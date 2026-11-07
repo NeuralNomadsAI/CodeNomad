@@ -60,5 +60,5 @@ test("wake reader accepts only the durable exact native user, bounds SQL and exp
   assert.equal(await reader.message(wake), undefined)
   await Effect.runPromise(Scope.close(scope, Exit.void))
   await assert.rejects(reader.message(wake), /retired/)
-  await assert.rejects(reader.nonWakeMessages(wake, []), /retired/)
+  await assert.rejects(reader.contextMessages(wake.sessionID, []), /retired/)
 })

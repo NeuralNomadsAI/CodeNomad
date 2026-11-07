@@ -1,4 +1,4 @@
-// PREPARED ONLY: build/run after the parent's explicit integrated final-ready message.
+// Isolated retained-product qualification: private service, storage and local provider.
 // node --import tsx scripts/test-native-mission-schedule-product.mjs <cli> <fresh-scratch> --parent-ready --kinds=at,in
 // --kinds=every --natural-every uses the real >=15-minute product interval.
 import assert from "node:assert/strict"
@@ -13,10 +13,12 @@ import { setTimeout as delay } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 
 const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: true, options: {
   "parent-ready": { type: "boolean" }, kinds: { type: "string", default: "at,in" }, "natural-every": { type: "boolean" },
-  "delay-ms": { type: "string", default: "30000" }, "grace-ms": { type: "string", default: "45000" },
+  // Cold recovery can wait for the native 60-second leader lease and 30-second loop.
+  "delay-ms": { type: "string", default: "30000" }, "grace-ms": { type: "string", default: "120000" },
   "controlled-settlement": { type: "boolean" },
   "arm-only": { type: "boolean" },
   "first-admission-race": { type: "boolean" }, "crash-pending": { type: "boolean" },
@@ -25,11 +27,12 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "diagnose-product-stop": { type: "boolean" },
   "convert-preparation": { type: "boolean" },
 } })
-assert(values["parent-ready"], "Wait for the parent's explicit final-ready message, then pass --parent-ready")
+assert(values["parent-ready"], "Explicit product qualification requires --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
-const approved = ["impl/core/product-native", "impl/fix-core/native", "impl/fix-core-2/native", "impl/adopt-223/native", "impl/ui-convert/native"].map(part => path.resolve(process.env.LOCALAPPDATA, `codenomad-agent-scratch/issue-926/${part}`))
+const approved = [path.resolve(process.env.TEMP, "opencode"), ...["impl/core/product-native", "impl/fix-core/native", "impl/fix-core-2/native", "impl/adopt-223/native", "impl/ui-convert/native"].map(part => path.resolve(process.env.LOCALAPPDATA, `codenomad-agent-scratch/issue-926/${part}`))]
 assert(approved.some(base => { const relative = path.relative(base, path.resolve(scratch)); return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) }), "Use an approved native scratch child")
 const kinds = values.kinds.split(","), delayMs = Number(values["delay-ms"]), graceMs = Number(values["grace-ms"])
+const cliVersion = await fixtureCliVersion(cli)
 const controlsKinds = ["paused-manual", "stop-pending", "flag-off-pause", "stop-preparing", "delete-preparing"]
 assert(kinds.length && new Set(kinds).size === kinds.length && kinds.every(kind => ["at", "in", "every", ...controlsKinds].includes(kind)))
 assert(!kinds.some(kind => controlsKinds.includes(kind)) || values["controlled-settlement"], "Control journeys require the explicit native Clock observer")
@@ -221,7 +224,7 @@ async function journey(kind) {
     assert(endpoint && endpoint.url === readNativeScheduleIncarnation(registrationFile).url)
     client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
-    const info = await client.server.info({ signal }); assert.equal(info.version, "2.2.3"); assert.equal(info.pid, child.pid)
+    const info = await client.server.info({ signal }); assert.equal(info.version, cliVersion); assert.equal(info.pid, child.pid)
     rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
   const stop = async () => {

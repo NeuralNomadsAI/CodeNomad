@@ -7,7 +7,6 @@ import type { NativeMissionDocumentRunner } from "./native-mission-document-stor
 import type { NativeScheduleWake } from "./native-schedule-transport-contract"
 import { assertNativeScheduleWake } from "./native-schedule-transport-contract"
 import { NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
-import type { NativeScheduleCarrierMapping } from "./native-schedule-carrier"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -57,29 +56,34 @@ export const acquireNativeMissionScheduleWakeReader = Effect.fn("missions.acquir
       || !Number.isSafeInteger(metadata.dueAt) || Number(metadata.dueAt) < 0 || typeof metadata.late !== "boolean") return undefined
     return { scheduleID: wake.scheduleID, run: wake.run, messageID: wake.messageID, dueAt: Number(metadata.dueAt) }
   }
-  // Model-context IDs select exact native records; their prose never classifies
-  // a notice/checkpoint. Current deterministic wakes keep strict hint validation.
-  const nonWakeMessages = async (mapping: NativeScheduleCarrierMapping, messages: readonly unknown[]) => {
+  // The LLM projection supplies IDs only. Resolve every user-role entry against
+  // its native row, including wakes; projected metadata and prose carry no proof.
+  const contextMessages = async (sessionID: string, messages: readonly unknown[]) => {
     current()
     if (messages.length > 128 || Buffer.byteLength(JSON.stringify(messages)) > 1024 * 1024) throw new Error("schedule-carrier-coverage")
     const ids = new Set<string>()
     for (const raw of messages) {
       if (!raw || typeof raw !== "object") throw new Error("schedule-carrier-context")
-      const hint = raw as { role?: unknown; id?: unknown; metadata?: { schedule?: unknown } }
-      if (hint.role !== "user" || hint.metadata?.schedule !== undefined) continue
+      const hint = raw as { role?: unknown; id?: unknown }
+      if (hint.role !== "user") continue
       if (typeof hint.id !== "string" || !hint.id.length || hint.id.length > 1024) throw new Error("schedule-carrier-coverage")
-      if (!hint.id.startsWith(`msg_${mapping.scheduleID}_`)) ids.add(hint.id)
+      ids.add(hint.id)
     }
-    const result: Array<typeof SessionMessage.Synthetic.Type | typeof SessionMessage.Compaction.Type> = []
+    const result = []
     for (const id of ids) {
-      const data = await read(mapping.sessionID, id)
+      const data = await read(sessionID, id)
       if (!data) throw new Error("schedule-carrier-coverage")
-      if (data.type === "synthetic") result.push(Schema.decodeUnknownSync(SessionMessage.Synthetic)(data))
-      else if (data.type === "compaction") result.push(Schema.decodeUnknownSync(SessionMessage.Compaction)(data))
+      if (data.type === "user") {
+        const user = Schema.decodeUnknownSync(SessionMessage.User)(data)
+        if (user.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL) throw new Error("schedule-carrier-wake")
+        result.push({ ...user, role: "user" as const })
+      }
+      else if (data.type === "synthetic") result.push({ ...Schema.decodeUnknownSync(SessionMessage.Synthetic)(data), role: "user" as const })
+      else if (data.type === "compaction") result.push({ ...Schema.decodeUnknownSync(SessionMessage.Compaction)(data), role: "user" as const })
       else throw new Error("schedule-carrier-wake")
     }
     return result
   }
-  return { current, message, nonWakeMessages }
+  return { current, message, contextMessages }
 })
 export type NativeMissionScheduleWakeReader = Effect.Success<ReturnType<typeof acquireNativeMissionScheduleWakeReader>>

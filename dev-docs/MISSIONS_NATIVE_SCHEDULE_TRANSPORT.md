@@ -100,8 +100,8 @@ The language object is shared and stateless; title and compaction return local
 results even when auxiliary agent defaults point to remote models. Context
 validation clears technical tools; provider HTTP for an owned carrier throws.
 
-`nativeScheduleCarrierWakes` extracts correlation hints from at most 128 context
-messages / 1 MiB, retaining at most 32 contiguous new runs after durable high-water.
+`nativeScheduleCarrierWakes` classifies resolved native records selected by at most
+128 context messages / 1 MiB, retaining at most 32 contiguous new runs after durable high-water.
 Exact schedule IDs, deterministic message IDs, run, dueAt and late fields are
 required. Gaps and incomplete metadata fail closed. RPC must point-read durable
 messages and revalidate authority before reservation. Summaries remain prose;
@@ -195,14 +195,15 @@ guard. Keep required Core work in the current invocation and join it before grap
 release.
 
 Native compaction checkpoints and restart notices project as user-role model
-messages. The invocation reader point-reads only referenced non-wake IDs from
-the current model context to classify completed compactions and synthetics
-carrying native `metadata.notice:"restart"`. Classification and deterministic
+messages. The invocation reader point-reads every referenced user-role ID from
+the current model context in the exact carrier session to classify native scheduled
+users, completed compactions and synthetics carrying native `metadata.notice:"restart"`.
+Projected metadata and prose supply no authority. Classification and deterministic
 wake proofs share 128 reads and 1 MiB per invocation; SQL restricts each message
 to 256 KiB and the remaining byte budget before transferring its body.
-The model-context selector ignores their exact IDs only when schedule metadata is
+The native-record selector ignores their exact IDs only when schedule metadata is
 absent and the ID is outside the current deterministic wake namespace. Prose and
-description matching supply no classification. New scheduled users keep
+description matching supply no classification. Stored scheduled users carry
 their exact metadata and are point-read again by the RPC receiver. Automatic
 compaction can also serialize the current wake into the checkpoint: when context
 has no candidate, the hook first asks read-only `status` for the next deterministic

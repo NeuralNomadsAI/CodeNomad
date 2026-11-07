@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
 import { buildNativeScheduleFoundation } from "../packages/server/scripts/build-native-schedule-foundation.mjs"
+import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 
 const [cli, root] = process.argv.slice(2)
 const statusOnly = process.argv.includes("--status-only")
@@ -17,6 +18,7 @@ const controlledMaintenance = process.argv.includes("--controlled-maintenance")
 assert(!coldMissing || ["runtime", "provider"].includes(coldMissing), "cold missing artifact must be runtime or provider")
 assert([statusOnly, !!coldMissing, controlledMaintenance].filter(Boolean).length <= 1, "choose one qualification mode")
 assert(cli && path.isAbsolute(cli) && root && path.isAbsolute(root), "absolute isolated CLI and fresh scratch directory required")
+const cliVersion = await fixtureCliVersion(cli)
 assert(!existsSync(root), "Preserve existing evidence; use a fresh scratch child")
 mkdirSync(root, { recursive: true })
 const save = (name, value) => { writeFileSync(path.join(root, `${name}.json`), JSON.stringify(value, null, 2)); return value }
@@ -78,7 +80,7 @@ const launch = async label => {
     if (!existsSync(registrationFile)) return false
     const registration = JSON.parse(readFileSync(registrationFile))
     if (registration.pid !== child.pid) return false
-    endpoint = await Service.discover({ file: registrationFile, version: "2.2.3" })
+    endpoint = await Service.discover({ file: registrationFile, version: cliVersion })
     return !!endpoint
   })
   assert.equal(endpoint.url, `http://127.0.0.1:${port}`)
@@ -312,7 +314,7 @@ try {
   assert(observed.filter(event => event.kind === "language-cache").every(event => event.same))
   assert.equal(observed.filter(event => ["provider-http-hook", "forbidden-lifecycle", "forbidden-child", "forbidden-signal"].includes(event.kind)).length, 0)
   assert.equal(providerRequests.length, 0)
-  save("result", { completed: true, nativeVersion: "2.2.3", casCount: 3, highWater: 3, launchedCount: 0,
+  save("result", { completed: true, nativeVersion: cliVersion, casCount: 3, highWater: 3, launchedCount: 0,
     coldWakeWithoutProjectClient: true, lostACKNoAutomaticResend: true, forcedCompaction: true,
     remoteTitleAndCompactionLocal: true, providerHTTP: providerRequests.length, forbiddenWakeOperations: 0,
     productInstalledRegistration: false, coreBusinessAdmissionQualified: false })

@@ -156,8 +156,8 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
         scheduleID: binding.calendar.scheduleID, sessionID: binding.calendar.sessionID }
       const run = <A>(effect: Effect.Effect<A, unknown>) => invocation.check(run => run(effect))
       const reader = yield* acquireNativeMissionScheduleWakeReader(ctx, run)
-      const nonWakes = yield* Effect.promise(() => reader.nonWakeMessages(mapping, event.messages))
-      const wakes: NativeScheduleWake[] = nativeScheduleCarrierWakes(mapping, binding.calendar.highWater, event.messages, nativeScheduleCarrierNonWakeMessageIDs(nonWakes))
+      const messages = yield* Effect.promise(() => reader.contextMessages(mapping.sessionID, event.messages))
+      const wakes: NativeScheduleWake[] = nativeScheduleCarrierWakes(mapping, binding.calendar.highWater, messages, nativeScheduleCarrierNonWakeMessageIDs(messages))
       // Only public context closures survive this hook. RPC reacquires its own
       // Core graph; never reuse the plugin setup or a completed HTTP Scope.
       yield* Effect.promise(async () => {

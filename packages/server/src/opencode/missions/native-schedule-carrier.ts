@@ -60,7 +60,7 @@ export function nativeScheduleCarrierNonWakeMessageIDs(messages: readonly unknow
   })
 }
 
-/** Bounded model-context hints only. RPC must point-read the native user message,
+/** Classify resolved native records only, never LLM-projected metadata. RPC must point-read the native user message,
  * revalidate mapping/Location/state, and reserve/advance high-water under CAS. */
 export function nativeScheduleCarrierWakes(mapping: NativeScheduleCarrierMapping, highWater: number,
   messages: readonly unknown[], nativeNonWakeIDs: readonly string[] = []): NativeScheduleCarrierCandidate[] {

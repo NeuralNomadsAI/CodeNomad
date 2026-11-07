@@ -74,16 +74,16 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
     const descriptor = original.calendarOwner.slots.find(item => item.sessionID === event.sessionID && item.timeGeneration === original.timeGeneration)
     if (!descriptor) return // Retiring carriers stay local, without autonomous admission.
     const calendar = original.calendars.find(item => item.sessionID === event.sessionID)
+    const messages = yield* Effect.promise(() => reader.contextMessages(event.sessionID, event.messages))
     let scheduleID = calendar?.scheduleID ?? descriptor.scheduleID
     if (!scheduleID) {
-      const ids = new Set(event.messages.filter(message => message.role === "user").map(message =>
+      const ids = new Set(messages.map(message =>
         (message as { metadata?: { schedule?: { id?: unknown } } }).metadata?.schedule?.id).filter((id): id is string => typeof id === "string"))
       if (ids.size !== 1 || descriptor.role !== "reconciliation" || descriptor.creation !== "attempted") return
       scheduleID = [...ids][0]
     }
     const mapping = { missionID: original.id, generation: original.timeGeneration, sessionID: event.sessionID, scheduleID }
-    const nonWakes = yield* Effect.promise(() => reader.nonWakeMessages(mapping, event.messages))
-    const candidates = nativeScheduleCarrierWakes(mapping, calendar?.highWater ?? 0, event.messages, nativeScheduleCarrierNonWakeMessageIDs(nonWakes))
+    const candidates = nativeScheduleCarrierWakes(mapping, calendar?.highWater ?? 0, messages, nativeScheduleCarrierNonWakeMessageIDs(messages))
     const next = calendar?.highWater ?? 0
     const candidate = candidates[0] ?? { ...mapping, run: next + 1, messageID: `msg_${scheduleID}_${next + 1}` }
     yield* Effect.tryPromise(async () => {
