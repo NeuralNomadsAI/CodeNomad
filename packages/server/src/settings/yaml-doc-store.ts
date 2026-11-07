@@ -25,7 +25,7 @@ function normalizeDoc(input: unknown): SettingsDoc {
   return input
 }
 
-function resolveWriteDestination(filePath: string): string {
+export function resolveWriteDestination(filePath: string): string {
   let current = path.resolve(filePath)
   const seen = new Set<string>()
 
