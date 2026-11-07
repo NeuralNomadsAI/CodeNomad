@@ -4,27 +4,27 @@ import { randomUUID } from "node:crypto"
 import { z } from "zod"
 import { resolveWriteDestination } from "./yaml-doc-store"
 
-/** Publish a complete immutable claim exclusively; a crash can only leave an unused temp file. */
+/** Elect one persistent identity; an interrupted writer requires explicit repair. */
 export function claimServerIdentity(configPath: string): string {
   const identityPath = `${resolveWriteDestination(configPath)}.server-id`
   const read = () => z.string().uuid().parse(fs.readFileSync(identityPath, "utf8").trim())
-  try {
-    return read()
-  } catch (error: any) {
-    if (error?.code !== "ENOENT") throw error
-  }
   fs.mkdirSync(path.dirname(identityPath), { recursive: true })
-  const temporary = `${identityPath}.${process.pid}.${randomUUID()}.tmp`
   try {
-    fs.writeFileSync(temporary, randomUUID(), { flag: "wx", mode: 0o600 })
-    try {
-      // link is an atomic, no-replace publication on Windows, macOS and Linux.
-      fs.linkSync(temporary, identityPath)
-    } catch (error: any) {
-      if (error?.code !== "EEXIST") throw error
+    const handle = fs.openSync(identityPath, "wx", 0o600)
+    try { fs.writeFileSync(handle, randomUUID()) }
+    finally { fs.closeSync(handle) }
+  } catch (error: any) {
+    if (error?.code !== "EEXIST") throw error
+  }
+  const deadline = Date.now() + 1000
+  while (true) {
+    try { return read() }
+    catch (error) {
+      if (!(error instanceof z.ZodError)) throw error
+      if (Date.now() >= deadline) {
+        throw new Error("Incomplete or invalid server identity file; explicit repair required")
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20)
     }
-    return read()
-  } finally {
-    fs.rmSync(temporary, { force: true })
   }
 }

@@ -61,31 +61,31 @@ test("metadata identity persists across HTTP server restarts and separates confi
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
-test("identity initialization refuses invalid/unreadable config and failed persistence", (t) => {
+test("identity initialization omits serverId after invalid/unreadable config and failed persistence", (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "codenomad-meta-errors-"))
   const config = path.join(root, "config.yaml")
   try {
     for (const content of ["server: [", "server: 42", "server:\n  serverId: not-a-uuid\n"]) {
       writeFileSync(config, content)
       const settings = new SettingsService(resolveConfigLocation(config), undefined, logger)
-      assert.throws(() => settings.getServerId())
+      assert.equal(settings.getServerId(), undefined)
       assert.equal(readFileSync(config, "utf8"), content, "bad config must remain untouched")
     }
     rmSync(config)
     const settings = new SettingsService(resolveConfigLocation(config), undefined, logger)
     mkdirSync(config)
-    assert.throws(() => settings.getServerId(), /could not be read authoritatively/)
+    assert.equal(settings.getServerId(), undefined)
     rmSync(config, { recursive: true })
     // A file in place of the parent directory fails portably, even with elevated privileges.
     const blocked = path.join(root, "blocked")
     writeFileSync(blocked, "file")
     const unwritable = new SettingsService(resolveConfigLocation(path.join(blocked, "config.yaml")), undefined, logger)
-    assert.throws(() => unwritable.getServerId())
+    assert.equal(unwritable.getServerId(), undefined)
     assert.equal(readFileSync(blocked, "utf8"), "file")
     writeFileSync(config, "ui:\n  locale: fr\n")
     const retry = new SettingsService(resolveConfigLocation(config), undefined, logger)
     const rename = t.mock.method(fs, "renameSync", () => { throw new Error("injected persist failure") })
-    assert.throws(() => retry.getServerId(), /injected persist failure/)
+    assert.equal(retry.getServerId(), undefined)
     assert.equal(readFileSync(config, "utf8"), "ui:\n  locale: fr\n")
     assert.deepEqual(fs.readdirSync(root).sort(), ["blocked", "config.yaml", "config.yaml.server-id"])
     rename.mock.restore()
@@ -93,4 +93,30 @@ test("identity initialization refuses invalid/unreadable config and failed persi
     const persistedId = retry.getServerId()
     assert.equal(parse(readFileSync(config, "utf8")).server.serverId, persistedId)
   } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test("HTTP metadata remains available without a stable identity after corrupt config", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "codenomad-meta-fallback-"))
+  const config = path.join(root, "config.yaml")
+  const app = Fastify()
+  try {
+    writeFileSync(config, "server: [")
+    const settings = new SettingsService(resolveConfigLocation(config), undefined, logger)
+    registerMetaRoutes(app, {
+      serverMeta: {
+        serverId: settings.getServerId(), apiContract: CODENOMAD_API_CONTRACT,
+        capabilities: [...CODENOMAD_CAPABILITIES], localUrl: "http://127.0.0.1:9899",
+        eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 9899,
+        hostLabel: "fixture", workspaceRoot: root, addresses: [],
+      },
+      remotePreviewsAllowed: () => false,
+    })
+    await app.listen({ host: "127.0.0.1", port: 0 })
+    const response = await fetch(`${app.listeningOrigin}/api/meta`)
+    assert.equal(response.status, 200)
+    const meta = await response.json() as Record<string, unknown>
+    assert.equal(Object.prototype.hasOwnProperty.call(meta, "serverId"), false)
+    assert.equal(meta.apiContract, CODENOMAD_API_CONTRACT)
+    assert.equal(readFileSync(config, "utf8"), "server: [")
+  } finally { await app.close(); rmSync(root, { recursive: true, force: true }) }
 })

@@ -93,8 +93,16 @@ export class SettingsService {
     )
   }
 
-  /** Persist before advertising; unreadable config or failed writes abort startup. */
-  getServerId(): string {
+  /** Identity failures disable native backend admission while startup continues. */
+  getServerId(): string | undefined {
+    try { return this.initializeServerId() }
+    catch (error) {
+      this.logger.warn({ err: error }, "Stable server identity unavailable; backend compatibility falls back")
+      return undefined
+    }
+  }
+
+  private initializeServerId(): string {
     const server = this.configStore.getAuthoritativeOwner("server")
     if (server.serverId !== undefined) {
       return z.string().uuid().parse(server.serverId)
@@ -112,7 +120,11 @@ export class SettingsService {
     } catch (error: any) {
       if (error?.code !== "ENOENT") throw error
     }
-    this.configStore.mergePatchOwner("server", { serverId })
+    try { this.configStore.mergePatchOwner("server", { serverId }) }
+    catch (error) {
+      // A concurrent initializer may have committed while Windows refused our rename.
+      if (this.configStore.getAuthoritativeOwner("server").serverId !== serverId) throw error
+    }
     return z.string().uuid().parse(this.configStore.getAuthoritativeOwner("server").serverId)
   }
 

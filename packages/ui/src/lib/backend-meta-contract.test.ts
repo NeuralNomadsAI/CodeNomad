@@ -6,9 +6,13 @@ import { createBackendClient } from "./backend-client"
 import { CODENOMAD_API_CONTRACT } from "../../../server/src/meta-contract"
 
 test("native policy requires the exact CodeNomad contract, including legacy fallback", () => {
-  assert.equal(backendCompatibility({ apiContract: CODENOMAD_API_CONTRACT }), "native")
+  const serverId = "715941e7-8f5e-422a-b64d-25e56c672553"
+  assert.equal(backendCompatibility({ apiContract: CODENOMAD_API_CONTRACT, serverId }), "native")
+  for (const serverId of [undefined, "", null, 123]) {
+    assert.equal(backendCompatibility({ apiContract: CODENOMAD_API_CONTRACT, serverId } as never), "fallback")
+  }
   for (const apiContract of [undefined, 0, -1, 0.5, CODENOMAD_API_CONTRACT + 1, NaN, "1", null]) {
-    assert.equal(backendCompatibility({ apiContract } as never), "fallback", String(apiContract))
+    assert.equal(backendCompatibility({ apiContract, serverId } as never), "fallback", String(apiContract))
   }
   assert.equal(backendCompatibility({}), "fallback")
 })
