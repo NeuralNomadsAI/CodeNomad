@@ -147,6 +147,23 @@ test("real preference consumers isolate host, server, fallback, instance data an
     assert.equal(preferredModelList(models, "prefsA~same").shown.some(model => model.id === "b"), true)
   })
 
+  await t.test("persisted thinking variants reset through Merge Patch on host and server", async () => {
+    const model = { providerId: "p", modelId: "variant" }
+    for (const [prefs, backend, data] of [[hostPrefs, localBackend, host], [prefsB, ownerB.backend, b]] as const) {
+      prefs.setModelThinkingSelection(model, "high")
+      await new Promise<void>(resolve => setImmediate(resolve))
+      await backend.storage.flushWrites()
+      assert.equal(prefs.getModelThinkingSelection(model), "high")
+      prefs.setModelThinkingSelection(model, undefined)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      await backend.storage.flushWrites()
+      assert.equal(prefs.getModelThinkingSelection(model), undefined)
+      assert.equal(Object.values(data.state.ui.models.thinkingSelections).includes("high"), false)
+      const patch = JSON.parse(String(data.calls.filter(call => call.method === "PATCH").at(-1)?.body))
+      assert.ok(Object.values(patch.models.thinkingSelections).includes(null))
+    }
+  })
+
   await t.test("missing and revoked owners never write locally; queued writes retain admission", async () => {
     const beforeHost = host.calls.length, beforeA = a.calls.length
     assert.throws(() => module.preferencesForBackend("absentPrefs"), /Backend unavailable/)

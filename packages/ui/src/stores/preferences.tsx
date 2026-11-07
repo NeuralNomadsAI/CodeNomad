@@ -1302,9 +1302,9 @@ function setModelThinkingSelection(model: { providerId: string; modelId: string 
   const current = uiState().models.thinkingSelections[key]
   if (current === value) return
 
-  const selections = { ...uiState().models.thinkingSelections }
+  const selections: Record<string, string | null> = { ...uiState().models.thinkingSelections }
   if (!value) {
-    delete selections[key]
+    selections[key] = null
   } else {
     selections[key] = value
   }
