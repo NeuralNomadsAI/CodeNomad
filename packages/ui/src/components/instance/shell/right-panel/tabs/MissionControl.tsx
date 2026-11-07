@@ -476,7 +476,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       </Show>
 
       <MissionRows entries={pickerEntries()} query={query()} selectedKey={selectedKey()}
-        paging={<MissionPanelPaging instanceId={props.instanceId} lane="summaries" search />}
+        paging={<>{recurrence.listView()}{scheduled.listView()}<MissionPanelPaging instanceId={props.instanceId} lane="summaries" search /></>}
         onSelect={entry => {
           const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
           if (kind === "schedule") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: id, selectedScheduled: undefined }) }

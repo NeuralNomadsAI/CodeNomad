@@ -60,6 +60,14 @@ export function MissionRows(props: {
   const below = createMemo(() => position() < 0 ? [] : shown().slice(position() + 1).map(entry => entry.key))
   const selected = () => position() < 0 ? undefined : shown()[position()]
   const expanded = () => Boolean(selected()) && folded() !== props.selectedKey
+  let list!: HTMLUListElement
+  // Selecting moves rows between the lists above and below the selection, which
+  // recreates them: the control that had focus gets it back on its new row.
+  const select = (entry: MissionPickerEntry, control: HTMLButtonElement) => {
+    const focused = control === document.activeElement ? control.classList.contains("mission-row-select") ? ".mission-row-select" : ".session-item-expander" : undefined
+    props.onSelect(entry)
+    if (focused) list.querySelector<HTMLElement>(`.mission-row[data-mission-key="${CSS.escape(entry.key)}"] ${focused}`)?.focus({ preventScroll: true })
+  }
   const row = (key: string) => <Show when={byKey().get(key)}>{entry => {
     const isSelected = () => key === props.selectedKey
     const open = () => isSelected() && expanded()
@@ -69,11 +77,11 @@ export function MissionRows(props: {
       <div class={`session-item-base ${isSelected() ? "session-item-active" : "session-item-inactive"}`}>
         <button type="button" class="session-item-expander opacity-80 hover:opacity-100 hover:bg-surface-hover" aria-expanded={open()}
           aria-label={label()} title={label()}
-          onClick={() => { if (isSelected()) setFolded(open() ? key : undefined); else { setFolded(undefined); props.onSelect(entry()) } }}>
+          onClick={event => { if (isSelected()) setFolded(open() ? key : undefined); else { setFolded(undefined); select(entry(), event.currentTarget) } }}>
           <ChevronRight class="disclosure-chevron w-3.5 h-3.5" aria-hidden="true" />
         </button>
         <button type="button" class="session-item-select mission-row-select" aria-current={isSelected() ? "true" : undefined} title={describe(entry())}
-          onClick={() => { if (!isSelected()) setFolded(undefined); props.onSelect(entry()) }}>
+          onClick={event => { if (!isSelected()) setFolded(undefined); select(entry(), event.currentTarget) }}>
           <Dynamic component={key.startsWith("mission:") ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} aria-hidden="true" />
           <bdi class="session-item-title session-item-title--clamp">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
         </button>
@@ -81,7 +89,7 @@ export function MissionRows(props: {
     </div>
   }}</Show>
   return <div class="mission-rows" hidden={props.hidden}>
-    <ul aria-label={t("missions.control.mapLabel")}>
+    <ul ref={list} aria-label={t("missions.control.mapLabel")}>
       <For each={above()}>{key => <li>{row(key)}</li>}</For>
       {/* Without a selection it holds only the detail's list-level notices. */}
       <li class="mission-rows-selection">

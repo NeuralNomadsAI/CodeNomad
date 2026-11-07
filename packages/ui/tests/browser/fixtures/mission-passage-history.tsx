@@ -36,7 +36,7 @@ function Schedules(props: { projectID: string; scope: string; active: () => bool
     </header>
     <MissionRows entries={list.entries()} query="" selectedKey={selected() ? `schedule:${selected()}` : undefined}
       onSelect={entry => updateMissionProjectView(props.scope, { selectedRecurrence: entry.key.slice("schedule:".length) })}
-      detail={list.view()} />
+      detail={list.view()} paging={list.listView()} />
   </MissionActionSlot.Provider>
 }
 

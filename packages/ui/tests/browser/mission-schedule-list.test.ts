@@ -577,6 +577,11 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
     await page.getByRole("button", { name: "Load more Missions", exact: true }).and(page.locator(":enabled")).waitFor()
     await button(page, "Refresh saved request").waitFor()
     assert.equal(await page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inventory Mission" }).count(), 8)
+    // Inventory paging belongs to the list, not to the selection: folding keeps it.
+    const selectedChevron = page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
+    await selectedChevron.click()
+    assert.equal(await page.getByRole("button", { name: "Load more Missions", exact: true }).isVisible(), true, "folding the selection keeps Load more")
+    await selectedChevron.click()
     assert.equal(await button(page, "Check passage").isDisabled(), true, "retained partial metadata grants no new control")
     assert.equal(await button(page, "Stop…").isDisabled(), true)
     if (negativeFirst) {

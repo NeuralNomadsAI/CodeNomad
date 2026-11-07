@@ -11,17 +11,17 @@
    they stay mounted. The header, the form and alerts remain. */
 .mission-control[data-creating] > :not(.mission-control-header, .mission-editor, [role="alert"], .mission-control-stale) { display: none; }
 
-/* The header spans the panel and stays at its top while the tree scrolls beneath;
-   the panel's scroll padding (its measured height, MissionControl.tsx) keeps
-   scrolled-to and focused content out from under it. */
-.mission-control { scroll-padding-block-start: var(--mission-header-height, 0px); }
+/* The header spans the panel and stays at its top while the tree scrolls beneath.
+   The tree's content takes the header's measured height (MissionControl.tsx) as
+   scroll margin, so scrolled-to and focused content stays out from under it; the
+   header's own controls keep none, so focusing them never scrolls the tree. */
+.mission-control .mission-rows, .mission-control .mission-rows * { scroll-margin-block-start: var(--mission-header-height, 0px); }
 /* The creation form keeps its own layout (mission-create.css), and a very short
    window leaves no room for a fixed header: there the header scrolls away. */
-.mission-control[data-creating] { scroll-padding-block-start: 0; }
 .mission-control[data-creating] > .mission-control-header { position: static; }
 @media (max-height: 400px) {
-  .mission-control { scroll-padding-block-start: 0; }
   .mission-control > .mission-control-header { position: static; }
+  .mission-control .mission-rows, .mission-control .mission-rows * { scroll-margin-block-start: 0; }
 }
 .mission-control-header {
   position: sticky;
