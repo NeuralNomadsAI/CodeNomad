@@ -87,7 +87,7 @@ test("identity initialization refuses invalid/unreadable config and failed persi
     const rename = t.mock.method(fs, "renameSync", () => { throw new Error("injected persist failure") })
     assert.throws(() => retry.getServerId(), /injected persist failure/)
     assert.equal(readFileSync(config, "utf8"), "ui:\n  locale: fr\n")
-    assert.deepEqual(fs.readdirSync(root).sort(), ["blocked", "config.yaml"])
+    assert.deepEqual(fs.readdirSync(root).sort(), ["blocked", "config.yaml", "config.yaml.server-id"])
     rename.mock.restore()
     assert.equal(parse(readFileSync(config, "utf8")).server, undefined)
     const persistedId = retry.getServerId()

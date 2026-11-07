@@ -726,6 +726,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test concurrent server identity and crash recovery
+        run: node --import tsx --test packages/server/src/settings/server-identity.test.ts
+
       - name: Test binary compatibility and shared lifecycle
         run: >-
           node --import tsx --test

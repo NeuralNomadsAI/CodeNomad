@@ -9,7 +9,9 @@ import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
 import { readAdmissionEnvironment } from "./admission-environment"
 import { canonicalScope } from "../host-lifetime/protocol"
-import { createHash, randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
+import fs from "node:fs"
+import { claimServerIdentity } from "./server-identity"
 import path from "node:path"
 
 export type DocKind = "config" | "state"
@@ -97,9 +99,21 @@ export class SettingsService {
     if (server.serverId !== undefined) {
       return z.string().uuid().parse(server.serverId)
     }
-    const serverId = randomUUID()
+    const serverId = claimServerIdentity(this.location.configYamlPath)
+    // Refresh after exclusive publication: every process uses the winning claim.
+    const current = this.configStore.getAuthoritativeOwner("server")
+    if (current.serverId !== undefined) {
+      const persisted = z.string().uuid().parse(current.serverId)
+      if (persisted !== serverId) throw new Error("Conflicting persisted server identity")
+      return persisted
+    }
+    try {
+      fs.accessSync(this.location.configYamlPath, fs.constants.W_OK)
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error
+    }
     this.configStore.mergePatchOwner("server", { serverId })
-    return serverId
+    return z.string().uuid().parse(this.configStore.getAuthoritativeOwner("server").serverId)
   }
 
   /** Selected desktop profile; same identity used at Mission Play. */
