@@ -33,13 +33,6 @@ updates:
         update-types:
           - minor
           - patch
-      cargo-dependencies:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
 
   - package-ecosystem: github-actions
     directory: /
@@ -48,14 +41,12 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
-  # Root workspaces use the root lockfile; the deployment worker has its own.
+  # Keep root workspaces and the separately deployed worker in independent jobs.
   # Fastify security fixes share a family PR; unmatched dependencies stay individual.
   # Routine majors require a maintainer decision, except supported Electron majors.
   # The all-dependency rule preserves security coverage, including major fixes.
   - package-ecosystem: npm
-    directories:
-      - /
-      - /packages/cloudflare
+    directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -89,10 +80,31 @@ updates:
         update-types:
           - minor
           - patch
-      npm-dependencies:
+      opencode-sdk:
         applies-to: version-updates
         patterns:
-          - "*"
+          - "@opencode/client"
+          - "@opencode/schema"
+          - "@opencode/plugin"
         update-types:
           - minor
           - patch
+
+  - package-ecosystem: npm
+    directory: /packages/cloudflare
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: all
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+    groups:
+      cloudflare-security:
+        applies-to: security-updates
+        patterns:
+          - wrangler
+          - miniflare
+          - workerd
+          - "@cloudflare/*"
