@@ -290,13 +290,14 @@ pub(crate) fn handle_native_request(
     method: &str,
     params: Option<serde_json::Value>,
     deadline: u64,
+    fence: native_request::RequestFence,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     match method {
         "browser.probe" | "browser.execute" | "browser.page.begin" | "browser.page.send"
         | "browser.page.check" | "browser.page.end" => state
             .browser_controller
-            .handle_native(app, method, params, deadline),
+            .handle_native(app, method, params, deadline, fence),
         "opencode.service.start" => native_service_start::start(params, deadline),
         "developer.status" => state.developer_mode.native_snapshot(app),
         "developer.restart" => state.developer_mode.request_restart(app),

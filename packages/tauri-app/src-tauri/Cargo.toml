@@ -6,6 +6,8 @@ license = "MIT"
 
 [build-dependencies]
 tauri-build = { version = "2.7.4", features = [] }
+cc = "1"
+pkg-config = "0.3"
 
 [dependencies]
 tauri = { version = "2.12.5", features = ["devtools", "unstable"] }

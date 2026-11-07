@@ -534,6 +534,7 @@ version = "1.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "cc",
  "dirs 5.0.1",
  "fs2",
  "gtk",
@@ -543,6 +544,7 @@ dependencies = [
  "objc2-web-kit",
  "open",
  "parking_lot",
+ "pkg-config",
  "plist",
  "regex",
  "reqwest 0.12.28",

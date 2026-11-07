@@ -6,11 +6,17 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
 
 #[cfg(target_os = "linux")]
+#[path = "embedded_view/linux.rs"]
 mod linux;
 #[cfg(target_os = "macos")]
+#[path = "embedded_view/macos.rs"]
 mod macos;
 #[cfg(windows)]
+#[path = "embedded_view/windows.rs"]
 mod windows;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "embedded_view/input.rs"]
+pub(crate) mod input;
 
 /// Full, normalized desktop identity. The caller resolves config aliases before startup.
 pub(crate) struct StorageIdentity {

@@ -1,5 +1,63 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[derive(Clone)]
+pub(crate) struct RequestFence {
+    deadline: Instant,
+    current: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+impl RequestFence {
+    pub(crate) fn new(
+        deadline_ms: u64,
+        current: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|value| value.as_millis() as u64)
+            .unwrap_or(u64::MAX);
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(deadline_ms.saturating_sub(now)))
+            .unwrap_or_else(Instant::now);
+        Self {
+            deadline,
+            current: Arc::new(current),
+        }
+    }
+
+    pub(crate) fn check(&self) -> Result<(), String> {
+        if !(self.current)() {
+            return Err("Native backend process is no longer current".into());
+        }
+        if Instant::now() >= self.deadline {
+            return Err("Native request expired before execution".into());
+        }
+        Ok(())
+    }
+}
+
+/// Shared by the desktop stream reader and native-engine regression harness.
+/// A replacement process never receives its predecessor's result.
+pub(crate) fn dispatch(
+    request: NativeRequest,
+    fence: RequestFence,
+    handle: impl FnOnce(&NativeRequest, RequestFence) -> Result<Value, String>,
+) -> Option<String> {
+    if !(fence.current)() {
+        return None;
+    }
+    let result = fence.check().and_then(|()| handle(&request, fence.clone()));
+    if !(fence.current)() {
+        return None;
+    }
+    let result = match fence.check() {
+        Ok(()) => result,
+        Err(error) => Err(error),
+    };
+    Some(response(&request.id, result))
+}
 
 pub(crate) const REQUEST_PREFIX: &str = "CODENOMAD_NATIVE_REQUEST:";
 pub(crate) const RESPONSE_PREFIX: &str = "CODENOMAD_NATIVE_RESPONSE:";
@@ -87,5 +145,47 @@ mod tests {
             response("r1", Ok(json!({ "available": true }))),
             "CODENOMAD_NATIVE_RESPONSE:{\"v\":1,\"id\":\"r1\",\"ok\":true,\"result\":{\"available\":true}}\n"
         );
+    }
+
+    #[test]
+    fn fences_expired_dispatch_retired_processes_and_late_results() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let request = || NativeRequest {
+            v: 1,
+            id: "request".into(),
+            method: "browser.probe".into(),
+            params: None,
+            deadline: u64::MAX,
+        };
+        let expired = RequestFence::new(0, || true);
+        let response =
+            dispatch(request(), expired, |_, _| panic!("expired work dispatched")).unwrap();
+        assert!(response.contains("expired"));
+        let current = Arc::new(AtomicBool::new(true));
+        let predicate = current.clone();
+        let fence = RequestFence::new(u64::MAX - 1, move || predicate.load(Ordering::SeqCst));
+        // Use a representable deadline while keeping this test independent of clock changes.
+        let fence = RequestFence {
+            deadline: Instant::now() + Duration::from_secs(10),
+            ..fence
+        };
+        let queued = fence.clone();
+        assert!(dispatch(request(), fence, |_, _| {
+            current.store(false, Ordering::SeqCst);
+            Ok(json!({"secret":"old process"}))
+        })
+        .is_none());
+        assert!(queued.check().unwrap_err().contains("no longer current"));
+        let late = RequestFence {
+            deadline: Instant::now() + Duration::from_millis(5),
+            current: Arc::new(|| true),
+        };
+        let response = dispatch(request(), late, |_, _| {
+            std::thread::sleep(Duration::from_millis(10));
+            Ok(json!({"stale":true}))
+        })
+        .unwrap();
+        assert!(response.contains("expired"));
+        assert!(!response.contains("stale"));
     }
 }

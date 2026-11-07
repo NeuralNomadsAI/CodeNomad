@@ -108,7 +108,7 @@ export async function onNativeBrowserOpen(
   const electronUnsubscribe = window.electronAPI?.onBrowserOpenRequest?.(callback)
   if (electronUnsubscribe) return electronUnsubscribe
   const environment = { host: window.__CODENOMAD_RUNTIME_HOST__ ?? "web", windowContext: window.__CODENOMAD_WINDOW_CONTEXT__ ?? "remote" }
-  if (nativeBrowserHost(environment) !== "tauri" || !browserHostCapabilities(environment).automation) {
+  if (nativeBrowserHost(environment) !== "tauri") {
     return () => {}
   }
   return listen<{ sessionID: string; url: string; requestID: string }>("browser-target:open", (event) => callback(event.payload))
