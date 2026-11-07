@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Ubuntu GNOME native input trial: python3 gtk-child-trial.py [prebuilt-binary].
+"""Native input trial: python3 gtk-child-trial.py [prebuilt-binary].
 
 Requires python3-dbus and a logged-in GNOME session. Runs X11 and Wayland;
-keeps logs in the current directory. Input goes through Mutter's native seat.
+keeps logs in the current directory. GTK_TRIAL_UINPUT=1 uses python3-evdev
+and a writable /dev/uinput for KDE Wayland; GTK_TRIAL_X11=1 uses xdotool
+in an X11 desktop session; otherwise uses Mutter's seat.
 """
 import dbus
 import http.server
@@ -62,11 +64,55 @@ setTimeout(()=>{let a=document.createElement('a');a.href='/download';a.download=
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
-bus = dbus.SessionBus()
-service = "org.gnome.Mutter.RemoteDesktop"
-path = dbus.Interface(bus.get_object(service, "/org/gnome/Mutter/RemoteDesktop"), service).CreateSession()
-seat = dbus.Interface(bus.get_object(service, path), service + ".Session")
-seat.Start()
+if os.environ.get("GTK_TRIAL_X11") == "1":
+    class Seat:
+        def NotifyPointerMotionRelative(self, x, y):
+            subprocess.run(["xdotool", "mousemove_relative", "--", str(int(x)), str(int(y))], check=True, timeout=5)
+
+        def NotifyPointerButton(self, button, pressed):
+            assert button == 272
+            subprocess.run(["xdotool", "mousedown" if pressed else "mouseup", "1"], check=True, timeout=5)
+
+        def Stop(self):
+            pass
+
+    seat = Seat()
+elif os.environ.get("GTK_TRIAL_UINPUT") == "1":
+    from evdev import UInput, ecodes
+
+    class Seat:
+        def __init__(self):
+            self.device = UInput({ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y],
+                                 ecodes.EV_KEY: [ecodes.BTN_LEFT]}, name="CodeNomad GTK trial")
+            time.sleep(1)
+            # Match Mutter seat coordinates: bypass libinput pointer acceleration.
+            bus = dbus.SessionBus()
+            manager = dbus.Interface(bus.get_object("org.kde.KWin", "/org/kde/KWin/InputDevice"), "org.freedesktop.DBus.Properties")
+            devices = [dbus.Interface(bus.get_object("org.kde.KWin", "/org/kde/KWin/InputDevice/" + name), "org.freedesktop.DBus.Properties")
+                       for name in manager.Get("org.kde.KWin.InputDeviceManager", "devicesSysNames")]
+            settings, = [device for device in devices if device.Get("org.kde.KWin.InputDevice", "name") == "CodeNomad GTK trial"]
+            settings.Set("org.kde.KWin.InputDevice", "pointerAccelerationProfileFlat", True)
+            settings.Set("org.kde.KWin.InputDevice", "pointerAcceleration", 0.)
+
+        def NotifyPointerMotionRelative(self, x, y):
+            self.device.write(ecodes.EV_REL, ecodes.REL_X, int(x))
+            self.device.write(ecodes.EV_REL, ecodes.REL_Y, int(y))
+            self.device.syn()
+
+        def NotifyPointerButton(self, button, pressed):
+            self.device.write(ecodes.EV_KEY, button, int(pressed))
+            self.device.syn()
+
+        def Stop(self):
+            self.device.close()
+
+    seat = Seat()
+else:
+    bus = dbus.SessionBus()
+    service = "org.gnome.Mutter.RemoteDesktop"
+    path = dbus.Interface(bus.get_object(service, "/org/gnome/Mutter/RemoteDesktop"), service).CreateSession()
+    seat = dbus.Interface(bus.get_object(service, path), service + ".Session")
+    seat.Start()
 scale = 1
 
 
@@ -83,7 +129,7 @@ def click(x, y):
 
 
 try:
-    for backend in ("wayland", "x11"):
+    for backend in (("x11",) if os.environ.get("GTK_TRIAL_X11") == "1" else ("wayland", "x11")):
         with tempfile.TemporaryDirectory(prefix="gtk-trial-") as storage:
             env = dict(os.environ, GDK_BACKEND=backend,
                        WAYLAND_DISPLAY=os.environ.get("WAYLAND_DISPLAY", "wayland-0"),
