@@ -240,6 +240,19 @@ fn main() {
                     let response = native_request::dispatch(request, fence, |request, fence| {
                         let id = live.lock().unwrap().clone();
                         match request.method.as_str() {
+                            "fixture.read-mutation" => {
+                                let script = match request.params.as_ref().and_then(|value| value["kind"].as_str()) {
+                                    Some("pushstate") => "history.pushState({}, '', '?same-document')",
+                                    Some("reinsert") => "{ const item=document.querySelector('#aria-button');item.remove();document.querySelector('main').append(item); }",
+                                    Some("recreate") => "document.open();document.write('<button>Recreated document</button>');document.close()",
+                                    _ => return Err("Invalid read fixture mutation".into()),
+                                };
+                                let view = app.webviews().into_values().find(|view| view.label().starts_with(&format!("browser-{id}-"))).ok_or("Fixture preview missing")?;
+                                view.eval(script).map_err(|error| error.to_string())?;
+                                // eval is queued; the next isolated read observes its completion.
+                                std::thread::sleep(Duration::from_millis(100));
+                                Ok(Value::Null)
+                            }
                             "fixture.hide" => {
                                 update(&app, &controller, OWNER, &id, false).map(|()| Value::Null)
                             }

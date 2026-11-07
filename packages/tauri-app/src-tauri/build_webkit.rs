@@ -12,6 +12,7 @@ pub fn build(directory: &std::path::Path) {
         "cargo:rerun-if-changed={}",
         directory.join("input.h").display()
     );
+    println!("cargo:rerun-if-changed={}", directory.join("page_read.generated.h").display());
     let mut build = cc::Build::new();
     build.file(source);
     if os == "macos" {

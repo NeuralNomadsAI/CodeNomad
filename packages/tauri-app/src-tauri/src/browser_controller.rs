@@ -192,7 +192,7 @@ impl BrowserController {
         let installed = webkit_history::install(&webview, self.clone(), registration.clone())
             .and_then(|()| {
                 webkit_navigation::install(&webview, self.clone(), registration.clone())
-            });
+            }).and_then(|()| crate::embedded_view::input::install_read(&webview));
         if let Err(error) = installed {
             let _ = self
                 .embedded_views
@@ -1083,7 +1083,7 @@ impl BrowserController {
         if let Ok(mut inner) = self.inner.0.lock() {
             inner
                 .page_leases
-                .retain(|_, lease| lease.registration.registration_id != registration_id);
+                .retain(|_, lease| lease.registration.registration_id != registration_id || lease.document.is_some());
             if let Some(version) = inner.navigation_versions.get_mut(registration_id) {
                 *version = version.wrapping_add(1);
             }
@@ -1102,7 +1102,7 @@ impl BrowserController {
             }
             inner
                 .page_leases
-                .retain(|_, lease| lease.registration.registration_id != registration_id);
+                .retain(|_, lease| lease.registration.registration_id != registration_id || lease.document.is_some());
             if let Some(version) = inner.navigation_versions.get_mut(registration_id) {
                 *version = version.wrapping_add(1);
             }

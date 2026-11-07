@@ -20,6 +20,19 @@ import time
 
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith('/read/'):
+            directory = Path(__file__).resolve().parents[1] / 'tests/browser-parent'
+            name = self.path.split('?',1)[0][len('/read/'):]
+            fixtures = json.loads((directory / 'read-fixtures.generated.json').read_text())
+            if name == 'advanced':
+                body = (directory / 'read-advanced.html').read_text().replace('{{CROSS}}', f'http://localhost:{self.server.server_port}')
+            elif name == 'frame':
+                body = '<title>Child document</title><button>Frame action</button><label>Frame field <input value="Child value"></label>'
+            else:
+                body = fixtures.get(name, '<button>New document</button>')
+            body = body.encode('utf-8')
+        else:
+            body = b'<!doctype html><meta charset="utf-8"><title>Parent channel fixture</title><h1>Native parent fixture</h1><dialog>Overlay</dialog>'
         if self.path == '/redirect':
             self.send_response(302)
             self.send_header('Location', '/ok')
@@ -27,7 +40,6 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             return
         if self.path == '/slow':
             time.sleep(.3)
-        body = b'<!doctype html><meta charset="utf-8"><title>Parent channel fixture</title><h1>Native parent fixture</h1><dialog>Overlay</dialog>'
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))

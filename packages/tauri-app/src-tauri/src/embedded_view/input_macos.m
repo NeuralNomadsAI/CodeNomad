@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 #import <WebKit/WebKit.h>
 #include "input.h"
+#include "page_read.generated.h"
 #include <math.h>
 #include <objc/runtime.h>
 #include <stdatomic.h>
@@ -134,6 +135,26 @@ int cn_test_direct_hover(void *opaque, double x, double y) {
 
 static void fail(CNCompletion done, void *context, NSString *error) {
     done(context, NULL, 0, error.UTF8String);
+}
+int cn_install_page_read(void *opaque) {
+    WKWebView *view = (__bridge WKWebView *)opaque;
+    WKUserScript *hook = [[WKUserScript alloc] initWithSource:[NSString stringWithUTF8String:CN_PAGE_HOOK] injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:NO inContentWorld:WKContentWorld.pageWorld];
+    [view.configuration.userContentController addUserScript:hook];
+    return 1;
+}
+void cn_page_read(void *opaque, const char *request, unsigned timeout_ms, CNCompletion done, void *context) {
+    (void)timeout_ms; // The Rust request fence rejects late WKWebView callbacks.
+    WKWebView *view = (__bridge WKWebView *)opaque;
+    if (view.loading) { fail(done,context,@"Native browser page is loading"); return; }
+    NSDictionary *arguments = @{ @"request": [NSString stringWithUTF8String:request] };
+    [view callAsyncJavaScript:[NSString stringWithUTF8String:CN_PAGE_READ] arguments:arguments inFrame:nil inContentWorld:[WKContentWorld worldWithName:@CN_WORLD]
+        completionHandler:^(id result, NSError *error) {
+            if (error || view.loading || ![result isKindOfClass:NSString.class]) {
+                fail(done,context,error.localizedDescription ?: @"Native browser page changed or is loading"); return;
+            }
+            NSData *bytes = [result dataUsingEncoding:NSUTF8StringEncoding];
+            done(context,bytes.bytes,bytes.length,NULL);
+        }];
 }
 void cn_checkpoint(void *opaque, CNCompletion done, void *context) {
     WKWebView *view = (__bridge WKWebView *)opaque;

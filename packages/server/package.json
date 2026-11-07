@@ -37,6 +37,7 @@
     "@opencode/client": "2.2.3",
     "@opencode/schema": "2.2.3",
     "commander": "^12.1.0",
+    "dom-accessibility-api": "0.7.1",
     "effect": "4.0.6",
     "fastify": "^4.28.1",
     "fuzzysort": "^2.0.4",

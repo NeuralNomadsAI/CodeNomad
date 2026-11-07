@@ -14,6 +14,8 @@ int cn_wheel(void *view, double x, double y, double dx, double dy, unsigned modi
 int cn_key(void *view, const char *key, unsigned modifiers, int down);
 int cn_text(void *view, const char *text);
 void cn_capture(void *view, CNCompletion done, void *context);
+int cn_install_page_read(void *view);
+void cn_page_read(void *view, const char *request, unsigned timeout_ms, CNCompletion done, void *context);
 
 /* Fixed isolated-world program. A page-global value must never leak into it.
  * The document fields also permit an external fixture to publish observations. */

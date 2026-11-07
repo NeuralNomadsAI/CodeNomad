@@ -1,0 +1,24 @@
+<!doctype html><meta charset="utf-8"><title>Semantic boundaries</title>
+<main>
+  <span id="first">First</span><span id="second"> choice</span><p id="description">Detailed help</p>
+  <button id="aria-button" aria-labelledby="first second" aria-describedby="description">Ignored content</button>
+  <label>Secret <input id="secret" type="password" value="never-expose-this-secret"></label>
+  <label>Required <input id="required" required readonly value="Fixed"></label>
+  <label>Checked <input id="checked" type="checkbox" checked></label>
+  <div id="mixed" role="checkbox" aria-checked="mixed" aria-label="Mixed"></div>
+  <button id="expanded" aria-expanded="true" aria-pressed="mixed">Expanded</button>
+  <button id="disabled" aria-disabled="true">Disabled</button>
+  <label>Multiple <select id="multiple" multiple><option selected>One</option><option>Two</option><optgroup disabled label="Locked"><option>Three</option></optgroup></select></label>
+  <section hidden><button>Hidden attribute</button></section>
+  <section style="display:none"><button>Hidden display</button></section>
+  <section inert><button>Hidden inert</button></section>
+  <section aria-hidden="true"><button>Hidden ARIA</button></section>
+  <x-open id="open"></x-open><div id="closed"></div>
+  <iframe id="same" title="Same-origin frame" src="/read/frame"></iframe>
+  <iframe id="cross" title="Cross-origin frame" src="{{CROSS}}/read/frame"></iframe>
+</main>
+<script>
+  window.__codenomadPageOnly=true;
+  document.querySelector('#open').attachShadow({mode:'open'}).innerHTML='<span id="label">Shadow label</span><button id="shadow-button" aria-labelledby="label">Wrong text</button><label>Shadow field <input value="Shadow value"></label>';
+  document.querySelector('#closed').attachShadow({mode:'closed'}).innerHTML='<button id="closed-button">Closed action</button>';
+</script>
