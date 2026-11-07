@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, type Accessor, type Setter } from "solid-js"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { invalidateFilesystemCaches } from "../lib/filesystem-events"
 import { showToastNotification } from "../lib/notifications"
 import { showConfirmDialog } from "../stores/alerts"
@@ -68,7 +68,8 @@ export function useWorkspaceFileEditor(options: {
     setSaving(true)
     try {
       // An unavailable conflict check must never silently permit an overwrite.
-      const disk = decodeWorkspaceText(await serverApi.previewWorkspaceFile(options.instanceId, target.path, target.directory, operation?.signal))
+      const api = backendOf(options.instanceId).api
+      const disk = decodeWorkspaceText(await api.previewWorkspaceFile(options.instanceId, target.path, target.directory, operation?.signal))
       if (!current()) return
       if (disk !== baseline && disk !== value) {
         const confirmed = await showConfirmDialog(options.t("instanceShell.rightPanel.actions.conflict.message", { path: target.path }), {
@@ -77,7 +78,7 @@ export function useWorkspaceFileEditor(options: {
         })
         if (!confirmed || !current()) return
       }
-      if (disk !== value) await serverApi.writeWorkspaceFile(options.instanceId, target.path, value, { directory: target.directory, signal: operation?.signal })
+      if (disk !== value) await api.writeWorkspaceFile(options.instanceId, target.path, value, { directory: target.directory, signal: operation?.signal })
       if (operation && !operation.current()) return
       const latest = drafts.get(identity)
       if (latest) {

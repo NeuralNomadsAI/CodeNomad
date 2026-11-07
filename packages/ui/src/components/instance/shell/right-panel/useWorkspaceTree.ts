@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import type { FileSystemEntry } from "../../../../../../server/src/api-types"
-import { serverApi } from "../../../../lib/api-client"
+import { backendOf } from "../../../../lib/backend-client"
 import type { captureBackendOperation } from "../../../../lib/backend-operation"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
@@ -39,7 +39,7 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
     setErrors(previous => { const next = new Map(previous); next.delete(path); return next })
     try {
       const entries = await backgroundReads.run(signal,
-        () => serverApi.listWorkspaceFiles(instanceId, path, scope, signal), "visible")
+        () => backendOf(instanceId).api.listWorkspaceFiles(instanceId, path, scope, signal), "visible")
       if (signal.aborted || directory() !== scope) return
       const nextEntries = new Map(entries.map(entry => [entry.path, entry]))
       const replaced = new Set((state().directories.get(path) ?? []).filter(entry => {

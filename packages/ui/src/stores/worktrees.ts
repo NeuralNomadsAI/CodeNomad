@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
@@ -67,7 +67,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
         const response = await prioritizedRead(
           () => activeInstanceId() === instanceId,
           signal ?? new AbortController().signal,
-          () => { signal?.throwIfAborted(); return serverApi.fetchWorktrees(instanceId, fresh, signal) },
+          () => { signal?.throwIfAborted(); return backendOf(instanceId).api.fetchWorktrees(instanceId, fresh, signal) },
         )
         if (!current()) return
         if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
@@ -237,7 +237,7 @@ async function createWorktree(instanceId: string, slug: string, fromSlug = "root
   if (!trimmed) {
     throw new Error("Worktree name is required")
   }
-  return serverApi.createWorktree(instanceId, { slug: trimmed, fromSlug })
+  return backendOf(instanceId).api.createWorktree(instanceId, { slug: trimmed, fromSlug })
 }
 
 async function deleteWorktree(
@@ -258,7 +258,7 @@ async function deleteWorktree(
   }
   let deleteError: unknown
   try {
-    await serverApi.deleteWorktree(instanceId, trimmed, options)
+    await backendOf(instanceId).api.deleteWorktree(instanceId, trimmed, options)
   } catch (error) {
     deleteError = error
   }
@@ -389,7 +389,7 @@ async function setWorktreeSlugForParentSession(
   const pending = familyMoveRequests.get(key)
   const previous = pending && worktreeTaskOwners.get(pending)?.() ? pending : undefined
   const moveFamily = options.moveFamily ?? ((id: string, sessionId: string, worktreeSlug: string) =>
-    serverApi.moveSessionFamily(id, sessionId, { worktreeSlug }))
+    backendOf(id).api.moveSessionFamily(id, sessionId, { worktreeSlug }))
   const refreshSessions = options.refreshSessions ?? (async (id: string) => {
     const { fetchSessions } = await import("./session-api")
     if (operation.current()) await fetchSessions(id, { reset: true, strictStatus: true, signal: operation.signal })

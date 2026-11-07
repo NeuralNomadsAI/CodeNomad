@@ -9,14 +9,14 @@ const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === "solid-js") return nextResolve("solid-js/dist/solid.js", context)
     const sources: Record<string, string> = {
-      "../lib/api-client": `const f = globalThis.__workspaceEditorFixture;
-        export const serverApi = {
+      "../lib/backend-client": `const f = globalThis.__workspaceEditorFixture;
+        export const backendOf = () => ({ api: {
           previewWorkspaceFile: async () => ({ contents: f.disk }),
           writeWorkspaceFile: async (_id, _path, value) => {
             f.writing = true; await f.gate;
             if (f.fail) throw new Error('write failed'); f.disk = value;
           },
-        };`,
+        } });`,
       "../lib/notifications": "export const showToastNotification = () => {}",
       "../stores/alerts": "export const showConfirmDialog = async () => true",
     }

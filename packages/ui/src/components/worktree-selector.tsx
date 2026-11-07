@@ -439,7 +439,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   >
                     <Copy class="w-3 h-3" />
                   </button>
-                  <Show when={canOpenWorkspacePaths()}>
+                  <Show when={canOpenWorkspacePaths(props.instanceId)}>
                     <button
                       type="button"
                       class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"

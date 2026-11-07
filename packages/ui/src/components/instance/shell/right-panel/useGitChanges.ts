@@ -5,7 +5,7 @@ import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPa
 import { getRootClient } from "../../../../stores/opencode-client"
 import { instances } from "../../../../stores/instances"
 import { getWorktrees } from "../../../../stores/worktrees"
-import { serverApi } from "../../../../lib/api-client"
+import { backendOf } from "../../../../lib/backend-client"
 import type { captureBackendOperation } from "../../../../lib/backend-operation"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItemId, buildGitChangeListItems, hideWhitespaceOnlyChanges, reuseUnchanged } from "./git-changes-model"
@@ -276,7 +276,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         finally { clearTimeout(timeout) }
       }, "visible").catch(() => null)
       const detailList = await backgroundReads.run(signal, () =>
-        serverApi.fetchWorktreeGitStatus(options.instanceId, slug, signal, { hideWhitespace: hide }),
+        backendOf(options.instanceId).api.fetchWorktreeGitStatus(options.instanceId, slug, signal, { hideWhitespace: hide }),
         "visible",
       )
       // A read made under the other whitespace option is stale; its refresh follows.
@@ -324,7 +324,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
 
     try {
       const slug = options.worktreeSlug()
-      const diff = await backgroundReads.run(signal, () => serverApi.fetchWorktreeGitDiff(options.instanceId, slug, {
+      const diff = await backgroundReads.run(signal, () => backendOf(options.instanceId).api.fetchWorktreeGitDiff(options.instanceId, slug, {
         path: item.path,
         originalPath: item.originalPath ?? null,
         scope: item.section,
@@ -408,9 +408,9 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const targetPaths = Array.from(new Set(targetItems.map((candidate) => candidate.path)))
     try {
       if (action === "stage") {
-        await serverApi.stageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths }, context.signal)
+        await backendOf(options.instanceId).api.stageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths }, context.signal)
       } else {
-        await serverApi.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths }, context.signal)
+        await backendOf(options.instanceId).api.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths }, context.signal)
       }
 
       if (!context.current()) return
@@ -458,7 +458,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const draft = gitCommitMessage()
     const previous = captureGitSelection()
     try {
-      await serverApi.commitWorktreeGitChanges(options.instanceId, context.slug, { message }, context.signal)
+      await backendOf(options.instanceId).api.commitWorktreeGitChanges(options.instanceId, context.slug, { message }, context.signal)
       if (!context.current()) return
       invalidateFilesystemCaches(options.instanceId)
       if (gitCommitMessage() === draft) setGitCommitMessage("")

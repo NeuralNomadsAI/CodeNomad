@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, type Accessor } from "solid-js"
-import { serverApi } from "../../../../lib/api-client"
+import { backendOf } from "../../../../lib/backend-client"
 import { captureBackendOperation } from "../../../../lib/backend-operation"
 import { invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { loadInstanceProjectMetadata } from "../../../../lib/hooks/use-instance-metadata"
@@ -62,7 +62,7 @@ export function useGitInit(options: {
     if (!operation.current()) return
     setPending(true)
     try {
-      await serverApi.initializeWorkspaceGit(options.instanceId, options.directory(), operation.signal)
+      await backendOf(options.instanceId).api.initializeWorkspaceGit(options.instanceId, options.directory(), operation.signal)
       if (operation.current()) showToastNotification({ category: "files", message: options.t("filesPanel.gitInit.success"), variant: "success" })
     } catch (error) {
       const key = errorKey(error)

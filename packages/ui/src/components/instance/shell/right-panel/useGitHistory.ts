@@ -1,6 +1,6 @@
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import type { GitCommitDetails, GitHistoryPage } from "../../../../../../server/src/api-types"
-import { serverApi } from "../../../../lib/api-client"
+import { backendOf } from "../../../../lib/backend-client"
 import type { captureBackendOperation } from "../../../../lib/backend-operation"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
@@ -28,7 +28,7 @@ export function useGitHistory(instanceId: string, slug: Accessor<string>, active
     setLoading(true)
     setError(null)
     try {
-      const result = await backgroundReads.run(signal, () => serverApi.fetchGitHistory(instanceId, scope,
+      const result = await backgroundReads.run(signal, () => backendOf(instanceId).api.fetchGitHistory(instanceId, scope,
         more ? previous?.commits.length ?? 0 : 0, more ? previous?.head ?? undefined : undefined, signal), "visible")
       if (signal.aborted || scope !== slug()) return
       if (more && previous) setPage({ ...result, commits: [...previous.commits, ...result.commits] })
@@ -56,7 +56,7 @@ export function useGitHistory(instanceId: string, slug: Accessor<string>, active
     setError(null)
     setDetailLoading(true)
     try {
-      const result = await backgroundReads.run(signal, () => serverApi.fetchGitCommit(instanceId, slug(), id, signal), "visible")
+      const result = await backgroundReads.run(signal, () => backendOf(instanceId).api.fetchGitCommit(instanceId, slug(), id, signal), "visible")
       if (!signal.aborted) setDetails(result)
     } catch (cause) {
       if (!signal.aborted) setError(String(cause instanceof Error ? cause.message : cause))

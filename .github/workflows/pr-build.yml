@@ -494,6 +494,7 @@ jobs:
           packages/ui/src/stores/backend-instance-identity.test.ts
           packages/ui/src/lib/backend-events.test.ts
           packages/ui/src/lib/backend-session-routing.test.ts
+          packages/ui/src/lib/backend-files-routing.test.ts
           packages/ui/src/lib/backend-event-lifecycle.test.ts
           packages/ui/src/lib/backend-event-authority.test.ts
           packages/ui/src/lib/backend-consumer-lifetime.test.ts

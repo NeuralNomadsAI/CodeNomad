@@ -1,7 +1,7 @@
 import { Show, Suspense, createEffect, createMemo, createSignal, lazy, on, onCleanup } from "solid-js"
 import { WrapText, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendEvents } from "../lib/server-events"
 import { previewReads } from "../lib/background-read-queue"
@@ -56,8 +56,8 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     setError(null)
     try {
       const result = await previewReads.run<{ before: string; after: string; isBinary?: boolean; image?: GitImageDiff }>(signal, () => target.commit
-        ? serverApi.fetchGitCommitDiff(props.instanceId, target.slug, target.commit, target.path, signal)
-        : serverApi.fetchWorktreeGitDiff(props.instanceId, target.slug, {
+        ? backendOf(props.instanceId).api.fetchGitCommitDiff(props.instanceId, target.slug, target.commit, target.path, signal)
+        : backendOf(props.instanceId).api.fetchWorktreeGitDiff(props.instanceId, target.slug, {
           path: target.path, originalPath: target.originalPath, scope: target.scope ?? "unstaged",
         }, signal), "visible")
       if (!operation.current()) return

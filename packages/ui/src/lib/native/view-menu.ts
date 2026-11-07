@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 import { useI18n } from "../i18n"
-import { setWorkspaceMenuEnabled } from "../workspace-open"
+import { canOpenWorkspacePaths, setWorkspaceMenuEnabled } from "../workspace-open"
 import { useConfig } from "../../stores/preferences"
 import { getLogger } from "../logger"
 import { nativeMenuLabels, type NativeMenuLabels } from "./menu-labels"
@@ -50,6 +50,7 @@ export function useViewMenu(activeInstanceId: Accessor<string | undefined>) {
 
   createEffect(() => {
     const enabled = Boolean(activeInstanceId())
+    const workspaceEnabled = enabled && canOpenWorkspacePaths(activeInstanceId())
     const drawersEnabled = panelEnabled()
     const state: ViewMenuState = {
       leftPanel: { label: t("window.menu.leftPanel"), checked: drawersEnabled && Boolean(controller()?.leftOpen()), enabled: drawersEnabled },
@@ -58,7 +59,7 @@ export function useViewMenu(activeInstanceId: Accessor<string | undefined>) {
       menuLabels: nativeMenuLabels(t),
     }
     // Keep IPC updates ordered when a project switch and its shell mount race.
-    pending = pending.then(() => setWorkspaceMenuEnabled(enabled, state))
+    pending = pending.then(() => setWorkspaceMenuEnabled(workspaceEnabled, state))
       .catch(error => log.warn("Failed to update native view menu state", error))
   })
 

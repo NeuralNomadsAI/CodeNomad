@@ -8,12 +8,12 @@ const fixture = { listings: new Map<string, FileSystemEntry[]>(), reads: [] as s
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === "solid-js") return nextResolve("solid-js/dist/solid.js", context)
-    if (context.parentURL?.endsWith("/useWorkspaceTree.ts") && specifier === "../../../../lib/api-client") {
+    if (context.parentURL?.endsWith("/useWorkspaceTree.ts") && specifier === "../../../../lib/backend-client") {
       const source = `const f = globalThis.__workspaceTreeFixture;
-        export const serverApi = { listWorkspaceFiles: async (_id, path, directory) => {
+        export const backendOf = () => ({ api: { listWorkspaceFiles: async (_id, path, directory) => {
           const key = directory + ':' + path; f.reads.push(key);
           const entries = f.listings.get(key) ?? []; await f.gates.get(key); return entries;
-        } };`
+        } } });`
       return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(source)}` }
     }
     return nextResolve(specifier, context)
