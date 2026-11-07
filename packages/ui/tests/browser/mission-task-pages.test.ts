@@ -292,9 +292,12 @@ test("scrolling loads all 400 tasks without gap controls and preserves independe
   try {
     const notice = attentionInfo(f.page), failure = f.page.locator(".mission-tree-read")
     await notice.waitFor()
-    for (let scroll = 0; (await rows(f.page)).length < value.tasks.length; scroll++) {
-      assert.ok(scroll < 8, "at most seven ordinary pages")
+    for (let scroll = 0; ; scroll++) {
+      // The observer can finish another page between awaits. Use the same count
+      // for completion and progress, or the wait can demand more than 400 rows.
       const before = (await rows(f.page)).length
+      if (before >= value.tasks.length) break
+      assert.ok(scroll < 8, "at most seven ordinary pages")
       assert.ok(await f.page.locator(".mission-tree-more button").count() <= 1)
       assert.equal(await f.page.locator(".mission-tree-gap").count(), 0)
       await f.page.evaluate(() => {
