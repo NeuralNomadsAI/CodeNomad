@@ -354,6 +354,7 @@ jobs:
           packages/ui/src/lib/client-identity.test.ts
           packages/ui/src/lib/backend-identity.test.ts
           packages/ui/src/lib/backend-client.test.ts
+          packages/ui/src/lib/passive-image.test.ts
           packages/ui/src/lib/backend-usage-routing.test.ts
           packages/ui/src/lib/backend-transport.test.ts
           packages/ui/src/lib/backend-route-joining.test.ts

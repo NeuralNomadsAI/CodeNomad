@@ -450,7 +450,7 @@ export function Markdown(props: MarkdownProps) {
         return source ? [{ paths: candidate.paths, source }] : []
       })
       Promise.resolve().then(() => {
-        if (active && !disposed && containerRef) resolveLocalImages(containerRef, resolved)
+        if (active && !disposed && containerRef) resolveLocalImages(containerRef, resolved, sources.some(source => source.restricted()))
       })
     })
   })

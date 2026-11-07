@@ -1,5 +1,6 @@
 import { untrack } from "solid-js"
 import { isToolImageContent, toolImageSource, toolImageReference } from "./tool-content"
+import { restrictMediaImage } from "./media-image-interaction"
 
 const decode = (value: string) => { try { return decodeURIComponent(value) } catch { return value } }
 
@@ -71,10 +72,11 @@ function label(element: HTMLElement, failedSource?: string): HTMLSpanElement {
 
 /** Shows each rendered local-image label as its matching transcript image. An image whose
  * match disappears, or whose source fails to load, returns to its alt text; a changed source retries. */
-export function resolveLocalImages(container: ParentNode, candidates: readonly SessionImageCandidate[]): void {
+export function resolveLocalImages(container: ParentNode, candidates: readonly SessionImageCandidate[], restricted = false): void {
   for (const element of container.querySelectorAll<HTMLElement>("[data-local-image]")) {
     const source = matchLocalImage(candidates, element.dataset.localImage ?? "", element.dataset.localImageExact === undefined)
     if (element instanceof HTMLImageElement) {
+      restrictMediaImage(element, Boolean(source && restricted && source.startsWith("blob:")))
       if (!source) element.replaceWith(label(element))
       else if (element.getAttribute("src") !== source) element.src = source
       continue
@@ -89,9 +91,14 @@ export function resolveLocalImages(container: ParentNode, candidates: readonly S
     image.loading = "lazy"
     image.decoding = "async"
     image.referrerPolicy = "no-referrer"
-    image.addEventListener("error", () => { if (image.isConnected) image.replaceWith(label(image, image.getAttribute("src") ?? undefined)) })
+    image.addEventListener("error", () => {
+      if (!image.isConnected) return
+      restrictMediaImage(image, false)
+      image.replaceWith(label(image, image.getAttribute("src") ?? undefined))
+    })
     image.src = source
     element.replaceWith(image)
+    restrictMediaImage(image, restricted && source.startsWith("blob:"))
   }
 }
 

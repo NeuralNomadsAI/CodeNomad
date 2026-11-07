@@ -8,7 +8,7 @@ import { captureBackendOperation } from "../lib/backend-operation"
 import { projectScope, parseInstanceKey } from "../lib/backend-identity"
 import { selectBrowserOpenOwner } from "../lib/native/browser"
 import { getPreviewFrameSource } from "../components/browser-frame-security"
-import { closeSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, showSessionChatFor, showSessionPreview } from "./session-previews"
+import { closeSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, showSessionChatFor, showSessionPreview } from "./session-previews"
 
 const registry = backends as Map<string, BackendClient>
 function fixture(id: string, baseUrl = `https://${id}.example/tenant/`) {
@@ -61,10 +61,18 @@ test("preview store routes creation, replacement and deletion by instance; local
 test("revoked creates clean their own tokens and restore deduplication never joins or clears another generation", async t => {
   const owner = fixture("preview_generation")
   t.after(owner.dispose)
+  const localDeletes: string[] = []
+  t.mock.method(localBackend.api, "deletePreview", async (token: string) => { localDeletes.push(token) })
   const scope = projectScope({ folder: "/race", backendId: owner.backend.id }), id = `${owner.backend.id}~workspace`
   const first = await openSessionPreview("session", "https://example.com/saved", scope, id)
+  assert.equal(sessionPreviews().get(first.storageKey), first, "published preview is in the live map")
   owner.detach()
   assert.equal(getSessionPreview("session", scope), null)
+  assert.equal(sessionPreviews().has(first.storageKey), false, "revocation removes the published record, independently of filtered getters")
+  assert.deepEqual(owner.calls.filter(call => call.method === "DELETE"), [{
+    url: `https://preview_generation.example/api/previews/${first.token}`, method: "DELETE", body: undefined,
+  }], "revocation deletes the exact published token through its owning backend")
+  assert.deepEqual(localDeletes, [], "remote token cleanup never falls back to the host")
   owner.reattach(); owner.hold()
   const old = restoreSessionPreview("session", scope, id)
   assert.equal(restoreSessionPreview("session", scope, id), old)

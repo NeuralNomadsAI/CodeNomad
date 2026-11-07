@@ -11,6 +11,7 @@ import { useI18n } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendOf } from "../lib/backend-client"
 import { createMediaSource } from "../lib/media-source"
+import { blockMediaInteraction } from "../lib/media-image-interaction"
 import { isTauriHost } from "../lib/runtime-env"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -55,6 +56,7 @@ export default function MessageItem(props: MessageItemProps) {
     url: () => string | undefined
     name: string
     anchor: HTMLElement
+    restricted: () => boolean
   }
 
   const [imagePreview, setImagePreview] = createSignal<ImagePreviewState | null>(null)
@@ -266,9 +268,9 @@ export default function MessageItem(props: MessageItemProps) {
     }
   }
 
-  const showImagePreview = (anchor: HTMLElement, url: () => string | undefined, name: string) => {
+  const showImagePreview = (anchor: HTMLElement, url: ReturnType<typeof createMediaSource>, name: string) => {
     if (!url()) return
-    setImagePreview({ anchor, url, name })
+    setImagePreview({ anchor, url, name, restricted: url.restricted })
   }
 
   const errorMessage = () => {
@@ -797,6 +799,8 @@ export default function MessageItem(props: MessageItemProps) {
                   <div
                     class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
                     title={name}
+                    onContextMenu={event => { if (source.restricted()) blockMediaInteraction(event) }}
+                    onAuxClick={event => { if (source.restricted()) blockMediaInteraction(event) }}
                     onMouseEnter={(e) => {
                       if (!isImage) return
                       const el = e.currentTarget as HTMLElement
@@ -814,7 +818,8 @@ export default function MessageItem(props: MessageItemProps) {
                         />
                       </svg>
                     }>
-                      <img src={source()} alt={name} class="h-5 w-5 object-cover" />
+                      <img src={source()} alt={name} class="h-5 w-5 object-cover"
+                        style={source.restricted() ? { "pointer-events": "none" } : undefined} draggable={source.restricted() ? false : undefined} />
                     </Show>
                     <span class="truncate max-w-[180px]">{name}</span>
                     <Show when={!attachment.url?.startsWith("file://")}>
@@ -852,8 +857,11 @@ export default function MessageItem(props: MessageItemProps) {
                         class="attachment-image-popover"
                         style={{ left: `${coords.left}px`, top: `${coords.top}px` }}
                         aria-hidden="true"
+                        onContextMenu={event => { if (state.restricted()) blockMediaInteraction(event) }}
+                        onAuxClick={event => { if (state.restricted()) blockMediaInteraction(event) }}
                       >
-                        <img src={state.url()} alt={state.name} />
+                        <img src={state.url()} alt={state.name}
+                          style={state.restricted() ? { "pointer-events": "none" } : undefined} draggable={state.restricted() ? false : undefined} />
                       </div>
                     )
                   }}
