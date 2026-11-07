@@ -31,7 +31,8 @@ for (const role of ["CONFIG", "STATE", "DATA", "CACHE"]) env[`XDG_${role}_HOME`]
 Object.assign(env, { XDG_RUNTIME_DIR: path.join(root, "runtime"), HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"),
   APPDATA: path.join(root, "appdata"), LOCALAPPDATA: path.join(root, "localappdata"), ProgramData: path.join(root, "programdata"),
   TEMP: path.join(root, "tmp"), TMP: path.join(root, "tmp"), PATH: "C:\\Windows\\System32;C:\\Program Files\\Git\\cmd",
-  OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_DISABLE_CLAUDE_CODE: "true", OPENCODE_DISABLE_MODELS_FETCH: "true",
+  OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_TEST_HOME: path.join(root, "home"), OPENCODE_DB: path.join(root, "fixture.db"),
+  OPENCODE_DISABLE_CLAUDE_CODE: "true", OPENCODE_DISABLE_MODELS_FETCH: "true",
   OPENCODE_DISABLE_FILEWATCHER: "true", OPENCODE_DISABLE_FFF: "true", OPENCODE_LOG_LEVEL: "DEBUG" })
 for (const [key, value] of Object.entries(env))
   if (key.startsWith("XDG_") || ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "TEMP", "TMP"].includes(key))
