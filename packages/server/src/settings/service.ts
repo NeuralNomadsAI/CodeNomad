@@ -9,7 +9,7 @@ import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
 import { readAdmissionEnvironment } from "./admission-environment"
 import { canonicalScope } from "../host-lifetime/protocol"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import path from "node:path"
 
 export type DocKind = "config" | "state"
@@ -89,6 +89,17 @@ export class SettingsService {
       logger.child({ component: "settings-state" }),
       { throwOnPersistError: true },
     )
+  }
+
+  /** Persist before advertising; unreadable config or failed writes abort startup. */
+  getServerId(): string {
+    const server = this.configStore.getAuthoritativeOwner("server")
+    if (server.serverId !== undefined) {
+      return z.string().uuid().parse(server.serverId)
+    }
+    const serverId = randomUUID()
+    this.configStore.mergePatchOwner("server", { serverId })
+    return serverId
   }
 
   /** Selected desktop profile; same identity used at Mission Play. */
