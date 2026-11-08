@@ -73,8 +73,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.edit": "עריכת המשימה שנבחרה",
   "missionsPanel.picker.delete": "מחיקת המשימה שנבחרה…",
   "missionsPanel.picker.actions": "פעולות המשימה",
-  "missionsPanel.tasks.omitted.one": "משימה {count} לא מוצגת",
-  "missionsPanel.tasks.omitted.other": "{count} משימות לא מוצגות",
   "missionsPanel.tasks.showMore": "הצג עוד",
   "missionsPanel.tasks.readFailed": "לא ניתן היה לקרוא את המשימות האלה.",
   "missionsPanel.tasks.readChanged": "רשימת המשימות השתנתה במהלך הקריאה. יש לרענן ולנסות שוב.",

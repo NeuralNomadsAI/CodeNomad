@@ -73,8 +73,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.edit": "Seçili görevi düzenle",
   "missionsPanel.picker.delete": "Seçili görevi sil…",
   "missionsPanel.picker.actions": "Görev eylemleri",
-  "missionsPanel.tasks.omitted.one": "{count} görev gösterilmiyor",
-  "missionsPanel.tasks.omitted.other": "{count} görev gösterilmiyor",
   "missionsPanel.tasks.showMore": "Daha fazla göster",
   "missionsPanel.tasks.readFailed": "Bu görevler okunamadı.",
   "missionsPanel.tasks.readChanged": "Okuma sırasında görev listesi değişti. Yenileyip tekrar deneyin.",

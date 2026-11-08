@@ -132,7 +132,7 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
               onCommit={next => { if (props.pagination) props.pagination.onPage(next - 1); else setPage(next - 1); article?.scrollIntoView({ block: "nearest" }) }} />
           </Show>
         </label></Show>
-        <button type="button" class="window-text-button" onClick={() => void copy()}>{t("markdown.copy")}</button>
+        <button type="button" class="window-action" onClick={() => void copy()}>{t("markdown.copy")}</button>
         <span role="status">{copyStatus()}</span>
       </div>
     </Show>
@@ -503,7 +503,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
             <Show when={section().taskKeys?.length}><div class="mission-briefing-sources"><For each={section().taskKeys}>{key => {
               // A source a compact map's page does not hold is read by key when opened.
               const source = () => mission()?.tasks.find(task => task.key === key)
-               return <Show when={source() || taskPage()}><button type="button" class="window-text-button"
+               return <Show when={source() || taskPage()}><button type="button" class="window-action"
                  onClick={() => void openMissionTask(props.instanceId, props.scope, mission, key, target()?.recurrence, missionStore)}>
                 {source()?.title ?? key}
               </button></Show>

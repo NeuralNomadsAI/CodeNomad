@@ -73,8 +73,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.edit": "Изменить выбранную миссию",
   "missionsPanel.picker.delete": "Удалить выбранную миссию…",
   "missionsPanel.picker.actions": "Действия миссии",
-  "missionsPanel.tasks.omitted.one": "{count} задача не показана",
-  "missionsPanel.tasks.omitted.other": "Не показано задач: {count}",
   "missionsPanel.tasks.showMore": "Показать ещё",
   "missionsPanel.tasks.readFailed": "Не удалось прочитать эти задачи.",
   "missionsPanel.tasks.readChanged": "Список задач изменился во время чтения. Обновите его и повторите попытку.",

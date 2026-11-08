@@ -73,8 +73,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.edit": "चयन गरिएको मिसन सम्पादन गर्नुहोस्",
   "missionsPanel.picker.delete": "चयन गरिएको मिसन मेटाउनुहोस्…",
   "missionsPanel.picker.actions": "मिसन कार्यहरू",
-  "missionsPanel.tasks.omitted.one": "{count} कार्य देखाइएको छैन",
-  "missionsPanel.tasks.omitted.other": "{count} कार्यहरू देखाइएका छैनन्",
   "missionsPanel.tasks.showMore": "थप देखाउनुहोस्",
   "missionsPanel.tasks.readFailed": "यी कार्यहरू पढ्न सकिएन।",
   "missionsPanel.tasks.readChanged": "पढ्ने क्रममा कार्य सूची परिवर्तन भयो। ताजा गरेर फेरि प्रयास गर्नुहोस्।",

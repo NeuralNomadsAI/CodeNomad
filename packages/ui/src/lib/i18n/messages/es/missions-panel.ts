@@ -73,8 +73,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.edit": "Editar la misión seleccionada",
   "missionsPanel.picker.delete": "Eliminar la misión seleccionada…",
   "missionsPanel.picker.actions": "Acciones de la misión",
-  "missionsPanel.tasks.omitted.one": "{count} tarea no mostrada",
-  "missionsPanel.tasks.omitted.other": "{count} tareas no mostradas",
   "missionsPanel.tasks.showMore": "Mostrar más",
   "missionsPanel.tasks.readFailed": "No se pudieron leer estas tareas.",
   "missionsPanel.tasks.readChanged": "La lista de tareas cambió durante la lectura. Actualiza y vuelve a intentarlo.",

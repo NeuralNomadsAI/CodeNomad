@@ -198,7 +198,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   const feedback = <Show when={heldIntent()} fallback={<Show when={refusal()}>{message => <small role="status">{t(message())}</small>}</Show>}>
     <small role="status">{t("missions.recurrence.uncertain")}</small></Show>
   // While a superseding action holds the primary place, the unknown intent's exact status read stays one click away.
-  const statusButton = <button type="button" class="window-text-button" title={statusAction().ariaLabel} aria-label={statusAction().ariaLabel}
+  const statusButton = <button type="button" class="window-action" title={statusAction().ariaLabel} aria-label={statusAction().ariaLabel}
     disabled={statusAction().disabled} onClick={() => statusAction().onSelect()}>{statusAction().label}</button>
   const superseding = createMemo(() => Boolean(heldIntent() && primaryAction()))
   const secondary = () => superseding() ? statusButton : undefined
