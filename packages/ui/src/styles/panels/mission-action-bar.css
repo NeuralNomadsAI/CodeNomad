@@ -5,6 +5,8 @@
    of the selection's detail, left-aligned. */
 .mission-action-texts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm); min-width: 0; }
 .mission-action-texts .mission-brief-save { margin-inline-end: 0; }
+/* Save as brief lives in the overflow menu: its row shows only while naming a brief or reporting. */
+.mission-action-texts .mission-brief-save:empty, .mission-action-texts:not(:has(> :not(:empty))) { display: none; }
 .mission-action-texts .mission-brief-save input { width: 10em; min-width: 0; flex: 1 1 8em; }
 .mission-action-feedback { display: grid; color: var(--text-muted); font-size: var(--font-size-xs); }
 .mission-action-feedback:empty { display: none; }

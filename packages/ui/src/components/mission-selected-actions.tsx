@@ -7,7 +7,7 @@ import { MissionActionBar } from "./mission-action-bar"
 import { createMissionBriefingRequest } from "./mission-briefing"
 import { createMissionLifecycle, type MissionControlRetry, type MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
-import { MissionBriefSave } from "./mission-model-library"
+import { MissionBriefSave, type MissionBriefSaveTrigger } from "./mission-model-library"
 import { missionRecordedBrief } from "../lib/mission-model-library"
 import { missionDisplayTitle } from "../lib/mission-display"
 import { useRecordedBriefInputs } from "./mission-target-bodies"
@@ -56,6 +56,8 @@ export function MissionSelectedActions(props: {
   // state (full wording as tooltip) and never resends automatically.
   // Save as brief saves the recorded inputs of the one snapshot shown when its name field opens.
   const [briefOpen, setBriefOpen] = createSignal(false)
+  // The overflow menu's Save as brief opens the name field shown in the detail.
+  const [briefTrigger, setBriefTrigger] = createSignal<MissionBriefSaveTrigger>()
   const brief = useRecordedBriefInputs({ instanceId: () => props.instanceId, mission: () => props.mission, open: briefOpen,
     refresh: () => missionStore.refresh(props.instanceId) })
   const recordedBrief = () => {
@@ -74,7 +76,8 @@ export function MissionSelectedActions(props: {
     <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
       primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
       onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
-      secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active}
+      saveBrief={briefTrigger()}
+      secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active} trigger={trigger => setBriefTrigger(() => trigger)}
         draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
         reading={() => brief.state() === "ready" ? undefined
           : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}

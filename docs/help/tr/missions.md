@@ -40,7 +40,7 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 
 1. Bir görevin satırını seçin: görev düğümleri altında, eylemleri ise üst bilginin ikinci satırında görünür. Satırın oku görev düğümlerini daraltır veya genişletir; başka bir görevin oku, o görevi seçmeden düğümlerini gösterir. **Görevleri filtrele** diğer satırları süzer.
 2. Merkezi genel bakış için **Özet** (göz) eylemini seçin; açıkken başka bir görevi seçmek o görevin genel bakışını gösterir. İlgili sonucu, iş özetini ve kanıtları görmek için bir görev düğümünü seçin: okuyucusu açıkken üst bilgideki eylemler o düğüme uygulanır; **Görevin konuşmasını aç** ve raporu eksikse **Eksik raporu doğrula ve kurtar** da bunlar arasındadır. Ardından **Özet**, düğümün okuyucusunu kapatır.
-3. **Diğer eylemler** (⋯), **Şimdi kes**, **Güncelleme iste** ve **Seçili görevi düzenle** eylemlerini içerir; geçerli olmayan eylemler devre dışı kalır.
+3. **Diğer eylemler** (⋯), **Güncelleme iste**, **Şimdi kes**, **Özet olarak kaydet** ve **Seçili görevi düzenle** eylemlerini içerir; geçerli olmayan eylemler devre dışı kalır.
 4. Bağımlılık bağlantılarını ve **Raporlar** bölümünü izleyin; koordinatörün konuşma dökümüne ihtiyaç duyduğunuzda **Konuşmayı aç** eylemini kullanın.
 5. Bir görev veya görev düğümlerinden biri kırmızıya döndüğünde onu seçin: soruyu soran konuşma, sorusu istek panelinde olacak şekilde açılır.
 
@@ -144,7 +144,7 @@ Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı d
 
 1. Oluşturma ekranında **Seçenekler → Kayıtlı bir özetle başla** bölümünü genişletip kayıtlı özeti seçin.
 2. **Oluştur** eyleminden önce kopyalanan hedefi, notları, rehberi, profilleri ve iş devri tercihini inceleyin.
-3. Yeniden kullanılabilir taslağa ad vermek için **Özet olarak kaydet** eylemini kullanın. Seçili tek seferlik bir görev, tamamlanmış olsa bile, aynı **Özet olarak kaydet** eylemini sunar.
+3. Yeniden kullanılabilir taslağa ad vermek için **Özet olarak kaydet** eylemini kullanın. Seçili tek seferlik bir görev, tamamlanmış olsa bile, **Diğer eylemler** (⋯) altında aynı **Özet olarak kaydet** eylemini sunar.
 
 Özetler talimatları ve istenen tercihleri saklar; görev planlarını, sonuçları, konuşmaları, zamanlama saatlerini veya yürütme yetkisini saklamaz. Bir özeti yüklemek sıradan oluşturma taslağını doldurur; hiçbir şeyi başlatmaz veya zamanlamaz. Özeti kaldırmak mevcut görevleri/konuşmaları korur. **Ayarlar → Görevler → Kayıtlı özetler** kitaplığı yönetir; kitaplık okunamaz hale gelirse **Kaydedilmiş kitaplığı sıfırla** (onaydan sonra) yürütmeleri değil, kayıtlı özetleri kaldırır. Zamanlamalarda özeti kaydetme eylemi yoktur.
 

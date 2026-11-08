@@ -40,7 +40,7 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 1. Select a mission's row: its tasks appear beneath it and its actions on the header's second line. The row's chevron folds or unfolds its tasks; another mission's chevron shows its tasks without selecting it. **Filter missions** narrows the other rows.
 2. Choose **Summary** (eye) for the central overview; while it is open, selecting another mission shows that mission's overview. Select a task for its exact result, brief and evidence: while its reader is open, the header's actions apply to that task, with **Open the task's conversation** and, when its report is missing, **Verify and recover missing report**. **Summary** then closes the task's reader.
-3. **More actions** (⋯) holds **Interrupt now**, **Request an update** and **Edit selected mission**; actions that do not apply stay disabled.
+3. **More actions** (⋯) holds **Request an update**, **Interrupt now**, **Save as brief** and **Edit selected mission**; actions that do not apply stay disabled.
 4. Follow dependency links and **Reports**; use **Open conversation** for the coordinator when you need its transcript.
 5. When a mission or one of its tasks turns red, select it: the asking conversation opens with its question in the interruption dock.
 
@@ -144,7 +144,7 @@ A refused or unconfirmed choice is never resent: the stored values are shown aga
 
 1. In creation, expand **Options → Start from a brief** and select the saved brief.
 2. Review the copied objective, notes, playbook, profiles and delegation before **Create**.
-3. Use **Save as brief** to name a reusable draft. A selected one-time mission, including a finished one, also offers **Save as brief**.
+3. Use **Save as brief** to name a reusable draft. A selected one-time mission, including a finished one, also offers **Save as brief** under **More actions** (⋯).
 
 Briefs store instructions and requested choices, not task plans, results, conversations, schedule clocks or execution authority. Loading one fills an ordinary creation draft; it does not start or schedule anything. Removing a brief keeps existing missions/conversations. **Settings → Missions → Saved briefs** manages the library; if the library becomes unreadable, **Reset the saved library** (after confirmation) removes saved briefs, not executions. Schedules themselves have no save-as-brief action.
 

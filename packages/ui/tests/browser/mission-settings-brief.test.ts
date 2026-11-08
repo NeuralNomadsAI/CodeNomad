@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
+import { missionMenuItem } from "./mission-actions"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
@@ -104,12 +105,16 @@ test("Save as brief copies only a finished Mission's recorded inputs and launche
   const fixture = await setup(page, "accept")
   try {
     const detail = page.locator("section.mission-detail")
-    await detail.getByRole("button", { name: "Save as brief", exact: true }).click()
+    // Save as brief is an overflow-menu item, never a control under the Mission's row.
+    assert.equal(await page.locator(".mission-control").getByRole("button", { name: "Save as brief", exact: true }).count(), 0)
+    assert.equal(await detail.locator(".mission-action-texts").isVisible(), false, "no empty row under the Mission")
+    await (await missionMenuItem(page, "save-brief")).click()
     const name = detail.getByLabel("Brief name", { exact: true })
     assert.equal(await name.inputValue(), "Dependency audit", "the Mission title prefills the name")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
     await name.fill("Weekly dependency audit")
     await detail.getByRole("button", { name: "Save brief", exact: true }).click()
-    await detail.getByRole("button", { name: "Save as brief", exact: true }).waitFor()
+    await name.waitFor({ state: "detached" })
     assert.equal(fixture.writes.length, 1)
     const [saved] = fixture.writes[0]!.settings.missionModels as Array<Record<string, unknown>>
     assert.match(saved!.id as string, /^[0-9a-f-]{36}$/)

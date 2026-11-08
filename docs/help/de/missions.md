@@ -40,7 +40,7 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 
 1. Wählen Sie die Zeile einer Mission: Ihre Aufgaben erscheinen darunter und ihre Aktionen in der zweiten Zeile der Kopfzeile. Der Pfeil der Zeile klappt ihre Aufgaben ein oder aus; der Pfeil einer anderen Mission zeigt deren Aufgaben, ohne sie auszuwählen. **Missionen filtern** grenzt die übrigen Zeilen ein.
 2. Wählen Sie **Zusammenfassung** (Auge) für die zentrale Übersicht; solange sie geöffnet ist, zeigt die Auswahl einer anderen Mission deren Übersicht. Wählen Sie eine Aufgabe für ihr exaktes Ergebnis, ihren Auftrag und ihre Belege: Solange ihr Leser geöffnet ist, gelten die Aktionen der Kopfzeile für diese Aufgabe, mit **Unterhaltung der Aufgabe öffnen** und, wenn ihr Bericht fehlt, **Fehlenden Bericht prüfen und wiederherstellen**. **Zusammenfassung** schließt dann den Leser der Aufgabe.
-3. **Weitere Aktionen** (⋯) enthält **Jetzt unterbrechen**, **Update anfordern** und **Ausgewählte Mission bearbeiten**; nicht zutreffende Aktionen bleiben deaktiviert.
+3. **Weitere Aktionen** (⋯) enthält **Update anfordern**, **Jetzt unterbrechen**, **Als Auftrag speichern** und **Ausgewählte Mission bearbeiten**; nicht zutreffende Aktionen bleiben deaktiviert.
 4. Folgen Sie Abhängigkeitslinks und **Berichte**; verwenden Sie **Unterhaltung öffnen** für den Koordinator, wenn Sie dessen Verlauf benötigen.
 5. Wird eine Mission oder eine ihrer Aufgaben rot, wählen Sie sie aus: Die fragende Unterhaltung öffnet sich mit ihrer Frage im Unterbrechungsdock.
 
@@ -144,7 +144,7 @@ Eine abgelehnte oder unbestätigte Auswahl wird nie erneut gesendet: Die gespeic
 
 1. Öffnen Sie beim Erstellen **Optionen → Mit einem gespeicherten Auftrag beginnen** und wählen Sie den Auftrag.
 2. Prüfen Sie vor **Erstellen** das kopierte Ziel, Notizen, Playbook, Profile und Delegation.
-3. Verwenden Sie **Als Auftrag speichern**, um einen wiederverwendbaren Entwurf zu benennen. Auch eine ausgewählte einmalige Mission, einschließlich abgeschlossener, bietet **Als Auftrag speichern**.
+3. Verwenden Sie **Als Auftrag speichern**, um einen wiederverwendbaren Entwurf zu benennen. Auch eine ausgewählte einmalige Mission, einschließlich abgeschlossener, bietet **Als Auftrag speichern** unter **Weitere Aktionen** (⋯).
 
 Aufträge speichern Anweisungen und angeforderte Auswahl, keine Aufgabenpläne, Ergebnisse, Unterhaltungen, Zeitplanuhren oder Ausführungsbefugnis. Laden füllt einen normalen Erstellungsentwurf; es startet oder plant nichts. Entfernen eines Auftrags behält bestehende Missionen/Unterhaltungen. **Einstellungen → Missionen → Gespeicherte Aufträge** verwaltet die Bibliothek; wird die Bibliothek unlesbar, entfernt **Gespeicherte Bibliothek zurücksetzen** (nach Bestätigung) gespeicherte Aufträge, keine Ausführungen. Zeitpläne selbst haben keine Aktion zum Speichern als Auftrag.
 

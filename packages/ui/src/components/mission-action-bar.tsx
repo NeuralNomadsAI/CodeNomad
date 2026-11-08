@@ -1,9 +1,10 @@
 import { Show, createContext, createMemo, useContext, type Accessor, type JSX } from "solid-js"
 import { Portal } from "solid-js/web"
-import { ArrowUpRight, PauseCircle, Eye, FastForward, Pause, Pencil, Play, RefreshCw, Square, Trash2 } from "lucide-solid"
+import { ArrowUpRight, BookmarkPlus, PauseCircle, Eye, FastForward, Pause, Pencil, Play, RefreshCw, Square, Trash2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
+import type { MissionBriefSaveTrigger } from "./mission-model-library"
 
 /** The Missions header's selection line: a selected item's toolbar mounts there. */
 export const MissionActionSlot = createContext<Accessor<HTMLElement | undefined>>()
@@ -19,7 +20,7 @@ function primaryIcon(key?: string): JSX.Element {
 /** The selected Mission/schedule's icon toolbar, mounted in the header's selection
  * line: contextual Play/Pause (or recovery), Stop and, for schedules only, Run now,
  * then the summary reader, coordinator conversation and delete, then the shared
- * overflow menu (interrupt now, update request, edit). Inapplicable buttons stay in
+ * overflow menu (update request, interrupt now, save as brief, edit). Inapplicable buttons stay in
  * place, disabled. Optional secondary text actions and feedback stay in the detail. */
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader?: () => void
@@ -30,6 +31,8 @@ export function MissionActionBar(props: {
   interrupt?: MissionPrimaryAction
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
+  /** Opens the selected Mission's inline brief name field (in `secondary`). */
+  saveBrief?: MissionBriefSaveTrigger
   /** Renders in place instead of in the header's selection line. */
   inline?: boolean
   /** An open task reader's toolbar, which takes the line from its schedule's. */
@@ -43,12 +46,14 @@ export function MissionActionBar(props: {
   const primaryLabel = () => props.primary ? props.primary.ariaLabel ?? props.primary.label : t("missionsPanel.action.start")
   const stopLabel = () => props.stop ? props.stop.ariaLabel ?? props.stop.label : t("missions.control.run.stop")
   const menu: ActionOverflowMenuItem[] = [
-    { key: "interrupt", get label() { return props.interrupt?.label ?? t("missionsPanel.action.interruptNow") },
-      get description() { return props.interrupt?.ariaLabel }, get icon() { return <PauseCircle class="h-3.5 w-3.5" /> },
-      get disabled() { return !props.interrupt || props.interrupt.disabled }, onSelect: () => props.interrupt?.onSelect() },
     { key: "request", get label() { return props.request?.label ?? t("missionsPanel.action.requestUpdate") },
       get description() { return props.request?.ariaLabel }, get icon() { return <RefreshCw class="h-3.5 w-3.5" /> },
       get disabled() { return !props.request || props.request.disabled }, onSelect: () => props.request?.onSelect() },
+    { key: "interrupt", get label() { return props.interrupt?.label ?? t("missionsPanel.action.interruptNow") },
+      get description() { return props.interrupt?.ariaLabel }, get icon() { return <PauseCircle class="h-3.5 w-3.5" /> },
+      get disabled() { return !props.interrupt || props.interrupt.disabled }, onSelect: () => props.interrupt?.onSelect() },
+    { key: "save-brief", get label() { return t("missions.create.brief.saveAs") }, get icon() { return <BookmarkPlus class="h-3.5 w-3.5" /> },
+      get disabled() { return !props.saveBrief || props.saveBrief.disabled() }, onSelect: () => props.saveBrief?.open() },
     { key: "edit", get label() { return t("missionsPanel.picker.edit") }, get icon() { return <Pencil class="h-3.5 w-3.5" /> },
       get disabled() { return !props.onEdit || props.editDisabled }, onSelect: () => props.onEdit?.() },
   ]
