@@ -99,6 +99,7 @@ for (const variant of [{ name: "desktop LTR", context: {} }, { name: "touch RTL"
   test(`${variant.name}: the panel is the single scroller under a fixed header, and its scrollbar never changes its width`, async () => {
     const { page, errors } = await open({ ...variant.context, viewport: { width: 900, height: 600 } }, long, "long", { rtl: variant.rtl })
     try {
+      await page.waitForFunction(() => document.querySelectorAll(".mission-rows .mission-row").length === 12)
       assert.equal(await page.locator(".mission-rows .mission-row").count(), 12)
       assert.equal(await page.locator(".mission-tree-node").count(), 40)
       assert.deepEqual(await scrollers(page), ["mission-control"], "one scroller: no list or task flow of its own")
