@@ -9,13 +9,8 @@
 /* The playbook description (the editor's own paragraph style) sits tight under its selector. */
 .mission-editor .mission-create-template > label { margin-block-end: var(--space-xs); }
 .mission-create-option-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
-/* The project's native nesting depth, shared with Preferences (mission-subagent-depth.tsx). */
-.mission-create-options .mission-depth { margin-block: var(--space-sm); }
-.mission-create-options .mission-depth > header { display: flex; align-items: center; gap: var(--space-xs); }
-.mission-create-options .mission-depth > header h4 { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
-.mission-create-options :is(.mission-depth-effective, .mission-depth-nesting, .mission-depth-rule, .mission-depth-path) { margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }
-.mission-create-options .mission-depth-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mission-create-options .mission-depth .window-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-block-start: var(--space-xs); }
+/* The project's native nesting depth (mission-subagent-depth.tsx) is a Delegation row. */
+.mission-create-options .mission-depth .window-actions { display: flex; gap: var(--space-xs); }
 
 .mission-create .window-footer { flex-wrap: wrap; }
 /* In the panel the form is a column filling the height below the header: its body is the only
@@ -42,6 +37,8 @@
   min-width: var(--touch-target-size-compact); min-height: var(--touch-target-size-compact);
   padding-inline: var(--space-xs); color: var(--text-secondary); background: transparent; border-radius: 0;
 }
+/* The footer's Save as brief is a bookmark icon named by its tooltip. */
+.mission-brief-save > .window-icon-button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
 .mission-brief-save { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin-inline-end: auto; min-width: 0; }
 .mission-editor .mission-brief-save input { width: 12em; min-width: 0; flex: 1 1 8em; }
 .mission-brief-save > p { flex-basis: 100%; margin: 0; font-size: var(--font-size-xs); }
