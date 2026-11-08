@@ -45,9 +45,9 @@ Ce sont des instructions. Ce qu’un agent peut réellement faire dépend des au
 
 ### Questions qui vous sont posées {#questions}
 
-Seul le coordinateur vous pose des questions. Les tâches et leurs aides renvoient les leurs à la conversation qui les a lancées, avec les options, les éléments à l’appui, les conséquences, la réversibilité et une recommandation, et poursuivent le travail qui ne dépend pas de la réponse. Le coordinateur tranche d’abord ce qu’il peut et regroupe les questions restantes dans un seul formulaire sous **Votre réponse est attendue** ; [Questions et décisions](missions.md#questions) explique ce qu’il demande et comment les décisions sont libellées. Chaque coordinateur, ponctuel ou programmé, et chaque affectation de tâche reçoivent cette règle comme instruction ; Exploration ajoute les vérifications de décision [ci-dessous](#wayfinder-checks).
+Seul le coordinateur vous pose des questions. Les tâches et leurs aides renvoient les leurs à la conversation qui les a lancées, avec les options, les éléments à l’appui, les conséquences, la réversibilité et une recommandation, et poursuivent le travail qui ne dépend pas de la réponse. Le coordinateur tranche d’abord ce qu’il peut et regroupe les questions restantes dans un seul formulaire, ouvert depuis la ligne rouge de la mission ; [Questions et décisions](missions.md#questions) explique ce qu’il demande et comment les décisions sont libellées. Chaque coordinateur, ponctuel ou programmé, et chaque affectation de tâche reçoivent cette règle comme instruction ; Exploration ajoute les vérifications de décision [ci-dessous](#wayfinder-checks).
 
-Répondez dans le dock d’interruption (**Répondre** sous **Votre réponse est attendue**) : seule cette réponse compte comme la vôtre. Une réponse tapée dans le chat est un message ordinaire.
+Répondez dans le dock d’interruption, ouvert en sélectionnant la mission ou la tâche en rouge : seule cette réponse compte comme la vôtre. Une réponse tapée dans le chat est un message ordinaire.
 
 ### Points de situation et rapport final {#briefings}
 
@@ -165,7 +165,7 @@ Les responsables ne vous interrogent jamais ; ils renvoient au coordinateur des 
 
 - **Il décide lui-même** quand les preuves suffisent et que le choix est peu coûteux à annuler.
 - **Il reporte** une décision dont on n’a pas encore besoin : il retire la tâche et garde la question dans les notes comme brouillard.
-- **Il vous la pose**, en regroupant les décisions en attente dans un seul formulaire sous **Votre réponse est attendue**.
+- **Il vous la pose**, en regroupant les décisions en attente dans un seul formulaire, ouvert depuis la ligne rouge de la mission.
 
 Il n’écrit jamais votre réponse lui-même et ne présente jamais sa propre décision comme la vôtre. L’endroit où lire l’issue dépend de **Sessions des tâches** :
 
@@ -187,7 +187,7 @@ Simples instructions : quand un choix est considéré comme peu coûteux à annu
 Vous obtenez une carte : la destination, les décisions enregistrées avec leur auteur, les résultats de recherche, les prototypes, le brouillard restant dans les notes et un rapport final. Un coordinateur de mission ponctuelle peut aussi préparer une mission de suite que vous démarrez vous-même. Pièges :
 
 - Exploration planifie ; elle ne construit pas la destination. Utilisez un autre scénario, ou la mission de suite préparée, pour implémenter.
-- Répondez sous **Votre réponse est attendue**, pas dans le chat : seule une réponse donnée dans le dock d’interruption compte comme la vôtre.
+- Répondez dans le dock d’interruption ouvert depuis la ligne rouge, pas dans le chat : seule une réponse donnée dans le dock d’interruption compte comme la vôtre.
 - Avec **Sous-agents natifs**, lisez les résultats libellés **Décision du coordinateur** ; avec **Sessions indépendantes**, lisez les issues dans les **Notes**. Pour modifier une décision, écrivez au coordinateur depuis **Ouvrir la conversation**.
 - Une destination formulée vaguement laisse l’essentiel de la carte dans le brouillard.
 

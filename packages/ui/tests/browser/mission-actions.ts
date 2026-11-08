@@ -38,6 +38,17 @@ export async function inlineMissionEntry(page: Page, title: string | RegExp): Pr
   return missionRows(page).locator("button.mission-row-select").filter({ has: titleFilter(page, title) })
 }
 
+/** A row for a title: its chevron (`.session-item-expander`), flag and select button. */
+export const missionRow = (page: Page, title: string | RegExp) =>
+  missionRows(page).locator(".mission-row").filter({ has: titleFilter(page, title) })
+
+/** Answer a red row like a session row: select it (again) to open its flag's question. */
+export async function answerMissionRow(page: Page, title: string | RegExp): Promise<void> {
+  const row = missionRow(page, title)
+  await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+  await row.locator(".mission-row-select").click()
+}
+
 /** The entry's screen-reader status (state, attention, relative time / schedule), read from its row. */
 export async function missionEntryStatus(page: Page, title: string | RegExp): Promise<string> {
   const entry = await inlineMissionEntry(page, title)

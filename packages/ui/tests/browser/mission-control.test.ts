@@ -7,7 +7,7 @@ import { fixtureEventStream } from "./fixture-event-stream"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Locator, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
-import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionMenuTrigger, missionPicker, missionRows, missionToolbar,
+import { clickMissionAction, inlineMissionEntry, missionEntryStatus, missionGeneralAction, missionRow, missionMenuTrigger, missionPicker, missionRows, missionToolbar,
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 
 import { borrowFixture } from "./fixture-borrow"
@@ -879,7 +879,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
           if (name.includes("human-request")) {
             await fixtureCall(target, "seedActor")
             await fixtureCall(target, "event", { type: "form.created", data: { form: { id: "form-mobile", sessionID: "ses_background", title: "Choose a supported build route", fields: [{ type: "text", name: "route", label: "Build route" }] } } })
-            await target.locator(".mission-attention-list").getByText("Choose a supported build route", { exact: true }).waitFor()
+            await taskState(target, "inspect", "input").waitFor()
           }
         } else await target.setViewportSize({ width, height: 900 })
         await fixtureCall(target, "panelWidth", panelWidth)
@@ -895,7 +895,6 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await checklist.getByText("Ready to start. Start the mission to build its plan.", { exact: true }).waitFor()
     assert.equal(await card.locator("form, textarea, .mission-disclosure:not(.mission-tree)").count(), 0, "no coordinator field or secondary disclosure besides the task tree")
     assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
-    assert.equal(await page.locator(".mission-needs").count(), 0)
     await capture("before-wide", 1280, "440px")
 
     value.runState = "running"
@@ -926,7 +925,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await taskState(page, "inspect", "blocked").waitFor()
     assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).filter({ visible: true }).count(), 0,
       "source prose belongs in the central reader, not duplicated in the tree")
-    assert.equal(await page.locator(".mission-needs").count(), 0, "a reported blockage is not a human request")
+    assert.equal(await missionRow(page, value.objective).locator(".session-item-expander").getAttribute("data-child-activity"), null, "a reported blockage is not a human request")
     await capture("technical-blocked-narrow", 1100, "280px")
     await capture("technical-blocked-mobile", 390, "390px", true)
     await page.setViewportSize({ width: 1280, height: 900 })
@@ -951,25 +950,22 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
 
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "form-journey", sessionID: "ses_background", title: "Choose a supported build route", fields: [{ type: "text", name: "route", label: "Build route" }] } } })
-    const attention = card.locator(".mission-needs")
-    await attention.waitFor()
-    assert.equal(await attention.evaluate(element => Boolean(element.compareDocumentPosition(document.querySelector(".mission-tree")!) & Node.DOCUMENT_POSITION_FOLLOWING)), true,
-      "human decisions precede the tasks")
-    const needs = attention.locator(".mission-needs-item")
-    assert.equal(await needs.count(), 1)
-    assert.equal(await needs.evaluate(element => element.getBoundingClientRect().height <= 44), true, "one compact line per request")
-    await page.locator(".mission-attention-list").getByText("Choose a supported build route", { exact: true }).waitFor()
+    // The asking task turns red and opens its question; the chevron carries it, the flag stays the mission's own.
+    const row = missionRow(page, value.objective)
+    await taskState(page, "inspect", "input").waitFor()
+    assert.equal(await taskButton(page, "inspect").getAttribute("aria-description"), "Opens its question")
+    assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), "permission")
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0, "a task's question is never the mission's flag")
+    assert.equal(await card.locator(".mission-needs, .mission-attention-list").count(), 0, "questions live on their rows")
     await capture("human-request-mobile", 390, "390px", true)
     await fixtureCall(page, "event", { type: "permission.asked", data: { id: "permission-journey", sessionID: "ses_background", action: "shell", resources: ["npm run verify"] } })
-    await page.waitForFunction(() => document.querySelectorAll(".mission-needs-item").length === 2)
-    await page.locator(".mission-attention-list .sr-only", { hasText: "npm run verify" }).waitFor({ state: "attached" })
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "unrelated-form", sessionID: "ses_unrelated", title: "Unrelated request", fields: [] } } })
-    assert.equal(await page.locator(".mission-attention-list").getByText("Unrelated request", { exact: true }).count(), 0)
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-journey", sessionID: "ses_background", answers: { route: "Windows" } } })
-    await page.waitForFunction(() => document.querySelectorAll(".mission-needs-item").length === 1)
+    await taskState(page, "inspect", "input").waitFor()
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0, "an unrelated request belongs to no mission")
     await fixtureCall(page, "event", { type: "permission.replied", data: { requestID: "permission-journey", sessionID: "ses_background", response: "once" } })
-    await attention.waitFor({ state: "detached" })
     await taskState(page, "inspect", "blocked").waitFor()
+    assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), null)
     assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).filter({ visible: true }).count(), 0)
 
     const old = { ...blocked, id: "old-report", taskKey: "retired", summary: "Obsolete failure from the cancelled build.", createdAt: 100 }
@@ -1334,11 +1330,12 @@ test("background native questions settle and requested execution remains distinc
     await page.locator(".mission-execution-cell", { hasText: "native/observed" }).waitFor()
     await page.locator('.mission-execution-cell[data-state="unknown"]', { hasText: "Unknown" }).waitFor()
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "form-background", sessionID: "ses_background", title: "Choose the scope", fields: [{ type: "text", name: "scope", label: "Scope" }] } } })
-    await page.getByText("Choose the scope", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-attention-list").getByRole("button", { name: "Answer", exact: true }).getAttribute("aria-description"), "Open Background assistant")
+    // Its only task is done: no live task row carries the actor's question, so the flag does.
+    const flag = missionRow(page, value.objective).locator('.mission-row-flag[data-mark="permission"]')
+    await flag.waitFor()
+    assert.match(await missionEntryStatus(page, value.objective), /Awaiting your input/)
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-background", sessionID: "ses_background", answers: {} } })
-    await page.getByText("Choose the scope", { exact: true }).waitFor({ state: "detached" })
-    assert.equal(await page.locator(".mission-needs").count(), 0)
+    await flag.waitFor({ state: "detached" })
     // The coordinator's conversation is the mission's toolbar once the task's reader closes.
     await page.getByRole("button", { name: "Back to chat" }).click()
     await clickMissionAction(page, "Open conversation")
