@@ -14,7 +14,7 @@ import { openSessionPreview, showSessionChatFor, getSessionPreview } from "../..
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { serverEvents } from "../../../src/lib/server-events"
-import { backendOf, backends } from "../../../src/lib/backend-client"
+import { backendOf, localBackend } from "../../../src/lib/backend-client"
 import { observeBackendPanelReads } from "../panel-read-fixture"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -22,7 +22,8 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
 
-observeBackendPanelReads(backendOf("cross-navigation"), backends)
+observeBackendPanelReads()
+if (backendOf("cross-navigation") !== localBackend) throw new Error("Fixture changed the local backend owner")
 await initializeClientState()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
 const id = "cross-navigation", scope = "/fixture", client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -57,7 +58,6 @@ function Fixture() {
     snapshot, history: () => [...history],
     transport: status => {
       const transport = serverEvents as unknown as { emitTransportStatus(status: string): void }
-      if (status === "connected") transport.emitTransportStatus("disconnected")
       transport.emitTransportStatus(status)
     },
     coldCatalogue: async () => {

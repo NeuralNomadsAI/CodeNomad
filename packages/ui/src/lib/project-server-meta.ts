@@ -13,16 +13,14 @@ export function createProjectServerMeta(instanceId: Accessor<string | undefined>
     setMeta(null)
     setAvailable(false)
     if (!id || !signal || signal.aborted) return
-    let disposed = false
     const revoke = () => { setMeta(null); setAvailable(false) }
     signal.addEventListener("abort", revoke, { once: true })
-    onCleanup(() => { disposed = true; signal.removeEventListener("abort", revoke) })
+    onCleanup(() => { signal.removeEventListener("abort", revoke) })
     try {
       const client = backendOf(id)
       setAvailable(true)
-      void client.meta.getServerMeta(false, signal).then(value => {
-        if (!disposed && !signal.aborted) setMeta(value)
-      }).catch(() => undefined)
+      createEffect(() => { setMeta(signal.aborted ? null : client.meta.meta(signal)) })
+      void client.meta.getServerMeta(false, signal).catch(() => undefined)
     } catch { /* An unavailable owner leaves project controls inactive. */ }
   })
   return { meta, previewsUnavailable: () => !available() || meta()?.previewsUnavailable === true,

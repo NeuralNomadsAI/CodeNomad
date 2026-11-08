@@ -69,7 +69,11 @@ before(async () => {
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [shutdown.plugin, solid(), { name: "extension-fixture", configureServer(vite) {
+    plugins: [shutdown.plugin, { name: "observe-extension-controller", enforce: "pre", transform(code, id) {
+      if (!id.replaceAll("\\", "/").endsWith("/right-panel/RightPanel.tsx")) return
+      return code.replace("const extensions = usePanelExtensions(() => props.instanceId, props.isActive)",
+        "const extensions = usePanelExtensions(() => props.instanceId, props.isActive); window.extensionFixture.inventory = extensions.entries")
+    } }, solid(), { name: "extension-fixture", configureServer(vite) {
       vite.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await vite.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/panel-extensions.tsx"></script></body></html>'))
@@ -150,10 +154,13 @@ test("malformed inventory retains the last good display and revokes catalogue ac
   try {
     await view.getByRole("tab", { name: "Session example", exact: true }).waitFor()
     await openManager(view)
+    const inventory = await view.evaluate(() => (window as any).extensionFixture.inventory())
+    assert.equal(inventory.length, 1)
     const failure = view.getByRole("region", { name: "Panel extensions", exact: true }).getByRole("alert").filter({ hasText: "Extension unavailable" })
     await view.route("**/api/panel-extensions", route => route.fulfill({ json: {} }))
     await changed(view)
     await failure.waitFor()
+    assert.deepEqual(await view.evaluate(() => (window as any).extensionFixture.inventory()), inventory, "the controller retains its last valid inventory")
     assert.equal(await view.getByRole("tab", { name: "Session example", exact: true }).count(), 1)
     assert.equal(await view.locator(".panel-extension-zip").isDisabled(), true)
     assert.deepEqual(errors, [])

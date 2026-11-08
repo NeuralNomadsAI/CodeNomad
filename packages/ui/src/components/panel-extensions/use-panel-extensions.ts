@@ -64,7 +64,8 @@ export function usePanelExtensions(instanceId: Accessor<string>, active: Accesso
   }))
   onCleanup(serverEvents.forInstance(instanceId).onTransportStatus(status => {
     const next = status === "connected"
-    if (connected === next) return
+    // Every stream open reconciles the HTTP snapshot, including the first open.
+    if (!next && !connected) return
     connected = next
     clear()
     if (connected) void refresh()

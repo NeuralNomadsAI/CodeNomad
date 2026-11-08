@@ -1,12 +1,11 @@
 import type { Page, Request } from "playwright"
-import type { BackendClient } from "../../src/lib/backend-client"
 
 export const PANEL_READ_HEADER = "x-codenomad-fixture-panel-read"
 
-/** Observe the backend transport shared by the per-operation API factories. */
-export function observeBackendPanelReads(backend: BackendClient, backends: ReadonlyMap<string, BackendClient>) {
+/** Observe below the transport, preserving registered backend object identity. */
+export function observeBackendPanelReads() {
   const outcomes = new Map<string, Promise<boolean>>()
-  const fetch = backend.fetch
+  const fetch = window.fetch.bind(window)
   let sequence = 0
   const observedFetch: typeof fetch = (input, init) => {
     if (new URL(String(input), location.origin).pathname !== "/api/panel-extensions" || (init?.method ?? "GET") !== "GET") return fetch(input, init)
@@ -25,7 +24,7 @@ export function observeBackendPanelReads(backend: BackendClient, backends: Reado
       return response
     }, failed)
   }
-  ;(backends as Map<string, BackendClient>).set(backend.id, { ...backend, fetch: observedFetch })
+  window.fetch = observedFetch
   return window.fixturePanelReadCancelled = async id => await outcomes.get(id) ?? false
 }
 

@@ -4,16 +4,25 @@ import { serverApi, type ServerApi } from "./api-client"
 
 /** One backend's cached `/api/meta`, with its previews availability signals. */
 export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
-  interface Snapshot { cached: ServerMeta | null; pending: Promise<ServerMeta> | null }
-  const local: Snapshot = { cached: null, pending: null }
+  function createSnapshot() {
+    const [meta, setMeta] = createSignal<ServerMeta | null>(null)
+    return { cached: null as ServerMeta | null, pending: null as Promise<ServerMeta> | null, meta, setMeta }
+  }
+  type Snapshot = ReturnType<typeof createSnapshot>
+  const local = createSnapshot()
   const attachments = new WeakMap<AbortSignal, Snapshot>()
   const [previewsUnavailable, setPreviewsUnavailable] = createSignal(false)
   const [previewsAvailabilityResolved, setPreviewsAvailabilityResolved] = createSignal(false)
 
+  function snapshotFor(signal?: AbortSignal): Snapshot {
+    let snapshot = signal ? attachments.get(signal) : local
+    if (!snapshot) { snapshot = createSnapshot(); attachments.set(signal!, snapshot) }
+    return snapshot
+  }
+
   async function getServerMeta(forceRefresh = false, signal?: AbortSignal): Promise<ServerMeta> {
     signal?.throwIfAborted()
-    let snapshot = signal ? attachments.get(signal) : local
-    if (!snapshot) { snapshot = { cached: null, pending: null }; attachments.set(signal!, snapshot) }
+    const snapshot = snapshotFor(signal)
     if (snapshot.cached && !forceRefresh) {
       return snapshot.cached
     }
@@ -23,6 +32,7 @@ export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
     const request = api.fetchServerMeta().then((meta) => {
       signal?.throwIfAborted()
       snapshot.cached = meta
+      snapshot.setMeta(meta)
       setPreviewsUnavailable(meta.previewsUnavailable === true)
       setPreviewsAvailabilityResolved(true)
       return meta
@@ -35,7 +45,7 @@ export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
     }
   }
 
-  return { getServerMeta, previewsUnavailable, previewsAvailabilityResolved }
+  return { getServerMeta, meta: (signal?: AbortSignal) => snapshotFor(signal).meta(), previewsUnavailable, previewsAvailabilityResolved }
 }
 
 export type ServerMetaCache = ReturnType<typeof createServerMetaCache>

@@ -11,6 +11,7 @@ export async function fixtureEventStream(origin: string) {
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve) })
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/events`
   return {
+    url,
     route: (page: Page) => page.route("**/api/events*", route => route.continue({ url })),
     close: async () => {
       server.closeAllConnections()

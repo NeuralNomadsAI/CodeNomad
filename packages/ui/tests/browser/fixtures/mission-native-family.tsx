@@ -15,13 +15,12 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
-import { backendOf, backends } from "../../../src/lib/backend-client"
 import { observeBackendPanelReads } from "../panel-read-fixture"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { markSessionListsRestored } from "./session-list-restored"
 import "../../../src/index.css"
 
-const panelReadCancelled = observeBackendPanelReads(backendOf("native-family"), backends)
+const panelReadCancelled = observeBackendPanelReads()
 
 // Production whole-InstanceShell foundation, independent of the concurrent
 // mission-cross-navigation fixture. Native HTTP/SSE transport remains fake.
@@ -103,7 +102,6 @@ function Fixture() {
     panelReadCancelled,
     transport: status => {
       const transport = serverEvents as unknown as { emitTransportStatus(status: string): void }
-      if (status === "connected") transport.emitTransportStatus("disconnected")
       transport.emitTransportStatus(status)
     },
     statusKnown: (sessionId, known) => setSessions(previous => {
