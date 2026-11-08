@@ -20,8 +20,8 @@ Native previews share cookies, sign-ins and site storage across projects/session
 | --- | --- | --- | --- |
 | Electron on supported desktop platforms | Native Chromium guest | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
 | Windows Tauri | Native WebView2 child | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
-| macOS Tauri | Native WKWebView child | Unavailable; use Electron or Windows Tauri | Dimensions only |
-| Linux Tauri | Native WebKitGTK child | Unavailable; use Electron or Windows Tauri | Dimensions only |
+| macOS Tauri | Native WKWebView child | Unavailable; use Electron or Windows Tauri | WebKit mobile identity and CSS viewport; native input limits |
+| Linux Tauri | Native WebKitGTK child | Unavailable; use Electron or Windows Tauri | WebKit mobile identity and CSS viewport; native density/input limits |
 | Plain browser/remote view | Iframe fallback | No local native preview target | Dimensions only |
 
 On Electron and Windows Tauri, native automation is prepared at desktop startup and uses the session-bound `codenomad.browser` tool for open, navigate, snapshot, screenshot and page actions: click, type, select, hover, drag, scroll, key presses and waiting for text. Tool availability is not authorization for every window: execution checks the owning backend, native capabilities, session and visible target. An action whose page was hidden, replaced or navigated meanwhile is refused rather than sent to another page, and an action is never repeated automatically. Page contents remain untrusted. An iframe may fail because the target forbids embedding; use an external browser rather than weakening its protections.
@@ -43,7 +43,7 @@ Tauri macOS/Linux previews open manually, retain shared sign-ins across restarts
 | Mobile viewport | 390 × 844 |
 | Mobile landscape | 844 × 390 |
 
-On Electron and Windows Tauri, mobile templates set Android/Chromium identity, orientation, touch and DPR 2.75 on the owned guest only. Returning to responsive/desktop/tablet clears those overrides and reloads. Tauri macOS/Linux and iframe fallback only resize. These are reproducible layout references, not Safari/Firefox emulation or simulations of phone keyboards, browser/system bars or mobile OS text settings. Save page work before changing templates because reload can discard unsent page state.
+On Electron and Windows Tauri, mobile templates set Android/Chromium identity, orientation, touch and DPR 2.75 on the owned guest only. Returning to responsive/desktop/tablet clears those overrides and reloads. Tauri macOS/Linux apply a generic WebKit mobile identity to HTTP and JavaScript and fit CSS viewports independently of app zoom/DPI, reloading on template/profile changes and reset. macOS uses native DPR 2.75 when available; GTK density follows the fitted zoom and monitor. Screen, platform, pointer/hover media and maximum touch points keep native desktop values. GTK mobile clicks deliver native touch with mouse compatibility events; macOS keeps mouse input. The iframe fallback resizes only. These profiles provide layout references; phone keyboards, system bars and mobile OS text settings stay outside their scope. Save page work before changing templates because reload can discard unsent page state.
 
 ## Register a SideCar {#register-sidecar}
 

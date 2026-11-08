@@ -1,0 +1,34 @@
+<!doctype html><meta charset="utf-8"><title>Semantic boundaries</title>
+<main>
+  <span id="first">First</span><span id="second"> choice</span><p id="description">Detailed help</p>
+  <button id="aria-button" aria-labelledby="first second" aria-describedby="description">Ignored content</button>
+  <label>Secret <input id="secret" type="password" value="never-expose-this-secret"></label>
+  <label>Required <input id="required" required readonly value="Fixed"></label>
+  <label>Checked <input id="checked" type="checkbox" checked></label>
+  <div id="mixed" role="checkbox" aria-checked="mixed" aria-label="Mixed"></div>
+  <button id="expanded" aria-expanded="true" aria-pressed="mixed">Expanded</button>
+  <button id="disabled" aria-disabled="true">Disabled</button>
+  <label>Multiple <select id="multiple" multiple><option selected>One</option><option>Two</option><optgroup disabled label="Locked"><option>Three</option></optgroup></select></label>
+  <section hidden><button>Hidden attribute</button></section>
+  <section style="display:none"><button>Hidden display</button></section>
+  <section inert><button>Hidden inert</button></section>
+  <section aria-hidden="true"><button>Hidden ARIA</button></section>
+  <x-open id="open"></x-open><div id="closed"></div>
+  <div id="disabled-shadow" aria-disabled="true"></div>
+  <div id="hidden-shadow" style="display:none"></div>
+  <label>Search secret <input type="password" role="searchbox" value="private"></label>
+  <iframe id="same" title="Same-origin frame" src="/read/frame"></iframe>
+  <iframe id="cross" title="Cross-origin frame" src="{{CROSS}}/read/frame"></iframe>
+</main>
+<script>
+  window.__codenomadPageOnly=true;
+  document.querySelector('#open').attachShadow({mode:'open'}).innerHTML='<span id="label">Shadow label</span><button id="shadow-button" aria-labelledby="label">Wrong text</button><label>Shadow field <input value="Shadow value"></label>';
+  const closedRoot=document.querySelector('#closed').attachShadow({mode:'closed'});
+  closedRoot.innerHTML='<button id="closed-button">Closed action</button><label>Closed field <input id="closed-field" value="Old closed"></label><div contenteditable role="textbox" aria-label="Closed rich">Old closed rich</div><label>Closed plan <select><option>One</option><option>Two</option></select></label><div id="nested"></div>';
+  const nestedRoot=closedRoot.querySelector('#nested').attachShadow({mode:'closed'});
+  nestedRoot.innerHTML='<button>Nested closed action</button><input aria-label="Nested closed field">';
+  nestedRoot.querySelector('button').addEventListener('click',event=>{document.body.dataset.nestedClicked=event.isTrusted});
+  closedRoot.querySelector('button').addEventListener('click',event=>{window.closedClicks=(window.closedClicks||0)+1;window.closedTrusted=event.isTrusted});
+  document.querySelector('#disabled-shadow').attachShadow({mode:'open'}).innerHTML='<button>Disabled shadow action</button>';
+  document.querySelector('#hidden-shadow').attachShadow({mode:'open'}).innerHTML='<button>Hidden shadow action</button>';
+</script>

@@ -20,8 +20,8 @@
 | --- | --- | --- | --- |
 | 支持的桌面平台上的 Electron | 原生 Chromium 访客页面 | 支持可见且归属已确认的会话预览 | Android/Chromium 身份、触摸和像素密度仿真 |
 | Windows Tauri | 原生 WebView2 子窗口 | 支持可见且归属已确认的会话预览 | Android/Chromium 身份、触摸和像素密度仿真 |
-| macOS Tauri | 原生 WKWebView 子窗口 | 不可用；请使用 Electron 或 Windows Tauri | 仅尺寸 |
-| Linux Tauri | 原生 WebKitGTK 子窗口 | 不可用；请使用 Electron 或 Windows Tauri | 仅尺寸 |
+| macOS Tauri | 原生 WKWebView 子窗口 | 不可用；请使用 Electron 或 Windows Tauri | WebKit 移动标识和 CSS 视口；输入受原生限制 |
+| Linux Tauri | 原生 WebKitGTK 子窗口 | 不可用；请使用 Electron 或 Windows Tauri | WebKit 移动标识和 CSS 视口；密度和输入受原生限制 |
 | 普通浏览器/远程视图 | iframe 后备实现 | 无本地原生预览目标 | 仅尺寸 |
 
 在 Electron 和 Windows Tauri 上，原生自动化在桌面启动时准备好，使用会话绑定的 `codenomad.browser` 工具进行打开、导航、快照、截图和页面操作：点击、输入、选择、悬停、拖动、滚动、按键以及等待文本出现。工具可用不代表对每个窗口都已获授权：执行会检查所属后端、原生能力、会话和可见目标。如果操作所针对的页面在此期间已被隐藏、替换或导航离开，该操作会被拒绝，而不会发送到其他页面；操作也绝不会被自动重复。页面内容仍不可信。目标禁止嵌入时 iframe 可能失败；请使用外部浏览器，不要削弱保护。
@@ -43,7 +43,7 @@ Tauri macOS/Linux 预览需手动打开，共享登录状态在重启后仍会�
 | 手机视口 | 390 × 844 |
 | 手机横向 | 844 × 390 |
 
-在 Electron 和 Windows Tauri 上，移动模板仅对所属访客页面设置 Android/Chromium 身份、方向、触摸和 DPR 2.75。返回响应式/桌面/平板会清除覆盖值并重新加载。Tauri macOS/Linux 和 iframe 后备实现只调整尺寸。这些是可重现的布局参考，而非 Safari/Firefox 仿真，也不模拟手机键盘、浏览器/系统栏或移动操作系统文字设置。切换模板前请保存页面工作，因为重新加载可能丢弃未发送页面状态。
+在 Electron 和 Windows Tauri 上，移动模板仅对所属访客页面设置 Android/Chromium 身份、方向、触摸和 DPR 2.75。返回响应式/桌面/平板会清除覆盖值并重新加载。Tauri macOS/Linux 在 HTTP 和 JavaScript 中应用通用 WebKit 移动标识，并独立于应用缩放/DPI 调整 CSS 视口；切换模板和重置会重新加载。macOS 在可用时使用原生 DPR 2.75；GTK 密度取决于适配缩放和显示器。屏幕、平台、指针/悬停媒体和最大触点数保留原生桌面值。GTK 移动点击产生原生触摸和兼容鼠标事件；macOS 保留鼠标输入。iframe 后备实现只调整尺寸。这些配置提供布局参考；手机键盘、系统栏和移动文字设置不在其范围内。切换模板前请保存页面工作，因为重新加载可能丢弃未发送页面状态。
 
 ## 注册 SideCar {#register-sidecar}
 

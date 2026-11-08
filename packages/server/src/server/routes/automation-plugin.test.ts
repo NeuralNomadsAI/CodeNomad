@@ -147,9 +147,9 @@ test("browser works with an unavailable developer target and unrelated inventory
       available: true,
       request: async (method: string, params: any) => {
         nativeCalls.push({ method, params })
-        if (method === "browser.page.begin") return { generation: "preview-document", url: "https://example.com/" }
-        if (method === "browser.page.send" && params.method === "Accessibility.getFullAXTree") {
-          return { nodes: [{ nodeId: "one", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Preview action" } }] }
+        if (method === "browser.page.begin") return { generation: "preview-document", url: "https://example.com/", driver: "cdp", contractVersion: 1 }
+        if (method === "browser.page.send" && params.operation?.op === "tree") {
+          return { nodes: [{ id: "one", node: 42, role: "button", name: "Preview action" }] }
         }
         return method === "developer.status" ? { status: { state: "stopped" } }
           : method === "browser.probe" ? { available: true } : { url: "https://example.com/" }

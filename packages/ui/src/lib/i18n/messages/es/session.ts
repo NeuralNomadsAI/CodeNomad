@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "browser.viewport.webkitEmulationHint": "Identidad móvil WebKit y viewport CSS. Se aplican límites nativos de densidad y entrada.",
   "browser.viewport.emulationHint": "Recarga con identidad móvil, entrada táctil y densidad de píxeles. No simula el motor del navegador, el teclado ni las barras del sistema.",
   "browser.viewport.emulationUnavailable": "Solo dimensiones. La emulación de dispositivos no está disponible en esta vista previa.",
   "sessionList.filter.includeMainSessions": "Sesiones principales",

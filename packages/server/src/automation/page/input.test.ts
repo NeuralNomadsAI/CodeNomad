@@ -2,20 +2,17 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { clickAt, dragBetween, pressKeys } from "./input"
 import type { PageSession } from "./protocol"
+import { cdpSession } from "./cdp-driver"
 
 test("failed pointer and key sequences release potentially held inputs without replaying the action", async () => {
   for (const kind of ["click", "drag", "keys"] as const) {
     const calls: Array<{ method: string; params: Record<string, unknown> }> = []
     let pressed = false, failed = false
-    const session: PageSession = {
-      markAutomation: true,
-      channel: { send: async (method, params = {}) => {
+    const session: PageSession = cdpSession({ send: async (method, params = {}) => {
         calls.push({ method, params })
         if (params.type === "mousePressed" || params.type === "rawKeyDown") pressed = true
         return method === "Runtime.evaluate" ? { result: { value: 1_700_000_000 } } : {}
-      } },
-      checkpoint: async () => { if (pressed && !failed) { failed = true; throw new Error("Page changed") } },
-    }
+      } }, async () => { if (pressed && !failed) { failed = true; throw new Error("Page changed") } }, true)
     await assert.rejects(kind === "click" ? clickAt(session, { x: 10, y: 20 })
       : kind === "drag" ? dragBetween(session, { x: 10, y: 20 }, { x: 50, y: 60 }) : pressKeys(session, "Control+K"), /Page changed/)
     const inputs = calls.filter(call => call.method.startsWith("Input."))
@@ -31,10 +28,7 @@ test("a frozen mark write cannot suppress release, and late input effects are re
   for (const recoversBeforeRelease of [true, false]) {
     const calls: Array<{ method: string; params: Record<string, unknown> }> = []
     let frozen = false, clicks = 0, queuedRelease: (() => void) | undefined
-    const session: PageSession = {
-      markAutomation: true,
-      checkpoint: async () => {},
-      channel: { send: async (method, params = {}) => {
+    const session: PageSession = cdpSession({ send: async (method, params = {}) => {
         calls.push({ method, params })
         if (method === "Runtime.evaluate" && frozen) throw new Error("CDP mark timed out")
         if (params.type === "mousePressed") { frozen = true; throw new Error("CDP input timed out") }
@@ -43,8 +37,7 @@ test("a frozen mark write cannot suppress release, and late input effects are re
           else { queuedRelease = () => { clicks++ }; throw new Error("CDP release timed out") }
         }
         return method === "Runtime.evaluate" ? { result: { value: 1_700_000_000 } } : {}
-      } },
-    }
+      } }, async () => {}, true)
     await assert.rejects(clickAt(session, { x: 10, y: 20 }), /outcome is unknown.*may still be delivered; inspect before retrying/)
     assert.equal(calls.filter(call => call.params.type === "mousePressed").length, 1)
     assert.equal(calls.filter(call => call.params.type === "mouseReleased").length, 1,
@@ -61,10 +54,10 @@ test("trusted input waits until a freshly navigated page accepts it, within a bo
     const calls: string[] = []
     const answers = [...delays]
     const started = Date.now()
-    await pressKeys({ markAutomation: false, checkpoint: async () => {}, channel: { send: async (method, params = {}) => {
+    await pressKeys(cdpSession({ send: async (method, params = {}) => {
       calls.push(method === "Runtime.evaluate" ? "ready?" : `${method}:${params.type}`)
       return method === "Runtime.evaluate" ? { result: { value: { inputDelayMs: answers.length > 1 ? answers.shift() : answers[0] } } } : {}
-    } } }, "a")
+    } }, async () => {}, false), "a")
     const elapsed = Date.now() - started
     const firstKey = calls.indexOf("Input.dispatchKeyEvent:keyDown")
     assert.ok(firstKey > 0 && calls.slice(0, firstKey).every(call => call === "ready?"), "no key precedes acceptance")
@@ -80,8 +73,7 @@ test("trusted input waits until a freshly navigated page accepts it, within a bo
 
 test("input refuses when the page cannot supply a valid provenance timestamp", async () => {
   const methods: string[] = []
-  await assert.rejects(pressKeys({ markAutomation: true, checkpoint: async () => {},
-    channel: { send: async method => { methods.push(method); return { result: { value: null } } } },
-  }, "Enter"), /Cannot establish automation input provenance/)
+  await assert.rejects(pressKeys(cdpSession({ send: async method => { methods.push(method); return { result: { value: null } } } },
+    async () => {}, true), "Enter"), /Cannot establish automation input provenance/)
   assert.ok(methods.every(method => method === "Runtime.evaluate"))
 })

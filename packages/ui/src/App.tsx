@@ -283,7 +283,7 @@ const App: Component = () => {
       if (!await claimNativeBrowserOpen(requestID)) return
       try {
         const instance = owner
-        await openSessionPreview(sessionID, url, instance.folder)
+        await openSessionPreview(sessionID, url, instance.folder, async () => !disposed && await claimNativeBrowserOpen(requestID))
         if (disposed) {
           await releaseNativeBrowserOpen(requestID)
           return

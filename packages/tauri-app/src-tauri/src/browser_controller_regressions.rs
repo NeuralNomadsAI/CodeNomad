@@ -157,6 +157,123 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn replacing_a_registration_clears_its_emulation_profile() {
+    let (controller, mut current) = controller_with_registration();
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .emulation_profiles
+        .insert(current.registration_id.clone(), "mobile".into());
+    current.generation += 1;
+    controller
+        .publish_registration(current.clone(), 0, "https://example.com/")
+        .unwrap();
+    assert!(!controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .emulation_profiles
+        .contains_key(&current.registration_id));
+}
+
+#[test]
+fn capture_document_identity_changes_on_navigation_hide_and_replacement() {
+    let (controller, expected) = controller_with_registration();
+    let document = controller.document_version(&expected).unwrap();
+    controller.invalidate_page(&expected.registration_id);
+    assert_ne!(controller.document_version(&expected).unwrap(), document);
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut(&expected.registration_id)
+        .unwrap()
+        .visible = false;
+    assert!(controller.document_version(&expected).is_err());
+    controller.inner.0.lock().unwrap().registrations.insert(
+        expected.registration_id.clone(),
+        Registration {
+            generation: expected.generation + 1,
+            ..expected.clone()
+        },
+    );
+    assert!(controller.document_version(&expected).is_err());
+}
+
+#[test]
+fn native_open_claim_cannot_be_reclaimed_after_deadline_or_backend_retirement() {
+    use std::sync::atomic::AtomicBool;
+    let (controller, _) = controller_with_registration();
+    let current = Arc::new(AtomicBool::new(true));
+    let predicate = current.clone();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    controller.inner.0.lock().unwrap().open_claims.insert(
+        "pending".into(),
+        OpenClaim {
+            session_id: "session".into(),
+            url: "https://example.com/".into(),
+            owner: None,
+            failed_owners: HashSet::new(),
+            fence: Some(crate::native_request::RequestFence::new(
+                now + 10_000,
+                move || predicate.load(Ordering::SeqCst),
+            )),
+        },
+    );
+    assert!(controller.claim_open(OWNER, "pending"));
+    current.store(false, Ordering::SeqCst);
+    assert!(!controller.claim_open(OWNER, "pending"));
+    assert!(controller.release_claim(OWNER, "pending").is_none());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .open_claims
+        .get_mut("pending")
+        .unwrap()
+        .fence = Some(crate::native_request::RequestFence::new(0, || true));
+    assert!(!controller.claim_open(OWNER, "pending"));
+}
+
+#[test]
+fn a_different_native_navigation_supersedes_a_bound_load_even_if_it_finishes_late() {
+    let (controller, expected) = controller_with_registration();
+    let sequence = controller
+        .prepare_page_load(&expected.registration_id, "https://example.com/wanted")
+        .unwrap();
+    controller.mark_page_started(
+        &expected.registration_id,
+        expected.generation,
+        1,
+        "https://example.com/wanted".into(),
+    );
+    controller.mark_page_started(
+        &expected.registration_id,
+        expected.generation,
+        2,
+        "https://example.com/user".into(),
+    );
+    controller.mark_page_finished(&expected.registration_id, expected.generation, 1, None);
+    assert!(controller
+        .wait_for_page_load(
+            &expected.registration_id,
+            sequence,
+            Instant::now() + Duration::from_secs(1)
+        )
+        .unwrap_err()
+        .contains("no longer current"));
+}
+
+#[test]
 fn history_requires_current_owner_and_generation_but_survives_hide() {
     let (controller, expected) = controller_with_registration();
     assert!(controller.check_history_registration(&expected).is_ok());
@@ -304,6 +421,7 @@ fn hiding_revokes_page_authority_even_when_native_hide_fails() {
                 registration_id: "preview".into(),
                 bounds: None,
                 visible: Some(false),
+                presentation: None,
             }
         )
         .is_err());
@@ -484,6 +602,58 @@ fn page_generation_survives_end_but_not_navigation_registration_or_host_replacem
         .reserve_page(other_registration, &operation)
         .unwrap();
     assert_ne!(other.generation, first.generation);
+}
+
+#[test]
+fn document_bound_page_leases_preserve_uri_changes_and_registration_fences() {
+    let (controller, registration) = controller_with_registration();
+    let operation = uuid::Uuid::new_v4().to_string();
+    let mut lease = controller.reserve_page(registration, &operation).unwrap();
+    lease.document = Some("isolated-document-token".into());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .page_leases
+        .insert(operation.clone(), lease.clone());
+    controller.invalidate_page_for_generation("preview", 1);
+    controller.invalidate_page("preview");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    assert!(controller.check_page_state(&lease, deadline).is_ok());
+    // The native adapter checks the document token; URI callbacks keep the lease.
+    assert!(controller.check_page_state(&lease, Instant::now()).is_err());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("preview")
+        .unwrap()
+        .visible = false;
+    assert!(controller.check_page_state(&lease, deadline).is_err());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("preview")
+        .unwrap()
+        .visible = true;
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("preview")
+        .unwrap()
+        .generation += 1;
+    assert!(controller.check_page_state(&lease, deadline).is_err());
+    controller.end_page("session", &operation);
+    assert!(controller.check_page_state(&lease, deadline).is_err());
 }
 
 #[test]

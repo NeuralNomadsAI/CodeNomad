@@ -290,13 +290,14 @@ pub(crate) fn handle_native_request(
     method: &str,
     params: Option<serde_json::Value>,
     deadline: u64,
+    fence: native_request::RequestFence,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     match method {
         "browser.probe" | "browser.execute" | "browser.page.begin" | "browser.page.send"
         | "browser.page.check" | "browser.page.end" => state
             .browser_controller
-            .handle_native(app, method, params, deadline),
+            .handle_native(app, method, params, deadline, fence),
         "opencode.service.start" => native_service_start::start(params, deadline),
         "developer.status" => state.developer_mode.native_snapshot(app),
         "developer.restart" => state.developer_mode.request_restart(app),
@@ -514,20 +515,25 @@ async fn browser_target_register(
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
     let window = webview.window();
-    state.browser_controller.register(&window, payload)
+    let controller = state.browser_controller.clone();
+    tauri::async_runtime::spawn_blocking(move || controller.register(&window, payload))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn browser_target_update(
+async fn browser_target_update(
     webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetUpdate,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    state
-        .browser_controller
-        .update(&app, webview.label(), payload)
+    let controller = state.browser_controller.clone();
+    let owner = webview.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || controller.update(&app, &owner, payload))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

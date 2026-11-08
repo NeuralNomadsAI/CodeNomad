@@ -143,6 +143,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [highlight, setHighlight] = createSignal<{ x: number; y: number; width: number; height: number } | null>(null)
   const browserHost = nativeBrowserHost(runtimeEnv)
   const capabilities = browserHostCapabilities(runtimeEnv)
+  const webkitEmulation = capabilities.reason === "webkit" && capabilities.emulation
   const emulationReady = () => registrationReady() && capabilities.emulation
   const nativeBrowserAvailable = Boolean(browserHost) && props.addressMode === "url"
   const [nativeMode, setNativeMode] = createSignal(nativeBrowserAvailable)
@@ -215,8 +216,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
 
   const emulationProfile = (preset: BrowserViewportPreset): BrowserEmulationPreset =>
     preset === "mobile" || preset === "mobileLandscape" ? preset : "none"
-  const applyEmulation = async (registrationId: string, preset: BrowserEmulationPreset) => {
-    await emulateBrowserTarget(registrationId, preset)
+  const cssViewport = (preset: BrowserViewportPreset) => {
+    const size = VIEWPORT_PRESETS[preset]
+    return size.width && size.height ? { width: size.width, height: size.height } : undefined
+  }
+  const presentation = () => webkitEmulation ? { css: true, viewport: cssViewport(viewportPreset()) } : undefined
+  const applyEmulation = async (registrationId: string, preset: BrowserEmulationPreset, viewport: BrowserViewportPreset = viewportPreset()) => {
+    await emulateBrowserTarget(registrationId, preset, webkitEmulation ? cssViewport(viewport) : undefined)
     if (!disposed && registrationId === browserRegistrationId) appliedEmulation = { registrationId, preset }
   }
   const restoreEmulation = async (registrationId: string) => {
@@ -239,12 +245,12 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     setViewportMenuOpen(false)
     const previous = appliedEmulation?.registrationId === browserRegistrationId ? appliedEmulation.preset : undefined
     const next = emulationProfile(preset)
-    if (previous === next || !nativeMode() || !capabilities.emulation) { setViewportPreset(preset); return }
+    if ((previous === next && !webkitEmulation) || !nativeMode() || !capabilities.emulation) { setViewportPreset(preset); return }
     setEmulationBusy(true)
     const generation = ++emulationGeneration
     const registrationId = browserRegistrationId
     try {
-      await applyEmulation(registrationId, next)
+      await applyEmulation(registrationId, next, preset)
       if (!disposed && registrationId === browserRegistrationId) setViewportPreset(preset)
     } catch (error) { if (registrationId === browserRegistrationId) reportNativeError(error) }
     finally { if (!disposed && generation === emulationGeneration) setEmulationBusy(false) }
@@ -587,7 +593,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const right = Math.min(rect.right, clip.right, window.innerWidth)
       const bottom = Math.min(rect.bottom, clip.bottom, window.innerHeight)
       if (right <= left || bottom <= top) return null
-      return physicalBrowserBounds({ x: left, y: top, width: right - left, height: bottom - top }, window.devicePixelRatio)
+      return physicalBrowserBounds({ x: left, y: top, width: right - left, height: bottom - top }, webkitEmulation ? 1 : window.devicePixelRatio)
     }
     const syncBounds = () => {
       const sessionId = props.sessionId
@@ -623,12 +629,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         })
         return
       }
-      const serialized = JSON.stringify(next)
+      const serialized = JSON.stringify(webkitEmulation
+        ? { bounds: next, presentation: presentation(), window: [window.innerWidth, window.innerHeight, window.devicePixelRatio] }
+        : next)
       if (registered && nativeVisible && serialized === lastBounds) return
       if (registered) {
         const revealing = !nativeVisible
         registering = true
-        void updateTauriBrowserTarget(browserRegistrationId, next, true).then(() => {
+        void updateTauriBrowserTarget(browserRegistrationId, next, true, presentation()).then(() => {
           lastBounds = serialized
           nativeVisible = true
           syncErrorReported = false
@@ -659,6 +667,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           registrationId,
           url: target,
           bounds: next,
+          ...(webkitEmulation ? { presentation: presentation() } : {}),
         })
         registeredSessionId = sessionId
         lastBounds = serialized
@@ -935,7 +944,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
                     aria-label={option.getLabel(props.labels)}
                     disabled={nativeMode() && capabilities.emulation && emulationProfile(option.id) !== "none" && !emulationReady()}
                     title={emulationProfile(option.id) !== "none"
-                      ? t(nativeMode() && capabilities.emulation ? "browser.viewport.emulationHint" : "browser.viewport.emulationUnavailable")
+                      ? t(nativeMode() && webkitEmulation ? "browser.viewport.webkitEmulationHint" : nativeMode() && capabilities.emulation ? "browser.viewport.emulationHint" : "browser.viewport.emulationUnavailable")
                       : option.getLabel(props.labels)}
                     onClick={() => void selectViewport(option.id)}
                   >

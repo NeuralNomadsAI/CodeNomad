@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "browser.viewport.webkitEmulationHint": "WebKitのモバイル識別とCSSビューポート。画素密度と入力にはネイティブ環境の制限があります。",
   "browser.viewport.emulationHint": "モバイル識別情報、タッチ、ピクセル密度を設定して再読み込みします。ブラウザーエンジン、キーボード、システムバーは再現しません。",
   "browser.viewport.emulationUnavailable": "サイズのみ。このプレビューではデバイスのエミュレーションは利用できません。",
   "sessionList.filter.includeMainSessions": "メインセッション",
