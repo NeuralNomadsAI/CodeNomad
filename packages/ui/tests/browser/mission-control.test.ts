@@ -690,6 +690,49 @@ test("config invalidation fences an admitted stale depth response and keeps the 
   } finally { release(); await page.close() }
 })
 
+for (const foreign of [false, true]) test(`a depth chosen during a held refresh is written after it ${foreign ? "only if no other writer changed the depth" : "against its fresh expectation"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let reads = 0, depth = 2, expectation = "e-2", release!: () => void, reached!: () => void
+  const held = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { reached = resolve })
+  const writes: unknown[] = []
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/subagent-depth*", async route => {
+      if (route.request().method() !== "GET") {
+        writes.push(route.request().postDataJSON()); depth = route.request().postDataJSON().depth; expectation = `e-${depth}`
+        return route.fulfill({ status: 204, body: "" })
+      }
+      if (++reads === 2) { reached(); await held }
+      return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 }, effectiveDepth: depth,
+        project: { path: "fixture/opencode.jsonc", depth, expectation } } })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await openMissionSettings(page)
+    const menu = depthMenu(page)
+    await waitForDepthInfo(page, "OpenCode effective depth: 2")
+    await page.evaluate(async () => {
+      const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
+      serverEvents.dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "config.updated" } } as any])
+    })
+    await started
+    await menu.evaluate(element => { (element as HTMLSelectElement).value = "5"; element.dispatchEvent(new Event("change", { bubbles: true })) })
+    assert.equal(await menu.inputValue(), "5", "the choice is shown while the refresh is held")
+    if (foreign) { depth = 7; expectation = "e-foreign" }
+    release()
+    if (foreign) {
+      await waitForDepthInfo(page, "OpenCode effective depth: 7")
+      await waitForDepthReady(page)
+      await page.waitForTimeout(150)
+      assert.deepEqual(writes, [], "another writer's depth wins over the queued choice")
+      assert.equal(await menu.inputValue(), "7")
+    } else {
+      await waitForDepthInfo(page, "OpenCode effective depth: 5")
+      assert.deepEqual(writes, [{ location: { directory: "fixture" }, depth: 5, expectation: "e-2" }])
+    }
+  } finally { release(); await page.close() }
+})
+
 test("depth uncertainty stays at its original Location through pending navigation and remount, with no replay until explicit refresh", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let writes = 0, reads = 0, release!: () => void, reached!: () => void
