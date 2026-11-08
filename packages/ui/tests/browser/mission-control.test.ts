@@ -11,6 +11,7 @@ import { clickMissionAction, inlineMissionEntry, missionEntryStatus, missionGene
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle, depthInfo, depthMenu, waitForDepthInfo, waitForDepthReady } from "./mission-actions"
 
 import { borrowFixture } from "./fixture-borrow"
+import { createMissionFailureDiagnostics } from "./mission-failure-diagnostics"
 import { isMissionContentRequest, listedMissions, panelMissions, routeMissionContent } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -1119,14 +1120,15 @@ test("paginated evidence copies its entire unchanged source without touching the
   } finally { await page.close() }
 })
 
-test("one Play control starts and resumes; partial Pause survives remount and Stop stays terminal", async () => {
+test("one Play control starts and resumes; partial Pause survives remount and Stop stays terminal", async t => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  const diagnostics = createMissionFailureDiagnostics(), calls: any[] = []
+  let current!: MissionMap
+  let failPause = true, failMap = false
   try {
+    await diagnostics.observe(page)
     await setup(page)
-    let current: MissionMap = { ...mission("lifecycle"), runState: "prepared" }
-    const calls: any[] = []
-    let failPause = true
-    let failMap = false
+    current = { ...mission("lifecycle"), runState: "prepared" }
     await page.route("**/api/workspaces/fixture/missions**", async route => {
       if (isMissionContentRequest(route.request().url())) return route.fallback()
       if (route.request().method() === "GET") return failMap
@@ -1143,8 +1145,10 @@ test("one Play control starts and resumes; partial Pause survives remount and St
       if (input.action === "pause" && failPause) {
         failPause = false
         current.control!.pending = ["ses_fixture"]
+        diagnostics.record("fixture-control", { input, status: 503, revision: current.revision, control: current.control })
         return route.fulfill({ status: 503, json: { code: "control-pending" } })
       }
+      diagnostics.record("fixture-control", { input, status: 200, revision: current.revision, control: current.control })
       return route.fulfill({ json: { mission: current } })
     })
     await page.goto(url)
@@ -1196,6 +1200,10 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     assert.equal(await missionMenuTrigger(page).count(), 1, "secondary actions live in the selection's overflow menu")
     await page.screenshot({ path: screenshotPath("mission-lifecycle-stopped") })
     assert.deepEqual(calls.map(call => call.action), ["start", "pause", "pause", "start", "stop"])
+  } catch (error) {
+    await diagnostics.dump(t, { calls, failMap, failPause, current: current && { id: current.id, revision: current.revision,
+      status: current.status, runState: current.runState, control: current.control } })
+    throw error
   } finally { await page.close() }
 })
 
