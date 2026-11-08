@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.preferenceSaveFailed": "प्राथमिकता सुरक्षित गर्न सकिएन।",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "अनुमानित रिसेट {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "उप-सत्रहरू स्वतः विस्तार गर्नुहोस्",

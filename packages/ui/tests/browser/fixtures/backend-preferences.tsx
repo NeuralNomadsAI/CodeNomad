@@ -1,5 +1,6 @@
 import { render } from "solid-js/web"
 import { createSignal } from "solid-js"
+import { Toaster } from "solid-toast"
 import type { BackendClient } from "../../../src/lib/backend-client"
 import "../../../src/index.css"
 import { applyMergePatch } from "../../../../server/src/settings/merge-patch"
@@ -45,6 +46,7 @@ const [{ ConfigProvider, preferencesForBackend }, { I18nProvider }, { default: M
   import("../../../src/components/mission-model-library"), import("../../../src/stores/session-state"),
 ])
 await Promise.all([preferencesForBackend("local").ensureLoaded(), preferencesForBackend("a").ensureLoaded(), preferencesForBackend("b").ensureLoaded()])
+const { getToastHistory } = await import("../../../src/lib/notifications")
 const models = ["host", "a", "b"].map(id => ({ id, name: `Model ${id}`, providerId: "p" }))
 setProviders(new Map(["a", "b"].map(id => [`${id}~same`, [{ id: "p", name: "P", models }]])))
 function Panel(props: { id: string }) {
@@ -61,9 +63,10 @@ function SharedSave() {
     <MissionBriefSave instanceId={`${owner()}~same`} draft={() => ({ objective: "Shared brief", notes: "", template: "custom" })} />
   </section>
 }
-render(() => <ConfigProvider><I18nProvider><Panel id="a" /><Panel id="b" /><SharedSave /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><Toaster /><Panel id="a" /><Panel id="b" /><SharedSave /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 const releases = new Map<string, () => void>()
 ;(window as any).fixture = { records, localWrites,
+  history: getToastHistory,
   favorite(id: string, modelId: string) { preferencesForBackend(id).toggleFavoriteModelPreference({ providerId: "p", modelId }) },
   revoke(id: string, dispose: boolean) {
     const owner = owners.get(id)!

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
+import toast from "solid-toast"
 import { YamlDocStore } from "../../../server/src/settings/yaml-doc-store"
 import { applyMergePatch } from "../../../server/src/settings/merge-patch"
 import { backends, createBackendClient, localBackend, type BackendClient } from "../lib/backend-client"
@@ -36,6 +37,9 @@ function fixture(config: Bucket = {}, state: Bucket = {}) {
 }
 
 test("real preference consumers isolate host, server, fallback, instance data and revoked attachments", async t => {
+  const originalToast = toast.custom
+  toast.custom = () => "test-toast"
+  t.after(() => { toast.custom = originalToast })
   const originalFetch = globalThis.fetch
   const root = mkdtempSync(join(tmpdir(), "codenomad-preferences-"))
   const file = join(root, "config.yaml")
@@ -62,6 +66,7 @@ test("real preference consumers isolate host, server, fallback, instance data an
     rmSync(root, { recursive: true, force: true })
   })
   const module = await import("./preferences")
+  const { getToastHistory } = await import("../lib/notifications")
   const hostPrefs = module.preferencesForBackend("local")
   await hostPrefs.ensureLoaded()
   const a = fixture({ ui: { settings: { missionProfileDefaults: [], missionModels: [] } }, server: { logLevel: "INFO" } },
@@ -213,6 +218,7 @@ test("real preference consumers isolate host, server, fallback, instance data an
   })
 
   await t.test("missing and revoked owners never write locally; queued writes retain admission", async () => {
+    const beforeToasts = getToastHistory().length
     const beforeHost = host.calls.length, beforeA = a.calls.length
     assert.deepEqual(module.preferencesForBackend("absentPrefs").recentFolders(), [])
     ownerA.detach()
@@ -232,6 +238,8 @@ test("real preference consumers isolate host, server, fallback, instance data an
     await assert.rejects(queued, /Backend unavailable/)
     assert.equal(b.calls.length, sent, "queued mutation is never dispatched after revocation")
     assert.equal(host.calls.length, beforeHost)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(getToastHistory().length - beforeToasts, 3, "each revoked action reports once, including both queued edits")
   })
 
   await t.test("the same client reattached cannot publish an old ACK or erase newer persisted recents", async () => {

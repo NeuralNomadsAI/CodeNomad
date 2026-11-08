@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.preferenceSaveFailed": "לא ניתן לשמור את ההעדפה.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "איפוס משוער {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "הרחבה אוטומטית של תת־סשנים",

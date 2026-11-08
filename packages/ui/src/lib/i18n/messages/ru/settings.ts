@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.preferenceSaveFailed": "Не удалось сохранить настройку.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Предполагаемый сброс {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Автоматически раскрывать подсессии",

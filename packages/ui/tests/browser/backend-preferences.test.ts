@@ -16,6 +16,60 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await events?.close() })
 
+test("a refused model preference edit shows one Settings error and never replays", { timeout: 120_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await events.route(page)
+  await page.route("**/api/**", route => route.request().url().includes("/api/events") ? route.fallback()
+    : route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    const a = page.locator('[data-owner="a"]')
+    await a.locator(".mission-brief-picker select").waitFor({ timeout: 90_000 })
+    await page.evaluate(async () => {
+      const { backends } = await import("/src/lib/backend-client.ts")
+      ;(window as any).fixture.hold("a")
+      // Seed the old transport write independently of the user action under test.
+      void backends.get("a")!.storage.patchStateOwner("ui", { models: { favorites: [{ providerId: "p", modelId: "a" }, { providerId: "p", modelId: "old" }] } }).catch(() => {})
+    })
+    await page.waitForFunction(() => (window as any).fixture.records.a.writes.length === 1)
+    await page.evaluate(async () => {
+      const { backends } = await import("/src/lib/backend-client.ts")
+      const { backendEvents } = await import("/src/lib/backend-events.ts")
+      ;(window as any).fixture.revoke("a", false)
+      backendEvents.attach("a", backends.get("a")!.events)
+    })
+    await a.locator("[data-model-selector-control] .selector-trigger").click()
+    await page.locator(".selector-favorites-toggle").click()
+    const bubble = page.getByText("Could not save the preference.", { exact: true })
+    await bubble.waitFor({ timeout: 15_000 })
+    assert.equal(await bubble.count(), 1)
+    const failures = () => page.evaluate(() => (window as any).fixture.history().filter((item: any) => item.message === "Could not save the preference."))
+    assert.equal((await failures()).length, 1)
+    assert.equal((await failures())[0].variant, "error")
+    assert.equal(await page.locator(".selector-favorites-toggle").getAttribute("aria-pressed"), "false")
+    assert.equal(await page.evaluate(() => (window as any).fixture.records.a.writes.length), 1)
+    await page.evaluate(() => (window as any).fixture.release("a"))
+    // An explicit read settles the real barrier; it must not replay the refused click.
+    await page.evaluate(async () => {
+      const { preferencesForBackend } = await import("/src/stores/preferences.tsx")
+      await preferencesForBackend("a").ensureEditDocument("state/ui")
+    })
+    assert.equal(await page.evaluate(() => (window as any).fixture.records.a.writes.length), 1)
+    assert.equal(await page.locator(".selector-favorites-toggle").getAttribute("aria-pressed"), "false")
+    await page.locator(".selector-favorites-toggle").click()
+    await page.waitForFunction(() => (window as any).fixture.records.a.state.models.favoritesOnly === true)
+    assert.equal(await page.evaluate(() => (window as any).fixture.records.a.writes.length), 2)
+    assert.equal((await failures()).length, 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.localWrites), [])
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.evaluate(() => (window as any).fixture?.release("a"))
+    await page.close()
+  }
+})
+
 test("real Mission save stays available while an unrelated replacement state read waits", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
   await events.route(page)

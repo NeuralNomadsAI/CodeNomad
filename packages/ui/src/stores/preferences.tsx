@@ -3,6 +3,7 @@ import type { Accessor, ParentComponent } from "solid-js"
 import { ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
 import { backends, localBackend, isLocalBackend, type BackendClient, type BackendId } from "../lib/backend-client"
 import { backendEvents } from "../lib/backend-events"
+import { tGlobal } from "../lib/i18n"
 import { parseInstanceKey } from "../lib/backend-identity"
 import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
@@ -1649,12 +1650,20 @@ const stateEdits = new Set([...deferredServerEdits].filter(key => ![
   "updateEnvironmentVariables", "addEnvironmentVariable", "removeEnvironmentVariable", "toggleSecureEnvVar", "updateLastUsedBinary", "updateLogLevel",
 ].includes(key)).concat(["addNamedRecentFolder", "renameRecentFolderProject"]))
 const configEdits = new Set(["updatePreferences", "saveMissionDefaults", "resetMissionModels", "saveUserMissionModel", "removeUserMissionModel", "setProviderModelVisibility"])
+function notifyRefusedPreferenceEdit() {
+  void import("../lib/notifications").then(({ showToastNotification }) => {
+    showToastNotification({ category: "settings", variant: "error", message: tGlobal("settings.preferenceSaveFailed") })
+  }).catch(error => log.error("Failed to notify refused preference edit", error))
+}
 // Empty server buckets keep host presentation/model inheritance but carry no write authority.
 const unavailablePreferences = createPreferencesStore({ ...localBackend, id: "unavailable" })
 for (const key of hostPreferenceMethods) Object.assign(unavailablePreferences, { [key]: hostPreferences[key] })
 const unavailableTarget = (backendId: BackendId): ConfigContextValue => new Proxy(unavailablePreferences, {
   get: (target, key) => (...args: unknown[]) => {
-    if (!preferenceReads.has(String(key))) throw new Error(`Backend unavailable: ${backendId}`)
+    if (!preferenceReads.has(String(key))) {
+      if (stateEdits.has(String(key)) || configEdits.has(String(key))) notifyRefusedPreferenceEdit()
+      throw new Error(`Backend unavailable: ${backendId}`)
+    }
     return (target[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
   },
 })
@@ -1679,6 +1688,7 @@ export function preferencesForBackend(backendId: BackendId): ConfigContextValue 
         const attached = backendEvents.signal(backendId)
         if (attachment.aborted || attached !== attachment || backends.get(backendId) !== backend) {
           if (preferenceReads.has(key)) return (unavailablePreferences[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
+          if (stateEdits.has(key) || configEdits.has(key)) notifyRefusedPreferenceEdit()
           throw new Error(`Backend unavailable: ${backendId}`)
         }
         if (stateEdits.has(key) || configEdits.has(key)) {
@@ -1690,7 +1700,10 @@ export function preferencesForBackend(backendId: BackendId): ConfigContextValue 
             if (document === "state/ui") await settle()
             return result
           })
-          editTails.set(document, backend.storage.trackWrite(write.then(() => {}, error => { log.error("Failed to update settings", error) })))
+          editTails.set(document, backend.storage.trackWrite(write.then(() => {}, error => {
+            notifyRefusedPreferenceEdit()
+            log.error("Failed to update settings", error)
+          })))
           return write
         }
         if (deferredServerEdits.has(key) && !ready()) {
