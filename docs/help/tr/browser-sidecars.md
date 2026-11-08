@@ -30,6 +30,8 @@ Tauri macOS/Linux önizlemeleri elle açılır, paylaşılan oturum açma bilgil
 
 Yerel açılır pencereler önizleme oturumlarını paylaşır, `opener`/`postMessage` ilişkisini korur ve açan sayfayla kapanır. Yazılan veya geri yüklenen adresler kimlik bilgisiz HTTP(S) ile sınırlıdır; siteler boş ve aynı kökenli blob belgeleri de açabilir. Dosya ve uygulama şemaları engellenir. İndirmeler temizlenmiş benzersiz adlarla İndirilenler'e kaydedilir; üzerine yazılmaz ve otomatik açılmaz. Kamera, mikrofon, konum ve bildirimler reddedilir; sınıflandırılmış izinler onay ister, bilinmeyen istekler hata gösterir. Tauri ve Electron `alert`/`confirm`/`prompt` destekler; Electron'un prompt iletişim kutusu önizlemenin ana sayfalarında ve açılır pencerelerde kullanılabilir. Aygıt ve ekran seçicilerinde mevcut girdiler arasında kaydırma yapılabilir. Diğer API'ler motora ve donanıma bağlıdır.
 
+Siteler yerel açılır pencere kapanırken onay isteyebilir. Linux'ta işaretçi kilidi onayı ilgili pencerenin üstünde görünür. 2.52.6 dahil [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) sorunundan etkilenen WebKitGTK sürümlerinde, bırakılan dosyalara erişim güvenlik nedeniyle engellendiği için yüklemelerde sayfanın dosya seçicisini kullanın. İlgili CodeNomad penceresini kapatmadan veya yeniden yüklemeden önce sayfadaki çalışmanızı kaydedin.
+
 ## Altı görünüm alanı şablonundan birini seçin {#templates}
 
 1. Önizlemenin görünüm menüsünü açın.

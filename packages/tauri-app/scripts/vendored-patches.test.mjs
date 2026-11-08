@@ -67,3 +67,19 @@ test("WK preview print and beforeunload callbacks retain native completion and a
   assert.match(delegate, /webview\.printOperationWithPrintInfo\(&info\)/)
   assert.match(delegate, /operation\.runOperation\(\)/)
 })
+
+test("GTK pointer consent preserves the requesting surface and cancels on navigation", () => {
+  const source = read("src-tauri/src/embedded_view/linux.rs")
+  assert.match(source, /if kind == "pointer-lock"[\s\S]*?pointer_lock_consent\([\s\S]*?return true/)
+  assert.match(source, /gtk::InfoBar::new\(\)/)
+  assert.match(source, /button\.set_focus_on_click\(false\)/)
+  assert.match(source, /LoadEvent::Started[\s\S]*?bar\.response\(gtk::ResponseType::Cancel\)/)
+  assert.match(source, /allowed && epoch\.get\(\) == captured/)
+})
+
+test("native popup closure runs each engine's beforeunload path", () => {
+  assert.match(read("src-tauri/src/embedded_view/browser.rs"), /CloseRequested \{ api, \.\. \}[\s\S]*?api\.prevent_close\(\)/)
+  assert.match(read("src-tauri/src/embedded_view/linux.rs"), /native\.inner\(\)\.try_close\(\)/)
+  assert.match(read("src-tauri/src/embedded_view/macos.rs"), /msg_send!\[view, _tryClose\]/)
+  assert.match(read("src-tauri/src/embedded_view/windows.rs"), /view\.eval\("window.close\(\)"\)/)
+})

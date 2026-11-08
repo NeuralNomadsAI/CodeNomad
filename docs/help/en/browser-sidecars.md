@@ -30,6 +30,8 @@ Tauri macOS/Linux previews open manually, retain shared sign-ins across restarts
 
 Native pop-ups share preview sign-ins, preserve `opener`/`postMessage` and close with their opener. Typed/restored addresses accept credential-free HTTP(S); sites can also open blank and same-origin blob documents. File and app schemes are blocked. Downloads save to Downloads with sanitized unique names, never overwrite files and never auto-open. Camera, microphone, location and notifications are denied; classified permissions use consent, unknown requests show an error. Tauri and Electron support `alert`/`confirm`/`prompt`; Electron's prompt dialog covers top-level preview pages and pop-ups. Device and screen selectors scroll through the available entries. Other APIs depend on the engine and hardware.
 
+Sites can ask for confirmation when closing a native pop-up. Linux pointer-lock consent appears at the top of its owning window. WebKitGTK builds affected by [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), including 2.52.6, require the page's file input for uploads because dropped-file access is blocked for security. Save page work before closing or reloading the owning CodeNomad window.
+
 ## Choose one of six viewport templates {#templates}
 
 1. Open the preview's viewport menu.

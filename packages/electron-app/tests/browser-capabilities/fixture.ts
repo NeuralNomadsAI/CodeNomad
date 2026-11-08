@@ -5,6 +5,7 @@ import { configureBrowserDownloads } from "../../electron/main/browser-downloads
 import { protectBrowserGuest, configureBrowserGuests } from "../../electron/main/browser-guests"
 import { configureBrowserPromptSession } from "../../electron/main/browser-prompt"
 import { qualifyPrompt } from "./prompt-acceptance"
+import { qualifyBeforeUnload } from "./beforeunload-acceptance"
 
 if (!process.env.CODENOMAD_PROFILE) throw new Error("Set an isolated CODENOMAD_PROFILE directory")
 app.setPath("userData", process.env.CODENOMAD_PROFILE)
@@ -23,6 +24,7 @@ owner.webContents.on("will-attach-webview", (event, preferences, params) => {
 owner.webContents.on("did-attach-webview", (_event, guest) => {
   protectBrowserGuest(owner, guest)
   if (process.env.CODENOMAD_FIXTURE_PROMPT_TEST) guest.once("did-finish-load", () => { void qualifyPrompt(owner, guest) })
+  else if (process.env.CODENOMAD_FIXTURE_BEFOREUNLOAD_TEST) guest.once("did-finish-load", () => { void qualifyBeforeUnload(owner, guest) })
   guest.on("console-message", details => console.log("guest", details.message))
   if (process.env.CODENOMAD_FIXTURE_NETWORK) guest.once("did-finish-load", () => {
     void guest.loadURL("https://example.com").then(() => guest.executeJavaScript(`

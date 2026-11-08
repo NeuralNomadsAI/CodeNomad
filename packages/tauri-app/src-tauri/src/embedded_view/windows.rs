@@ -1,6 +1,13 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
+pub(super) fn request_close<R: tauri::Runtime>(view: &tauri::Webview<R>) -> Result<(), String> {
+    // These windows were opened by script. WebView2's supported close request
+    // is window.close(), which emits WindowCloseRequested after beforeunload.
+    view.eval("window.close()")
+        .map_err(|error| error.to_string())
+}
+
 pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<(), String> {
     use webview2_com::{Microsoft::Web::WebView2::Win32::*, PermissionRequestedEventHandler};
     crate::windows_browser_accelerators::bind(webview);

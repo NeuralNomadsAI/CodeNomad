@@ -577,6 +577,7 @@ version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
  "gtk",
+ "objc2",
  "serde",
  "sha2",
  "tauri",

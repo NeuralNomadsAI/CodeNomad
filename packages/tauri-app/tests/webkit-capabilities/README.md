@@ -63,3 +63,40 @@ unique 593-byte PDF in Downloads. Arm beforeunload before **Navigate**, **Reload
 page** and native closure, testing cancellation and acceptance separately. Record
 native closure independently from navigation. **Hardware APIs** reports interface
 availability; **WebAuthn availability** reports platform-authenticator availability.
+
+## Isolated native inputs
+
+Linux fixtures and native file sources share the same session bus. Set `DISPLAY`
+before `dbus-run-session` and update its activation environment before launching
+portal clients; a portal with a different display can open its print dialog
+outside the test display. Use a dedicated Xvfb display and compositor, with native
+Wayland clients connected to that compositor's own socket. Capture both client and
+server Wayland traces when qualifying pointer lock, including the compositor's
+`locked` event to establish effective lock.
+
+`gtk-file-source.py <known-fixture-file>` offers a genuine `text/uri-list` drag.
+Move inside the destination after its initial drag-enter so WebKit receives a
+drag-over before release. `mac-file-source.swift`, built with the system `swiftc`,
+offers a native NSURL drag; `mac-input.py drag X Y X Y` sends native mouse events.
+On Windows, launch `windows-file-source.ps1 -FixtureProcessId <pid>` in hidden
+PowerShell and use `windows-file-drop.ps1` with that source PID and fixture PID.
+The source is the checked-in `drop-fixture.txt`; the page reports FileList count
+and name. WebKitGTK 2.52.6 reproduces WebKit bug 323277 (CVE-2025-13947 protection)
+in both the production layer and a bare native WebKit view. Preserve the engine's
+file security policy; uploading through the file input is the available path.
+
+For reproducible WebView2 beforeunload checks, start a fresh isolated release
+fixture, then run `windows-beforeunload.ps1 -FixtureProcessId <pid>
+-EvidenceDirectory <new-directory>`. It asserts Stay/Leave for navigation, reload
+and native popup closure, capturing each stage. The driver admits external-browser
+dialog windows only through their live HWND owner chain, restores owned minimized
+windows and refuses covered controls before foreground pointer input.
+
+Electron's `CODENOMAD_FIXTURE_BEFOREUNLOAD_TEST=1` runs equivalent assertions against
+the production guest hooks. Set `CODENOMAD_FIXTURE_DIALOG_DRIVER` to the absolute
+`linux-answer-beforeunload.sh` path and `CODENOMAD_FIXTURE_EVIDENCE` to an isolated
+output directory. The native answer helper needs `xdotool`, ImageMagick and the
+fixture's display; it matches both the owning PID and origin-labelled dialog.
+Run the test process under an external `timeout` too, since a synchronous native
+dialog can block the main JavaScript event loop. These checks cover individual
+popup closure; owning-window/opener teardown is recorded independently.

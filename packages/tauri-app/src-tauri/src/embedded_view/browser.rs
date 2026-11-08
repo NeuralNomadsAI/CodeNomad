@@ -223,7 +223,21 @@ impl EmbeddedViews {
         let cleanup_app = app.clone();
         let cleanup_label = label.clone();
         let cleanup_record = record.clone();
+        let close_view: tauri::Webview<R> = window.as_ref().clone();
         window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                #[cfg(target_os = "linux")]
+                let result = super::linux::request_close(&close_view);
+                #[cfg(target_os = "macos")]
+                let result = super::macos::request_close(&close_view);
+                #[cfg(windows)]
+                let result = super::windows::request_close(&close_view);
+                if let Err(error) = result {
+                    eprintln!("[browser-close] {error}");
+                }
+                return;
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 cleanup.remove_exact(&cleanup_label, &cleanup_record);
                 cleanup.close_popups(&cleanup_app, &cleanup_label);

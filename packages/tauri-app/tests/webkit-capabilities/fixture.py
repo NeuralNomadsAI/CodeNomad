@@ -24,11 +24,12 @@ PAGE = b'''<!doctype html><meta charset="utf-8"><title>WebKit capabilities</titl
 <button onclick="this.requestPointerLock()">Pointer lock</button>
 <button onclick="navigator.clipboard.readText().then(v=>report('clipboard-read','length:'+v.length),e=>report('clipboard-read',e.name))">Read clipboard</button>
 <button onclick="navigator.clipboard.writeText('capabilities-fixture').then(()=>report('clipboard-write','written'),e=>report('clipboard-write',e.name))">Write clipboard</button>
-<button onclick="window.onbeforeunload=()=>true;report('beforeunload','armed')">Arm beforeunload</button><a href="/next">Navigate</a>
+<button onclick="window.onbeforeunload=()=>true;report('beforeunload','armed');report('activation',navigator.userActivation?.hasBeenActive)">Arm beforeunload</button><a href="/next">Navigate</a>
 <button onclick="location.reload()">Reload page</button>
+<button onclick="window.open('/close-test','close-test','width=800,height=700')">Close-test popup</button>
 <button onclick="window.print();report('print','requested')">Print</button>
 <input type="file" onchange="report('file',this.files[0]?.name)">
-<div style="height:80px;border:1px solid" ondragover="event.preventDefault()" ondrop="event.preventDefault();report('drop',event.dataTransfer.files[0]?.name)">Drop file</div>
+<div style="height:80px;border:1px solid" ondragenter="report('drag-enter',Array.from(event.dataTransfer.types).join(','))" ondragover="event.preventDefault();event.dataTransfer.dropEffect='copy'" ondrop="event.preventDefault();report('drop-count',event.dataTransfer.files.length);report('drop',event.dataTransfer.files[0]?.name)">Drop file</div>
 <button onclick="if(window.PublicKeyCredential)PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(v=>report('webauthn',v));else report('webauthn','unavailable')">WebAuthn availability</button>
 <button onclick="report('hardware',JSON.stringify(Object.fromEntries(['usb','hid','serial','bluetooth'].map(k=>[k,typeof navigator[k]]))))">Hardware APIs</button>
 <a href="/pdf" target="_blank">PDF display</a><a href="/pdf-download" download>PDF download</a>
@@ -38,6 +39,8 @@ function report(k,v){results.textContent+=k+': '+v+'\\n';fetch('/result?'+encode
 addEventListener('error',e=>report('error',e.message));
 document.addEventListener('pointerlockchange',()=>report('pointer-lock',Boolean(document.pointerLockElement)));
 document.addEventListener('pointerlockerror',()=>report('pointer-lock','error'));
+let lockedMotions=0;
+document.addEventListener('mousemove',event=>{if(document.pointerLockElement&&(event.movementX||event.movementY)&&lockedMotions++<3)report('locked-motion',event.movementX+','+event.movementY)});
 document.addEventListener('fullscreenchange',()=>report('fullscreen-state',Boolean(document.fullscreenElement)));
 function blankPopup(){
   popup=window.open('about:blank','blank-oauth','width=520,height=680');

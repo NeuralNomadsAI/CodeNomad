@@ -101,6 +101,12 @@ Camera, microphone, geolocation and notifications remain denied on every host. W
 
 WKWebView preview delegates implement WebKit's native print and beforeunload callbacks from `WKUIDelegatePrivate.h`. Printing uses the public `printOperationWithPrintInfo:` API and the system print panel; beforeunload uses the initiating-frame-labelled confirmation sheet. Requalify these selectors on supported macOS/WebKit updates.
 
+Native popup-window close requests run WebKitGTK `try_close`, WKWebView `_tryClose`, or WebView2's script-window close action before native disposal. A cancelled beforeunload retains the popup. Owning-window/opener cleanup and primary-renderer replacement dispose their preview tree directly; page work must be saved before these operations.
+
+GTK pointer-lock consent uses a native `GtkInfoBar` on the owning surface. Its buttons retain the WebView's focus on click and offer native mnemonics; load start cancels the bar and the document-generation fence validates the answer. A separate modal surface can cancel WebKit's pending Wayland lock request. Qualification checks the compositor's `zwp_locked_pointer_v1.locked` event as well as DOM state and Escape release.
+
+Affected WebKitGTK builds, including 2.52.6, block `DataTransfer.files` as a security measure for CVE-2025-13947. The system engine's `DataTransfer::allowsFileAccess()` returns false for non-Cocoa ports; the native fixture and a plain WebKit control reproduce an empty FileList with genuine GTK file drags. Keep this protection and use the page's file input. [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) tracks the secure separation of native file grants from web-writable URI text; never convert arbitrary dropped URI text into host file reads.
+
 ### Tauri embedded-view contract
 
 - Consumers choose a unique native label for each creation, including replacements, and a persistent storage descriptor separate from the application renderer. Windows/Linux preview storage is `browser/shared-v1` inside the scoped profile. macOS uses a WebKit-managed identified store. The common registry binds each child to a validated local-window owner before native construction. Every bounds, visibility and close operation rechecks ownership; native calls run outside registry locks.

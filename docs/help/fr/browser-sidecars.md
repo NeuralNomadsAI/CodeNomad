@@ -30,6 +30,8 @@ Les aperçus Tauri macOS/Linux s’ouvrent manuellement, conservent les connexio
 
 Les pop-ups natifs partagent les connexions de l’aperçu, conservent `opener`/`postMessage` et se ferment avec leur page d’origine. Les adresses saisies/restaurées acceptent HTTP(S) sans identifiants ; les sites peuvent aussi ouvrir des documents vierges et blob de même origine. Les schémas de fichiers et applicatifs sont bloqués. Les téléchargements vont dans Téléchargements, avec des noms assainis et uniques, sans écrasement ni ouverture automatique. Caméra, microphone, localisation et notifications sont refusés ; les permissions classifiées demandent un consentement, les requêtes inconnues affichent une erreur. Tauri et Electron prennent en charge `alert`/`confirm`/`prompt` ; le dialogue prompt d’Electron couvre les pages principales de l’aperçu et les pop-ups. Les sélecteurs de périphériques et d’écrans permettent de faire défiler les entrées disponibles. Les autres API dépendent du moteur et du matériel.
 
+Les sites peuvent demander confirmation à la fermeture d’un pop-up natif. Sous Linux, le consentement au verrouillage du pointeur apparaît en haut de sa fenêtre. Les versions de WebKitGTK affectées par [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), dont 2.52.6, nécessitent le sélecteur de fichiers de la page pour les envois : l’accès aux fichiers déposés est bloqué pour des raisons de sécurité. Enregistrez le travail de la page avant de fermer ou recharger la fenêtre CodeNomad qui l’héberge.
+
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 
 1. Ouvrez le menu de zone d’affichage de l’aperçu.

@@ -30,6 +30,8 @@ Las vistas previas de Tauri para macOS/Linux se abren manualmente, conservan los
 
 Las ventanas emergentes nativas comparten las sesiones de la vista previa, conservan `opener`/`postMessage` y se cierran con su página de origen. Las direcciones introducidas/restauradas permiten HTTP(S) sin credenciales; los sitios también pueden abrir documentos vacíos y blob del mismo origen. Se bloquean los esquemas de archivos y de la aplicación. Las descargas usan nombres saneados y únicos en Descargas, sin sobrescribir ni abrir archivos automáticamente. Se deniegan cámara, micrófono, ubicación y notificaciones; los permisos clasificados requieren consentimiento y las solicitudes desconocidas muestran un error. Tauri y Electron admiten `alert`/`confirm`/`prompt`; el diálogo prompt de Electron cubre las páginas principales de la vista previa y las ventanas emergentes. Los selectores de dispositivos y pantallas permiten desplazarse por las entradas disponibles. Otras API dependen del motor y del hardware.
 
+Los sitios pueden pedir confirmación al cerrar una ventana emergente nativa. En Linux, el consentimiento para bloquear el puntero aparece en la parte superior de su ventana. Las versiones de WebKitGTK afectadas por [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), incluida 2.52.6, requieren el selector de archivos de la página para subir archivos, ya que el acceso a archivos arrastrados está bloqueado por seguridad. Guarde el trabajo de la página antes de cerrar o recargar la ventana de CodeNomad que la contiene.
+
 ## Elegir una de seis plantillas de área visible {#templates}
 
 1. Abre el menú de área visible de la vista previa.

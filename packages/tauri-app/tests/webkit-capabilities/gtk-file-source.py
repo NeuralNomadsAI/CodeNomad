@@ -15,9 +15,11 @@ button = Gtk.Button(label='Drag fixture file')
 button.drag_source_set(Gdk.ModifierType.BUTTON1_MASK,
                        [Gtk.TargetEntry.new('text/uri-list', 0, 0)], Gdk.DragAction.COPY)
 button.connect('drag-begin', lambda *_: print('drag-begin', flush=True))
+button.connect('drag-end', lambda *_: print('drag-end', flush=True))
+button.connect('drag-failed', lambda _button, _context, result: print('drag-failed', result.value_nick, flush=True) or False)
 def provide(_button, _context, data, _info, _time):
-    print('drag-data-get', flush=True)
     data.set_uris([uri])
+    print('drag-data-get', data.get_target().name(), bytes(data.get_data()), flush=True)
 button.connect('drag-data-get', provide)
 window.add(button)
 window.connect('destroy', Gtk.main_quit)
