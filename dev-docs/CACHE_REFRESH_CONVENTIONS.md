@@ -27,6 +27,8 @@ where their authority, lifetime or runtime differs.
   including conditional Mission writes sharing `config/ui`. After settlement, fresh
   reads supersede events received during the wait. A ten-second owner reconciliation
   budget bounds each wait; expiry fails closed and retains the barrier until settlement.
+  Preference edit queues await only their own document's initial read and prior edits;
+  independent owner reads publish separately while full initialization joins them all.
 - Treat a background update of a displayed collection as data, never as a user
   selection: preserve its open state, stable-key keyboard target and inline actions.
 

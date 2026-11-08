@@ -184,7 +184,7 @@
   "stores/plugin-package-actions.ts": ["sdk:plugin.check x1","sdk:plugin.update x1"],
   "stores/plugin-sources.ts": ["api-client:addPluginSource x1","api-client:removePluginSource x1","delegated:backend x1"],
   "stores/model-picker.ts": ["delegated:backend x1"],
-  "stores/preferences.tsx": ["continuation:delegated x1","continuation:onMount x1","continuation:then x13","delegated:backend x81"],
+  "stores/preferences.tsx": ["continuation:delegated x1","continuation:onMount x1","continuation:then x13","delegated:backend x91"],
   "stores/project-names.ts": ["delegated:backend x2"],
   "stores/releases.ts": ["continuation:setInterval x1","delegated:backend x5","server-meta:getServerMeta x1"],
   "stores/restore-creation-cancellation.ts": ["api-client:cancelWorkspaceCreation x1","continuation:delegated x1"],

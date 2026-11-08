@@ -317,6 +317,57 @@ test("real preference consumers isolate host, server, fallback, instance data an
     detach()
   })
 
+  for (const heldDocument of ["state/ui", "config/ui", "config/server"]) await t.test(`preference edits await only their own document (${heldDocument} pending)`, async () => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const writes: string[] = []
+    let state: Bucket = { recentFolders: [{ path: "/initial", lastAccessed: 1 }] }, config: Bucket = {}
+    const backend = createBackendClient({ id: `independent-${heldDocument.replace("/", "-")}`, baseUrl: "https://independent.invalid", fetcher: async (input, init) => {
+      const document = new URL(String(input)).pathname.split("/storage/")[1]
+      if (init?.method === "PATCH") {
+        writes.push(document)
+        if (writes.length === 1 && document === heldDocument) await held
+        const body = JSON.parse(String(init.body))
+        if (document === "state/ui") state = applyMergePatch(state, body) as Bucket
+        else config = applyMergePatch(config, body.patch ?? body) as Bucket
+      } else if (document === "config/server" && heldDocument === "config/server") await held
+      return Response.json(document === "state/ui" ? state : config)
+    } })
+    registry.set(backend.id, backend); registered.push(backend)
+    let detach = backendEvents.attach(backend.id, backend.events)
+    let oldWrite = Promise.resolve()
+    try {
+      const old = module.preferencesForBackend(backend.id)
+      if (heldDocument !== "config/server") {
+        await old.ensureLoaded()
+        oldWrite = (heldDocument === "state/ui" ? old.renameRecentFolderProject("/initial", "Old")
+          : old.setProviderModelVisibility("p", { hiddenModelIds: ["old"] })).catch(() => {})
+        while (!writes.length) await new Promise<void>(resolve => setImmediate(resolve))
+        detach(); detach = backendEvents.attach(backend.id, backend.events)
+      }
+      const fresh = module.preferencesForBackend(backend.id)
+      for (let turn = 0; turn < 10; turn++) await new Promise<void>(resolve => setImmediate(resolve))
+      const independent = heldDocument === "state/ui" ? "config/ui" : "state/ui"
+      if (independent === "config/ui") {
+        assert.equal(fresh.isUiConfigLoaded(), true)
+        assert.equal(fresh.missionModelsValid(), true)
+      }
+      const saving = (independent === "config/ui"
+        ? fresh.saveUserMissionModel({ version: 1, id: "00000000-0000-0000-0000-000000000099", name: "Independent", objective: "Independent", notes: "", template: "custom" })
+        : fresh.renameRecentFolderProject("/initial", "Independent")).catch(() => {})
+      for (let turn = 0; turn < 10; turn++) await new Promise<void>(resolve => setImmediate(resolve))
+      const dispatched = writes.includes(independent)
+      release()
+      await Promise.all([oldWrite, saving, fresh.ensureLoaded()])
+      assert.equal(dispatched, true, "ready document mutation must not wait for an unrelated document")
+      if (independent === "config/ui") assert.ok(config.settings.missionModels.some((model: any) => model.name === "Independent"))
+      else {
+        assert.equal(state.recentFolders[0].projectName, "Independent")
+        assert.equal(fresh.recentFolders()[0].projectName, "Independent", "late global load preserves the newer document snapshot")
+      }
+    } finally { release(); await oldWrite; detach() }
+  })
+
   await t.test("revocation fences in-flight loads and a reused backend id gets fresh state", async () => {
     const data = fixture({}, { ui: { recentFolders: [{ path: "/obsolete", lastAccessed: 1 }] } })
     let release!: () => void

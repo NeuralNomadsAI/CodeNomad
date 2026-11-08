@@ -716,21 +716,45 @@ const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBi
 const remoteServers: Accessor<RemoteServerProfile[]> = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
 
 let loadPromise: Promise<void> | null = null
+let stateLoaded = false
+const documentLoads = new Map<string, Promise<void>>()
+
+async function ensureEditDocument(document: "config/ui" | "state/ui"): Promise<void> {
+  assertCurrent()
+  if (local) return ensureLoaded()
+  if (document === "config/ui" ? isUiConfigLoaded() : stateLoaded) return
+  let loading = documentLoads.get(document)
+  if (!loading) {
+    loading = (document === "config/ui" ? storage.revalidateUiConfigOwner() : storage.loadStateOwner("ui"))
+      .then(value => {
+        assertCurrent()
+        if (document === "config/ui") {
+          setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
+        } else { setUiStateBucket(value as any); stateLoaded = true }
+      })
+      .catch(error => { if (current() && document === "config/ui") setUiConfigLoadFailed(true); throw error })
+      .finally(() => { if (documentLoads.get(document) === loading) documentLoads.delete(document) })
+    documentLoads.set(document, loading)
+  }
+  await loading
+}
 
 async function ensureLoaded(): Promise<void> {
   assertCurrent()
   if (isLoaded()) return
   if (!loadPromise) {
     loadPromise = Promise.all([
-      storage.revalidateUiConfigOwner().then(value => { assertCurrent(); setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false); return value })
-        .catch(error => { if (current()) setUiConfigLoadFailed(true); throw error }),
-      storage.loadConfigOwner("server"),
-      storage.loadStateOwner("ui"),
+      local ? storage.revalidateUiConfigOwner().then(value => { assertCurrent(); setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false); return value })
+        .catch(error => { if (current()) setUiConfigLoadFailed(true); throw error }) : ensureEditDocument("config/ui"),
+      local ? storage.loadConfigOwner("server") : storage.loadConfigOwner("server").then(value => { assertCurrent(); setServerConfigBucket(value as any); return value }),
+      local ? storage.loadStateOwner("ui") : ensureEditDocument("state/ui"),
     ])
       .then(([, srvCfg, uiSt]) => {
         assertCurrent()
-        setServerConfigBucket(srvCfg as any)
-        setUiStateBucket(uiSt as any)
+        if (local) {
+          setServerConfigBucket(srvCfg as any)
+          setUiStateBucket(uiSt as any)
+        }
         setIsLoaded(true)
       })
       .catch((error) => {
@@ -749,7 +773,8 @@ async function ensureLoaded(): Promise<void> {
 }
 
 async function patchConfigOwner(owner: string, patch: unknown) {
-  await ensureLoaded()
+  if (!local && owner === "ui") await ensureEditDocument("config/ui")
+  else await ensureLoaded()
   assertCurrent()
   if (!local && owner === "server") throw new Error("Server administration requires its local host")
   let updated: OwnerBucket
@@ -769,7 +794,7 @@ function patchStateOwner(owner: string, patch: unknown): Promise<void> {
   return stateWrite
 }
 async function writeStateOwner(owner: string, patch: unknown) {
-  await ensureLoaded()
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
   assertCurrent()
   if (!local && owner === "ui" && patch && typeof patch === "object" && "opencodeBinaries" in patch) {
     throw new Error("Binary administration requires its local host")
@@ -1187,7 +1212,7 @@ async function renameRecentFolderProject(folderPath: string, projectName: string
   const name = projectName.trim()
   if (!folderPath || !name) return
   // Derive from loaded state; an unloaded empty list would erase every recent folder.
-  await ensureLoaded()
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
   const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
   try {
     await patchStateOwner("ui", { recentFolders: next })
@@ -1230,7 +1255,7 @@ function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
 
 /** Adds a named project to the recent folders, e.g. a kept temporary folder. */
 async function addNamedRecentFolder(folderPath: string, projectName: string): Promise<void> {
-  await ensureLoaded()
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
   await patchStateOwner("ui", { recentFolders: buildRecentFolderList(folderPath, recentFolders(), undefined, projectName) })
 }
 
@@ -1589,7 +1614,7 @@ function subscribe() {
       unsubStateUi()
     }
 }
-return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, patchHotkeyPreferences, setUpdateFeed, subscribe,
+return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, patchHotkeyPreferences, setUpdateFeed, subscribe, ensureEditDocument,
   settleStateWrite: async () => { await Promise.all([favoritesOnlyWriteQueue, cloneParentSaves]); await stateWrite } }
 }
 
@@ -1646,7 +1671,7 @@ export function preferencesForBackend(backendId: BackendId): ConfigContextValue 
     const rooted = createRoot(dispose => ({ config: createPreferencesStore(backend), dispose }), null)
     config = rooted.config
     const editTails = new Map<string, Promise<void>>()
-    const ready = rooted.config.isLoaded, load = rooted.config.ensureLoaded, settle = rooted.config.settleStateWrite
+    const ready = rooted.config.isLoaded, load = rooted.config.ensureLoaded, loadDocument = rooted.config.ensureEditDocument, settle = rooted.config.settleStateWrite
     // All presentation and native-host controls retain the local owner.
     for (const key of hostPreferenceMethods) Object.assign(config, { [key]: hostPreferences[key] })
     for (const [key, method] of Object.entries(config)) {
@@ -1659,7 +1684,7 @@ export function preferencesForBackend(backendId: BackendId): ConfigContextValue 
         if (stateEdits.has(key) || configEdits.has(key)) {
           const document = stateEdits.has(key) ? "state/ui" : "config/ui"
           const write = (editTails.get(document) ?? Promise.resolve()).then(async () => {
-            await load()
+            await loadDocument(document)
             if (attachment.aborted || backends.get(backendId) !== backend) throw new Error(`Backend unavailable: ${backendId}`)
             const result = await (method as (...args: unknown[]) => unknown)(...args)
             if (document === "state/ui") await settle()

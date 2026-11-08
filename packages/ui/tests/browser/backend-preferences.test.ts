@@ -16,6 +16,39 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await events?.close() })
 
+test("real Mission save stays available while an unrelated replacement state read waits", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  await events.route(page)
+  await page.route("**/api/**", route => route.request().url().includes("/api/events") ? route.fallback()
+    : route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    const a = page.locator('[data-owner="a"]')
+    await a.locator(".mission-brief-picker select").waitFor({ timeout: 90_000 })
+    await page.evaluate(() => { (window as any).fixture.hold("a"); (window as any).fixture.favorite("a", "old") })
+    await page.waitForFunction(() => (window as any).fixture.records.a.writes.length === 1)
+    await page.evaluate(async () => {
+      const { backends } = await import("/src/lib/backend-client.ts")
+      const { backendEvents } = await import("/src/lib/backend-events.ts")
+      const fixture = (window as any).fixture
+      fixture.revoke("a", false)
+      fixture.records.a.wait = undefined // Only the already dispatched state write stays held.
+      backendEvents.attach("a", backends.get("a")!.events)
+    })
+    await a.getByRole("button", { name: "Save as brief", exact: true }).click()
+    await a.getByRole("textbox").fill("Independent save")
+    await a.getByRole("button", { name: "Save brief", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.records.a.config.settings.missionModels.some((model: any) => model.name === "Independent save"), undefined, { timeout: 5000 })
+    assert.equal(await page.evaluate(() => (window as any).fixture.records.a.state.models.favorites.some((model: any) => model.modelId === "old")), false)
+    await page.evaluate(() => (window as any).fixture.release("a"))
+    await page.waitForFunction(() => (window as any).fixture.records.a.state.models.favorites.some((model: any) => model.modelId === "old"))
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.localWrites), [])
+  } finally {
+    await page.evaluate(() => (window as any).fixture?.release("a"))
+    await page.close()
+  }
+})
+
 test("real model and Mission library controls preserve two server owners and host inheritance", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
   const errors: string[] = []
