@@ -30,8 +30,8 @@ then rebuild and smoke-test the packaged applications on Windows, macOS, and
 Linux. Check the upstream platform requirements before changing a pin or the
 Electron version: Tauri's bundled Node 24 requires macOS 13.5 or later, and
 the pinned Electron (`packages/electron-app/package.json`) requires macOS 13
-or later and Windows 10 or later. Both macOS bundles declare 13.5 so the two
-desktop builds share one minimum; keep them aligned. Keep the versions exact
+or later and Windows 10 or later. Electron declares macOS 13.5; Tauri declares macOS 14 for identified
+WKWebView preview stores. Keep the versions exact
 rather than resolving `latest` or `lts/*` at build time so release inputs remain
 reproducible.
 
@@ -142,8 +142,9 @@ Electron names deb architectures the Debian way (`amd64`) and Tauri keeps its na
 
 ### macOS
 
-- **Build on:** macOS 13.5+ with the required Xcode tools (CI uses macOS 15)
-- **Run on:** macOS 13.5+ (Intel and Apple Silicon; required by Tauri's bundled Node 24, shared by Electron)
+- **Build on:** macOS 13.5+ for Electron, macOS 14+ for Tauri, with the required Xcode tools (CI uses macOS 15)
+- **Run on:** Electron macOS 13.5+; Tauri macOS 14+ (Intel and Apple Silicon)
+- **Tauri bundles:** keep `minimumSystemVersion` and `LSMinimumSystemVersion` at 14.0 for both architectures; scope any `MACOSX_DEPLOYMENT_TARGET=14.0` override to Tauri build steps.
 - **Code signing:** Optional (recommended for distribution)
 
 ### Windows

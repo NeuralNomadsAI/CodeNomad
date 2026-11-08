@@ -1,5 +1,5 @@
 [workspace]
-members = ["src-tauri", "tests/windows-input", "tests/windows-runner-refcount", "tests/macos-window", "tests/panel-extension"]
+members = ["src-tauri", "tests/windows-input", "tests/windows-runner-refcount", "tests/macos-window", "tests/panel-extension", "tests/webkit-capabilities"]
 default-members = ["src-tauri"]
 resolver = "2"
 
@@ -9,3 +9,5 @@ resolver = "2"
 [patch.crates-io]
 tao = { path = "vendor/tao-0.37.2" }
 tauri-plugin-updater = { path = "vendor/tauri-plugin-updater-2.14.1" }
+tauri-runtime-wry = { path = "vendor/tauri-runtime-wry-2.12.3" }
+wry = { path = "vendor/wry-0.57.1" }

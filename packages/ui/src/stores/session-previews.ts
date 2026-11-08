@@ -112,13 +112,17 @@ function getSessionPreview(sessionId: string, instanceFolder = ""): SessionPrevi
   return preview ?? null
 }
 
-async function openSessionPreview(sessionId: string, url: string, instanceFolder = ""): Promise<SessionPreviewRecord> {
+async function openSessionPreview(sessionId: string, url: string, instanceFolder = "", canPublish?: () => Promise<boolean>): Promise<SessionPreviewRecord> {
   initializeStorage()
   const storageKey = previewKey(sessionId, instanceFolder)
   const operationVersion = beginOperation(storageKey)
   const existing = sessionPreviews().get(storageKey)
   const saved = storedPreviews.get(storageKey)
   const preview = await serverApi.createPreview({ sessionId, url })
+  if (canPublish && !await canPublish().catch(() => false)) {
+    void serverApi.deletePreview(preview.token).catch(() => undefined)
+    throw new Error("Preview open request is no longer current")
+  }
   if (operationVersions.get(storageKey) !== operationVersion) {
     void serverApi.deletePreview(preview.token).catch(() => undefined)
     const current = sessionPreviews().get(storageKey)

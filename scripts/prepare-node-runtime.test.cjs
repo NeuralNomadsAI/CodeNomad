@@ -38,11 +38,14 @@ test("all Node setup steps use the checked-out runtime pin", () => {
   assert.ok(checked > 0)
 })
 
-test("both macOS bundles share the minimum required by Tauri's bundled Node 24", () => {
+test("Electron macOS requires the OS supported by Node 24", () => {
   const electron = JSON.parse(read("packages/electron-app/package.json"))
-  const tauri = JSON.parse(read("packages/tauri-app/src-tauri/tauri.conf.json"))
   assert.equal(electron.build.mac.minimumSystemVersion, "13.5")
-  assert.equal(tauri.bundle.macOS.minimumSystemVersion, "13.5")
+})
+
+test("Tauri macOS requires identified persistent WebKit data stores", () => {
+  const tauri = JSON.parse(read("packages/tauri-app/src-tauri/tauri.conf.json"))
+  assert.equal(tauri.bundle.macOS.minimumSystemVersion, "14.0")
 })
 
 test("both hosts' npm is pinned exactly and separately from the Node archive", () => {

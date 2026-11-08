@@ -11,6 +11,7 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
 import { sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
 import { sseManager } from "../../../src/lib/sse-manager"
+import { serverApi } from "../../../src/lib/api-client"
 import "../../../src/index.css"
 
 const instanceId = "stream-delta-fixture"
@@ -19,6 +20,7 @@ const model = { providerID: "fixture", id: "fixture" }
 let sequence = 1000
 let assistantCounter = 0
 const [visible, show] = createSignal(true)
+serverApi.fetchSessionOutline = async () => ({ status: "outline", entries: [], checkpoints: [], total: 0, cursor: null })
 
 const client: any = {
   session: {

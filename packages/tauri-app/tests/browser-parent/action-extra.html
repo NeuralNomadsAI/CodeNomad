@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>Action edge cases</title>
+<script>window.declarativeTemplates=0;new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node.nodeName==='TEMPLATE')window.declarativeTemplates++}).observe(document,{childList:true,subtree:true})</script>
+<div id="declarative"><template shadowrootmode="closed"><button>Declarative closed action</button></template></div>
+<label>Multiple <select id="multiple" multiple><option value="one" selected>One</option><option value="two">Two</option><optgroup label="Locked" disabled><option value="three">Three</option></optgroup></select></label>
+<label>Readonly <input id="readonly" readonly value="Kept"></label>
+<label>Password <input id="password" type="password" value="private"></label>
+<label>Clock <input id="clock" type="time"></label>
+<label>Focus locked clock <input id="focus-locked" type="time" onfocus="this.readOnly=true"></label>
+<label>Moment <input id="moment" type="datetime-local"></label>
+<div id="rich" contenteditable role="textbox" aria-label="Rich lines">Old rich</div>
