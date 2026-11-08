@@ -640,7 +640,10 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     const detail = item => item && { name: redact(item.name), type: redact(item.type ?? item._tag), message: redact(item.message), stack: redact(item.stack) }
     result.status = "failed"; result.error = redact(error?.message ?? "qualification-failed")
     await save("failure-diagnostic", { stage: result.stage, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause), nativeErrorTail: redact(nativeErrorTail) })
-    if (result.documentID) try { await save("failure-sql", snapshot(result.documentID)) } catch { /* Preserve the original failure. */ }
+    if (result.documentID) try {
+      const json = JSON.stringify(snapshot(result.documentID), (_key, value) => typeof value === "string" ? redact(value) : value)
+      await writeFile(path.join(root, "failure-sql.json"), Buffer.byteLength(json) <= 512 * 1024 ? json : '{"error":"failure-sql-bound"}')
+    } catch { /* Preserve the original failure. */ }
     throw Error(`Native product qualification failed at ${result.stage ?? "setup"}: ${result.error}; private redacted diagnostic saved`)
   }
   finally {
