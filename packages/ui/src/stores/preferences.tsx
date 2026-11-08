@@ -762,7 +762,12 @@ async function patchConfigOwner(owner: string, patch: unknown) {
   if (owner === "server") setServerConfigBucket(updated as any)
 }
 
-async function patchStateOwner(owner: string, patch: unknown) {
+let stateWrite: Promise<void> = Promise.resolve()
+function patchStateOwner(owner: string, patch: unknown): Promise<void> {
+  stateWrite = writeStateOwner(owner, patch)
+  return stateWrite
+}
+async function writeStateOwner(owner: string, patch: unknown) {
   await ensureLoaded()
   assertCurrent()
   if (!local && owner === "ui" && patch && typeof patch === "object" && "opencodeBinaries" in patch) {
@@ -1583,7 +1588,8 @@ function subscribe() {
       unsubStateUi()
     }
 }
-return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, patchHotkeyPreferences, setUpdateFeed, subscribe }
+return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, patchHotkeyPreferences, setUpdateFeed, subscribe,
+  settleStateWrite: async () => { await Promise.all([favoritesOnlyWriteQueue, cloneParentSaves]); await stateWrite } }
 }
 
 const serverModelPreferenceKeys = ["modelVisibility", "missionProfileDefaults", "missionModels"] as const
@@ -1606,25 +1612,63 @@ const hostPreferenceMethods = [
   "setThinkingBlocksExpansion", "setToolInputsVisibility",
 ] as const satisfies readonly (keyof ConfigContextValue)[]
 const scopedPreferences = new WeakMap<BackendClient, { config: ConfigContextValue; attachment: AbortSignal }>()
+const preferenceReads = new Set([
+  "isLoaded", "isUiConfigLoaded", "uiConfigLoadFailed", "missionDefaultsValid", "missionModelsValid", "missionPreferenceSnapshot",
+  "preferences", "getProviderModelVisibilityPreference", "providerModelVisibilitySaveFailed", "serverSettings", "isSecureEnvVar",
+  "recentFolders", "opencodeBinaries", "uiState", "isFavoriteModelPreference", "getFavoritesOnlyPreference", "getModelThinkingSelection", "lastCloneParent",
+  "themePreference", "colorSchemePreference", "getAppearancePalette", "getAppearancePresetId", "customColorSchemePreference",
+  "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId", "remoteServers",
+])
+const stateEdits = new Set([...deferredServerEdits].filter(key => ![
+  "updateEnvironmentVariables", "addEnvironmentVariable", "removeEnvironmentVariable", "toggleSecureEnvVar", "updateLastUsedBinary", "updateLogLevel",
+].includes(key)).concat(["addNamedRecentFolder", "renameRecentFolderProject"]))
+const configEdits = new Set(["updatePreferences", "saveMissionDefaults", "resetMissionModels", "saveUserMissionModel", "removeUserMissionModel", "setProviderModelVisibility"])
+// Empty server buckets keep host presentation/model inheritance but carry no write authority.
+const unavailablePreferences = createPreferencesStore({ ...localBackend, id: "unavailable" })
+for (const key of hostPreferenceMethods) Object.assign(unavailablePreferences, { [key]: hostPreferences[key] })
+const unavailableTarget = (backendId: BackendId): ConfigContextValue => new Proxy(unavailablePreferences, {
+  get: (target, key) => (...args: unknown[]) => {
+    if (!preferenceReads.has(String(key))) throw new Error(`Backend unavailable: ${backendId}`)
+    return (target[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
+  },
+})
 /** Explicit settings target; host-owned preferences always retain their single local owner. */
 export function preferencesForBackend(backendId: BackendId): ConfigContextValue {
   const backend = backends.get(backendId)
-  if (!backend) throw new Error(`Backend unavailable: ${backendId}`)
-  if (backend === localBackend) return hostPreferences
   const attachment = backendEvents.signal(backendId)
-  if (!attachment || attachment.aborted) throw new Error(`Backend unavailable: ${backendId}`)
+  if (!backend) return unavailableTarget(backendId)
+  if (backend === localBackend) return hostPreferences
+  if (!attachment || attachment.aborted) return unavailableTarget(backendId)
   const cached = scopedPreferences.get(backend)
   let config = cached?.attachment === attachment ? cached.config : undefined
   if (!config) {
     const rooted = createRoot(dispose => ({ config: createPreferencesStore(backend), dispose }), null)
     config = rooted.config
+    const editTails = new Map<string, Promise<void>>()
+    const ready = rooted.config.isLoaded, load = rooted.config.ensureLoaded, settle = rooted.config.settleStateWrite
     // All presentation and native-host controls retain the local owner.
     for (const key of hostPreferenceMethods) Object.assign(config, { [key]: hostPreferences[key] })
     for (const [key, method] of Object.entries(config)) {
       Object.assign(config, { [key]: (...args: unknown[]) => {
-        if (!attachment || attachment.aborted || backends.get(backendId) !== backend) throw new Error(`Backend unavailable: ${backendId}`)
-        if (deferredServerEdits.has(key) && !rooted.config.isLoaded()) {
-          void rooted.config.ensureLoaded().then(() => {
+        const attached = backendEvents.signal(backendId)
+        if (attachment.aborted || attached !== attachment || backends.get(backendId) !== backend) {
+          if (preferenceReads.has(key)) return (unavailablePreferences[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
+          throw new Error(`Backend unavailable: ${backendId}`)
+        }
+        if (stateEdits.has(key) || configEdits.has(key)) {
+          const document = stateEdits.has(key) ? "state/ui" : "config/ui"
+          const write = (editTails.get(document) ?? Promise.resolve()).then(async () => {
+            await load()
+            if (attachment.aborted || backends.get(backendId) !== backend) throw new Error(`Backend unavailable: ${backendId}`)
+            const result = await (method as (...args: unknown[]) => unknown)(...args)
+            if (document === "state/ui") await settle()
+            return result
+          })
+          editTails.set(document, backend.storage.trackWrite(write.then(() => {}, error => { log.error("Failed to update settings", error) })))
+          return write
+        }
+        if (deferredServerEdits.has(key) && !ready()) {
+          void load().then(() => {
             if (attachment.aborted || backends.get(backendId) !== backend) throw new Error(`Backend unavailable: ${backendId}`)
             return (method as (...args: unknown[]) => unknown)(...args)
           }).catch(error => log.error("Failed to update settings", error))

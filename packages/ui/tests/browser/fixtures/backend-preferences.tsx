@@ -21,6 +21,7 @@ const records: Record<string, { config: any; state: any; writes: unknown[]; wait
     state: { models: { favorites: [{ providerId: "p", modelId: "a" }], favoritesOnly: false } }, writes: [] },
   b: { config: {}, state: {}, writes: [] },
 }
+const owners = new Map<string, { backend: BackendClient; detach: () => void; signal: AbortSignal }>()
 for (const [id, record] of Object.entries(records)) {
   const backend = createBackendClient({ id, baseUrl: `https://${id}.invalid`, fetcher: async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input)), family = url.pathname.split("/")[3], owner = url.pathname.split("/")[4]
@@ -35,7 +36,8 @@ for (const [id, record] of Object.entries(records)) {
     return Response.json(record[target])
   } })
   ;(backends as Map<string, BackendClient>).set(id, backend)
-  backendEvents.attach(id, backend.events)
+  const detach = backendEvents.attach(id, backend.events)
+  owners.set(id, { backend, detach, signal: backendEvents.signal(id)! })
 }
 const [{ ConfigProvider, preferencesForBackend }, { I18nProvider }, { default: ModelSelector },
   { MissionBriefPicker, MissionBriefSave }, { setProviders }] = await Promise.all([
@@ -62,6 +64,12 @@ function SharedSave() {
 render(() => <ConfigProvider><I18nProvider><Panel id="a" /><Panel id="b" /><SharedSave /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 const releases = new Map<string, () => void>()
 ;(window as any).fixture = { records, localWrites,
+  favorite(id: string, modelId: string) { preferencesForBackend(id).toggleFavoriteModelPreference({ providerId: "p", modelId }) },
+  revoke(id: string, dispose: boolean) {
+    const owner = owners.get(id)!
+    if (dispose) owner.backend.events.dispose(); else owner.detach()
+    return { aborted: owner.signal.aborted, attached: !!backendEvents.signal(id) }
+  },
   hold(id: string) { records[id].wait = new Promise(resolve => releases.set(id, resolve)) },
   release(id: string) { releases.get(id)?.(); records[id].wait = undefined },
 }

@@ -42,6 +42,7 @@ test("real model and Mission library controls preserve two server owners and hos
     await b.getByRole("textbox").fill("B saved")
     await b.getByRole("button", { name: "Save brief", exact: true }).click()
     await page.waitForFunction(() => (window as any).fixture.records.b.config.settings?.missionModels?.length === 2)
+    await b.locator(".mission-brief-picker select").getByRole("option", { name: "B saved", exact: true }).waitFor({ state: "attached" })
     assert.match(await b.locator(".mission-brief-picker select").innerText(), /B saved/)
     assert.doesNotMatch(await a.locator(".mission-brief-picker select").innerText(), /B saved/)
     await page.evaluate(() => { (window as any).fixture.hold("a"); (window as any).fixture.hold("b") })
@@ -60,6 +61,21 @@ test("real model and Mission library controls preserve two server owners and hos
     await page.evaluate(() => (window as any).fixture.release("b"))
     await shared.getByRole("button", { name: "Save as brief", exact: true }).waitFor()
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.localWrites), [])
+    for (const [id, dispose] of [["a", false], ["b", true]] as const) {
+      await page.evaluate(id => { (window as any).fixture.hold(id); (window as any).fixture.favorite(id, "dispatched") }, id)
+      await page.waitForFunction(id => (window as any).fixture.records[id].writes.some((write: any) => write.patch.models?.favorites?.some((model: any) => model.modelId === "dispatched")), id)
+      const revoked = await page.evaluate(({ id, dispose }) => {
+        const fixture = (window as any).fixture
+        fixture.favorite(id, "queued")
+        const result = fixture.revoke(id, dispose)
+        fixture.release(id)
+        return result
+      }, { id, dispose })
+      assert.deepEqual(revoked, { aborted: true, attached: false })
+      await page.waitForFunction(id => (window as any).fixture.records[id].state.models?.favorites?.some((model: any) => model.modelId === "dispatched"), id)
+      assert.equal(await page.evaluate(id => (window as any).fixture.records[id].writes.some((write: any) => write.patch.models?.favorites?.some((model: any) => model.modelId === "queued")), id), false)
+      await page.locator(`[data-owner="${id}"] .mission-brief-picker select`).getByRole("option", { name: "Host brief", exact: true }).waitFor({ state: "attached" })
+    }
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

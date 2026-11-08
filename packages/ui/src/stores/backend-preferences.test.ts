@@ -147,6 +147,54 @@ test("real preference consumers isolate host, server, fallback, instance data an
     assert.equal(preferredModelList(models, "prefsA~same").shown.some(model => model.id === "b"), true)
   })
 
+  await t.test("remote state edits compose at their turn, loaded or cold, and stay backend independent", async () => {
+    for (const cold of [false, true]) {
+      const data = fixture({}, { ui: { recentFolders: [{ path: "/existing", lastAccessed: 1 }], models: { favorites: [] } } })
+      const owner = attach(`burst${cold}`, data), prefs = module.preferencesForBackend(owner.backend.id)
+      if (!cold) await prefs.ensureLoaded()
+      let release!: () => void
+      data.hold(new Promise<void>(resolve => { release = resolve }))
+      prefs.addRecentFolder("/first")
+      prefs.addRecentFolder("/second")
+      prefs.toggleFavoriteModelPreference({ providerId: "p", modelId: "first" })
+      prefs.toggleFavoriteModelPreference({ providerId: "p", modelId: "second" })
+      const firstBrief = prefs.saveUserMissionModel({ version: 1, id: "00000000-0000-0000-0000-000000000011", name: "First", objective: "First", notes: "", template: "custom" })
+      const secondBrief = prefs.saveUserMissionModel({ version: 1, id: "00000000-0000-0000-0000-000000000012", name: "Second", objective: "Second", notes: "", template: "custom" })
+      await prefsB.renameRecentFolderProject("/b", "Independent")
+      release()
+      await owner.backend.storage.flushWrites()
+      await Promise.all([firstBrief, secondBrief])
+      assert.deepEqual(data.state.ui.recentFolders.map((entry: any) => entry.path), ["/second", "/first", "/existing"])
+      assert.deepEqual(data.state.ui.models.favorites.map((entry: any) => entry.modelId), ["second", "first"])
+      assert.deepEqual(data.config.ui.settings.missionModels.map((entry: any) => entry.name).sort(), ["First", "Host", "Second"])
+    }
+  })
+
+  await t.test("cold default model waits for the server's recents before inheritance", async () => {
+    const data = fixture({}, { ui: { models: { recents: [{ providerId: "p", modelId: "remote" }] } } })
+    let release!: () => void
+    data.hold(new Promise<void>(resolve => { release = resolve }))
+    attach("coldModel", data)
+    const { setProviders } = await import("./session-state")
+    setProviders(previous => new Map(previous).set("coldModel~same", [{ id: "p", name: "P", models: ["host", "remote"].map(id => ({ id, name: id, providerId: "p" })) }]))
+    const { getDefaultModel } = await import("./session-models")
+    let settled = false
+    const selected = getDefaultModel("coldModel~same").then(model => { settled = true; return model })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(settled, false)
+    release()
+    assert.deepEqual(await selected, { providerId: "p", modelId: "remote" })
+    const revokedData = fixture({}, { ui: { models: { recents: [{ providerId: "p", modelId: "remote" }] } } })
+    let releaseRevoked!: () => void
+    revokedData.hold(new Promise<void>(resolve => { releaseRevoked = resolve }))
+    const revoked = attach("coldRevoked", revokedData)
+    const pending = getDefaultModel("coldRevoked~same")
+    const rejected = assert.rejects(pending, /Backend unavailable|abort/i)
+    revoked.detach()
+    releaseRevoked()
+    await rejected
+  })
+
   await t.test("persisted thinking variants reset through Merge Patch on host and server", async () => {
     const model = { providerId: "p", modelId: "variant" }
     for (const [prefs, backend, data] of [[hostPrefs, localBackend, host], [prefsB, ownerB.backend, b]] as const) {
@@ -166,10 +214,10 @@ test("real preference consumers isolate host, server, fallback, instance data an
 
   await t.test("missing and revoked owners never write locally; queued writes retain admission", async () => {
     const beforeHost = host.calls.length, beforeA = a.calls.length
-    assert.throws(() => module.preferencesForBackend("absentPrefs"), /Backend unavailable/)
+    assert.deepEqual(module.preferencesForBackend("absentPrefs").recentFolders(), [])
     ownerA.detach()
     assert.throws(() => prefsA.addRecentFolder("/wrong"), /Backend unavailable/)
-    assert.throws(() => module.preferencesOf("prefsA~same"), /Backend unavailable/)
+    assert.deepEqual(module.preferencesOf("prefsA~same").recentFolders(), [])
     assert.equal(host.calls.length, beforeHost)
     assert.equal(a.calls.length, beforeA)
     let release!: () => void
@@ -201,7 +249,7 @@ test("real preference consumers isolate host, server, fallback, instance data an
     await new Promise<void>(resolve => setImmediate(resolve))
     release()
     await assert.rejects(loading, /Backend unavailable/)
-    assert.throws(() => oldPrefs.recentFolders(), /Backend unavailable/)
+    assert.deepEqual(oldPrefs.recentFolders(), [])
     assert.deepEqual(newPrefs.recentFolders().map(folder => folder.path), ["/extra", "/new"], "an early edit waits for its existing server state")
   })
 })

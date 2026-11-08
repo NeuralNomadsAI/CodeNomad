@@ -6,6 +6,7 @@ import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { resolveAgentId } from "../types/session"
 import { requestLocationOptions, toRequestLocation } from "./request-locations"
+import { parseInstanceKey, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
 
@@ -66,6 +67,10 @@ async function getDefaultModel(
     }
   }
 
+  if (parseInstanceKey(instanceId).backendId !== LOCAL_BACKEND_ID) {
+    await preferencesOf(instanceId).ensureLoaded()
+    signal.throwIfAborted()
+  }
   const recent = getRecentModelPreferenceForInstance(instanceId)
   if (recent) {
     return recent

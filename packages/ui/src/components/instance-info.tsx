@@ -1,4 +1,4 @@
-import { Component, For, Show, createMemo, createSignal } from "solid-js"
+import { Component, For, Show, createMemo, createSignal, onCleanup } from "solid-js"
 import type { Instance } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import InstanceServiceStatus from "./instance-service-status"
@@ -8,6 +8,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { openCodeSetupAction, openCodeSetupBusy, runOpenCodeSetup } from "../stores/opencode-setup"
 import { showToastNotification } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
+import { LOCAL_BACKEND_ID, parseInstanceKey } from "../lib/backend-identity"
 
 interface InstanceInfoProps {
   instance: Instance
@@ -20,7 +21,6 @@ const log = getLogger("actions")
 
 const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   const { t } = useI18n()
-  const { isSecureEnvVar, serverSettings } = useConfig()
   const metadataContext = useOptionalInstanceMetadataContext()
   const isLoadingMetadata = metadataContext?.isLoading ?? (() => false)
   const instanceAccessor = metadataContext?.instance ?? (() => props.instance)
@@ -29,18 +29,23 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   const [reloadPending, setReloadPending] = createSignal(false)
 
   const currentInstance = () => instanceAccessor()
+  const { isSecureEnvVar, serverSettings } = useConfig(() => currentInstance().id)
+  const isLocal = () => parseInstanceKey(currentInstance().id).backendId === LOCAL_BACKEND_ID
+  let disposed = false
+  onCleanup(() => { disposed = true })
   const metadata = () => metadataAccessor()
   const binaryVersion = () => currentInstance().binaryVersion || metadata()?.version
-  const environmentVariables = () => currentInstance().environmentVariables
+  const environmentVariables = () => isLocal() ? currentInstance().environmentVariables : serverSettings().environmentVariables
   const environmentEntries = createMemo(() => {
     const env = environmentVariables()
     return env ? Object.entries(env) : []
   })
 
-  const reloadEnabled = createMemo(() => Boolean(currentInstance()?.client) && !reloadPending() && !openCodeSetupBusy())
+  const reloadEnabled = createMemo(() => isLocal() && Boolean(currentInstance()?.client) && !reloadPending() && !openCodeSetupBusy())
 
   const handleReloadConfiguration = async () => {
-    if (!reloadEnabled()) return
+    if (disposed || !reloadEnabled()) return
+    const instance = currentInstance()
     const binary = serverSettings().opencodeBinary
     setReloadPending(true)
     try {
@@ -51,7 +56,8 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         cancelLabel: t("alertDialog.actions.cancel"),
         dismissible: false,
       })
-      if (!confirmed || binary !== serverSettings().opencodeBinary || openCodeSetupBusy()) return
+      if (!confirmed || disposed || currentInstance().id !== instance.id || !isLocal()
+        || binary !== serverSettings().opencodeBinary || openCodeSetupBusy()) return
       const status = await runOpenCodeSetup("reload", { resumeWorkspace: false })
       if (status) {
         showToastNotification({ category: "opencode",
@@ -208,7 +214,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           </div>
         </div>
 
-        <Show when={props.showReloadButton}>
+        <Show when={props.showReloadButton && isLocal()}>
           <div class="pt-3 border-t border-base">
             <p class="text-xs text-secondary mb-2">{t("settings.opencode.setup.reloadDescription")}</p>
             <button

@@ -58,6 +58,49 @@ function backend(t: TestContext, id: string, read?: (input: RequestInfo | URL) =
     rejectRequests: () => { unauthorized = true } }
 }
 
+test("detach completes revocation and cleanup when a reactive subscriber and unsubscribe throw", () => {
+  const bus = new BackendEvents(), cleaned: string[] = []
+  const source = {
+    on: () => () => { cleaned.push("events"); throw new Error("expected unsubscribe failure") },
+    onOpen: () => () => { cleaned.push("open") },
+    onTransportStatus: () => () => { cleaned.push("status") },
+    onDispose: () => () => { cleaned.push("dispose") },
+  }
+  const detach = bus.attach("revoked", source)
+  const signal = bus.signal("revoked")!
+  let removal = false
+  bus.onDetach(() => { removal = true })
+  createRoot(dispose => {
+    createComputed(() => { if (!bus.signal("revoked")) throw new Error("expected reactive failure") })
+    assert.doesNotThrow(detach)
+    assert.equal(signal.aborted, true)
+    assert.equal(bus.signal("revoked"), undefined)
+    assert.equal(removal, true)
+    assert.deepEqual(cleaned, ["events", "open", "status", "dispose"])
+    dispose()
+  })
+})
+
+test("reattachment during abort preserves the replacement's reactive authority", () => {
+  const bus = new BackendEvents()
+  const source = { on: () => () => {}, onOpen: () => () => {}, onTransportStatus: () => () => {}, onDispose: () => () => {} }
+  const detach = bus.attach("replacement", source), first = bus.signal("replacement")!
+  let detachReplacement!: () => void
+  first.addEventListener("abort", () => { detachReplacement = bus.attach("replacement", source) }, { once: true })
+  const observed: (AbortSignal | undefined)[] = []
+  createRoot(dispose => {
+    createComputed(() => { observed.push(bus.signal("replacement")) })
+    detach()
+    const replacement = bus.signal("replacement")!
+    assert.notEqual(replacement, first)
+    assert.equal(observed.at(-1), replacement)
+    detachReplacement()
+    assert.equal(replacement.aborted, true)
+    assert.equal(observed.at(-1), undefined)
+    dispose()
+  })
+})
+
 test("all CodeNomad envelope identities are scoped, with native identities and local objects intact", () => {
   const workspace = { id: "ws", path: "/same", proxyPath: "/workspaces/ws/instance" } as WorkspaceDescriptor
   const native = { id: "event", type: "server.connected" as const, location: { directory: "/same", workspaceID: "native" }, data: { daemon: "opaque" } }
