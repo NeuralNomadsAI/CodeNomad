@@ -51,14 +51,14 @@ function harness() {
 
 test("a child read before its first message is admitted links on a later pulse of the same revision", async () => {
   const { state, store } = harness()
-  await store.demand("inst", mission, 1)
+  await store.demand("inst", mission, 1, "view")
   assert.equal(state.firstReads, 1)
   assert.equal(store.taskSession("inst", mission, "build"), undefined)
   // Same pulse: no new read.
-  await store.demand("inst", mission, 1)
+  await store.demand("inst", mission, 1, "view")
   assert.equal(state.firstReads, 1)
   state.first = [{ type: "user", text: assignment("msn_one", "build") }]
-  await store.demand("inst", mission, 2)
+  await store.demand("inst", mission, 2, "view")
   assert.equal(state.firstReads, 2)
   assert.equal(store.taskSession("inst", mission, "build"), "ses_child")
   assert.equal(store.sessionActive("inst", mission, "ses_child"), true)
@@ -69,8 +69,8 @@ test("a child read before its first message is admitted links on a later pulse o
 test("an admitted non-assignment first message is examined once and never links", async () => {
   const { state, store } = harness()
   state.first = [{ type: "user", text: "Audit task build for mission msn_other; compare with mission msn_one." }]
-  await store.demand("inst", mission, 1)
-  await store.demand("inst", mission, 2)
+  await store.demand("inst", mission, 1, "view")
+  await store.demand("inst", mission, 2, "view")
   assert.equal(state.firstReads, 1)
   assert.equal(store.taskSession("inst", mission, "build"), undefined)
 })
@@ -80,7 +80,7 @@ test("a late child read after a connection or generation change publishes nothin
     const { state, store, hold } = harness()
     state.first = [{ type: "user", text: assignment("msn_one", "build") }]
     const gate = hold()
-    const read = store.demand("inst", mission, 1)
+    const read = store.demand("inst", mission, 1, "view")
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(state.firstReads, 1)
     if (change === "connection") state.connection = {}
@@ -95,15 +95,15 @@ test("a late child read after a connection or generation change publishes nothin
 test("demand during a read is coalesced into one trailing read", async () => {
   const { state, store, hold } = harness()
   const gate = hold()
-  const first = store.demand("inst", mission, 1)
+  const first = store.demand("inst", mission, 1, "view")
   await new Promise(resolve => setImmediate(resolve))
-  void store.demand("inst", mission, 2)
-  void store.demand("inst", mission, 3)
+  void store.demand("inst", mission, 2, "view")
+  void store.demand("inst", mission, 3, "view")
   state.first = [{ type: "user", text: assignment("msn_one", "build") }]
   gate.resolve()
   await first
   await new Promise(resolve => setImmediate(resolve))
-  await store.demand("inst", mission, 3)
+  await store.demand("inst", mission, 3, "view")
   // One leading and one trailing read; the linked child is not reread.
   assert.equal(state.activeReads, 2)
   assert.equal(state.firstReads, 1)
@@ -113,15 +113,61 @@ test("demand during a read is coalesced into one trailing read", async () => {
 test("a different project keeps its own entry", async () => {
   const { state, store } = harness()
   state.first = [{ type: "user", text: assignment("msn_one", "build") }]
-  await store.demand("inst", mission, 1)
+  await store.demand("inst", mission, 1, "view")
   assert.equal(store.taskSession("inst", { ...mission, projectID: "elsewhere" } as MissionMap, "build"), undefined)
 })
 
 test("activity invalidations without linked conversations never fan out an active-session read", async () => {
   const { state, store } = harness()
   const done = { ...mission, tasks: [{ key: "build", status: "completed" }] } as MissionMap
-  await store.demand("inst", done, 1)
-  await store.demand("inst", done, 2)
+  await store.demand("inst", done, 1, "view")
+  await store.demand("inst", done, 2, "view")
   assert.equal(state.firstReads, 0)
+  assert.equal(state.activeReads, 0)
+})
+
+test("releasing the last owner stops a read in flight and drops its queued rerun; another owner keeps it", async () => {
+  const { state, store, hold } = harness()
+  state.first = [{ type: "user", text: assignment("msn_one", "build") }]
+  // The only owner hides while the child read is held: nothing after it runs.
+  let gate = hold()
+  const read = store.demand("inst", mission, 1, "preview")
+  for (let attempt = 0; state.firstReads === 0 && attempt < 50; attempt++) await new Promise(resolve => setTimeout(resolve, 1))
+  void store.demand("inst", mission, 2, "preview")
+  store.release("inst", mission, "preview")
+  gate.resolve(); await read
+  assert.equal(state.activeReads, 0, "a released read stops before its next step")
+  assert.equal(store.taskSession("inst", mission, "build"), undefined, "a released read publishes nothing")
+  assert.equal(state.firstReads, 1, "its queued rerun is dropped")
+  // With a second owner still showing the mission, releasing one keeps the read.
+  gate = hold()
+  const kept = store.demand("inst", mission, 3, "preview")
+  void store.demand("inst", mission, 3, "selected")
+  store.release("inst", mission, "preview")
+  gate.resolve(); await kept
+  assert.equal(store.taskSession("inst", mission, "build"), "ses_child")
+  assert.equal(state.activeReads, 1)
+})
+
+test("a completed queued rerun registers no owner: releasing the last view still stops the next read", async () => {
+  const { state, store, hold } = harness()
+  const tick = () => new Promise(resolve => setImmediate(resolve))
+  // A coalesced pulse runs as the trailing read of the same view.
+  let gate = hold()
+  const first = store.demand("inst", mission, 1, "preview")
+  await tick()
+  void store.demand("inst", mission, 2, "preview")
+  gate.resolve(); await first
+  for (let attempt = 0; state.firstReads < 2 && attempt < 50; attempt++) await tick()
+  assert.equal(state.firstReads, 2, "the trailing read ran")
+  await tick()
+  // The next pulse's read is held; the view hides meanwhile.
+  state.first = [{ type: "user", text: assignment("msn_one", "build") }]
+  gate = hold()
+  const next = store.demand("inst", mission, 3, "preview")
+  for (let attempt = 0; state.firstReads < 3 && attempt < 50; attempt++) await tick()
+  store.release("inst", mission, "preview")
+  gate.resolve(); await next
+  assert.equal(store.taskSession("inst", mission, "build"), undefined, "nothing is published without an owner")
   assert.equal(state.activeReads, 0)
 })

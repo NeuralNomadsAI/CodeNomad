@@ -1,5 +1,7 @@
 # Historique, recherche et nettoyage
 
+La recherche, la chronologie, la galerie d’images et le nettoyage technique prennent aussi en charge le stockage expérimental `part_rows` d’OpenCode, y compris les messages mixtes. Les éléments déjà séparés restent lisibles après désactivation de l’option.
+
 L’historique enregistré, ce que la transcription affiche actuellement et le contexte compacté du modèle sont distincts. Préférez la navigation ou le filtrage avant toute suppression.
 
 ## Rechercher dans tout l’historique {#full-history-search}

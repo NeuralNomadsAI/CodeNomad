@@ -10,11 +10,11 @@ Elige un equipo de escritorio local o ejecuta el [servidor independiente](server
 
 | Plataforma | Versión Electron | Versión Tauri | Notas de la plataforma |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel o Apple Silicon | ZIP, Intel o Apple Silicon | macOS 13.5 o posterior (lo requiere el Node que incluye Tauri; Electron declara el mismo mínimo). |
+| macOS | ZIP, Intel o Apple Silicon | ZIP, Intel o Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Instalador, x64 | Windows 10 o posterior; Tauri usa WebView2. |
 | Linux | Paquete Debian, x64 | AppImage, x64 | Compilado y probado en Ubuntu 24.04; no se garantiza la compatibilidad con distribuciones anteriores. |
 
-Las versiones de escritorio incluyen los recursos de ejecución necesarios para el backend y el instalador de OpenCode, por lo que no necesitas instalar Node.js/npm por separado para usarlas. Git no está incluido. La automatización nativa del navegador es compatible con Electron y Tauri para Windows; las demás plataformas Tauri usan vistas previas iframe.
+Las versiones de escritorio incluyen los recursos de ejecución necesarios para el backend y el instalador de OpenCode, por lo que no necesitas instalar Node.js/npm por separado para usarlas. Git no está incluido. La automatización nativa del navegador por agentes es compatible con Electron y Tauri en Windows, macOS y Linux. Tauri en macOS/Linux utiliza vistas previas WebKit y perfiles móviles nativos con límites de densidad y entrada propios del motor; consulta las [vistas previas del navegador](browser-sidecars.md#signins-automation).
 
 Si una descarga verificada se bloquea al iniciarse, consulta la [solución de problemas de la plataforma](troubleshooting.md#desktop-launch). Nunca ejecutes un archivo de origen no fiable solo para eludir una advertencia.
 
@@ -45,7 +45,7 @@ La instalación Debian de Electron configura el aislamiento de Chromium. No desa
 
 | Requisito | Dónde debe estar disponible | Requisito actual |
 | --- | --- | --- |
-| CLI de OpenCode | Equipo de ejecución seleccionado, incluida la distribución WSL seleccionada cuando corresponda | Mínimo **2.2.3**; **2.2.5** es la versión recomendada/verificada. Las versiones más nuevas o personalizadas pasan una validación de contratos en lugar de prohibirse por no haberse probado. |
+| CLI de OpenCode | Equipo de ejecución seleccionado, incluida la distribución WSL seleccionada cuando corresponda | Mínimo **2.2.3**; **2.2.6** es la versión recomendada/verificada. Las versiones más nuevas o personalizadas pasan una validación de contratos en lugar de prohibirse por no haberse probado. |
 | Git | `PATH` de la cuenta del backend de CodeNomad | Necesario para la identidad del repositorio, las operaciones Git y los worktrees. |
 | Node.js/npm | Equipo del servidor independiente y de compilación desde el código fuente | Node.js 24 LTS; las compilaciones reproducibles desde el código fuente usan la versión fijada en `.node-version`. Las versiones de escritorio incluyen el suyo: el Node integrado de Electron o el Node que incluye Tauri, con npm. |
 | Carpeta del espacio de trabajo | Disco accesible para el backend | Una carpeta física abierta explícitamente, no una carpeta local del dispositivo deducida por un navegador remoto. |

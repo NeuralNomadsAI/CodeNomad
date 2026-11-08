@@ -10,11 +10,11 @@
 
 | 平台 | Electron 发行包 | Tauri 发行包 | 平台说明 |
 | --- | --- | --- | --- |
-| macOS | ZIP，Intel 或 Apple Silicon | ZIP，Intel 或 Apple Silicon | macOS 13.5 或更高版本（Tauri 附带的 Node 需要；Electron 声明相同的最低版本）。 |
+| macOS | ZIP，Intel 或 Apple Silicon | ZIP，Intel 或 Apple Silicon | Tauri：macOS 14+；Electron：macOS 13.5+。 |
 | Windows | ZIP，x64 | 安装程序，x64 | Windows 10 或更高版本；Tauri 使用 WebView2。 |
 | Linux | Debian 软件包，x64 | AppImage，x64 | 在 Ubuntu 24.04 上构建和测试；不保证兼容更早的发行版。 |
 
-桌面发行包包含后端和 OpenCode 安装程序所需的运行时资源，无需另行安装 Node.js/npm。不附带 Git。Electron 和 Windows Tauri 支持原生浏览器自动化；其他 Tauri 平台使用 iframe 预览。
+桌面发行包包含后端和 OpenCode 安装程序所需的运行时资源，无需另行安装 Node.js/npm。不附带 Git。Electron 和 Tauri 在 Windows、macOS 和 Linux 上均支持代理原生浏览器自动化。macOS/Linux 上的 Tauri 使用 WebKit 预览和原生移动配置，其像素密度和输入受引擎原生限制；请参阅[浏览器预览](browser-sidecars.md#signins-automation)。
 
 已验证的下载若在启动时被阻止，请参阅[平台故障排查](troubleshooting.md#desktop-launch)。切勿仅为绕过警告而运行不可信的压缩包。
 
@@ -45,7 +45,7 @@ Electron Debian 安装过程会配置 Chromium 沙箱。不要通过禁用沙箱
 
 | 要求 | 必须可用的位置 | 当前要求 |
 | --- | --- | --- |
-| OpenCode CLI | 所选执行主机，适用时包括所选 WSL 发行版 | 最低 **2.2.3**；建议/已验证目标为 **2.2.5**。更新版本或自定义版本会接受契约验证，而非因未经测试就被禁止。 |
+| OpenCode CLI | 所选执行主机，适用时包括所选 WSL 发行版 | 最低 **2.2.3**；建议/已验证目标为 **2.2.6**。更新版本或自定义版本会接受契约验证，而非因未经测试就被禁止。 |
 | Git | CodeNomad 后端账户的 `PATH` | 仓库身份识别、Git 操作和工作树必需。 |
 | Node.js/npm | 独立服务器和源码构建主机 | Node.js 24 LTS；可重现的源码构建使用 `.node-version` 中固定的版本。桌面发行包自带：Electron 内置 Node 或 Tauri 附带 Node，均含 npm。 |
 | 工作区文件夹 | 后端可访问的磁盘 | 显式打开的物理文件夹，而非远程浏览器推断出的设备本地文件夹。 |

@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
+import { createMissionFailureDiagnostics } from "./mission-failure-diagnostics"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { clickMissionAction, missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
@@ -47,8 +48,9 @@ async function until(condition: () => boolean, message: string) {
 }
 
 /** One page whose schedules answer a first Pause/Stop partially, with gates on row and status reads. */
-async function openPage(schedules: RecurrenceSchedule[]) {
+async function openPage(schedules: RecurrenceSchedule[], diagnostics?: ReturnType<typeof createMissionFailureDiagnostics>) {
   const page = await browser.newPage({ locale: "en-US" })
+  if (diagnostics) await diagnostics.observe(page)
   page.setDefaultTimeout(10_000)
   const state = { errors: [] as string[], log: [] as string[], posts: [] as any[], statusReads: [] as any[], rows: 0,
     rowGate: undefined as Promise<void> | undefined, statusGate: undefined as Promise<void> | undefined,
@@ -58,6 +60,8 @@ async function openPage(schedules: RecurrenceSchedule[]) {
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", async route => {
     const request = route.request(), path = new URL(request.url()).pathname
+    if (request.method() === "POST") diagnostics?.record("route-post", { path, input: request.postDataJSON(),
+      schedules: schedules.map(({ id, revision, state, actions, controls }) => ({ id, revision, state, actions, controls })) })
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
     if (path.endsWith("/missions/recurrence")) {
       state.rows++; const gate = state.rowGate
@@ -224,9 +228,10 @@ for (const transition of ["inactive", "instance"] as const) test(`a late refusal
   } catch (error) { console.error(state.errors, state.log, state.posts, await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
-test("a late refusal for another row leaves the selected row's held request and message unchanged", async () => {
+test("a late refusal for another row leaves the selected row's held request and message unchanged", async t => {
   const other = schedule("rec_other", OTHER)
-  const { page, state } = await openPage([schedule(), other])
+  const diagnostics = createMissionFailureDiagnostics(), schedules = [schedule(), other]
+  const { page, state } = await openPage(schedules, diagnostics)
   const reply = deferred()
   try {
     await holdPartial(page, "pause", OTHER)
@@ -252,5 +257,9 @@ test("a late refusal for another row leaves the selected row's held request and 
     assert.equal(await page.getByText(NOT_SENT, { exact: true }).count(), 0)
     assert.equal(state.posts.length, 2, "nothing resent")
     assert.deepEqual(state.errors, [])
-  } catch (error) { console.error(state.errors, state.log, state.posts, await page.locator("body").innerText()); throw error } finally { await page.close() }
+  } catch (error) {
+    await diagnostics.dump(t, { posts: state.posts, statusReads: state.statusReads, rows: state.rows, log: state.log,
+      errors: state.errors, schedules })
+    throw error
+  } finally { await page.close() }
 })

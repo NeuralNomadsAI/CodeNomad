@@ -36,6 +36,8 @@ Ist eine Prüfung beschäftigt, warten Sie den Vorgang des anderen Fensters ab. 
 
 ## Eigenständigen Server aktualisieren {#standalone-update}
 
+Die Oberfläche 1.1 benötigt für ihre Missions-APIs einen CodeNomad-Server ab **1.1.0**. Server der Reihe 1.0.x behalten ihre zwischengespeicherte oder mitgelieferte Oberfläche, statt die inkompatible Oberfläche herunterzuladen.
+
 1. Ermitteln Sie, wie CodeNomad gestartet wurde, und sichern Sie Backend-abhängige Arbeit.
 2. Stoppen Sie diesen CodeNomad-Serverprozess über dessen normale Prozess-/Dienststeuerung.
 3. Aktualisieren Sie dieselbe Paketinstallation und starten Sie mit vorgesehener Konfiguration und Flags neu.

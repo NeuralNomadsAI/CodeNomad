@@ -453,14 +453,15 @@ export function MissionEditor(props: {
         {/* Steps, roles and the exact instructions open in the central reader. On narrow layouts that
             closes the panel, ending the view a request in flight completes in, so wait for it. */}
         <Show when={props.onShowPlaybook}>
-          <button type="button" class="window-text-button" aria-describedby={ids.templateDescription} disabled={pending() || creationPending()}
+          <button type="button" class="window-action" aria-describedby={ids.templateDescription} disabled={pending() || creationPending()}
             onClick={() => props.onShowPlaybook?.(template(), taskMode() ?? "native")}>{t("missions.playbook.details")}</button>
         </Show>
       </div>
       <MissionTaskModeControls value={taskMode() ?? "native"} disabled={structuralLocked()}
-        onChange={value => { setTaskMode(value); setCustomTaskMode(true) }} />
-      {/* Native nesting depth is project configuration, shared with every conversation there. */}
-      <Show when={kind === "create"}><MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={() => optionsOpen() && isActive()} /></Show>
+        onChange={value => { setTaskMode(value); setCustomTaskMode(true) }}>
+        {/* Native nesting depth is project configuration, shared with every conversation there. */}
+        <Show when={kind === "create"}><MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={() => optionsOpen() && isActive()} /></Show>
+      </MissionTaskModeControls>
       <section class="mission-create-option" aria-label={t("missions.create.agents")} aria-describedby={errorFor("profiles") ? ids.profilesError : undefined}>
         <MissionProfileSummary instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()} />
         {/* Catalog-backed selectors mount (and read the native catalog) only on demand. */}
@@ -474,8 +475,8 @@ export function MissionEditor(props: {
               onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
           </Show>
           <div class="mission-create-option-actions">
-            <button type="button" class="window-text-button" disabled={structuralLocked()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
-            <Show when={props.onOpenPreferences}><button type="button" class="window-text-button" title={t("missions.defaults.hint")} onClick={props.onOpenPreferences}>{t("missions.defaults.manage")}</button></Show>
+            <button type="button" class="window-action" disabled={structuralLocked()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
+            <Show when={props.onOpenPreferences}><button type="button" class="window-action" title={t("missions.defaults.hint")} onClick={props.onOpenPreferences}>{t("missions.defaults.manage")}</button></Show>
           </div>
         </details>
         {inlineError("profiles", ids.profilesError)}

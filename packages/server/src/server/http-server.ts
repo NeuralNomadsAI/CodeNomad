@@ -5,7 +5,6 @@ import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { isIP, type Socket } from "net"
 import path from "path"
-import type { Readable } from "stream"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
@@ -93,7 +92,9 @@ import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { isRemoteRequest } from "../remote-control/request-origin"
-import { routedPath } from "./routed-path"
+import { framesNoBody } from "./bodiless-request"
+import { addProxiedHttpMethods } from "./proxied-http-methods"
+import { ROUTER_OPTIONS, routedPath } from "./routed-path"
 import { redactSecrets, registerRequestLogging } from "./request-logging"
 export { redactSecrets, registerRequestLogging } from "./request-logging"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
@@ -165,6 +166,8 @@ interface HttpServerStartResult {
   displayHost: string
 }
 
+const CORS_METHODS = "GET,HEAD,PUT,PATCH,POST,DELETE"
+
 export function shouldRetryPreferredPort(error: unknown, autoPortRequested: boolean, platform = process.platform): boolean {
   if (!autoPortRequested) return false
   const code = (error as NodeJS.ErrnoException | undefined)?.code
@@ -177,9 +180,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   const app = Fastify(
     ({
       logger: false,
+      routerOptions: ROUTER_OPTIONS,
       ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
     } as unknown) as any,
   ) as unknown as FastifyInstance
+  // Before any route: `all()` routes take the methods supported when declared.
+  addProxiedHttpMethods(app)
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
@@ -280,6 +286,8 @@ export function createHttpServer(deps: HttpServerDeps) {
 
       cb(null, false)
     },
+    // Every method the UI sends cross-origin; @fastify/cors defaults to the CORS-safelisted ones.
+    methods: CORS_METHODS,
     credentials: true,
   })
 
@@ -619,12 +627,21 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
       sidecarManager: deps.sidecarManager,
       logger: deps.logger,
       sessionCookie: deps.authManager.getCookieName(),
-      pathSuffix: request.params["*"] ?? "",
+      pathSuffix: reencodePercent(request.params["*"] ?? ""),
     })
   }
 
-  app.all("/sidecars/:id", proxyBaseHandler)
-  app.all("/sidecars/:id/*", proxyWildcardHandler)
+  app.register(async (sidecarApp) => {
+    // Like the instance proxy, a SideCar's bodiless DELETE or OPTIONS passes as such even when it declares JSON.
+    const parseJson = sidecarApp.getDefaultJsonParser("error", "error")
+    sidecarApp.removeContentTypeParser("application/json")
+    sidecarApp.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+      if (framesNoBody(request)) done(null, undefined)
+      else parseJson(request, body.toString(), done)
+    })
+    sidecarApp.all("/sidecars/:id", proxyBaseHandler)
+    sidecarApp.all("/sidecars/:id/*", proxyWildcardHandler)
+  })
 }
 
 function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps) {
@@ -658,10 +675,31 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
         reply,
         previewManager: deps.previewManager,
         logger: deps.logger,
-        pathSuffix: request.params["*"] ?? "",
+        pathSuffix: reencodePercent(request.params["*"] ?? ""),
       })
     })
   })
+}
+
+/**
+ * Wildcard parameters arrive percent-decoded. A literal "%" in one (sent as
+ * "%25") is escaped again so the target URL decodes back to it; every other
+ * character keeps the form the URL parser gives it ("@vite/client" stays raw).
+ */
+function reencodePercent(decoded: string): string {
+  return decoded.replaceAll("%", "%25")
+}
+
+/**
+ * @fastify/reply-from validates a target by decoding it whole, so a query with
+ * a raw "%" ("?q=50%") would fail. The target travels without its query, and the
+ * query, as the URL parser serialized it, is appended unchanged.
+ */
+function withoutQuery(target: string): { url: string; query: string } {
+  const url = new URL(target)
+  const query = url.search.slice(1)
+  url.search = ""
+  return { url: url.href, query }
 }
 
 function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
@@ -733,14 +771,18 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
 export function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
   app.register(async (instance) => {
     instance.removeAllContentTypeParsers()
-    instance.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+    instance.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
+      if (framesNoBody(req)) {
+        done(null, undefined)
+        return
+      }
       try {
         done(null, body.length ? JSON.parse(body.toString()) : {})
       } catch {
         done(Object.assign(new Error("Invalid JSON request body"), { statusCode: 400 }), undefined)
       }
     })
-    instance.addContentTypeParser("*", (req, body, done) => done(null, body))
+    instance.addContentTypeParser("*", (req, body, done) => done(null, framesNoBody(req) ? undefined : body))
 
     const proxyBaseHandler = async (
       request: FastifyRequest<{ Params: { id: string } }>,
@@ -1369,7 +1411,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         if (proxyReply.statusCode === 401) {
           workspaceManager.invalidateSharedServiceConnection?.()
         }
-        const upstream = upstreamResponse as typeof upstreamResponse & { readableEnded?: boolean; destroyed?: boolean }
+        const upstream = upstreamResponse.stream
         const release = () => releaseMutation?.()
         if (upstream.readableEnded || upstream.destroyed) release()
         else {
@@ -2210,7 +2252,9 @@ async function proxyPreviewTargetRequest(args: {
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
   let responseKind: "html" | "css" | "js" | null = null
-  await args.reply.from(args.targetUrl, {
+  const target = withoutQuery(args.targetUrl)
+  await args.reply.from(target.url, {
+    queryString: () => target.query,
     rewriteRequestHeaders: (_originalRequest, headers) => {
       const next = sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin)
       delete next["accept-encoding"]
@@ -2234,7 +2278,7 @@ async function proxyPreviewTargetRequest(args: {
       return next
     },
     onResponse: (_proxyRequest, proxyReply, upstreamResponse) => {
-      const upstream = upstreamResponse as unknown as Readable
+      const upstream = upstreamResponse.stream
       if (!responseKind || args.request.method === "HEAD") {
         proxyReply.send(upstream)
         return
@@ -2267,7 +2311,9 @@ async function proxyTargetRequest(args: {
   errorMessage: string
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
-  await args.reply.from(args.targetUrl, {
+  const target = withoutQuery(args.targetUrl)
+  await args.reply.from(target.url, {
+    queryString: () => target.query,
     rewriteRequestHeaders: (_originalRequest, headers) =>
       sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin, args.sessionCookie),
     rewriteHeaders: args.rewriteHeaders,

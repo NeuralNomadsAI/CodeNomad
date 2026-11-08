@@ -45,9 +45,9 @@ Son instrucciones. Lo que un agente puede hacer realmente lo deciden los permiso
 
 ### Preguntas que se te hacen {#questions}
 
-Solo el coordinador te hace preguntas. Las tareas y sus auxiliares devuelven las suyas a la conversación que las lanzó, con las opciones, las evidencias, las consecuencias, la reversibilidad y una recomendación, y siguen con el trabajo que no depende de la respuesta. El coordinador resuelve primero lo que puede y agrupa las preguntas restantes en un solo formulario en **Te necesita**; [Preguntas y decisiones](missions.md#questions) explica qué pregunta y cómo se etiquetan las decisiones. Cada coordinador, puntual o programado, y cada asignación de tarea reciben esta regla como instrucción; Exploración añade las comprobaciones de decisiones [más abajo](#wayfinder-checks).
+Solo el coordinador te hace preguntas. Las tareas y sus auxiliares devuelven las suyas a la conversación que las lanzó, con las opciones, las evidencias, las consecuencias, la reversibilidad y una recomendación, y siguen con el trabajo que no depende de la respuesta. El coordinador resuelve primero lo que puede y agrupa las preguntas restantes en un solo formulario, que se abre desde la fila roja de la misión; [Preguntas y decisiones](missions.md#questions) explica qué pregunta y cómo se etiquetan las decisiones. Cada coordinador, puntual o programado, y cada asignación de tarea reciben esta regla como instrucción; Exploración añade las comprobaciones de decisiones [más abajo](#wayfinder-checks).
 
-Responde en el panel de interrupciones (**Responder** en **Te necesita**): solo eso cuenta como tu respuesta. Una respuesta escrita en el chat es un mensaje normal.
+Responde en el panel de interrupciones, que se abre al seleccionar la misión o la tarea en rojo: solo eso cuenta como tu respuesta. Una respuesta escrita en el chat es un mensaje normal.
 
 ### Informes de situación e informe final {#briefings}
 
@@ -165,7 +165,7 @@ Los responsables nunca te preguntan; devuelven informes y preguntas listas al co
 
 - **Decide él mismo** cuando la evidencia basta y la elección es fácil de revertir.
 - **Aplaza** una decisión que aún no hace falta: retira la tarea y conserva la pregunta en las notas como niebla.
-- **Te pregunta**, agrupando las decisiones pendientes en un solo formulario en **Te necesita**.
+- **Te pregunta**, agrupando las decisiones pendientes en un solo formulario, que se abre desde la fila roja de la misión.
 
 Nunca escribe tu respuesta por sí mismo ni presenta su propia decisión como tuya. Dónde lees el resultado depende de **Sesiones de tareas**:
 
@@ -187,7 +187,7 @@ Solo instrucciones: cuándo una elección se considera fácil de revertir, la ca
 Obtienes un mapa: el destino, decisiones registradas con quién las tomó, hallazgos de investigación, prototipos, la niebla que queda en las notas y un informe final. Un coordinador de misión única también puede preparar una misión de seguimiento que inicias tú. Errores frecuentes:
 
 - Exploración planifica; no construye el destino. Usa otro guion, o la misión de seguimiento preparada, para implementar.
-- Responde en **Te necesita**, no en el chat: solo una respuesta dada en el panel de interrupciones cuenta como tuya.
+- Responde en el panel de interrupciones que se abre desde la fila roja, no en el chat: solo una respuesta dada en el panel de interrupciones cuenta como tuya.
 - Con **Subagentes nativos**, lee los resultados con la etiqueta **Decisión del coordinador**; con **Sesiones independientes**, lee los resultados en las **Notas**. Para cambiar una decisión, escribe al coordinador desde **Abrir conversación**.
 - Un destino formulado de forma vaga deja la mayor parte del mapa en la niebla.
 

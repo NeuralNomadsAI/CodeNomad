@@ -1,5 +1,7 @@
 # History, search and cleanup
 
+Search, timeline navigation, the image gallery and technical cleanup also support OpenCode's experimental `part_rows` storage, including messages containing both split and inline parts. Existing split parts remain supported after the option is disabled.
+
 Stored history, what the transcript currently displays and the model's compacted context are separate. Choose navigation or filtering before deleting anything.
 
 ## Search full history {#full-history-search}

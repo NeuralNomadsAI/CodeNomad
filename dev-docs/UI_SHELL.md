@@ -4,6 +4,8 @@ Panel toggles, floating drawers, project/right-panel tabs, the session sidebar a
 
 ## Agent conventions
 
+- The right panel's tab scroller (`RightPanel.tsx`) is `position: relative`, so it contains every absolutely positioned descendant of a tab: content of any tab, an extension's included, never grows the shell's overflow (which would scroll the whole window under the project tabs). A tab that scrolls itself is also its own containing block (Missions: `dev-docs/MISSIONS.md`).
+
 - Docked panel resize handles follow the composer's Pointer Events design: capture the pointer on the handle and keep its `.is-resizing` highlight until pointer up/cancel, capture loss or the active handle's cleanup. Scope each handle's cleanup to its own side so resizing continues when the opposite panel closes. Keep event handlers local in `useDrawerResize.ts` and styles in `styles/panels/session-layout.css`; validate both sides, RTL and touch with `tests/browser/panel-resize.test.ts`.
 
 - Session rows keep actions inline until their measured title, badges, and controls no longer fit. Keep responsive action styles in `styles/components/session-row-actions.css`; hidden inline controls remain measurable but inert, and an open overflow menu stays mounted until dismissal.

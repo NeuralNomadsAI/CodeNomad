@@ -1,6 +1,5 @@
-import { rm, writeFile } from "node:fs/promises"
-import path from "node:path"
-import { executeInstaller, npmNeedsNodeCommand, openCodeAllowScripts, writeNpmNodeCommand } from "./npm-runtime"
+import { rm } from "node:fs/promises"
+import { executeInstaller, openCodeAllowScripts, writeNpmCommands } from "./npm-runtime"
 import { createInstallerDirectory, InstallationInterruptedError } from "./installation-lock"
 
 /** Let OpenCode retain its running Windows image while using our npm (in Electron resources,
@@ -20,26 +19,15 @@ export async function upgradeSharedOpenCode(options: {
   const directory = await createInstallerDirectory(options.prefix, "upgrade")
   let retain = false
   try {
-    const windows = options.platform === "win32"
     const env = { ...options.env }
-    const runtimeArgs = npmNeedsNodeCommand(options.node, options.platform)
-      ? await writeNpmNodeCommand(directory, options.node, env, options.platform) : []
-    // Electron's npm on Windows loads the preload that hides its children's consoles.
-    const shim = windows
-      ? `@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" ${runtimeArgs.length ? '--require "%CODENOMAD_NPM_PRELOAD%" ' : ""}"%CODENOMAD_UPGRADE_NPM%" %*\r\n`
-      : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n'
-    await writeFile(path.join(directory, windows ? "npm.cmd" : "npm"), shim, { mode: 0o700 })
+    await writeNpmCommands(directory, options.node, options.npm, env, options.platform)
     // npm config keys are case-insensitive, even on POSIX. Do not allow an
     // inherited prefix or registry to redirect this verified installation, nor
     // an inherited script allow-list to replace the one below.
     for (const key of Object.keys(env)) {
       if (/^npm_config_(prefix|registry|audit|fund|allow_scripts)$/i.test(key)) delete env[key]
     }
-    const pathKey = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH"
-    env[pathKey] = [directory, path.dirname(options.node), env[pathKey] || ""].join(windows ? ";" : ":")
     Object.assign(env, {
-      CODENOMAD_UPGRADE_NODE: options.node,
-      CODENOMAD_UPGRADE_NPM: options.npm,
       npm_config_prefix: options.prefix,
       npm_config_registry: "https://registry.npmjs.org",
       npm_config_audit: "false",

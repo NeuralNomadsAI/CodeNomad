@@ -19,7 +19,7 @@ function Field(props: { instanceId: string; missionId: string; field: string }) 
     await missionStore.more(props.instanceId, lane(), retry, at)
   }
   return <>
-    <button type="button" class="window-text-button" aria-pressed={raw()} onClick={() => {
+    <button type="button" class="window-action" aria-pressed={raw()} onClick={() => {
       setRaw(value => !value)
       if (raw() && state().total === undefined) void read(0)
     }}>{t("missionsPanel.pages.raw")}</button>
@@ -28,11 +28,11 @@ function Field(props: { instanceId: string; missionId: string; field: string }) 
       <For each={missionStore.fieldValues(props.instanceId, props.missionId, props.field)}>{value => <Value value={value} />}</For>
     </>}>
       <Show when={state().failure}><p role="status">{t(state().failure === "changed" ? "missionsPanel.pages.changed" : "missionsPanel.pages.failed")}</p>
-        <button type="button" class="window-text-button" disabled={state().loading} onClick={() => void read(state().failure === "changed" ? 0 : page(), true)}>{t("missions.control.retry")}</button>
+        <button type="button" class="window-action" disabled={state().loading} onClick={() => void read(state().failure === "changed" ? 0 : page(), true)}>{t("missions.control.retry")}</button>
       </Show>
       <p role="status">{t(state().loading ? "missions.control.loading" : "missionsPanel.pages.rawPage", { page: page() + 1, total: state().total ?? 0 })}</p>
-      <button type="button" class="window-text-button" disabled={state().loading || Boolean(state().failure) || page() === 0} onClick={() => void read(page() - 1)}>{t("missionsPanel.pages.previous")}</button>
-      <button type="button" class="window-text-button" disabled={state().loading || Boolean(state().failure) || page() + 1 >= (state().total ?? 0)} onClick={() => void read(page() + 1)}>{t("missionsPanel.pages.next")}</button>
+      <button type="button" class="window-action" disabled={state().loading || Boolean(state().failure) || page() === 0} onClick={() => void read(page() - 1)}>{t("missionsPanel.pages.previous")}</button>
+      <button type="button" class="window-action" disabled={state().loading || Boolean(state().failure) || page() + 1 >= (state().total ?? 0)} onClick={() => void read(page() + 1)}>{t("missionsPanel.pages.next")}</button>
       <Show when={missionStore.fieldText(props.instanceId, props.missionId, props.field, page())}>{text => <BoundedText source={text()}>{shown => <pre>{shown()}</pre>}</BoundedText>}</Show>
     </Show>
   </>

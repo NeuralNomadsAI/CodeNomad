@@ -184,7 +184,7 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
   } finally { releaseB(); await page.close() }
 })
 
-const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-picker-mark").getAttribute("data-mark")
+const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-row-flag").getAttribute("data-mark")
 
 test("closed missions list as rows with their marks and open their full map only when selected", async () => {
   const { page, errors, requests } = await open()
@@ -199,7 +199,7 @@ test("closed missions list as rows with their marks and open their full map only
     await missionToolbarAction(page, "Recover interrupted mission").waitFor()
     await missionDetail(page).locator('.mission-tree li[data-task-key="work"]').waitFor()
     // The included closed map serves the readers: its overview, then its task.
-    await missionDetail(page).locator(".mission-overview-toggle").first().click()
+    await page.locator(".mission-picker-selection-actions .mission-overview-toggle").click()
     await page.locator(".mission-reader").getByText("Stopped short of the release").waitFor()
     await missionDetail(page).locator('.mission-tree li[data-task-key="work"] > button.mission-tree-task').click()
     await page.locator(".mission-reader").getByText("Result of failed").waitFor()
@@ -211,7 +211,7 @@ test("closed missions list as rows with their marks and open their full map only
     await refreshed
     assert.ok(requests.length > reads)
     assert.equal(requests.at(-1)?.get("include"), "failed")
-    assert.equal(await page.locator(".mission-picker-inline button.mission-picker-option").count(), 4)
+    assert.equal(await page.locator(".mission-rows button.mission-row-select").count(), 4)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
