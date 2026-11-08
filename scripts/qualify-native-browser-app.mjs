@@ -9,6 +9,9 @@ import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
+import Fastify from "fastify"
+import staticFiles from "@fastify/static"
+import { fileURLToPath } from "node:url"
 
 const [appPath, cli, outputPath] = process.argv.slice(2)
 if (![appPath, cli, outputPath].every(value => value && path.isAbsolute(value))) throw Error("Usage: node scripts/qualify-native-browser-app.mjs <app-executable> <opencode-executable> <output-directory>")
@@ -17,6 +20,10 @@ await mkdir(project, { recursive: true })
 const run = randomUUID().slice(0, 8), password = `p7-${randomUUID()}`, started = Date.now()
 let desired, issued, providerError, app, daemon, daemonOutput = "", appOutput = ""
 const tools = [], evidence = []
+const ui = Fastify()
+await ui.register(staticFiles, { root: fileURLToPath(new URL("../packages/tauri-app/src-tauri/resources/server/public", import.meta.url)) })
+ui.setNotFoundHandler((_request, reply) => reply.sendFile("index.html"))
+await ui.listen({ host: "127.0.0.1", port: 0 })
 const fixtureHtml = await readFile(new URL("../packages/tauri-app/tests/browser-parent/app.html", import.meta.url), "utf8")
 const fixture = createServer((req, res) => {
   if (req.url === "/download") {
@@ -82,8 +89,9 @@ try {
   const session = await client.session.create({ location: { directory: project }, title: "Native browser qualification" })
   const config = path.join(root, "config.yaml")
   await writeFile(config, JSON.stringify({ server: { opencodeBinary: wrapper }, preferences: { lastUsedBinary: wrapper, locale: "en" }, opencodeBinaries: [{ path: wrapper, lastUsed: Date.now() }] }))
-  const appEnv = { ...process.env, CODENOMAD_PROFILE: `p7-${run}`, CLI_CONFIG: config }
-  delete appEnv.VITE_DEV_SERVER_URL; delete appEnv.ELECTRON_RUN_AS_NODE
+  const appEnv = { ...process.env, CODENOMAD_PROFILE: `p7-${run}`, CLI_CONFIG: config,
+    VITE_DEV_SERVER_URL: `http://127.0.0.1:${ui.server.address().port}` }
+  delete appEnv.ELECTRON_RUN_AS_NODE
   app = spawn(appPath, [project], { cwd: path.dirname(appPath), env: appEnv, windowsHide: false })
   app.stdout.on("data", chunk => { appOutput += chunk }); app.stderr.on("data", chunk => { appOutput += chunk })
   await until(async () => {
@@ -124,34 +132,49 @@ try {
   await call({ action: "click", ref: ref("OAuth popup") })
   await call({ action: "wait", text: "OAuth complete" })
   await call({ action: "click", ref: ref("Download fixture") })
-  const downloads = path.join(os.homedir(), "Downloads")
+  const downloads = process.platform === "linux"
+    ? execFileSync("xdg-user-dir", ["DOWNLOAD"], { encoding: "utf8" }).trim()
+    : path.join(os.homedir(), "Downloads")
   const download = await until(async () => {
     const name = (await readdir(downloads)).find(name => name.includes(`p7-${run}.txt`))
     return name && await readFile(path.join(downloads, name), "utf8").catch(() => "") === `native-download-${run}` ? name : undefined
   })
   assert.equal(await readFile(path.join(downloads, download), "utf8"), `native-download-${run}`)
-  await call({ action: "click", ref: ref("Native dialog") })
-  await delay(1500)
-  if (process.platform === "darwin") execFileSync("python3", [new URL("fixtures/accept-owned-browser-dialog.py", import.meta.url).pathname, String(app.pid)])
-  else if (process.platform === "linux") {
-    const windows = execFileSync("xdotool", ["search", "--onlyvisible", "--pid", String(app.pid)], { encoding: "utf8" }).trim().split("\n")
-    execFileSync("xdotool", ["windowactivate", "--sync", windows.at(-1)])
-    execFileSync("xdotool", ["key", "Return"])
-  } else {
-    execFileSync("pwsh", ["-NoProfile", "-File", new URL("fixtures/accept-owned-browser-dialog.ps1", import.meta.url).pathname.replace(/^\/(\w:)/, "$1"), "-AppProcessId", String(app.pid)], { windowsHide: true, timeout: 20000 })
+  if (!process.env.P7_SKIP_NATIVE_DIALOG) {
+    await call({ action: "click", ref: ref("Native dialog") })
+    await delay(1500)
+    if (process.platform === "darwin") execFileSync("python3", [new URL("fixtures/accept-owned-browser-dialog.py", import.meta.url).pathname, String(app.pid)])
+    else if (process.platform === "linux") {
+      const windows = execFileSync("xdotool", ["search", "--onlyvisible", "--pid", String(app.pid)], { encoding: "utf8" }).trim().split("\n")
+      execFileSync("xdotool", ["windowactivate", "--sync", windows.at(-1)])
+      execFileSync("xdotool", ["key", "Return"])
+    } else {
+      execFileSync("pwsh", ["-NoProfile", "-File", new URL("fixtures/accept-owned-browser-dialog.ps1", import.meta.url).pathname.replace(/^\/(\w:)/, "$1"), "-AppProcessId", String(app.pid)], { windowsHide: true, timeout: 20000 })
+    }
+    await call({ action: "wait", text: "Dialog accepted" })
   }
-  await call({ action: "wait", text: "Dialog accepted" })
   snapshot = strings(await call({ action: "snapshot" }))
   assert.match(snapshot, /Native parity/)
   const image = strings(await call({ action: "screenshot" }))
   const png = /data:image\/png;base64,([A-Za-z0-9+/=]+)/.exec(image)
-  if (png) await writeFile(path.join(output, "browser.png"), Buffer.from(png[1], "base64"))
+  assert.ok(png, "Browser agent tool must return PNG data")
+  await writeFile(path.join(output, "browser.png"), Buffer.from(png[1], "base64"))
   await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, run, sessionID: session.id, project, appPath,
-    appSHA256: createHash("sha256").update(await readFile(appPath)).digest("hex"), tools: tools.map(command => command.action), download, screenshot: !!png }, null, 2))
+    appSHA256: createHash("sha256").update(await readFile(appPath)).digest("hex"), tools: tools.map(command => command.action), download, screenshot: !!png,
+    nativeDialog: !process.env.P7_SKIP_NATIVE_DIALOG }, null, 2))
   await shared.shutdown()
 } finally {
   app?.kill(); daemon?.kill()
+  if (process.platform !== "win32" && app) {
+    for (const [, pid] of appOutput.matchAll(/spawned pid=(\d+)/g)) {
+      try {
+        const args = execFileSync("ps", ["-ww", "-p", pid, "-o", "command="], { encoding: "utf8" })
+        if (args.includes(`codenomad_session_${app.pid}_`)) process.kill(-Number(pid), "SIGTERM")
+      } catch { /* The exact owned backend may already have stopped. */ }
+    }
+  }
   await writeFile(path.join(output, "app.log"), appOutput)
   await writeFile(path.join(output, "opencode.log"), daemonOutput)
   await Promise.all([fixture, provider].map(server => new Promise(done => server.close(done))))
+  await ui.close()
 }

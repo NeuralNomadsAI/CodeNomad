@@ -629,7 +629,7 @@ jobs:
 
   tests-tauri-windows:
     needs: authorize
-    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    if: ${{ needs.authorize.outputs.allowed == 'true' }}
     runs-on: windows-latest
     steps:
       - name: Checkout

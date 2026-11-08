@@ -3,6 +3,15 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { test } = require('node:test')
 
+test('Windows native qualification also runs authorized drafts without signing secrets', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/pr-build.yml'), 'utf8').replace(/\r\n/g, '\n')
+  const job = workflow.split('  tests-tauri-windows:\n')[1].split('\n  tests-')[0]
+  assert.match(job, /needs: authorize/)
+  assert.match(job, /if: \$\{\{ needs\.authorize\.outputs\.allowed == 'true' \}\}/)
+  assert.doesNotMatch(job, /pull_request\.draft|secrets\.|secrets:|actions: write/)
+  assert.match(job, /cargo test --locked -- --test-threads=1/)
+})
+
 test('WebKit qualification runs authorized drafts on Intel, ARM64 and Linux without secrets', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../workflows/pr-build.yml'), 'utf8').replace(/\r\n/g, '\n')
   const job = workflow.split('  tests-tauri-webkit:\n')[1].split('\n  # Exercise the window persistence')[0]
