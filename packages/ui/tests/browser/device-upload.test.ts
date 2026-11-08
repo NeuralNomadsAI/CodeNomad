@@ -201,6 +201,31 @@ test("pending native paste blocks send and preserves the paste anchor and draft 
   } finally { await page.close() }
 })
 
+test("a native read with no attachment keeps the clipboard text at the paste selection", async () => {
+  const { page } = await setup("tauri", "local")
+  try {
+    const textarea = page.locator("textarea:visible").first()
+    const uri = "file://other-host/shared/report.txt"
+    for (const outcome of ["empty", "error"]) {
+      await page.evaluate(outcome => {
+        (window as any).__TAURI_INTERNALS__.invoke = async (command: string) => {
+          if (command !== "read_clipboard_attachments") return null
+          ;(window as any).clipboardReads++
+          if (outcome === "error") throw new Error("native clipboard unavailable")
+          return []
+        }
+      }, outcome)
+      await textarea.fill("before AFTER")
+      await textarea.evaluate((input: HTMLTextAreaElement) => input.setSelectionRange(7, 7))
+      const reads = await page.evaluate(() => (window as any).clipboardReads)
+      await nativePaste(page, "text/uri-list", uri, true)
+      await page.waitForFunction(reads => (window as any).clipboardReads === reads + 1, reads)
+      await page.waitForFunction(expected => (document.querySelector("textarea") as HTMLTextAreaElement).value === expected, `before ${uri}AFTER`)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments()), [], outcome)
+    }
+  } finally { await page.close() }
+})
+
 test("native paste uses the shared size limits and unreadable-file warnings", async () => {
   const { page } = await setup("tauri", "local")
   try {

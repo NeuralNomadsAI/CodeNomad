@@ -11,7 +11,7 @@ import {
   imageDisplayCounterRegex,
   pastedDisplayCounterRegex,
 } from "./attachmentPlaceholders"
-import { useDeviceAttachments } from "./useDeviceAttachments"
+import { clipboardInsertion, useDeviceAttachments } from "./useDeviceAttachments"
 import { readClipboardAttachments } from "../../lib/native/clipboard-attachments"
 
 type PromptAttachmentsOptions = {
@@ -242,59 +242,84 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     const nativeFiles = !pastedText || hasFileUris ? readClipboardAttachments(e) : null
     if (nativeFiles) {
       e.preventDefault()
-      await device.enqueue(nativeFiles, true)
+      const owner = device.capture()
+      const textarea = options.getTextarea()
+      const anchor = { text: options.prompt(), start: textarea?.selectionStart ?? options.prompt().length,
+        end: textarea?.selectionEnd ?? options.prompt().length }
+      // Without attachments the paste stays the text the browser would have inserted.
+      await device.enqueue(nativeFiles.then(files => {
+        if (!files.length && pastedText && owner.current()) insertPastedText(pastedText, anchor)
+        return files
+      }), true, owner)
       return
     }
     if (!pastedText) return
+    if (isLongPaste(pastedText)) {
+      e.preventDefault()
+      pasteLongText(pastedText)
+    }
+  }
 
+  function isLongPaste(text: string) {
+    return text.length > 150 || text.split("\n").length > 3
+  }
+
+  // Inserts text at the paste's selection, mapped around edits made while the native read ran.
+  function insertPastedText(text: string, anchor: { text: string; start: number; end: number }) {
+    const at = clipboardInsertion(anchor, options.prompt())
+    const textarea = options.getTextarea()
+    if (isLongPaste(text)) {
+      textarea?.setSelectionRange(at.start, at.end)
+      pasteLongText(text)
+      return
+    }
+    const current = options.prompt()
+    options.setPrompt(current.slice(0, at.start) + text + current.slice(at.end))
+    textarea?.setSelectionRange(at.start + text.length, at.start + text.length)
+  }
+
+  function pasteLongText(pastedText: string) {
     const lineCount = pastedText.split("\n").length
     const charCount = pastedText.length
+    // Number above detached tokens too: a new placeholder lands before its
+    // attachment and must never revive an undone paste with the same number.
+    const { highestPaste } = findHighestAttachmentCounters(options.prompt())
+    const detachedPastes = [...(detached.get(draftKey())?.keys() ?? [])]
+      .filter((tokenKey) => tokenKey.startsWith("pasted:"))
+      .map((tokenKey) => Number(tokenKey.slice("pasted:".length)))
+    const count = Math.max(highestPaste, ...detachedPastes) + 1
+    setPasteCount(count)
 
-    const isLongPaste = charCount > 150 || lineCount > 3
+    const summary = lineCount > 1 ? `${lineCount} lines` : `${charCount} chars`
+    const display = `pasted #${count} (${summary})`
+    const filename = `paste-${count}.txt`
 
-    if (isLongPaste) {
-      e.preventDefault()
+    const attachment = createTextAttachment(pastedText, display, filename)
+    const owner = device.capture()
+    const placeholder = formatPastedPlaceholder(count)
+    const textarea = options.getTextarea()
+    // A native insertion keeps the caret and the browser's undo history; the
+    // resulting input event updates the prompt like typing.
+    const insertedNatively = textarea !== null && document.activeElement === textarea
+      && document.execCommand("insertText", false, placeholder)
+    if (!insertedNatively && textarea) {
+      const start = textarea.selectionStart
+      const end = textarea.selectionEnd
+      const currentText = options.prompt()
+      const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
+      options.setPrompt(newText)
 
-      // Number above detached tokens too: a new placeholder lands before its
-      // attachment and must never revive an undone paste with the same number.
-      const { highestPaste } = findHighestAttachmentCounters(options.prompt())
-      const detachedPastes = [...(detached.get(draftKey())?.keys() ?? [])]
-        .filter((tokenKey) => tokenKey.startsWith("pasted:"))
-        .map((tokenKey) => Number(tokenKey.slice("pasted:".length)))
-      const count = Math.max(highestPaste, ...detachedPastes) + 1
-      setPasteCount(count)
-
-      const summary = lineCount > 1 ? `${lineCount} lines` : `${charCount} chars`
-      const display = `pasted #${count} (${summary})`
-      const filename = `paste-${count}.txt`
-
-      const attachment = createTextAttachment(pastedText, display, filename)
-      const owner = device.capture()
-      const placeholder = formatPastedPlaceholder(count)
-      const textarea = options.getTextarea()
-      // A native insertion keeps the caret and the browser's undo history; the
-      // resulting input event updates the prompt like typing.
-      const insertedNatively = textarea !== null && document.activeElement === textarea
-        && document.execCommand("insertText", false, placeholder)
-      if (!insertedNatively && textarea) {
-        const start = textarea.selectionStart
-        const end = textarea.selectionEnd
-        const currentText = options.prompt()
-        const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
-        options.setPrompt(newText)
-
-        setTimeout(() => {
-          if (!owner.current()) return
-          const newCursorPos = start + placeholder.length
-          textarea.setSelectionRange(newCursorPos, newCursorPos)
-          textarea.focus()
-        }, 0)
-      } else if (!insertedNatively) {
-        options.setPrompt(options.prompt() + placeholder)
-      }
-
-      addAttachment(options.instanceId(), options.sessionId(), attachment)
+      setTimeout(() => {
+        if (!owner.current()) return
+        const newCursorPos = start + placeholder.length
+        textarea.setSelectionRange(newCursorPos, newCursorPos)
+        textarea.focus()
+      }, 0)
+    } else if (!insertedNatively) {
+      options.setPrompt(options.prompt() + placeholder)
     }
+
+    addAttachment(options.instanceId(), options.sessionId(), attachment)
   }
 
   function handleDragOver(e: DragEvent) {

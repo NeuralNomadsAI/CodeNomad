@@ -155,7 +155,7 @@ export function useDeviceAttachments(options: Options) {
 // Use the paste gesture's selection, never a later one. Map an unchanged anchor
 // around edits before/after it; if an edit overlaps it, append without deleting
 // any new text. This also preserves earlier tokens from queued clipboard batches.
-function clipboardInsertion(anchor: { text: string; start: number; end: number }, text: string) {
+export function clipboardInsertion(anchor: { text: string; start: number; end: number }, text: string) {
   if (text === anchor.text) return anchor
   let prefix = 0, suffix = 0
   while (prefix < text.length && prefix < anchor.text.length && text[prefix] === anchor.text[prefix]) prefix++
