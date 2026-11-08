@@ -52,9 +52,16 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
    * generation) rereads the native active set and, while a live task is unlinked, the
    * coordinator's direct children. A child without an admitted first message stays
    * unexamined, so a later pulse of the same revision reads it again. */
-  function demand(instanceId: string, mission: MissionPanelMap, pulse = 0, owner = "default"): Promise<void> {
-    const key = keyOf(instanceId, mission), connection = deps.connection(instanceId)
+  function demand(instanceId: string, mission: MissionPanelMap, pulse: number, owner: string): Promise<void> {
+    const key = keyOf(instanceId, mission)
     owners.set(key, (owners.get(key) ?? new Set()).add(owner))
+    return run(instanceId, mission, pulse)
+  }
+
+  /** The read for the mission's current owners; a queued rerun registers none. */
+  function run(instanceId: string, mission: MissionPanelMap, pulse: number): Promise<void> {
+    const key = keyOf(instanceId, mission), connection = deps.connection(instanceId)
+    if (!owners.get(key)?.size) return Promise.resolve()
     const generation = deps.generation(instanceId)
     const stamp = `${generation}:${mission.revision}`
     const entry = entries().get(key)
@@ -67,7 +74,7 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
       return Promise.resolve()
     }
     const running = inFlight.get(key)
-    if (running) { running.rerun = () => void demand(instanceId, mission, pulse); return running.done }
+    if (running) { running.rerun = () => void run(instanceId, mission, pulse); return running.done }
     const flight: { rerun?: () => void; done: Promise<void> } = { done: Promise.resolve() }
     inFlight.set(key, flight)
     const root = deps.root(instanceId)
@@ -115,7 +122,7 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
 
   /** `owner` no longer shows the mission. Without another owner the read in flight
    * stops at its next step and its queued rerun is dropped. */
-  function release(instanceId: string, mission: MissionPanelMap, owner = "default"): void {
+  function release(instanceId: string, mission: MissionPanelMap, owner: string): void {
     const key = keyOf(instanceId, mission), set = owners.get(key)
     if (!set?.delete(owner) || set.size) return
     owners.delete(key)

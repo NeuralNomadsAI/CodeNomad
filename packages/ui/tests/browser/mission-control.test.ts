@@ -5,7 +5,7 @@ import path from "node:path"
 import os from "node:os"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
-import { chromium, type Browser, type Locator, type Page } from "playwright"
+import { chromium, type Browser, type Locator, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionMenuTrigger, missionPicker, missionRows, missionToolbar,
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
@@ -725,6 +725,43 @@ test("depth uncertainty stays at its original Location through pending navigatio
     assert.equal(writes, 1)
     assert.equal(reads, 3)
   } finally { release(); await page.close() }
+})
+
+for (const close of [false, true]) test(`an open task reader's native task reads ${close ? "stop when it closes" : "go on while it stays open"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  try {
+    await setup(page)
+    const value = mission("reader-demand")
+    value.coordinatorSessionId = "ses_reader_root"
+    value.tasks[0].status = "dispatching"
+    await page.route("**/api/workspaces/fixture/missions**", route => {
+      if (isMissionContentRequest(route.request().url())) return route.fallback()
+      return route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: value.revision, discardedEvents: 0 } })
+    })
+    // Hold the coordinator's message read: the children read only follows it.
+    let held: Route | undefined
+    const children: string[] = []
+    page.on("request", request => { if (request.url().includes("parentID=ses_reader_root")) children.push(request.url()) })
+    await page.route(target => target.href.includes("ses_reader_root") && target.pathname.includes("/message"), route => {
+      if (!held) { held = route; return }
+      return route.fulfill({ json: { data: [] } })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await selectMission(page, "Objective reader-demand")
+    await until(() => Boolean(held), 15_000)
+    await taskButton(page, "task-one").click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Inspect evidence", level: 2 }).waitFor()
+    // The hidden panel's tree releases its demand; the open reader is the last owner.
+    await fixtureCall(page, "active", false)
+    if (close) {
+      await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+      await page.locator(".mission-reader").waitFor({ state: "detached" })
+    }
+    await held!.fulfill({ json: { data: [] } })
+    if (close) await page.waitForTimeout(1_000)
+    else await until(() => children.length > 0).catch(() => undefined)
+    assert.equal(children.length > 0, !close, close ? `a closed reader reads nothing further: ${children.join(", ")}` : "an open reader lists the coordinator's children")
+  } finally { await page.close() }
 })
 
 test("reader toggles highlight the exact visible content and toggle it off without navigation or writes", async () => {
