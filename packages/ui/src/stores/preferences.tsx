@@ -1692,6 +1692,8 @@ export function preferencesForBackend(backendId: BackendId): ConfigContextValue 
           throw new Error(`Backend unavailable: ${backendId}`)
         }
         if (stateEdits.has(key) || configEdits.has(key)) {
+          const remoteEdit = key !== "updatePreferences" || Object.keys(args[0] as object)
+            .some(key => serverModelPreferenceKeys.includes(key as ServerModelPreferenceKey))
           const document = stateEdits.has(key) ? "state/ui" : "config/ui"
           const write = (editTails.get(document) ?? Promise.resolve()).then(async () => {
             await loadDocument(document)
@@ -1700,8 +1702,10 @@ export function preferencesForBackend(backendId: BackendId): ConfigContextValue 
             if (document === "state/ui") await settle()
             return result
           })
-          editTails.set(document, backend.storage.trackWrite(write.then(() => {}, error => {
-            notifyRefusedPreferenceEdit()
+          editTails.set(document, backend.storage.trackWrite(write.then(result => {
+            if (remoteEdit && result === false) notifyRefusedPreferenceEdit()
+          }, error => {
+            if (remoteEdit) notifyRefusedPreferenceEdit()
             log.error("Failed to update settings", error)
           })))
           return write

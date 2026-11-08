@@ -70,6 +70,35 @@ test("a refused model preference edit shows one Settings error and never replays
   }
 })
 
+test("a false-returning remote edit renders one existing Settings toast without replay", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  await events.route(page)
+  await page.route("**/api/**", route => route.request().url().includes("/api/events") ? route.fallback()
+    : route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    await page.locator('[data-owner="a"] .mission-brief-picker select').waitFor({ timeout: 90_000 })
+    const result = await page.evaluate(async () => {
+      const { preferencesForBackend } = await import("/src/stores/preferences.tsx")
+      ;(window as any).fixture.records.a.refuse = true
+      return preferencesForBackend("a").updatePreferences({ modelVisibility: { p: { hiddenModelIds: ["a"] } } })
+    })
+    assert.equal(result, false)
+    const bubble = page.getByText("Could not save the preference.", { exact: true })
+    await bubble.waitFor({ timeout: 5000 })
+    assert.equal(await bubble.count(), 1)
+    await page.evaluate(async () => {
+      const { preferencesForBackend } = await import("/src/stores/preferences.tsx")
+      ;(window as any).fixture.records.a.refuse = false
+      await preferencesForBackend("a").reloadMissionPreferences()
+    })
+    assert.equal(await page.evaluate(() => (window as any).fixture.records.a.writes.length), 1)
+    assert.equal(await page.evaluate(() => (window as any).fixture.history().filter((item: any) => item.message === "Could not save the preference.").length), 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.records.a.config.settings.modelVisibility), {})
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.localWrites), [])
+  } finally { await page.close() }
+})
+
 test("real Mission save stays available while an unrelated replacement state read waits", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
   await events.route(page)

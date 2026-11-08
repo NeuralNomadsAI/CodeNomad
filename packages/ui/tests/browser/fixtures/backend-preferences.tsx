@@ -17,7 +17,7 @@ serverApi.patchConfigOwner = (async (_owner, patch) => { localWrites.push(patch)
 serverApi.patchStateOwner = (async (_owner, patch) => { localWrites.push(patch); return hostState }) as any
 const { backends, createBackendClient } = await import("../../../src/lib/backend-client")
 const { backendEvents } = await import("../../../src/lib/backend-events")
-const records: Record<string, { config: any; state: any; writes: unknown[]; wait?: Promise<void> }> = {
+const records: Record<string, { config: any; state: any; writes: unknown[]; wait?: Promise<void>; refuse?: boolean }> = {
   a: { config: { settings: { missionModels: [brief("A brief", "00000000-0000-0000-0000-000000000002")], missionProfileDefaults: [], modelVisibility: {} } },
     state: { models: { favorites: [{ providerId: "p", modelId: "a" }], favoritesOnly: false } }, writes: [] },
   b: { config: {}, state: {}, writes: [] },
@@ -32,6 +32,7 @@ for (const [id, record] of Object.entries(records)) {
       const body = JSON.parse(String(init.body)), patch = url.search ? body.patch : body
       record.writes.push({ target, patch })
       await record.wait
+      if (record.refuse) return new Response("unavailable", { status: 503 })
       record[target] = applyMergePatch(record[target], patch)
     }
     return Response.json(record[target])

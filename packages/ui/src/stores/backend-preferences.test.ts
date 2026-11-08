@@ -109,6 +109,79 @@ test("real preference consumers isolate host, server, fallback, instance data an
     assert.equal(a.config.server.listeningMode, undefined)
   })
 
+  await t.test("failed remote edit families notify once, preserve results and never replay; host edits stay silent", async () => {
+    const data = fixture({ ui: { settings: { missionProfileDefaults: [], missionModels: [] } } })
+    const owner = attach("refusedEdits", data)
+    const prefs = module.preferencesForBackend(owner.backend.id)
+    await prefs.ensureLoaded()
+    const fetcher = data.fetcher
+    let patches = 0
+    // Keep real storage, queues and action methods; refuse only the transport write.
+    const refused = createBackendClient({ id: "refusedFamilies", baseUrl: "https://refused.invalid", fetcher: async (input, init) => {
+      if (init?.method === "PATCH") { patches++; return new Response("unavailable", { status: 503 }) }
+      return fetcher(input, init)
+    } })
+    registry.set(refused.id, refused); registered.push(refused)
+    const detach = backendEvents.attach(refused.id, refused.events)
+    const target = module.preferencesForBackend(refused.id)
+    const brief = { version: 1 as const, id: "00000000-0000-0000-0000-000000000090", name: "Refused", objective: "Refused", notes: "", template: "custom" as const }
+    const actions = [
+      () => target.updatePreferences({ modelVisibility: { p: { hiddenModelIds: ["a"] } } }),
+      () => target.updatePreferences({ missionProfileDefaults: [] }),
+      () => target.updatePreferences({ missionModels: [] }),
+      () => target.setProviderModelVisibility("p", { hiddenModelIds: ["a"] }),
+      () => target.saveMissionDefaults([], target.missionPreferenceSnapshot("missionProfileDefaults")),
+      () => target.resetMissionModels(),
+      () => target.saveUserMissionModel(brief),
+      () => target.removeUserMissionModel(brief.id),
+      () => target.addRecentFolder("/new"),
+      () => target.removeRecentFolder("/new"),
+      () => target.recordWorkspaceLaunch("/new"),
+      () => target.addRecentModelPreference({ providerId: "p", modelId: "a" }),
+      () => target.toggleFavoriteModelPreference({ providerId: "p", modelId: "a" }),
+      () => target.setFavoritesOnlyPreference(true),
+      () => target.setModelThinkingSelection({ providerId: "p", modelId: "a" }, "high"),
+      () => target.rememberCloneParent("/clones"),
+      () => target.addNamedRecentFolder("/new", "New"),
+      () => target.renameRecentFolderProject("/new", "New"),
+      () => target.addOpenCodeBinary("/tools/remote"),
+      () => target.removeOpenCodeBinary("/tools/remote"),
+    ]
+    try {
+      for (const [index, action] of actions.entries()) {
+        await target.reloadMissionPreferences()
+        const before = getToastHistory().length, sent = patches
+        const result = await Promise.resolve().then(action).then(value => ({ value }), error => ({ error }))
+        await refused.storage.flushWrites()
+        await new Promise<void>(resolve => setImmediate(resolve))
+        if (index < 3) assert.deepEqual(result, { value: false }, "boolean failure contract is preserved")
+        else assert.ok("error" in result, `action ${index} rejects`)
+        assert.equal(patches - sent, index < 18 ? 1 : 0, `action ${index} writes once or refuses host administration`)
+        assert.equal(getToastHistory().length - before, 1, `action ${index} notifies once`)
+        assert.equal(getToastHistory().at(-1)?.message, "Could not save the preference.")
+        await target.ensureLoaded()
+        assert.equal(patches - sent, index < 18 ? 1 : 0, `action ${index} never replays on a read`)
+      }
+      for (const updates of [{ missionModels: ["invalid"] }, { locale: "fr", modelVisibility: {} }]) {
+        await target.reloadMissionPreferences()
+        const before = getToastHistory().length, sent = patches
+        assert.equal(await target.updatePreferences(updates as any), false)
+        await refused.storage.flushWrites()
+        await new Promise<void>(resolve => setImmediate(resolve))
+        assert.equal(getToastHistory().length - before, 1, "validation refusal notifies once")
+        assert.equal(patches, sent, "validation refuses before dispatch")
+      }
+      const before = getToastHistory().length
+      // Reject the local transport, including a host-owned edit delegated by a remote target.
+      globalThis.fetch = async (input, init) => init?.method === "PATCH" ? new Response("unavailable", { status: 503 }) : host.fetcher(input, init)
+      assert.equal(await hostPrefs.updatePreferences({ locale: "fr" }), false)
+      assert.equal(await prefs.updatePreferences({ locale: "fr" }), false)
+      await owner.backend.storage.flushWrites()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(getToastHistory().length, before)
+    } finally { globalThis.fetch = host.fetcher; detach(); owner.detach() }
+  })
+
   await t.test("model and Missions values inherit only when absent; writes create server overrides", async () => {
     assert.deepEqual(prefsB.uiState().models.favorites, hostPrefs.uiState().models.favorites)
     assert.deepEqual(prefsA.uiState().models.favorites, [], "explicit empty values suppress fallback")
