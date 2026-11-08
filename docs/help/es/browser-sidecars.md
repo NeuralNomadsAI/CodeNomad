@@ -32,6 +32,8 @@ Las ventanas emergentes nativas comparten las sesiones de la vista previa, conse
 
 Los sitios pueden pedir confirmación al cerrar una ventana emergente nativa. En Linux, el consentimiento para bloquear el puntero aparece en la parte superior de su ventana. Las versiones de WebKitGTK afectadas por [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), incluida 2.52.6, requieren el selector de archivos de la página para subir archivos, ya que el acceso a archivos arrastrados está bloqueado por seguridad. Guarde el trabajo de la página antes de cerrar o recargar la ventana de CodeNomad que la contiene.
 
+En Tauri macOS/Linux, enfoque la vista previa para ampliarla con ⌘/Ctrl +, − o 0, o con el menú de zoom de la aplicación. Con el foco en otro lugar, estas acciones del menú amplían la aplicación.
+
 ## Elegir una de seis plantillas de área visible {#templates}
 
 1. Abre el menú de área visible de la vista previa.

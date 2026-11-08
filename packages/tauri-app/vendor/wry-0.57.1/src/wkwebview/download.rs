@@ -20,12 +20,7 @@ pub(crate) fn navigation_download_action(
   _action: &WKNavigationAction,
   download: &WKDownload,
 ) {
-  unsafe {
-    if let Some(delegate) = &this.ivars().download_delegate {
-      let proto_delegate = ProtocolObject::from_ref(&**delegate);
-      download.setDelegate(Some(proto_delegate));
-    }
-  }
+  attach_download_delegate(this, download);
 }
 
 // Download response handler
@@ -35,6 +30,11 @@ pub(crate) fn navigation_download_response(
   _response: &WKNavigationResponse,
   download: &WKDownload,
 ) {
+  attach_download_delegate(this, download);
+}
+
+// Navigation and native context-menu downloads share the same destination policy.
+pub(crate) fn attach_download_delegate(this: &WryNavigationDelegate, download: &WKDownload) {
   unsafe {
     if let Some(delegate) = &this.ivars().download_delegate {
       let proto_delegate = ProtocolObject::from_ref(&**delegate);

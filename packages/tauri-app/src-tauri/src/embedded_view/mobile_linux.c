@@ -1,5 +1,6 @@
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
+#include "zoom.h"
 typedef struct { gboolean mobile, active, sending; double x, y; } TouchState;
 static void touch(GtkWidget *view, TouchState *state, GdkEventType type, double x, double y) {
     GdkWindow *window = gtk_widget_get_window(view);
@@ -66,6 +67,6 @@ int cn_preview_profile(void *opaque, const char *ua, double zoom, double density
     state->active = FALSE; state->mobile = ua && *ua;
     WebKitWebView *web = WEBKIT_WEB_VIEW(view);
     webkit_settings_set_user_agent(webkit_web_view_get_settings(web), state->mobile ? ua : NULL);
-    webkit_web_view_set_zoom_level(web, zoom);
+    cn_preview_zoom_base(opaque, zoom);
     return 0;
 }

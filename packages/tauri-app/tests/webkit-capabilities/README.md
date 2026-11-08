@@ -66,6 +66,20 @@ availability; **WebAuthn availability** reports platform-authenticator availabil
 
 ## Isolated native inputs
 
+Set `CODENOMAD_FIXTURE_CONTROLS=1` and `CODENOMAD_FIXTURE_ZOOM_EVIDENCE=1` for
+focused WebKit zoom trials. Native Cmd/Ctrl +, − and 0 and the fixture's **View**
+menu exercise the production native zoom handlers and focused-menu routing.
+`native-zoom.log` records actual primary/guest page zoom, independently of DOM
+viewport reports. Run `assert-zoom.py <log>` after both key and menu sequences;
+`--app-fallback` also checks primary zoom after explicitly focusing the app.
+Compile/run `zoom-policy.c` with the system C compiler and `-lm` for range/reset
+assertions. The user zoom factor composes with fitted mobile-profile zoom.
+
+For image downloads, mark the trial start with a file, activate the native image
+menu, then run `assert-image-download.py <marker> <count> [Downloads-directory]`.
+It checks unique UUID names and exact generated PNG bytes. WKWebView context-menu
+and navigation downloads share the same native download delegate and policy.
+
 `CODENOMAD_FIXTURE_LIFETIME` selects `opener-close`, `opener-reload`,
 `owner-destroy` or `renderer-reload`. Activate **Lifetime tree**, then **Create
 descendant** in its child using native input. The child arms beforeunload and

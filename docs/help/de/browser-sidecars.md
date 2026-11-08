@@ -32,6 +32,8 @@ Native Pop-ups teilen Vorschau-Anmeldungen, behalten `opener`/`postMessage` und 
 
 Websites können beim Schließen eines nativen Pop-ups eine Bestätigung verlangen. Unter Linux erscheint die Zustimmung zur Zeigersperre oben im zugehörigen Fenster. Von [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) betroffene WebKitGTK-Versionen, einschließlich 2.52.6, benötigen für Uploads die Dateiauswahl der Seite, da der Zugriff auf abgelegte Dateien aus Sicherheitsgründen gesperrt ist. Speichern Sie die Arbeit auf der Seite, bevor Sie das zugehörige CodeNomad-Fenster schließen oder neu laden.
 
+Fokussieren Sie unter Tauri macOS/Linux die Vorschau, um sie mit ⌘/Strg +, − oder 0 oder über das Zoommenü der App zu zoomen. Bei anderem Fokus zoomen diese Menüaktionen die App.
+
 ## Eine von sechs Ansichtsgrößenvorlagen wählen {#templates}
 
 1. Öffnen Sie das Ansichtsgrößenmenü der Vorschau.

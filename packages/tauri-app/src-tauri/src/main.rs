@@ -2072,6 +2072,9 @@ fn main() {
             browser_target_release_open
         ])
         .on_menu_event(|app_handle, event| {
+            if embedded_view::zoom::focused(app_handle, event.id().0.as_str()) {
+                return;
+            }
             match event.id().0.as_str() {
                 // File menu
                 action @ ("new-instance"

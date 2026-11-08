@@ -177,7 +177,8 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
         .map_err(|error| error.to_string())?;
     receiver
         .recv_timeout(Duration::from_secs(5))
-        .map_err(|_| "Timed out configuring WebKitGTK browser security".to_string())
+        .map_err(|_| "Timed out configuring WebKitGTK browser security".to_string())?;
+    super::zoom::install(webview)
 }
 
 // Keep the requesting Wayland surface focused: a separate modal window causes

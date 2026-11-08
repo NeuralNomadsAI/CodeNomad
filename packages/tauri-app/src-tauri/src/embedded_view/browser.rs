@@ -186,7 +186,7 @@ impl EmbeddedViews {
         .title(url.origin().ascii_serialization())
         .inner_size(520.0, 680.0)
         .disable_drag_drop_handler()
-        .zoom_hotkeys_enabled(true)
+        .zoom_hotkeys_enabled(cfg!(windows))
         .visible(false);
         #[cfg(target_os = "linux")]
         let builder = parent

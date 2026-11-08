@@ -24,6 +24,16 @@ pub fn build(directory: &std::path::Path) {
     ));
     println!("cargo:rerun-if-changed={}", mobile.display());
     build.file(mobile);
+    let zoom = directory.join(format!(
+        "zoom_{os}.{}",
+        if os == "macos" { "m" } else { "c" }
+    ));
+    println!("cargo:rerun-if-changed={}", zoom.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        directory.join("zoom.h").display()
+    );
+    build.file(zoom);
     if std::env::var_os("CARGO_FEATURE_BROWSER_PARENT_QUALIFICATION").is_some() {
         let trial = directory.join(format!(
             "../../../tests/browser-parent/mobile-trial-{os}.{}",

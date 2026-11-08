@@ -32,6 +32,8 @@ Yerel açılır pencereler önizleme oturumlarını paylaşır, `opener`/`postMe
 
 Siteler yerel açılır pencere kapanırken onay isteyebilir. Linux'ta işaretçi kilidi onayı ilgili pencerenin üstünde görünür. 2.52.6 dahil [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) sorunundan etkilenen WebKitGTK sürümlerinde, bırakılan dosyalara erişim güvenlik nedeniyle engellendiği için yüklemelerde sayfanın dosya seçicisini kullanın. İlgili CodeNomad penceresini kapatmadan veya yeniden yüklemeden önce sayfadaki çalışmanızı kaydedin.
 
+Tauri macOS/Linux'ta önizlemeye odaklanıp ⌘/Ctrl ile +, − veya 0 tuşlarını ya da uygulamanın yakınlaştırma menüsünü kullanın. Odak başka yerdeyse bu menü eylemleri uygulamayı yakınlaştırır.
+
 ## Altı görünüm alanı şablonundan birini seçin {#templates}
 
 1. Önizlemenin görünüm menüsünü açın.

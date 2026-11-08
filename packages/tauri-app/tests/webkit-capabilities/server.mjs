@@ -17,7 +17,7 @@ createServer((request, response) => {
   const route = new URL(request.url, "http://127.0.0.1:18741").pathname
   if (route === "/image.png") {
     response.setHeader("Content-Type", "image/png")
-    response.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64'))
+    response.end(Buffer.from(source.match(/PNG_BASE64 = '([^']+)'/)[1], 'base64'))
     return
   }
   const download = route === "/download"

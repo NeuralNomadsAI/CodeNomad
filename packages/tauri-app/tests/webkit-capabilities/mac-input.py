@@ -1,4 +1,4 @@
-"""Native VM input helper: click X Y, key virtual-keycode, or text VALUE."""
+"""Native VM input helper: click/right-click X Y, key virtual-keycode, or text VALUE."""
 import ctypes as c
 import sys
 import time
@@ -22,10 +22,11 @@ def post(event):
     cf.CFRelease(event)
     time.sleep(0.05)
 
-if sys.argv[1] == 'click':
+if sys.argv[1] in ('click', 'right-click'):
     point = Point(float(sys.argv[2]), float(sys.argv[3]))
-    for kind in (5, 1, 2):
-        post(cg.CGEventCreateMouseEvent(None, kind, point, 0))
+    right = sys.argv[1] == 'right-click'
+    for kind in ((5, 3, 4) if right else (5, 1, 2)):
+        post(cg.CGEventCreateMouseEvent(None, kind, point, 1 if right else 0))
 elif sys.argv[1] == 'key':
     for down in (True, False):
         event = cg.CGEventCreateKeyboardEvent(None, int(sys.argv[2]), down)
@@ -54,4 +55,4 @@ elif sys.argv[1] == 'text':
             cg.CGEventKeyboardSetUnicodeString(event, len(text) // 2, buf)
             post(event)
 else:
-    raise ValueError('click, key, chord, drag or text required')
+    raise ValueError('click, right-click, key, chord, drag or text required')

@@ -10,21 +10,23 @@ use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
 mod browser;
 #[path = "embedded_view/fullscreen.rs"]
 mod fullscreen;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "embedded_view/input.rs"]
+pub(crate) mod input;
 #[cfg(target_os = "linux")]
 #[path = "embedded_view/linux.rs"]
 mod linux;
 #[cfg(target_os = "macos")]
 #[path = "embedded_view/macos.rs"]
 mod macos;
-#[cfg(windows)]
-#[path = "embedded_view/windows.rs"]
-mod windows;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-#[path = "embedded_view/input.rs"]
-pub(crate) mod input;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "embedded_view/mobile.rs"]
 pub(crate) mod mobile;
+#[cfg(windows)]
+#[path = "embedded_view/windows.rs"]
+mod windows;
+#[path = "embedded_view/zoom.rs"]
+pub(crate) mod zoom;
 
 /// Full, normalized desktop identity. The caller resolves config aliases before startup.
 pub(crate) struct StorageIdentity {
@@ -440,7 +442,7 @@ impl EmbeddedViews {
         .data_directory(storage.directory.clone())
         .focused(false)
         .disable_drag_drop_handler()
-        .zoom_hotkeys_enabled(true)
+        .zoom_hotkeys_enabled(cfg!(windows))
         .on_page_load(move |view, payload| {
             if page_policy.page_load(&view, token, &payload) {
                 on_page_load(view, payload);

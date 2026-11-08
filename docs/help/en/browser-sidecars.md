@@ -32,6 +32,8 @@ Native pop-ups share preview sign-ins, preserve `opener`/`postMessage` and close
 
 Sites can ask for confirmation when closing a native pop-up. Linux pointer-lock consent appears at the top of its owning window. WebKitGTK builds affected by [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), including 2.52.6, require the page's file input for uploads because dropped-file access is blocked for security. Save page work before closing or reloading the owning CodeNomad window.
 
+On Tauri macOS/Linux, focus the preview to zoom it with ⌘/Ctrl +, − or 0, or the app's zoom menu. With focus elsewhere, these menu actions zoom the app.
+
 ## Choose one of six viewport templates {#templates}
 
 1. Open the preview's viewport menu.

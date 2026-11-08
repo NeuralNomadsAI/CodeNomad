@@ -19,7 +19,7 @@ use objc2_web_kit::WKWebView;
 use crate::{
   PageLoadEvent, WryWebView, url_from_webview,
   wkwebview::{
-    download::{navigation_download_action, navigation_download_response},
+    download::{attach_download_delegate, navigation_download_action, navigation_download_response},
     navigation::{
       did_commit_navigation, did_finish_navigation, navigation_policy, navigation_policy_response,
       web_content_process_did_terminate,
@@ -45,6 +45,15 @@ define_class!(
   pub struct WryNavigationDelegate;
 
   unsafe impl NSObjectProtocol for WryNavigationDelegate {}
+
+  impl WryNavigationDelegate {
+    // WKNavigationDelegatePrivate.h: native Download Image bypasses navigation policies.
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:contextMenuDidCreateDownload:))]
+    fn context_menu_download(&self, _webview: &WKWebView, download: &WKDownload) {
+      attach_download_delegate(self, download);
+    }
+  }
 
   unsafe impl WKNavigationDelegate for WryNavigationDelegate {
     #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]

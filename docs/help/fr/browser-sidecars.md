@@ -32,6 +32,8 @@ Les pop-ups natifs partagent les connexions de l’aperçu, conservent `opener`/
 
 Les sites peuvent demander confirmation à la fermeture d’un pop-up natif. Sous Linux, le consentement au verrouillage du pointeur apparaît en haut de sa fenêtre. Les versions de WebKitGTK affectées par [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), dont 2.52.6, nécessitent le sélecteur de fichiers de la page pour les envois : l’accès aux fichiers déposés est bloqué pour des raisons de sécurité. Enregistrez le travail de la page avant de fermer ou recharger la fenêtre CodeNomad qui l’héberge.
 
+Sur Tauri macOS/Linux, donnez le focus à l’aperçu pour le zoomer avec ⌘/Ctrl +, − ou 0, ou avec le menu de zoom de l’application. Si le focus est ailleurs, ces commandes de menu zooment l’application.
+
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 
 1. Ouvrez le menu de zone d’affichage de l’aperçu.

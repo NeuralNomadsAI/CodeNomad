@@ -28,7 +28,7 @@ pub(crate) fn profile<R: tauri::Runtime>(
         Ok(unsafe { cn_preview_profile(ptr, ua.as_ptr(), zoom, density) } != 0)
     })
 }
-fn native<R: tauri::Runtime, T: Send + 'static>(
+pub(super) fn native<R: tauri::Runtime, T: Send + 'static>(
     view: &tauri::Webview<R>,
     run: impl FnOnce(*mut c_void) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {

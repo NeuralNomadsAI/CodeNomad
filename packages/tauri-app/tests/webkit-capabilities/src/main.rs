@@ -49,7 +49,41 @@ fn main() {
             "capabilities-fixture".into(),
         ))
         .manage(embedded_view::EmbeddedViews::default())
+        .on_menu_event(|app, event| {
+            #[cfg(windows)]
+            let _ = (app, event);
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if embedded_view::zoom::focused(app, event.id().0.as_str()) {
+                return;
+            }
+            // Fixture-only primary fallback, so native menu routing can be qualified.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let Some(primary) = app.get_webview(OWNER) {
+                if let Ok((current, device)) = embedded_view::mobile::scale(&primary) {
+                    let next = match event.id().0.as_str() {
+                        "zoom_in" => current / device + 0.2,
+                        "zoom_out" => current / device - 0.2,
+                        "reset_zoom" => 1.0,
+                        _ => return,
+                    };
+                    let _ = primary.set_zoom(next.clamp(0.25, 5.0));
+                }
+            }
+        })
         .setup(move |app| {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                use tauri::menu::{Menu, MenuItem, Submenu};
+                let zoom_in =
+                    MenuItem::with_id(app, "zoom_in", "Zoom In", true, Some("CmdOrCtrl+="))?;
+                let zoom_out =
+                    MenuItem::with_id(app, "zoom_out", "Zoom Out", true, Some("CmdOrCtrl+-"))?;
+                let zoom_reset =
+                    MenuItem::with_id(app, "reset_zoom", "Reset Zoom", true, Some("CmdOrCtrl+0"))?;
+                let view =
+                    Submenu::with_items(app, "View", true, &[&zoom_in, &zoom_out, &zoom_reset])?;
+                app.set_menu(Menu::with_items(app, &[&view])?)?;
+            }
             std::fs::write(&log, "setup\n").unwrap();
             let window = tauri::WebviewWindowBuilder::new(
                 app,
@@ -154,6 +188,41 @@ fn main() {
                 .unwrap(),
             )?;
             guest.show()?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if std::env::var_os("CODENOMAD_FIXTURE_ZOOM_EVIDENCE").is_some() {
+                let primary: tauri::Webview = window.as_ref().clone();
+                let preview = guest.clone();
+                let output = root.join("native-zoom.log");
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    let mut previous = None;
+                    for _ in 0..3000 {
+                        let Ok((app, device)) = embedded_view::mobile::scale(&primary) else {
+                            break;
+                        };
+                        let Ok((guest, guest_device)) = embedded_view::mobile::scale(&preview)
+                        else {
+                            break;
+                        };
+                        let sample = (app / device, guest / guest_device);
+                        if previous != Some(sample) {
+                            writeln!(
+                                std::fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(&output)
+                                    .unwrap(),
+                                "app={:.6} guest={:.6}",
+                                sample.0,
+                                sample.1
+                            )
+                            .unwrap();
+                            previous = Some(sample);
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                });
+            }
             if let Ok(mode) = std::env::var("CODENOMAD_FIXTURE_LIFETIME") {
                 assert!([
                     "opener-close",

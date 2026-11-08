@@ -577,10 +577,13 @@ dependencies = [
 name = "codenomad-webkit-capabilities-fixture"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "dirs 5.0.1",
  "gtk",
  "objc2",
+ "pkg-config",
  "serde",
+ "serde_json",
  "sha2",
  "tauri",
  "tauri-plugin-dialog",
