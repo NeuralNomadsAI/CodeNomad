@@ -125,3 +125,26 @@ test("activity invalidations without linked conversations never fan out an activ
   assert.equal(state.firstReads, 0)
   assert.equal(state.activeReads, 0)
 })
+
+test("releasing the last owner stops a read in flight and drops its queued rerun; another owner keeps it", async () => {
+  const { state, store, hold } = harness()
+  state.first = [{ type: "user", text: assignment("msn_one", "build") }]
+  // The only owner hides while the child read is held: nothing after it runs.
+  let gate = hold()
+  const read = store.demand("inst", mission, 1, "preview")
+  for (let attempt = 0; state.firstReads === 0 && attempt < 50; attempt++) await new Promise(resolve => setTimeout(resolve, 1))
+  void store.demand("inst", mission, 2, "preview")
+  store.release("inst", mission, "preview")
+  gate.resolve(); await read
+  assert.equal(state.activeReads, 0, "a released read stops before its next step")
+  assert.equal(store.taskSession("inst", mission, "build"), undefined, "a released read publishes nothing")
+  assert.equal(state.firstReads, 1, "its queued rerun is dropped")
+  // With a second owner still showing the mission, releasing one keeps the read.
+  gate = hold()
+  const kept = store.demand("inst", mission, 3, "preview")
+  void store.demand("inst", mission, 3, "selected")
+  store.release("inst", mission, "preview")
+  gate.resolve(); await kept
+  assert.equal(store.taskSession("inst", mission, "build"), "ses_child")
+  assert.equal(state.activeReads, 1)
+})

@@ -20,7 +20,8 @@ export interface MissionTaskSelection {
  * overflow actions stay in place, disabled. */
 export function MissionTaskActions(props: {
   instanceId: string; mission: MissionPanelMap; selection: MissionTaskSelection; disabled: boolean
-  /** A schedule's passage: its tasks are read here, never recovered. */
+  /** A schedule's passage: its tasks are read here, never recovered, and the
+   * toolbar keeps the schedule's button positions. */
   readOnly?: boolean
   onAdmitted: () => Promise<void>; onCloseReader: () => void; onOpenConversation: (sessionId: string) => void
   feedback?: JSX.Element
@@ -35,8 +36,12 @@ export function MissionTaskActions(props: {
       disabled: action.disabled, onSelect: action.onSelect } : undefined
   }
   const conversation = () => props.selection.conversation
+  // A passage task replaces its schedule's toolbar: its disabled Run now slot keeps
+  // every later button in place.
+  const runNow = (): MissionPrimaryAction | undefined => props.readOnly
+    ? { key: "run-now", label: t("missionsPanel.action.runNow"), disabled: true, onSelect: () => undefined } : undefined
   return <MissionActionBar task label={t("missionsPanel.picker.actions")} reading onToggleReader={() => props.onCloseReader()}
-    primary={primary()} openLabel={t("missionsPanel.task.openConversation")}
+    primary={primary()} runNow={runNow()} openLabel={t("missionsPanel.task.openConversation")}
     onOpenConversation={conversation() ? () => props.onOpenConversation(conversation()!) : undefined}
     feedback={<>{props.feedback}{props.readOnly ? undefined : recovery.feedback}</>} />
 }

@@ -47,6 +47,9 @@ async function open(options: BrowserContextOptions = {}, holdDepth = false) {
   const context = await browser.newContext({ locale: "en-US", viewport: { width: 1000, height: 600 }, ...options })
   const page = await context.newPage(), errors: string[] = [], mutations: string[] = [], sessionReads: string[] = []
   page.on("request", request => { const path = new URL(request.url()).pathname; if (path.includes("/session/")) sessionReads.push(path) })
+  // Native reads naming the long mission's coordinator (its messages, its children).
+  const coordinatorReads: string[] = []
+  page.on("request", request => { if (request.url().includes("ses_long")) coordinatorReads.push(request.url()) })
   await page.addInitScript("globalThis.__name ??= target => target")
   page.setDefaultTimeout(15_000)
   page.on("pageerror", error => errors.push(error.message))
@@ -62,7 +65,7 @@ async function open(options: BrowserContextOptions = {}, holdDepth = false) {
   })
   await page.goto(url, { timeout: 60_000 })
   await page.locator(".mission-rows button.mission-row-select").first().waitFor()
-  return { page, errors, mutations, sessionReads, close: () => context.close(), releaseDepth: async () => {
+  return { page, errors, mutations, sessionReads, coordinatorReads, close: () => context.close(), releaseDepth: async () => {
     assert(depthRoute, "the actual depth HTTP request is held")
     // Exactly the default HTTP fixture reply, including its depth-read validation error.
     const route = depthRoute; depthRoute = undefined
@@ -154,6 +157,33 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     await f.page.evaluate(() => (window as any).missionHost.mount(true))
     await missionDetail(f.page).waitFor()
     assert.equal(await selectedMissionTitle(f.page).innerText(), "Long migration")
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+for (const fold of [false, true]) test(`an expanded mission's native task reads ${fold ? "stop once it folds" : "go on while it stays expanded"}`, async () => {
+  const f = await open()
+  try {
+    // Hold the coordinator's message read: the children read only follows it.
+    let held: Route | undefined
+    await f.page.route(url => url.href.includes("ses_long") && url.pathname.includes("/message"), route => {
+      if (!held) { held = route; return }
+      return route.fulfill({ json: { data: [] } })
+    })
+    const chevron = f.page.locator(".mission-row").filter({ has: f.page.locator(".session-item-title", { hasText: /^Long migration$/ }) }).locator(".session-item-expander")
+    await chevron.click()
+    for (let attempt = 0; !held && attempt < 200; attempt++) await f.page.waitForTimeout(50)
+    assert(held, "the expanded mission's coordinator read starts")
+    if (fold) {
+      await chevron.click()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    }
+    const before = f.coordinatorReads.length
+    await held.fulfill({ json: { data: [] } })
+    const children = () => f.coordinatorReads.slice(before).filter(url => url.includes("parentID=ses_long"))
+    for (let attempt = 0; !fold && !children().length && attempt < 100; attempt++) await f.page.waitForTimeout(50)
+    if (fold) await f.page.waitForTimeout(1_000)
+    assert.equal(children().length > 0, !fold, fold ? `a folded mission reads nothing further: ${children().join(", ")}` : "an expanded mission lists its coordinator's children")
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

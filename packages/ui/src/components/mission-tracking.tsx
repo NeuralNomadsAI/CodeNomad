@@ -1,5 +1,5 @@
-import { Show, createEffect } from "solid-js"
-import { demandMissionTaskSessions, missionDerivedTaskSession } from "../stores/mission-task-sessions"
+import { Show } from "solid-js"
+import { missionDerivedTaskSession, useMissionTaskSessionDemand } from "../stores/mission-task-sessions"
 import type { MissionActivityProjection, MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionReaderTarget } from "../stores/mission-view-state"
 import { MissionAttention } from "./mission-attention"
@@ -22,7 +22,8 @@ export function MissionTracking(props: {
   // Native lifecycle invalidations (session.execution.*, inbox, Shell, Form and
   // permission events) regenerate the activity projection: its generation paces
   // rereads of the linked conversations' activity.
-  createEffect(() => { if (props.active) demandMissionTaskSessions(props.instanceId, props.mission, props.activity?.generatedAt) })
+  useMissionTaskSessionDemand({ instanceId: () => props.instanceId, mission: () => props.mission, active: () => props.active,
+    pulse: () => props.activity?.generatedAt })
   return <>
     <MissionAttention mission={props.mission} family={observed()?.family} instanceId={props.instanceId} onOpenActor={props.onOpenActor} />
     <Show when={props.mission.panelCollections}>
