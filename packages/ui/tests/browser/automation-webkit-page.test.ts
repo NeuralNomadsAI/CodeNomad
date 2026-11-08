@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs"
 import { chromium } from "playwright"
 import { CLOSED_SHADOW_HOOK } from "../../../server/src/automation/page/webkit/hook"
 import { declaration } from "../../../server/src/automation/page/functions"
+import { nativeDriver } from "../../../server/src/automation/page/native-driver"
+import { waitForText } from "../../../server/src/automation/page/input"
 import type { PageOperation } from "../../../server/src/automation/page/protocol"
 
 test("WebKit reader finds composed text and accepts shadow descendants without accepting overlays", { timeout: 30_000 }, async () => {
@@ -30,12 +32,14 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
       return JSON.parse(response.result.value).result
     }
     const root = (await read({ op: "call", function: "document-root", args: [] })).handle
+    const session = { driver: nativeDriver({ driver: "webkit", contractVersion: 1 }, read, async () => {}),
+      markAutomation: false, checkpoint: async () => {} }
     const contains = async (text: string) => (await read({ op: "call", function: "contains", handle: root, args: [text] })).value
     for (const text of ["Hello world", "Frame phrase", "Shadow phrase"]) assert.equal(await contains(text), true, text)
-    // A gone wait must keep polling while the phrase is present, then succeed after removal.
-    assert.equal(await contains("Hello world"), true)
+    assert.equal((await waitForText(session, "Hello world", false, 500)).found, true)
+    await assert.rejects(waitForText(session, "Hello world", true, 50), /still shown/)
     await page.locator("p").first().evaluate(element => element.remove())
-    assert.equal(await contains("Hello world"), false)
+    assert.equal((await waitForText(session, "Hello world", true, 500)).found, false)
     const nodes = (await read({ op: "tree" })).nodes
     for (const mode of ["open", "closed"]) {
       const host = nodes.find((node: any) => node.name === `${mode} Host action`)
