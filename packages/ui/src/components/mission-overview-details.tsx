@@ -46,7 +46,7 @@ export function MissionOverviewDetails(props: {
         <Show when={props.mission.panelCollections}><MissionPanelPaging instanceId={props.instanceId} lane={`field:${props.mission.id}:history`} /></Show>
         <Show when={props.mission.historyTruncated}><p>{t("missions.control.history.truncated", { count: history().length })}</p></Show>
         <ol class="mission-reader-links"><For each={history()}>{change => <li>
-          <button type="button" class="window-action" onClick={() => open("change", String(change.revision))}>
+          <button type="button" class="window-action mission-reader-link" onClick={() => open("change", String(change.revision))}>
             {missionChangeExcerpt(change) ?? t("missions.control.edit")}</button>
           <small>{when(change.createdAt)} · {author(change.actorSessionId, change.source)}</small>
         </li>}</For></ol>
@@ -60,7 +60,7 @@ export function MissionOverviewDetails(props: {
         <Show when={props.mission.panelCollections}><MissionPanelPaging instanceId={props.instanceId} lane={`field:${props.mission.id}:reports`} /></Show>
         <Show when={omittedReports()}>{count => <p>{t(`missionsPanel.reports.omitted.${count() === 1 ? "one" : "other"}`, { count: count() })}</p>}</Show>
         <ol class="mission-reader-links"><For each={reports()}>{report => <li>
-          <button type="button" class="window-action" onClick={() => { const target = reportTarget(report); open(target.kind, target.id) }}>
+          <button type="button" class="window-action mission-reader-link" onClick={() => { const target = reportTarget(report); open(target.kind, target.id) }}>
             {props.mission.tasks.find(task => task.key === report.taskKey)?.title ?? (report.taskKey || t("missions.control.overview"))}</button>
           <small>{when(report.createdAt)} · {t(missionReportIsPrevious(props.mission, report) ? "missions.progress.previousAttempt" : `missions.control.report.outcome.${report.outcome}`)}
             <Show when={missionReportDecisionMaker(props.mission, report)}>{by => <> · <span data-decided-by={by()}>{t(`missions.decision.${by()}`)}</span></>}</Show></small>
