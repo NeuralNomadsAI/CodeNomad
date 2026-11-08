@@ -3,7 +3,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { deviceCookie, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../../remote-control/gate"
-import { isRemoteRequest } from "../../remote-control/request-origin"
+import { isRemoteRequest, isRemoteSocket } from "../../remote-control/request-origin"
+import { SERVER_PAIR_PATH, validServerPairRequest } from "../../remote-control/server-pairing"
 
 interface RouteDeps {
   manager: RemoteControlManager
@@ -11,11 +12,31 @@ interface RouteDeps {
 
 const DeviceParams = z.object({ id: z.string().uuid() })
 const PairBody = z.object({ code: z.string().min(1).max(256) })
+const ServerPairBody = z.object({ code: z.string().regex(/^[A-Za-z0-9_-]{32}$/), hostName: z.string().trim().min(1).max(255) }).strict()
 const PreviewsBody = z.object({ enabled: z.boolean() })
 const PAIR_TEMPLATE_URL = new URL("./auth-pages/remote-pair.html", import.meta.url)
 let pairTemplate: string | null = null
 
 export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDeps) {
+  // One failure bucket per backend, independent of untrusted peer/forwarded metadata.
+  let failedAttempts = 0
+  let resetsAt = 0
+  app.post(SERVER_PAIR_PATH, { bodyLimit: 4096, config: { cors: false } }, async (request, reply) => {
+    reply.header("Cache-Control", "no-store")
+    if (!isRemoteSocket(request.raw.socket)) return reply.code(404).send({ error: "Not found" })
+    if (!validServerPairRequest(request)) return reply.code(403).send({ error: "Server pairing request rejected" })
+    const parsed = ServerPairBody.safeParse(request.body)
+    // The 192-bit code is checked and consumed atomically before throttling failures;
+    // unauthenticated guesses must never lock out a holder of the valid code.
+    const paired = parsed.success ? deps.manager.exchangePairing(parsed.data.code, undefined, parsed.data.hostName) : null
+    if (paired) return { device: paired.device, credential: paired.token }
+    const now = Date.now()
+    if (now >= resetsAt) { failedAttempts = 0; resetsAt = now + 60_000 }
+    if (++failedAttempts > 10) return reply.header("Retry-After", String(Math.max(1, Math.ceil((resetsAt - now) / 1000)))).code(429).send({ error: "Pairing rate limited" })
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid server pairing body" })
+    return reply.code(401).send({ error: "This pairing link is invalid, already used or expired" })
+  })
+
   app.get("/api/remote-control/status", async (request) => {
     const status = deps.manager.status()
     return isRemoteRequest(request) ? { ...status, manageable: false } : status
@@ -77,7 +98,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
 
   // Pairing happens only on the public Remote Control origin.
   app.get(PAIR_PAGE_PATH, async (request, reply) => {
-    if (!isRemoteRequest(request)) return reply.code(404).send({ error: "Not found" })
+    if (!isRemoteSocket(request.raw.socket)) return reply.code(404).send({ error: "Not found" })
     pairTemplate ??= fs.readFileSync(PAIR_TEMPLATE_URL, "utf-8")
     reply.header("Cache-Control", "no-store")
     reply.header("Referrer-Policy", "no-referrer")
@@ -86,7 +107,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   })
 
   app.post(PAIR_EXCHANGE_PATH, { bodyLimit: 4096 }, async (request, reply) => {
-    if (!isRemoteRequest(request)) return reply.code(404).send({ error: "Not found" })
+    if (!isRemoteSocket(request.raw.socket)) return reply.code(404).send({ error: "Not found" })
     const parsed = PairBody.safeParse(request.body)
     const paired = parsed.success ? deps.manager.exchangePairing(parsed.data.code, request.headers["user-agent"]) : null
     if (!paired) {

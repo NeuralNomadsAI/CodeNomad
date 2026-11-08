@@ -22,6 +22,8 @@ const logger = createLogger({ level: "silent" } as never)
  */
 export async function startRemoteSurface(t: TestContext, options: {
   skipAuth?: boolean
+  now?: () => number
+  browse?: boolean
   openTunnel?: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
   /** Real panel extension routes over this store, with `workspaceManager` in place of the stub. */
   panelExtensions?: { store: PanelExtensionStore; workspaceManager: unknown }
@@ -46,7 +48,7 @@ export async function startRemoteSurface(t: TestContext, options: {
   let previewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
   const previewManager = new PreviewManager()
   const manager = new RemoteControlManager({
-    registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json")),
+    registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json"), options.now),
     router: () => (app ? (request, response) => app!.routing(request, response) : null),
     previewUpgrade: () => previewUpgrade,
     hasPreview: (token) => previewManager.get(token) !== undefined,
@@ -75,8 +77,9 @@ export async function startRemoteSurface(t: TestContext, options: {
     protocol: "http",
     workspaceManager: (options.panelExtensions?.workspaceManager ?? stub) as never,
     panelExtensions: options.panelExtensions?.store,
-    settings: stub,
-    fileSystemBrowser: stub,
+    settings: options.browse ? { getOwner: () => ({ recentFolders: [] }) } as never : stub,
+    fileSystemBrowser: options.browse ? { browse: () => ({ entries: [{ name: "app", path: "/srv/app", type: "directory" }],
+      metadata: { scope: "unrestricted", pathKind: "absolute", currentPath: "/srv", rootPath: "/", homePath: "/srv", displayPath: "/srv" } }) } as never : stub,
     eventBus: stub,
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub,

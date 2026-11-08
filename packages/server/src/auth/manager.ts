@@ -106,11 +106,10 @@ export class AuthManager {
   }
 
   getSessionFromRequest(request: FastifyRequest): { username: string; sessionId: string } | null {
-    // Remote Control authenticates paired devices only, even when local auth is skipped.
-    if (isRemoteRequest(request)) {
-      const deviceId = remoteDeviceOf(request)
-      return deviceId ? { username: this.init.username, sessionId: `remote-device:${deviceId}` } : null
-    }
+    // Device scope applies on both listeners, even when local auth is skipped.
+    const deviceId = remoteDeviceOf(request)
+    if (deviceId) return { username: this.init.username, sessionId: `remote-device:${deviceId}` }
+    if (isRemoteRequest(request)) return null
     return this.getSessionFromHeaders(request.headers)
   }
 

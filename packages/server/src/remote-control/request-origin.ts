@@ -6,7 +6,7 @@ import { isLoopbackAddress } from "../auth/http-auth"
 // Sockets accepted by the Remote Control ingress. Tunnelled traffic reaches that
 // listener from loopback, so membership, not the peer address, decides authority.
 const remoteSockets = new WeakSet<Socket>()
-// Paired device authenticated for a remote request by the ingress gate.
+// Paired device authenticated by the gate on either listener.
 const remoteDevices = new WeakMap<IncomingMessage, string>()
 
 export function attachRemoteDevice(request: Pick<FastifyRequest, "raw">, deviceId: string): void {
@@ -26,7 +26,7 @@ export function isRemoteSocket(socket: Socket | undefined): boolean {
 }
 
 export function isRemoteRequest(request: Pick<FastifyRequest, "raw">): boolean {
-  return isRemoteSocket(request.raw.socket)
+  return isRemoteSocket(request.raw.socket) || remoteDeviceOf(request) !== undefined
 }
 
 /** A request from this machine's own listeners, never a tunnelled one. */

@@ -7,6 +7,7 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+import type { ServerContractMeta } from "./meta-contract"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
@@ -767,6 +768,11 @@ export interface RemoteServerProbeRequest {
   skipTlsVerify?: boolean
 }
 
+export interface RemoteServerBrowseResponse {
+  listing: FileSystemListResponse
+  recents: Array<{ path: string; projectName?: string; lastAccessed: number }>
+}
+
 export interface RemoteServerProbeResponse {
   ok: boolean
   reachable: boolean
@@ -916,7 +922,8 @@ export interface SupportMeta {
   latestServerUrl?: string
 }
 
-export interface ServerMeta {
+/** Contract fields are optional on the wire for servers predating their introduction. */
+export interface ServerMeta extends Partial<ServerContractMeta> {
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
   /** URL direct remote clients should use (prefers HTTPS when enabled). */

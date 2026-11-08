@@ -5,7 +5,9 @@ import { test, type TestContext } from "node:test"
 import { fileURLToPath } from "node:url"
 import { serverApi } from "./api-client"
 import { authenticatedFetch, authRecovery } from "./auth-recovery"
-import { backendOf, backends, createBackendClient, localBackend } from "./backend-client"
+import { backendOf, backends, createBackendClient, createRemoteBackendClient, localBackend } from "./backend-client"
+import { createPanelExtensionsApi } from "./panel-extensions-api"
+import { toolImageSource } from "./tool-content"
 import { sdkManager } from "./sdk-manager"
 import { getServerMeta } from "./server-meta"
 import { serverEvents } from "./server-events"
@@ -214,4 +216,69 @@ test("only the transport modules read the injected API base and events URL", () 
   }
   visit(root)
   assert.deepEqual(readers.sort(), ["lib/api-base.ts", "lib/backend-transport.ts"])
+})
+
+test("the remote factory routes HTTP, SDK, media, SSE and login through the local profile relay", async t => {
+  useRendererWindow(t)
+  const requests: { url: string; init?: RequestInit }[] = []
+  const sources: FakeEventSource[] = []
+  let authenticated = false
+  const client = createRemoteBackendClient("remote_1", {
+    fetcher: async (input, init) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.endsWith("/auth/status")) return Response.json({ authenticated })
+      if (url.endsWith("/auth/login")) { authenticated = true; return Response.json({ ok: true }) }
+      if (url.endsWith("/api/meta") && !authenticated) return new Response("{}", { status: 401 })
+      return Response.json({})
+    },
+    eventSource: (url, init) => {
+      const source = new FakeEventSource(url, init)
+      sources.push(source)
+      return source as unknown as EventSource
+    },
+  })
+  t.after(() => client.events.dispose())
+  const relay = "https://ui.invalid/api/backends/remote_1"
+  assert.equal(client.id, "remote_1")
+  assert.equal(client.baseUrl, "https://ui.invalid")
+  assert.equal(client.eventsUrl, `${relay}/api/events`)
+  assert.equal(sources.length, 0)
+  assert.deepEqual([...backends], [["local", localBackend]])
+  assert.throws(() => backendOf("remote_1~ws"), /Backend unavailable/)
+
+  // Failed application requests are never replayed; recovery probes this relay only.
+  await assert.rejects(client.api.fetchServerMeta())
+  await until(() => client.auth.required(), "relay login is required")
+  assert.deepEqual(requests.map(request => request.url), [`${relay}/api/meta`, `${relay}/api/auth/status`])
+  assert.equal(await client.auth.signIn("owner", "password"), "ok")
+  assert.equal(client.auth.required(), false)
+  const login = requests.find(request => request.url.endsWith("/auth/login"))!
+  assert.equal(login.init?.body, JSON.stringify({ username: "owner", password: "password" }))
+
+  await client.meta.getServerMeta()
+  await client.storage.loadConfigOwner("ui")
+  await client.sdk.createClient("remote_1~ws", "/workspaces/ws/instance").session.prompt({ sessionID: "s", text: "fixture" })
+  await createPanelExtensionsApi(client).panelExtensionsApi.list()
+  const imagePath = `/api/workspaces/ws/session-media/s/m/0/0/${"a".repeat(64)}`
+  const image = toolImageSource({ type: "file", mime: "image/png", uri: imagePath }, client)!
+  assert.equal(image, `${relay}${imagePath}`)
+  await client.fetch(image, { credentials: "include" })
+  client.events.start()
+  await until(() => sources.length === 1, "relay stream starts")
+  assert.match(sources[0].url, /^https:\/\/ui\.invalid\/api\/backends\/remote_1\/api\/events\?clientId=/)
+  assert.deepEqual(sources[0].init, { withCredentials: true })
+  sources[0].emit("codenomad.client.ping", { ts: 7 })
+  await until(() => requests.some(request => request.url.endsWith("/pong")), "relay pong is sent")
+  for (const request of requests) {
+    assert.ok(request.url.startsWith(`${relay}/`), request.url)
+    assert.equal(request.init?.credentials, "include")
+    assert.equal(new Headers(request.init?.headers).has("Authorization"), false)
+  }
+  assert.ok(requests.some(request => request.url === `${relay}/workspaces/ws/instance/api/session/s/prompt`))
+  assert.ok(requests.some(request => request.url === `${relay}/api/storage/config/ui`))
+  assert.ok(requests.some(request => request.url === `${relay}/api/panel-extensions`))
+  for (const id of ["", "local", "../escape", "a/b", "a?b", "a".repeat(65)]) {
+    assert.throws(() => createRemoteBackendClient(id), TypeError)
+  }
 })

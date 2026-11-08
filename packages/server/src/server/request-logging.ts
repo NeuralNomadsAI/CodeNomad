@@ -2,11 +2,17 @@ import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { Logger } from "../logger"
 import { isHumanAnswerProofPayload } from "../missions/human-answer"
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
+import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
+import { routedPath } from "./routed-path"
 
 const integrationRoute = "/api/workspaces/:id/integrations"
 const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
 
 function integrationLogRoute(request: FastifyRequest): string | undefined {
+  const routed = routedPath(request.raw.url ?? request.url)
+  if (routed === SERVER_PAIR_PATH) return SERVER_PAIR_PATH
+  if (routed?.startsWith("/api/backends/")) return "/api/backends/:id/*"
+  if (routed?.startsWith("/api/remote-servers/")) return "/api/remote-servers/:id/*"
   const route = request.routeOptions.url
   if (route && integrationRoutes.has(route)) return route
   // Rejects and malformed parameters may have no matched route. Decode segments independently so
@@ -37,7 +43,7 @@ export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) 
         ...base,
         params: redactSecrets(request.params),
         query: redactSecrets(request.query),
-        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") ? "<redacted>" : redactSecrets(request.body),
+        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") || request.url.startsWith("/api/remote-servers/") ? "<redacted>" : redactSecrets(request.body),
       }, "HTTP request payload")
     }
     done()
@@ -54,6 +60,6 @@ export function redactSecrets(value: unknown): unknown {
     || isHumanAnswerProofPayload(value as Record<string, unknown>)) return "<redacted>"
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key,
-    /(authorization|cookie|key|code|token|password|secret|principal)/i.test(key) ? "<redacted>" : redactSecrets(entry),
+    /(authorization|cookie|credential|key|code|token|password|secret|principal|pairingLink)/i.test(key) ? "<redacted>" : redactSecrets(entry),
   ]))
 }

@@ -1,4 +1,5 @@
 import { CODENOMAD_API_BASE } from "./api-base"
+import { isBackendId } from "./backend-identity"
 
 export type BackendId = string
 
@@ -21,6 +22,8 @@ export interface BackendHttp extends BackendTransport {
 export interface BackendTransportOptions {
   id: BackendId
   baseUrl: string | undefined
+  /** Saved remote profile reached through this backend's local relay. */
+  relayProfileId?: string
   /** Absolute URL, or a path joined to `baseUrl`; defaults to `/api/events`. */
   eventsUrl?: string
   eventSource?: EventSourceFactory
@@ -46,11 +49,16 @@ function buildEventsUrl(base: string | undefined, path: string, local = false): 
 
 function makeBackendTransport(options: BackendTransportOptions, local = false): BackendTransport {
   const { id, baseUrl } = options
+  if (options.relayProfileId !== undefined && (!isBackendId(options.relayProfileId) || options.relayProfileId === "local")) {
+    throw new TypeError(`Invalid remote backend profile: ${options.relayProfileId}`)
+  }
+  const prefix = options.relayProfileId === undefined ? "" : `/api/backends/${encodeURIComponent(options.relayProfileId)}`
+  const url = (path: string) => resolveBackendUrl(baseUrl, `${prefix}${prefix && !path.startsWith("/") ? "/" : ""}${path}`)
   return {
     id,
     baseUrl,
-    eventsUrl: buildEventsUrl(baseUrl, options.eventsUrl ?? "/api/events", local),
-    url: (path) => resolveBackendUrl(baseUrl, path),
+    eventsUrl: prefix ? url(options.eventsUrl ?? "/api/events") : buildEventsUrl(baseUrl, options.eventsUrl ?? "/api/events", local),
+    url,
     // Resolved per connection, so tests and embedders may install EventSource after import.
     openEventSource: options.eventSource ?? ((url, init) => new EventSource(url, init)),
   }
