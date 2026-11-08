@@ -127,7 +127,8 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
   const encodedSession = session === null ? null : {
     tabs: await Promise.all(session.tabs.map(async (tab) => {
       if (tab.kind === "sidecar") return { kind: tab.kind, sidecarId: tab.sidecarId }
-      if (tab.kind === "remote-project") return { kind: tab.kind, profileId: tab.profileId, ...(tab.folder ? { folder: tab.folder } : {}) }
+      if (tab.kind === "remote-project") return { kind: tab.kind, profileId: tab.profileId,
+        ...(tab.folder ? { folder: tab.folder } : {}), ...(tab.title ? { title: tab.title } : {}) }
 
       const sessionIds = new Set([
         ...Object.keys(tab.drafts),
@@ -370,8 +371,9 @@ async function decodeGraph(
       continue
     }
     if (shell.kind === "remote-project") {
-      if (!hasExactKeys(shell, ["kind", "profileId"], ["folder"])) return
-      tabs.push({ kind: shell.kind, profileId: shell.profileId, ...(hasOwn(shell, "folder") ? { folder: shell.folder } : {}) })
+      if (!hasExactKeys(shell, ["kind", "profileId"], ["folder", "title"])) return
+      tabs.push({ kind: shell.kind, profileId: shell.profileId,
+        ...(hasOwn(shell, "folder") ? { folder: shell.folder } : {}), ...(hasOwn(shell, "title") ? { title: shell.title } : {}) })
       continue
     }
     if (shell.kind !== "workspace"

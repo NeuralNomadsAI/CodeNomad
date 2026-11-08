@@ -2,6 +2,7 @@ import type { RemoteServerProfile } from "../../../server/src/api-types"
 import { canOpenRemoteProjectTabs } from "../lib/native/remote-view"
 import { serverDisplayName } from "../lib/codenomad-link"
 import { mixRecents, type LaunchableRecent } from "../lib/remote-project-recents"
+import { getProjectDisplayName } from "../lib/recent-folder-display"
 import { activeBlankTabId, replaceBlankTab, getRemoteProjectAppTabId, selectRemoteProjectTab } from "./app-tabs"
 import { recentFolders, remoteProjectRecents, remoteServers, sidecarRecents } from "./preferences"
 import { sidecars } from "./sidecars"
@@ -26,9 +27,13 @@ export function launchableRecents(): LaunchableRecent[] {
     .map((server) => ({ id: server.id, name: serverDisplayName(server, servers) })), sidecarRecents(), [...sidecars().values()])
 }
 
-/** The project name the embedded page reported, else its server's name (never its raw address). */
-export function remoteProjectTabLabel(tab: Pick<RemoteProjectTabRecord, "profileId" | "title">): string {
+/** Prefer the reported or remembered project name, then its folder, then the server. */
+export function remoteProjectTabLabel(tab: Pick<RemoteProjectTabRecord, "profileId" | "title" | "folder">): string {
   if (tab.title) return tab.title
+  if (tab.folder) {
+    const recent = remoteProjectRecents().find((entry) => entry.profileId === tab.profileId && entry.folder === tab.folder)
+    return getProjectDisplayName(tab.folder, recent?.projectName)
+  }
   const servers = remoteServers()
   const profile = servers.find((server) => server.id === tab.profileId)
   return profile ? serverDisplayName(profile, servers) : tab.profileId

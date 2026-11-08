@@ -143,6 +143,38 @@ for (const response of ['empty', 'auth', 'error', 'pending'] as const) test(`rem
 const BOX = "https://box.example"
 
 for (const host of ['electron', 'tauri'] as const) {
+  for (const source of ['saved title', 'recent', 'folder'] as const) test(`${host}: restored projects use ${source} labels before either view opens`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: 'en-US' })
+    try {
+      const folders = ['/srv/first/', 'C:\\projects\\second\\']
+      const titles = source === 'folder' ? ['first', 'second'] : ['First project', 'Second project']
+      await open(page, '', { context: 'local', host,
+        uiState: { remoteServers: [server('box')], remoteProjectRecents: folders.map((folder, index) => ({
+          profileId: 'box', folder, projectName: source === 'recent' ? titles[index] : source === 'saved title' ? 'Older recent name' : undefined, lastAccessed: RECENT_TIME,
+        })) },
+        restore: { version: 1, revision: 1, savedAt: 1, layout: {}, session: {
+          homeActive: true, activeTabIndex: 0, tabs: folders.map((folder, index) => ({
+            kind: 'remote-project', profileId: 'box', folder,
+            ...(source === 'saved title' ? { title: titles[index] } : {}),
+          })),
+        } } })
+      await page.locator('.tab-pill').nth(1).waitFor()
+      assert.deepEqual(await page.locator('.tab-pill bdi').allTextContents(), titles)
+      assert.deepEqual(await page.locator('.tab-pill-close').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))), titles)
+      assert.equal((await views(page)).opened.length, 0, 'restoring labels must not open hidden native views')
+      if (source === 'saved title') {
+        await page.waitForFunction(() => (window as any).fixtureSnapshots.some((snapshot: any) =>
+          snapshot.session?.tabs.length === 2 && snapshot.session.tabs.every((tab: any) => tab.title)))
+        assert.deepEqual(await page.evaluate(() => (window as any).fixtureSnapshots.at(-1).session.tabs.map((tab: any) => tab.title)), titles)
+      }
+      await page.locator('.folder-home-root').getByRole('button', { name: 'Close', exact: true }).click()
+      await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
+      assert.equal((await views(page)).opened[0].url, `${BOX}/?codenomadEmbed=project&folder=${encodeURIComponent(folders[0]!)}`)
+      assert.deepEqual(await page.locator('.tab-pill bdi').allTextContents(), titles)
+      assert.equal((await views(page)).opened.length, 1, 'the unselected project must remain unopened')
+    } finally { await page.close() }
+  })
+
   test(`${host}: delayed view session rechecks visibility and bounds; native loading permits hide and close`, async () => {
     const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: 'en-US' })
     let release!: () => void
@@ -394,12 +426,14 @@ async function open(page: Page, path: string, scenario: Scenario) {
     if (context) w.__CODENOMAD_WINDOW_CONTEXT__ = context
     if (host !== "web") w.__CODENOMAD_RUNTIME_HOST__ = host
     w.fixtureViews = { opened: [], updates: [], closed: [], listeners: [], windows: [] }
+    w.fixtureSnapshots = []
     w.EventSource = class extends EventTarget { close() {} }
     if (host === "tauri") {
       w.__TAURI__ = { core: { invoke: async () => undefined } }
       w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
       w.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
         if (command === "client_state_load") return { isPrimary: true, restoreEnabled: Boolean(restore), snapshot: restore }
+        if (command === "client_state_save") { w.fixtureSnapshots.push(args.snapshot); return true }
         if (command === "open_external_url") w.externalURLs.push(args.url)
         if (command === "open_remote_window") w.fixtureViews.windows.push(args.payload)
         if (command === "remote_view_open") w.fixtureViews.opened.push(args.payload)
@@ -415,6 +449,7 @@ async function open(page: Page, path: string, scenario: Scenario) {
       const known = {
         claimClientStateAccess: async () => Boolean(restore),
         loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: restore }),
+        saveClientState: async (_token, snapshot) => { w.fixtureSnapshots.push(snapshot); return true },
         openRemoteView: async (payload) => { w.fixtureViews.opened.push(payload) },
         updateRemoteView: async (payload) => { w.fixtureViews.updates.push(payload) },
         closeRemoteView: async (viewId) => { w.fixtureViews.closed.push(viewId) },
@@ -762,7 +797,7 @@ test("a local window opens a saved server as a project tab whose view follows th
     await browse(page)
     await page.getByRole("button", { name: "Open a project on Box" }).click()
     await chooseRemoteRoot(page)
-    const tab = page.locator(".tab-pill", { hasText: "Box" })
+    const tab = page.locator(".tab-pill", { hasText: "/" })
     await tab.waitFor()
     await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
     const [opened] = (await views(page)).opened
@@ -902,7 +937,7 @@ test("an address added in Browse receives focus; choosing a folder opens its tab
     assert.equal((await views(page)).windows.length, 0)
     await row.click()
     await chooseRemoteRoot(page)
-    await page.locator(".tab-pill", { hasText: "lab.example" }).waitFor()
+    await page.locator(".tab-pill", { hasText: "/" }).waitFor()
     await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
     type Saved = { remoteServers: Array<{ id: string; name: string; baseUrl: string }> }
     const added = (fixture.state() as Saved).remoteServers.find((entry) => entry.baseUrl === "https://lab.example:8443")!
@@ -924,7 +959,7 @@ test("an address added in Browse receives focus; choosing a folder opens its tab
   } finally { await page.close() }
 })
 
-test("Browse lists saved servers by name and the selected root tab shows its server name", async () => {
+test("Browse lists saved servers by name and the selected root tab shows its folder", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     // An existing user's profiles, one saved under its pasted address.
@@ -938,7 +973,7 @@ test("Browse lists saved servers by name and the selected root tab shows its ser
     assert.equal(await page.getByRole("menuitem").count(), 0)
     await page.getByRole("button", { name: "Open a project on 127.0.0.1" }).click()
     await chooseRemoteRoot(page)
-    await page.locator(".tab-pill", { hasText: "127.0.0.1" }).waitFor()
+    await page.locator(".tab-pill", { hasText: "/" }).waitFor()
     assert.equal(await page.locator(".tab-pill", { hasText: "127.0.0.1:9911" }).count(), 0)
   } finally { await page.close() }
 })
@@ -981,7 +1016,7 @@ test("+ opens disposable blank tabs; remote and SideCar choices replace their or
     await browse(page)
     await page.getByRole("button", { name: "Open a project on Box" }).click()
     await chooseRemoteRoot(page)
-    await page.locator('.tab-pill', { hasText: 'Box' }).waitFor()
+    await page.locator('.tab-pill', { hasText: '/' }).waitFor()
     await page.locator('.new-instance-button').click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
     await blank.waitFor()
@@ -1395,7 +1430,7 @@ test("a restored window reopens its remote project tabs on their server and fold
         tabs: [{ kind: "remote-project", profileId: "box", folder: "/srv/app" }, { kind: "remote-project", profileId: "removed" }],
       } },
     })
-    await page.locator(".tab-pill", { hasText: "Box" }).waitFor()
+    await page.locator(".tab-pill", { hasText: "app" }).waitFor()
     await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
     const [opened] = (await views(page)).opened
     assert.equal(opened.url, `${BOX}/?codenomadEmbed=project&folder=%2Fsrv%2Fapp`)

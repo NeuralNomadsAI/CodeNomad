@@ -218,7 +218,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
       capture.recordRestoredTab(index, null, new Set())
       return
     }
-    const opened = openRemoteProjectTab(profile.id, tab.folder ? { folder: tab.folder } : {})
+    const opened = openRemoteProjectTab(profile.id, { folder: tab.folder, title: tab.title })
     const tabId = getRemoteProjectAppTabId(opened.token)
     capture.recordRestoredTab(index, tabId, new Set())
     if (index === snapshot.activeTabIndex) context.selectActive(tabId, true)

@@ -81,8 +81,8 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
   const restorableTabs: RestorableTabState[] = tabs.map((tab) => {
     if (tab.kind === "sidecar") return { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId }
     if (tab.kind === "remote-project") {
-      const { profileId, folder } = tab.remoteProjectTab
-      return { kind: "remote-project", profileId, ...(folder ? { folder } : {}) }
+      const { profileId, folder, title } = tab.remoteProjectTab
+      return { kind: "remote-project", profileId, ...(folder ? { folder } : {}), ...(title ? { title } : {}) }
     }
     const id = tab.instance.id
     const parentId = activeParentSessionId().get(id)

@@ -17,8 +17,8 @@ export interface RestorableWorkspaceTabState {
 }
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
-/** A remote CodeNomad project tab: its saved server and the folder its page last showed. */
-export interface RestorableRemoteProjectTabState { kind: "remote-project"; profileId: string; folder?: string }
+/** A remote CodeNomad project tab: its saved server and the folder/title its page last showed. */
+export interface RestorableRemoteProjectTabState { kind: "remote-project"; profileId: string; folder?: string; title?: string }
 export type RestorableTabState = RestorableWorkspaceTabState | RestorableSidecarTabState | RestorableRemoteProjectTabState
 export interface RestorableSessionState { tabs: RestorableTabState[]; activeTabIndex: number; homeActive?: boolean }
 export interface ClientSnapshotV1 {
@@ -230,7 +230,8 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
     const profileId = takeString(value.profileId, MAX_ID, budget)
     if (profileId === undefined) return null
     const folder = value.folder === undefined ? undefined : takeString(value.folder, MAX_PATH, budget)
-    return { kind, profileId, ...(folder === undefined ? {} : { folder }) }
+    const title = value.title === undefined ? undefined : takeString(value.title, MAX_PATH, budget)
+    return { kind, profileId, ...(folder === undefined ? {} : { folder }), ...(title === undefined ? {} : { title }) }
   }
   if (kind !== "workspace" && kind !== "instance") return null
   if (!["drafts", "attachments", "scrollSnapshots", "unseenIdleSince", "generationRecovery"]

@@ -20,17 +20,19 @@ const snapshot = (tabs: unknown[]): ClientSnapshotV1 => ({
 })
 
 describe("remote project tabs", () => {
-  it("restore as their server and folder, nothing else", () => {
+  it("restores the server, folder and known title, dropping transient entry URLs and invalid titles", () => {
     const normalized = normalizeRestorableSession({
       activeTabIndex: 0,
       tabs: [
-        { kind: "remote-project", profileId: "box", folder: "/srv/app", entryUrl: "https://t.example/remote-pair#code" },
-        { kind: "remote-project", profileId: "box" },
+        { kind: "remote-project", profileId: "box", folder: "/srv/app", title: "App", entryUrl: "https://t.example/remote-pair#code" },
+        { kind: "remote-project", profileId: "box", title: 42 },
+        { kind: "remote-project", profileId: "box", title: "x".repeat(4097) },
         { kind: "remote-project", folder: "/no-server" },
       ],
     })
     assert.deepEqual(normalized?.tabs, [
-      { kind: "remote-project", profileId: "box", folder: "/srv/app" },
+      { kind: "remote-project", profileId: "box", folder: "/srv/app", title: "App" },
+      { kind: "remote-project", profileId: "box" },
       { kind: "remote-project", profileId: "box" },
     ])
     assert.deepEqual(decodeClientSnapshot(snapshot([{ kind: "remote-project", profileId: "box" }]))?.session?.tabs,
@@ -39,7 +41,7 @@ describe("remote project tabs", () => {
 
   it("survive the partitioned native snapshot", async () => {
     const source = snapshot([
-      { kind: "remote-project", profileId: "box", folder: "/srv/app" },
+      { kind: "remote-project", profileId: "box", folder: "/srv/app", title: "App" },
       { kind: "remote-project", profileId: "other" },
     ])
     const encoded = await encodeClientSnapshotV2(source)
@@ -49,7 +51,8 @@ describe("remote project tabs", () => {
 
   it("join the tab bar as separate occurrences and close with their server", () => {
     releaseAppSessionRestoreGate()
-    const first = openRemoteProjectTab("box", { folder: "/srv/app" })
+    const first = openRemoteProjectTab("box", { folder: "/srv/app", title: "App" })
+    assert.equal(first.title, "App")
     assert.notEqual(openRemoteProjectTab("box", { folder: "/srv/app" }).token, first.token)
     const picker = openRemoteProjectTab("box")
     const pairing = openRemoteProjectTab("box", { entryUrl: "https://t.example/remote-pair#code" })

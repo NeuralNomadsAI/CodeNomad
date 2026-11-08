@@ -17,11 +17,12 @@ const [remoteProjectTabs, setRemoteProjectTabs] = createSignal<RemoteProjectTabR
 const [activeRemoteProjectToken, setActiveRemoteProjectToken] = createSignal<string | null>(null)
 let sequence = 0
 
-function openRemoteProjectTab(profileId: string, options: { folder?: string; entryUrl?: string } = {}): RemoteProjectTabRecord {
+function openRemoteProjectTab(profileId: string, options: { folder?: string; title?: string; entryUrl?: string } = {}): RemoteProjectTabRecord {
   const record: RemoteProjectTabRecord = {
     token: `${Date.now().toString(36)}-${(sequence++).toString(36)}`,
     profileId,
     ...(options.folder ? { folder: options.folder } : {}),
+    ...(options.title ? { title: options.title } : {}),
     ...(options.entryUrl ? { entryUrl: options.entryUrl } : {}),
   }
   setRemoteProjectTabs((tabs) => [...tabs, record])
