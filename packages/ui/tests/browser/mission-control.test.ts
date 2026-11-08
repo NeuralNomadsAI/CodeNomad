@@ -5,7 +5,7 @@ import path from "node:path"
 import os from "node:os"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
-import { chromium, type Browser, type Locator, type Page } from "playwright"
+import { chromium, type Browser, type Locator, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionMenuTrigger, missionPicker, missionRows, missionToolbar,
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
@@ -107,6 +107,8 @@ const settingsFits = (page: Page) => page.locator(".settings-screen-scroll").eva
 /** Plan changes, reports, cleanup history and identifiers are folded at the
  * bottom of the central overview reader; the panel keeps none of them. */
 async function openOverviewFold(page: Page, label: string) {
+  // An open task reader holds the Summary eye: it closes first.
+  if (await page.locator(".mission-task-reader").count()) await readAll(page).click()
   if (await readAll(page).getAttribute("aria-pressed") !== "true") await readAll(page).click()
   const fold = page.locator(".mission-reader details.mission-report-technical").filter({ has: page.locator(":scope > summary", { hasText: new RegExp(`^${label}$`) }) })
   if (!await fold.evaluate(element => (element as HTMLDetailsElement).open)) await fold.locator(":scope > summary").click()
@@ -725,6 +727,43 @@ test("depth uncertainty stays at its original Location through pending navigatio
   } finally { release(); await page.close() }
 })
 
+for (const close of [false, true]) test(`an open task reader's native task reads ${close ? "stop when it closes" : "go on while it stays open"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  try {
+    await setup(page)
+    const value = mission("reader-demand")
+    value.coordinatorSessionId = "ses_reader_root"
+    value.tasks[0].status = "dispatching"
+    await page.route("**/api/workspaces/fixture/missions**", route => {
+      if (isMissionContentRequest(route.request().url())) return route.fallback()
+      return route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: value.revision, discardedEvents: 0 } })
+    })
+    // Hold the coordinator's message read: the children read only follows it.
+    let held: Route | undefined
+    const children: string[] = []
+    page.on("request", request => { if (request.url().includes("parentID=ses_reader_root")) children.push(request.url()) })
+    await page.route(target => target.href.includes("ses_reader_root") && target.pathname.includes("/message"), route => {
+      if (!held) { held = route; return }
+      return route.fulfill({ json: { data: [] } })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await selectMission(page, "Objective reader-demand")
+    await until(() => Boolean(held), 15_000)
+    await taskButton(page, "task-one").click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Inspect evidence", level: 2 }).waitFor()
+    // The hidden panel's tree releases its demand; the open reader is the last owner.
+    await fixtureCall(page, "active", false)
+    if (close) {
+      await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+      await page.locator(".mission-reader").waitFor({ state: "detached" })
+    }
+    await held!.fulfill({ json: { data: [] } })
+    if (close) await page.waitForTimeout(1_000)
+    else await until(() => children.length > 0).catch(() => undefined)
+    assert.equal(children.length > 0, !close, close ? `a closed reader reads nothing further: ${children.join(", ")}` : "an open reader lists the coordinator's children")
+  } finally { await page.close() }
+})
+
 test("reader toggles highlight the exact visible content and toggle it off without navigation or writes", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
   try {
@@ -747,7 +786,7 @@ test("reader toggles highlight the exact visible content and toggle it off witho
     await fixtureCall(page, "panelWidth", "280px")
     await task.click()
     assert.equal(await task.getAttribute("aria-pressed"), "true")
-    assert.equal(await overview.getAttribute("aria-pressed"), "false")
+    assert.equal(await overview.getAttribute("aria-pressed"), "true", "the eye shows the task's open reader")
     await fixtureCall(page, "refresh")
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
     assert.equal(await task.getAttribute("aria-pressed"), "true")
@@ -1300,9 +1339,13 @@ test("background native questions settle and requested execution remains distinc
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-background", sessionID: "ses_background", answers: {} } })
     await page.getByText("Choose the scope", { exact: true }).waitFor({ state: "detached" })
     assert.equal(await page.locator(".mission-needs").count(), 0)
+    // The coordinator's conversation is the mission's toolbar once the task's reader closes.
+    await page.getByRole("button", { name: "Back to chat" }).click()
     await clickMissionAction(page, "Open conversation")
     await page.getByRole("alert").getByText("Unable to reload session").waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+    await taskButton(page, "task-one").click()
+    await openTaskTechnicalDetails(page)
     await page.locator(".mission-execution").scrollIntoViewIfNeeded()
     await page.screenshot({ path: screenshotPath("mission-execution-browser"), fullPage: true })
   } finally { await page.close() }
@@ -1395,7 +1438,19 @@ test("compact mission rows retain a completed branching plan, direct readers and
     await taskButton(page, "review").click()
     await page.locator(".mission-reader").getByRole("heading", { name: "Independent review", exact: true }).waitFor()
     assert.equal(await edge.getAttribute("d"), compactPath, "reading no longer expands task rows or changes graph geometry")
+    // The task's open reader takes the header toolbar; Summary hands it back to the mission.
+    assert.equal(await taskRow(page, "review").locator("button").count(), 1, "task rows carry no per-row controls")
+    await missionToolbar(page).getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
+    assert.equal(await missionToolbar(page).locator(".action-overflow-trigger").isDisabled(), true, "the mission's menu actions do not apply to a task")
+    assert.equal(await missionToolbar(page).getByRole("button", { name: "Delete selected mission…", exact: true }).isDisabled(), true)
+    await missionToolbar(page).locator(".mission-overview-toggle").click()
+    await missionToolbar(page).getByRole("button", { name: "Open conversation", exact: true }).waitFor()
+    assert.equal(await taskButton(page, "review").getAttribute("aria-pressed"), "false")
+    await taskButton(page, "review").click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Independent review", exact: true }).waitFor()
     await page.getByRole("button", { name: "Back to chat" }).click()
+    await missionToolbar(page).getByRole("button", { name: "Open conversation", exact: true }).waitFor()
     await page.evaluate(() => { document.querySelector<HTMLElement>(".mission-control")!.style.zoom = "1.25" })
     // At fractional zoom an edge still ends on its dependent's status icon.
     await page.waitForFunction(() => {

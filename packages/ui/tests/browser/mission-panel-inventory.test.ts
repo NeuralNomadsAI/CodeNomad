@@ -166,7 +166,7 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
       assert.equal(await f.page.locator('.mission-panel-paging[data-lane="marks"]').count(), 1, "completed traversal retains its info slot")
     }
     const geometry = () => f.page.evaluate(() => [...document.querySelectorAll<HTMLElement>(
-      ".mission-control-header,.mission-action-bar,.mission-tree > h3,.mission-flow,.mission-panel-paging")].map(element => {
+      ".mission-control-header,.mission-action-bar,.mission-tree,.mission-flow,.mission-panel-paging")].map(element => {
       const box = element.getBoundingClientRect()
       return [element.className, box.x, box.y, box.width, box.height, element.scrollTop]
     }))

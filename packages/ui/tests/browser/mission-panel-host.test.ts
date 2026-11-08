@@ -45,7 +45,11 @@ const SHORT = mission("short", "Short audit", [task(0)])
 
 async function open(options: BrowserContextOptions = {}, holdDepth = false) {
   const context = await browser.newContext({ locale: "en-US", viewport: { width: 1000, height: 600 }, ...options })
-  const page = await context.newPage(), errors: string[] = [], mutations: string[] = []
+  const page = await context.newPage(), errors: string[] = [], mutations: string[] = [], sessionReads: string[] = []
+  page.on("request", request => { const path = new URL(request.url()).pathname; if (path.includes("/session/")) sessionReads.push(path) })
+  // Native reads naming the long mission's coordinator (its messages, its children).
+  const coordinatorReads: string[] = []
+  page.on("request", request => { if (request.url().includes("ses_long")) coordinatorReads.push(request.url()) })
   await page.addInitScript("globalThis.__name ??= target => target")
   page.setDefaultTimeout(15_000)
   page.on("pageerror", error => errors.push(error.message))
@@ -61,7 +65,7 @@ async function open(options: BrowserContextOptions = {}, holdDepth = false) {
   })
   await page.goto(url, { timeout: 60_000 })
   await page.locator(".mission-rows button.mission-row-select").first().waitFor()
-  return { page, errors, mutations, close: () => context.close(), releaseDepth: async () => {
+  return { page, errors, mutations, sessionReads, coordinatorReads, close: () => context.close(), releaseDepth: async () => {
     assert(depthRoute, "the actual depth HTTP request is held")
     // Exactly the default HTTP fixture reply, including its depth-read validation error.
     const route = depthRoute; depthRoute = undefined
@@ -80,7 +84,7 @@ test("a long mission's tasks scroll with the panel, the only scroller, under its
       // One continuation follows the continuous rows and loads on scrolling.
       await flow.locator(".mission-tree-more").waitFor({ state: "attached" })
       assert.equal(await flow.locator(".mission-tree-node").count(), MISSION_TASK_PAGE)
-      assert.equal(await detail.locator(".mission-tree .mission-disclosure-trigger small").innerText(), String(TASKS), "the group shows its task count")
+      assert.equal(await detail.locator(".mission-tree").getAttribute("aria-label"), `Tasks (${TASKS})`, "the group names its task count")
       assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), false, `no task scroller at ${viewport.height}px`)
       assert.equal(await scrolls(f.page, "#tab-body"), false, `no host scrollbar at ${viewport.height}px`)
       assert.equal(await scrolls(f.page, ".mission-control"), true, `the panel scrolls at ${viewport.height}px`)
@@ -91,35 +95,15 @@ test("a long mission's tasks scroll with the panel, the only scroller, under its
       assert(await f.page.locator(".mission-control").evaluate(element => element.scrollTop) > 0)
       const [header, panel] = await Promise.all([f.page.locator(".mission-control-header").boundingBox(), f.page.locator(".mission-control").boundingBox()])
       assert(header && panel && Math.abs(header.y - panel.y) <= 1, `the header stays at the panel top at ${viewport.height}px: ${header?.y} vs ${panel?.y}`)
-      // Collapsing keeps the header and count.
-      const trigger = detail.locator(".mission-tree .mission-disclosure-trigger")
-      await trigger.click()
-      assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+      // The mission row's chevron folds the tasks with the rest of its detail.
+      const chevron = f.page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
+      await chevron.click()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "false")
       assert.equal(await flow.isVisible(), false)
       assert.equal(await scrolls(f.page, "#tab-body"), false)
-      await trigger.click()
-      assert.equal(await trigger.getAttribute("aria-expanded"), "true")
+      await chevron.click()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "true")
       assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
-    } finally { await f.close() }
-  }
-})
-
-test("the task conversation arrow appears on desktop hover and stays visible on touch", async () => {
-  for (const touch of [false, true]) {
-    const f = await open(touch ? { hasTouch: true, isMobile: true, viewport: { width: 1000, height: 700 } } : {})
-    try {
-      const detail = await selectMission(f.page, "Long migration")
-      const node = detail.locator('.mission-tree-node[data-task-key="t20"]'), arrow = node.locator(".mission-tree-open")
-      await arrow.waitFor({ state: "attached" })
-      const opacity = () => arrow.evaluate(element => Number(getComputedStyle(element).opacity))
-      if (touch) assert(await opacity() > 0, "touch shows the arrow without hover")
-      else {
-        await f.page.locator("#chat").hover()
-        assert.equal(await opacity(), 0, "desktop hides the arrow until rollover")
-        await node.hover()
-        await f.page.waitForFunction(() => Number(getComputedStyle(document.querySelector('.mission-tree-node[data-task-key="t20"] .mission-tree-open')!).opacity) > 0)
-      }
-      assert.deepEqual(f.errors, [])
     } finally { await f.close() }
   }
 })
@@ -148,10 +132,21 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     assert.equal(await actions.isVisible(), true, "the toolbar still acts on the folded selection")
     await chevron("Short audit").click()
     await missionDetail(f.page).waitFor()
-    // Another row's chevron selects it.
+    // Another mission's chevron expands its tasks, read on demand, without selecting it.
     await chevron("Long migration").click()
+    assert.equal(await chevron("Long migration").getAttribute("aria-expanded"), "true")
+    assert.equal(await selectedMissionTitle(f.page).innerText(), "Short audit")
+    const preview = row("Long migration").locator("xpath=following-sibling::div[contains(@class, 'mission-row-children')]")
+    await preview.locator('.mission-tree-node[data-task-key="t20"]').waitFor()
+    // Like a selected mission, an expanded one reads its native task conversations.
+    for (let attempt = 0; !f.sessionReads.some(path => path.includes("ses_long")) && attempt < 100; attempt++) await f.page.waitForTimeout(50)
+    assert.ok(f.sessionReads.some(path => path.includes("ses_long")), `the expanded mission's coordinator delegations are read: ${f.sessionReads.join(", ")}`)
+    assert.equal(await missionDetail(f.page).getAttribute("aria-label"), "Short audit", "the selection's detail stays where it is")
+    // A task there selects its mission (and asks for the task's reader).
+    await preview.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task').click()
     assert.equal(await selectedMissionTitle(f.page).innerText(), "Long migration")
     await missionDetail(f.page).and(f.page.locator('[aria-label="Long migration"]')).waitFor()
+    assert.equal(await chevron("Long migration").getAttribute("aria-expanded"), "true", "selected, it shows its detail")
     // The filter narrows the other rows only.
     await f.page.locator(".mission-picker-search").fill("audit")
     assert.equal(await row("Short audit").count(), 1)
@@ -162,6 +157,44 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     await f.page.evaluate(() => (window as any).missionHost.mount(true))
     await missionDetail(f.page).waitFor()
     assert.equal(await selectedMissionTitle(f.page).innerText(), "Long migration")
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+for (const hide of ["none", "fold", "create"] as const) test(`an expanded mission's native task reads ${hide === "fold" ? "stop once it folds" : hide === "create" ? "stop while the creation form hides it" : "go on while it stays expanded"}`, async () => {
+  const f = await open()
+  try {
+    // Hold the coordinator's message read: the children read only follows it.
+    let held: Route | undefined
+    await f.page.route(url => url.href.includes("ses_long") && url.pathname.includes("/message"), route => {
+      if (!held) { held = route; return }
+      return route.fulfill({ json: { data: [] } })
+    })
+    const chevron = f.page.locator(".mission-row").filter({ has: f.page.locator(".session-item-title", { hasText: /^Long migration$/ }) }).locator(".session-item-expander")
+    await chevron.click()
+    for (let attempt = 0; !held && attempt < 200; attempt++) await f.page.waitForTimeout(50)
+    assert(held, "the expanded mission's coordinator read starts")
+    const fold = hide !== "none"
+    if (hide === "fold") {
+      await chevron.click()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    }
+    if (hide === "create") {
+      await missionGeneralAction(f.page, "Create mission").click()
+      await f.page.locator("form.mission-editor").waitFor()
+    }
+    const before = f.coordinatorReads.length
+    await held.fulfill({ json: { data: [] } })
+    const children = () => f.coordinatorReads.slice(before).filter(url => url.includes("parentID=ses_long"))
+    for (let attempt = 0; !fold && !children().length && attempt < 100; attempt++) await f.page.waitForTimeout(50)
+    if (fold) await f.page.waitForTimeout(1_000)
+    assert.equal(children().length > 0, !fold, fold ? `a hidden mission reads nothing further: ${children().join(", ")}` : "an expanded mission lists its coordinator's children")
+    if (hide === "create") {
+      // Back from the form, the preview is still expanded and reads again.
+      await f.page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
+      await f.page.locator(".mission-row-children .mission-tree-node").first().waitFor()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "true")
+    }
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

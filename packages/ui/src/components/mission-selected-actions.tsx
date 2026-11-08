@@ -1,4 +1,5 @@
-import { createSignal, onCleanup } from "solid-js"
+import { Show, createSignal, onCleanup } from "solid-js"
+import { MissionTaskActions, type MissionTaskSelection } from "./mission-task-actions"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionActorActivityState } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -26,6 +27,8 @@ export function MissionSelectedActions(props: {
   interrupted: boolean
   onEdit: () => void; onDelete: () => void; editDisabled: boolean; deleteDisabled: boolean
   registerRetry?: (retry: MissionControlRetry) => () => void
+  /** A task whose reader is open takes the toolbar; Summary then closes its reader. */
+  task?: MissionTaskSelection; onToggleTask?: () => void; onOpenTask?: (sessionId: string) => void
 }) {
   const { t } = useI18n()
   const lifecycle = createMissionLifecycle({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
@@ -65,12 +68,19 @@ export function MissionSelectedActions(props: {
     key: "briefing", label: requestLabel(),
     ariaLabel: briefing.waiting() ? t(`missions.briefing.request.${briefing.state()}`) : undefined,
     disabled: briefing.waiting() || props.messagingDisabled || !props.active, onSelect: () => briefing.ask() } : undefined
-  return <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
-    primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
-    onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
-    secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active}
-      draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
-      reading={() => brief.state() === "ready" ? undefined
-        : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}
-    feedback={<>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>} />
+  // The Mission's lifecycle state lives here, so it survives a task taking the toolbar.
+  const feedback = <>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>
+  return <Show when={props.task?.task.key} keyed fallback={
+    <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
+      primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
+      onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
+      secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active}
+        draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
+        reading={() => brief.state() === "ready" ? undefined
+          : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}
+      feedback={feedback} />}>
+    {_key => <MissionTaskActions instanceId={props.instanceId} mission={props.mission} selection={props.task!}
+      disabled={props.disabled || !props.active} onAdmitted={props.onAdmitted} onCloseReader={() => props.onToggleTask?.()}
+      onOpenConversation={id => props.onOpenTask?.(id)} feedback={feedback} />}
+  </Show>
 }

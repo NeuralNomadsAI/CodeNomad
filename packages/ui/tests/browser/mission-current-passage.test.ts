@@ -210,6 +210,24 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     mission.briefing = savedBriefing
     await page.evaluate(() => (window as any).passageFixture.invalidate())
     await page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task').click()
+    // The passage task's open reader takes the header toolbar from its schedule: read-only,
+    // with the task's own conversation, and Summary closing the task's reader.
+    const toolbar = page.locator(".mission-picker-selection-actions .mission-action-bar")
+    await toolbar.getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
+    // Every button keeps its schedule position: Run now stays as a disabled slot.
+    const positions = () => toolbar.locator(":scope > button, :scope .action-overflow-trigger").evaluateAll(items =>
+      items.map(item => Math.round(item.getBoundingClientRect().x)))
+    const taskPositions = await positions()
+    assert.equal(await toolbar.getByRole("button", { name: "Run now", exact: true }).isDisabled(), true)
+    assert.equal(await toolbar.count(), 1, "the schedule's toolbar yields the line")
+    assert.equal(await toolbar.getByRole("button", { name: /^Stop schedule/ }).count(), 0)
+    assert.equal(await toolbar.locator("button").first().isDisabled(), true, "a passage task is never recovered from the panel")
+    assert.equal(await toolbar.locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
+    await toolbar.locator(".mission-overview-toggle").click()
+    await toolbar.getByRole("button", { name: /^Stop schedule/ }).waitFor()
+    assert.deepEqual(await positions(), taskPositions, "the hand-off moves no button")
+    await page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task').click()
+    await toolbar.getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
     await page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click()
     await page.waitForFunction(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture") === "ses_task")
     await page.waitForFunction(() => !document.querySelector(".mission-control-stale"))

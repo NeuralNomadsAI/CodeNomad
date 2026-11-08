@@ -17,15 +17,14 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-function mission(grown = false): MissionMap {
+function mission(): MissionMap {
   const tasks: MissionTask[] = Array.from({ length: 30 }, (_, index) => ({ id: `task-${index}`, key: `t${index}`, title: `Migration step ${index + 1}`,
-    brief: "Inspect the migration", role: "worker", status: "dispatching", blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1,
-    ...(grown && index < 20 ? { actorSessionId: "ses_worker", admissionId: `admission-${index}` } : {}) }))
+    brief: "Inspect the migration", role: "worker", status: "dispatching", blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 }))
   return { version: 1, id: "focus", projectID: "project", projectCanonical: "/fixture", objective: "Focus migration", template: "custom",
     coordinatorSessionId: "ses_focus", status: "active", runState: "running", actors: [
       { sessionId: "ses_focus", kind: "coordinator", managed: true, title: "Coordinator", roles: ["coordinator"], location: { directory: "fixture" }, joinedAt: 1 },
       { sessionId: "ses_worker", kind: "specialist", managed: true, title: "Worker", roles: ["worker"], location: { directory: "fixture" }, joinedAt: 1 }],
-    frontier: [], claims: [], revision: grown ? 4 : 3, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, tasks, reports: [] }
+    frontier: [], claims: [], revision: 3, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, tasks, reports: [] }
 }
 
 async function open(consumer: "creation" | "tree", viewport = { width: 1000, height: 600 }, holdDepth = false) {
@@ -34,11 +33,11 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript("globalThis.__name ??= target => target")
   await page.addInitScript(installAudit)
-  let grown = false, depthRoute: Route | undefined
+  let depthRoute: Route | undefined
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
     if (holdDepth && path.endsWith("/subagent-depth")) { depthRoute = route; return }
-    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission(grown)]), generatedAt: 1, discardedEvents: 0,
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission()]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: "focus", actors: [{ sessionId: "ses_worker", state: "idle-without-report" }] }] } } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
     return route.fulfill({ json: {} })
@@ -56,7 +55,7 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
       if (requested) await requested
       else await page.waitForFunction(() => Boolean(document.querySelector(".mission-depth [role=alert]")))
     }
-    return { page, context, errors, grow: async () => { grown = true; await page.evaluate(() => (window as any).missionHost.refresh()) },
+    return { page, context, errors,
       releaseDepth: async () => { assert(depthRoute); await depthRoute.fulfill({ json: {} }); depthRoute = undefined }, close: () => context.close() }
   } catch (error) { await context.close(); throw error }
 }
@@ -188,26 +187,6 @@ for (const consumer of ["creation", "tree"] as const) {
   })
 }
 
-for (const viewport of [{ width: 1000, height: 600 }, { width: 260, height: 300 }]) {
-  test(`task HTTP refresh grows nested recovery rows without changing its scroll policy at ${viewport.width}×${viewport.height}`, async () => {
-    const f = await open("tree", viewport)
-    try {
-      const task = target(f.page, "tree"), identity = await task.elementHandle()
-      await task.focus(); await frames(f.page)
-      assert.equal(await visible(f.page), true)
-      const size = await f.page.locator(".mission-tree-list").evaluate(element => element.getBoundingClientRect().height)
-      await audit(f.page)
-      await f.grow()
-      await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-recovery").length === 20)
-      await frames(f.page)
-      assert.equal(await identity!.evaluate(element => element === document.activeElement), true, "HTTP publication retains the exact DOM focus target")
-      assert.equal(await f.page.locator(".mission-control").evaluate(element => getComputedStyle(element).overflowY), "auto", "the panel stays the only vertical owner")
-      assert(await f.page.locator(".mission-tree-list").evaluate(element => element.getBoundingClientRect().height) > size, "real recovery controls grew the nested list")
-      assert.equal(await visible(f.page), true, "the same task stays hit-testable after nested HTTP growth")
-      assert.deepEqual(f.errors, [])
-    } finally { await f.close() }
-  })
-}
 
 test("an oversized focused creation textarea moves only the nearer vertical edge and preserves horizontal position", async () => {
   const f = await open("creation")

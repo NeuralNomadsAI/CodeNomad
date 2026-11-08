@@ -7,6 +7,8 @@ import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
 
 /** The Missions header's selection line: a selected item's toolbar mounts there. */
 export const MissionActionSlot = createContext<Accessor<HTMLElement | undefined>>()
+/** True while an open task reader's toolbar owns the selection line (a schedule's passage task). */
+export const MissionTaskToolbarActive = createContext<Accessor<boolean>>()
 
 function primaryIcon(key?: string): JSX.Element {
   if (key === "pause") return <Pause class="h-3.5 w-3.5" aria-hidden="true" />
@@ -22,15 +24,20 @@ function primaryIcon(key?: string): JSX.Element {
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader?: () => void
   primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; onOpenConversation?: () => void
+  /** Names Open conversation's target when it is not the coordinator's. */
+  openLabel?: string
   /** Interrupts a graceful Pause's still-running steps at once. */
   interrupt?: MissionPrimaryAction
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
   /** Renders in place instead of in the header's selection line. */
   inline?: boolean
+  /** An open task reader's toolbar, which takes the line from its schedule's. */
+  task?: boolean
 }) {
   const { t } = useI18n()
   const slot = useContext(MissionActionSlot)
+  const taskOwned = useContext(MissionTaskToolbarActive)
   // A refreshed action object must keep the SVG beneath an already-held pointer.
   const primaryKey = createMemo(() => props.primary?.key)
   const primaryLabel = () => props.primary ? props.primary.ariaLabel ?? props.primary.label : t("missionsPanel.action.start")
@@ -64,8 +71,8 @@ export function MissionActionBar(props: {
       aria-label={t("missionsPanel.overview")} title={t("missionsPanel.overview")} disabled={!props.onToggleReader} onClick={() => props.onToggleReader?.()}>
       <Eye class="h-3.5 w-3.5" aria-hidden="true" />
     </button>
-    <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.action.openConversation")}
-      title={t("missionsPanel.action.openConversation")} disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.()}>
+    <button type="button" class="mission-control-icon-button" aria-label={props.openLabel ?? t("missionsPanel.action.openConversation")}
+      title={props.openLabel ?? t("missionsPanel.action.openConversation")} disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.()}>
       <ArrowUpRight class="h-4 w-4" aria-hidden="true" />
     </button>
     <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
@@ -73,8 +80,12 @@ export function MissionActionBar(props: {
     <ActionOverflowMenu label={t("messageItem.actions.more")} items={menu} triggerClass="mission-control-icon-button" />
   </div>
   const mount = () => props.inline ? undefined : slot?.()
+  // A schedule's toolbar yields the line while one of its passage tasks' reader is open.
+  const yielded = () => !props.inline && !props.task && Boolean(taskOwned?.())
   return <>
-    <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
+    <Show when={!yielded()}>
+      <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
+    </Show>
     <Show when={props.secondary}><div class="mission-action-texts">{props.secondary}</div></Show>
     <div class="mission-action-feedback">{props.feedback}</div>
   </>

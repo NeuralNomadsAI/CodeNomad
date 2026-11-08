@@ -47,9 +47,18 @@ export function MissionPanelHeader(props: {
 export function MissionRows(props: {
   entries: MissionPickerEntry[]; query: string; selectedKey?: string; onSelect: (entry: MissionPickerEntry) => void
   detail: JSX.Element; paging?: JSX.Element; hidden?: boolean
+  /** An unselected row this returns content for expands from its chevron without
+   * being selected (a one-time Mission's tasks, read on demand); others select. */
+  preview?: (key: string) => JSX.Element | undefined; expandable?: (key: string) => boolean
 }) {
   const { t } = useI18n()
   const [folded, setFolded] = createSignal<string>()
+  const [opened, setOpened] = createSignal<ReadonlySet<string>>(new Set())
+  const toggleOpened = (key: string) => setOpened(previous => {
+    const next = new Set(previous)
+    if (!next.delete(key)) next.add(key)
+    return next
+  })
   // The selected row stays listed whatever the filter, so its detail never vanishes.
   const shown = createMemo(() => {
     const matching = new Set(filterMissionPickerEntries(props.entries, props.query).map(entry => entry.key))
@@ -87,14 +96,19 @@ export function MissionRows(props: {
   const select = (entry: MissionPickerEntry) => { setFolded(undefined); props.onSelect(entry) }
   const row = (key: string) => <Show when={byKey().get(key)}>{entry => {
     const isSelected = () => key === props.selectedKey
-    const open = () => isSelected() && expanded()
+    const previewing = () => !isSelected() && opened().has(key)
+    const open = () => isSelected() ? expanded() : previewing()
     const label = () => t(open() ? "missionsPanel.row.collapse" : "missionsPanel.row.expand")
     // The session list's own row classes (session-layout.css, session-tree.css).
-    return <div class="session-list-item mission-row" data-mission-key={key}>
+    return <><div class="session-list-item mission-row" data-mission-key={key}>
       <div class={`session-item-base ${isSelected() ? "session-item-active" : "session-item-inactive"}`}>
         <button type="button" class="session-item-expander opacity-80 hover:opacity-100 hover:bg-surface-hover" aria-expanded={open()}
           aria-label={label()} title={label()}
-          onClick={() => { if (isSelected()) setFolded(open() ? key : undefined); else select(entry()) }}>
+          onClick={() => {
+            if (isSelected()) setFolded(open() ? key : undefined)
+            else if (props.expandable?.(key)) toggleOpened(key)
+            else select(entry())
+          }}>
           <ChevronRight class="disclosure-chevron w-3.5 h-3.5" aria-hidden="true" />
         </button>
         <button type="button" class="session-item-select mission-row-select" aria-current={isSelected() ? "true" : undefined} title={describe(entry())}
@@ -104,6 +118,7 @@ export function MissionRows(props: {
         </button>
       </div>
     </div>
+    <Show when={previewing()}><div class="mission-row-children">{props.preview?.(key)}</div></Show></>
   }}</Show>
   return <div class="mission-rows" hidden={props.hidden}>
     <ul ref={list} aria-label={t("missions.control.mapLabel")}>
