@@ -12,7 +12,7 @@ const execute = <T = {url: string}>(action: string, url?: string, timeout?: numb
 const checks: string[] = []
 async function check(name: string, run: () => Promise<void>) { await run(); checks.push(name); console.error(`PASS ${name}`) }
 try {
-  assert.equal(parent.browserAutomationUnavailable, true, "public automation gate remains closed")
+  assert.equal(parent.browserAutomationUnavailable, false, "native browser automation is available")
   await check("no preview", async () => { await assert.rejects(request("browser.probe"), /No visible/ ) })
   await check("autonomous open and redirect", async () => {
     assert.equal((await execute("open", `${base}/redirect`)).url, `${base}/ok`)

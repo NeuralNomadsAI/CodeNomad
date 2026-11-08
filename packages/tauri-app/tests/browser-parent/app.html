@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8"><title>Native app qualification</title>
+<style>body{font:16px sans-serif;margin:16px}button,input,select{margin:5px;padding:6px}.row{display:flex;gap:15px}#source,#target{display:inline-block;padding:15px;border:1px solid;touch-action:none}#scroller{height:80px;overflow:auto;width:280px;border:1px solid}#scroller div{height:500px}</style>
+<h1>Ready native browser</h1>
+<button id="increment">Increment</button><output id="count">Count 0</output>
+<label>Name<input id="name"></label><label>Plan<select id="plan"><option>Standard</option><option>Pro</option></select></label>
+<output id="keys">Keys idle</output><button id="hover">Hover target</button><output id="hovered">Hover idle</output>
+<div class="row"><div id="source" role="button" aria-label="Drag source">Drag source</div><div id="target" role="button" aria-label="Drop target">Drop target</div><output id="dragged">Drag idle</output></div>
+<div id="scroller" role="region" aria-label="Scroll box"><div>Scrollable content</div></div><output id="scrolled">Scroll idle</output>
+<button id="oauth">OAuth popup</button><output id="oauthState">OAuth idle</output>
+<a id="download" href="/download" download>Download fixture</a><button id="dialog">Native dialog</button><output id="dialogState">Dialog idle</output>
+<script>
+let count=0,drag=false;
+increment.onclick=()=>document.querySelector('#count').textContent='Count '+ ++count;
+document.querySelector('#name').onkeydown=e=>{if(e.key==='Enter')keys.textContent='Pressed Enter'};
+document.querySelector('#plan').onchange=e=>keys.textContent='Plan '+e.target.value;
+hover.onmouseover=()=>hovered.textContent='Hovered';
+source.onpointerdown=()=>drag=true;document.onpointerup=e=>{if(drag&&e.clientX>target.getBoundingClientRect().left)dragged.textContent='Dragged';drag=false};
+scroller.onscroll=()=>scrolled.textContent='Scrolled';
+oauth.onclick=()=>window.open('/oauth','p7-oauth','width=360,height=240');
+onmessage=e=>{if(e.origin===location.origin&&e.data==='oauth-complete')oauthState.textContent='OAuth complete'};
+dialog.onclick=()=>{alert('Native app qualification');dialogState.textContent='Dialog accepted'};
+</script>

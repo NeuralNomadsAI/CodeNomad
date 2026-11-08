@@ -18,8 +18,8 @@ the desktop identity. Profile/template changes and desktop reset reload the gues
 an identical request is a no-op. The sandboxed iframe fallback changes dimensions
 only. Translated tooltips distinguish Chromium emulation, native WebKit profiles
 and dimensions-only previews. Native display, history, device emulation and agent
-automation are separate host capabilities; WebKit previews support manual browsing, while agent browser
-automation requires Electron or Tauri Windows. Never expose application
+automation are separate host capabilities; WebKit previews support manual and agent
+browsing through the native driver. Never expose application
 privileges or a general CDP bridge to preview pages. Tauri's synchronous WebView2
 callbacks are awaited off the UI thread. Electron retains its debugger attachment
 while emulation is active so the overrides survive accessibility automation.

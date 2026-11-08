@@ -77,7 +77,7 @@ for (const platform of ["macos", "linux"]) {
       assert.equal(await options.count(), 6)
       const mobile = page.getByRole("menuitemradio", { name: /390 × 844/ })
       assert.equal(await mobile.isEnabled(), true)
-      assert.equal(await mobile.getAttribute("title"), "Dimensions only. Device emulation is unavailable in this preview.")
+      assert.equal(await mobile.getAttribute("title"), "Dimensions only.")
       await mobile.click()
       await page.evaluate(() => {
         const f = (window as any).nativeFixture

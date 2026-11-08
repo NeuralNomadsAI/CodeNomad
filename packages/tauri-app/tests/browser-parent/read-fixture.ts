@@ -27,7 +27,7 @@ async function lease() {
   }
 }
 async function main() {
-  assert.equal(parent.browserAutomationUnavailable,true)
+   assert.equal(parent.browserAutomationUnavailable,false)
   await request("browser.execute",{command:{action:"open",url:`${base}/read/preview`}})
   for(const name of ["preview","forms","edges","inputs","advanced"]) {
     await navigate(`${base}/read/${name}`)

@@ -547,8 +547,6 @@ async function probeBridges(
   return found.slice(0, limit)
 }
 
-export const BROWSER_AUTOMATION_UNAVAILABLE = "Agent browser automation is unavailable in Tauri on macOS and Linux. Open the web preview manually, or use Electron for agent browser automation."
-
 async function probeBrowserBridges(
   active: DiscoveredBridgeRegistration[],
   sessionID: string,
@@ -557,12 +555,10 @@ async function probeBrowserBridges(
   purpose?: "mission",
 ): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  let unavailable = false
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
         const response = await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)
-        if (response.body.error === BROWSER_AUTOMATION_UNAVAILABLE) unavailable = true
         return response.status === 200 ? registration : undefined
       } catch {
         return undefined
@@ -572,7 +568,6 @@ async function probeBrowserBridges(
       if (registration) found.push(registration)
     }
   }
-  if (unavailable) throw new Error(BROWSER_AUTOMATION_UNAVAILABLE)
   return found.slice(0, 2)
 }
 

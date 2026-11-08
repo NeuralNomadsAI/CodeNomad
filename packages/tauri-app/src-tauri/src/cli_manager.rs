@@ -1261,7 +1261,7 @@ impl CliProcessManager {
                 },
             );
             c.env("CODENOMAD_NATIVE_PARENT", "1");
-            c.env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", if cfg!(windows) { "1" } else { "0" });
+            c.env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", if cfg!(any(windows, target_os = "macos", target_os = "linux")) { "1" } else { "0" });
             configure_spawn(&mut c);
             if let Some(ref cwd) = cwd {
                 c.current_dir(cwd);

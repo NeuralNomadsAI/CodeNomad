@@ -3,14 +3,14 @@ import { describe, it } from "node:test"
 import { browserHostCapabilities, nativeBrowserHost, onNativeBrowserOpen, physicalBrowserBounds, selectBrowserOpenOwner } from "./browser.ts"
 
 describe("native browser adapter", () => {
-  it("subscribes to private WebKit open requests while public automation remains disabled", async () => {
+  it("subscribes to WebKit open requests with native automation available", async () => {
     const previous = Object.getOwnPropertyDescriptor(globalThis, "window")
     const calls: string[] = []
     let dispatch: (event: { payload: unknown }) => void = () => {}
     try {
       Object.defineProperty(globalThis, "window", { configurable: true, value: {
         __CODENOMAD_RUNTIME_HOST__: "tauri", __CODENOMAD_WINDOW_CONTEXT__: "local",
-        __CODENOMAD_BROWSER_CAPABILITIES__: { embedding: true, history: true, emulation: false, automation: false },
+        __CODENOMAD_BROWSER_CAPABILITIES__: { embedding: true, history: true, emulation: true, automation: true, reason: "webkit" },
         __TAURI_INTERNALS__: {
           transformCallback: (callback: typeof dispatch) => { dispatch = callback; return 1 },
           invoke: async (command: string) => { calls.push(command); return 1 },
@@ -23,7 +23,7 @@ describe("native browser adapter", () => {
       const payload = { sessionID: "session", url: "https://example.com/", requestID: "request" }
       dispatch({ payload })
       assert.deepEqual(received, payload)
-      assert.equal(browserHostCapabilities({ host: "tauri", windowContext: "local" }).automation, false)
+      assert.equal(browserHostCapabilities({ host: "tauri", windowContext: "local" }).automation, true)
       await unsubscribe()
     } finally {
       if (previous) Object.defineProperty(globalThis, "window", previous)

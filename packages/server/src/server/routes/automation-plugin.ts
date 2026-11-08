@@ -4,7 +4,7 @@ import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
 import type { DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
 import type { NativeParent } from "../../native-parent"
-import { AUTOMATION_BRIDGE_PATH, BROWSER_AUTOMATION_UNAVAILABLE, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
+import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { admitMissionInput } from "./mission-input"
@@ -155,7 +155,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
 
     if (["browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode)) && !(body.mode === "browser-claim" && body.purpose === "mission")
       && deps.nativeParent.browserAutomationUnavailable) {
-      return reply.code(409).send({ error: BROWSER_AUTOMATION_UNAVAILABLE })
+      return reply.code(409).send({ code: "unsupported", error: "Browser automation is unavailable in this host" })
     }
 
     if (body.mode === "browser-claim") {
@@ -164,16 +164,6 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       // that cannot open a page, or make a desktop owner ambiguous.
       if (!deps.nativeParent.available && body.purpose !== "mission") {
         return reply.code(404).send({ error: "Browser automation is unavailable in this host" })
-      }
-      if (body.purpose !== "mission") {
-        try {
-          await deps.nativeParent.request("browser.probe", { sessionID: body.sessionID })
-        } catch (error) {
-          // A supported host can open a preview before it has a visible target.
-          if (error instanceof Error && error.message === BROWSER_AUTOMATION_UNAVAILABLE) {
-            return reply.code(409).send({ error: error.message })
-          }
-        }
       }
       return reply.send({ result: { available: true } })
     }

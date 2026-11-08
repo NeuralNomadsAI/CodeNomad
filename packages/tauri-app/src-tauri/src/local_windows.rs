@@ -11,7 +11,7 @@ const MAX_FOLDER_ATTEMPTS: u8 = 3;
 #[cfg(target_os = "windows")]
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true});";
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:false,reason:'webkit'});";
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,reason:'webkit'});";
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:false,history:false,emulation:false,automation:false,reason:'unsupported-platform'});";
 

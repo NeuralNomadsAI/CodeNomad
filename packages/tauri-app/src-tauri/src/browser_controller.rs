@@ -1372,7 +1372,7 @@ fn no_browser_target_error() -> String {
 
 #[cfg(any(test, not(windows)))]
 fn unsupported() -> String {
-    "Agent browser automation is unavailable in Tauri on macOS and Linux. Open the web preview manually, or use Electron for agent browser automation.".to_string()
+    "Native browser previews are unavailable on this platform.".to_string()
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -1604,8 +1604,11 @@ mod regressions;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn webkit_agent_refusal_offers_manual_preview_and_electron() {
-        assert_eq!(super::unsupported(), "Agent browser automation is unavailable in Tauri on macOS and Linux. Open the web preview manually, or use Electron for agent browser automation.");
+    fn webkit_hosts_publish_native_browser_profiles_and_automation() {
+        let source = include_str!("local_windows.rs");
+        let webkit = source.lines().find(|line| line.contains("reason:'webkit'")).unwrap();
+        assert!(webkit.contains("emulation:true,automation:true"));
+        assert!(include_str!("cli_manager.rs").contains("cfg!(any(windows, target_os = \"macos\", target_os = \"linux\"))"));
     }
 
     #[test]

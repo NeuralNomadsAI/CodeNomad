@@ -1,7 +1,7 @@
 export const sessionMessages = {
   "browser.viewport.webkitEmulationHint": "Мобильная идентификация WebKit и CSS-область просмотра. Действуют нативные ограничения плотности пикселей и ввода.",
   "browser.viewport.emulationHint": "Перезагрузка с мобильной идентификацией, сенсорным вводом и плотностью пикселей. Движок браузера, клавиатура и системные панели не эмулируются.",
-  "browser.viewport.emulationUnavailable": "Только размеры. Эмуляция устройства недоступна в этом предпросмотре.",
+  "browser.viewport.dimensionsOnly": "Только размеры.",
   "sessionList.filter.includeMainSessions": "Основные сессии",
   "sessionList.filter.includeSubsessions": "Подсессии",
   "session.pruning.maintenance_required": "Сессия или её хранилище заняты. Дождитесь завершения текущей операции и повторите очистку.",

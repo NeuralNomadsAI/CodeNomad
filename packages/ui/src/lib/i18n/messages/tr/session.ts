@@ -1,7 +1,7 @@
 export const sessionMessages = {
   "browser.viewport.webkitEmulationHint": "WebKit mobil kimliği ve CSS görünümü. Yerel piksel yoğunluğu ve giriş sınırlamaları geçerlidir.",
   "browser.viewport.emulationHint": "Mobil kimlik, dokunma ve piksel yoğunluğuyla yeniden yükler. Tarayıcı motoru, klavye ve sistem çubukları simüle edilmez.",
-  "browser.viewport.emulationUnavailable": "Yalnızca boyutlar. Bu önizlemede cihaz emülasyonu kullanılamıyor.",
+  "browser.viewport.dimensionsOnly": "Yalnızca boyutlar.",
   "sessionList.filter.includeMainSessions": "Ana oturumlar",
   "sessionList.filter.includeSubsessions": "Alt oturumlar",
   "session.pruning.maintenance_required": "Oturum veya depolama alanı meşgul. Geçerli işlem bitince temizlemeyi yeniden deneyin.",

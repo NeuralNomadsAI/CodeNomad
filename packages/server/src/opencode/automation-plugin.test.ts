@@ -8,7 +8,6 @@ import childProcess from "node:child_process"
 import { syncBuiltinESMExports } from "node:module"
 import {
   AUTOMATION_BRIDGE_PATH,
-  BROWSER_AUTOMATION_UNAVAILABLE,
   automationBridgeDirectory,
   automationBridgeDirectories,
   discoverAutomationBridgeDirectories,
@@ -180,22 +179,21 @@ test("mission discovery waits for cold ownership validation and still rejects co
   }
 })
 
-test("browser discovery preserves WebKit refusals without executing a preview action", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-webkit-refusal-"))
+test("browser discovery executes native WebKit open, snapshot and screenshot actions", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-webkit-browser-"))
   const restore = isolateAutomationBridgeRegistry(root)
   const calls: unknown[] = []
   let remove: (() => Promise<void>) | undefined
   const { server, url } = await listen(async (body, response) => {
     calls.push(body.mode)
-    response.statusCode = 409
-    return { error: BROWSER_AUTOMATION_UNAVAILABLE }
+    return { result: body.mode === "browser-execute" ? { text: "WebKit native result" } : { available: true } }
   })
   try {
     remove = await publishAutomationBridge(createAutomationBridgeRegistration(url))
     for (const command of [{ action: "open", url: "https://example.com" }, { action: "snapshot" }, { action: "screenshot" }]) {
-      await assert.rejects(executeBrowserTool("ses_webkit", command), { message: BROWSER_AUTOMATION_UNAVAILABLE })
+      assert.match((await executeBrowserTool("ses_webkit", command)).content as string, /WebKit native result/)
     }
-    assert.deepEqual(calls, ["browser-claim", "browser-probe", "browser-probe"])
+    assert.deepEqual(calls, ["browser-claim", "browser-execute", "browser-probe", "browser-execute", "browser-probe", "browser-execute"])
   } finally {
     await remove?.()
     await closeServer(server)

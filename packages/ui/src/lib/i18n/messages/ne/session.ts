@@ -1,7 +1,7 @@
 export const sessionMessages = {
   "browser.viewport.webkitEmulationHint": "WebKit मोबाइल पहिचान र CSS भ्युपोर्ट। पिक्सेल घनत्व र इनपुटमा नेटिभ सीमाहरू लागू हुन्छन्।",
   "browser.viewport.emulationHint": "मोबाइल पहिचान, टच र पिक्सेल घनत्वसहित पुनः लोड गर्छ। ब्राउजर इन्जिन, किबोर्ड र प्रणाली बारहरू अनुकरण गरिँदैनन्।",
-  "browser.viewport.emulationUnavailable": "आयाम मात्र। यस पूर्वावलोकनमा उपकरण अनुकरण उपलब्ध छैन।",
+  "browser.viewport.dimensionsOnly": "आयाम मात्र।",
   "sessionList.filter.includeMainSessions": "मुख्य सत्रहरू",
   "sessionList.filter.includeSubsessions": "उप-सत्रहरू",
   "session.pruning.maintenance_required": "सत्र वा यसको भण्डारण व्यस्त छ। हालको कार्य सकिएपछि सफाइ फेरि प्रयास गर्नुहोस्।",

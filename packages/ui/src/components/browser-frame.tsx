@@ -944,7 +944,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
                     aria-label={option.getLabel(props.labels)}
                     disabled={nativeMode() && capabilities.emulation && emulationProfile(option.id) !== "none" && !emulationReady()}
                     title={emulationProfile(option.id) !== "none"
-                      ? t(nativeMode() && webkitEmulation ? "browser.viewport.webkitEmulationHint" : nativeMode() && capabilities.emulation ? "browser.viewport.emulationHint" : "browser.viewport.emulationUnavailable")
+                      ? t(nativeMode() && webkitEmulation ? "browser.viewport.webkitEmulationHint" : nativeMode() && capabilities.emulation ? "browser.viewport.emulationHint" : "browser.viewport.dimensionsOnly")
                       : option.getLabel(props.labels)}
                     onClick={() => void selectViewport(option.id)}
                   >

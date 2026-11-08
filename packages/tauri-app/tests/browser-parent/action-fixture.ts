@@ -16,7 +16,7 @@ const request=<T=any>(method:string,params:object={},timeout=20_000)=>parent.req
 const control=(kind:string)=>request('fixture.action-control',{kind})
 const observe=()=>request('fixture.action-probe')
 async function main(){
-  assert.equal(parent.browserAutomationUnavailable,true)
+   assert.equal(parent.browserAutomationUnavailable,false)
   await request('browser.execute',{command:{action:'open',url:`${base}/read/preview`}})
   const result=await actionScenarios({
     navigate:name=>{console.error(`action fixture: ${name}`);return request('browser.execute',{command:{action:'navigate',url:`${base}/read/${name}`}})},

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify from "fastify"
-import { AUTOMATION_BRIDGE_PATH, BROWSER_AUTOMATION_UNAVAILABLE } from "../../opencode/automation-plugin"
+import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
 test("a slow unrelated workspace cannot hide an already verified automation owner", { timeout: 2_000 }, async t => {
@@ -173,12 +173,11 @@ test("browser works with an unavailable developer target and unrelated inventory
   })
 
   assert.equal((await request({ mode: "browser-claim", sessionID: "session-1" })).statusCode, 200)
-  assert.deepEqual(nativeCalls, [{ method: "browser.probe", params: { sessionID: "session-1" } }])
+  assert.equal(nativeCalls.length, 0)
   assert.equal((await request({ mode: "browser-probe", sessionID: "session-1" })).statusCode, 200)
   const open = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "open", url: "https://example.com" } })
   assert.equal(open.statusCode, 200)
   assert.deepEqual(nativeCalls, [
-    { method: "browser.probe", params: { sessionID: "session-1" } },
     { method: "browser.probe", params: { sessionID: "session-1" } },
     {
       method: "browser.execute",
@@ -198,15 +197,15 @@ test("browser works with an unavailable developer target and unrelated inventory
   await app.close()
 })
 
-for (const transport of [true, false]) test(`WebKit browser refusals preserve Mission-only claims (native transport: ${transport})`, async t => {
+test("WebKit browser claims, probes and native actions succeed independently of developer CDP", async t => {
   const app = Fastify({ logger: false })
   t.after(() => app.close())
   const nativeCalls: string[] = []
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
-    nativeParent: { available: transport, browserAutomationUnavailable: !transport, request: async (method: string) => {
+    nativeParent: { available: true, browserAutomationUnavailable: false, request: async (method: string) => {
       nativeCalls.push(method)
-      throw new Error(BROWSER_AUTOMATION_UNAVAILABLE)
+      return method === "browser.probe" ? { available: true } : { text: "WebKit native result" }
     } },
     workspaceManager: {
       getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
@@ -219,22 +218,18 @@ for (const transport of [true, false]) test(`WebKit browser refusals preserve Mi
   assert.equal((await request({ mode: "browser-claim", purpose: "mission" })).statusCode, 200)
   assert.deepEqual(nativeCalls, [])
   const claim = await request({ mode: "browser-claim" })
-  assert.equal(claim.statusCode, 409)
-  assert.equal(claim.json().error, BROWSER_AUTOMATION_UNAVAILABLE)
-  assert.deepEqual(nativeCalls, transport ? ["browser.probe"] : [], "claim refuses without requesting preview creation")
+  assert.equal(claim.statusCode, 200)
+  assert.deepEqual(nativeCalls, [], "claim can open the first preview without an existing target")
   const probe = await request({ mode: "browser-probe" })
-  assert.equal(probe.statusCode, transport ? 404 : 409)
-  assert.equal(probe.json().error, BROWSER_AUTOMATION_UNAVAILABLE)
+  assert.equal(probe.statusCode, 200)
+  assert.equal(probe.json().result.available, true)
   for (const command of [
     { action: "open", url: "https://example.com" }, { action: "navigate", url: "https://example.com" },
-    { action: "screenshot" }, { action: "snapshot" }, { action: "click", ref: "e1" },
-    { action: "type", ref: "e1", text: "x" }, { action: "select", ref: "e1", values: ["x"] },
-    { action: "hover", ref: "e1" }, { action: "drag", ref: "e1", to: "e2" },
-    { action: "scroll", direction: "down" }, { action: "press", key: "Enter" }, { action: "wait", text: "Ready" },
+    { action: "screenshot" },
   ]) {
     const response = await request({ mode: "browser-execute", command })
-    assert.equal(response.statusCode, 409, command.action)
-    assert.equal(response.json().error, BROWSER_AUTOMATION_UNAVAILABLE, command.action)
+    assert.equal(response.statusCode, 200, command.action)
+    assert.equal(response.json().result.text, "WebKit native result", command.action)
   }
 })
 

@@ -2,12 +2,15 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { NativeParent, NATIVE_REQUEST_PREFIX, NATIVE_RESPONSE_PREFIX } from "./native-parent"
 
-test("WebKit's explicit public automation gate remains closed with an available private native transport", () => {
+test("WebKit transport exposes browser automation and respects explicit missing capabilities", () => {
   const previous = process.env.CODENOMAD_TAURI_WEBKIT
   const previousCapability = process.env.CODENOMAD_NATIVE_BROWSER_AUTOMATION
   try {
     process.env.CODENOMAD_TAURI_WEBKIT = "1"
     delete process.env.CODENOMAD_NATIVE_BROWSER_AUTOMATION
+    assert.equal(new NativeParent(undefined, true).browserAutomationUnavailable, false)
+    assert.equal(new NativeParent(undefined, false).browserAutomationUnavailable, false)
+    process.env.CODENOMAD_NATIVE_BROWSER_AUTOMATION = "1"
     assert.equal(new NativeParent(undefined, true).browserAutomationUnavailable, false)
     process.env.CODENOMAD_NATIVE_BROWSER_AUTOMATION = "0"
     assert.equal(new NativeParent(undefined, true).browserAutomationUnavailable, true)
@@ -20,7 +23,7 @@ test("WebKit's explicit public automation gate remains closed with an available 
   }
 })
 
-test("WebKit browser refusal is independent of the native transport", async () => {
+test("a genuinely unavailable native transport rejects requests", async () => {
   const parent = new NativeParent({ write: () => { throw new Error("Unexpected native request") } }, false, true)
   assert.equal(parent.browserAutomationUnavailable, true)
   await assert.rejects(parent.request("browser.probe", {}), /Native control is unavailable/)

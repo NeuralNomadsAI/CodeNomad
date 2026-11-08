@@ -220,7 +220,7 @@ fn main() {
                     .arg(&args[3])
                     .env("CODENOMAD_NATIVE_PARENT", "1")
                     .env("CODENOMAD_TAURI_WEBKIT", "1")
-                    .env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", "0")
+                    .env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", "1")
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::inherit())

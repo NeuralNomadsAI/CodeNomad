@@ -1,7 +1,7 @@
 export const sessionMessages = {
   "browser.viewport.webkitEmulationHint": "Identité mobile WebKit et viewport CSS. Densité et saisie soumises aux limites natives.",
   "browser.viewport.emulationHint": "Recharge avec identité mobile, tactile et densité de pixels. Le moteur du navigateur, le clavier et les barres système ne sont pas simulés.",
-  "browser.viewport.emulationUnavailable": "Dimensions uniquement. L’émulation d’appareil est indisponible dans cet aperçu.",
+  "browser.viewport.dimensionsOnly": "Dimensions uniquement.",
   "sessionList.filter.includeMainSessions": "Sessions principales",
   "sessionList.filter.includeSubsessions": "Sous-sessions",
   "session.pruning.maintenance_required": "La session ou son stockage est occupé. Attendez la fin de l’opération en cours, puis réessayez le nettoyage.",
