@@ -51,11 +51,11 @@ test("General hides keep-awake in a plain web browser and remote desktop views",
 for (const host of ["electron", "tauri"]) for (const windowContext of ["local", "preferences"]) {
   test(`General persists keep-awake with an independent info tip in ${host} ${windowContext}`, async () => {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, locale: "en-US" })
-    await page.addInitScript(({ host, windowContext }) => Object.assign(window, {
-      __CODENOMAD_RUNTIME_HOST__: host, __CODENOMAD_WINDOW_CONTEXT__: windowContext,
+    await page.addInitScript({ content: `Object.assign(window, {
+      __CODENOMAD_RUNTIME_HOST__: ${JSON.stringify(host)}, __CODENOMAD_WINDOW_CONTEXT__: ${JSON.stringify(windowContext)},
       open: () => null,
       __TAURI_INTERNALS__: { invoke: async () => undefined },
-    }), { host, windowContext })
+    })` })
     let config: any = {}
     const patches: unknown[] = []
     await page.route("**/api/**", async route => {
