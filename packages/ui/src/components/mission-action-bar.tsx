@@ -54,8 +54,12 @@ export function MissionActionBar(props: {
       get disabled() { return !props.interrupt || props.interrupt.disabled }, onSelect: () => props.interrupt?.onSelect() },
     { key: "save-brief", get label() { return t("missions.create.brief.saveAs") }, get icon() { return <BookmarkPlus class="h-3.5 w-3.5" /> },
       get disabled() { return !props.saveBrief || props.saveBrief.disabled() },
-      // The field it opens gives focus back to this menu's trigger when it closes.
-      onSelect: () => props.saveBrief?.open(bar?.querySelector<HTMLElement>(".action-overflow-trigger") ?? undefined) },
+      // The field it opens gives focus back to this menu's trigger when it closes, or to
+      // the toolbar's first enabled button once nothing in the menu applies any more.
+      onSelect: () => props.saveBrief?.open(() => {
+        const trigger = bar?.querySelector<HTMLButtonElement>(".action-overflow-trigger")
+        return trigger && !trigger.disabled ? trigger : bar?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? undefined
+      }) },
     { key: "edit", get label() { return t("missionsPanel.picker.edit") }, get icon() { return <Pencil class="h-3.5 w-3.5" /> },
       get disabled() { return !props.onEdit || props.editDisabled }, onSelect: () => props.onEdit?.() },
   ]

@@ -147,8 +147,8 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
 
 /** The command that opens a brief's inline name field from elsewhere (a menu item). */
 export interface MissionBriefSaveTrigger {
-  /** Opens the name field; closing it gives focus back to `returnFocus` (the menu's trigger). */
-  open: (returnFocus?: HTMLElement) => void; disabled: () => boolean
+  /** Opens the name field; closing it gives focus back to `returnFocus()` (the menu's trigger, or a fallback). */
+  open: (returnFocus?: () => HTMLElement | undefined) => void; disabled: () => boolean
 }
 
 /** "Save as brief" asking for a name inline: the creation footer's draft, or a
@@ -166,15 +166,16 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
   createEffect(() => props.onOpen?.(open()))
   let input: HTMLInputElement | undefined, root!: HTMLDivElement
   // Opened from a menu, the field gives focus back to that menu's trigger when it closes.
-  let returnTo: HTMLElement | undefined
+  let returnTo: (() => HTMLElement | undefined) | undefined
   const close = (hadFocus = root.contains(document.activeElement)) => {
     // Unless the user has moved focus elsewhere meanwhile (a save is asynchronous and
     // disables the focused control, dropping focus to the body).
     const active = document.activeElement
     const free = !active || active === document.body || root.contains(active)
     setOpen(false)
-    if (hadFocus && free && returnTo?.isConnected) returnTo.focus({ preventScroll: true })
-    returnTo = undefined
+    const target = returnTo; returnTo = undefined
+    // Once the closing (and a save's preference update) has re-rendered the toolbar.
+    if (hadFocus && free && target) queueMicrotask(() => { const element = target(); if (element?.isConnected) element.focus({ preventScroll: true }) })
   }
   const full = () => config.preferences().missionModels.length >= MAX_MISSION_MODELS
   const save = async () => {
@@ -182,7 +183,7 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
     const hadFocus = root.contains(document.activeElement)
     if (await actions.save(name(), props.draft())) { setName(""); close(hadFocus) }
   }
-  const begin = (fromMenu: boolean, returnFocus?: HTMLElement) => {
+  const begin = (fromMenu: boolean, returnFocus?: () => HTMLElement | undefined) => {
     if (actions.disabled() || full()) return
     returnTo = returnFocus
     setName(props.initialName?.().slice(0, 80) ?? ""); setOpen(true)
