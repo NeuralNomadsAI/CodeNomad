@@ -100,6 +100,8 @@ results, closes the frame's port and removes its document. Manager confirmations
 belong to the current project/attachment lifetime. Inventory invalidations share
 one running read and one trailing refresh, with generation-owned publication and
 indicator release; prefill rate limits belong to each backend attachment.
+Inventory reads require a JSON array before publishing a verified catalogue;
+malformed responses follow the read-failure path and retain the last good display.
 
 To update, download and inspect a new release ZIP and install it over the same ID.
 Compare the displayed digest with the publisher's checksum through a trusted

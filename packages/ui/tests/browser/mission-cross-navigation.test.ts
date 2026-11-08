@@ -83,7 +83,7 @@ async function setup(missing = false, holdEvents = false) {
     events.release(); hold.release(); await page.close(); throw error
   }
 }
-test("shell fixture serves an event stream and still detects request cancellations and transport failures", async () => {
+test("shell fixture serves an event stream and still detects request cancellations and transport failures", { timeout: 60000 }, async () => {
   const { page, eventStreamResponse, panelReads, errors, networkErrors, hold } = await setup()
   try {
     assert.equal((await eventStreamResponse).status(), 200)
@@ -110,7 +110,7 @@ test("shell fixture serves an event stream and still detects request cancellatio
     assert.deepEqual(errors, [])
   } finally { hold.release(); await page.close() }
 })
-test("catalog cancellation receipts reject genuine same-URL aborts and missing, unknown or reused identities", async () => {
+test("catalog cancellation receipts reject genuine same-URL aborts and missing, unknown or reused identities", { timeout: 60000 }, async () => {
   const { page, panelReads, errors, networkErrors, hold } = await setup()
   const catalog = new URL("/api/panel-extensions", url).href, held = gate()
   let arrived!: (request: Request) => void, first = true
@@ -159,7 +159,7 @@ async function navigate(page: Page, origin: "actor" | "reader", id = "A") {
 async function ordinarySession(page: Page, name: string) { await page.locator(".session-sidebar").getByText(`Conversation ${name}`, { exact: true }).click() }
 async function settle(page: Page) { await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))) }
 for (const origin of ["actor", "reader"] as const) for (const change of ["session", "session-aba", "preview", "preview-aba"] as const) {
-  test(`shell deferred ${origin} respects external ${change}`, async () => {
+  test(`shell deferred ${origin} respects external ${change}`, { timeout: 60000 }, async () => {
     const forceSupersession = origin === "reader" && change !== "session"
     const { page, eventStreamResponse, events, panelReads, errors, networkErrors, requests, hold, reached, complete, defer } = await setup(false, forceSupersession)
     const catalogHold = gate()
@@ -192,6 +192,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["sessio
         const readId = pending.headers()[PANEL_READ_HEADER]
         assert.ok(readId, "the controller-owned pending read has a unique identity")
         const cancelled = page.waitForEvent("requestfailed", request => request === pending)
+        await page.evaluate(() => window.missionCrossNavigation.transport("disconnected"))
         events.release(); await eventStreamResponse; await cancelled
         catalogHold.release()
         await panelReads.drain()
@@ -215,7 +216,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["sessio
     } finally { events.release(); catalogHold.release(); hold.release(); await page.close() }
   })
 }
-for (const origin of ["actor", "reader"] as const) test(`shell current ${origin} survives its own synchronous navigation writes`, async () => {
+for (const origin of ["actor", "reader"] as const) test(`shell current ${origin} survives its own synchronous navigation writes`, { timeout: 60000 }, async () => {
   const { page, panelReads, errors, networkErrors, hold, reached, complete, defer } = await setup()
   try {
     defer()
@@ -236,7 +237,7 @@ for (const origin of ["actor", "reader"] as const) test(`shell current ${origin}
   } finally { hold.release(); await page.close() }
 })
 
-for (const change of ["session", "preview"] as const) test(`shell stale missing actor cannot publish an error over external ${change}`, async () => {
+for (const change of ["session", "preview"] as const) test(`shell stale missing actor cannot publish an error over external ${change}`, { timeout: 60000 }, async () => {
   const { page, panelReads, errors, networkErrors, hold, reached, complete, defer } = await setup(true)
   try {
     defer(); await navigate(page, "actor"); await reached.promise

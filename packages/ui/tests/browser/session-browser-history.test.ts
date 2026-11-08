@@ -61,6 +61,7 @@ async function prepare(page: Page, host: string, query = "") {
   page.setDefaultTimeout(20_000)
   page.on("pageerror", error => console.error("[browser history fixture]", error))
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/panel-extensions", route => route.fulfill({ json: [] }))
   await page.goto(`${base}/history-fixture?host=${host}${query}`)
   await page.waitForFunction(() => (window as any).browserHistoryReady, undefined, { timeout: 60_000 })
 }

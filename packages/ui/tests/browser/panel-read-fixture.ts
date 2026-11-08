@@ -1,28 +1,31 @@
 import type { Page, Request } from "playwright"
-import type { panelExtensionsApi } from "../../src/lib/panel-extensions-api"
+import type { BackendClient } from "../../src/lib/backend-client"
 
 export const PANEL_READ_HEADER = "x-codenomad-fixture-panel-read"
 
-/** Observe the real list call, including cancellation during response.json(). */
-export function observePanelReads(api: Pick<typeof panelExtensionsApi, "list">) {
+/** Observe the backend transport shared by the per-operation API factories. */
+export function observeBackendPanelReads(backend: BackendClient, backends: ReadonlyMap<string, BackendClient>) {
   const outcomes = new Map<string, Promise<boolean>>()
-  const list = api.list
+  const fetch = backend.fetch
   let sequence = 0
-  api.list = signal => {
-    const id = String(++sequence), originalFetch = window.fetch
-    window.fetch = (input, init) => {
-      const headers = new Headers(init?.headers)
-      headers.set(PANEL_READ_HEADER, id)
-      return originalFetch.call(window, input, { ...init, headers })
+  const observedFetch: typeof fetch = (input, init) => {
+    if (new URL(String(input), location.origin).pathname !== "/api/panel-extensions" || (init?.method ?? "GET") !== "GET") return fetch(input, init)
+    const id = String(++sequence), signal = init?.signal
+    const headers = new Headers(init?.headers)
+    headers.set(PANEL_READ_HEADER, id)
+    let settle!: (cancelled: boolean) => void
+    outcomes.set(id, new Promise(resolve => { settle = resolve }))
+    const failed = (error: unknown) => {
+      settle(signal?.aborted === true && error instanceof DOMException && error.name === "AbortError")
+      throw error
     }
-    try {
-      // The real API starts fetch synchronously; restore it before yielding.
-      const result = list(signal)
-      outcomes.set(id, result.then(() => false, error =>
-        signal?.aborted === true && error instanceof DOMException && error.name === "AbortError"))
-      return result
-    } finally { window.fetch = originalFetch }
+    return fetch(input, { ...init, headers }).then(response => {
+      const json = response.json.bind(response)
+      response.json = () => json().then(value => { settle(false); return value }, failed)
+      return response
+    }, failed)
   }
+  ;(backends as Map<string, BackendClient>).set(backend.id, { ...backend, fetch: observedFetch })
   return window.fixturePanelReadCancelled = async id => await outcomes.get(id) ?? false
 }
 

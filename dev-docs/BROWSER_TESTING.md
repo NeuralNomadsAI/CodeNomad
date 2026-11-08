@@ -105,12 +105,17 @@ synthetic provider.
   dispatcher directly. Keep network-failure collectors strict for failed streams
   and unrelated cancelled requests.
 - Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
-  panel-extension list cancellations: the exact request identity, its owning
+  panel-extension list cancellations through their registered backend transport
+  (each operation creates its own API): the exact request identity, its owning
   aborted signal and its native `AbortError` receipt must agree. Drain pending
   classifications before asserting; retain raw failures alongside the classified
   cancellations. Same-URL network aborts and missing, unknown or reused identities
   remain failures. Hold a controller-owned read across a native SSE open to
   exercise supersession with the navigation ownership assertions intact.
+  Empty catalogues answer `/api/panel-extensions` with `[]`. Reconnection probes
+  emit `disconnected` before `connected`; held-stream probes disconnect before
+  releasing the native open. Deferred navigation scenarios have a 60-second
+  timeout and release their barriers in `finally`.
 - Fixtures consuming EventSource serve a persistent `text/event-stream` response
   and let the real connection close with its page. Never answer that path with
   the generic JSON fallback. Composer bootstrap awaits DOM readiness and its

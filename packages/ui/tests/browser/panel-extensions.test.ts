@@ -144,6 +144,26 @@ async function setAddonEnabled(view: Page, enabled: boolean) {
   }), enabled)
 }
 
+test("malformed inventory retains the last good display and revokes catalogue actions until a valid read", { timeout: 60000 }, async () => {
+  const pkg = await installDirect(example), view = await page(), errors: string[] = []
+  view.on("pageerror", error => errors.push(error.message))
+  try {
+    await view.getByRole("tab", { name: "Session example", exact: true }).waitFor()
+    await openManager(view)
+    const failure = view.getByRole("region", { name: "Panel extensions", exact: true }).getByRole("alert").filter({ hasText: "Extension unavailable" })
+    await view.route("**/api/panel-extensions", route => route.fulfill({ json: {} }))
+    await changed(view)
+    await failure.waitFor()
+    assert.equal(await view.getByRole("tab", { name: "Session example", exact: true }).count(), 1)
+    assert.equal(await view.locator(".panel-extension-zip").isDisabled(), true)
+    assert.deepEqual(errors, [])
+    await view.unroute("**/api/panel-extensions")
+    await changed(view)
+    await failure.waitFor({ state: "detached" })
+    assert.equal(await view.getByRole("tab", { name: "Session example", exact: true }).count(), 1)
+  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+})
+
 test("online catalogue lists without downloading code; explicit consent installs an addon tab", async () => {
   const view = await page(), before = archiveRequests
   try {
