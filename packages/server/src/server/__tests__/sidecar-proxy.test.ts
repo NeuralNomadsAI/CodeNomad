@@ -19,7 +19,7 @@ const apps: FastifyInstance[] = []
 const upstreams: http.Server[] = []
 const upstreamSocketCleanups: Array<() => void> = []
 const sockets: net.Socket[] = []
-type UpstreamOptions = { cookies?: string[]; fragmented?: boolean; denied?: boolean }
+type UpstreamOptions = { cookies?: string[]; fragmented?: boolean; denied?: boolean; html?: string }
 
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.destroy()
@@ -41,12 +41,24 @@ afterEach(async () => {
 async function startSideCarUpstream(options: UpstreamOptions = {}) {
   const upgrades: string[] = []
   const requests: http.IncomingHttpHeaders[] = []
+  const received: Array<{ method: string; url: string; body: string }> = []
   const connections = new Set<net.Socket>()
   const upstream = http.createServer((request, response) => {
     requests.push(request.headers)
-    if (options.cookies) response.setHeader("Set-Cookie", options.cookies)
-    response.writeHead(200, { "content-type": "application/json" })
-    response.end("{\"ok\":true}")
+    let body = ""
+    request.setEncoding("utf8")
+    request.on("data", (chunk) => { body += chunk })
+    request.on("end", () => {
+      received.push({ method: request.method ?? "", url: request.url ?? "", body })
+      if (options.cookies) response.setHeader("Set-Cookie", options.cookies)
+      if (options.html !== undefined) {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
+        response.end(options.html)
+        return
+      }
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end("{\"ok\":true}")
+    })
   })
   upstream.on("connection", (socket) => {
     connections.add(socket)
@@ -72,7 +84,7 @@ async function startSideCarUpstream(options: UpstreamOptions = {}) {
   upstreams.push(upstream)
   upstreamSocketCleanups.push(() => { for (const socket of connections) socket.destroy() })
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve))
-  return { port: (upstream.address() as net.AddressInfo).port, upgrades, requests }
+  return { port: (upstream.address() as net.AddressInfo).port, upgrades, requests, received }
 }
 
 /** Raw WebSocket handshake, like a browser's; resolves once the status line and headers arrived. */
@@ -118,7 +130,7 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     generateToken: false,
     cookieName: options.cookieName,
   }, logger)
-  const { port, upgrades, requests } = await startSideCarUpstream(options)
+  const { port, upgrades, requests, received } = await startSideCarUpstream(options)
   const sidecar: SideCar = {
     id: "fixture", kind: "port", name: "ttyd", port, insecure: true, prefixMode: options.prefixMode ?? "strip",
     status: "running", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -161,6 +173,7 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     cookie: `${authManager.getCookieName()}=${session.id}`,
     upgrades,
     requests,
+    received,
     preview,
     cleanupDirectory: directory,
   }
@@ -291,4 +304,128 @@ it("opaque-origin frames cannot reach SideCar routes while same-origin frames ca
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
   }
+})
+
+it("forwards a bodiless SideCar DELETE declaring JSON and still parses framed JSON bodies", async () => {
+  const server = await startServer()
+  try {
+    const send = (options: { method: "DELETE" | "POST"; headers?: Record<string, string>; payload?: string }) => server.app.inject({
+      url: "/sidecars/fixture/item", ...options, headers: { cookie: server.cookie, "content-type": "application/json", ...options.headers },
+    })
+    const bodiless = await send({ method: "DELETE" })
+    assert.equal(bodiless.statusCode, 200, bodiless.body)
+    assert.deepEqual(server.received.at(-1), { method: "DELETE", url: "/item", body: "" })
+    // A framed body goes through Fastify's own JSON parser: empty and poisoned bodies are refused.
+    assert.equal((await send({ method: "DELETE", headers: { "content-length": "0" } })).statusCode, 400)
+    assert.equal((await send({ method: "POST", payload: "{\"__proto__\":{\"polluted\":true}}" })).statusCode, 400)
+    const framed = await send({ method: "DELETE", payload: "{\"id\":1}" })
+    assert.equal(framed.statusCode, 200, framed.body)
+    assert.deepEqual(server.received.at(-1), { method: "DELETE", url: "/item", body: "{\"id\":1}" })
+    assert.equal(server.received.length, 2)
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+// Writes the request line raw, so the target reaches the server exactly as written; resolves with the
+// response status once its head arrived (the upstream has recorded the request by then).
+function rawGet(port: number, target: string, headers: Record<string, string> = {}): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => socket.write([
+      `GET ${target} HTTP/1.1`, `Host: ${headers.host ?? `127.0.0.1:${port}`}`,
+      ...Object.entries(headers).filter(([name]) => name !== "host").map(([name, value]) => `${name}: ${value}`), "", "",
+    ].join("\r\n")))
+    sockets.push(socket)
+    let data = ""
+    socket.on("data", (chunk) => {
+      data += chunk
+      if (!data.includes("\r\n\r\n")) return
+      socket.destroy()
+      resolve(Number(data.split(" ")[1]))
+    })
+    socket.on("error", reject)
+  })
+}
+
+it("forwards SideCar and preview queries and percent-encoded paths with the bytes the client sent", async () => {
+  const server = await startServer()
+  try {
+    const token = server.preview.token
+    const entries: Array<{ prefix: string; headers: Record<string, string> }> = [
+      { prefix: "/sidecars/fixture", headers: { cookie: server.cookie } },
+      { prefix: `/previews/${token}`, headers: {} },
+      { prefix: "", headers: { host: `${token}.preview.localhost:${server.port}` } },
+    ]
+    const queries = ["?q=50%", "?q=%FF", "?name=caf%E9", "?q=a%20b&next=%2Fhome"]
+    const paths = [
+      ["/100%25.json", "/100%25.json"], ["/50%25%20off.json", "/50%25%20off.json"],
+      ["/@vite/client", "/@vite/client"], ["/a+b:c,d=e.js", "/a+b:c,d=e.js"], ["/caf%C3%A9.json", "/caf%C3%A9.json"],
+    ]
+    const expect = async (target: string, headers: Record<string, string>, forwarded: string) => {
+      assert.equal(await rawGet(server.port, target, headers), 200, target)
+      assert.equal(server.received.at(-1)?.url, forwarded, target)
+    }
+    for (const { prefix, headers } of entries) {
+      for (const query of queries) await expect(`${prefix}/data.json${query}`, headers, `/data.json${query}`)
+      for (const [path, forwarded] of paths) await expect(`${prefix}${path}`, headers, forwarded)
+    }
+    // A session's root-relative asset, resolved through the preview its Referer names.
+    for (const query of queries) {
+      await expect(`/assets/app.js${query}`, { cookie: server.cookie, referer: `${server.origin}/previews/${token}/page` }, `/assets/app.js${query}`)
+    }
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+it("rewrites previewed HTML read from the upstream body stream", async () => {
+  const server = await startServer({ html: "<html><head><script src=\"/app.js\"></script></head><body>preview-marker</body></html>" })
+  try {
+    const token = server.preview.token
+    for (const [request, script] of [
+      [{ url: `/previews/${token}/page` }, `src="/previews/${token}/app.js"`],
+      [{ url: "/page", headers: { host: `${token}.preview.localhost` } }, "src=\"/app.js\""],
+    ] as const) {
+      const response = await server.app.inject({ method: "GET", ...request })
+      assert.equal(response.statusCode, 200, `${request.url} ${response.body}`)
+      assert.match(String(response.headers["content-type"]), /^text\/html/, request.url)
+      assert.ok(response.body.includes("preview-marker"), request.url)
+      assert.ok(response.body.includes(script), request.url)
+      assert.ok(response.body.indexOf("codenomad-preview-location") < response.body.indexOf(script), request.url)
+    }
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+it("relays other preview responses as the upstream body stream", async () => {
+  const server = await startServer()
+  try {
+    const token = server.preview.token
+    for (const request of [{ url: `/previews/${token}/data.json` }, { url: "/data.json", headers: { host: `${token}.preview.localhost` } }]) {
+      const response = await server.app.inject({ method: "GET", ...request })
+      assert.equal(response.statusCode, 200, request.url)
+      assert.equal(response.body, "{\"ok\":true}", request.url)
+    }
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+it("forwards WebDAV, CalDAV and SEARCH methods with their bodies to SideCars and previews", async () => {
+  const server = await startServer()
+  try {
+    const token = server.preview.token
+    const methods = [
+      ["PROPFIND", true], ["PROPPATCH", true], ["MKCOL", true], ["COPY", true], ["MOVE", true],
+      ["LOCK", true], ["UNLOCK", false], ["SEARCH", true], ["REPORT", true], ["MKCALENDAR", true],
+    ] as const
+    for (const [method, hasBody] of methods) {
+      for (const [url, headers] of [["/sidecars/fixture/dav", { cookie: server.cookie }], [`/previews/${token}/dav`, {}]] as const) {
+        const response = await server.app.inject({
+          method, url, ...(hasBody ? { headers: { ...headers, "content-type": "text/plain" }, payload: `${method} body` } : { headers }),
+        })
+        assert.equal(response.statusCode, 200, `${method} ${url} ${response.body}`)
+        assert.equal(response.body, "{\"ok\":true}", `${method} ${url}`)
+      }
+    }
+    assert.deepEqual(server.received, methods.flatMap(([method, hasBody]) =>
+      [0, 1].map(() => ({ method, url: "/dav", body: hasBody ? `${method} body` : "" }))))
+    // The instance proxy's own handler answers them as well; this fixture has no workspace.
+    const instance = await server.app.inject({ method: "PROPFIND", url: "/workspaces/missing/instance/api/session", headers: { cookie: server.cookie } })
+    assert.equal(instance.statusCode, 404)
+    assert.deepEqual(instance.json(), { error: "Workspace not found" })
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
 })
