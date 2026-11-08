@@ -5,11 +5,6 @@
  * anything else is idle. Outcomes themselves are status text. */
 export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "idle"
 
-/** Most urgent first; like a collapsed session parent's chevron (`session-child-activity.ts`),
- * which leaves interrupted children on their own rows. */
-export const MISSION_PICKER_ATTENTION = ["permission", "working", "done"] as const
-export type MissionPickerAttention = (typeof MISSION_PICKER_ATTENTION)[number]
-
 export interface MissionPickerEntry {
   /** `mission:<id>` or `schedule:<id>`. */
   key: string
@@ -17,31 +12,6 @@ export interface MissionPickerEntry {
   /** Full localized state for tooltips and screen readers. */
   status: string
   mark: MissionMark
-}
-
-type Translate = (key: string, params?: Record<string, string>) => string
-export type MissionPickerAttentionCounts = Record<MissionPickerAttention, number>
-
-const attentionOf = (mark: MissionMark): MissionPickerAttention | undefined =>
-  (MISSION_PICKER_ATTENTION as readonly string[]).includes(mark) ? mark as MissionPickerAttention : undefined
-
-/** Attention among the entries other than the selected one. */
-export function missionPickerAttention(entries: readonly MissionPickerEntry[], selectedKey?: string): {
-  kind?: MissionPickerAttention; counts: MissionPickerAttentionCounts
-} {
-  const counts: MissionPickerAttentionCounts = { permission: 0, working: 0, done: 0 }
-  for (const entry of entries) {
-    const attention = attentionOf(entry.mark)
-    if (entry.key !== selectedKey && attention) counts[attention]++
-  }
-  return { kind: MISSION_PICKER_ATTENTION.find(kind => counts[kind] > 0), counts }
-}
-
-/** Counted states, e.g. "1 waiting, 2 running". */
-export function missionPickerAttentionLabel(t: Translate, counts: MissionPickerAttentionCounts): string {
-  return MISSION_PICKER_ATTENTION.filter(kind => counts[kind] > 0)
-    .map(kind => t(`missionsPanel.attention.${kind}.${counts[kind] === 1 ? "one" : "other"}`, { count: String(counts[kind]) }))
-    .join(", ")
 }
 
 /** A one-time Mission's state from native requests and observed actor activity.

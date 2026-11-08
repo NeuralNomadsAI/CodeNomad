@@ -10,7 +10,7 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 ## Crear y después iniciar explícitamente {#create}
 
-1. Abre **Misiones** en el panel derecho y elige **Crear misión**. El formulario sustituye la lista de misiones y las tareas de la misión seleccionada hasta que crees o canceles.
+1. Abre **Misiones** en el panel derecho y elige **Crear misión**. El formulario sustituye el árbol de misiones hasta que crees o canceles.
 2. Completa **¿Qué debe hacer la misión?** y comprueba el **Título**, rellenado a partir de la primera frase (hasta 60 caracteres).
 3. Deja **Programación** plegada para **Una vez, inmediatamente**, o despliégala y usa **Añadir un criterio** en **Lanzar cuando** para añadir horarios o eventos. Su orden fija cómo se combinan.
 4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, la **Profundidad de anidamiento de subsesiones** del proyecto, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
@@ -38,10 +38,11 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 
 ## Seguir el árbol y leer resultados {#tracking}
 
-1. Selecciona el título de la misión. El chevrón inicial mantiene abierta su lista; el campo del título abre un selector temporal.
-2. Elige **Resumen** (ojo) para la vista central general o selecciona un nodo de tarea para ver su resultado, encargo y evidencias exactos.
-3. Sigue los enlaces de dependencias y los **Informes**; usa **Abrir conversación** para el coordinador cuando necesites su transcripción.
-4. En **Te necesita**, elige **Responder** para abrir la conversación y el panel de interrupciones del actor solicitante.
+1. Selecciona la fila de una misión: sus tareas aparecen debajo y sus acciones en la segunda línea del encabezado. El chevrón de la fila pliega o despliega sus tareas; el chevrón de otra misión muestra sus tareas sin seleccionarla. **Filtrar misiones** acota las demás filas.
+2. Elige **Resumen** (ojo) para la vista central general; mientras está abierta, seleccionar otra misión muestra la vista general de esa misión. Selecciona una tarea para ver su resultado, encargo y evidencias exactos: mientras su lector está abierto, las acciones del encabezado se aplican a esa tarea, con **Abrir la conversación de la tarea** y, si falta su informe, **Verificar y recuperar el informe faltante**. **Resumen** cierra entonces el lector de la tarea.
+3. **Más acciones** (⋯) agrupa **Interrumpir ahora**, **Pedir una actualización** y **Editar la misión seleccionada**; las acciones que no corresponden quedan desactivadas.
+4. Sigue los enlaces de dependencias y los **Informes**; usa **Abrir conversación** para el coordinador cuando necesites su transcripción.
+5. En **Te necesita**, elige **Responder** para abrir la conversación y el panel de interrupciones del actor solicitante.
 
 | Indicador | Qué demuestra |
 | --- | --- |
@@ -55,13 +56,13 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 
 El gráfico incluye trabajo completado y retirado. Retirar una tarea no detiene por sí solo su conversación. En una misión puntual, el coordinador puede detener por separado las conversaciones de una tarea retirada que lanzó como subagente nativo, sin tocar las demás tareas. **En curso** es el estado del ciclo de vida de la misión, no demuestra que su coordinador esté ejecutándose. El texto completo pertenece al lector central, no a la lista de tareas del panel; **Detalles técnicos** pliega los identificadores y la información de ejecución solicitada.
 
-Un plan grande forma un árbol continuo: las tareas siguientes se cargan al desplazarse, con un único **Mostrar más** al final. Las tareas ya fijadas permanecen visibles; el icono de información junto a **Tareas** da los recuentos por tipo de toda la misión que requieren atención. Los recuentos de carga y las explicaciones de cobertura están tras los iconos de información. Las lecturas de fondo animan el indicador **Actualizar** existente arriba a la derecha y mantienen el panel en su sitio. Un trazo discontinuo marca una dependencia o tarea dependiente sin cargar; los enlaces del lector cargan su destino directamente. El lector ofrece **Mostrar todo** para los resultados anteriores e **Intentar de nuevo** tras un fallo de lectura.
+Un plan grande forma un árbol continuo: las tareas siguientes se cargan al desplazarse, con un único **Mostrar más** al final. Las tareas ya fijadas permanecen visibles; mientras algunas quedan más abajo, el icono de información de la línea **Tareas**, sobre las tareas, da los recuentos por tipo de toda la misión que requieren atención. Los recuentos de carga y las explicaciones de cobertura están tras los iconos de información. Las lecturas de fondo animan el indicador **Actualizar** existente arriba a la derecha y mantienen el panel en su sitio. Un trazo discontinuo marca una dependencia o tarea dependiente sin cargar; los enlaces del lector cargan su destino directamente. El lector ofrece **Mostrar todo** para los resultados anteriores e **Intentar de nuevo** tras un fallo de lectura.
 
 Las páginas de tareas aparecen solo cuando se han recibido por completo. Si falla o cambia una lectura, se conservan las últimas tareas mostradas. Si la lista cambia durante la lectura, usa **Actualizar** y después **Intentar de nuevo**; la página se lee de nuevo desde el principio. Una parte que falta nunca demuestra que una tarea o solicitud esté ausente, y reintentar una lectura no inicia trabajo. Si el plugin de Misiones no puede proporcionar la página, vuelve a intentarlo tras reconectar o recargar el plugin.
 
 ### Colores y misiones interrumpidas {#status-colours}
 
-Las marcas de las misiones, los iconos de las tareas y el chevrón de la lista usan los colores de la lista de sesiones: el color solo muestra lo que te necesita ahora.
+Las banderas de las misiones y los iconos de las tareas usan los colores de la lista de sesiones: el color solo muestra lo que te necesita ahora. Una misión recurrente muestra un icono de repetición en lugar de la bandera.
 
 | Color | Significado |
 | --- | --- |
@@ -71,7 +72,7 @@ Las marcas de las misiones, los iconos de las tareas y el chevrón de la lista u
 | Verde | Una misión terminada que aún no has abierto en esta ventana; vuelve a ser neutral en cuanto la seleccionas. |
 | Azul | Una misión preparada, lista para iniciarse como un prompt redactado. |
 
-Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos. Con la lista contraída, su chevrón toma el más urgente de rojo, amarillo y verde entre las demás misiones; como en las sesiones contraídas, el naranja y el azul solo se muestran en sus propias filas.
+Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos.
 
 Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando nada puede avanzar sin ti, te hace una pregunta en **Te necesita**. Solo tú detienes una misión.
 
@@ -92,7 +93,7 @@ Solo una respuesta que des en el panel de interrupciones cuenta como **Tu respue
 
 El coordinador recibe instrucciones de publicar un informe de situación del proyecto tras su plan inicial, tras resolver tareas, al esperar a una persona y antes del informe final. Es una evaluación redactada, no un contador de actividad en vivo ni una señal periódica garantizada. Un aviso identifica cuándo el mapa ha cambiado desde ese informe.
 
-Usa **Pedir una actualización** debajo de la barra de herramientas para solicitar una evaluación nueva del coordinador y lee después **Resumen**. **Actualización pedida…** significa que la solicitud está pendiente, no respondida. **Envío sin confirmar** no autoriza el reenvío automático: abre la conversación del coordinador antes de hacer una solicitud nueva independiente. Es una entrada nativa normal, no un entorno aislado de solo lectura; el coordinador conserva sus permisos habituales.
+Usa **Pedir una actualización** en **Más acciones** (⋯) para solicitar una evaluación nueva del coordinador y lee después **Resumen**. **Actualización pedida…** significa que la solicitud está pendiente, no respondida. **Envío sin confirmar** no autoriza el reenvío automático: abre la conversación del coordinador antes de hacer una solicitud nueva independiente. Es una entrada nativa normal, no un entorno aislado de solo lectura; el coordinador conserva sus permisos habituales.
 
 ## Cómo circula el contexto en una misión {#context-flow}
 
@@ -273,7 +274,7 @@ Cuando la lectura del recibo confirma una preparación parcial, aparece **Intent
 
 Antes del primer inicio de una nueva misión preparada, puede editar título, instrucciones, notas, playbook, agentes/modelos/razonamiento solicitados, modo de sesiones de tareas y **Programación**. Puede añadir o quitar criterios de lanzamiento conservando la misma Misión. Guardar la mantiene en pausa y prepara un coordinador nuevo y vacío; se conserva la conversación inicial. Solo Play inicia el trabajo o activa una programación. Tras el inicio, instrucciones y notas siguen las reglas de edición de la misión activa. Si guardar queda sin confirmar, **Actualizar la solicitud guardada** lee el resultado original; conserve esa solicitud mientras una preparación parcial bloquea el inicio, la edición de textos y la eliminación.
 
-Usa **Editar la misión seleccionada** en una misión puntual o programación nativa editable. Lee las explicaciones junto a los campos bloqueados. Ante un conflicto de revisión, elige **Recargar la configuración actual** y abre **Borrador anterior para comparar** para revisar el borrador conservado antes de volver a guardar. Las programaciones diarias existentes mantienen los controles de su propia barra de herramientas.
+Usa **Editar la misión seleccionada** desde **Más acciones** (⋯) en una misión puntual o programación nativa editable. Lee las explicaciones junto a los campos bloqueados. Ante un conflicto de revisión, elige **Recargar la configuración actual** y abre **Borrador anterior para comparar** para revisar el borrador conservado antes de volver a guardar. Las programaciones diarias existentes mantienen los controles de su propia barra de herramientas.
 
 En una programación nativa, **Eliminar la misión seleccionada…** desactiva futuras pasadas antes de retirar la entrada. Se conservan las conversaciones y resultados; la limpieza pendiente de reconciliación sigue visible en **Detalles técnicos**. Conserva una eliminación sin confirmar y actualiza su solicitud original.
 

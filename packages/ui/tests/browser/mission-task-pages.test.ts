@@ -75,6 +75,7 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
   })
   await events.route(page)
   await page.goto(url)
+  await page.waitForFunction(() => Boolean((window as any).missionFixture), undefined, { timeout: 60_000 })
   await page.evaluate(async id => {
     ;(window as any).missionFixture.connectCatalog()
     ;(await import("/src/stores/instances.ts")).updateInstance("fixture", { metadata: { project: { id: "project" } } })
@@ -91,7 +92,7 @@ const rows = (page: Page) => page.locator(".mission-tree-node").evaluateAll(node
 // Exercise the keyboard fallback without scrolling the sentinel into view as a
 // side effect. Scroll-driven loading has its own real-scroller regression below.
 const more = (page: Page) => page.locator(".mission-tree-more button").evaluate((button: HTMLButtonElement) => button.click())
-const attentionInfo = (page: Page) => page.locator(".mission-tree > h3 .settings-info-tip")
+const attentionInfo = (page: Page) => page.locator(".mission-tree > .mission-tree-summary .settings-info-tip")
 const stubs = (page: Page) => page.locator(".mission-graph path.mission-graph-omitted").evaluateAll(paths => paths.map(path =>
   `${(path as SVGPathElement).dataset.task}:${(path as SVGPathElement).dataset.omitted}`).sort())
 /** Every declared edge starts and ends at its tasks' status icons, in client space. */
@@ -113,7 +114,7 @@ test("the continuous tree has one continuation, retains pins and omitted edges, 
   const { page, errors, reads } = await open(value)
   try {
     await settle(page)
-    assert.equal(await page.locator(".mission-tree > h3 .mission-disclosure-trigger small").innerText(), "120", "the group counts every task")
+    assert.equal(await page.locator(".mission-tree").getAttribute("aria-label"), "Tasks (120)", "the group counts every task")
     // The window (positions 0-49), then the pinned blockage at the end of the order.
     assert.deepEqual(await rows(page), [...order.slice(0, 50), "t119"])
     assert.equal(await page.locator(".mission-tree-gap").count(), 0)
@@ -301,8 +302,8 @@ test("scrolling loads all 400 tasks without gap controls and preserves independe
       assert.ok(await f.page.locator(".mission-tree-more button").count() <= 1)
       assert.equal(await f.page.locator(".mission-tree-gap").count(), 0)
       await f.page.evaluate(() => {
-        const tree = document.querySelector(".mission-tree")!, flow = tree.querySelector<HTMLElement>(".mission-flow")!
-        const scroller = tree.getAttribute("data-scroller") === "panel" ? tree.closest<HTMLElement>(".mission-control")! : flow
+        // The panel is the tree's only scroller.
+        const scroller = document.querySelector(".mission-tree")!.closest<HTMLElement>(".mission-control")!
         scroller.scrollTop = scroller.scrollHeight
       })
       await f.page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
@@ -504,14 +505,19 @@ test("off-page attention stays available in an info tooltip and every recovery a
     await notice.waitFor()
     assert.equal(await notice.getAttribute("aria-label"), "In this mission: 15 blocked, 0 failed, 55 awaiting a report, 5 with a notification pending")
     assert.equal(await f.page.locator(".mission-tree-gap").count(), 0)
-    assert.equal(await f.page.locator(".mission-tree-recovery button").count(), 0, "no recovery task is shown yet")
+    assert.equal(await f.page.locator('.mission-tree-node[data-task-key="c070"]').count(), 0, "no recovery task is shown yet")
     await more(f.page)
     await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 120)
     await more(f.page)
     await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 125)
     assert.deepEqual(f.reads.map(query => new URLSearchParams(query).get("offset")), ["70", "120"])
     await notice.waitFor({ state: "detached" })
-    assert.equal(await f.page.locator(".mission-tree-recovery button").count(), 55, "every recovery action is reachable")
+    // A task's recovery is its open reader's primary action in the header toolbar.
+    const toolbar = f.page.locator(".mission-picker-selection-actions .mission-action-bar")
+    for (const key of ["c070", "c124"]) {
+      await f.page.locator(`.mission-tree-node[data-task-key="${key}"] .mission-tree-task`).click()
+      await toolbar.getByRole("button", { name: "Verify and recover missing report", exact: true }).and(f.page.locator(":enabled")).waitFor()
+    }
     assert.deepEqual(f.errors, [])
   } finally { await f.page.context().close() }
 })
@@ -552,7 +558,7 @@ for (const failure of ["network", "changed"] as const) test(`sliced task ${failu
     return route.fulfill({ json: answer })
   })
   try {
-    const original = await rows(f.page), toolbar = f.page.locator(".mission-action-bar"), element = await toolbar.elementHandle()
+    const original = await rows(f.page), toolbar = f.page.locator(".mission-picker-selection-actions .mission-action-bar"), element = await toolbar.elementHandle()
     await more(f.page)
     const read = f.page.locator(".mission-tree-read")
     await read.waitFor()

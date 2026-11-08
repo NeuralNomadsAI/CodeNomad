@@ -1,5 +1,7 @@
 # Historial, búsqueda y limpieza
 
+La búsqueda, la cronología, la galería de imágenes y la limpieza técnica admiten también el almacenamiento experimental `part_rows` de OpenCode y los mensajes con partes separadas e integradas. Las partes ya separadas siguen siendo compatibles tras desactivar la opción.
+
 El historial almacenado, lo que muestra actualmente la transcripción y el contexto compactado del modelo son cosas distintas. Elige navegar o filtrar antes de eliminar nada.
 
 ## Buscar en todo el historial {#full-history-search}

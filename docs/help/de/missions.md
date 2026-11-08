@@ -10,7 +10,7 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 
 ## Erstellen, dann ausdrücklich starten {#create}
 
-1. Öffnen Sie **Missionen** im rechten Panel und wählen Sie **Mission erstellen**. Das Formular ersetzt die Missionsliste und die Aufgaben der ausgewählten Mission, bis Sie erstellen oder abbrechen.
+1. Öffnen Sie **Missionen** im rechten Panel und wählen Sie **Mission erstellen**. Das Formular ersetzt den Missionsbaum, bis Sie erstellen oder abbrechen.
 2. Füllen Sie **Was soll die Mission tun?** aus und prüfen Sie **Titel**, der aus dem ersten Satz vorbelegt wird (bis 60 Zeichen).
 3. Lassen Sie **Zeitplanung** für **Einmal, sofort** eingeklappt oder klappen Sie sie auf und fügen Sie unter **Starten, wenn** mit **Kriterium hinzufügen** Zeitpläne oder Ereignisse hinzu. Ihre Reihenfolge legt fest, wie sie kombiniert werden.
 4. Klappen Sie **Optionen** für **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, die **Verschachtelungstiefe der Untersitzungen** des Projekts, gespeicherte Aufträge und optional verfolgte Unterhaltungen auf. Mit **Zwei Modelle vergleichen** erscheinen die Auswahlfelder **Modell A** und **Modell B** im Hauptformular.
@@ -38,10 +38,11 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 
 ## Baum verfolgen und Ergebnisse lesen {#tracking}
 
-1. Wählen Sie den Missionstitel. Der vorangestellte Pfeil hält die Liste offen; das Titelfeld öffnet eine vorübergehende Auswahl.
-2. Wählen Sie **Zusammenfassung** (Auge) für die zentrale Übersicht oder einen Aufgabenknoten für dessen exaktes Ergebnis, Auftrag und Belege.
-3. Folgen Sie Abhängigkeitslinks und **Berichte**; verwenden Sie **Unterhaltung öffnen** für den Koordinator, wenn Sie dessen Verlauf benötigen.
-4. Wählen Sie unter **Braucht Sie** die Aktion **Antworten**, um Unterhaltung und Unterbrechungsdock des anfragenden Akteurs zu öffnen.
+1. Wählen Sie die Zeile einer Mission: Ihre Aufgaben erscheinen darunter und ihre Aktionen in der zweiten Zeile der Kopfzeile. Der Pfeil der Zeile klappt ihre Aufgaben ein oder aus; der Pfeil einer anderen Mission zeigt deren Aufgaben, ohne sie auszuwählen. **Missionen filtern** grenzt die übrigen Zeilen ein.
+2. Wählen Sie **Zusammenfassung** (Auge) für die zentrale Übersicht; solange sie geöffnet ist, zeigt die Auswahl einer anderen Mission deren Übersicht. Wählen Sie eine Aufgabe für ihr exaktes Ergebnis, ihren Auftrag und ihre Belege: Solange ihr Leser geöffnet ist, gelten die Aktionen der Kopfzeile für diese Aufgabe, mit **Unterhaltung der Aufgabe öffnen** und, wenn ihr Bericht fehlt, **Fehlenden Bericht prüfen und wiederherstellen**. **Zusammenfassung** schließt dann den Leser der Aufgabe.
+3. **Weitere Aktionen** (⋯) enthält **Jetzt unterbrechen**, **Update anfordern** und **Ausgewählte Mission bearbeiten**; nicht zutreffende Aktionen bleiben deaktiviert.
+4. Folgen Sie Abhängigkeitslinks und **Berichte**; verwenden Sie **Unterhaltung öffnen** für den Koordinator, wenn Sie dessen Verlauf benötigen.
+5. Wählen Sie unter **Braucht Sie** die Aktion **Antworten**, um Unterhaltung und Unterbrechungsdock des anfragenden Akteurs zu öffnen.
 
 | Anzeige | Was sie belegt |
 | --- | --- |
@@ -55,13 +56,13 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 
 Der Graph enthält abgeschlossene und zurückgezogene Arbeit. Eine Aufgabe zurückzuziehen stoppt nicht von selbst deren Unterhaltung. In einer einmaligen Mission kann der Koordinator die Unterhaltungen einer zurückgezogenen Aufgabe, die er als nativen Subagenten gestartet hat, separat stoppen, ohne andere Aufgaben zu berühren. **In Arbeit** ist der Lebenszykluszustand der Mission, kein Beweis, dass der Koordinator gerade läuft. Vollständiger Text gehört in die zentrale Leseansicht, nicht die Aufgabenliste des Panels; **Technische Details** klappt Kennungen und angeforderte Ausführungsinformationen ein.
 
-Ein großer Plan bildet einen durchgehenden Baum: Weitere Aufgaben laden beim Scrollen, mit einem einzigen **Mehr anzeigen** am Ende. Vorhandene angeheftete Aufgaben bleiben sichtbar; das Infosymbol neben **Aufgaben** nennt den Handlungsbedarf der gesamten Mission nach Art. Ladezähler und Hinweise zur Abdeckung stehen hinter Infosymbolen. Hintergrundlesevorgänge animieren die vorhandene **Aktualisieren**-Anzeige oben rechts und halten das Panel an seinem Platz. Ein gestrichelter Ansatz markiert eine ungelesene Abhängigkeit oder Folgeaufgabe; Links im Leser laden ihr Ziel direkt. Der Leser bietet **Alle anzeigen** für frühere Ergebnisse und **Erneut versuchen** nach einem Lesefehler.
+Ein großer Plan bildet einen durchgehenden Baum: Weitere Aufgaben laden beim Scrollen, mit einem einzigen **Mehr anzeigen** am Ende. Vorhandene angeheftete Aufgaben bleiben sichtbar; solange einige davon weiter unten liegen, nennt das Infosymbol in der Zeile **Aufgaben** über den Aufgaben den Handlungsbedarf der gesamten Mission nach Art. Ladezähler und Hinweise zur Abdeckung stehen hinter Infosymbolen. Hintergrundlesevorgänge animieren die vorhandene **Aktualisieren**-Anzeige oben rechts und halten das Panel an seinem Platz. Ein gestrichelter Ansatz markiert eine ungelesene Abhängigkeit oder Folgeaufgabe; Links im Leser laden ihr Ziel direkt. Der Leser bietet **Alle anzeigen** für frühere Ergebnisse und **Erneut versuchen** nach einem Lesefehler.
 
 Aufgabenseiten erscheinen erst nach vollständigem Empfang. Bei fehlgeschlagenen oder geänderten Lesevorgängen bleiben die zuletzt gezeigten Aufgaben erhalten. Ändert sich die Liste während des Lesens, wählen Sie **Aktualisieren**, dann **Erneut versuchen**; die Seite wird von vorn gelesen. Ein fehlender Teil belegt niemals, dass eine Aufgabe oder Anfrage fehlt. Das Wiederholen eines Lesevorgangs startet keine Arbeit. Kann das Missions-Plugin die Seite nicht liefern, versuchen Sie es nach erneutem Verbinden oder Neuladen des Plugins.
 
 ### Farben und unterbrochene Missionen {#status-colours}
 
-Missionsmarkierungen, Aufgabensymbole und das Chevron der Liste verwenden die Farben der Sitzungsliste: Farbe zeigt nur, was Sie jetzt braucht.
+Missionsflaggen und Aufgabensymbole verwenden die Farben der Sitzungsliste: Farbe zeigt nur, was Sie jetzt braucht. Eine wiederkehrende Mission zeigt anstelle der Flagge ein Wiederholungssymbol.
 
 | Farbe | Bedeutung |
 | --- | --- |
@@ -71,7 +72,7 @@ Missionsmarkierungen, Aufgabensymbole und das Chevron der Liste verwenden die Fa
 | Grün | Eine abgeschlossene Mission, die Sie in diesem Fenster noch nicht geöffnet haben; sie wird neutral, sobald Sie sie auswählen. |
 | Blau | Eine vorbereitete Mission, bereit zum Start wie ein verfasster Prompt. |
 
-Alles andere ist neutral, auch erledigte und fehlgeschlagene Aufgaben: Ergebnisse stehen im Statustext und in den Symbolen. Ist die Liste eingeklappt, übernimmt ihr Chevron die dringendste Farbe aus Rot, Gelb und Grün unter den anderen Missionen; wie bei eingeklappten Sitzungen erscheinen Orange und Blau nur in ihren eigenen Zeilen.
+Alles andere ist neutral, auch erledigte und fehlgeschlagene Aufgaben: Ergebnisse stehen im Statustext und in den Symbolen.
 
 Eine Mission ist **Unterbrochen**, wenn ihr Koordinator ohne Abschluss angehalten hat, während nichts anderes läuft. Eine als **Fehlgeschlagen** angezeigte Mission kann ebenfalls fortgesetzt werden. In beiden Fällen wird die erste Schaltfläche der Werkzeugleiste zu **Unterbrochene Mission wiederherstellen**: Sie bittet den Koordinator, anhand des gespeicherten Plans und der Ergebnisse neu zu bewerten, und öffnet eine fehlgeschlagene Mission zuvor wieder. Ein Koordinator beendet eine einmalige Mission nicht als fehlgeschlagen: Kann ohne Sie nichts mehr weitergehen, stellt er Ihnen eine Frage unter **Braucht Sie**. Nur Sie stoppen eine Mission.
 
@@ -92,7 +93,7 @@ Nur eine Antwort, die Sie im Unterbrechungsdock geben, zählt als **Ihre Antwort
 
 Der Koordinator erhält die Anweisung, nach dem ersten Plan, nach Aufgabenerledigungen, beim Warten auf Menschen und vor dem Abschlussbericht einen Projektlagebericht zu veröffentlichen. Dies ist eine verfasste Einschätzung, kein Live-Aktivitätszähler oder garantierter periodischer Heartbeat. Ein Hinweis kennzeichnet Änderungen der Karte seit dem Lagebericht.
 
-Verwenden Sie **Update anfordern** unter der Symbolleiste für eine neue Koordinatoreinschätzung und lesen Sie dann **Zusammenfassung**. **Update angefordert…** bedeutet wartend, nicht beantwortet. **Zustellung unbestätigt** erlaubt kein automatisches erneutes Senden: Öffnen Sie die Koordinatorunterhaltung vor einer separaten neuen Anfrage. Dies ist normale native Eingabe, keine schreibgeschützte Sandbox; der Koordinator behält seine normalen Rechte.
+Verwenden Sie **Update anfordern** unter **Weitere Aktionen** (⋯) für eine neue Koordinatoreinschätzung und lesen Sie dann **Zusammenfassung**. **Update angefordert…** bedeutet wartend, nicht beantwortet. **Zustellung unbestätigt** erlaubt kein automatisches erneutes Senden: Öffnen Sie die Koordinatorunterhaltung vor einer separaten neuen Anfrage. Dies ist normale native Eingabe, keine schreibgeschützte Sandbox; der Koordinator behält seine normalen Rechte.
 
 ## Wie Kontext durch eine Mission fließt {#context-flow}
 
@@ -273,7 +274,7 @@ Bestätigt das Lesen des Belegs eine teilweise Vorbereitung, erscheint **Erneut 
 
 Vor dem ersten Start einer neu vorbereiteten Mission können Sie Titel, Anweisungen, Notizen, Playbook, gewünschte Agenten/Modelle/Denkeinstellungen, Aufgabensitzungsmodus und **Zeitplanung** bearbeiten. Sie können Startkriterien hinzufügen oder entfernen und dabei dieselbe Mission behalten. Speichern hält sie pausiert und bereitet einen neuen, leeren Koordinator vor; die ursprüngliche Unterhaltung bleibt erhalten. Erst Play startet Arbeit oder aktiviert einen Zeitplan. Nach dem Start gelten die Bearbeitungsregeln der aktiven Mission für Anweisungen und Notizen. Bei unbestätigtem Speichern liest **Gespeicherte Anfrage aktualisieren** das ursprüngliche Ergebnis; behalten Sie diese Anfrage, während eine teilweise Vorbereitung Start, Textänderungen und Löschen blockiert.
 
-Verwenden Sie **Ausgewählte Mission bearbeiten** für eine bearbeitbare einmalige Mission oder einen nativen Zeitplan. Beachten Sie die Erklärungen neben gesperrten Feldern. Wählen Sie bei einem Revisionskonflikt **Aktuelle Konfiguration neu laden** und öffnen Sie anschließend **Vorheriger Entwurf zum Vergleich**, um den erhaltenen Entwurf vor dem erneuten Speichern zu prüfen. Bestehende tägliche Zeitpläne behalten die Steuerelemente ihrer eigenen Symbolleiste.
+Verwenden Sie **Ausgewählte Mission bearbeiten** unter **Weitere Aktionen** (⋯) für eine bearbeitbare einmalige Mission oder einen nativen Zeitplan. Beachten Sie die Erklärungen neben gesperrten Feldern. Wählen Sie bei einem Revisionskonflikt **Aktuelle Konfiguration neu laden** und öffnen Sie anschließend **Vorheriger Entwurf zum Vergleich**, um den erhaltenen Entwurf vor dem erneuten Speichern zu prüfen. Bestehende tägliche Zeitpläne behalten die Steuerelemente ihrer eigenen Symbolleiste.
 
 Bei einem nativen Zeitplan deaktiviert **Ausgewählte Mission löschen…** künftige Durchläufe vor dem Entfernen des Eintrags. Unterhaltungen und Ergebnisse bleiben erhalten; auf Abgleich wartende Bereinigung bleibt unter **Technische Details** sichtbar. Behalten Sie eine unbestätigte Löschung und aktualisieren Sie ihre ursprüngliche Anfrage.
 

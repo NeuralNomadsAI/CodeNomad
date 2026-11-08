@@ -10,7 +10,7 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 ## Create, then explicitly start {#create}
 
-1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission list and the selected mission's tasks until you create or cancel.
+1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission tree until you create or cancel.
 2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
 3. Leave **Scheduling** folded for **Once, immediately**, or expand it and use **Add a criterion** under **Launch when** to add schedules or events. Their order sets how they combine.
 4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subsession nesting depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
@@ -38,10 +38,11 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 ## Follow the tree and read results {#tracking}
 
-1. Select the mission title. The leading chevron keeps its list open; the title field opens a temporary picker.
-2. Choose **Summary** (eye) for the central overview, or select a task node for its exact result, brief and evidence.
-3. Follow dependency links and **Reports**; use **Open conversation** for the coordinator when you need its transcript.
-4. Under **Needs you**, choose **Answer** to open the requesting actor's conversation and interruption dock.
+1. Select a mission's row: its tasks appear beneath it and its actions on the header's second line. The row's chevron folds or unfolds its tasks; another mission's chevron shows its tasks without selecting it. **Filter missions** narrows the other rows.
+2. Choose **Summary** (eye) for the central overview; while it is open, selecting another mission shows that mission's overview. Select a task for its exact result, brief and evidence: while its reader is open, the header's actions apply to that task, with **Open the task's conversation** and, when its report is missing, **Verify and recover missing report**. **Summary** then closes the task's reader.
+3. **More actions** (⋯) holds **Interrupt now**, **Request an update** and **Edit selected mission**; actions that do not apply stay disabled.
+4. Follow dependency links and **Reports**; use **Open conversation** for the coordinator when you need its transcript.
+5. Under **Needs you**, choose **Answer** to open the requesting actor's conversation and interruption dock.
 
 | Indicator | What it establishes |
 | --- | --- |
@@ -55,13 +56,13 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 The graph includes completed and retired work. Retiring a task does not itself stop its conversation. In a one-time mission, the coordinator can separately stop the conversations of a retired task it launched as a native subagent, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
 
-A large plan is a continuous tree: more tasks load as you scroll, with one **Show more** fallback at the end. Existing attention pins remain visible, and the info icon beside **Tasks** gives whole-mission attention counts by kind. Loaded counts and coverage explanations live behind info icons. Background reads animate the existing top-right **Refresh** indicator while keeping the panel in place. A dashed stub marks an unread dependency or dependent; reader links load their target directly. A task's reader offers **Show all** for its earlier results and **Try again** for a failed read.
+A large plan is a continuous tree: more tasks load as you scroll, with one **Show more** fallback at the end. Existing attention pins remain visible, and while some of them lie further down, the info icon on the **Tasks** line above the tasks gives whole-mission attention counts by kind. Loaded counts and coverage explanations live behind info icons. Background reads animate the existing top-right **Refresh** indicator while keeping the panel in place. A dashed stub marks an unread dependency or dependent; reader links load their target directly. A task's reader offers **Show all** for its earlier results and **Try again** for a failed read.
 
 Task pages appear only after the requested page has arrived completely. A failed or changed read keeps the last shown tasks. If the task list changes during a read, use **Refresh**, then **Try again**; retrying starts that page again. A missing part never means a task or request is absent, and retrying a read never starts work. If the Missions plugin cannot provide the page, retry after reconnecting or reloading the plugin.
 
 ### Colours and interrupted missions {#status-colours}
 
-Mission marks, task icons and the list's chevron use the session list's colours: colour shows only what needs you now.
+Mission flags and task icons use the session list's colours: colour shows only what needs you now. A recurring mission shows a repeat icon in place of the flag.
 
 | Colour | Meaning |
 | --- | --- |
@@ -71,7 +72,7 @@ Mission marks, task icons and the list's chevron use the session list's colours:
 | Green | A completed mission you have not opened yet in this window; it turns neutral once you select it. |
 | Blue | A prepared mission, ready to start like a composed prompt. |
 
-Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons. While the list is collapsed, its chevron takes the most urgent of red, yellow and green among the other missions; like collapsed sessions, orange and blue show only on their own rows.
+Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons.
 
 A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when nothing can proceed without you, it asks you a question under **Needs you**. Only you stop a mission.
 
@@ -92,7 +93,7 @@ Only an answer you give in the interruption dock counts as **Your answer**; an a
 
 The coordinator is instructed to publish a project briefing after its initial plan, after task settlements, when waiting for a human and before the final report. This is an authored assessment, not a live activity counter or guaranteed periodic heartbeat. A notice identifies when the map has changed since the briefing.
 
-Use **Request an update** below the toolbar for a fresh coordinator assessment, then read **Summary**. **Update requested…** means the request is pending, not answered. **Delivery unconfirmed** does not authorize automatic resending: open the coordinator conversation before making a separate new request. This is an ordinary native input, not a read-only sandbox; the coordinator retains its normal permissions.
+Use **Request an update** under **More actions** (⋯) for a fresh coordinator assessment, then read **Summary**. **Update requested…** means the request is pending, not answered. **Delivery unconfirmed** does not authorize automatic resending: open the coordinator conversation before making a separate new request. This is an ordinary native input, not a read-only sandbox; the coordinator retains its normal permissions.
 
 ## How context flows through a mission {#context-flow}
 
@@ -273,7 +274,7 @@ When a receipt read confirms partial preparation, **Try again** appears. Clickin
 
 Before the first launch of a newly prepared mission, you can edit its title, instructions, notes, playbook, requested agents/models/thinking, task-session mode and **Scheduling**. You can add or remove launch criteria, keeping the same Mission. Saving keeps it paused and prepares a fresh, empty coordinator; the initial conversation is kept. Only Play starts work or arms a schedule. After launch, instructions and notes follow the active mission's editing rules. If saving is unconfirmed, **Refresh saved request** reads the original outcome; keep that request while a partial preparation blocks Play, text edits and deletion.
 
-Use **Edit selected mission** on an editable one-time mission or native schedule. Read the explanations beside locked fields. On a revision conflict, choose **Reload current configuration**, then open **Previous draft for comparison** to review the retained draft before saving again. Existing daily schedules keep their own toolbar controls.
+Use **Edit selected mission** under **More actions** (⋯) on an editable one-time mission or native schedule. Read the explanations beside locked fields. On a revision conflict, choose **Reload current configuration**, then open **Previous draft for comparison** to review the retained draft before saving again. Existing daily schedules keep their own toolbar controls.
 
 For a native schedule, **Delete selected mission…** disables future passages before removing the entry. Conversations and results are kept; cleanup awaiting reconciliation remains visible in **Technical details**. Preserve an unconfirmed deletion and refresh its original request.
 

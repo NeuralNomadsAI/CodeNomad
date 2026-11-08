@@ -7,7 +7,7 @@ import { assertMissionCalendarPlacement } from "../../missions/mission-calendar-
 import { nativeInvocation } from "./native-invocation"
 import { acquireNativeMissionDocumentStore } from "./native-mission-document-storage"
 import { acquireNativeMissionScheduleWakeReader } from "./native-mission-schedule-wake-reader"
-import { nativeScheduleCarrierWakes, nativeScheduleCarrierNonWakeMessageIDs } from "./native-schedule-carrier"
+import { nativeScheduleCarrierWakes } from "./native-schedule-carrier"
 import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnership, claimNativeScheduleCarrierWake,
   nativeScheduleClaimKey, type NativeScheduleCarrierBinding } from "./native-schedule-carrier-binding"
 import { createNativeScheduleTransport } from "./native-schedule-transport"
@@ -75,36 +75,44 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
     if (!descriptor) return // Retiring carriers stay local, without autonomous admission.
     const calendar = original.calendars.find(item => item.sessionID === event.sessionID)
     let scheduleID = calendar?.scheduleID ?? descriptor.scheduleID
+    if (!scheduleID && (descriptor.role !== "reconciliation" || descriptor.creation !== "attempted")) return
+    // An unacknowledged auxiliary needs a deterministic wake ID hint before reading rows.
+    if (!scheduleID && !event.messages.some(message => message.role === "user" && /^msg_.+_[1-9]\d*$/.test(message.id ?? ""))) return
+    const messages = yield* Effect.promise(() => reader.contextMessages(event.sessionID, event.messages))
     if (!scheduleID) {
-      const ids = new Set(event.messages.filter(message => message.role === "user").map(message =>
+      const ids = new Set(messages.map(message =>
         (message as { metadata?: { schedule?: { id?: unknown } } }).metadata?.schedule?.id).filter((id): id is string => typeof id === "string"))
-      if (ids.size !== 1 || descriptor.role !== "reconciliation" || descriptor.creation !== "attempted") return
+      if (ids.size !== 1) return
       scheduleID = [...ids][0]
     }
     const mapping = { missionID: original.id, generation: original.timeGeneration, sessionID: event.sessionID, scheduleID }
-    const nonWakes = yield* Effect.promise(() => reader.nonWakeMessages(mapping, event.messages))
-    const candidates = nativeScheduleCarrierWakes(mapping, calendar?.highWater ?? 0, event.messages, nativeScheduleCarrierNonWakeMessageIDs(nonWakes))
+    const candidates = nativeScheduleCarrierWakes(mapping, calendar?.highWater ?? 0, messages)
     const next = calendar?.highWater ?? 0
     const candidate = candidates[0] ?? { ...mapping, run: next + 1, messageID: `msg_${scheduleID}_${next + 1}` }
-    yield* Effect.tryPromise(async () => {
-      const proof = await reader.message(candidate)
-      if (!proof) return
-      if (descriptor.role === "principal") await prepare(candidate, proof)
-      const result = await dispatch(nativeScheduleWakeIdentity(candidate))
-      if (descriptor.role !== "reconciliation" || result.state !== "received" || result.reply.state !== "applied") return
-      // A fresh auxiliary turn recovers only original next principal identities.
-      // Previously dispatched identities remain status-only in dispatch().
-      const doc = await fresh()
-      for (const principal of doc?.calendars.filter(item => item.role === "principal").slice(0, 8) ?? []) {
-        current()
-        const run = principal.wakePreparing?.run ?? principal.highWater + 1
-        const wake = { missionID: doc!.id, generation: principal.timeGeneration, sessionID: principal.sessionID,
-          scheduleID: principal.scheduleID, run, messageID: `msg_${principal.scheduleID}_${run}` }
-        const proof = await reader.message(wake)
-        if (!proof) continue
-        await prepare(wake, proof)
-        await dispatch(wake)
+    yield* Effect.promise(async () => {
+      try {
+        const proof = await reader.message(candidate)
+        if (!proof) return
+        if (descriptor.role === "principal") await prepare(candidate, proof)
+        const result = await dispatch(nativeScheduleWakeIdentity(candidate))
+        if (descriptor.role !== "reconciliation" || result.state !== "received" || result.reply.state !== "applied") return
+        // A fresh auxiliary turn recovers only original next principal identities.
+        // Previously dispatched identities remain status-only in dispatch().
+        const doc = await fresh()
+        for (const principal of doc?.calendars.filter(item => item.role === "principal").slice(0, 8) ?? []) {
+          current()
+          const run = principal.wakePreparing?.run ?? principal.highWater + 1
+          const wake = { missionID: doc!.id, generation: principal.timeGeneration, sessionID: principal.sessionID,
+            scheduleID: principal.scheduleID, run, messageID: `msg_${principal.scheduleID}_${run}` }
+          const proof = await reader.message(wake)
+          if (!proof) continue
+          await prepare(wake, proof)
+          await dispatch(wake)
+        }
+      } catch (error) {
+        // Durable preparation/claim retain uncertainty; incomplete reads fail visibly.
+        if (error instanceof Error && /^schedule-(wake-reader|carrier)-(coverage|capacity)$/.test(error.message)) throw error
       }
-    }).pipe(Effect.catchCause(() => Effect.void)) // Durable preparation/claim retain uncertainty for later native wakes.
+    })
   })).pipe(Effect.orDie))
 }

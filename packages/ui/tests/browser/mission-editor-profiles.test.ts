@@ -300,7 +300,7 @@ test("recurring creation shares the draft, prefills its title and picks named co
     const form = page.locator("form.mission-editor")
     assert.equal(await form.locator("details").first().locator(":scope > summary").innerText(), "Options")
     assert.equal(await form.locator(":scope > header").count(), 0, "the panel's Create button heads the form")
-    assert.equal(await page.locator(".mission-picker-control").isVisible(), false, "the creation form replaces the current-mission line")
+    assert.equal(await page.locator(".mission-rows").isVisible(), false, "the creation form replaces the tree")
     assert.equal(await form.getByRole("button", { name: /start/i }).count(), 0, "creation never offers a start action; Play stays separate")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Daily review\nReview the latest work and report changes.")
     await form.locator(".mission-scheduling > summary").click()

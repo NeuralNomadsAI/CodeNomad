@@ -1,16 +1,13 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { AlertTriangle, ArrowUpRight, Check, ChevronRight, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
+import { AlertTriangle, Check, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
 import type { MissionActorActivity, MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
-import { instances } from "../stores/instances"
 import { missionDerivedSessionActive } from "../stores/mission-task-sessions"
 import { sessions } from "../stores/session-state"
-import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
-import { createMissionRecoveryAction } from "./mission-recovery-button"
-import { missionPanelScroll } from "./mission-panel-scroll"
 import { useMissionPanelStore } from "./mission-panel-scope"
+import { missionPanelScroll } from "./mission-panel-scroll"
 import type { MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
@@ -35,7 +32,7 @@ export function missionTaskState(task: MissionPanelTask, activity?: MissionActor
 /** A natively delegated task has no declared actor: the live status of its exact
  * linked conversation stands in. Loaded sessions supply open requests; the native
  * active set covers children the session list has not loaded. */
-function conversationActivity(instanceId: string, mission: MissionPanelMap, sessionId: string): MissionActorActivity["state"] | undefined {
+export function conversationActivity(instanceId: string, mission: MissionPanelMap, sessionId: string): MissionActorActivity["state"] | undefined {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (session?.pendingPermission) return "permission"
   if (session?.pendingForm) return "form"
@@ -46,14 +43,16 @@ function conversationActivity(instanceId: string, mission: MissionPanelMap, sess
 const ICONS = { done: Check, active: CircleDot, input: MessageCircleQuestion, assigned: Circle, ready: Circle,
   waiting: Clock, blocked: AlertTriangle, failed: XCircle, retired: CircleSlash }
 
-/** The Mission's single task view: declared dependencies drawn beside one row
- * per task, each row a status icon and title toggling the exact task reader. */
+/** The Mission's single task view, its row's children: declared dependencies drawn
+ * beside one row per task, each row a status icon and title toggling the exact task
+ * reader. A task's actions (its conversation, report recovery) are the header
+ * toolbar's while its reader is open. */
 export function MissionTaskTree(props: {
   mission: MissionPanelMap; instanceId: string; activity?: MissionActorActivity[]
   reading: (task: MissionPanelTask) => boolean; onRead: (task: MissionPanelTask) => void
   /** The task's exact owned conversation, once one is known. */
-  conversation: (task: MissionPanelTask) => string | undefined; onOpenConversation: (sessionId: string) => void
-  active?: boolean; disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
+  conversation: (task: MissionPanelTask) => string | undefined
+  active?: boolean
 }) {
   const missionStore = useMissionPanelStore()
   const { t } = useI18n()
@@ -96,34 +95,28 @@ export function MissionTaskTree(props: {
     return [value?.dependencies ? t(`missionsPanel.task.omittedDependencies.${value.dependencies === 1 ? "one" : "other"}`, { count: value.dependencies }) : "",
       value?.dependents ? t(`missionsPanel.task.omittedDependents.${value.dependents === 1 ? "one" : "other"}`, { count: value.dependents }) : ""].filter(Boolean).join(" · ")
   }
-  const id = `mission-tree-${createUniqueId()}`
-  // Per project, like the picker list: the folder scope survives instance restarts.
-  const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
-  const open = () => missionProjectView(scope()).tasksCollapsed !== true
   let root!: HTMLElement
-  const panelScrolls = missionPanelScroll(() => root, () => props.active ?? true)
+  // Keeps the focused task in view through nested growth; the panel is the only scroller.
+  missionPanelScroll(() => root, () => props.active ?? true)
   const [sentinel, setSentinel] = createSignal<HTMLLIElement>()
   const loadNext = () => {
     const offset = nextOffset()
-    if (props.active !== false && open() && offset !== undefined && !read()?.loading) readFurther({ offset })
+    if (props.active !== false && offset !== undefined && !read()?.loading) readFurther({ offset })
   }
   createEffect(() => {
     const target = sentinel(), offset = nextOffset()
-    if (!target || props.active === false || !open() || offset === undefined || read()?.loading || read()?.failure) return
+    if (!target || props.active === false || offset === undefined || read()?.loading || read()?.failure) return
     const observer = new IntersectionObserver(entries => {
       // Reaching the manual fallback with the keyboard is not an activation.
       if (entries.some(entry => entry.isIntersecting) && !target.contains(document.activeElement) && !read()?.failure) loadNext()
-    }, { root: panelScrolls() ? root.closest(".mission-control") : target.closest(".mission-flow"), rootMargin: "0px 0px 120px 0px" })
+    // The panel is the tree's only scroller.
+    }, { root: root.closest(".mission-control"), rootMargin: "0px 0px 120px 0px" })
     observer.observe(target)
     onCleanup(() => observer.disconnect())
   })
-  return <section ref={root} class="mission-tree mission-disclosure" data-scroller={panelScrolls() ? "panel" : undefined}>
-    <h3><button type="button" class="mission-disclosure-trigger" aria-expanded={open()} aria-controls={id}
-      onClick={() => updateMissionProjectView(scope(), { tasksCollapsed: open() || undefined })}>
-      <ChevronRight class="disclosure-chevron h-4 w-4" aria-hidden="true" /><span>{t("missionsPanel.tasks")}</span>
-      <small>{total()}</small>
-    </button><Show when={attention()}>{counts => <SettingsInfoTip text={t("missionsPanel.tasks.attention.counts", counts())} />}</Show></h3>
-    <div id={id} hidden={!open()}>
+  return <section ref={root} class="mission-tree" aria-label={`${t("missionsPanel.tasks")} (${total()})`}>
+    <Show when={attention()}>{counts => <p class="mission-tree-summary">{t("missionsPanel.tasks")} · {total()}
+      <SettingsInfoTip text={t("missionsPanel.tasks.attention.counts", counts())} /></p>}</Show>
     <Show when={total()} fallback={<p class="mission-control-empty-line">{t(props.mission.runState === "prepared"
       ? "missions.progress.prepared" : "missions.progress.noPlan")}</p>}>
       <div class="mission-flow" classList={{ "mission-flow-linked": linked() }}>
@@ -137,29 +130,13 @@ export function MissionTaskTree(props: {
           }
           const state = () => missionTaskState(task(), activity())
           const word = () => t(`missionsPanel.task.${state()}`)
-          const recovery = createMissionRecoveryAction({
-            get instanceId() { return props.instanceId },
-            get mission() { return props.mission },
-            target: "report",
-            get taskKey() { return task().key },
-            get disabled() { return props.disabled },
-            get activity() { return activity() },
-            onAdmitted: () => props.onRecoveryAdmitted?.(),
-          })
-          const recover = () => props.onRecoveryAdmitted ? recovery.action() : undefined
           return <li class="mission-tree-node" data-task-key={task().key} data-status={task().status} data-state={state()}>
             <button type="button" class="mission-tree-task" aria-pressed={props.reading(task())}
               title={[task().title, word(), omittedText(task())].filter(Boolean).join(" · ")} onClick={() => props.onRead(task())}>
-              <span class="mission-tree-mark" data-graph-anchor aria-hidden="true"><Dynamic component={ICONS[state()]} class="h-3.5 w-3.5" /></span>
+              <span class="mission-tree-mark" data-graph-anchor aria-hidden="true"><Dynamic component={ICONS[state()]} class="h-4 w-4" /></span>
               <span class="mission-tree-title">{task().title}</span>
               <span class="sr-only">{[word(), omittedText(task())].filter(Boolean).join(" · ")}</span>
             </button>
-            <Show when={props.conversation(task())}>{id => <button type="button" class="mission-tree-open"
-              aria-label={t("missionsPanel.task.openConversation")} title={t("missionsPanel.task.openConversation")}
-              onClick={() => props.onOpenConversation(id())}><ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" /></button>}</Show>
-            <Show when={recover()}>{action => <div class="mission-tree-recovery">
-              <button type="button" class="window-text-button" disabled={action().disabled} aria-description={action().description}
-                onClick={() => void action().onSelect()}>{action().label}</button>{recovery.feedback}</div>}</Show>
           </li>
         }}</For><Show when={nextOffset() !== undefined && !read()?.failure}><li ref={setSentinel} class="mission-tree-more">
           <button type="button" class="window-text-button" aria-disabled={read()?.loading || undefined}
@@ -171,6 +148,5 @@ export function MissionTaskTree(props: {
         <p class="mission-tree-read" role="status">{t(failed().reason === "changed" ? "missionsPanel.tasks.readChanged" : "missionsPanel.tasks.readFailed")}{" "}
           <button type="button" class="window-text-button" onClick={() => readFurther(failed().request)}>{t("missions.control.retry")}</button></p>}</Show>
     </Show>
-    </div>
   </section>
 }

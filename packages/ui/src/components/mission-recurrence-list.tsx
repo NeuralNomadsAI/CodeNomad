@@ -278,10 +278,11 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
         .filter(Boolean).join(" · ") }
   }))
   const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined
+  /** Inventory-wide notice, independent of the selection. */
+  const listView = () => <Show when={error()}><p role="status">{t(snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
   const view = () => <>
-    <Show when={error()}><p role="status">{t(snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-    {/* Separate detail below the list: actions, a stuck schedule's one sentence,
-        the current passage's tree and the compact list of past runs. */}
+    {/* The selected schedule's detail (its row's children): actions, a stuck
+        schedule's one sentence, the current passage's tree and the compact list of past runs. */}
     <Show when={selectedId()} keyed>{id => {
       // Keyed by identity: a refreshed snapshot keeps the controls and their focus.
       const schedule = createMemo<RecurrenceSchedule>(previous => snapshot()?.schedules.find(item => item.id === id) ?? previous!)
@@ -305,5 +306,5 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       </section>
     }}</Show>
   </>
-  return { entries, view, loading }
+  return { entries, view, listView, loading }
 }
