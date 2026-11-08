@@ -116,3 +116,31 @@ export async function toggleMissionOverview(page: Page, title: string | RegExp):
   await selectMission(page, title)
   await missionToolbar(page).locator(".mission-overview-toggle").click()
 }
+
+/** The Delegation depth row (`MissionSubagentDepth`): one labelled menu. */
+export const depthMenu = (scope: Page | Locator) => scope.locator(".mission-depth select")
+
+/** The lines the depth row's info tip reveals (hint, rule, effective depth, nesting, paths). */
+export async function depthInfo(scope: Page | Locator): Promise<string[]> {
+  const label = await scope.locator(".mission-depth .settings-info-tip").getAttribute("aria-label")
+  return (label ?? "").replace(/[\u2066-\u2069]/g, "").split("\n")
+}
+
+async function poll(check: () => Promise<boolean>, what: string, timeout = 15_000): Promise<void> {
+  const deadline = Date.now() + timeout
+  while (!(await check().catch(() => false))) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+}
+
+/** Waits until the depth info tip reveals `line`. */
+export function waitForDepthInfo(scope: Page | Locator, line: string): Promise<void> {
+  return poll(async () => (await depthInfo(scope)).includes(line), `depth info "${line}"`)
+}
+
+/** Waits until the depth menu takes a choice: enabled, and not locked by a read or write. */
+export function waitForDepthReady(scope: Page | Locator): Promise<void> {
+  return poll(() => depthMenu(scope).evaluate(menu => !(menu as HTMLSelectElement).disabled && !menu.hasAttribute("aria-disabled"), undefined, { timeout: 1_000 }),
+    "an unlocked depth menu")
+}

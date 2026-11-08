@@ -458,9 +458,10 @@ export function MissionEditor(props: {
         </Show>
       </div>
       <MissionTaskModeControls value={taskMode() ?? "native"} disabled={structuralLocked()}
-        onChange={value => { setTaskMode(value); setCustomTaskMode(true) }} />
-      {/* Native nesting depth is project configuration, shared with every conversation there. */}
-      <Show when={kind === "create"}><MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={() => optionsOpen() && isActive()} /></Show>
+        onChange={value => { setTaskMode(value); setCustomTaskMode(true) }}>
+        {/* Native nesting depth is project configuration, shared with every conversation there. */}
+        <Show when={kind === "create"}><MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={() => optionsOpen() && isActive()} /></Show>
+      </MissionTaskModeControls>
       <section class="mission-create-option" aria-label={t("missions.create.agents")} aria-describedby={errorFor("profiles") ? ids.profilesError : undefined}>
         <MissionProfileSummary instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()} />
         {/* Catalog-backed selectors mount (and read the native catalog) only on demand. */}

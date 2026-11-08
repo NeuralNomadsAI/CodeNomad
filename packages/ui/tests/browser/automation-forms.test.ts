@@ -218,7 +218,7 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
     assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Seam survey (pilot)")
     // Like an agent, wait for the Options section to finish reading before clicking under it.
-    await act({ action: "wait", text: "OpenCode effective depth: 1" })
+    await act({ action: "wait", text: "Inherit (1)" })
     await act({ action: "click", ref: await refFor(/button "Create"(?= \[)/, "Create") })
     await page.waitForFunction(() => document.querySelector("form.mission-editor") === null)
     assert.equal(creates.length, 1)
@@ -234,7 +234,7 @@ const map = (extra: Record<string, unknown> = {}) => ({ json: { available: true,
 const depth = (supported: boolean) => ({ json: { location: { directory: "/fixture" }, capability: supported ? { minimum: 0 } : null,
   effectiveDepth: supported ? 1 : null, project: supported ? { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } : null } })
 const HELD_OUTCOMES = [
-  { name: "a supported first depth read", held: "depth", response: depth(true), shown: "OpenCode effective depth: 1" },
+  { name: "a supported first depth read", held: "depth", response: depth(true), shown: "Inherit (1)" },
   { name: "an unsupported first depth read", held: "depth", response: depth(false), shown: "This OpenCode connection does not expose an editable depth contract." },
   { name: "a failed first depth read", held: "depth", response: { status: 503, json: { error: "unavailable" } },
     shown: "Depth could not be verified. Your value is kept; refresh before changing it." },
@@ -293,8 +293,9 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
     cdp.command = async (state, method, params) => {
       if (!after && method === "Input.dispatchMouseEvent" && params?.type === "mouseMoved") {
         response.resolve()
-        await page.locator(".mission-control").getByText(outcome.shown, { exact: true }).waitFor()
-        await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+        // The rendered text, a closed menu's options included (as an agent's text wait reads it).
+        await page.waitForFunction(text => document.querySelector<HTMLElement>(".mission-control")?.innerText.includes(text) ?? false, outcome.shown)
+        await page.waitForFunction(() => !document.querySelector(".mission-depth select")?.hasAttribute("aria-disabled"))
         assert.equal(await page.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Hold a read", "the read preserves the draft")
         after = await create.boundingBox()
       }

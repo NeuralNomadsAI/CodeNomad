@@ -595,6 +595,9 @@
 .section-info-tooltip {
   @apply max-w-xs px-3 py-2 text-xs border shadow-lg;
   border-radius: 0;
+  /* A multi-part explanation puts each part on its own line. */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   background-color: var(--surface-overlay);
   border-color: var(--border-base);
   color: var(--text-primary);
