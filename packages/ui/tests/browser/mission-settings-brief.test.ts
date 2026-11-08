@@ -108,13 +108,27 @@ test("Save as brief copies only a finished Mission's recorded inputs and launche
     // Save as brief is an overflow-menu item, never a control under the Mission's row.
     assert.equal(await page.locator(".mission-control").getByRole("button", { name: "Save as brief", exact: true }).count(), 0)
     assert.equal(await detail.locator(".mission-action-texts").isVisible(), false, "no empty row under the Mission")
+    // From a folded Mission, the menu unfolds its detail to show the name field; Escape
+    // closes it and gives focus back to the menu's trigger.
+    const chevron = page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
+    await chevron.click()
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    await (await missionMenuItem(page, "save-brief")).click()
+    await detail.getByLabel("Brief name", { exact: true }).waitFor()
+    assert.equal(await chevron.getAttribute("aria-expanded"), "true", "the menu unfolds the Mission")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
+    await page.keyboard.press("Escape")
+    await detail.getByLabel("Brief name", { exact: true }).waitFor({ state: "detached" })
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("action-overflow-trigger")), true, "focus returns to the menu's trigger")
     await (await missionMenuItem(page, "save-brief")).click()
     const name = detail.getByLabel("Brief name", { exact: true })
     assert.equal(await name.inputValue(), "Dependency audit", "the Mission title prefills the name")
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
     await name.fill("Weekly dependency audit")
-    await detail.getByRole("button", { name: "Save brief", exact: true }).click()
+    // Enter saves; focus returns to the menu's trigger even though the write disabled the field.
+    await name.press("Enter")
     await name.waitFor({ state: "detached" })
+    await page.waitForFunction(() => document.activeElement?.classList.contains("action-overflow-trigger"), undefined, { timeout: 5_000 })
     assert.equal(fixture.writes.length, 1)
     const [saved] = fixture.writes[0]!.settings.missionModels as Array<Record<string, unknown>>
     assert.match(saved!.id as string, /^[0-9a-f-]{36}$/)

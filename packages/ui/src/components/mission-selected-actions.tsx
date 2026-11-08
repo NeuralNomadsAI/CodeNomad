@@ -29,6 +29,8 @@ export function MissionSelectedActions(props: {
   registerRetry?: (retry: MissionControlRetry) => () => void
   /** A task whose reader is open takes the toolbar; Summary then closes its reader. */
   task?: MissionTaskSelection; onToggleTask?: () => void; onOpenTask?: (sessionId: string) => void
+  /** Unfolds the selection's detail, where Save as brief opens its name field. */
+  onRevealDetail?: () => void
 }) {
   const { t } = useI18n()
   const lifecycle = createMissionLifecycle({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
@@ -76,7 +78,7 @@ export function MissionSelectedActions(props: {
     <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
       primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
       onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
-      saveBrief={briefTrigger()}
+      saveBrief={briefTrigger() && { disabled: briefTrigger()!.disabled, open: returnFocus => { props.onRevealDetail?.(); briefTrigger()!.open(returnFocus) } }}
       secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active} trigger={trigger => setBriefTrigger(() => trigger)}
         draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
         reading={() => brief.state() === "ready" ? undefined

@@ -53,11 +53,14 @@ export function MissionActionBar(props: {
       get description() { return props.interrupt?.ariaLabel }, get icon() { return <PauseCircle class="h-3.5 w-3.5" /> },
       get disabled() { return !props.interrupt || props.interrupt.disabled }, onSelect: () => props.interrupt?.onSelect() },
     { key: "save-brief", get label() { return t("missions.create.brief.saveAs") }, get icon() { return <BookmarkPlus class="h-3.5 w-3.5" /> },
-      get disabled() { return !props.saveBrief || props.saveBrief.disabled() }, onSelect: () => props.saveBrief?.open() },
+      get disabled() { return !props.saveBrief || props.saveBrief.disabled() },
+      // The field it opens gives focus back to this menu's trigger when it closes.
+      onSelect: () => props.saveBrief?.open(bar?.querySelector<HTMLElement>(".action-overflow-trigger") ?? undefined) },
     { key: "edit", get label() { return t("missionsPanel.picker.edit") }, get icon() { return <Pencil class="h-3.5 w-3.5" /> },
       get disabled() { return !props.onEdit || props.editDisabled }, onSelect: () => props.onEdit?.() },
   ]
-  const toolbar = () => <div class="mission-action-bar" role="toolbar" aria-label={props.label}>
+  let bar: HTMLDivElement | undefined
+  const toolbar = () => <div ref={bar} class="mission-action-bar" role="toolbar" aria-label={props.label}>
     <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={primaryLabel()}
       disabled={!props.primary || props.primary.disabled} onClick={() => void props.primary?.onSelect()}>
       {primaryIcon(primaryKey())}

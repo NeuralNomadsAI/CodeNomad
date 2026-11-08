@@ -305,6 +305,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // history belongs to the overview reader.
   const cleanupPending = () => (state().cleanups ?? []).some(missionCleanupPending)
   const detailId = createUniqueId()
+  // Unfolds the selection's detail (MissionRows owns its folding).
+  let revealDetail: (() => void) | undefined
   /** The task of `value` whose exact reader is open, with its conversation and activity. */
   const taskSelection = (value: MissionPanelMap | undefined, activity: MissionActivityProjection | undefined, store: ReturnType<typeof passageStore> = missionStore): MissionTaskSelection | undefined => {
     const reader = missionProjectView(scope()).reader
@@ -576,7 +578,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         </div>
       </Show>
 
-      <MissionRows entries={pickerEntries()} query={query()} selectedKey={selectedKey()}
+      <MissionRows entries={pickerEntries()} query={query()} selectedKey={selectedKey()} revealDetail={reveal => { revealDetail = reveal }}
         paging={<>{recurrence.listView()}{scheduled.listView()}<MissionPanelPaging instanceId={props.instanceId} lane="summaries" search /></>}
         onSelect={entry => {
           const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
@@ -622,7 +624,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             working={missionActivityWorking(state().activity?.missions.find(item => item.missionId === id)?.actors)}
             onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
             interrupted={missionEntries().find(entry => entry.key === `mission:${id}`)?.mark === "interrupted"}
-            onAdmitted={refreshVisible} registerRetry={registerRetry}
+            onAdmitted={refreshVisible} registerRetry={registerRetry} onRevealDetail={() => revealDetail?.()}
             editDisabled={Boolean(editor()) || selected().status !== "active"} deleteDisabled={Boolean(editor())}
             onEdit={() => openEditor({ kind: "edit", mission: selected() })}
             onDelete={() => openEditor({ kind: "delete", mission: selected() })}

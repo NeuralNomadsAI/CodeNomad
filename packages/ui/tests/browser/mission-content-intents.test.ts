@@ -223,6 +223,8 @@ test("a map without notes names no notes body: Save as brief and the edit form r
     await saveBrief(f.page).click(); await saved
     const record = f.preferenceWrites.find(patch => patch.settings?.missionModels)?.settings.missionModels[0]
     assert.deepEqual([record.objective, record.notes], ["only-objective", ""])
+    // A clicked save returns focus to the menu's trigger once the field closes.
+    await f.page.waitForFunction(() => document.activeElement?.classList.contains("action-overflow-trigger"), undefined, { timeout: 5_000 })
     await (await missionMenuAction(f.page, "Edit selected mission")).click()
     await f.page.waitForFunction(() => !(document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled)
     assert.deepEqual([await fields(f.page).nth(0).inputValue(), await fields(f.page).nth(1).inputValue()], ["only-objective", ""])
