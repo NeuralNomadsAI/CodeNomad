@@ -35,7 +35,9 @@ it("allows a metadata retry after a failed request", async () => {
 })
 
 it("publishes refreshes only to the same attachment and rejects revoked metadata replies", async () => {
-  let value = { previewsUnavailable: false } as ServerMeta
+  let value: ServerMeta = { localUrl: "http://127.0.0.1:9899", eventsUrl: "http://127.0.0.1:9899/api/events",
+    host: "127.0.0.1", listeningMode: "local", localPort: 9899, hostLabel: "localhost",
+    workspaceRoot: "/workspace", addresses: [] }
   let release: (() => void) | undefined
   const cache = createServerMetaCache({ fetchServerMeta: async () => {
     if (release) await new Promise<void>(resolve => { release = resolve })
@@ -43,9 +45,9 @@ it("publishes refreshes only to the same attachment and rejects revoked metadata
   } })
   const first = new AbortController(), second = new AbortController()
   await cache.getServerMeta(false, first.signal)
-  assert.equal(cache.meta(first.signal)?.previewsUnavailable, false)
+  assert.equal(cache.meta(first.signal)?.previewsUnavailable, undefined)
   assert.equal(cache.meta(second.signal), null)
-  value = { previewsUnavailable: true } as ServerMeta
+  value = { ...value, previewsUnavailable: true }
   await cache.getServerMeta(true, first.signal)
   assert.equal(cache.meta(first.signal)?.previewsUnavailable, true)
   assert.equal(cache.meta(second.signal), null)
