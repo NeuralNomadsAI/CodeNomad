@@ -544,6 +544,46 @@ describe("instance proxy location enforcement", () => {
     assert.equal(deleted, true)
   })
 
+  it("streams reply-from upstream bodies and holds mutation admission until they end", async () => {
+    const { app, manager, worktreeDeletionFence, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
+    // Without a pinned connection or runtime fetch the proxy forwards through @fastify/reply-from.
+    manager.getSharedServiceConnection = undefined
+    const mutation = app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session",
+      headers: { "x-test-delay-upstream-body": "1" },
+      payload: { location: { directory: "/repo/worktree" } },
+    })
+    await delayedUpstreamStarted
+    let deleted = false
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], async () => { deleted = true })
+
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(deleted, false)
+    releaseDelayedUpstream()
+    const response = await mutation
+    assert.equal(response.statusCode, 200, response.body)
+    assert.match(String(response.headers["content-type"]), /^application\/json/)
+    assert.deepEqual(response.json(), { started: true })
+    await deletion
+    assert.equal(deleted, true)
+  })
+
+  it("forwards no body for a bodiless DELETE, even one declaring JSON", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {}, { terminal: "/repo/worktree" })
+    for (const [headers, body] of [
+      [{}, undefined],
+      [{ "content-type": "application/json" }, undefined],
+      // A framed empty JSON body still reads as an empty object.
+      [{ "content-type": "application/json", "content-length": "0" }, {}],
+    ] as const) {
+      const response = await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/pty/terminal", headers })
+      assert.equal(response.statusCode, 200, `${JSON.stringify(headers)} ${response.body}`)
+      assert.deepEqual(response.json().body, body, JSON.stringify(headers))
+    }
+    assert.equal(requestCount(), 3)
+  })
+
   it("blocks lexical aliases after translation to the canonical worktree", async () => {
     const { app, worktreeDeletionFence, requestCount } = await harness(
       "/repo/worktree", {}, {}, "/repo", "/repo", {}, {}, {}, { "/repo/worktree/.": "/repo/worktree" },
