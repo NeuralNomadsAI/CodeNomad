@@ -46,9 +46,12 @@ const RemoteProjectContent: Component<RemoteProjectViewProps & { profile: Remote
     const profileId = props.tab.profileId
     let disposed = false
     let opened = false
+    let openingNative = false
     let pending = false
     let failed = false
-    let lastBounds = ""
+    let sessionReady = false
+    let sessionCookie: RemoteViewOpenPayload["cookie"]
+    let lastBounds: string | undefined
     let unlisten = () => {}
 
     const fail = (cause?: unknown) => {
@@ -71,6 +74,23 @@ const RemoteProjectContent: Component<RemoteProjectViewProps & { profile: Remote
       if (!opened) {
         if (!rect) return
         const profile = props.profile
+        if (sessionReady) {
+          // Native creation precedes loading: visibility and close must work while loading.
+          opened = true
+          openingNative = true
+          lastBounds = key
+          const opening = openRemoteView({ viewId: token, profileId, baseUrl: profile.baseUrl,
+            url: embeddedProjectUrl(profile.baseUrl, props.tab.folder), cookie: sessionCookie }, rect)
+          sessionCookie = undefined
+          setSessionNeeded(false)
+          void opening.then(() => {
+            openingNative = false
+            patchRemoteProjectTab(token, { entryUrl: undefined })
+            if (disposed) void closeRemoteView(token).catch(() => {})
+            else { lastBounds = undefined; sync() }
+          }).catch(fail)
+          return
+        }
         pending = true
         const origin = new URL(profile.baseUrl).origin
         acceptSession = (cookie) => {
@@ -81,23 +101,13 @@ const RemoteProjectContent: Component<RemoteProjectViewProps & { profile: Remote
             if (!report) return
             patchRemoteProjectTab(token, report)
             recordRemoteProjectRecent({ profileId, folder: report.folder, projectName: report.title })
-          }).then(async (stop) => {
+          }).then((stop) => {
             if (disposed) return stop()
             unlisten = stop
-            await openRemoteView({
-              viewId: token,
-              profileId,
-              baseUrl: profile.baseUrl,
-              url: embeddedProjectUrl(profile.baseUrl, props.tab.folder),
-              cookie,
-            }, rect)
-            opened = true
-            lastBounds = key
+            sessionCookie = cookie
+            sessionReady = true
             pending = false
-            setSessionNeeded(false)
-            patchRemoteProjectTab(token, { entryUrl: undefined })
-            if (disposed) void closeRemoteView(token).catch(() => {})
-            else sync()
+            sync()
           }).catch(fail)
         }
         setSessionNeeded(true)
@@ -109,10 +119,14 @@ const RemoteProjectContent: Component<RemoteProjectViewProps & { profile: Remote
       void updateRemoteView(token, rect).then(() => {
         pending = false
         sync()
-      }).catch(fail)
+      }).catch((cause) => {
+        // A host may still be creating the view. Replay the current state when it exists.
+        if (openingNative) { pending = false; lastBounds = undefined }
+        else fail(cause)
+      })
     }
 
-    retry = () => { failed = false; pending = false; lastBounds = ""; setError(undefined); sync() }
+    retry = () => { failed = false; opened = false; sessionReady = false; pending = false; lastBounds = undefined; setSessionNeeded(false); setError(undefined); sync() }
 
     const resizeObserver = new ResizeObserver(sync)
     const overlayObserver = new MutationObserver(sync)

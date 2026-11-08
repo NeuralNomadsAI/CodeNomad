@@ -97,6 +97,8 @@ Pegar un enlace nuevo de Control remoto guarda el origen del túnel y empareja e
 
 ## Abrir un proyecto remoto en una pestaña {#remote-project-tabs}
 
+Si el backend confirma que el servidor acepta acceso anónimo, sus proyectos se abren sin instalar una cookie ni mostrar un formulario de inicio de sesión, incluidos los recientes y las pestañas restauradas.
+
 En la aplicación de escritorio (Electron, o Tauri en Windows), un servidor guardado también puede abrir uno de sus proyectos en una pestaña de esta ventana, junto a tus proyectos locales:
 
 1. En Inicio o una pestaña vacía, abre **Explorar** y elige un servidor. Para añadir uno, usa **Dirección o enlace del servidor** y pulsa su fila.

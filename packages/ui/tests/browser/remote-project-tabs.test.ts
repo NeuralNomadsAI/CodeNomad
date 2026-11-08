@@ -142,6 +142,85 @@ for (const response of ['empty', 'auth', 'error', 'pending'] as const) test(`rem
 
 const BOX = "https://box.example"
 
+for (const host of ['electron', 'tauri'] as const) {
+  test(`${host}: delayed view session rechecks visibility and bounds; native loading permits hide and close`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: 'en-US' })
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    try {
+      await open(page, '', { context: 'local', host, remoteNeedsPassword: true,
+        uiState: { remoteServers: [server('box')] },
+        restore: { version: 1, revision: 1, savedAt: 1, layout: {}, session: {
+          activeTabIndex: 0, tabs: [{ kind: 'remote-project', profileId: 'box', folder: '/srv/app' }],
+        } } })
+      await page.locator('input[type=password]').fill('fixture-password')
+      await page.evaluate((host) => {
+        const w = window as any
+        w.holdOpen = async (payload: unknown) => {
+          w.fixtureViews.opened.push(payload)
+          await new Promise<void>(resolve => { w.releaseNative = resolve })
+        }
+        if (host === 'electron') w.electronAPI.openRemoteView = w.holdOpen
+        else {
+          const invoke = w.__TAURI_INTERNALS__.invoke
+          w.__TAURI_INTERNALS__.invoke = (command: string, args: any) => command === 'remote_view_open' ? w.holdOpen(args.payload) : invoke(command, args)
+        }
+      }, host)
+      await page.route('**/api/remote-servers/box/view-session', async route => { await held; await route.fallback() })
+      const request = page.waitForRequest('**/api/remote-servers/box/view-session')
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+      await request
+      await page.locator('.new-instance-button').click()
+      await page.locator('.folder-home-root--blank:visible').waitFor()
+      release()
+      await page.locator('[data-remote-view-session][aria-busy=false]').waitFor({ state: 'attached' })
+      assert.equal((await views(page)).opened.length, 0, 'inactive session completion must defer native creation')
+      await page.setViewportSize({ width: 1000, height: 700 })
+      await page.evaluate(() => { const overlay = document.createElement('div'); overlay.role = 'dialog'; overlay.id = 'held-overlay'; document.body.append(overlay) })
+      await page.locator('.tab-pill').first().click()
+      assert.equal((await views(page)).opened.length, 0, 'an overlay must also defer native creation')
+      await page.evaluate(() => document.getElementById('held-overlay')!.remove())
+      await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
+      const rect = await page.locator('[data-remote-project-view]').boundingBox()
+      const first = (await views(page)).opened[0]
+      assert.equal(first.bounds.width, Math.round(rect!.width))
+      assert.equal(first.bounds.height, Math.round(rect!.height))
+      // The native load remains unresolved throughout these transitions.
+      await page.evaluate(() => { const overlay = document.createElement('div'); overlay.role = 'dialog'; overlay.id = 'held-overlay'; document.body.append(overlay) })
+      await page.waitForFunction(() => (window as any).fixtureViews.updates.at(-1)?.visible === false)
+      await page.evaluate(() => document.getElementById('held-overlay')!.remove())
+      await page.waitForFunction(() => (window as any).fixtureViews.updates.at(-1)?.visible === true)
+      await page.locator('.new-instance-button').click()
+      await page.waitForFunction(() => (window as any).fixtureViews.updates.at(-1)?.visible === false)
+      await page.locator('.tab-pill').first().locator('.tab-pill-close').click()
+      await page.waitForFunction(() => (window as any).fixtureViews.closed.length > 0)
+      assert.equal((await views(page)).closed[0], first.viewId)
+      await page.evaluate(() => (window as any).releaseNative())
+      await page.waitForFunction(() => (window as any).fixtureViews.closed.length === 2)
+      assert.equal(await page.locator('[data-remote-project-view]').count(), 0)
+    } finally { release(); await page.close() }
+  })
+
+  for (const surface of ['browse', 'recent', 'restore'] as const) test(`${host}: anonymous ${surface} opens without a cookie or sign-in form`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: 'en-US' })
+    try {
+      await open(page, '', { context: 'local', host, anonymous: true, uiState: { remoteServers: [server('box')],
+        remoteProjectRecents: [{ profileId: 'box', folder: '/srv/app', projectName: 'Remote', lastAccessed: RECENT_TIME }] },
+        ...(surface === 'restore' ? { restore: { version: 1, revision: 1, savedAt: 1, layout: {}, session: {
+          activeTabIndex: 0, tabs: [{ kind: 'remote-project', profileId: 'box', folder: '/srv/app' }],
+        } } } : {}) })
+      if (surface === 'browse') {
+        await browse(page)
+        await page.getByRole('button', { name: 'Open a project on Box', exact: true }).click()
+        await page.locator('.remote-server-path').getByRole('button', { name: 'Open', exact: true }).click()
+      } else if (surface === 'recent') await page.getByRole('button', { name: 'Remote · Box · /srv/app', exact: true }).click()
+      await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
+      assert.equal((await views(page)).opened[0].cookie, undefined)
+      assert.equal(await page.locator('input[type=password]').count(), 0)
+    } finally { await page.close() }
+  })
+}
+
 for (const code of ['needs_credentials', 'unreachable'] as const) test(`folder navigation clears availability while pending and after ${code}`, async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: 'en-US' })
   let release!: () => void
@@ -303,6 +382,7 @@ interface Scenario {
   restore?: unknown
   sidecars?: unknown[]
   remoteNeedsPassword?: boolean
+  anonymous?: boolean
   pairingWorks?: boolean
   pairingError?: string
 }
@@ -317,9 +397,14 @@ async function open(page: Page, path: string, scenario: Scenario) {
     w.EventSource = class extends EventTarget { close() {} }
     if (host === "tauri") {
       w.__TAURI__ = { core: { invoke: async () => undefined } }
+      w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} }
       w.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+        if (command === "client_state_load") return { isPrimary: true, restoreEnabled: Boolean(restore), snapshot: restore }
         if (command === "open_external_url") w.externalURLs.push(args.url)
         if (command === "open_remote_window") w.fixtureViews.windows.push(args.payload)
+        if (command === "remote_view_open") w.fixtureViews.opened.push(args.payload)
+        if (command === "remote_view_update") w.fixtureViews.updates.push(args.payload)
+        if (command === "remote_view_close") w.fixtureViews.closed.push(args.viewId)
         }, transformCallback: () => 1, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main', windowLabel: 'main' } } }
     }
     // Fixture shim: the session list's virtualizer reads defaultView from nodes the dev
@@ -363,6 +448,7 @@ async function open(page: Page, path: string, scenario: Scenario) {
         return route.fulfill({ json: { ok: true } })
       }
       if (!remoteAuthenticated) return route.fulfill({ status: 409, json: { error: 'needs_credentials' } })
+      if (remote[2] === 'view-session' && scenario.anonymous) return route.fulfill({ json: {} })
       if (remote[2] === 'view-session') return route.fulfill({ json: { cookie: {
         origin: BOX, name: 'codenomad_session', value: 'fixture-session-secret', path: '/', secure: true, httpOnly: true, sameSite: 'lax',
       } } })

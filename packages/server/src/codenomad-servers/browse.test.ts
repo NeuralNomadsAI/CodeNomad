@@ -131,6 +131,24 @@ test("revoked password retries once and clears private identity; profiles are re
 test("anonymous direct servers need no secrets; removed and changed profiles cannot reuse credentials", async t => {
   const f = await fixture(t, { anonymous: true })
   assert.equal((await f.call("browse")).statusCode, 200)
+  const session = await f.call("view-session")
+  assert.equal(session.statusCode, 200)
+  assert.deepEqual(session.json(), {})
+  assert.equal(f.remote.state.requests.at(-1)!.path, "/api/auth/status")
+  assert.equal(f.remote.state.requests.at(-1)!.headers.cookie, undefined)
+  assert.equal(f.remote.state.requests.at(-1)!.headers.authorization, undefined)
+  assert.equal(f.remote.state.requests.at(-1)!.headers.origin, undefined)
+  assert.equal(f.remote.state.logins, 0)
+  for (const body of [{ authenticated: false }, { authenticated: "true" }, { authenticated: true, pairingRequired: true }]) {
+    f.remote.state.overrides.set("/api/auth/status", { status: 200, body })
+    assert.deepEqual((await f.call("view-session")).json(), { error: "needs_credentials" })
+  }
+  f.remote.state.overrides.delete("/api/auth/status")
+  for (const status of [302, 503]) {
+    f.remote.state.overrides.set("/api/auth/status", { status, body: { authenticated: true }, headers: { location: "/api/filesystem" } })
+    assert.deepEqual((await f.call("view-session")).json(), { error: "unreachable" })
+  }
+  f.remote.state.overrides.delete("/api/auth/status")
   assert.equal((await f.call("connect")).statusCode, 200)
   assert.equal(fs.existsSync(path.join(f.dir, "remote-server-credentials.json")), false)
   f.profiles.splice(0)

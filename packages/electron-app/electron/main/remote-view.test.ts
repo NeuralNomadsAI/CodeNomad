@@ -155,6 +155,10 @@ test("remote cookies are origin-bound and reject unsafe attributes", () => {
   ]) assert.throws(() => validateRemoteViewOpen({ ...request, cookie: { ...cookie, ...change } }), /cookie/)
   assert.throws(() => validateRemoteCookie({ ...cookie, origin: "http://box.example" }, "http://box.example"), /cookie/)
   assert.throws(() => validateRemoteCookie({ ...cookie, name: "session", secure: false, sameSite: "none" }, origin), /cookie/)
+  for (const path of ["/;Domain=evil.example", "/ space", "/é", "/\n"]) {
+    assert.throws(() => validateRemoteCookie({ ...cookie, name: "codenomad_session", path }, origin), /cookie/)
+  }
+  assert.equal(validateRemoteCookie({ ...cookie, name: "codenomad_session", path: "/project" }, origin).path, "/project")
   assert.equal(remoteCookieDetails({ ...cookie, sameSite: "none", expires: undefined }).sameSite, "no_restriction")
   assert.equal(remoteCookieDetails({ ...cookie, expires: undefined }).expirationDate, undefined)
 })

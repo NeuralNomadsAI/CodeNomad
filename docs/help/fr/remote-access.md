@@ -97,6 +97,8 @@ Coller un lien neuf du Contrôle à distance enregistre l’origine du tunnel et
 
 ## Ouvrir un projet distant dans un onglet {#remote-project-tabs}
 
+Si le backend confirme que le serveur accepte l'accès anonyme, ses projets s'ouvrent sans installer de cookie ni afficher de formulaire de connexion, y compris les projets récents et les onglets restaurés.
+
 Dans l'application de bureau (Electron, ou Tauri sous Windows), un serveur enregistré peut aussi ouvrir l'un de ses projets dans un onglet de cette fenêtre, à côté de vos projets locaux :
 
 1. Sur l'accueil ou un onglet vide, ouvrez **Parcourir** et choisissez un serveur enregistré. Ajoutez un serveur avec **Adresse ou lien du serveur**, puis cliquez sur sa ligne.

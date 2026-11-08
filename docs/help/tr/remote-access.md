@@ -97,6 +97,8 @@ Yeni bir Uzaktan Kontrol bağlantısı yapıştırmak tünel kökenini kaydeder 
 
 ## Uzak bir projeyi sekmede açın {#remote-project-tabs}
 
+Arka uç sunucunun anonim erişimi kabul ettiğini doğrularsa, son kullanılan projeler ve geri yüklenen sekmeler dahil projeler çerez yüklenmeden veya giriş formu gösterilmeden açılır.
+
 Masaüstü uygulamasında (Electron veya Windows'ta Tauri), kayıtlı bir sunucu projelerinden birini yerel projelerinizin yanında bu pencerenin bir sekmesinde de açabilir:
 
 1. Ana sayfa veya boş sekmede **Gözat** bölümünden sunucu seçin. Sunucu eklemek için **Sunucu adresi veya bağlantısı** alanını kullanıp satırına tıklayın.

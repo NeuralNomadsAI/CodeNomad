@@ -17,8 +17,17 @@ export interface RemoteViewCookie {
 
 /** Disposable transport: passwords stay here; the browse session and credential file stay untouched. */
 export async function createViewSession(origin: string, skipTlsVerify: boolean, secret: CodeNomadServerSecret | undefined,
-  signal: AbortSignal): Promise<{ cookie: RemoteViewCookie }> {
-  if (!secret || secret.kind === "session") throw new CodeNomadServerError("needs_credentials")
+  signal: AbortSignal): Promise<{ cookie?: RemoteViewCookie }> {
+  if (!secret) {
+    const client = new CodeNomadServerClient(origin, undefined, { skipTlsVerify })
+    try {
+      const status = await client.json<{ authenticated?: unknown; pairingRequired?: unknown }>("/api/auth/status", { signal })
+      if (status.status !== 200) throw new CodeNomadServerError("unreachable")
+      if (status.body?.authenticated !== true || status.body.pairingRequired) throw new CodeNomadServerError("needs_credentials")
+      return {}
+    } finally { client.close() }
+  }
+  if (secret.kind === "session") throw new CodeNomadServerError("needs_credentials")
   if (secret.kind === "device") {
     const client = new CodeNomadServerClient(origin, secret, { skipTlsVerify })
     try {

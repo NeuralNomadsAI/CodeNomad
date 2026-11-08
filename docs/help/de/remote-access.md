@@ -97,6 +97,8 @@ Das Einfügen eines frischen Fernsteuerungslinks speichert den Tunnel-Ursprung u
 
 ## Ein Remote-Projekt in einem Tab öffnen {#remote-project-tabs}
 
+Bestätigt das Backend anonymen Zugriff auf den Server, öffnen sich seine Projekte ohne Cookie-Installation oder Anmeldeformular, auch über zuletzt verwendete Projekte und wiederhergestellte Tabs.
+
 In der Desktop-App (Electron oder Tauri unter Windows) kann ein gespeicherter Server eines seiner Projekte auch in einem Tab dieses Fensters öffnen, neben Ihren lokalen Projekten:
 
 1. Öffnen Sie auf Startseite oder leerem Tab **Durchsuchen** und wählen Sie einen Server. Neue Server über **Serveradresse oder -link** hinzufügen, dann auf ihre Zeile klicken.

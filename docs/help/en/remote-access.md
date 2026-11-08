@@ -97,6 +97,8 @@ Pasting a fresh Remote Control pairing link saves its tunnel origin and pairs th
 
 ## Open a remote project in a tab {#remote-project-tabs}
 
+If the backend confirms that the server accepts anonymous access, its projects open without installing a cookie or showing a sign-in form, including recents and restored tabs.
+
 In the desktop app (Electron, or Tauri on Windows), a saved server can also open one of its projects in a tab of this window, beside your local projects:
 
 1. On Home or an empty tab, open **Browse** and choose a saved server. To add a server, use **Server address or link**, then click its new row.
@@ -105,7 +107,7 @@ In the desktop app (Electron, or Tauri on Windows), a saved server can also open
 
 The tab's conversations, files, Git, settings and Missions run on the remote server. Its embedded view shares that server's remote-window storage. The local backend prepares a dedicated password session through a fresh login without cookies. Never forward the stored password to the renderer or native host. The origin-bound cookie passes ephemerally through the renderer into the native cookie jar before the embedded URL opens. Never log this cookie or persist it in UI state. Paired access shares the existing device cookie and its lifetime and revocation; isolating device authentication requires a separate mechanism.
 
-Missing credentials for a remote recent show an inline form on Home, the left **Recent tabs** panel of a new tab or the `+` menu before opening a project tab. A restored tab shows the form inside its tab. The username is always `codenomad`, focus starts on the password and errors stay inline for retry. Use the pairing repair above for a revoked device.
+If a remote recent requires credentials, Home, the left **Recent tabs** panel of a new tab and the `+` menu show an inline form before opening a project tab. A restored tab shows the form inside its tab. The username is always `codenomad`, focus starts on the password and errors stay inline for retry. Use the pairing repair above for a revoked device.
 
 Remote tabs participate in startup restoration. Servers without embedded mode show their full interface; profiles that skip TLS verification and Tauri on macOS/Linux open a separate remote window, explicitly indicated by the opening action when choosing the project. The embedded page stays on its server and has only notification access to the host. Web clients and Remote Control devices have no remote tabs.
 

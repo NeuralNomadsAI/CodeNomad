@@ -247,7 +247,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
-  remoteViewSession(id: string, signal?: AbortSignal): Promise<{ cookie: NonNullable<import("./native/remote-view").RemoteViewOpenPayload["cookie"]> }> {
+  remoteViewSession(id: string, signal?: AbortSignal): Promise<{ cookie?: NonNullable<import("./native/remote-view").RemoteViewOpenPayload["cookie"]> }> {
     return request(`/api/remote-servers/${encodeURIComponent(id)}/view-session`, { method: "POST", body: "{}", signal })
   },
   browseRemoteServer(id: string, path?: string, signal?: AbortSignal): Promise<RemoteServerBrowseResponse> {

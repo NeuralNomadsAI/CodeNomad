@@ -79,6 +79,13 @@ mod tests {
             assert!(serde_json::from_value::<RemoteSessionCookie>(bad).unwrap().validate(&base).is_err(), "{key}");
         }
         let mut session = value.clone();
+        session["name"] = json!("codenomad_session");
+        for path in ["/;Domain=evil.example", "/ space", "/é", "/\n"] {
+            session["path"] = json!(path);
+            assert!(serde_json::from_value::<RemoteSessionCookie>(session.clone()).unwrap().validate(&base).is_err());
+        }
+        session["path"] = json!("/project");
+        assert!(serde_json::from_value::<RemoteSessionCookie>(session.clone()).unwrap().validate(&base).is_ok());
         session.as_object_mut().unwrap().remove("expires");
         assert!(serde_json::from_value::<RemoteSessionCookie>(session.clone()).unwrap().validate(&base).unwrap().expires().is_none());
         session["domain"] = json!("evil.example");

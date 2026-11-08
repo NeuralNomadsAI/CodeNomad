@@ -163,8 +163,12 @@ retrying a rate-limited attempt.
 
 ## Native view sessions
 
-The local backend prepares an origin-bound authentication cookie before the host
-opens an embedded project URL. Password profiles use a fresh, cookie-free login
+The local backend checks access before the host opens an embedded project URL.
+Profiles without stored credentials use a fresh, unauthenticated status request
+through the browse transport and its origin/TLS policy. An authenticated status
+without a pairing requirement returns an empty view-session result: the host opens
+without installing a cookie or showing a sign-in form. Other profiles requiring
+credentials keep the inline sign-in flow. Password profiles use a fresh, cookie-free login
 with the backend-held password to obtain a dedicated remote session. Never forward
 the stored password to the renderer or native host. Paired profiles reuse the
 existing device cookie, sharing that device's revocation and 30-day idle lifetime.
