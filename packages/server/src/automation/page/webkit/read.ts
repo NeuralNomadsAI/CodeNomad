@@ -91,7 +91,7 @@ function hidden(element: Element): boolean {
 const collapse=(text: string)=>text.replace(/\s+/g," ").trim()
 function composedText(root: Node,state:State): string {
   if (root.nodeType === 3) return root.textContent ?? ""
-  if (root.nodeType === 1 && hidden(root as Element)) return ""
+   if (root.nodeType === 1 && (["script","style","template","noscript","head"].includes((root as Element).localName) || hidden(root as Element))) return ""
   const element=root.nodeType === 1 ? root as Element : undefined
   if (element?.localName === "slot") { const nodes=(element as HTMLSlotElement).assignedNodes({flatten:true}); if (nodes.length) return nodes.map(node=>composedText(node,state)).join(" ") }
   return Array.from((element && shadowRoot(element,state.roots))?.childNodes ?? root.childNodes).map(node=>composedText(node,state)).join(" ")
@@ -233,7 +233,8 @@ export function read(operation: PageOperation): {document: string; result: Recor
           const element=target?.nodeType === 1 ? target as Element : undefined
           const attributes=element ? ['aria-label','title','placeholder'].map(name=>element.getAttribute(name)) : []
           if(element && ['input','textarea'].includes(element.localName)) attributes.push((element as HTMLInputElement).value)
-          return [item.name,item.value,item.description,...attributes].some(value=>typeof value === "string" && collapse(value).toLowerCase().includes(needle))
+           const text=target?.nodeType === 9 && (target as Document).body ? composedText((target as Document).body,state) : undefined
+           return [text,item.name,item.value,item.description,...attributes].some(value=>typeof value === "string" && collapse(value).toLowerCase().includes(needle))
         })}
         break
       }

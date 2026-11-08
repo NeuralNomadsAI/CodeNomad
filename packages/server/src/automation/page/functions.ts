@@ -98,7 +98,10 @@ export const ELEMENT_FUNCTIONS = {
   if (element instanceof HTMLInputElement && element.type === "password") return "•".repeat(Math.min(value.length, 16));
   return value.length > ${VALUE_LIMIT} ? value.slice(0, ${VALUE_LIMIT - 1}) + "…" : value;`,
   receives: `const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);
-  if (!hit || element === hit || element.contains(hit)) return null;
+   if (!hit) return null;
+   for (let node = hit; node; node = node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null)) {
+     if (node === element) return null;
+   }
   const label = hit.closest("label");
   if (label && (label.control === element || label.contains(element))) return null;
   const name = (hit.getAttribute("aria-label") || hit.getAttribute("title") || hit.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 60);

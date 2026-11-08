@@ -72,7 +72,7 @@
       "handle"
     ],
     "handle": false,
-    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);\n  if (!hit || element === hit || element.contains(hit)) return null;\n  const label = hit.closest(\"label\");\n  if (label && (label.control === element || label.contains(element))) return null;\n  const name = (hit.getAttribute(\"aria-label\") || hit.getAttribute(\"title\") || hit.innerText || \"\").replace(/\\s+/g, \" \").trim().slice(0, 60);\n  return hit.tagName.toLowerCase() + (name ? \" \" + JSON.stringify(name) : \"\"); }"
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);\n   if (!hit) return null;\n   for (let node = hit; node; node = node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null)) {\n     if (node === element) return null;\n   }\n  const label = hit.closest(\"label\");\n  if (label && (label.control === element || label.contains(element))) return null;\n  const name = (hit.getAttribute(\"aria-label\") || hit.getAttribute(\"title\") || hit.innerText || \"\").replace(/\\s+/g, \" \").trim().slice(0, 60);\n  return hit.tagName.toLowerCase() + (name ? \" \" + JSON.stringify(name) : \"\"); }"
   },
   "contains": {
     "scope": "element",
