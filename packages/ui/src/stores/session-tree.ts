@@ -20,6 +20,32 @@ export type VisibleSessionRow = {
 }
 
 export type SessionFamilySort = "activity" | "name" | "worktree"
+export type SessionArchiveFilter = "active" | "archived" | "all"
+
+export const isSessionArchived = (session: Session): boolean => session.time.archived !== undefined
+
+/** Hide archived branches, retaining the selected conversation and live work or
+ * pending requests with their ancestor path. Native child flags stay unchanged. */
+export function projectUnarchivedSessionThreads(threads: SessionThread[], selected?: string | null): SessionThread[] {
+  const visit = (thread: SessionThread, inherited = false): { thread: SessionThread; live: boolean } | null => {
+    const archived = inherited || isSessionArchived(thread.session)
+    const children = thread.children.flatMap(child => {
+      const result = visit(child, archived)
+      return result ? [result] : []
+    })
+    const session = thread.session
+    const live = session.id === selected || session.status !== "idle" || Boolean(session.pendingPermission || session.pendingForm)
+      || children.some(child => child.live)
+    if (archived && !live) return null
+    const projected = children.map(child => child.thread)
+    return { live, thread: { ...thread, children: projected, hasChildren: projected.length > 0,
+      latestUpdated: Math.max(session.time.updated, ...projected.map(child => child.latestUpdated)) } }
+  }
+  return threads.flatMap(thread => {
+    const result = visit(thread)
+    return result ? [result.thread] : []
+  })
+}
 
 type SessionFamilyProjection = {
   matchesSession?: (session: Session) => boolean
@@ -61,11 +87,12 @@ export function projectSessionFamilies(
 // the session itself, without adding ancestors or inheriting descendant activity.
 export function projectSessionSearchResults(
   sessions: Iterable<Session>,
-  options: SessionFamilyProjection & { includeMainSessions: boolean; includeSubsessions: boolean },
+  options: SessionFamilyProjection & { includeMainSessions: boolean; includeSubsessions: boolean; archive?: SessionArchiveFilter },
 ): SessionThread[] {
   const rows = new Map<string, SessionThread>()
   for (const session of sessions) {
     if (isReservedMissionScheduleSessionID(session.id)) continue
+    if ((options.archive ?? "active") !== "all" && isSessionArchived(session) !== (options.archive === "archived")) continue
     if (session.parentId && !options.includeSubsessions) continue
     if (!session.parentId && !options.includeMainSessions) continue
     rows.set(session.id, { session, children: [], depth: 0, hasChildren: false, latestUpdated: session.time.updated })
@@ -120,9 +147,11 @@ export function collectDescendantActivity(
       : session.status === "working" || session.status === "compacting" ? session.status
         : session.status === "idle" && showIdleStatus(session) ? "idle" : null
     if (!kind) continue
+    if (kind === "idle" && isSessionArchived(session)) continue
     const seen = new Set([session.id])
     let parentId = session.parentId
     while (parentId && !seen.has(parentId) && instanceSessions!.has(parentId)) {
+      if (kind === "idle" && isSessionArchived(instanceSessions!.get(parentId)!)) break
       seen.add(parentId)
       const counts = activity.get(parentId) ?? { permission: 0, working: 0, compacting: 0, idle: 0 }
       counts[kind] += 1

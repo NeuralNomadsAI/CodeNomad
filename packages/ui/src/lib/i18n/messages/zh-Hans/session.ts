@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "归档会话",
+  "sessionList.actions.restore.title": "恢复会话",
+  "sessionList.status.archived": "已归档",
+  "sessionList.archiveFilter.ariaLabel": "按归档状态筛选会话",
+  "sessionList.archiveFilter.active": "未归档会话",
+  "sessionList.archiveFilter.archived": "已归档会话",
+  "sessionList.archiveFilter.all": "所有会话",
+  "sessionList.archive.error": "无法确认归档。请刷新会话列表。",
+  "sessionList.restore.error": "无法确认恢复。请刷新会话列表。",
   "browser.viewport.webkitEmulationHint": "WebKit 移动标识和 CSS 视口。像素密度和输入受原生环境限制。",
   "browser.viewport.emulationHint": "使用移动设备标识、触控和像素密度重新加载。不模拟浏览器引擎、键盘或系统栏。",
   "browser.viewport.dimensionsOnly": "仅调整尺寸。",

@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "Архивировать сессию",
+  "sessionList.actions.restore.title": "Восстановить сессию",
+  "sessionList.status.archived": "В архиве",
+  "sessionList.archiveFilter.ariaLabel": "Фильтр сессий по архиву",
+  "sessionList.archiveFilter.active": "Неархивированные сессии",
+  "sessionList.archiveFilter.archived": "Архивированные сессии",
+  "sessionList.archiveFilter.all": "Все сессии",
+  "sessionList.archive.error": "Архивация не подтверждена. Обновите список сессий.",
+  "sessionList.restore.error": "Восстановление не подтверждено. Обновите список сессий.",
   "browser.viewport.webkitEmulationHint": "Мобильная идентификация WebKit и CSS-область просмотра. Действуют нативные ограничения плотности пикселей и ввода.",
   "browser.viewport.emulationHint": "Перезагрузка с мобильной идентификацией, сенсорным вводом и плотностью пикселей. Движок браузера, клавиатура и системные панели не эмулируются.",
   "browser.viewport.dimensionsOnly": "Только размеры.",

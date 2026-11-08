@@ -19,6 +19,12 @@ Normal browsing is hierarchical; search/filter results are flat entries with eac
 
 Back/Forward is a per-project-tab, per-window visit history, not list order. It is kept in memory, skips unavailable/deleted conversations and is not restored after restart. Selecting a new conversation after going back replaces the forward path. The palette's **Previous Session** / **Next Session** instead cycle the visible list.
 
+## Archive and restore {#archive}
+
+Choose **Archive session** in a session row's actions to keep its history while removing its idle branch from normal browsing. The selected conversation and conversations with running work or pending questions remain reachable. Archiving does not stop work, delete messages or change subsessions' own archive flags.
+
+Open **Search sessions…** and choose **Archived sessions** or **All sessions** to find archived conversations. Rows show **Archived** and offer **Restore session**. Enable **Subsessions** to find children independently, including children beneath an archived parent. **Unarchived sessions** filters by each conversation's own flag. Restore an archived ancestor to bring its idle branch back into normal browsing. If an action is not confirmed, refresh the session list before trying again.
+
 ## Choose Agent, Model and Thinking {#agent-model-thinking}
 
 1. Use the composer footer's agent and model selectors before sending.
