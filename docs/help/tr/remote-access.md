@@ -97,17 +97,15 @@ Yeni bir Uzaktan Kontrol bağlantısı yapıştırmak tünel kökenini kaydeder 
 
 ## Uzak bir projeyi sekmede açın {#remote-project-tabs}
 
-Arka uç sunucunun anonim erişimi kabul ettiğini doğrularsa, son kullanılan projeler ve geri yüklenen sekmeler dahil projeler çerez yüklenmeden veya giriş formu gösterilmeden açılır.
-
 Masaüstü uygulamasında (Electron veya Windows'ta Tauri), kayıtlı bir sunucu projelerinden birini yerel projelerinizin yanında bu pencerenin bir sekmesinde de açabilir:
 
 1. Ana sayfa veya boş sekmede **Gözat** bölümünden sunucu seçin. Sunucu eklemek için **Sunucu adresi veya bağlantısı** alanını kullanıp satırına tıklayın.
 2. Gerekirse etiketli satır içi formda oturum açın. Sunucunun klasörleri, düzenlenebilir bir yolun altında yerinde görünür: içine girmek için bir klasöre veya yukarı çıkmak için **Üst klasör** seçeneğine tıklayın, ardından o klasörü açmak için Enter tuşuna ya da yolun sonundaki oka basın. Sunucunun son projeleri **Son sekmeler** içinde görünür. **Gözat'a dön** sunucu listesine döner.
 3. Klasör seçimi boş sekmenin yerine yeni uzak örnek oluşturur ve **Son kullanılanlar** listesine ekler. Ayrı **Aç** eylemi mevcut örneğe geçer. TLS ve Tauri macOS/Linux dahil ayrı pencere kullanılacağı seçim anında belirtilir.
 
-Sekmenin konuşmaları, dosyaları, Git'i, ayarları ve Missions uzak sunucuda çalışır. Gömülü görünüm sunucunun uzak pencere depolamasını paylaşır. Yerel arka uç çerezsiz yeni parola girişiyle özel bir oturum hazırlar. Saklanan parolayı renderer veya yerel ana bilgisayara asla iletmeyin. Kökene bağlı çerez, gömülü URL açılmadan önce renderer üzerinden geçici olarak yerel çerez deposuna aktarılır. Bu çerezi asla günlüklere veya arayüz durumuna kaydetmeyin. Eşleştirilmiş erişim mevcut cihaz çerezini, ömrünü ve iptalini paylaşır; cihaz kimlik doğrulamasını ayırmak ayrı bir mekanizma gerektirir.
+Sekmenin konuşmaları, dosyaları, Git'i, ayarları ve Missions uzak sunucuda çalışır. Gömülü görünüm sunucunun uzak pencere depolamasını paylaşır. Sekme, yerel arka ucun bu sunucu için zaten tuttuğu oturumu kullanarak parolayı yeniden sormadan açılır; kayıtlı parola yerel arka uçta kalır. Eşleştirilmiş sunucu, aynı geçerlilik süresi ve iptal koşullarıyla cihaz erişimini kullanır. Anonim erişimi kabul eden sunucu oturum açmadan açılır.
 
-Son kullanılan uzak proje için kimlik bilgileri eksikse ana sayfa, yeni sekmenin solundaki **Son sekmeler** ve `+` menüsü proje sekmesini açmadan önce formu yerinde gösterir. Geri yüklenen sekme formu kendi içinde gösterir. Kullanıcı adı her zaman `codenomad`, ilk odak paroladadır ve hatalar yeniden denemek için formda kalır. İptal edilen cihaz için yukarıdaki eşleştirme onarımını kullanın.
+Sunucunun oturumu henüz kaydedilmediyse Ana sayfada, yeni sekmenin solundaki **Son sekmeler** panelinde veya `+` menüsünde sunucunun son projelerinden birini seçmek giriş formunu yerinde gösterir; oturum açtıktan sonra sekme açılır. Geri yüklenen sekme formu kendi içinde gösterir. Kullanıcı adı her zaman `codenomad`, ilk odak paroladadır ve hatalar yeniden denemek için formda kalır. İptal edilen cihaz için yukarıdaki eşleştirme onarımını kullanın.
 
 Uzak sekmeler başlangıçta geri yüklenir. Gömülü modu olmayan sunucular tam arayüzü gösterir; TLS doğrulamasını atlayan profiller ve macOS/Linux'ta Tauri ayrı pencere açar. Gömülü sayfa kendi sunucusunda kalır ve ana bilgisayarda yalnızca bildirim erişimine sahiptir. Web istemcilerinde ve Uzaktan Kontrol cihazlarında uzak sekme yoktur.
 

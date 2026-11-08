@@ -97,17 +97,15 @@ Pasting a fresh Remote Control pairing link saves its tunnel origin and pairs th
 
 ## Open a remote project in a tab {#remote-project-tabs}
 
-If the backend confirms that the server accepts anonymous access, its projects open without installing a cookie or showing a sign-in form, including recents and restored tabs.
-
 In the desktop app (Electron, or Tauri on Windows), a saved server can also open one of its projects in a tab of this window, beside your local projects:
 
 1. On Home or an empty tab, open **Browse** and choose a saved server. To add a server, use **Server address or link**, then click its new row.
 2. Sign in using the labelled inline form if needed. The server's folders appear in place below an editable path: click a folder to enter it or **Parent folder** to go up, then press Enter or the arrow at the end of the path to open that folder. The server's recent projects appear in **Recent tabs**. **Back to Browse** returns to the server list.
 3. Choosing the folder creates a new remote project occurrence, replacing the originating empty tab. The project joins **Recent**. To join an existing occurrence instead, use its separate **Open** action.
 
-The tab's conversations, files, Git, settings and Missions run on the remote server. Its embedded view shares that server's remote-window storage. The local backend prepares a dedicated password session through a fresh login without cookies. Never forward the stored password to the renderer or native host. The origin-bound cookie passes ephemerally through the renderer into the native cookie jar before the embedded URL opens. Never log this cookie or persist it in UI state. Paired access shares the existing device cookie and its lifetime and revocation; isolating device authentication requires a separate mechanism.
+The tab's conversations, files, Git, settings and Missions run on the remote server. Its embedded view shares that server's remote-window storage. The tab uses the sign-in the local backend already holds for that server, so it opens without asking for the password again; the saved password stays in the local backend. A paired server uses its device access, with the same lifetime and revocation. A server that accepts anonymous access opens without signing in.
 
-If a remote recent requires credentials, Home, the left **Recent tabs** panel of a new tab and the `+` menu show an inline form before opening a project tab. A restored tab shows the form inside its tab. The username is always `codenomad`, focus starts on the password and errors stay inline for retry. Use the pairing repair above for a revoked device.
+If the server's sign-in is not saved yet, choosing one of its recents on Home, in the left **Recent tabs** panel of a new tab or in the `+` menu shows the sign-in form in place; the tab opens after you sign in. A restored tab shows the form inside its tab. The username is always `codenomad`, focus starts on the password and errors stay inline for retry. Use the pairing repair above for a revoked device.
 
 Remote tabs participate in startup restoration. Servers without embedded mode show their full interface; profiles that skip TLS verification and Tauri on macOS/Linux open a separate remote window, explicitly indicated by the opening action when choosing the project. The embedded page stays on its server and has only notification access to the host. Web clients and Remote Control devices have no remote tabs.
 
