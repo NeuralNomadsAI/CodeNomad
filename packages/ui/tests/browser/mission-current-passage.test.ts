@@ -242,7 +242,17 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     const historical = mission.tasks[0].report!
     mission.reports.push(historical)
     mission.tasks[0].report = { ...historical, id: "rpt_newer", summary: "Newer result must not replace the historical body", createdAt: 4 }
-    await page.locator(".mission-briefing-sources").getByRole("button", { name: "Review commits" }).click()
+    // A long source title wraps within a narrow reader instead of overflowing it.
+    const source = page.locator(".mission-briefing-sources").getByRole("button", { name: "Review commits" })
+    assert.equal(await source.evaluate(element => {
+      const original = element.textContent, parent = element.parentElement!
+      element.textContent = "Review every commit of the release branch and reconcile the changelog ".repeat(3)
+      parent.style.width = "240px"
+      const fits = element.getBoundingClientRect().right <= parent.getBoundingClientRect().right + 1 && element.scrollWidth <= element.clientWidth + 1
+      element.textContent = original; parent.style.width = ""
+      return fits
+    }), true, "a long briefing source wraps within its container")
+    await source.click()
     await page.locator(".mission-reader").getByText("Exact isolated result", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-reader").getByText("Newer result must not replace the historical body", { exact: true }).count(), 0)
     mission.tasks[0].report = historical

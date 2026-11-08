@@ -73,8 +73,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.edit": "選択したミッションを編集",
   "missionsPanel.picker.delete": "選択したミッションを削除…",
   "missionsPanel.picker.actions": "ミッションの操作",
-  "missionsPanel.tasks.omitted.one": "{count} 件のタスクを表示していません",
-  "missionsPanel.tasks.omitted.other": "{count} 件のタスクを表示していません",
   "missionsPanel.tasks.showMore": "さらに表示",
   "missionsPanel.tasks.readFailed": "これらのタスクを読み込めませんでした。",
   "missionsPanel.tasks.readChanged": "読み込み中にタスク一覧が変更されました。更新してから再試行してください。",

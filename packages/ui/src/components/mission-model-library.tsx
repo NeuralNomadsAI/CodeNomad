@@ -78,7 +78,7 @@ function createMissionModelActions(props: LibraryProps) {
     <Show when={reconciliationPending()}><p role="alert">{t("missions.defaults.reconciliationPending")}</p></Show>
     {/* An unreadable library already offers its own Reload beside the repair. */}
     <Show when={(failed() || reconciliationPending()) && !(config.isUiConfigLoaded() && !config.missionModelsValid())}>
-      <button type="button" class="window-text-button" aria-label={t("missions.models.reload")} title={t("missions.models.reload")}
+      <button type="button" class="window-action" aria-label={t("missions.models.reload")} title={t("missions.models.reload")}
         disabled={pending() || !active()} onClick={() => void reload()}>{t("missions.preferences.reload")}</button>
     </Show>
   </>
@@ -148,11 +148,11 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
 /** A "Save as brief" button that asks for a name inline: the creation footer's
  * draft, or a selected Mission's recorded brief inputs (`initialName` prefills).
  * `onOpen` follows the name field, which shows `reading` while the draft is still read.
- * A window footer passes its own button template; elsewhere these are text commands. */
+ * A window footer passes its own button template; elsewhere these are bordered actions. */
 export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string
   onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined }) {
   const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
-  const buttonClass = () => props.buttonClass ?? "window-text-button"
+  const buttonClass = () => props.buttonClass ?? "window-action"
   const [open, setOpen] = createSignal(false), [name, setName] = createSignal("")
   createEffect(() => props.onOpen?.(open()))
   let input: HTMLInputElement | undefined

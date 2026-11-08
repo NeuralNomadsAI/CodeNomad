@@ -58,9 +58,9 @@ export function createMissionBriefingRequest(props: {
     <div class="mission-briefing-feedback">
       <p role={request()?.state === "error" || request()?.state === "uncertain" ? "alert" : "status"}>{t(`missions.briefing.request.${request()!.state}`)}</p>
       <Show when={["admitted", "uncertain"].includes(request()!.state)}>
-        <button type="button" class="window-text-button" disabled={props.disabled || !props.active}
+        <button type="button" class="window-action" disabled={props.disabled || !props.active}
           onClick={onOpenCoordinator}>{t("missions.control.openCoordinator")}</button>
-        <button type="button" class="window-text-button" disabled={props.disabled || !props.active || !available()}
+        <button type="button" class="window-action" disabled={props.disabled || !props.active || !available()}
           onClick={() => { if (window.confirm(t("missions.briefing.newConfirm"))) {
             setMissionBriefingRequest(identity(), { requestID: request()!.requestID, state: "error" })
             void ask()

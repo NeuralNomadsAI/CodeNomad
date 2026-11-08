@@ -68,8 +68,8 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}
           onOpenConversation={doc().pendingPassage ? () => props.onOpenConversation(doc().pendingPassage!.coordinatorSessionID) : undefined}
           secondary={<>
-            <button type="button" class="window-text-button" disabled={!controls.capable("check")} onClick={() => void controls.act("check")}>{controls.label("check")}</button>
-            <Show when={controls.held()}><button type="button" class="window-text-button" disabled={controls.busy()} onClick={() => void controls.reconcile()}>{t("missions.scheduling.readReceipt")}</button></Show>
+            <button type="button" class="window-action" disabled={!controls.capable("check")} onClick={() => void controls.act("check")}>{controls.label("check")}</button>
+            <Show when={controls.held()}><button type="button" class="window-action" disabled={controls.busy()} onClick={() => void controls.reconcile()}>{t("missions.scheduling.readReceipt")}</button></Show>
           </>}
           feedback={<>
             <Show when={controls.held()}><p role="status">{t(controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain")}</p></Show>
@@ -100,7 +100,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         <section class="mission-past-runs" aria-label={t("missionsPanel.pastRuns")}><h3>{t("missionsPanel.pastRuns")}</h3>
           <Show when={doc().history.length} fallback={<p>{t("missionsPanel.schedule.noRuns")}</p>}><ol><For each={[...doc().history].reverse()}>{item => <li>
             <span>{date(item.dueAt)} · {t(`missionsPanel.run.${item.reason === "not-started" ? "not-started" : item.outcome}`)}</span>
-            <button type="button" class="window-text-button" onClick={() => props.onOpenConversation(item.coordinatorSessionID)}>{t("missionsPanel.action.openConversation")}</button>
+            <button type="button" class="window-action" onClick={() => props.onOpenConversation(item.coordinatorSessionID)}>{t("missionsPanel.action.openConversation")}</button>
           </li>}</For></ol></Show>
         </section>
         <MissionScheduleDiagnostics document={doc()} />

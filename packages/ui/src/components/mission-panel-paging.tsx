@@ -22,7 +22,7 @@ export function MissionPanelPaging(props: { instanceId: string; lane: string; se
   return <Show when={visible().shown}><div class="mission-panel-paging" data-lane={props.lane}>
     <Show when={info()}>{text => <SettingsInfoTip text={text()} />}</Show>
     <Show when={state().failure}><p role="status">{t(state().failure === "changed" ? "missionsPanel.pages.changed" : "missionsPanel.pages.failed")}</p>
-      <button type="button" class="window-text-button" disabled={state().loading} onClick={() => void missionStore.more(props.instanceId, props.lane, true)}>{t("missions.control.retry")}</button>
+      <button type="button" class="window-action" disabled={state().loading} onClick={() => void missionStore.more(props.instanceId, props.lane, true)}>{t("missions.control.retry")}</button>
     </Show>
     <Show when={!state().failure && state().more}>
       <button type="button" class="window-text-button" disabled={state().loading} onClick={() => void missionStore.more(props.instanceId, props.lane)}>

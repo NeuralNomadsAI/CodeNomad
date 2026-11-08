@@ -73,8 +73,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.edit": "编辑所选任务",
   "missionsPanel.picker.delete": "删除所选任务…",
   "missionsPanel.picker.actions": "任务操作",
-  "missionsPanel.tasks.omitted.one": "{count} 个任务未显示",
-  "missionsPanel.tasks.omitted.other": "{count} 个任务未显示",
   "missionsPanel.tasks.showMore": "显示更多",
   "missionsPanel.tasks.readFailed": "无法读取这些任务。",
   "missionsPanel.tasks.readChanged": "读取期间任务列表已更改。请刷新后重试。",
