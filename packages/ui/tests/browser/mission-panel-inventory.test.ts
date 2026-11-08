@@ -18,7 +18,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function open() {
+async function open(extraForms: Array<{ id: string; sessionID: string; title: string; fields: never[] }> = []) {
   const f = missionPluginFixture(), journal = new MissionJournal(f.storage, FIXTURE_PROJECT.id, FIXTURE_PROJECT.canonical), location = FIXTURE_PROJECT.location
   const prefixes: string[] = [], scan = f.storage.scan.bind(f.storage), native: string[] = [], requests: any[] = [], bytes: number[] = [], mutations: string[] = []
   f.storage.scan = async options => { prefixes.push(options.prefix); return scan(options) }
@@ -38,7 +38,7 @@ async function open() {
     seed("msn_inventory_119", { id: `evt_task_${index}`, type: "task.created", task: { id: `tsk_${index}`, key, title: key, brief: "Brief", role: "specialist", blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } }, createdAt: 1000 + 2 * index })
     seed("msn_inventory_119", { id: `evt_bind_${index}`, type: "task.native-bound", taskKey: key, binding, actor: { sessionID: `ses_actor_${index}`, title: `Actor ${index}`, managed: true, location }, createdAt: 1001 + 2 * index })
   }
-  const forms = [{ id: "far_form", sessionID: "ses_actor_189", title: "Off-page native question", fields: [] }]
+  const forms = [{ id: "far_form", sessionID: "ses_actor_189", title: "Off-page native question", fields: [] }, ...extraForms]
   const session = (id: string) => ({ id, projectID: FIXTURE_PROJECT.id, location })
   // One durable control/index, with no unrelated startup-outbox background scans.
   const control = f.control(), plugin = { rpc: (_method: string, input: unknown) => control.panelPage(input as any), dispose: async () => {} }
@@ -123,6 +123,20 @@ test("actual picker discovers a bounded first inventory without maps, traverses/
     assert.equal(await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.progress("fixture", "summaries").loaded), 120)
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, []); assert.ok(f.bytes.every(bytes => bytes <= 65536))
     t.diagnostic(`first summary body ${f.bytes[0]} bytes; ${f.requests.length} total panel transfers; ${f.native.filter(item => item.startsWith("get:")).length} native root reads; no legacy list`)
+  } finally { await f.close() }
+})
+
+test("a closed row's coordinator question seen only by the marks lane reddens its flag and opens from it", async () => {
+  const f = await open([{ id: "coordinator_form", sessionID: "ses_119", title: "Coordinator question", fields: [] }])
+  try {
+    // Nothing is selected: the Mission's map is unread and the UI's native queue never saw the form.
+    const row = f.page.locator(".mission-row").filter({ has: f.page.locator(".session-item-title", { hasText: /^Mission 119$/ }) })
+    await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+    assert.equal(await f.page.locator("section.mission-detail").count(), 0)
+    const opened = f.page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/session/ses_119"))
+    await row.locator(".mission-row-select").click()
+    await opened
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
 

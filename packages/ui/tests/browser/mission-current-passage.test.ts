@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Route } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
@@ -17,7 +17,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
-import { missionMenuTrigger, missionToolbar, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
+import { inlineMissionEntry, missionMenuTrigger, missionToolbar, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
 import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
@@ -57,13 +57,16 @@ test("actual MissionControl reuses the current task tree and attention, with bri
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } }), errors: string[] = [], writes: string[] = []
   page.setDefaultTimeout(8_000)
   let reads = 0, fail = false, passageID: string | null = "pas_current", observed = true, ordinary: MissionMap | undefined
+  let hold: Promise<void> | undefined
   const nativeReads: string[] = []
   const sourceReads: Array<Record<string, unknown>> = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
-    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
-  await page.route("**/api/**", route => {
+  const init = `Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`
+  await page.addInitScript(init)
+  const api = async (route: Route) => {
     const path = new URL(route.request().url()).pathname
+    if (hold && path.endsWith("/rec_current/current")) await hold
     if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (path === "/api/events") return route.continue()
     if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
@@ -125,10 +128,34 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } } })
     }
     return route.fulfill({ json: {} })
-  })
+  }
+  await page.route("**/api/**", api)
   try {
+    {
+      // A red row's deferred answer is dropped when the conversation changes before its
+      // passage's question is discovered: never replayed into a newer view.
+      const probe = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } })
+      await probe.addInitScript(init); await probe.route("**/api/**", api)
+      let release!: () => void
+      hold = new Promise(resolve => { release = resolve })
+      try {
+        await probe.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+        const row = await inlineMissionEntry(probe, "Daily commit review")
+        await row.locator('.mission-row-flag[data-mark="permission"]').waitFor({ timeout: 30_000 })
+        await row.click()
+        await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("/fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
+        release(); hold = undefined
+        await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
+        await probe.waitForTimeout(500)
+        assert.notEqual(await probe.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), "ses_child")
+      } finally { release(); hold = undefined; await probe.close() }
+      reads = 0; nativeReads.length = 0; sourceReads.length = 0
+    }
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+    // A first click on the red row opens the passage's question once it is discovered.
     const card = await selectMission(page, "Daily commit review")
+    for (let attempt = 0; await page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")) !== "ses_child" && attempt < 100; attempt++) await page.waitForTimeout(50)
+    assert.equal(await page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), "ses_child")
     await card.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
     assert.equal(reads, 1)
     assert.equal(await page.locator(".mission-picker section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")

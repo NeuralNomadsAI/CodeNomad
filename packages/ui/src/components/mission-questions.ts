@@ -7,22 +7,30 @@ import { selectMissionAttention, type MissionObservedFamily } from "./mission-at
 import type { MissionQuestion, MissionQuestionContext } from "./mission-question-owners"
 
 type MissionKey = Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId">
+export type MissionQuestionStore = Pick<typeof missionStore, "observations" | "observedActors" | "markObservations">
+
+/** The Mission's current observation pages: its own activity windows once read,
+ * else its marks-lane window (a closed row's). Superseded or failed windows are
+ * not evidence: they read as `unknown` and never count. */
+export function currentMissionObservations(store: MissionQuestionStore, instanceId: string, missionId: string) {
+  const own = store.observations(instanceId, missionId)
+  return (own.length ? own : store.markObservations(instanceId, missionId)).filter(page => page.requests.state !== "unknown")
+}
 
 /** Open questions of the Mission's declared and observed actors and their observed
- * family, from the native queues and the panel's off-page request windows. */
+ * family, from the native queues and its current observation pages. */
 export function missionQuestions(input: {
   instanceId: string; mission: MissionKey; actors: readonly { sessionId: string }[]; family?: MissionObservedFamily
-  store: Pick<typeof missionStore, "observations" | "observedActors">
+  store: MissionQuestionStore
 }): MissionQuestion[] {
   const { instanceId, mission, store } = input
+  const pages = currentMissionObservations(store, instanceId, mission.id)
   // The coordinator always belongs to its Mission, listed among its actors or not.
-  const native = selectMissionAttention({ actors: [{ sessionId: mission.coordinatorSessionId }, ...input.actors, ...store.observedActors(instanceId, mission.id)],
-    forms: getFormQueue(instanceId), permissions: getPermissionQueue(instanceId), tasks: [], family: input.family })
+  const native = selectMissionAttention({ actors: [{ sessionId: mission.coordinatorSessionId }, ...input.actors, ...store.observedActors(instanceId, mission.id),
+    ...pages.flatMap(page => page.context.actors)], forms: getFormQueue(instanceId), permissions: getPermissionQueue(instanceId), tasks: [], family: input.family })
     .flatMap(item => item.open && item.sessionId && item.kind !== "blocked"
       ? [{ sessionId: item.sessionId, actorSessionId: item.actorSessionId, request: { kind: item.kind, id: item.id.slice(item.kind.length + 1) } }] : [])
-  // Off-page windows count every listed request, as the row's red does, even while its
-  // open state is unconfirmed: opening it focuses the request only if still queued.
-  const observed = store.observations(instanceId, mission.id).flatMap(page => page.requests.items.map(item => ({
+  const observed = pages.flatMap(page => page.requests.items.map(item => ({
     sessionId: item.request.sessionID, actorSessionId: item.actorSessionId, request: { kind: item.kind, id: item.request.id } })))
   return [...new Map([...observed, ...native].map(question => [JSON.stringify([question.request.kind, question.request.id, question.sessionId]), question])).values()]
 }

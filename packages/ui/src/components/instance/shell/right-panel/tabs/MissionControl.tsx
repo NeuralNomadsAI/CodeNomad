@@ -16,7 +16,7 @@ import { MissionEditor, type MissionEditorAction } from "../../../../mission-edi
 import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../../../stores/mission-editor-state"
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
-import { missionQuestionContext, missionQuestions } from "../../../../mission-questions"
+import { currentMissionObservations, missionQuestionContext, missionQuestions, type MissionQuestionStore } from "../../../../mission-questions"
 import { missionQuestionOwners } from "../../../../mission-question-owners"
 import { MissionPanelHeader, MissionRows } from "../../../../mission-picker"
 import { MissionActionBar, MissionActionSlot, MissionTaskToolbarActive } from "../../../../mission-action-bar"
@@ -87,15 +87,17 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const missions = () => state().missions
   const rows = () => state().summaries
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
-  // A full map, or a list row before its map is read (its declared actors only); a
-  // passage reads its own store and family.
+  // A full map, or a list row before its map is read (its declared actors and its
+  // current marks window); a passage reads its own store and family. Only current
+  // observation pages are evidence.
   const includesSession = (value: Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId"> & { actors: readonly { sessionId: string }[] }, id: string,
-    store: Pick<typeof missionStore, "observations" | "observedActors"> = missionStore, observedFamily = family(value.id)) =>
-    value.coordinatorSessionId === id
-    || missionIncludesSession([...value.actors, ...store.observedActors(props.instanceId, value.id)], id, observedFamily)
-    // A listed request proves its session's membership, whether or not it is still open.
-    || store.observations(props.instanceId, value.id).some(page => page.requests.items.some(item => item.request.sessionID === id))
-    || missionDerivedSessionIncludes(props.instanceId, value as MissionPanelMap, id)
+    store: MissionQuestionStore = missionStore, observedFamily = family(value.id)) => {
+    const pages = currentMissionObservations(store, props.instanceId, value.id)
+    return value.coordinatorSessionId === id
+      || missionIncludesSession([...value.actors, ...store.observedActors(props.instanceId, value.id), ...pages.flatMap(page => page.context.actors)], id, observedFamily)
+      || pages.some(page => page.requests.items.some(item => item.request.sessionID === id))
+      || missionDerivedSessionIncludes(props.instanceId, value as MissionPanelMap, id)
+  }
   const directory = () => instances().get(props.instanceId)?.folder
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? state().projectID ?? missions()[0]?.projectID
   const completionScope = () => JSON.stringify([scope(), projectID()])
@@ -195,7 +197,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const value = mission(), passageID = currentPassage.snapshot()?.passageID
     if (!passageSchedule() || !value || !passageID) return
     const store = passageStore(), actors = [...value.actors, ...store.observedActors(props.instanceId, value.id)]
-    const known = new Set(store.observations(props.instanceId, value.id).flatMap(page => page.requests.items.map(item => `${item.kind}:${item.request.id}`)))
+    const known = new Set(currentMissionObservations(store, props.instanceId, value.id).flatMap(page => page.requests.items.map(item => `${item.kind}:${item.request.id}`)))
     return { passageID, count: Math.max(known.size, openRequests(value.id, actors, observedActivity())) }
   }
   const readerTarget = (target: MissionReaderTarget): MissionReaderTarget => {
@@ -327,16 +329,27 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       task => missionTaskConversation(value, task, family, missionDerivedTaskSession(props.instanceId, value, task.key), actors))
     return owners.flag[0] ?? questions[0]
   }
-  // Selecting a red schedule row answers once its passage is read, unless the selection moves on.
-  const [pendingAnswer, setPendingAnswer] = createSignal<string>()
+  // Selecting a red schedule row answers as soon as its passage's questions are
+  // discovered (the passage, its activity and request windows load separately). The
+  // click's fences hold throughout: the same view, no newer selection or navigation
+  // intent, no conversation change, the same connection and no editor; otherwise the
+  // answer is dropped, never replayed later.
+  const clickFence = () => {
+    const viewCurrent = captureView(), operation = intent, epoch = conversationEpoch, instanceId = props.instanceId
+    const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
+    return () => viewCurrent() && operation === intent && epoch === conversationEpoch && !editor()
+      && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
+  }
+  const [pendingAnswer, setPendingAnswer] = createSignal<{ key: string; current: () => boolean }>()
   createEffect(() => {
-    const key = pendingAnswer()
-    if (!key) return
-    if (selectedKey() !== key) { setPendingAnswer(undefined); return }
-    if (!mission()) return
-    const question = untrack(passageQuestion)
+    const pending = pendingAnswer()
+    if (!pending) return
+    if (selectedKey() !== pending.key || !untrack(pending.current)) { setPendingAnswer(undefined); return }
+    // Tracked: reruns as the passage, its activity and its request windows arrive.
+    const question = passageQuestion()
+    if (!question) return
     setPendingAnswer(undefined)
-    if (question) untrack(() => void onOpenActor(question.sessionId, question.request))
+    untrack(() => void onOpenActor(question.sessionId, question.request))
   })
   // A schedule's current passage: its open task reader takes the toolbar from the schedule's.
   const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
@@ -554,7 +567,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             intent++
             updateMissionProjectView(scope(), kind === "schedule" ? { selectedRecurrence: id, selectedScheduled: undefined } : { selectedRecurrence: undefined, selectedScheduled: id })
             // A red row asks for an answer: open its passage's question, as for a Mission row.
-            setPendingAnswer(entry.mark === "permission" ? entry.key : undefined)
+            setPendingAnswer(entry.mark === "permission" ? { key: entry.key, current: clickFence() } : undefined)
           }
           else {
             batch(() => { followReader(id); selectMission(id) })
