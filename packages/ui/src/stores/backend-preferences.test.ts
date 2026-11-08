@@ -234,6 +234,45 @@ test("real preference consumers isolate host, server, fallback, instance data an
     assert.equal(host.calls.length, beforeHost)
   })
 
+  await t.test("the same client reattached cannot publish an old ACK or erase newer persisted recents", async () => {
+    let state: Bucket = { recentFolders: [{ path: "/initial", lastAccessed: 1 }] }
+    let hold: Promise<void> | undefined, release!: () => void
+    const backend = createBackendClient({ id: "sameClient", baseUrl: "https://same.invalid", fetcher: async (input, init) => {
+      if (!new URL(String(input)).pathname.includes("/state/")) return Response.json({})
+      if (init?.method === "PATCH") {
+        state = applyMergePatch(state, JSON.parse(String(init.body))) as Bucket
+        const acknowledged = structuredClone(state)
+        await hold // The mutation commits before its response is delayed.
+        return Response.json(acknowledged)
+      }
+      return Response.json(state)
+    } })
+    registry.set(backend.id, backend); registered.push(backend)
+    let detach = backendEvents.attach(backend.id, backend.events)
+    const old = module.preferencesForBackend(backend.id)
+    await old.ensureLoaded()
+    hold = new Promise(resolve => { release = resolve })
+    const pending = old.renameRecentFolderProject("/initial", "Committed name")
+    const rejected = assert.rejects(pending, /Backend unavailable/)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(state.recentFolders[0].projectName, "Committed name")
+    detach()
+    hold = undefined
+    detach = backendEvents.attach(backend.id, backend.events)
+    const fresh = module.preferencesForBackend(backend.id)
+    await fresh.ensureLoaded()
+    await fresh.addRecentFolder("/fresh")
+    const before = structuredClone(fresh.recentFolders())
+    assert.ok(before.some(folder => folder.path === "/fresh"))
+    release(); await rejected
+    assert.deepEqual(fresh.recentFolders(), before, "revoked ACK never reaches the new subscription")
+    assert.deepEqual(await backend.storage.loadStateOwner("ui"), state, "revoked ACK never replaces the shared cache")
+    await fresh.addRecentFolder("/after")
+    assert.deepEqual(state.recentFolders.map((folder: any) => folder.path), ["/after", "/fresh", "/initial"])
+    assert.equal(state.recentFolders[2].projectName, "Committed name", "a dispatched mutation retains its durable result")
+    detach()
+  })
+
   await t.test("revocation fences in-flight loads and a reused backend id gets fresh state", async () => {
     const data = fixture({}, { ui: { recentFolders: [{ path: "/obsolete", lastAccessed: 1 }] } })
     let release!: () => void

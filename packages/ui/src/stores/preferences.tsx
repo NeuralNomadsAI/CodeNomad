@@ -631,6 +631,7 @@ function createPreferencesStore(backend: BackendClient) {
 const storage = backend.storage
 const local = isLocalBackend(backend)
 const attachment = local ? undefined : backendEvents.signal(backend.id)
+if (attachment) storage.bindOwnerAuthority(attachment)
 const current = () => local || (attachment !== undefined && !attachment.aborted && backends.get(backend.id) === backend)
 function assertCurrent() {
   if (!current()) throw new Error(`Backend unavailable: ${backend.id}`)

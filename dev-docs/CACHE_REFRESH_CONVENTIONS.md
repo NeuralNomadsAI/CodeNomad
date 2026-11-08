@@ -19,6 +19,10 @@ where their authority, lifetime or runtime differs.
   failures for explicit operations rather than reporting stale data as success.
 - A successful mutation must be visible to its next dependent read. Display-cache
   policies must not weaken ownership checks or transactional revalidation.
+- Backend preference owner caches and read flights retain their attachment signal.
+  Reattaching the same client starts fresh owner reads; revoked reads and ACKs are
+  fenced before cache publication and subscriber delivery, and their cleanup
+  releases only their own flight. Already sent mutations retain their durable result.
 - Treat a background update of a displayed collection as data, never as a user
   selection: preserve its open state, stable-key keyboard target and inline actions.
 

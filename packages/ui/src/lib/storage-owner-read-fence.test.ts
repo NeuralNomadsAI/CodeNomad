@@ -14,6 +14,42 @@ function holdFetch() {
   return (owner: Record<string, unknown>) => release(owner)
 }
 
+test("replacement owner authority separates flights and fences late reads and ACKs on the same storage", async () => {
+  for (const family of ["config", "state"] as const) {
+    const releases: ((value: Record<string, unknown>) => void)[] = []
+    const delayed = <T>() => new Promise<T>(resolve => releases.push(value => resolve(value as T)))
+    const storage = new ServerStorage({ api: { ...serverApi,
+      fetchConfigOwner: delayed, fetchStateOwner: delayed,
+      patchConfigOwner: delayed, patchStateOwner: delayed, patchMissionPreferences: delayed,
+    }, events: { on: () => () => {} } })
+    const first = new AbortController(), second = new AbortController()
+    storage.bindOwnerAuthority(first.signal)
+    const load = () => family === "config" ? storage.loadConfigOwner("ui") : storage.loadStateOwner("ui")
+    const patch = () => family === "config" ? storage.patchConfigOwner("ui", {}) : storage.patchStateOwner("ui", {})
+    const oldRead = assert.rejects(load(), /revoked storage authority/)
+    const oldWrite = assert.rejects(patch(), /revoked storage authority/)
+    const oldMission = family === "config" ? assert.rejects(storage.patchMissionPreferences({}, []), /revoked storage authority/) : undefined
+    first.abort()
+    storage.bindOwnerAuthority(second.signal)
+    const newRead = load()
+    const published: unknown[] = []
+    const off = family === "config" ? storage.onConfigOwnerChanged("ui", value => published.push(value))
+      : storage.onStateOwnerChanged("ui", value => published.push(value))
+    releases[0]({ stale: "read" })
+    releases[1]({ stale: "write" })
+    if (oldMission) releases[2]({ stale: "mission" })
+    await Promise.all([oldRead, oldWrite, oldMission])
+    const joined = load()
+    assert.equal(releases.length, family === "config" ? 4 : 3, "old flight cleanup preserves the replacement's coalesced read")
+    releases.at(-1)!({ fresh: true })
+    assert.deepEqual(await newRead, { fresh: true })
+    assert.deepEqual(await joined, { fresh: true })
+    assert.deepEqual(await load(), { fresh: true })
+    assert.deepEqual(published, [{ fresh: true }])
+    off(); second.abort()
+  }
+})
+
 test("an old initial GET never replaces a newer owned configuration event", async () => {
   const release = holdFetch(), storage = new ServerStorage(), published: unknown[] = []
   storage.onConfigOwnerChanged("ui", owner => published.push(owner))
