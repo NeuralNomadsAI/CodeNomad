@@ -302,3 +302,91 @@ test("unreachable targets return a stable error, and manager shutdown cancels fu
   f.manager.close()
   assert.deepEqual((await f.call("browse")).json(), { error: "unreachable" })
 })
+
+test("view sessions are fresh, cookie-free logins and leave the backend identity untouched", async t => {
+  const f = await fixture(t)
+  assert.deepEqual((await f.call("view-session")).json(), { error: "needs_credentials" })
+  await f.connect()
+  const file = path.join(f.dir, "remote-server-credentials.json")
+  const before = fs.readFileSync(file, "utf8")
+  const backendCookie = JSON.parse(before).servers.saved.secret.cookie
+  const response = await f.call("view-session")
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.headers["cache-control"], "no-store")
+  const { cookie } = response.json()
+  assert.equal(cookie.origin, f.remote.origin)
+  assert.equal(cookie.name, "codenomad_session")
+  assert.notEqual(`${cookie.name}=${cookie.value}`, backendCookie)
+  assert.equal(cookie.path, "/")
+  assert.equal(cookie.httpOnly, true)
+  assert.equal(cookie.secure, false)
+  assert.equal(cookie.sameSite, "lax")
+  assert.equal(f.remote.state.requests.at(-1)!.path, "/api/auth/login")
+  assert.equal(f.remote.state.requests.at(-1)!.headers.cookie, undefined)
+  assert.equal(response.body.includes("remote-password"), false)
+  assert.equal(response.body.includes("password"), false)
+  assert.equal(fs.readFileSync(file, "utf8"), before)
+  assert.notEqual((await f.call("view-session")).json().cookie.value, cookie.value)
+  f.remote.state.password = "changed"
+  assert.deepEqual((await f.call("view-session")).json(), { error: "auth" })
+  assert.equal(fs.readFileSync(file, "utf8"), before)
+})
+
+test("view-session uses the browse guard, including loopback ingress denial", async t => {
+  const f = await fixture(t)
+  for (const origin of [undefined, "null", "http://foreign.test"]) {
+    assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/saved/view-session",
+      headers: origin ? { origin } : {}, payload: {} })).statusCode, 403)
+  }
+  assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/saved/view-session",
+    remoteAddress: "192.168.1.8", headers: { origin: f.origin }, payload: {} })).statusCode, 403)
+  const ingress = new RemoteIngress((req, res) => f.app.server.emit("request", req, res))
+  const target = await ingress.start()
+  t.after(() => ingress.stop())
+  const response = await fetch(`http://${target}/api/remote-servers/saved/view-session`, {
+    method: "POST", headers: { origin: f.origin, "content-type": "application/json" }, body: "{}",
+  })
+  assert.equal(response.status, 403)
+  assert.equal(f.remote.state.requests.length, 0)
+})
+
+test("a view login admitted before profile retargeting never publishes its cookie", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  const file = path.join(f.dir, "remote-server-credentials.json")
+  const before = fs.readFileSync(file, "utf8")
+  let admitted!: () => void
+  const admission = new Promise<void>(resolve => { admitted = resolve })
+  let release!: () => void
+  const released = new Promise<void>(resolve => { release = resolve })
+  f.remote.state.handlers.set("/api/auth/login", async (_request, response) => {
+    admitted()
+    await released
+    response.writeHead(200, { "set-cookie": "codenomad_session=private; Path=/; HttpOnly; SameSite=Lax" })
+    response.end("{}")
+  })
+  const pending = f.call("view-session")
+  // inject is lazy until consumed.
+  const result = Promise.resolve(pending)
+  await admission
+  f.profiles[0]!.baseUrl = "http://127.0.0.1:1"
+  release()
+  assert.deepEqual((await result).json(), { error: "unreachable" })
+  assert.equal(fs.readFileSync(file, "utf8"), before, "view-session never writes even when its authority is revoked")
+})
+
+test("view-session refuses redirects and preserves cookie expiry attributes", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  f.remote.state.overrides.set("/api/auth/login", { status: 200, body: {}, headers: {
+    "set-cookie": "custom_session=dedicated; Path=/; HttpOnly; SameSite=Strict; Max-Age=120",
+  } })
+  const cookie = (await f.call("view-session")).json().cookie
+  assert.equal(cookie.name, "custom_session")
+  assert.equal(cookie.sameSite, "strict")
+  assert(cookie.expires > Date.now() / 1000 + 100)
+  const before = f.remote.state.requests.length
+  f.remote.state.overrides.set("/api/auth/login", { status: 302, body: {}, headers: { location: "/api/auth/status" } })
+  assert.deepEqual((await f.call("view-session")).json(), { error: "unreachable" })
+  assert.equal(f.remote.state.requests.length, before + 1)
+})

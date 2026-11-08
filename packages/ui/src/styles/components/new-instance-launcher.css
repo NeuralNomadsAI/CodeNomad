@@ -11,8 +11,8 @@
   overflow: hidden;
   z-index: 1000;
 }
-.new-instance-launcher .window-header { background: transparent; }
-.new-instance-launcher-search { background-color: var(--surface-field); gap: var(--space-sm); }
+.new-instance-launcher .window-header { background: transparent; border-bottom-color: var(--border-row); }
+.new-instance-launcher-search { background-color: var(--surface-field); gap: var(--space-sm); border-bottom-color: var(--border-row); }
 .new-instance-launcher-search-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -36,7 +36,7 @@
   align-items: center;
   gap: var(--space-sm);
   padding-inline-end: var(--window-inline-padding);
-  border-bottom: 1px solid var(--border-divider);
+  border-bottom: 1px solid var(--border-row);
 }
 .new-instance-launcher-recent-primary {
   display: flex;

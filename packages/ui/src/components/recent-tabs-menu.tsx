@@ -4,6 +4,8 @@ import { useI18n } from "../lib/i18n"
 import { filterRecents, formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget } from "../lib/recent-open-target"
 import type { LaunchableRecent } from "../lib/remote-project-recents"
+import { recentKey } from "../lib/remote-project-recents"
+import RemoteRecentSession from "./remote-recent-session"
 import { launchableRecents, openRemoteProject } from "../stores/remote-project-open"
 import { openSidecar } from "../stores/sidecar-open"
 import { ensureSidecarsLoaded } from "../stores/sidecars"
@@ -19,12 +21,14 @@ export default function RecentTabsMenu(props: {
 }) {
   const { t } = useI18n()
   const [query, setQuery] = createSignal("")
+  const [connectingRecent, setConnectingRecent] = createSignal<string>()
   const listId = `recent-list-${createUniqueId()}`
   const [index, setIndex] = createSignal(0)
   const [keyboardNavigation, setKeyboardNavigation] = createSignal(false)
   const matches = createMemo(() => filterRecents(launchableRecents(), query()))
   let list: HTMLDivElement | undefined
   createEffect(on(() => props.active, (active) => {
+    setConnectingRecent(undefined)
     if (!active) return
     setQuery("")
     setIndex(0)
@@ -34,12 +38,13 @@ export default function RecentTabsMenu(props: {
   createEffect(on(matches, () => setIndex(0), { defer: true }))
   function open(recent: LaunchableRecent) {
     if (props.isLoading) return
+    if (recent.remote) { setConnectingRecent(recentKey(recent)); return }
     props.onRun?.()
     if (recent.sidecar) return void openSidecar(recent.sidecar.sidecarId)
-    if (recent.remote) return openRemoteProject(recent.remote.profileId, { folder: recent.path })
     props.onSelectFolder(recent.path)
   }
   function navigate(event: KeyboardEvent, fromSearch = false) {
+    if ((event.target as HTMLElement).closest("[data-remote-view-session]")) return
     if (props.isLoading || !matches().length) return
     if (event.key === "ArrowDown" || event.key === "ArrowUp" || (!fromSearch && (event.key === "Home" || event.key === "End"))) {
       event.preventDefault()
@@ -56,9 +61,12 @@ export default function RecentTabsMenu(props: {
     }
   }
   return (
-    <div class="recent-tabs-menu" data-keyboard-active={keyboardNavigation()}
+    <div class="recent-tabs-menu" tabindex="-1" data-keyboard-active={keyboardNavigation()}
       onPointerMove={() => setKeyboardNavigation(false)}
-      onKeyDown={(event) => { if (event.key === "Tab") setKeyboardNavigation(true) }}>
+      onKeyDown={(event) => {
+        if (event.key === "Tab") setKeyboardNavigation(true)
+        if (event.target === event.currentTarget) navigate(event, true)
+      }}>
       <div class="window-toolbar new-instance-launcher-search">
         <Search class="w-4 h-4 icon-muted" aria-hidden="true" />
         <input type="search" class="new-instance-launcher-search-input" aria-controls={listId}
@@ -71,6 +79,7 @@ export default function RecentTabsMenu(props: {
           {(recent, position) => (
             <div class="new-instance-launcher-recent" role="listitem" data-open={recentOpenTarget(recent) ? "true" : undefined}
               data-remote-server={recent.remote?.profileId} data-sidecar={recent.sidecar?.sidecarId}>
+              <Show when={connectingRecent() === recentKey(recent) && recent.remote} fallback={<>
               <button type="button" class="new-instance-launcher-recent-primary" disabled={props.isLoading}
                 aria-label={recentAccessibleName(recent)} title={recentAccessibleName(recent)} data-launcher-index={position()}
                 onFocus={() => setIndex(position())} onClick={() => open(recent)}>
@@ -92,6 +101,11 @@ export default function RecentTabsMenu(props: {
                   onClick={() => { if (!props.isLoading) { props.onRun?.(); joinRecentOpenTarget(recent, props.onSelectExistingInstance) } }}>
                   {t("folderSelection.recent.openBadge")}
                 </button>
+              </Show>
+              </>}>
+                <RemoteRecentSession profileId={recent.remote!.profileId} active={props.active}
+                  onBack={() => { setConnectingRecent(undefined); queueMicrotask(() => list?.querySelector<HTMLButtonElement>(`[data-launcher-index="${position()}"]`)?.focus()) }}
+                  onReady={() => { setConnectingRecent(undefined); openRemoteProject(recent.remote!.profileId, { folder: recent.path }); props.onRun?.() }} />
               </Show>
             </div>
           )}

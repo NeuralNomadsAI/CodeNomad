@@ -21,7 +21,7 @@ function validEntry(value: unknown): value is Entry {
 
 /** Backend-only, mode 0600, beside the profile's config and never inside it. Kept across
  * launches (password or Remote Control device cookie) until removal or a refused credential.
- * Never logged, never returned to a browser or a paired device. */
+ * Passwords stay backend-only. The host-only view-session exchange supplies native cookie storage. */
 export class CodeNomadServerCredentials {
   #entries = new Map<string, Entry>()
 
@@ -33,10 +33,10 @@ export class CodeNomadServerCredentials {
   }
 
   /** The secret, only for the exact origin it was obtained from. */
-  read(serverId: string, origin: string, skipTlsVerify = false): CodeNomadServerSecret | undefined {
+  read(serverId: string, origin: string, skipTlsVerify = false, preserveDisk = false): CodeNomadServerSecret | undefined {
     const entry = this.#entries.get(serverId)
     if (!entry) return undefined
-    if (entry.origin !== origin || (entry.skipTlsVerify ?? false) !== skipTlsVerify) { this.delete(serverId); return undefined }
+    if (entry.origin !== origin || (entry.skipTlsVerify ?? false) !== skipTlsVerify) { if (!preserveDisk) this.delete(serverId); return undefined }
     return { ...entry.secret }
   }
 

@@ -39,6 +39,7 @@ import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
 import { openExternalWithFeedback } from "./open-external"
 import { RemoteRecoveryPages, showRemoteUnavailable } from "./remote-recovery"
 import { RemoteViewRegistry } from "./remote-view"
+import { remoteCookieDetails, validateRemoteCookie, type RemoteSessionCookie } from "./remote-cookie"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -577,10 +578,14 @@ function runPrimary(firstIntent: LaunchIntent) {
     const candidates = [join(process.resourcesPath, "preload/index.js"), join(mainDirname, "../preload/index.js"), join(mainDirname, "../preload/index.cjs"), join(mainDirname, "../../electron/preload/index.cjs"), join(app.getAppPath(), "electron/preload/index.cjs")]
     return candidates.find(existsSync) ?? candidates[0]
   }
-  async function openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }) {
+  async function openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean; cookie?: RemoteSessionCookie }) {
     return remoteWindows.serialize(payload.id, async () => {
       const base = requireHttpUrl(payload.baseUrl, "baseUrl")
       const target = requireHttpUrl(payload.entryUrl ?? payload.baseUrl, "entryUrl")
+      const cookie = payload.cookie === undefined ? undefined : validateRemoteCookie(payload.cookie, base.origin)
+      if (cookie && target.origin !== base.origin) throw new Error("Remote cookie navigation must stay on its server's origin")
+      const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
+      if (cookie) await remoteSession.cookies.set(remoteCookieDetails(cookie))
       const title = `${payload.name} - ${payload.baseUrl}`
       const existing = remoteWindows.reuse(payload.id, payload.proxySessionId)
       if (existing) {
@@ -589,7 +594,6 @@ function runPrimary(firstIntent: LaunchIntent) {
         await navigateRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
         return
       }
-      const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
       const window = new BrowserWindow({
         width: 1400, height: 900, minWidth: MIN_WINDOW_WIDTH, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
         // A launch connection shows the window only once its page has loaded.

@@ -18,7 +18,7 @@ interface CliIPCDependencies {
   resolveLocal(sender: IpcMainInvokeEvent["sender"]): LocalSender | undefined
   resolvePreferences?(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
-  openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }): Promise<void>
+  openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean; cookie?: import("./remote-cookie").RemoteSessionCookie }): Promise<void>
   newWindow(): Promise<unknown>
   /**
    * The retry of the unavailable-server document the host loaded in a remote window, when `token` and
@@ -166,7 +166,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
 
   // Remote project tabs belong to the local window that asks for them.
   ipcMain.handle("remote-view:open", async (event, payload: unknown) => {
-    dependencies.remoteViews.open(local(event).window, validateRemoteViewOpen(payload))
+    await dependencies.remoteViews.open(local(event).window, validateRemoteViewOpen(payload))
   })
   ipcMain.handle("remote-view:update", async (event, payload: unknown) => {
     const request = payload as Partial<RemoteViewUpdateRequest> | null
@@ -241,7 +241,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     anyTrusted(event)
     return { granted: await requestMicrophoneAccess() }
   })
-  ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }) => {
+  ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean; cookie?: import("./remote-cookie").RemoteSessionCookie }) => {
     settings(event)
     if (!payload || typeof payload.id !== "string" || !payload.id.trim() || typeof payload.name !== "string" || typeof payload.baseUrl !== "string"
       || (payload.entryUrl !== undefined && typeof payload.entryUrl !== "string")

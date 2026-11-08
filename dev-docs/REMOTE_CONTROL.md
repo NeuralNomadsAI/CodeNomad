@@ -88,8 +88,8 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
    Direct listeners refuse both pairing routes. Pasting a pairing link into the
    desktop server-add field saves the tunnel-origin profile and asks the local
    backend to redeem the code through the server protocol below. Embedded views
-   retain their own remote-window authentication, independently of backend Browse
-   pairing ([PROJECTS.md](PROJECTS.md#agent-conventions)). Never persist a pairing
+   receive that device's existing cookie through the view-session flow below
+   ([PROJECTS.md](PROJECTS.md#agent-conventions)). Never persist a pairing
    code or retain it for native opening.
 - `--connect-server` opens a saved server or URL at launch through that same
   connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
@@ -134,9 +134,9 @@ metadata, follows the saved TLS policy and endpoint-identity checks, and refuses
 redirects and foreign origins. It verifies `/api/auth/status` reports device
 authentication before persisting the device cookie in private
 `remote-server-credentials.json` (mode `0600`). Protect the configuration directory
-and its platform permissions as credential storage. The local UI receives only
-success; secrets stay out of UI state and logs, and the add field is scrubbed after
-the attempt. Never retain codes for retries.
+and its platform permissions as credential storage. Pairing returns success to
+the local UI, and the add field is scrubbed after the attempt. Never retain codes
+for retries or expose pairing credentials in UI state or logs.
 
 HTTP, HTTPS and the private bridge share the backend's browse authority and private
 credential cache. Admission captures the profile id, exact origin, TLS policy and
@@ -150,15 +150,7 @@ lease, and the last lease closes the connections.
 The credential survives local launches. Forgetting the saved server deletes it;
 revocation clears the rejected credential. To repair tunnel browsing, use Back to
 Browse and paste a fresh pairing link into the add field. Pairing errors name the
-saved server. Home and blank tabs own this named-server browsing flow; the quick
-launcher reaches it through Open another project….
-
-Known authentication limitation: native embedded views and backend browsing use
-independent authentication authorities. A native view can require another sign-in
-or pairing link even after backend browsing succeeds. A separate backend/native
-authentication change is required to unify that flow; keep single-use codes
-scrubbed after redemption. Project selection explicitly labels the separate-window
-fallback for profiles skipping TLS verification and hosts without embedded views.
+saved server. Home and blank tabs own this named-server browsing flow.
 
 Compatibility is capability-based: an endpoint returning 403 (including an older
 browser-Origin rejection), 404 or 405 maps to `pairing_unavailable` and offers
@@ -168,6 +160,32 @@ password access. Invalid, expired or replayed codes map to `pairing_expired`
 (`pairingExpired` in UI translations); 429 maps to `pairing_rate_limited`
 (`pairingRateLimited`). Obtain a fresh link for expired codes and wait before
 retrying a rate-limited attempt.
+
+## Native view sessions
+
+The local backend prepares an origin-bound authentication cookie before the host
+opens an embedded project URL. Password profiles use a fresh, cookie-free login
+with the backend-held password to obtain a dedicated remote session. Never forward
+the stored password to the renderer or native host. Paired profiles reuse the
+existing device cookie, sharing that device's revocation and 30-day idle lifetime.
+Isolating device authentication requires a separate credential mechanism.
+
+The view-session endpoint uses the same admission as backend browsing: a loopback,
+non-ingress request with the trusted local self-Origin guard. Admission captures
+the profile id, exact origin, TLS policy and revocable generation; dispatch and
+return recheck that authority. The outbound login follows the captured TLS policy
+and endpoint-identity checks. Never follow redirects or write credentials during
+a view-session request. The renderer transports the returned cookie ephemerally
+to the native cookie jar, bound to its exact origin, before navigation. Never log
+the cookie or persist it in UI state. Keep the pairing code scrubbed after redemption.
+
+When a remote recent requires credentials, Home, the left Recent tabs panel of a
+blank tab and the `+` menu show the form in place before creating a project tab.
+Restored remote tabs show it inside the tab. The username starts as `codenomad`;
+focus starts on the password and failures remain inline for retry. Revoked tunnel
+devices use the existing fresh-link pairing repair. Project selection explicitly
+labels the separate-window fallback for profiles skipping TLS verification and
+hosts without embedded views.
 
 ## Validation
 

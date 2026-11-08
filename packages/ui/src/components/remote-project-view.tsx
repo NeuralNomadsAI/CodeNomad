@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, onCleanup, onMount, type Component } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { embeddedProjectUrl, readEmbeddedProjectReport } from "../lib/embed-mode"
 import { localOverlayOpen } from "../lib/native/browser"
@@ -6,6 +6,9 @@ import { closeRemoteView, onRemoteViewUpdated, openRemoteView, updateRemoteView 
 import { getLogger } from "../lib/logger"
 import { recordRemoteProjectRecent, remoteServers } from "../stores/preferences"
 import { patchRemoteProjectTab, type RemoteProjectTabRecord } from "../stores/remote-project-tabs"
+import RemoteViewSession from "./remote-view-session"
+import type { RemoteViewOpenPayload } from "../lib/native/remote-view"
+import type { RemoteServerProfile } from "../../../server/src/api-types"
 
 const log = getLogger("actions")
 
@@ -22,7 +25,20 @@ interface RemoteProjectViewProps {
  */
 export const RemoteProjectView: Component<RemoteProjectViewProps> = (props) => {
   const { t } = useI18n()
+  const profile = createMemo(() => remoteServers().find((entry) => entry.id === props.tab.profileId), undefined,
+    { equals: (left, right) => JSON.stringify(left) === JSON.stringify(right) })
+  return <Show when={profile()} keyed
+    fallback={<p role="alert">{t("folderSelection.remoteProject.serverMissing")}</p>}>
+    {(profile) => <RemoteProjectContent {...props} profile={profile} />}
+  </Show>
+}
+
+const RemoteProjectContent: Component<RemoteProjectViewProps & { profile: RemoteServerProfile }> = (props) => {
+  const { t } = useI18n()
   const [error, setError] = createSignal<string>()
+  const [sessionNeeded, setSessionNeeded] = createSignal(false)
+  let acceptSession: (cookie: RemoteViewOpenPayload["cookie"]) => void = () => {}
+  let retry = () => {}
   let element!: HTMLDivElement
 
   onMount(() => {
@@ -35,11 +51,11 @@ export const RemoteProjectView: Component<RemoteProjectViewProps> = (props) => {
     let lastBounds = ""
     let unlisten = () => {}
 
-    const fail = (cause: unknown) => {
+    const fail = (cause?: unknown) => {
       failed = true
       pending = false
-      log.warn("Remote project view failed", { profileId, cause })
-      if (!disposed) setError(cause instanceof Error ? cause.message : String(cause))
+      log.warn("Remote project view failed", { profileId, cause: cause instanceof Error ? cause.message : String(cause) })
+      if (!disposed) setError(t("remoteBrowse.unreachable"))
     }
 
     const visibleRect = (): DOMRect | null => {
@@ -54,33 +70,37 @@ export const RemoteProjectView: Component<RemoteProjectViewProps> = (props) => {
       const key = rect ? [rect.x, rect.y, rect.width, rect.height].map(Math.round).join(",") : ""
       if (!opened) {
         if (!rect) return
-        const profile = remoteServers().find((entry) => entry.id === profileId)
-        if (!profile) return fail(new Error(t("folderSelection.remoteProject.serverMissing")))
+        const profile = props.profile
         pending = true
         const origin = new URL(profile.baseUrl).origin
-        void onRemoteViewUpdated((update) => {
-          if (update.viewId !== token) return
-          const report = readEmbeddedProjectReport(update.url, update.title, origin)
-          if (!report) return
-          patchRemoteProjectTab(token, report)
-          recordRemoteProjectRecent({ profileId, folder: report.folder, projectName: report.title })
-        }).then(async (stop) => {
-          if (disposed) return stop()
-          unlisten = stop
-          await openRemoteView({
-            viewId: token,
-            profileId,
-            baseUrl: profile.baseUrl,
-            url: props.tab.entryUrl ?? embeddedProjectUrl(profile.baseUrl, props.tab.folder),
-          }, rect)
-          opened = true
-          lastBounds = key
-          pending = false
-          // A pairing code is single-use: a later reopen loads the project entry.
-          patchRemoteProjectTab(token, { entryUrl: undefined })
-          if (disposed) void closeRemoteView(token).catch(() => {})
-          else sync()
-        }).catch(fail)
+        acceptSession = (cookie) => {
+          unlisten()
+          void onRemoteViewUpdated((update) => {
+            if (disposed || update.viewId !== token) return
+            const report = readEmbeddedProjectReport(update.url, update.title, origin)
+            if (!report) return
+            patchRemoteProjectTab(token, report)
+            recordRemoteProjectRecent({ profileId, folder: report.folder, projectName: report.title })
+          }).then(async (stop) => {
+            if (disposed) return stop()
+            unlisten = stop
+            await openRemoteView({
+              viewId: token,
+              profileId,
+              baseUrl: profile.baseUrl,
+              url: embeddedProjectUrl(profile.baseUrl, props.tab.folder),
+              cookie,
+            }, rect)
+            opened = true
+            lastBounds = key
+            pending = false
+            setSessionNeeded(false)
+            patchRemoteProjectTab(token, { entryUrl: undefined })
+            if (disposed) void closeRemoteView(token).catch(() => {})
+            else sync()
+          }).catch(fail)
+        }
+        setSessionNeeded(true)
         return
       }
       if (key === lastBounds) return
@@ -91,6 +111,8 @@ export const RemoteProjectView: Component<RemoteProjectViewProps> = (props) => {
         sync()
       }).catch(fail)
     }
+
+    retry = () => { failed = false; pending = false; lastBounds = ""; setError(undefined); sync() }
 
     const resizeObserver = new ResizeObserver(sync)
     const overlayObserver = new MutationObserver(sync)
@@ -115,11 +137,14 @@ export const RemoteProjectView: Component<RemoteProjectViewProps> = (props) => {
 
   return (
     <div ref={element} class="flex-1 min-h-0 min-w-0 flex items-center justify-center bg-surface-canvas" data-remote-project-view={props.tab.token}>
+      <Show when={sessionNeeded() && !error()}>
+        <RemoteViewSession profile={props.profile} active={props.active} onReady={(cookie) => acceptSession(cookie)} />
+      </Show>
       <Show when={error()}>
         {(message) => (
-          <p class="text-sm text-secondary p-4 break-words" role="alert">
+          <div class="text-sm text-secondary p-4 break-words"><p role="alert">
             {t("folderSelection.servers.errorTitle")}: {message()}
-          </p>
+          </p><button type="button" class="browse-menu-row" onClick={() => retry()}>{t("filesystemBrowser.actions.retry")}</button></div>
         )}
       </Show>
     </div>

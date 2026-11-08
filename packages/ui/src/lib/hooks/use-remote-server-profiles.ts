@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
-import { openRemoteServerWindow, type RemoteWindowOpenOptions } from "../native/remote-window"
+import { openRemoteServerWindow, type RemoteWindowOpenOptions, type RemoteWindowOpenPayload } from "../native/remote-window"
 import { splitPairingLink } from "../remote-pairing-link"
 import { codeNomadLinkName } from "../codenomad-link"
 import { canOpenRemoteWindows, isTauriHost } from "../runtime-env"
@@ -87,7 +87,15 @@ export function useRemoteServerProfiles() {
           bootstrap.searchParams.set("returnTo", `${entry.pathname}${entry.search}`)
           target = bootstrap.toString()
         }
-        await openRemoteServerWindow(profile, target, proxySession?.sessionId, windowOptions)
+        let cookie: RemoteWindowOpenPayload["cookie"]
+        if (!proxySession) {
+          try { ({ cookie } = await serverApi.remoteViewSession(profile.id)) }
+          catch (error) {
+            // A separate window can still sign in interactively without a saved backend credential.
+            if (!(error instanceof Error && ["needs_credentials", "auth", "pairing_unavailable"].includes(error.message))) throw error
+          }
+        }
+        await openRemoteServerWindow(profile, target, proxySession?.sessionId, windowOptions, cookie)
       } catch (error) {
         if (proxySession) void serverApi.deleteRemoteProxySession(proxySession.sessionId).catch(() => {})
         throw error

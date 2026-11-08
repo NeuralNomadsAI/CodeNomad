@@ -9,6 +9,7 @@ export const recentFolders = [
   ...Array.from({ length: 12 }, (_, i) => ({ path: `D:/archive/project-${i}`, lastAccessed: now - (8 + i) * 86_400_000 })),
 ]
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
+serverApi.patchConfigOwner = async (_owner, patch) => patch as any
 const state = { recentFolders, remoteServers: [{ id: "saved-server", name: "Saved remote", baseUrl: "https://remote.example.test", skipTlsVerify: false, createdAt: now, updatedAt: now }] }
 serverApi.fetchStateOwner = async () => state as any
 // Like the server, a patch merges into the owner's state; `holdStatePatches` leaves them pending.

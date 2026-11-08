@@ -4,6 +4,7 @@ import { showConfirmDialog } from "../../stores/alerts"
 import { tGlobal } from "../i18n"
 import { canOpenRemoteWindows, isElectronHost, isTauriHost } from "../runtime-env"
 import { InteractionRequiredError } from "../desktop-connection-queue"
+import type { RemoteViewOpenPayload } from "./remote-view"
 
 export interface RemoteWindowOpenPayload {
   id: string
@@ -14,6 +15,7 @@ export interface RemoteWindowOpenPayload {
   skipTlsVerify: boolean
   /** Electron: a failed first page load rejects (and closes the new window) instead of showing the loading screen. */
   requireLoad?: boolean
+  cookie?: RemoteViewOpenPayload["cookie"]
 }
 
 /** `interactive: false` refuses to prompt; `requireLoad` makes a failed first page load an error. */
@@ -27,6 +29,7 @@ export async function openRemoteServerWindow(
   entryUrl?: string,
   proxySessionId?: string,
   options: RemoteWindowOpenOptions = {},
+  cookie?: RemoteViewOpenPayload["cookie"],
 ): Promise<void> {
   if (!canOpenRemoteWindows()) {
     throw new Error("Remote server windows can only be opened from a local desktop window")
@@ -40,6 +43,9 @@ export async function openRemoteServerWindow(
     proxySessionId,
     skipTlsVerify: profile.skipTlsVerify,
   }
+  // Proxy windows use a different origin and retain their own sign-in flow.
+  if (cookie && !proxySessionId && cookie.origin === new URL(profile.baseUrl).origin
+    && cookie.origin === new URL(entryUrl ?? profile.baseUrl).origin) payload.cookie = cookie
 
   if (isElectronHost()) {
     const api = (window as Window & { electronAPI?: ElectronAPI }).electronAPI

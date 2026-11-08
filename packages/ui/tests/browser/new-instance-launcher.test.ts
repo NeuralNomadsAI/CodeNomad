@@ -18,7 +18,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function prepare(width = 1100, home = false) {
+async function prepare(width = 1100, home: boolean | 'blank' = false) {
   const page = await browser.newPage({ viewport: { width, height: 760 }, locale: "en-US" })
   const errors: string[] = []
   const remoteRequests: string[] = []
@@ -32,7 +32,7 @@ async function prepare(width = 1100, home = false) {
     window.__CODENOMAD_WINDOW_CONTEXT__ = "local"
   })
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-  await page.goto(home ? `${url}?home` : url)
+  await page.goto(home ? `${url}?${home === 'blank' ? 'blank' : 'home'}` : url)
   await page.waitForFunction(() => Boolean((window as any).launcherFixture))
   return { page, errors, remoteRequests, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }
 }
@@ -41,17 +41,66 @@ const CREATE = ["Clone Git Repo", "New temporary tab", "New SideCar"]
 const plus = (page: Page) => page.locator(".new-instance-button")
 const launcher = (page: Page) => page.locator(".new-instance-launcher")
 const options = (page: Page) => launcher(page).locator(".new-instance-launcher-recent-primary")
-// Wait for the popup's own focus lifecycle before typing.
+// Opening focuses the menu container; search is an explicit user choice.
 const openedWithFocus = async (page: Page) => {
   await launcher(page).waitFor()
   try {
-    await page.waitForFunction(() => document.activeElement?.classList.contains("new-instance-launcher-search-input"))
+    await page.waitForFunction(() => document.activeElement?.classList.contains("recent-tabs-menu"))
+    assert.equal(await launcher(page).getByRole('searchbox').evaluate(node => node === document.activeElement), false)
   } catch (error) {
     const state = await page.evaluate(() => ({ focus: document.activeElement?.outerHTML,
       search: document.querySelector(".new-instance-launcher-search-input")?.outerHTML }))
     throw new Error(`Launcher focus failed: ${JSON.stringify(state)}`, { cause: error })
   }
 }
+
+test('blank creation stays above the columns, keeps its actions, and shares compact new-session branding', async () => {
+  const { page, errors, calls } = await prepare(1100, 'blank')
+  try {
+    const root = page.locator('.folder-home-root--blank')
+    const actions = root.locator('.folder-home-blank-actions')
+    await actions.getByRole('button', { name: 'Temporary', exact: true }).waitFor()
+    assert.deepEqual(await actions.getByRole('button').allTextContents(), ['Temporary', 'Clone'])
+    const brand = (await root.locator('.folder-home-hero').boundingBox())!
+    const controls = (await actions.boundingBox())!
+    const columns = (await root.locator('.folder-home-main').boundingBox())!
+    assert.ok(brand.y + brand.height <= controls.y && controls.y + controls.height < columns.y)
+    const styles = await page.evaluate(() => ['.folder-home-root--blank', '.session-center-column'].map(selector => {
+        const logo = getComputedStyle(document.querySelector(`${selector} .empty-state-logo`)!)
+        const title = getComputedStyle(document.querySelector(`${selector} .empty-state-brand-title`)!)
+        return { height: logo.height, fontSize: title.fontSize, lineHeight: title.lineHeight, weight: title.fontWeight }
+    }))
+    assert.deepEqual(styles[0], styles[1], 'same real new-session component classes and shared sizing rules')
+    assert.equal(await actions.getByRole('button', { name: 'Clone', exact: true }).getAttribute('title'), 'Clone Git Repo')
+    assert.equal(await actions.locator('svg').count(), 2)
+    assert.equal(await actions.locator('button').first().evaluate(node => getComputedStyle(node).borderRadius), '0px')
+    await actions.getByRole('button', { name: 'Temporary', exact: true }).click()
+    assert.deepEqual(await calls(), ['temporary'])
+    await actions.getByRole('button', { name: 'Clone', exact: true }).click()
+    await page.getByRole('dialog').waitFor()
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click()
+    await page.evaluate(() => (window as any).launcherFixture.setLoading(true))
+    assert.equal(await actions.locator('button:disabled').count(), 2)
+    await page.evaluate(async () => { (window as any).launcherFixture.setLoading(false); await (window as any).launcherFixture.setLocale('fr') })
+    await actions.getByRole('button', { name: 'Temporaire', exact: true }).waitFor()
+    assert.deepEqual(await actions.getByRole('button').allTextContents(), ['Temporaire', 'Cloner'])
+    if (process.env.CODENOMAD_BLANK_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_BLANK_CAPTURE })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test('opening the context menu focuses its container, not search, and arrows and Escape remain available', async () => {
+  const { page, errors } = await prepare()
+  try {
+    await plus(page).click({ button: 'right' })
+    await openedWithFocus(page)
+    await page.keyboard.press('ArrowDown')
+    assert.equal(await options(page).first().evaluate(node => document.activeElement === node), true)
+    await page.keyboard.press('Escape')
+    await launcher(page).waitFor({ state: 'detached' })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
 
 test("a click keeps the full home page while a long press opens the launcher", async () => {
   const { page, errors, remoteRequests, calls } = await prepare()
@@ -79,6 +128,15 @@ test("a click keeps the full home page while a long press opens the launcher", a
     assert.equal(await launcher(page).getByRole("button", { name: "Open another project…", exact: true }).count(), 0)
     assert.equal(await launcher(page).getByRole("button", { name: /^(Recent|Browse|Clone Git Repo)$/ }).count(), 0)
     assert.equal(await launcher(page).getByRole("searchbox").getAttribute("placeholder"), "Search recent tabs…")
+    const subtleBorder = await launcher(page).evaluate(node => {
+      const probe = document.createElement('span')
+      probe.style.borderBottom = '1px solid var(--border-row)'
+      node.append(probe)
+      const color = getComputedStyle(probe).borderBottomColor
+      probe.remove()
+      return color
+    })
+    assert.deepEqual(await launcher(page).locator('.window-header, .window-toolbar, .new-instance-launcher-recent').evaluateAll(nodes => nodes.map(node => getComputedStyle(node).borderBottomColor)), Array(17).fill(subtleBorder))
     assert.deepEqual(remoteRequests, [], "saved profiles do not trigger launcher remote reads or probes")
     if (process.env.CODENOMAD_LAUNCHER_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_CAPTURE })
     assert.deepEqual(errors, [])
@@ -90,6 +148,7 @@ test("typing and Enter open a new occurrence; the separate Open action joins the
   try {
     await plus(page).click({ button: "right" })
     await openedWithFocus(page)
+    await launcher(page).getByRole('searchbox').focus()
     await page.keyboard.type("blend")
     await page.waitForFunction(() => document.querySelectorAll(".new-instance-launcher-recent-primary").length === 1)
     await page.keyboard.press("Enter")
@@ -99,6 +158,7 @@ test("typing and Enter open a new occurrence; the separate Open action joins the
     await plus(page).focus()
     await page.keyboard.press("Alt+ArrowDown")
     await openedWithFocus(page)
+    await launcher(page).getByRole('searchbox').focus()
     await page.keyboard.type("zzz")
     await launcher(page).getByText("No project matches.").waitFor()
     await page.keyboard.press("Control+A")
@@ -223,6 +283,7 @@ test("dismissal returns focus, aborted long presses keep keyboard activation, an
 
     await page.keyboard.press("Alt+ArrowDown")
     await openedWithFocus(page)
+    await launcher(page).getByRole('searchbox').focus()
     await page.keyboard.type("project")
     await page.waitForFunction(() => document.querySelectorAll(".new-instance-launcher-recent-primary").length === 12)
     const visible = await page.evaluate(() => {
@@ -306,11 +367,13 @@ test("Home owns browsing and creation; quick recents contain neither", async () 
     const actions = page.locator(".folder-home-creation-actions")
     assert.deepEqual(await actions.getByRole("button").allTextContents(), CREATE)
 
-    // Right: two tabs, Recent tabs first, with the launcher's search.
+    // Right: two tabs, Recent tabs first; search stays in the quick launcher.
     const tabList = page.getByRole("tablist")
     assert.deepEqual(await tabList.getByRole("tab").allTextContents(), ["Recent tabs15 items", "Browse2 items"])
     const recentTab = tabList.getByRole("tab", { name: "Recent tabs" })
     assert.equal(await recentTab.getAttribute("aria-selected"), "true")
+    assert.equal(await recentTab.evaluate(node => (node as HTMLElement).style.backgroundColor), 'var(--surface-secondary)')
+    assert.equal(await tabList.getByRole('tab', { name: 'Browse', exact: true }).evaluate(node => (node as HTMLElement).style.backgroundColor), 'var(--surface-control)')
     const selectedBackground = await recentTab.evaluate(node => getComputedStyle(node).backgroundColor)
     const unselectedBackground = await tabList.getByRole('tab', { name: 'Browse', exact: true }).evaluate(node => getComputedStyle(node).backgroundColor)
     assert.notEqual(selectedBackground, unselectedBackground)
@@ -318,10 +381,8 @@ test("Home owns browsing and creation; quick recents contain neither", async () 
     assert.notEqual(await recentTab.evaluate(node => getComputedStyle(node).backgroundImage), 'none')
     await page.mouse.move(5, 700)
     assert.equal(await recentTab.evaluate(node => getComputedStyle(node).backgroundImage), 'none')
-    const search = page.getByRole("searchbox", { name: "Search recent projects" })
-    await search.fill("blend")
-    await page.waitForFunction(() => document.querySelectorAll(".folder-home-recent-item").length === 1)
-    await search.fill("")
+    assert.equal(await page.getByRole('searchbox').count(), 0)
+    assert.equal(await page.locator('.folder-home-recent-item').count(), 15)
     // Arrow keys move between the tabs; Browse is a list without a disclosure.
     await recentTab.focus()
     await page.keyboard.press("ArrowRight")
@@ -387,8 +448,8 @@ test("recent hover clears on pointer exit and keyboard highlighting is limited t
     assert.equal(await background(), idle)
     assert.equal(await row.locator('.folder-home-recent-primary-action').evaluate(node => getComputedStyle(node).boxShadow), 'none')
     assert.equal(await row.evaluate(node => node.classList.contains('panel-list-item-highlight')), false)
-    await home.page.getByRole('searchbox').focus()
-    await home.page.keyboard.press('ArrowDown')
+    await row.locator('.folder-home-recent-primary-action').focus()
+    await home.page.keyboard.press('Home')
     assert.equal(await row.evaluate(node => node.classList.contains('panel-list-item-highlight')), true)
     await row.locator('.folder-home-recent-primary-action').hover({ position: { x: 10, y: 10 } })
     await home.page.mouse.move(5, 700)

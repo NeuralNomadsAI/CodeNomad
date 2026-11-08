@@ -9,6 +9,7 @@ import {
   validateRemoteViewBounds,
   validateRemoteViewOpen,
 } from "./remote-view"
+import { remoteCookieDetails, validateRemoteCookie } from "./remote-cookie"
 
 const origin = "https://box.example"
 const entry = `${origin}/?codenomadEmbed=project&folder=%2Fsrv%2Fapp`
@@ -42,6 +43,9 @@ test("open requests carry a view id, integer bounds and an address on the server
 })
 
 class FakeContents extends EventEmitter {
+  cookieWrites: unknown[] = []
+  setCookie: (cookie: unknown) => Promise<void> = async (cookie) => { this.cookieWrites.push(cookie) }
+  session = { cookies: { set: (cookie: unknown) => this.setCookie(cookie) } }
   url = ""
   closed = false
   loaded: string[] = []
@@ -54,7 +58,7 @@ class FakeContents extends EventEmitter {
   close() { this.closed = true }
 }
 
-function harness() {
+function harness(configureContents: (contents: FakeContents, profileId: string) => void = () => {}) {
   const views: Array<{ webContents: FakeContents; bounds?: unknown; visible: boolean; setBounds(b: unknown): void; setVisible(v: boolean): void }> = []
   const help: string[] = []
   const sent: unknown[][] = []
@@ -66,8 +70,9 @@ function harness() {
     contentView: { addChildView: (view: unknown) => children.add(view), removeChildView: (view: unknown) => children.delete(view) },
   }
   const registry = new RemoteViewRegistry({
-    createView: () => {
+    createView: (profileId) => {
       const view = { webContents: new FakeContents(), visible: true, setBounds(b: unknown) { this.bounds = b }, setVisible(v: boolean) { this.visible = v } } as (typeof views)[number]
+      configureContents(view.webContents, profileId)
       views.push(view)
       return view as never
     },
@@ -133,4 +138,64 @@ test("only the committed main frame of a view on its server's origin is a remote
   assert.equal(h.registry.resolve({ sender: contents as never, senderFrame: contents.mainFrame as never }), undefined)
   h.registry.close(h.owner, "tab-1")
   assert.equal(contents.closed, true)
+})
+
+const cookie = { origin, name: "__Host-session", value: "abc_123", path: "/", secure: true, httpOnly: true, sameSite: "lax" as const, expires: 2000000000 }
+
+test("remote cookies are origin-bound and reject unsafe attributes", () => {
+  const request = { viewId: "tab-1", profileId: "box", baseUrl: origin, url: entry, bounds: { x: 0, y: 0, width: 10, height: 10 }, cookie }
+  assert.deepEqual(validateRemoteViewOpen(request).cookie, cookie)
+  assert.deepEqual(remoteCookieDetails(cookie), { url: origin, name: cookie.name, value: cookie.value, path: "/", secure: true, httpOnly: true, sameSite: "lax", expirationDate: 2000000000 })
+  for (const change of [
+    { origin: "https://evil.example" }, { origin: `${origin}/` }, { name: "bad;name" },
+    { value: "x\r\nSet-Cookie: y" }, { value: "x;y" }, { path: "/;Domain=evil.example" },
+    { path: "relative" }, { path: "/other" }, { secure: false }, { httpOnly: "true" },
+    { sameSite: "invalid" }, { domain: "evil.example" }, { expires: -1 }, { expires: NaN }, { expires: Infinity },
+    { expires: 0.5 }, { expires: 253402300800 },
+  ]) assert.throws(() => validateRemoteViewOpen({ ...request, cookie: { ...cookie, ...change } }), /cookie/)
+  assert.throws(() => validateRemoteCookie({ ...cookie, origin: "http://box.example" }, "http://box.example"), /cookie/)
+  assert.throws(() => validateRemoteCookie({ ...cookie, name: "session", secure: false, sameSite: "none" }, origin), /cookie/)
+  assert.equal(remoteCookieDetails({ ...cookie, sameSite: "none", expires: undefined }).sameSite, "no_restriction")
+  assert.equal(remoteCookieDetails({ ...cookie, expires: undefined }).expirationDate, undefined)
+})
+
+test("the view's own session receives its cookie before any navigation", async () => {
+  // Hold the session write while opening: no request may reach the remote yet.
+  let release!: () => void
+  const h = harness((contents, profileId) => {
+    assert.equal(profileId, "box")
+    contents.setCookie = async (value) => {
+      contents.cookieWrites.push(value)
+      await new Promise<void>((resolve) => { release = resolve })
+    }
+  })
+  const opening = h.registry.open(h.owner, { viewId: "tab-1", profileId: "box", baseUrl: origin, url: entry, bounds: { x: 0, y: 0, width: 10, height: 10 }, cookie })
+  const contents = h.views[0]!.webContents
+  assert.deepEqual(contents.cookieWrites, [remoteCookieDetails(cookie)])
+  assert.deepEqual(contents.loaded, [])
+  release()
+  await opening
+  assert.deepEqual(contents.loaded, [entry])
+})
+
+test("cookie failure closes the view and never loads an unauthenticated page", async () => {
+  const h = harness((contents) => {
+    contents.setCookie = async () => { throw new Error("cookie rejected") }
+  })
+  await assert.rejects(h.registry.open(h.owner, { viewId: "tab-1", profileId: "box", baseUrl: origin, url: entry, bounds: { x: 0, y: 0, width: 10, height: 10 }, cookie }), /cookie rejected/)
+  assert.equal(h.views[0]!.webContents.closed, true)
+  assert.deepEqual(h.views[0]!.webContents.loaded, [])
+  assert.equal(h.children.size, 0)
+})
+
+test("closing a view while its cookie is being installed prevents late navigation", async () => {
+  let release!: () => void
+  const h = harness((contents) => {
+    contents.setCookie = () => new Promise<void>((resolve) => { release = resolve })
+  })
+  const opening = h.registry.open(h.owner, { viewId: "tab-1", profileId: "box", baseUrl: origin, url: entry, bounds: { x: 0, y: 0, width: 10, height: 10 }, cookie })
+  h.registry.close(h.owner, "tab-1")
+  release()
+  await opening
+  assert.deepEqual(h.views[0]!.webContents.loaded, [])
 })

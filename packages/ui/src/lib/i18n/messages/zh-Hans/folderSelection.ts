@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "newTab.temporary": "临时",
   "remoteBrowse.connectionRequired": "需要登录",
   "remoteBrowse.openSeparateWindow": "在单独窗口中打开",
   "folderSelection.recent.actions": "项目操作",

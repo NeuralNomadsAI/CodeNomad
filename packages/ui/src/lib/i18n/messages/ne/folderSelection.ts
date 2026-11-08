@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "newTab.temporary": "अस्थायी",
   "remoteBrowse.connectionRequired": "साइन इन आवश्यक छ",
   "remoteBrowse.openSeparateWindow": "छुट्टै विन्डोमा खोल्नुहोस्",
   "folderSelection.recent.actions": "परियोजनाका कार्यहरू",

@@ -13,6 +13,16 @@ export interface RemoteViewOpenPayload {
   profileId: string
   baseUrl: string
   url: string
+  cookie?: {
+    origin: string
+    name: string
+    value: string
+    path: string
+    secure: boolean
+    httpOnly: boolean
+    sameSite: "lax" | "strict" | "none"
+    expires?: number
+  }
 }
 
 export interface RemoteViewUpdate {

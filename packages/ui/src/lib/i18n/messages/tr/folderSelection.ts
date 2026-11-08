@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "newTab.temporary": "Geçici",
   "remoteBrowse.connectionRequired": "Oturum açılması gerekiyor",
   "remoteBrowse.openSeparateWindow": "Ayrı bir pencerede aç",
   "folderSelection.recent.actions": "Proje işlemleri",

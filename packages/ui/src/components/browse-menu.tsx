@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onMount, type JSX } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { Globe, Laptop, Server } from "lucide-solid"
 import type { RemoteServerProfile, SideCar } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -18,9 +18,11 @@ import type { LaunchableRecent } from "../lib/remote-project-recents"
 
 interface BrowseMenuProps {
   isLoading: boolean
+  active?: boolean
+  onSourceChange?: (source: { profile: RemoteServerProfile; recents: LaunchableRecent[]; available: boolean } | undefined) => void
   /** Browses this computer's folders (native dialog or folder browser). */
   onBrowseLocal: () => void
-  footer?: JSX.Element
+  pinAddField?: boolean
 }
 
 /** Choices only: this computer, available saved servers and configured SideCars (the add field is an action). */
@@ -37,7 +39,16 @@ export default function BrowseMenu(props: BrowseMenuProps) {
   const { remoteServers, openServer } = useRemoteServerProfiles()
   const [selectedServer, setSelectedServer] = createSignal<RemoteServerProfile>()
   const [pairingFailures, setPairingFailures] = createSignal<string[]>([])
-  createEffect(() => { if (selectedServer() && !remoteServers().some(profile => profile.id === selectedServer()!.id)) setSelectedServer(undefined) })
+  createEffect(() => {
+    const selected = selectedServer()
+    if (selected && !remoteServers().some(profile => profile.id === selected.id && profile.name === selected.name
+      && profile.baseUrl === selected.baseUrl && profile.skipTlsVerify === selected.skipTlsVerify)) selectServer(undefined)
+  })
+  onCleanup(() => props.onSourceChange?.(undefined))
+  function selectServer(profile: RemoteServerProfile | undefined) {
+    props.onSourceChange?.(profile ? { profile, recents: [], available: false } : undefined)
+    setSelectedServer(profile)
+  }
   let bodyRef: HTMLDivElement | undefined
 
   onMount(() => void ensureSidecarsLoaded())
@@ -71,8 +82,8 @@ export default function BrowseMenu(props: BrowseMenuProps) {
 
   function backToRoot() {
     const id = selectedServer()?.id
-    setSelectedServer(undefined)
-    queueMicrotask(() => bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id ?? "")}"]`)?.focus())
+    selectServer(undefined)
+    queueMicrotask(() => { if (props.active !== false) bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id ?? "")}"]`)?.focus() })
   }
 
   const sidecarRunning = (sidecar: SideCar) => sidecar.status === "running"
@@ -81,18 +92,19 @@ export default function BrowseMenu(props: BrowseMenuProps) {
       onPairingFailure={(id) => setPairingFailures(ids => ids.includes(id) ? ids : [...ids, id])}
       onAdded={(id, mayFocus) => {
         setPairingFailures(ids => ids.filter(value => value !== id))
-        queueMicrotask(() => { if (mayFocus?.() ?? true) bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id)}"]`)?.focus() })
+        queueMicrotask(() => { if (props.active !== false && (mayFocus?.() ?? true)) bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id)}"]`)?.focus() })
       }} />
   </Show>
 
   return (
-    <div class="browse-menu" classList={{ "browse-menu--footer": Boolean(props.footer) }} ref={bodyRef} onKeyDown={handleKeyDown}>
+    <div class="browse-menu" classList={{ "browse-menu--footer": props.pinAddField }} ref={bodyRef} onKeyDown={handleKeyDown}>
         <div class="browse-menu-body" role="group" aria-label={t("folderSelection.browseMenu.title")}>
-          <Show when={selectedServer()}>{(profile) => <RemoteServerBrowser profile={profile()} onBack={backToRoot}
-            onConnected={() => setPairingFailures(ids => ids.filter(id => id !== profile().id))}
+          <Show when={selectedServer()} keyed>{(profile) => <RemoteServerBrowser profile={profile} active={props.active} onBack={backToRoot}
+            onRecents={(recents, available) => { if (selectedServer() === profile) props.onSourceChange?.({ profile, recents, available }) }}
+            onConnected={() => setPairingFailures(ids => ids.filter(id => id !== profile.id))}
             onSelect={(folder) => run(() => {
-              if (opensRemoteProjectTab(profile())) openRemoteProject(profile().id, { folder })
-              else openServer(profile(), embeddedProjectUrl(profile().baseUrl, folder))
+              if (opensRemoteProjectTab(profile)) openRemoteProject(profile.id, { folder })
+              else openServer(profile, embeddedProjectUrl(profile.baseUrl, folder))
             })} />}</Show>
           <Show when={!selectedServer()}>
           <button type="button" class="browse-menu-row" data-browse-nav disabled={props.isLoading}
@@ -104,7 +116,7 @@ export default function BrowseMenu(props: BrowseMenuProps) {
           <For each={servers()}>
             {(profile) => (
               <button type="button" class="browse-menu-row" data-browse-nav data-remote-server={profile.id}
-                disabled={props.isLoading} title={profile.baseUrl} onClick={() => setSelectedServer(profile)}
+                disabled={props.isLoading} title={profile.baseUrl} onClick={() => selectServer(profile)}
                 aria-label={t("folderSelection.remoteProject.openProject", { name: displayName(profile) })}>
                 <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
                 <bdi class="browse-menu-name" dir="auto">{displayName(profile)}</bdi>
@@ -134,11 +146,11 @@ export default function BrowseMenu(props: BrowseMenuProps) {
               </div>
             }}
           </For>
-          <Show when={!props.footer}><AddField /></Show>
+          <Show when={!props.pinAddField}><AddField /></Show>
           </Show>
         </div>
-        <Show when={props.footer}>
-          <div class="browse-menu-footer"><AddField />{props.footer}</div>
+        <Show when={props.pinAddField}>
+          <div class="browse-menu-footer"><AddField /></div>
         </Show>
     </div>
   )

@@ -1,5 +1,6 @@
 import type { BrowserWindow, IpcMainInvokeEvent, WebContents, WebContentsView } from "electron"
 import { requireHttpUrl } from "./navigation-security"
+import { remoteCookieDetails, validateRemoteCookie, type RemoteSessionCookie } from "./remote-cookie"
 
 /**
  * Remote CodeNomad project tabs: a WebContentsView per tab, inside the local
@@ -19,6 +20,7 @@ export interface RemoteViewOpenRequest {
   baseUrl: string
   url: string
   bounds: RemoteViewBounds
+  cookie?: RemoteSessionCookie
 }
 
 export interface RemoteViewUpdateRequest {
@@ -60,6 +62,7 @@ export function validateRemoteViewOpen(value: unknown): RemoteViewOpenRequest {
     baseUrl: base.origin,
     url: target.toString(),
     bounds: validateRemoteViewBounds(request.bounds),
+    ...(request.cookie === undefined ? {} : { cookie: validateRemoteCookie(request.cookie, base.origin) }),
   }
 }
 
@@ -132,7 +135,8 @@ export class RemoteViewRegistry {
     return [...this.records.values()].some((record) => record.view.webContents === contents)
   }
 
-  open(owner: BrowserWindow, request: RemoteViewOpenRequest): void {
+  async open(owner: BrowserWindow, request: RemoteViewOpenRequest): Promise<void> {
+    request = validateRemoteViewOpen(request)
     const key = this.key(owner, request.viewId)
     this.close(owner, request.viewId)
     const view = this.dependencies.createView(request.profileId)
@@ -163,7 +167,14 @@ export class RemoteViewRegistry {
     })
     owner.contentView.addChildView(view)
     this.place(record, request.bounds)
-    void contents.loadURL(request.url).catch((error) => console.warn("[electron] failed to load remote view", error))
+    try {
+      if (request.cookie) await contents.session.cookies.set(remoteCookieDetails(request.cookie))
+      if (this.records.get(key) !== record || contents.isDestroyed()) return
+      await contents.loadURL(request.url)
+    } catch (error) {
+      if (this.records.get(key) === record) this.close(owner, request.viewId)
+      throw error
+    }
   }
 
   update(owner: BrowserWindow, request: RemoteViewUpdateRequest): void {

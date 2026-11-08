@@ -8,7 +8,7 @@ export function registerRemoteServerBrowseRoutes(app: FastifyInstance, deps: {
   getSelfOrigins(): Set<string>
 }) {
   // This guard is deliberately stricter than CORS and runs before body parsing or secret/network access.
-  for (const action of ["browse", "connect", "forget"] as const) {
+  for (const action of ["browse", "connect", "forget", "view-session"] as const) {
     app.post<{ Params: { id: string } }>(`/api/remote-servers/:id/${action}`, {
       bodyLimit: 24 * 1024,
       onRequest: async (request, reply) => {
@@ -23,6 +23,7 @@ export function registerRemoteServerBrowseRoutes(app: FastifyInstance, deps: {
         const id = request.params.id
         if (!id || id.length > 256) return reply.code(404).send({ error: "unknown_server" })
         if (action === "forget") return await deps.manager.forget(id)
+        if (action === "view-session") return await deps.manager.viewSession(id)
         if (action === "connect") return await deps.manager.connect(id, ConnectBody.parse(request.body ?? {}))
         return await deps.manager.browse(id, BrowseBody.parse(request.body ?? {}))
       } catch (error) {

@@ -6,6 +6,7 @@ import { normalizeExplicitOrigin } from "../opencode/servers/endpoint"
 import { CodeNomadServerClient, CodeNomadServerError } from "./client"
 import { CodeNomadServerCredentials, type CodeNomadServerSecret } from "./credentials"
 import { relayedFolderListing } from "./folders"
+import { createViewSession } from "./view-session"
 
 const Profile = z.object({ id: z.string(), baseUrl: z.string(), skipTlsVerify: z.boolean().default(false) })
 const Recent = z.object({ path: z.string().min(1).max(8192), projectName: z.string().max(1024).optional(), lastAccessed: z.number().finite() })
@@ -26,7 +27,7 @@ type ProfileAuthority = Readonly<{ id: string; origin: string; skipTlsVerify: bo
 type ConnectionState = {
   credentials?: CodeNomadServerCredentials
   clients: Map<string, { authority: ProfileAuthority; client: CodeNomadServerClient }>
-  pending: Map<CodeNomadServerClient, ProfileAuthority>
+  pending: Map<Pick<CodeNomadServerClient, "close">, ProfileAuthority>
   queues: Map<string, Promise<unknown>>
   authorities: Map<string, ProfileAuthority>
   owners: number
@@ -53,23 +54,23 @@ export class RemoteServerBrowseManager {
     return this.#state.credentials ??= new CodeNomadServerCredentials(path.join(path.dirname(this.settings.configYamlPathForAuthority()), "remote-server-credentials.json"))
   }
 
-  private profile(id: string) {
+  private profile(id: string, preserveDisk = false) {
     const values = this.settings.getOwner("state", "ui").remoteServers
     const profile = Array.isArray(values) ? values.map(value => Profile.safeParse(value)).find(value => value.success && value.data.id === id) : undefined
-    if (!profile?.success) { this.remove(id); throw new CodeNomadServerError("unknown_server") }
+    if (!profile?.success) { this.remove(id, preserveDisk); throw new CodeNomadServerError("unknown_server") }
     let origin: string
     try { origin = normalizeExplicitOrigin(profile.data.baseUrl) }
-    catch (error) { this.remove(id); throw error }
+    catch (error) { this.remove(id, preserveDisk); throw error }
     return { ...profile.data, origin, key: `${origin}|${profile.data.skipTlsVerify}` }
   }
 
-  private capture(id: string): ProfileAuthority {
+  private capture(id: string, preserveDisk = false): ProfileAuthority {
     if (this.#closed) throw new CodeNomadServerError("unreachable")
-    const profile = this.profile(id)
+    const profile = this.profile(id, preserveDisk)
     let authority = this.#state.authorities.get(id)
-    if (authority && authority.key !== profile.key) { this.remove(id); authority = undefined }
+    if (authority && authority.key !== profile.key) { this.remove(id, preserveDisk); authority = undefined }
     // Disk identities also belong to this exact policy, including before a replacement login.
-    this.credentials.read(id, profile.origin, profile.skipTlsVerify)
+    this.credentials.read(id, profile.origin, profile.skipTlsVerify, preserveDisk)
     if (!authority) {
       authority = Object.freeze({ id, origin: profile.origin, skipTlsVerify: profile.skipTlsVerify, key: profile.key })
       this.#state.authorities.set(id, authority)
@@ -77,19 +78,19 @@ export class RemoteServerBrowseManager {
     return authority
   }
 
-  private assertCurrent(authority: ProfileAuthority) {
+  private assertCurrent(authority: ProfileAuthority, preserveDisk = false) {
     if (this.#state.authorities.get(authority.id) !== authority) throw new CodeNomadServerError("unreachable")
-    if (this.profile(authority.id).key !== authority.key) {
-      this.remove(authority.id)
+    if (this.profile(authority.id, preserveDisk).key !== authority.key) {
+      this.remove(authority.id, preserveDisk)
       throw new CodeNomadServerError("unreachable")
     }
   }
 
-  private serial<T>(authority: ProfileAuthority, run: () => Promise<T>): Promise<T> {
+  private serial<T>(authority: ProfileAuthority, run: () => Promise<T>, preserveDisk = false): Promise<T> {
     const id = authority.id
     const pending = (this.#state.queues.get(id) ?? Promise.resolve()).catch(() => {}).then(() => {
       if (this.#closed) throw new CodeNomadServerError("unreachable")
-      this.assertCurrent(authority)
+      this.assertCurrent(authority, preserveDisk)
       return run()
     })
     this.#state.queues.set(id, pending)
@@ -128,6 +129,23 @@ export class RemoteServerBrowseManager {
         return { ok: true }
       } finally { this.#state.pending.delete(client); client.close() }
     })
+  }
+
+  async viewSession(id: string) {
+    const profile = this.capture(id, true)
+    return this.serial(profile, async () => {
+      const controller = new AbortController()
+      // Share the same revocation/close fence as browse and connect transports.
+      const client = { close: () => controller.abort() }
+      this.#state.pending.set(client, profile)
+      try {
+        const result = await createViewSession(profile.origin, profile.skipTlsVerify,
+          this.credentials.read(id, profile.origin, profile.skipTlsVerify, true), controller.signal)
+        this.assertCurrent(profile, true)
+        if (this.#closed || controller.signal.aborted) throw new CodeNomadServerError("unreachable")
+        return result
+      } finally { this.#state.pending.delete(client); controller.abort() }
+    }, true)
   }
 
   async browse(id: string, body: z.infer<typeof BrowseBody>): Promise<RemoteServerBrowseResponse> {
@@ -189,12 +207,12 @@ export class RemoteServerBrowseManager {
     }
   }
 
-  private remove(id: string) {
+  private remove(id: string, preserveDisk = false) {
     this.#state.authorities.delete(id)
     for (const [client, owner] of this.#state.pending) if (owner.id === id) client.close()
     this.#state.clients.get(id)?.client.close()
     this.#state.clients.delete(id)
-    this.credentials.delete(id)
+    if (!preserveDisk) this.credentials.delete(id)
   }
 
   async forget(id: string) {

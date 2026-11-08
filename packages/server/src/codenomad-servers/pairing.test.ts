@@ -106,6 +106,32 @@ test("link syntax and saved-origin fences reject before DNS or dispatch", async 
   assert.equal(fs.existsSync(path.join(dir, "remote-server-credentials.json")), false)
 })
 
+test("native view session shares the paired device identity without rotating or writing it", async t => {
+  const remote = await startFakeCodeNomad({ tls: tls(t) })
+  t.after(() => remote.close())
+  const dir = directory(t)
+  const manager = new RemoteServerBrowseManager({ getOwner: () => ({ remoteServers: [{ id: "saved", baseUrl: remote.origin, skipTlsVerify: true }] }),
+    configYamlPathForAuthority: () => path.join(dir, "config.yaml") })
+  t.after(() => manager.close())
+  const credential = "a".repeat(43)
+  remote.state.overrides.set(SERVER_PAIR_PATH, { status: 200, body: { credential, device: {
+    id: "12345678-1234-4123-8123-123456789012", name: "test", createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
+  } } })
+  remote.state.overrides.set("/api/auth/status", { status: 200, body: { authenticated: true } })
+  await manager.connect("saved", { pairingLink: `${remote.origin}/remote-pair#${"a".repeat(32)}` })
+  const file = path.join(dir, "remote-server-credentials.json")
+  const before = fs.readFileSync(file, "utf8")
+  assert.deepEqual(await manager.viewSession("saved"), { cookie: {
+    origin: remote.origin, name: "__Host-codenomad_device", value: credential, path: "/", secure: true, httpOnly: true, sameSite: "lax",
+  } })
+  assert.equal(remote.state.requests.at(-1)!.headers.cookie, `__Host-codenomad_device=${credential}`)
+  assert.equal(remote.state.logins, 0)
+  assert.equal(fs.readFileSync(file, "utf8"), before)
+  remote.state.overrides.set("/api/auth/status", { status: 401, body: {} })
+  await assert.rejects(manager.viewSession("saved"), { code: "auth" })
+  assert.equal(fs.readFileSync(file, "utf8"), before)
+})
+
 test("older endpoints and refused/malformed exchanges yield stable errors without credentials or ambient cookies", async t => {
   const remote = await startFakeCodeNomad({ tls: tls(t) })
   t.after(() => remote.close())

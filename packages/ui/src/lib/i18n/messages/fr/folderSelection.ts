@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "newTab.temporary": "Temporaire",
   "remoteBrowse.connectionRequired": "Connexion requise",
   "remoteBrowse.openSeparateWindow": "Ouvrir dans une fenêtre séparée",
   "folderSelection.recent.actions": "Actions du projet",

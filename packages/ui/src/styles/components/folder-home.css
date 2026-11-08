@@ -16,7 +16,8 @@
 .folder-home-root--blank .folder-home-main { align-items: stretch; }
 .folder-dashboard-servers > .browse-menu { flex: 1; }
 .folder-home-root--blank .panel-header { background-color: var(--surface-secondary); }
-.folder-home-blank-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.folder-home-blank-actions { display: flex; justify-content: center; gap: var(--space-sm); flex-shrink: 0; }
+.folder-home-blank-actions .window-action:not(:hover) { background-color: var(--surface-control); }
 
 .folder-home-list-panel {
   min-width: 0;

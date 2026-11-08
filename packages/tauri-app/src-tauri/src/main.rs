@@ -29,6 +29,7 @@ mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
 mod remote_view;
+mod remote_cookie;
 mod shutdown;
 mod title_bar;
 mod update_releases;
@@ -345,7 +346,7 @@ fn set_workspace_menu_enabled(
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteWindowPayload {
     id: String,
@@ -353,6 +354,7 @@ struct RemoteWindowPayload {
     base_url: String,
     entry_url: Option<String>,
     proxy_session_id: Option<String>,
+    cookie: Option<remote_cookie::RemoteSessionCookie>,
     #[allow(dead_code)]
     skip_tls_verify: bool,
 }
@@ -949,12 +951,16 @@ fn open_remote_window_locked(
     label: String,
     requested_profile: RemoteProfileIdentity,
 ) -> Result<(), String> {
-    require_http_url(&payload.base_url, "baseUrl")?;
+    let base = require_http_url(&payload.base_url, "baseUrl")?;
+    let cookie = payload.cookie.as_ref().map(|cookie| cookie.validate(&base)).transpose()?;
     let entry_url = payload
         .entry_url
         .as_deref()
         .unwrap_or(payload.base_url.as_str());
     let parsed = require_http_url(entry_url, "entryUrl")?;
+    if cookie.is_some() && parsed.origin() != base.origin() {
+        return Err("Remote cookie navigation must stay on its server's origin".into());
+    }
     let title = format!("{} - {}", payload.name, payload.base_url);
 
     let window_url = parsed.clone();
@@ -995,6 +1001,9 @@ fn open_remote_window_locked(
                 handlers.remove(&label);
             }
         } else {
+            if let Some(cookie) = cookie.clone() {
+                existing.set_cookie(cookie).map_err(|_| "Failed to set remote session cookie")?;
+            }
             let staged = set_remote_window_metadata(
                 &app,
                 &label,
@@ -1072,6 +1081,9 @@ fn open_remote_window_locked(
     #[cfg(not(target_os = "linux"))]
     let initial_url = window_url.clone();
 
+    let initial_url = if cookie.is_some() { Url::parse("about:blank").unwrap() } else { initial_url };
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+
     let profile_key = match requested_profile.proxy_session_id() {
         Some(session_id) => format!("{}\0{session_id}", payload.id),
         None => payload.id.clone(),
@@ -1109,6 +1121,9 @@ fn open_remote_window_locked(
         NewWindowResponse::Deny
     })
     .on_page_load(move |window, payload| {
+        if payload.url().as_str() == "about:blank" && payload.event() == PageLoadEvent::Finished {
+            let _ = ready_tx.try_send(());
+        }
         if payload.event() == PageLoadEvent::Started {
             notification_badge::page_started(window.as_ref(), badge_binding);
         }
@@ -1152,6 +1167,24 @@ fn open_remote_window_locked(
             window_generation,
         );
         return Err(error);
+    }
+
+    if let Some(cookie) = cookie {
+        let setup = ready_rx.recv_timeout(std::time::Duration::from_secs(15))
+            .map_err(|_| "Remote window initialization timed out".to_string())
+            .and_then(|()| window.set_cookie(cookie).map_err(|_| "Failed to set remote session cookie".to_string()));
+        if let Err(error) = setup {
+            cleanup_failed_remote_window(&app, Some(&window), &label, &requested_profile, previous_profile.as_ref(), window_generation);
+            return Err(error);
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    if initial_url != window_url {
+        if let Err(error) = window.navigate(window_url.clone()) {
+            cleanup_failed_remote_window(&app, Some(&window), &label, &requested_profile, previous_profile.as_ref(), window_generation);
+            return Err(error.to_string());
+        }
     }
 
     #[cfg(target_os = "linux")]

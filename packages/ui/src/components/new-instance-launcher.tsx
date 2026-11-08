@@ -26,9 +26,12 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
           <Popover.Content class="window-shell new-instance-launcher" aria-busy={props.isLoading} ref={content}
             onOpenAutoFocus={(event) => {
               event.preventDefault()
-              content?.querySelector<HTMLInputElement>("input[type='search']")?.focus()
+              if (!content?.contains(document.activeElement) || document.activeElement === content) content?.querySelector<HTMLElement>(".recent-tabs-menu")?.focus()
             }}
-            onEscapeKeyDown={() => { returnFocus = true }} onCloseAutoFocus={(event) => {
+            onEscapeKeyDown={(event) => {
+              if ((event.target as HTMLElement)?.closest("[data-remote-view-session]")) event.preventDefault()
+              else returnFocus = true
+            }} onCloseAutoFocus={(event) => {
               event.preventDefault()
               const active = document.activeElement
               if (returnFocus && !props.open && (!active || active === document.body || content?.contains(active))) props.anchor?.focus()

@@ -33,30 +33,33 @@ async function prepare(page: Page, locale: string, error?: string) {
   })
 }
 
-for (const [locale, folders, recents, offline, tls] of [
-  ["fr", "Dossiers", "Récents", "Serveur inaccessible.", "Échec de la vérification du certificat."],
-  ["de", "Ordner", "Zuletzt verwendet", "Server nicht erreichbar.", "Zertifikatsprüfung fehlgeschlagen."],
+for (const [locale, separateWindow, offline, tls] of [
+  ["fr", "Ouvrir dans une fenêtre séparée", "Serveur inaccessible.", "Échec de la vérification du certificat."],
+  ["de", "In separatem Fenster öffnen", "Server nicht erreichbar.", "Zertifikatsprüfung fehlgeschlagen."],
 ]) {
-  test(`${locale}: server context, sections and long paths fit 480px and remain keyboard accessible`, async () => {
+  test(`${locale}: the editable path opens a folder; folder rows only navigate; a long path fits 480px`, async () => {
     const page = await browser.newPage({ viewport: { width: 480, height: 800 } })
     try {
       await prepare(page, locale)
       await page.goto(url)
-      await page.getByRole("heading", { name: folders, exact: true }).waitFor()
-      await page.getByRole("heading", { name: recents, exact: true }).waitFor()
+      await page.getByRole("button", { name: "app", exact: true }).waitFor()
       assert.match(await page.locator(".remote-server-navigation").innerText(), /Box/)
-      const path = page.locator(".remote-server-path > span").first()
-      await path.focus()
-      assert.equal(await path.getAttribute("aria-label"), longPath)
-      const info = page.locator(".remote-server-path .settings-info-tip")
-      await info.focus()
-      await page.getByRole("tooltip").getByText(longPath, { exact: true }).waitFor()
+      const field = page.locator(".remote-server-path input")
+      assert.equal(await field.inputValue(), longPath)
+      // Recent projects live in the Recent tabs column, never inside the folder browser.
+      assert.equal(await page.getByText("Recent project").count(), 0)
+      assert.equal(await page.locator(".remote-server-path .settings-info-tip").count(), 0)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
-      await info.press("Escape")
-      await page.getByRole("tooltip").waitFor({ state: "hidden" })
       await page.getByRole("button", { name: "app", exact: true }).click()
       assert.equal(await page.locator("output").innerText(), "")
-      await page.locator(".browse-menu-row", { hasText: "Recent project" }).click()
+      await field.fill("/srv/typed")
+      await field.press("Enter")
+      assert.equal(await page.locator("output").innerText(), "/srv/typed")
+      await field.fill(longPath)
+      // This web fixture cannot embed remote tabs, so the arrow names the separate window it opens.
+      const arrow = page.locator(".remote-server-path").getByRole("button")
+      assert.equal(await arrow.getAttribute("aria-label"), separateWindow)
+      await arrow.click()
       assert.equal(await page.locator("output").innerText(), longPath)
     } finally { await page.close() }
   })

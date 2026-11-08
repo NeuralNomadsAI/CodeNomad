@@ -9,6 +9,7 @@ interface NewTabActionsProps {
   onNewTemporary?: () => void
   hideSidecar?: boolean
   home?: boolean
+  blank?: boolean
 }
 
 /** Secondary creation actions inside the canonical project selector. */
@@ -21,13 +22,15 @@ export default function NewTabActions(props: NewTabActionsProps) {
       <span>{action.label}</span>
     </button>
   )
+  const Temporary = () => <Show when={props.onNewTemporary}>
+    {(onNewTemporary) => <Action label={t(props.blank ? "newTab.temporary" : "folderSelection.temporary.button")} icon={Hourglass}
+      title={t("folderSelection.temporary.description")} onClick={() => onNewTemporary()()} />}
+  </Show>
   return (
     <>
-      <Action label={t("folderSelection.clone.button")} icon={GitBranch} onClick={props.onClone} />
-      <Show when={props.onNewTemporary}>
-        {(onNewTemporary) => <Action label={t("folderSelection.temporary.button")} icon={Hourglass}
-          title={t("folderSelection.temporary.description")} onClick={() => onNewTemporary()()} />}
-      </Show>
+      <Show when={props.blank}><Temporary /></Show>
+      <Action label={t(props.blank ? "folderSelection.clone.dialog.clone" : "folderSelection.clone.button")} title={t("folderSelection.clone.button")} icon={GitBranch} onClick={props.onClone} />
+      <Show when={!props.blank}><Temporary /></Show>
       <Show when={!props.hideSidecar}>
         <Action label={t("folderSelection.newSidecar")} icon={Globe} onClick={() => void openSettingsRow("sidecars", "sidecar-add")} />
       </Show>

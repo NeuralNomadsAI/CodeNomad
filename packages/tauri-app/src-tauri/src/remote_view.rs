@@ -21,7 +21,7 @@ pub(crate) struct RemoteViewBounds {
     height: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RemoteViewOpen {
     view_id: String,
@@ -29,6 +29,7 @@ pub(crate) struct RemoteViewOpen {
     base_url: String,
     url: String,
     bounds: RemoteViewBounds,
+    cookie: Option<crate::remote_cookie::RemoteSessionCookie>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,6 +42,7 @@ pub(crate) struct RemoteViewUpdate {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Record {
+    generation: uuid::Uuid,
     owner: String,
     origin: String,
     /// The single-project address the view returns to; follows the project it shows.
@@ -233,6 +235,7 @@ impl RemoteViews {
         let base = http_url(&input.base_url)?;
         let target = http_url(&input.url)?;
         let origin = base.origin().ascii_serialization();
+        let cookie = input.cookie.as_ref().map(|cookie| cookie.validate(&base)).transpose()?;
         if target.origin().ascii_serialization() != origin {
             return Err("Remote view must open on its server's origin".into());
         }
@@ -242,7 +245,9 @@ impl RemoteViews {
         let bounds = validate_bounds(input.bounds)?;
         let label = view_label(owner, &input.view_id)?;
         let _ = self.close(app, owner, &input.view_id);
+        let generation = uuid::Uuid::new_v4();
         let record = Record {
+            generation,
             owner: owner.to_string(),
             origin: origin.clone(),
             entry: entry_for(&target, &origin),
@@ -260,7 +265,10 @@ impl RemoteViews {
         let title_label = label.clone();
         let title_owner = owner.to_string();
         let title_view_id = input.view_id.clone();
-        let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(target))
+        // With a session to install, the view starts blank: its cookie store exists once the
+        // webview is created, so the cookie is set before the project entry is requested.
+        let initial = if cookie.is_some() { Url::parse("about:blank").unwrap() } else { target.clone() };
+        let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(initial))
             // The remote window's storage: its sessions and paired device cookie.
             .data_directory(crate::remote_profile_data_directory(app, &input.profile_id))
             .initialization_script(crate::REMOTE_WINDOW_CONTEXT_SCRIPT)
@@ -324,6 +332,21 @@ impl RemoteViews {
                 return Err(format!("failed to create remote view: {error}"));
             }
         };
+        if let Some(cookie) = cookie {
+            let result = (if self.record(&label).is_some_and(|record| record.generation == generation) {
+                    Ok(())
+                } else {
+                    Err("Remote view is no longer available".to_string())
+                })
+                .and_then(|()| view.set_cookie(cookie).map_err(|error| format!("Failed to set remote session cookie: {error}")))
+                .and_then(|()| view.navigate(target).map_err(|error| error.to_string()));
+            if let Err(error) = result {
+                if self.record(&label).is_some_and(|record| record.generation == generation) {
+                    let _ = self.close(app, owner, &input.view_id);
+                }
+                return Err(error);
+            }
+        }
         crate::windows_browser_accelerators::bind(&view);
         view.show().map_err(|error| error.to_string())
     }
@@ -449,6 +472,7 @@ mod tests {
         views.records.lock().unwrap().insert(
             label.clone(),
             Record {
+                generation: uuid::Uuid::new_v4(),
                 owner: owner.into(),
                 origin: "http://127.0.0.1:9911".into(),
                 entry: initial.to_string(),
@@ -486,7 +510,7 @@ mod tests {
         let label = view_label(owner, "tab").unwrap();
         views.records.lock().unwrap().insert(
             label.clone(),
-            Record { owner: owner.into(), origin: ORIGIN.into(), entry: format!("{ORIGIN}/?codenomadEmbed=project") },
+            Record { generation: uuid::Uuid::new_v4(), owner: owner.into(), origin: ORIGIN.into(), entry: format!("{ORIGIN}/?codenomadEmbed=project") },
         );
         assert_eq!(views.owned(owner, "tab").unwrap(), label);
         assert!(views.owned("local-b", "tab").is_err());

@@ -197,8 +197,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const method = (init?.method ?? "GET").toUpperCase()
   const startedAt = Date.now()
-  const sensitive = /\/plugin-sources(?:[?/#]|$)/.test(path)
-  const logPath = sensitive ? "/api/workspaces/:id/plugin-sources" : path
+  const pluginSource = /\/plugin-sources(?:[?/#]|$)/.test(path)
+  const sensitive = pluginSource || /\/remote-servers\/[^/]+\/(?:connect|view-session)$/.test(path)
+  const logPath = pluginSource ? "/api/workspaces/:id/plugin-sources" : path
   logHttp(`${method} ${logPath}`)
 
   try {
@@ -246,6 +247,9 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  remoteViewSession(id: string, signal?: AbortSignal): Promise<{ cookie: NonNullable<import("./native/remote-view").RemoteViewOpenPayload["cookie"]> }> {
+    return request(`/api/remote-servers/${encodeURIComponent(id)}/view-session`, { method: "POST", body: "{}", signal })
+  },
   browseRemoteServer(id: string, path?: string, signal?: AbortSignal): Promise<RemoteServerBrowseResponse> {
     return request(`/api/remote-servers/${encodeURIComponent(id)}/browse`, { method: "POST", body: JSON.stringify({ path }), signal })
   },

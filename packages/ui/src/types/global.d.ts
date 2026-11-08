@@ -91,15 +91,7 @@ declare global {
   onRemoteViewUpdated?: (callback: (update: import("../lib/native/remote-view").RemoteViewUpdate) => void) => () => void
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
-    openRemoteWindow?: (payload: {
-      id: string
-      name: string
-      baseUrl: string
-      entryUrl?: string
-      proxySessionId?: string
-      skipTlsVerify: boolean
-      requireLoad?: boolean
-    }) => Promise<{ ok: boolean }>
+    openRemoteWindow?: (payload: import("../lib/native/remote-window").RemoteWindowOpenPayload) => Promise<{ ok: boolean }>
     openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
     getPreferencesRequest?: () => Promise<unknown>
     getPreferencesSection?: () => Promise<unknown>

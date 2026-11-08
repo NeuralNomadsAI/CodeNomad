@@ -24,7 +24,7 @@ setupCliIPC({} as never, {
   nextFolder: () => null, acknowledgeFolder: () => {},
   nextConnection: () => null, acknowledgeConnection: () => {},
   browserController: {} as never,
-  remoteViews: { open: () => {}, update: () => {}, close: () => {}, resolve: () => undefined },
+  remoteViews: { open: async () => {}, update: () => {}, close: () => {}, resolve: () => undefined },
 })
 
 // "/" is the server's own document; "/no-content" answers 204, so a retry commits no document.
