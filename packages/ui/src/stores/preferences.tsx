@@ -1650,6 +1650,12 @@ const stateEdits = new Set([...deferredServerEdits].filter(key => ![
   "updateEnvironmentVariables", "addEnvironmentVariable", "removeEnvironmentVariable", "toggleSecureEnvVar", "updateLastUsedBinary", "updateLogLevel",
 ].includes(key)).concat(["addNamedRecentFolder", "renameRecentFolderProject"]))
 const configEdits = new Set(["updatePreferences", "saveMissionDefaults", "resetMissionModels", "saveUserMissionModel", "removeUserMissionModel", "setProviderModelVisibility"])
+// Host-owned updates delegated through a server target keep the host's silent failure contract.
+function isServerEdit(key: string, args: unknown[]): boolean {
+  if (!stateEdits.has(key) && !configEdits.has(key)) return false
+  return key !== "updatePreferences" || Object.keys((args[0] ?? {}) as object)
+    .some(name => serverModelPreferenceKeys.includes(name as ServerModelPreferenceKey))
+}
 function notifyRefusedPreferenceEdit() {
   void import("../lib/notifications").then(({ showToastNotification }) => {
     showToastNotification({ category: "settings", variant: "error", message: tGlobal("settings.preferenceSaveFailed") })
@@ -1661,7 +1667,7 @@ for (const key of hostPreferenceMethods) Object.assign(unavailablePreferences, {
 const unavailableTarget = (backendId: BackendId): ConfigContextValue => new Proxy(unavailablePreferences, {
   get: (target, key) => (...args: unknown[]) => {
     if (!preferenceReads.has(String(key))) {
-      if (stateEdits.has(String(key)) || configEdits.has(String(key))) notifyRefusedPreferenceEdit()
+      if (isServerEdit(String(key), args)) notifyRefusedPreferenceEdit()
       throw new Error(`Backend unavailable: ${backendId}`)
     }
     return (target[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
@@ -1688,12 +1694,11 @@ export function preferencesForBackend(backendId: BackendId): ConfigContextValue 
         const attached = backendEvents.signal(backendId)
         if (attachment.aborted || attached !== attachment || backends.get(backendId) !== backend) {
           if (preferenceReads.has(key)) return (unavailablePreferences[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
-          if (stateEdits.has(key) || configEdits.has(key)) notifyRefusedPreferenceEdit()
+          if (isServerEdit(key, args)) notifyRefusedPreferenceEdit()
           throw new Error(`Backend unavailable: ${backendId}`)
         }
         if (stateEdits.has(key) || configEdits.has(key)) {
-          const remoteEdit = key !== "updatePreferences" || Object.keys(args[0] as object)
-            .some(key => serverModelPreferenceKeys.includes(key as ServerModelPreferenceKey))
+          const remoteEdit = isServerEdit(key, args)
           const document = stateEdits.has(key) ? "state/ui" : "config/ui"
           const write = (editTails.get(document) ?? Promise.resolve()).then(async () => {
             await loadDocument(document)

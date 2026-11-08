@@ -179,6 +179,17 @@ test("real preference consumers isolate host, server, fallback, instance data an
       await owner.backend.storage.flushWrites()
       await new Promise<void>(resolve => setImmediate(resolve))
       assert.equal(getToastHistory().length, before)
+      // Refused targets notify server edits only: host-owned updates stay silent.
+      detach()
+      for (const refusedTarget of [target, module.preferencesForBackend("missingBackend")]) {
+        const quiet = getToastHistory().length
+        await assert.rejects(Promise.resolve().then(() => refusedTarget.updatePreferences({ locale: "fr" })), /Backend unavailable/)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        assert.equal(getToastHistory().length, quiet, "a host-owned update never shows the server toast")
+        await assert.rejects(Promise.resolve().then(() => refusedTarget.updatePreferences({ modelVisibility: {} })), /Backend unavailable/)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        assert.equal(getToastHistory().length - quiet, 1, "a refused server edit still notifies once")
+      }
     } finally { globalThis.fetch = host.fetcher; detach(); owner.detach() }
   })
 
