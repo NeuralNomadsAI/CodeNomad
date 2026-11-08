@@ -36,6 +36,8 @@ Si une vérification est occupée, attendez l’opération de l’autre fenêtre
 
 ## Mettre à jour un serveur autonome {#standalone-update}
 
+L’interface 1.1 nécessite un serveur CodeNomad **1.1.0 ou ultérieur** pour ses API Missions. Les serveurs 1.0.x conservent leur interface en cache ou intégrée au lieu de télécharger l’interface incompatible.
+
 1. Identifiez votre mode de lancement CodeNomad et enregistrez le travail dépendant de ce backend.
 2. Arrêtez ce processus serveur CodeNomad par sa commande normale de processus/service.
 3. Mettez à jour la même installation de paquet, puis redémarrez avec la configuration et les options voulues.

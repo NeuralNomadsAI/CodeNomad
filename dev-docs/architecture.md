@@ -60,6 +60,14 @@ Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy
 
 Yolo state endpoints live at `/workspaces/:id/yolo/sessions/:sessionId`; Yolo notifications use `/api/events`.
 
+### Published UI compatibility
+
+`packages/cloudflare/release-config.json` sets the remote UI's minimum CodeNomad
+server to **1.1.0**. The Missions interface consumes `POST /api/workspaces/:id/missions/panel-page`
+for its inventory and task reads. `ui/remote-ui.ts` checks the manifest's minimum
+before downloading: older servers keep their cached or bundled interface and expose
+the server-upgrade status. `ui/__tests__/remote-ui.test.ts` covers both sides of this boundary.
+
 ## Client And Events
 
 `packages/ui/src/lib/sdk-manager.ts` uses `OpenCode.make()` and caches generated Promise clients by instance proxy path. `packages/ui/src/stores/opencode-client.ts` is the root-client authority; native directory/location fields select the worktree.
