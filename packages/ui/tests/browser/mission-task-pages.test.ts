@@ -12,7 +12,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { missionContentFixture, missionTaskFixture, missionTaskQuery, olderPluginMap, panelMissions } from "./mission-content-fixture"
 
 // Real MissionControl and reader over a compact map that holds a page of its tasks:
-// scroll continuation, graph's omitted edges, reads further and Needs you beyond the page.
+// scroll continuation, graph's omitted edges, reads further and questions beyond the page.
 let browser: Browser, url: string
 let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
@@ -522,15 +522,14 @@ test("off-page attention stays available in an info tooltip and every recovery a
   } finally { await f.page.context().close() }
 })
 
-test("Needs you lists the request of an actor whose task is outside the loaded page", async () => {
+test("the flag carries the question of an actor whose task is outside the loaded page", async () => {
   const { page, errors } = await open(paged())
   try {
     assert.equal(await page.locator('.mission-tree-node[data-task-key="t118"]').count(), 0, "the actor's task is beyond the page")
     await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_far", "far-permission"))
-    const needs = page.locator(".mission-attention-list .mission-needs-item")
-    await needs.waitFor()
-    assert.equal(await needs.count(), 1)
-    assert.equal(await needs.getByRole("button", { name: "Answer", exact: true }).getAttribute("aria-description"), "Open Far worker")
+    // No loaded task row carries it, so it stays one click away on the Mission's own row.
+    await page.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor()
+    assert.equal(await page.locator('.mission-tree-node[data-state="input"]').count(), 0)
     assert.equal(await page.locator('.mission-tree-node[data-task-key="t118"]').count(), 0, "reading nothing further")
     assert.deepEqual(errors, [])
   } finally { await page.context().close() }

@@ -42,7 +42,7 @@ The playbook guides coordination; it does not bypass native permissions or guara
 2. Choose **Summary** (eye) for the central overview; while it is open, selecting another mission shows that mission's overview. Select a task for its exact result, brief and evidence: while its reader is open, the header's actions apply to that task, with **Open the task's conversation** and, when its report is missing, **Verify and recover missing report**. **Summary** then closes the task's reader.
 3. **More actions** (⋯) holds **Interrupt now**, **Request an update** and **Edit selected mission**; actions that do not apply stay disabled.
 4. Follow dependency links and **Reports**; use **Open conversation** for the coordinator when you need its transcript.
-5. Under **Needs you**, choose **Answer** to open the requesting actor's conversation and interruption dock.
+5. When a mission or one of its tasks turns red, select it: the asking conversation opens with its question in the interruption dock.
 
 | Indicator | What it establishes |
 | --- | --- |
@@ -50,7 +50,7 @@ The playbook guides coordination; it does not bypass native permissions or guara
 | Active | Native activity was observed. |
 | Waiting | Declared dependencies are not yet met. |
 | Blocked | A blockage was reported, not necessarily a question for you. |
-| Awaiting your input | An open native Form/question or permission needs an answer; it is listed under **Needs you**. |
+| Awaiting your input | An open native Form/question or permission needs an answer; select the task to open it. |
 | Done | A task result was recorded; inspect its evidence and any remaining native work. |
 | Failed / Retired | The task failed, or the coordinator replaced or abandoned it. |
 
@@ -66,7 +66,7 @@ Mission flags and task icons use the session list's colours: colour shows only w
 
 | Colour | Meaning |
 | --- | --- |
-| Red | An answer is expected from you; it is listed under **Needs you**. |
+| Red | An answer is expected from you. A mission's flag turns red for its coordinator's question, a task for its own, and the mission's chevron shows that one of its tasks asks. Select the red mission or task to open the question. |
 | Yellow, pulsing | Work is running. |
 | Orange | The mission is paused, or interrupted, with an action to continue it. |
 | Green | A completed mission you have not opened yet in this window; it turns neutral once you select it. |
@@ -74,11 +74,11 @@ Mission flags and task icons use the session list's colours: colour shows only w
 
 Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons.
 
-A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when nothing can proceed without you, it asks you a question under **Needs you**. Only you stop a mission.
+A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when nothing can proceed without you, it asks you a question and its row turns red. Only you stop a mission.
 
 ### Questions and decisions {#questions}
 
-Only the coordinator asks you questions. Tasks and the sub-agents they launch return their open questions to it, with the options, the evidence and a recommendation. Before asking, the coordinator tries to settle a question itself: it reads the project, researches, has a task investigate, or adopts a default that is easy to undo and records it as an assumption. It asks only what it cannot settle: your consent, credentials, choices that are costly to undo, or product decisions the objective leaves open. It groups pending questions into one form under **Needs you** and starts unrelated work first.
+Only the coordinator asks you questions. Tasks and the sub-agents they launch return their open questions to it, with the options, the evidence and a recommendation. Before asking, the coordinator tries to settle a question itself: it reads the project, researches, has a task investigate, or adopts a default that is easy to undo and records it as an assumption. It asks only what it cannot settle: your consent, credentials, choices that are costly to undo, or product decisions the objective leaves open. It groups pending questions into one form, opened from the mission's red row, and starts unrelated work first.
 
 In **Exploration**, decision tasks prepare a brief and the coordinator settles each decision: it decides itself when the evidence is enough and the choice is easy to undo, keeps the question in **Notes** for later, or asks you. With **Native subagents**, the decision task's result says who decided:
 

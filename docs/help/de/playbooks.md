@@ -45,9 +45,9 @@ Das sind Anweisungen. Was ein Agent tatsächlich tun kann, bestimmen die OpenCod
 
 ### Fragen an Sie {#questions}
 
-Nur der Koordinator stellt Ihnen Fragen. Aufgaben und ihre Helfer geben ihre an die Unterhaltung zurück, die sie gestartet hat, mit Optionen, Belegen, Folgen, Umkehrbarkeit und einer Empfehlung, und arbeiten an dem weiter, was nicht von der Antwort abhängt. Der Koordinator klärt zuerst, was er kann, und bündelt die übrigen Fragen in einem Formular unter **Braucht Sie**; [Fragen und Entscheidungen](missions.md#questions) erklärt, was er fragt und wie Entscheidungen bezeichnet werden. Jeder Koordinator, einmalig oder geplant, und jede Aufgabenzuweisung erhalten diese Regel als Anweisung; die Erkundung fügt die Entscheidungsprüfungen [weiter unten](#wayfinder-checks) hinzu.
+Nur der Koordinator stellt Ihnen Fragen. Aufgaben und ihre Helfer geben ihre an die Unterhaltung zurück, die sie gestartet hat, mit Optionen, Belegen, Folgen, Umkehrbarkeit und einer Empfehlung, und arbeiten an dem weiter, was nicht von der Antwort abhängt. Der Koordinator klärt zuerst, was er kann, und bündelt die übrigen Fragen in einem Formular, das sich über die rote Zeile der Mission öffnet; [Fragen und Entscheidungen](missions.md#questions) erklärt, was er fragt und wie Entscheidungen bezeichnet werden. Jeder Koordinator, einmalig oder geplant, und jede Aufgabenzuweisung erhalten diese Regel als Anweisung; die Erkundung fügt die Entscheidungsprüfungen [weiter unten](#wayfinder-checks) hinzu.
 
-Antworten Sie im Unterbrechungsdock (**Antworten** unter **Braucht Sie**): Nur das zählt als Ihre Antwort. Eine im Chat getippte Antwort ist eine gewöhnliche Nachricht.
+Antworten Sie im Unterbrechungsdock, das sich durch Auswahl der roten Mission oder Aufgabe öffnet: Nur das zählt als Ihre Antwort. Eine im Chat getippte Antwort ist eine gewöhnliche Nachricht.
 
 ### Lageberichte und Abschlussbericht {#briefings}
 
@@ -165,7 +165,7 @@ Die Bearbeiter fragen Sie nie; sie geben Papiere und fertige Fragen an den Koord
 
 - **Er entscheidet selbst**, wenn die Belege genügen und die Wahl leicht umkehrbar ist.
 - **Er stellt zurück**, was noch nicht nötig ist: Er zieht die Aufgabe zurück und hält die Frage als Nebel in den Notizen.
-- **Er fragt Sie** und bündelt offene Entscheidungen in einem Formular unter **Braucht Sie**.
+- **Er fragt Sie** und bündelt offene Entscheidungen in einem Formular, das sich über die rote Zeile der Mission öffnet.
 
 Er schreibt Ihre Antwort nie selbst und gibt seine eigene Entscheidung nie als Ihre aus. Wo Sie das Ergebnis lesen, hängt von **Aufgabensitzungen** ab:
 
@@ -187,7 +187,7 @@ Nur Anweisungen: wann eine Wahl als leicht umkehrbar gilt, die Qualität von Pap
 Sie erhalten eine Karte: das Ziel, erfasste Entscheidungen mit ihrem Urheber, Rechercheergebnisse, Prototypen, den in den Notizen verbleibenden Nebel und einen Abschlussbericht. Ein Koordinator einer einmaligen Mission kann außerdem eine Folgemission vorbereiten, die Sie selbst starten. Fallstricke:
 
 - Erkundung plant; sie baut das Ziel nicht. Nutzen Sie zum Umsetzen ein anderes Playbook oder die vorbereitete Folgemission.
-- Antworten Sie unter **Braucht Sie**, nicht im Chat: Nur eine Antwort aus dem Unterbrechungsdock zählt als Ihre.
+- Antworten Sie im Unterbrechungsdock, das sich über die rote Zeile öffnet, nicht im Chat: Nur eine Antwort aus dem Unterbrechungsdock zählt als Ihre.
 - Lesen Sie mit **Native Unteragenten** die Ergebnisse mit der Bezeichnung **Entscheidung des Koordinators** und mit **Unabhängige Sitzungen** die Ergebnisse in den **Notizen**. Um eine Entscheidung zu ändern, schreiben Sie dem Koordinator über **Unterhaltung öffnen**.
 - Ein vage formuliertes Ziel lässt den größten Teil der Karte im Nebel.
 

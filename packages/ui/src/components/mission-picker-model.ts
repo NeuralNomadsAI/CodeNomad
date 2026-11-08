@@ -12,16 +12,22 @@ export interface MissionPickerEntry {
   /** Full localized state for tooltips and screen readers. */
   status: string
   mark: MissionMark
+  /** The most urgent state of a Mission's tasks, carried by its chevron like a
+   * session's children: a task asks for an answer, or works. */
+  childActivity?: "permission" | "working"
 }
 
-/** A one-time Mission's state from native requests and observed actor activity.
+/** A one-time Mission's own state from native requests and observed actor activity:
+ * red only for the questions its flag carries (`openRequests`, each one it can
+ * open); observed actor states, the coordinator's included, cover whole families
+ * and never redden it. Its tasks' questions belong to its chevron.
  * A failed mission can be resumed unless the user stopped it since, so it reads
  * as interrupted; a completed one is green until seen. */
 export function missionMark(mission: { status: string; runState?: string }, input: {
   openRequests: number; actorStates?: readonly string[]; coordinatorState?: string; seen: boolean
 }): MissionMark {
   const states = input.actorStates ?? []
-  if (input.openRequests > 0 || states.some(state => state === "permission" || state === "form")) return "permission"
+  if (input.openRequests > 0) return "permission"
   const run = mission.runState ?? "running"
   if (mission.status === "failed") return run === "running" ? "interrupted" : "idle"
   if (mission.status === "completed") return input.seen ? "idle" : "done"
