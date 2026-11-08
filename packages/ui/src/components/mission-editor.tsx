@@ -62,7 +62,7 @@ export function MissionEditor(props: {
 }) {
   const { t } = useI18n()
   const ids = { objective: createUniqueId(), objectiveError: createUniqueId(), profilesError: createUniqueId(), followedError: createUniqueId(), templateDescription: createUniqueId() }
-  const config = useConfig()
+  const config = useConfig(() => props.instanceId)
   // The revision and draft belong to this editor, not to live snapshot refreshes.
   const action = props.action, original = action.mission, kind = action.kind
   // The UI's physical folder fences the view; it must not replace the server's
@@ -433,7 +433,7 @@ export function MissionEditor(props: {
     <details class="mission-profile-optional mission-create-options" open={optionsOpen()} onToggle={event => setOptionsOpen(event.currentTarget.open)}>
       <summary>{t("missions.create.options")}</summary>
       {/* Natively hidden while closed so local drafts survive; network demand follows optionsOpen. */}
-      <Show when={kind === "create"}><MissionBriefPicker disabled={locked() || !isActive()} active={() => optionsOpen() && isActive()} value={selectedModel()?.id}
+      <Show when={kind === "create"}><MissionBriefPicker instanceId={props.instanceId} disabled={locked() || !isActive()} active={() => optionsOpen() && isActive()} value={selectedModel()?.id}
         onUse={model => {
           requestId = crypto.randomUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
           setObjective(model.objective); setTitleOverride(undefined); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
@@ -551,7 +551,7 @@ export function MissionEditor(props: {
     <footer class="window-footer">
       <Show when={kind === "create"}>
         {/* An unsent draft beside another request's hold may still be kept as a brief. */}
-        <MissionBriefSave buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
+        <MissionBriefSave instanceId={props.instanceId} buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>

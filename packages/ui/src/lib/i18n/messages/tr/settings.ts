@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.preferenceSaveFailed": "Tercih kaydedilemedi.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Tahmini sıfırlanma {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Alt oturumları otomatik genişlet",

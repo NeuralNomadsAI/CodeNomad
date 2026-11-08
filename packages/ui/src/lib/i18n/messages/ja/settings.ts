@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.preferenceSaveFailed": "設定を保存できませんでした。",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "推定リセット時刻 {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "サブセッションを自動展開",

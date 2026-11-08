@@ -3,6 +3,7 @@ import { runtimeEnv } from "../lib/runtime-env"
 import { openNativePreferences, type NativePreferencesRequest } from "../lib/native/preferences-window"
 import { getLogger } from "../lib/logger"
 import { confirmSettingsDiscard } from "./settings-dirty-guard"
+import { backendOf, isLocalBackend } from "../lib/backend-client"
 
 export type SettingsSectionId =
   | "general"
@@ -38,7 +39,8 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
   if ((runtimeEnv.host === "electron" || runtimeEnv.host === "tauri") && runtimeEnv.windowContext === "local") {
     try {
       const { activeInstanceId, instances } = await import("./instances")
-      const instanceId = activeInstanceId() ?? undefined
+      const selected = activeInstanceId()
+      const instanceId = selected && isLocalBackend(backendOf(selected)) ? selected : undefined
       const request: NativePreferencesRequest = { section: section ?? "general", instanceId }
       if (instanceId) {
         request.workspacePath = instances().get(instanceId)?.folder

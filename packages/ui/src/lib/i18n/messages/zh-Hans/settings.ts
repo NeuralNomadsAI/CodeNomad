@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.preferenceSaveFailed": "无法保存偏好设置。",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "预计重置时间 {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "自动展开子会话",

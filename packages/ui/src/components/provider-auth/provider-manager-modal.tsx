@@ -901,6 +901,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                 }>
                   {(provider) => (
                     <ProviderModelVisibilityManager
+                      instanceId={props.instanceId}
                       providerId={provider().id}
                       providerName={provider().name || provider().id}
                       models={provider().models}

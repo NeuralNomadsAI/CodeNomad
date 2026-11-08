@@ -68,7 +68,7 @@ export function MissionSelectedActions(props: {
   return <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
     primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
     onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
-    secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active}
+    secondary={<MissionBriefSave instanceId={props.instanceId} disabled={props.disabled} active={() => props.active}
       draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
       reading={() => brief.state() === "ready" ? undefined
         : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}

@@ -44,7 +44,7 @@ import { claimPendingRecoveryNotice, pendingRecoveryNoticeKey, releasePendingRec
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
-import { serverSettings } from "./preferences"
+import { preferencesForBackend } from "./preferences"
 import {
   reconcileSessionPendingState,
   activeSessionId,
@@ -660,6 +660,7 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
 
 function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string, backendId: BackendId = LOCAL_BACKEND_ID): Instance {
   const existing = instances().get(descriptor.id)
+  const environment = preferencesForBackend(backendId).serverSettings().environmentVariables
   return {
     id: descriptor.id,
     ...(backendId !== LOCAL_BACKEND_ID ? { backendId } : {}),
@@ -675,7 +676,7 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
     binaryPath: descriptor.binaryId ?? descriptor.binaryLabel ?? existing?.binaryPath,
     binaryLabel: descriptor.binaryLabel,
     binaryVersion: descriptor.binaryVersion ?? existing?.binaryVersion,
-    environmentVariables: existing?.environmentVariables ?? serverSettings().environmentVariables ?? {},
+    environmentVariables: backendId === LOCAL_BACKEND_ID ? existing?.environmentVariables ?? environment ?? {} : environment,
     ...(descriptor.temporary ? { temporary: true } : {}),
   }
 }

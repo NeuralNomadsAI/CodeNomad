@@ -8,6 +8,7 @@ import { loading, sessions, sessionInfoByInstance, setProviders, setSessions } f
 import { messageStoreBus } from "./message-v2/bus"
 import type { Session } from "../types/session"
 import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
+import { serverApi } from "../lib/api-client"
 
 const source = {
   on: () => () => {}, onOpen: () => () => {},
@@ -32,6 +33,8 @@ async function until(predicate: () => boolean) {
 for (const operation of ["create", "delete"] as const) {
   for (const outcome of ["success", "failure"] as const) {
     test(`${operation} ${outcome}: revoked owner clears only its own loading flag`, async t => {
+      t.mock.method(serverApi, "fetchConfigOwner", async () => ({}))
+      t.mock.method(serverApi, "fetchStateOwner", async () => ({}))
       // Both sequences use the same backend/client across detach and reattach.
       // First exercise abandoned loading; then keep owner B pending while A settles.
       for (const replacement of [false, true]) {

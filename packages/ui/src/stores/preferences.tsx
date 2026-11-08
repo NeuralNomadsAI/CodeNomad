@@ -1,6 +1,10 @@
-import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
+import { createContext, createMemo, createRoot, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
-import { storage, ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
+import { ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
+import { backends, localBackend, isLocalBackend, type BackendClient, type BackendId } from "../lib/backend-client"
+import { backendEvents } from "../lib/backend-events"
+import { tGlobal } from "../lib/i18n"
+import { parseInstanceKey } from "../lib/backend-identity"
 import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
@@ -624,6 +628,15 @@ function createRandomId(): string {
   return `remote-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+function createPreferencesStore(backend: BackendClient) {
+const storage = backend.storage
+const local = isLocalBackend(backend)
+const attachment = local ? undefined : backendEvents.signal(backend.id)
+if (attachment) storage.bindOwnerAuthority(attachment)
+const current = () => local || (attachment !== undefined && !attachment.aborted && backends.get(backend.id) === backend)
+function assertCurrent() {
+  if (!current()) throw new Error(`Backend unavailable: ${backend.id}`)
+}
 const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
@@ -631,11 +644,21 @@ const [isLoaded, setIsLoaded] = createSignal(false)
 // Mission inputs require a successful UI-owner read, not server/state readiness.
 const [isUiConfigLoaded, setIsUiConfigLoaded] = createSignal(false)
 const [uiConfigLoadFailed, setUiConfigLoadFailed] = createSignal(false)
-const missionDefaultsValid = () => isUiConfigLoaded() && validMissionDefaults(missionPreferenceValue(uiConfigBucket(), "missionProfileDefaults"))
-const missionModelsValid = () => isUiConfigLoaded() && validMissionModels(missionPreferenceValue(uiConfigBucket(), "missionModels"))
+const missionDefaultsValid = (): boolean => isUiConfigLoaded() && (!local && !missionPreferenceSnapshot("missionProfileDefaults").present
+  ? hostPreferences.missionDefaultsValid() : validMissionDefaults(missionPreferenceValue(uiConfigBucket(), "missionProfileDefaults")))
+const missionModelsValid = (): boolean => isUiConfigLoaded() && (!local && !missionPreferenceSnapshot("missionModels").present
+  ? hostPreferences.missionModelsValid() : validMissionModels(missionPreferenceValue(uiConfigBucket(), "missionModels")))
 const missionPreferenceSnapshot = (key: MissionPreferenceKey) => missionPreferenceExpectation(uiConfigBucket(), key)
 
-const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
+const effectiveUiConfig = (): UiConfigBucket => local ? uiConfigBucket() : {
+  settings: {
+    ...hostPreferences.preferences(),
+    ...Object.fromEntries(serverModelPreferenceKeys.map(key => [key,
+      Object.prototype.hasOwnProperty.call(uiConfigBucket().settings ?? {}, key) ? uiConfigBucket().settings![key] : hostPreferences.preferences()[key],
+    ])),
+  },
+}
+const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(effectiveUiConfig().settings))
 const legacyThemePreference = createMemo<ThemePreference>(() => uiStateBucket().theme ?? uiConfigBucket().theme ?? "system")
 const colorSchemeOverrides = createMemo(() => normalizeColorSchemeOverrides(uiStateBucket().colorSchemeOverrides))
 const colorSchemePreference = createMemo(() => {
@@ -682,31 +705,63 @@ function getAppearancePresetId(appearance: Appearance): string | undefined {
   return id && colorSchemePresets()[id]?.appearance === appearance ? id : undefined
 }
 const serverSettings = createMemo(() => normalizeServerConfig(serverConfigBucket()))
-const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
+const uiState: Accessor<NormalizedUiState> = createMemo<NormalizedUiState>(() => normalizeUiState(local ? uiStateBucket() : {
+  ...uiStateBucket(),
+  remoteServers: hostPreferences.remoteServers(),
+  models: { ...hostPreferences.uiState().models, ...uiStateBucket().models },
+}))
 
 const preferences = uiSettings
-const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
+const recentFolders: Accessor<RecentFolder[]> = createMemo<RecentFolder[]>(() => uiState().recentFolders)
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
-const remoteServers = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
+const remoteServers: Accessor<RemoteServerProfile[]> = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
 
 let loadPromise: Promise<void> | null = null
+let stateLoaded = false
+const documentLoads = new Map<string, Promise<void>>()
+
+async function ensureEditDocument(document: "config/ui" | "state/ui"): Promise<void> {
+  assertCurrent()
+  if (local) return ensureLoaded()
+  if (document === "config/ui" ? isUiConfigLoaded() : stateLoaded) return
+  let loading = documentLoads.get(document)
+  if (!loading) {
+    loading = (document === "config/ui" ? storage.revalidateUiConfigOwner() : storage.loadStateOwner("ui"))
+      .then(value => {
+        assertCurrent()
+        if (document === "config/ui") {
+          setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
+        } else { setUiStateBucket(value as any); stateLoaded = true }
+      })
+      .catch(error => { if (current() && document === "config/ui") setUiConfigLoadFailed(true); throw error })
+      .finally(() => { if (documentLoads.get(document) === loading) documentLoads.delete(document) })
+    documentLoads.set(document, loading)
+  }
+  await loading
+}
 
 async function ensureLoaded(): Promise<void> {
+  assertCurrent()
   if (isLoaded()) return
   if (!loadPromise) {
     loadPromise = Promise.all([
-      storage.revalidateUiConfigOwner().then(value => { setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false); return value })
-        .catch(error => { setUiConfigLoadFailed(true); throw error }),
-      storage.loadConfigOwner("server"),
-      storage.loadStateOwner("ui"),
+      local ? storage.revalidateUiConfigOwner().then(value => { assertCurrent(); setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false); return value })
+        .catch(error => { if (current()) setUiConfigLoadFailed(true); throw error }) : ensureEditDocument("config/ui"),
+      local ? storage.loadConfigOwner("server") : storage.loadConfigOwner("server").then(value => { assertCurrent(); setServerConfigBucket(value as any); return value }),
+      local ? storage.loadStateOwner("ui") : ensureEditDocument("state/ui"),
     ])
       .then(([, srvCfg, uiSt]) => {
-        setServerConfigBucket(srvCfg as any)
-        setUiStateBucket(uiSt as any)
+        assertCurrent()
+        if (local) {
+          setServerConfigBucket(srvCfg as any)
+          setUiStateBucket(uiSt as any)
+        }
         setIsLoaded(true)
       })
       .catch((error) => {
+        if (!current()) throw error
         log.error("Failed to load settings", error)
+        if (!local) throw error
         setServerConfigBucket({})
         setUiStateBucket({})
         setIsLoaded(true)
@@ -719,20 +774,34 @@ async function ensureLoaded(): Promise<void> {
 }
 
 async function patchConfigOwner(owner: string, patch: unknown) {
-  await ensureLoaded()
+  if (!local && owner === "ui") await ensureEditDocument("config/ui")
+  else await ensureLoaded()
+  assertCurrent()
+  if (!local && owner === "server") throw new Error("Server administration requires its local host")
   let updated: OwnerBucket
   try { updated = await storage.patchConfigOwner(owner, patch) }
   catch (error) {
     if (owner === "ui" && error instanceof ConfigOwnerReconciliationPendingError) { setIsUiConfigLoaded(false); setUiConfigLoadFailed(true) }
     throw error
   }
+  assertCurrent()
   if (owner === "ui") setUiConfigBucket(updated as any)
   if (owner === "server") setServerConfigBucket(updated as any)
 }
 
-async function patchStateOwner(owner: string, patch: unknown) {
-  await ensureLoaded()
+let stateWrite: Promise<void> = Promise.resolve()
+function patchStateOwner(owner: string, patch: unknown): Promise<void> {
+  stateWrite = writeStateOwner(owner, patch)
+  return stateWrite
+}
+async function writeStateOwner(owner: string, patch: unknown) {
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
+  assertCurrent()
+  if (!local && owner === "ui" && patch && typeof patch === "object" && "opencodeBinaries" in patch) {
+    throw new Error("Binary administration requires its local host")
+  }
   const updated = await storage.patchStateOwner(owner, patch)
+  assertCurrent()
   if (owner === "ui") setUiStateBucket(updated as any)
 }
 
@@ -754,6 +823,14 @@ function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
 }
 
 function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
+  if (!local) {
+    const hostUpdates = Object.fromEntries(Object.entries(updates).filter(([key]) => !serverModelPreferenceKeys.includes(key as ServerModelPreferenceKey)))
+    const serverUpdates = Object.fromEntries(Object.entries(updates).filter(([key]) => serverModelPreferenceKeys.includes(key as ServerModelPreferenceKey)))
+    if (Object.keys(hostUpdates).length) {
+      if (Object.keys(serverUpdates).length) return Promise.resolve(false)
+      return hostPreferences.updatePreferences(hostUpdates)
+    }
+  }
   const keys = Object.keys(updates)
   const missionKeys = keys.filter((key): key is MissionPreferenceKey => key === "missionProfileDefaults" || key === "missionModels")
   if (missionKeys.length) {
@@ -767,7 +844,7 @@ function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
 }
 
 // Preserve null deletion markers rather than passing resets through normalizers.
-export function patchHotkeyPreferences(patch: { settings: { hotkeyOverrides: Record<string, HotkeyBinding[] | null> | null } }): Promise<boolean> {
+function patchHotkeyPreferences(patch: { settings: { hotkeyOverrides: Record<string, HotkeyBinding[] | null> | null } }): Promise<boolean> {
   return patchConfigOwner("ui", patch).then(() => true, error => {
     log.error("Failed to patch hotkey settings", error)
     return false
@@ -779,14 +856,17 @@ export function patchHotkeyPreferences(patch: { settings: { hotkeyOverrides: Rec
 async function reloadMissionPreferences(): Promise<void> {
   try {
     const owner = await storage.revalidateUiConfigOwner()
+    assertCurrent()
     setUiConfigBucket(owner as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
   } catch (error) { setIsUiConfigLoaded(false); setUiConfigLoadFailed(true); throw error }
 }
 
 async function patchMissionPreferences(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<void> {
+  assertCurrent()
   setIsUiConfigLoaded(false)
   try {
     const owner = await storage.patchMissionPreferences(patch, expected)
+    assertCurrent()
     setUiConfigBucket(owner as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
   } catch (error) {
     // A conflict, unknown mutation outcome or unordered acknowledged write is not
@@ -808,7 +888,7 @@ function saveUserMissionModel(input: UserMissionModel): Promise<void> {
   const model = parseMissionModel(input)
   if (!missionModelsValid()) return Promise.reject(new Error("Invalid mission model document"))
   const expected = missionPreferenceSnapshot("missionModels")
-  const current = normalizeMissionModels(expected.present ? expected.value : [])
+   const current = normalizeMissionModels(expected.present ? expected.value : preferences().missionModels)
   const write = missionModelWriteQueue.then(async () => {
     await patchMissionPreferences({ settings: { missionModels: saveMissionModelRecord(current, model) } }, [expected])
   })
@@ -818,7 +898,7 @@ function saveUserMissionModel(input: UserMissionModel): Promise<void> {
 function removeUserMissionModel(id: string, expected = missionPreferenceSnapshot("missionModels")): Promise<void> {
   if (!missionModelsValid()) return Promise.reject(new Error("Invalid mission model document"))
   if (expected.key !== "missionModels" || !validMissionModels(expected.present ? expected.value : undefined)) return Promise.reject(new Error("Invalid mission model expectation"))
-  const current = normalizeMissionModels(expected.present ? expected.value : [])
+   const current = normalizeMissionModels(expected.present ? expected.value : preferences().missionModels)
   const write = missionModelWriteQueue.then(async () => {
     await patchMissionPreferences({ settings: { missionModels: removeMissionModelRecord(current, id) } }, [expected])
   })
@@ -1133,7 +1213,7 @@ async function renameRecentFolderProject(folderPath: string, projectName: string
   const name = projectName.trim()
   if (!folderPath || !name) return
   // Derive from loaded state; an unloaded empty list would erase every recent folder.
-  await ensureLoaded()
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
   const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
   try {
     await patchStateOwner("ui", { recentFolders: next })
@@ -1176,7 +1256,7 @@ function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
 
 /** Adds a named project to the recent folders, e.g. a kept temporary folder. */
 async function addNamedRecentFolder(folderPath: string, projectName: string): Promise<void> {
-  await ensureLoaded()
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
   await patchStateOwner("ui", { recentFolders: buildRecentFolderList(folderPath, recentFolders(), undefined, projectName) })
 }
 
@@ -1254,9 +1334,9 @@ function setModelThinkingSelection(model: { providerId: string; modelId: string 
   const current = uiState().models.thinkingSelections[key]
   if (current === value) return
 
-  const selections = { ...uiState().models.thinkingSelections }
+  const selections: Record<string, string | null> = { ...uiState().models.thinkingSelections }
   if (!value) {
-    delete selections[key]
+    selections[key] = null
   } else {
     selections[key] = value
   }
@@ -1352,10 +1432,6 @@ async function getAgentModelPreference(instanceId: string, agent: string): Promi
   return selections[agent]
 }
 
-void ensureLoaded().catch((error: unknown) => {
-  log.error("Failed to initialize settings", error)
-})
-
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   ensureLoaded: typeof ensureLoaded
@@ -1441,8 +1517,6 @@ interface ConfigContextValue {
   getAgentModelPreference: typeof getAgentModelPreference
 }
 
-const ConfigContext = createContext<ConfigContextValue>()
-
 const configContextValue: ConfigContextValue = {
   isLoaded,
   ensureLoaded,
@@ -1520,21 +1594,18 @@ const configContextValue: ConfigContextValue = {
   getAgentModelPreference,
 }
 
-export const ConfigProvider: ParentComponent = (props) => {
-  onMount(() => {
-    ensureLoaded().catch((error: unknown) => {
-      log.error("Failed to initialize settings", error)
-    })
-
+function subscribe() {
     const unsubUi = storage.onConfigOwnerChanged("ui", (bucket) => {
+      if (!current()) return
       setUiConfigBucket(bucket as any)
     })
     const unsubServer = storage.onConfigOwnerChanged("server", (bucket) => {
+      if (!current()) return
       setServerConfigBucket(bucket as any)
-      resetSpeechCapabilities()
-      void loadSpeechCapabilities(true)
+      if (local) { resetSpeechCapabilities(); void loadSpeechCapabilities(true) }
     })
     const unsubStateUi = storage.onStateOwnerChanged("ui", (bucket) => {
+      if (!current()) return
       setUiStateBucket(bucket as any)
     })
 
@@ -1543,20 +1614,150 @@ export const ConfigProvider: ParentComponent = (props) => {
       unsubServer()
       unsubStateUi()
     }
-  })
-
-  return <ConfigContext.Provider value={configContextValue}>{props.children}</ConfigContext.Provider>
+}
+return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, patchHotkeyPreferences, setUpdateFeed, subscribe, ensureEditDocument,
+  settleStateWrite: async () => { await Promise.all([favoritesOnlyWriteQueue, cloneParentSaves]); await stateWrite } }
 }
 
-export function useConfig(): ConfigContextValue {
+const serverModelPreferenceKeys = ["modelVisibility", "missionProfileDefaults", "missionModels"] as const
+type ServerModelPreferenceKey = typeof serverModelPreferenceKeys[number]
+const hostPreferences = createPreferencesStore(localBackend)
+type ConfigContextValue = ReturnType<typeof createPreferencesStore>
+const deferredServerEdits = new Set([
+  "addRecentFolder", "removeRecentFolder", "recordWorkspaceLaunch", "addRecentModelPreference", "toggleFavoriteModelPreference",
+  "setFavoritesOnlyPreference", "setModelThinkingSelection", "rememberCloneParent", "addOpenCodeBinary", "removeOpenCodeBinary",
+  "updateEnvironmentVariables", "addEnvironmentVariable", "removeEnvironmentVariable", "toggleSecureEnvVar", "updateLastUsedBinary", "updateLogLevel",
+])
+const hostPreferenceMethods = [
+  "themePreference", "setThemePreference", "colorSchemePreference", "getAppearancePalette", "getAppearancePresetId",
+  "customColorSchemePreference", "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId",
+  "setColorSchemePreference", "selectColorSchemePreset", "saveColorSchemeOverride", "resetColorSchemeOverride",
+  "saveColorSchemePreset", "deleteColorSchemePreset", "remoteServers", "saveRemoteServerProfile",
+  "markRemoteServerConnected", "removeRemoteServerProfile", "patchHotkeyPreferences", "setUpdateFeed",
+  "toggleShowThinkingBlocks", "toggleShowMessageTimeline", "toggleUsageMetrics", "toggleAutoCleanupBlankSessions",
+  "toggleShowPromptVoiceInput", "setDiffViewMode", "setToolOutputExpansion", "setDiagnosticsExpansion",
+  "setThinkingBlocksExpansion", "setToolInputsVisibility",
+] as const satisfies readonly (keyof ConfigContextValue)[]
+const scopedPreferences = new WeakMap<BackendClient, { config: ConfigContextValue; attachment: AbortSignal }>()
+const preferenceReads = new Set([
+  "isLoaded", "isUiConfigLoaded", "uiConfigLoadFailed", "missionDefaultsValid", "missionModelsValid", "missionPreferenceSnapshot",
+  "preferences", "getProviderModelVisibilityPreference", "providerModelVisibilitySaveFailed", "serverSettings", "isSecureEnvVar",
+  "recentFolders", "opencodeBinaries", "uiState", "isFavoriteModelPreference", "getFavoritesOnlyPreference", "getModelThinkingSelection", "lastCloneParent",
+  "themePreference", "colorSchemePreference", "getAppearancePalette", "getAppearancePresetId", "customColorSchemePreference",
+  "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId", "remoteServers",
+])
+const stateEdits = new Set([...deferredServerEdits].filter(key => ![
+  "updateEnvironmentVariables", "addEnvironmentVariable", "removeEnvironmentVariable", "toggleSecureEnvVar", "updateLastUsedBinary", "updateLogLevel",
+].includes(key)).concat(["addNamedRecentFolder", "renameRecentFolderProject"]))
+const configEdits = new Set(["updatePreferences", "saveMissionDefaults", "resetMissionModels", "saveUserMissionModel", "removeUserMissionModel", "setProviderModelVisibility"])
+// Host-owned updates delegated through a server target keep the host's silent failure contract.
+function isServerEdit(key: string, args: unknown[]): boolean {
+  if (!stateEdits.has(key) && !configEdits.has(key)) return false
+  return key !== "updatePreferences" || Object.keys((args[0] ?? {}) as object)
+    .some(name => serverModelPreferenceKeys.includes(name as ServerModelPreferenceKey))
+}
+function notifyRefusedPreferenceEdit() {
+  void import("../lib/notifications").then(({ showToastNotification }) => {
+    showToastNotification({ category: "settings", variant: "error", message: tGlobal("settings.preferenceSaveFailed") })
+  }).catch(error => log.error("Failed to notify refused preference edit", error))
+}
+// Empty server buckets keep host presentation/model inheritance but carry no write authority.
+const unavailablePreferences = createPreferencesStore({ ...localBackend, id: "unavailable" })
+for (const key of hostPreferenceMethods) Object.assign(unavailablePreferences, { [key]: hostPreferences[key] })
+const unavailableTarget = (backendId: BackendId): ConfigContextValue => new Proxy(unavailablePreferences, {
+  get: (target, key) => (...args: unknown[]) => {
+    if (!preferenceReads.has(String(key))) {
+      if (isServerEdit(String(key), args)) notifyRefusedPreferenceEdit()
+      throw new Error(`Backend unavailable: ${backendId}`)
+    }
+    return (target[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
+  },
+})
+/** Explicit settings target; host-owned preferences always retain their single local owner. */
+export function preferencesForBackend(backendId: BackendId): ConfigContextValue {
+  const backend = backends.get(backendId)
+  const attachment = backendEvents.signal(backendId)
+  if (!backend) return unavailableTarget(backendId)
+  if (backend === localBackend) return hostPreferences
+  if (!attachment || attachment.aborted) return unavailableTarget(backendId)
+  const cached = scopedPreferences.get(backend)
+  let config = cached?.attachment === attachment ? cached.config : undefined
+  if (!config) {
+    const rooted = createRoot(dispose => ({ config: createPreferencesStore(backend), dispose }), null)
+    config = rooted.config
+    const editTails = new Map<string, Promise<void>>()
+    const ready = rooted.config.isLoaded, load = rooted.config.ensureLoaded, loadDocument = rooted.config.ensureEditDocument, settle = rooted.config.settleStateWrite
+    // All presentation and native-host controls retain the local owner.
+    for (const key of hostPreferenceMethods) Object.assign(config, { [key]: hostPreferences[key] })
+    for (const [key, method] of Object.entries(config)) {
+      Object.assign(config, { [key]: (...args: unknown[]) => {
+        const attached = backendEvents.signal(backendId)
+        if (attachment.aborted || attached !== attachment || backends.get(backendId) !== backend) {
+          if (preferenceReads.has(key)) return (unavailablePreferences[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
+          if (isServerEdit(key, args)) notifyRefusedPreferenceEdit()
+          throw new Error(`Backend unavailable: ${backendId}`)
+        }
+        if (stateEdits.has(key) || configEdits.has(key)) {
+          const remoteEdit = isServerEdit(key, args)
+          const document = stateEdits.has(key) ? "state/ui" : "config/ui"
+          const write = (editTails.get(document) ?? Promise.resolve()).then(async () => {
+            await loadDocument(document)
+            if (attachment.aborted || backends.get(backendId) !== backend) throw new Error(`Backend unavailable: ${backendId}`)
+            const result = await (method as (...args: unknown[]) => unknown)(...args)
+            if (document === "state/ui") await settle()
+            return result
+          })
+          editTails.set(document, backend.storage.trackWrite(write.then(result => {
+            if (remoteEdit && result === false) notifyRefusedPreferenceEdit()
+          }, error => {
+            if (remoteEdit) notifyRefusedPreferenceEdit()
+            log.error("Failed to update settings", error)
+          })))
+          return write
+        }
+        if (deferredServerEdits.has(key) && !ready()) {
+          void load().then(() => {
+            if (attachment.aborted || backends.get(backendId) !== backend) throw new Error(`Backend unavailable: ${backendId}`)
+            return (method as (...args: unknown[]) => unknown)(...args)
+          }).catch(error => log.error("Failed to update settings", error))
+          return
+        }
+        return (method as (...args: unknown[]) => unknown)(...args)
+      } })
+    }
+    scopedPreferences.set(backend, { config, attachment })
+    const unsubscribe = config.subscribe()
+    attachment.addEventListener("abort", () => { unsubscribe(); rooted.dispose() }, { once: true })
+    void config.ensureLoaded().catch(error => log.error("Failed to initialize settings", error))
+  }
+  return config
+}
+export function preferencesOf(instanceId: string) {
+  return preferencesForBackend(parseInstanceKey(instanceId).backendId)
+}
+const ConfigContext = createContext<ConfigContextValue>()
+export const ConfigProvider: ParentComponent = (props) => {
+  onMount(() => { void hostPreferences.ensureLoaded(); return hostPreferences.subscribe() })
+
+  return <ConfigContext.Provider value={hostPreferences}>{props.children}</ConfigContext.Provider>
+}
+
+export function useConfig(instanceId?: Accessor<string | undefined>): ConfigContextValue {
   const context = useContext(ConfigContext)
   if (!context) {
     throw new Error("useConfig must be used within ConfigProvider")
   }
-  return context
+  if (!instanceId) return context
+  return new Proxy(context, {
+    get: (_target, key) => (...args: unknown[]) => {
+      const config = preferencesOf(instanceId() ?? "")
+      const method = config[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown
+      return method(...args)
+    },
+  })
 }
 
-export {
+export const {
   preferences,
   uiState,
   lastCloneParent,
@@ -1617,5 +1818,8 @@ export {
   setThinkingBlocksExpansion,
   setAgentModelPreference,
   getAgentModelPreference,
-}
+  patchHotkeyPreferences,
+} = hostPreferences
+
+void hostPreferences.ensureLoaded().catch((error: unknown) => log.error("Failed to initialize settings", error))
 

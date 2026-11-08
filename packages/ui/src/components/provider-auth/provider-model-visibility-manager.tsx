@@ -11,6 +11,7 @@ export interface ProviderVisibilityModel {
 }
 
 interface ProviderModelVisibilityManagerProps {
+  instanceId?: string
   providerId: string
   providerName: string
   models: readonly ProviderVisibilityModel[]
@@ -27,7 +28,7 @@ export const ProviderModelVisibilityManager: Component<ProviderModelVisibilityMa
     getProviderModelVisibilityPreference,
     providerModelVisibilitySaveFailed,
     setProviderModelVisibility,
-  } = useConfig()
+  } = useConfig(() => props.instanceId)
   const [query, setQuery] = createSignal("")
   const headingId = "provider-model-visibility-heading"
   let searchInput: HTMLInputElement | undefined
