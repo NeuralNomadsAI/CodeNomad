@@ -126,8 +126,8 @@ for (const consumer of ["creation", "tree"] as const) {
           // Real consumer observation, while its active focus/lifetime guards decide ownership.
           node.append(document.createElement("span"))
         }, { condition, selector: region(consumer) })
-        // Short enough to move the focused control out of view (a tree task sits wherever its rows put it).
-        const shrunk = consumer === "tree" && condition === "window-unfocused" ? Math.max(160, Math.floor((await focus.boundingBox())!.y) - 4) : 420
+        // The native blur case needs an actually clipped target, wherever this layout puts it.
+        const shrunk = condition === "window-unfocused" ? Math.max(160, Math.floor((await focus.boundingBox())!.y) - 4) : 420
         if (condition !== "visible") await f.page.setViewportSize({ width: 1000, height: shrunk })
         await frames(other ?? f.page)
         assert.equal(await f.page.evaluate(() => (window as any).focusAudit.writes.length), 0, `${condition} view leaves every scroll owner alone`)

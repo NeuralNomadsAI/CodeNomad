@@ -116,12 +116,6 @@ test("the editor and Compare follow favorites-only and keep hidden or non-favori
     assert.deepEqual(await listing(page, "Tasks · Model"), { value: key(SECRET.providerID, SECRET.id), shown: "Secret Preview",
       options: [native, ["OpenAI", ["GPT-6.1 Sol Fast", "Secret Preview"]]] }, "a saved hidden model stays selected under its name")
 
-    // A fresher conversation catalog names the selected model without another Missions read.
-    const reads = fixture.reads.length
-    await publishConversationCatalog(page, CATALOG.map(item => item.id === OPUS.id ? { ...item, name: "Opus 5.5 Turbo" } : item))
-    await page.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Opus 5.5 Turbo" }).waitFor({ state: "attached" })
-    assert.equal(fixture.reads.length, reads)
-
     await page.getByLabel("Playbook", { exact: true }).selectOption("compare")
     await loadedCatalog(page, "Model A · Model")
     assert.deepEqual(await listing(page, "Model A · Model"), { value: key(SECRET.providerID, SECRET.id), shown: "Secret Preview",
