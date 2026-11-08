@@ -351,6 +351,100 @@ test("a Mission whose plan holds no task has no chevron; an unknown count keeps 
   } finally { await page.close() }
 })
 
+test("the first completion is green even after selecting unfinished work; a mouse sweep clears only crossed finished icons", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 900 } })
+  try {
+    const title = "Complete the first tasks"
+    const data: Data = { missions: [mission("first", title, ["first", "second", "waiting", "third", "outside"].map(key => task(key, key, "queued")))],
+      activity: {}, schedules: [], deletions: [], failDelete: 0 }
+    const { errors } = await open(page, data)
+    await selectMission(page, title)
+    await missionTask(missionRows(page), "first").click()
+    await attribute(missionTask(missionRows(page), "first"), "aria-current", "true")
+    await (await inlineMissionEntry(page, title)).click()
+    const finish = (keys: string[]) => publish(page, data, value => {
+      value.missions = value.missions.map(item => ({ ...item, revision: item.revision + 1, updatedAt: Date.now(),
+        tasks: item.tasks.map(entry => keys.includes(entry.key) ? { ...entry, status: "completed" as const, updatedAt: Date.now() } : entry) }))
+    })
+    await finish(["first"])
+    const first = taskNode(page, "first")
+    await first.and(page.locator("[data-unseen]")).waitFor()
+    assert.equal(await first.locator(".mission-tree-mark").evaluate(element => getComputedStyle(element).color),
+      await first.evaluate(element => { const probe = document.createElement("span"); probe.style.color = "var(--session-status-idle-fg)";
+        element.append(probe); const color = getComputedStyle(probe).color; probe.remove(); return color }), "the first completion uses the green idle color")
+    await finish(["second", "third", "outside"])
+    for (const key of ["first", "second", "third", "outside"]) await taskNode(page, key).locator("button.mission-tree-mark-clear").waitFor()
+    const center = async (key: string) => {
+      const box = (await taskNode(page, key).locator("button.mission-tree-mark-clear").boundingBox())!
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+    const start = await center("first"), end = await center("third")
+    await page.mouse.move(start.x, start.y)
+    await page.mouse.down()
+    try { await page.mouse.move(end.x, end.y, { steps: 12 }) }
+    finally { await page.mouse.up() }
+    for (const key of ["first", "second", "third"]) {
+      await attribute(taskNode(page, key), "data-unseen", null)
+      assert.equal(await taskNode(page, key).locator("button.mission-tree-mark-clear").count(), 0)
+    }
+    assert.equal(await taskNode(page, "outside").locator("button.mission-tree-mark-clear").count(), 1, "an uncrossed completion stays unseen")
+    assert.equal(await taskNode(page, "waiting").getAttribute("data-state"), "assigned", "unfinished work is untouched")
+    assert.deepEqual(await highlighted(page), [title], "the sweep and its release select no task")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const direction of ["ltr", "rtl"]) {
+  test(`${direction}: crowded dependency lanes widen the indent and stay on their status icons after resize and scroll`, async () => {
+    const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 600 } })
+    try {
+      const title = "Parallel dependency rails"
+      const data: Data = { missions: [mission("rails", title, [
+        ...Array.from({ length: 6 }, (_, i) => task(`source${i}`, `Source ${i}`, "queued")),
+        ...Array.from({ length: 6 }, (_, i) => task(`target${i}`, `Target ${i}`, "queued", { blockedBy: i ? [] : ["source0"] })),
+      ])], activity: {}, schedules: [], deletions: [], failDelete: 0 }
+      const { errors } = await open(page, data)
+      await page.locator("html").evaluate((element, dir) => element.setAttribute("dir", dir), direction)
+      await selectMission(page, title)
+      const geometry = () => page.locator(".mission-flow").evaluate(flow => {
+        const svg = flow.querySelector<SVGSVGElement>(".mission-graph")!, matrix = svg.getScreenCTM()!
+        const rtl = getComputedStyle(svg).direction === "rtl", box = flow.getBoundingClientRect()
+        const paths = [...svg.querySelectorAll<SVGPathElement>("path[data-from]")]
+        const gaps = paths.flatMap(path => [[path.dataset.from!, 0], [path.dataset.to!, path.getTotalLength()]] as const).map(([key, length], index) => {
+          const point = paths[Math.floor(index / 2)].getPointAtLength(length).matrixTransform(matrix)
+          const mark = flow.querySelector(`[data-task-key="${key}"] [data-graph-anchor]`)!.getBoundingClientRect()
+          return Math.max(Math.abs(point.x - (rtl ? mark.right : mark.left)), Math.abs(point.y - mark.top - mark.height / 2))
+        })
+        const mark = flow.querySelector('[data-task-key="source0"] [data-graph-anchor]')!.getBoundingClientRect()
+        return { extra: parseFloat(getComputedStyle(flow).getPropertyValue("--mission-graph-extra")),
+          indent: rtl ? box.right - mark.right : mark.left - box.left,
+          lanes: paths.map(path => Number(/ H ([\d.]+)/.exec(path.getAttribute("d")!)![1])), gaps }
+      })
+      await page.locator('.mission-graph path[data-from="source0"]').waitFor()
+      await until(async () => (await geometry()).gaps.every(gap => gap <= 0.75), "the initial rail's measured endpoints")
+      const before = await geometry()
+      assert.equal(before.extra, 0, "one lane fits the ordinary task indent")
+      await publish(page, data, value => {
+        value.missions = value.missions.map(item => ({ ...item, revision: item.revision + 1, updatedAt: Date.now(),
+          tasks: item.tasks.map(entry => entry.key.startsWith("target") ? { ...entry, blockedBy: [`source${entry.key.slice(6)}`] } : entry) }))
+      })
+      await until(async () => { const value = await geometry(); return value.lanes.length === 6 && value.extra > 0 && value.gaps.every(gap => gap <= 0.75) },
+        "six crowded lanes and remeasured endpoints")
+      const crowded = await geometry()
+      assert.equal(new Set(crowded.lanes).size, 6, "overlapping edges retain distinct lanes")
+      assert.ok(Math.abs(crowded.indent - before.indent - crowded.extra) <= 0.75, "extra rail width moves the task icons by the same amount")
+      assert.ok(Math.max(...crowded.lanes) < crowded.indent, "every lane stays beside the task icons")
+      await page.evaluate(() => (window as any).missionFixture.panelWidth("300px"))
+      await page.setViewportSize({ width: 1100, height: 300 })
+      await taskNode(page, "target5").scrollIntoViewIfNeeded()
+      assert.ok(await page.locator(".mission-control").evaluate(element => element.scrollTop > 0), "the geometry check includes an actual panel scroll")
+      await until(async () => (await geometry()).gaps.every(gap => gap <= 0.75), "aligned endpoints after resize and scrolling")
+      assert.equal(new Set((await geometry()).lanes).size, 6)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
+
 /** Records whether a Mission editor form ever rendered (a hidden delete form never does). */
 // A string script: the test transpiler would wrap a named helper with an undefined `__name`.
 const watchForms = (page: Page) => page.evaluate(`(() => {
@@ -413,14 +507,31 @@ test("command feedback is announced and joins the primary button's tooltip inste
     const primary = missionToolbar(page).locator("button").first()
     assert.equal(await primary.getAttribute("title"), "Pause mission")
     await primary.click()
-    const alert = detail.locator(".mission-action-feedback [role=alert]")
+    const feedback = page.locator(".mission-picker-selection-actions .mission-action-feedback")
+    const alert = feedback.getByRole("alert")
     await alert.getByText("Pause was not applied", { exact: false }).waitFor({ state: "attached" })
+    await chevron(page, RELEASE).click()
+    await attribute(chevron(page, RELEASE), "aria-expanded", "false")
+    assert.equal(await detail.isVisible(), false)
     const text = (await alert.innerText()).trim()
     await until(async () => await primary.getAttribute("title") === `Pause mission — ${text}`, "the tooltip with the feedback")
-    // Still in the expanded detail and announced, but visually hidden.
-    assert.equal(await detail.isVisible(), true)
+    assert.match(await alert.ariaSnapshot(), /Pause was not applied/, "folding the row preserves the live announcement in the accessibility tree")
     assert.ok(await alert.evaluate(element => { const box = element.getBoundingClientRect(); return box.width <= 1 && box.height <= 1 }),
       "the explanation takes no room in the panel")
+    // A retained uncertain request also keeps its explicit recovery actions in the header.
+    await page.evaluate(async () => {
+      const path = "/src/stores/mission-briefing-request.ts", { setMissionBriefingRequest } = await import(path)
+      setMissionBriefingRequest(JSON.stringify(["fixture", "fixture", "project", "project", "release", "ses_release"]), { requestID: "held-briefing", state: "uncertain" })
+    })
+    const recovery = feedback.getByRole("button", { name: "Make a separate new request", exact: true })
+    await recovery.waitFor()
+    assert.equal(await feedback.getByRole("button", { name: "Open coordinator", exact: true }).isVisible(), true)
+    await recovery.focus()
+    const confirmation = page.waitForEvent("dialog")
+    page.once("dialog", dialog => dialog.dismiss())
+    await page.keyboard.press("Enter")
+    assert.equal((await confirmation).type(), "confirm", "keyboard activation reaches the explicit recovery confirmation")
+    assert.equal(await recovery.isEnabled(), true, "recovery is keyboard reachable with the row folded")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

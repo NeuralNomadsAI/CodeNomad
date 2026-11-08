@@ -15,6 +15,7 @@ export interface MissionEditorDraft {
   taskMode?: MissionTaskMode; customTaskMode: boolean; defaults: MissionProfileDefault[]; defaultsReady: boolean
   selectedModel?: Pick<UserMissionModel, "id" | "name">; optionsOpen: boolean; profileDetailsOpen: boolean
   requestId: string; lastPayload: string; deleteManagedSessions: boolean; deleteAttempted: boolean
+  deleteAutoSubmitted?: boolean; deleteError?: string
 }
 
 export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; scheduleID?: string; draft?: Readonly<MissionEditorDraft> }

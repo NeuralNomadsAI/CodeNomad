@@ -141,15 +141,25 @@ test("dependencies, dependents and replacements navigate reader identity without
   try {
     await f.page.locator("#draft").fill("Preserved draft")
     await f.page.locator("#transcript").evaluate(e => { e.scrollTop = 100 })
+    await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("/fixture", {
+      selected: "another-mission", selectedRecurrence: "another-daily", selectedScheduled: "another-schedule",
+      selectedTask: { missionId: "another-mission", taskId: "another-task" },
+    }))
     await show(f.page)
     await expand(f.page, "Task brief")
     await expand(f.page, "Technical details")
     await article(f.page, "Task brief").getByRole("spinbutton").fill("2")
     await f.page.getByRole("button", { name: "Depends on Earlier task", exact: true }).click()
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Earlier task", exact: true }).waitFor()
+    const dependencyView = (await f.page.evaluate(() => (window as any).taskReader.snapshot())).view
+    assert.deepEqual(dependencyView.selectedTask, { missionId: "mission", taskId: "before" })
+    assert.equal(dependencyView.selected, "mission")
+    assert.equal(dependencyView.selectedRecurrence, undefined)
+    assert.equal(dependencyView.selectedScheduled, undefined)
     assert((await f.page.locator(".mission-reader").innerText()).includes("Retired from the plan; native work is still outstanding."))
     assert.equal(await f.page.getByRole("button", { name: "Back to chat", exact: true }).evaluate(e => e === document.activeElement), true)
     await f.page.getByRole("button", { name: "Replaced by Work title", exact: true }).click()
+    assert.deepEqual((await f.page.evaluate(() => (window as any).taskReader.snapshot())).view.selectedTask, { missionId: "mission", taskId: "task" })
     assert.equal(await article(f.page, "Task brief").getByRole("spinbutton").inputValue(), "1")
     // The finished task omits the trivial "Unblocks" pointer; the tree still reaches the follow-up.
     assert.equal(await f.page.getByRole("button", { name: /^Unblocks/ }).count(), 0)

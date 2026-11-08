@@ -106,11 +106,14 @@ export function MissionActionBar(props: {
   const mount = () => props.inline ? undefined : slot?.()
   // A schedule's toolbar yields the line while one of its passage tasks' reader is open.
   const yielded = () => !props.inline && !props.task && Boolean(taskOwned?.())
+  // Live announcements and recovery buttons share the persistent header owner;
+  // folding the task content must preserve their accessibility and reachability.
+  const feedback = <div ref={feedbackRoot} class="mission-action-feedback">{props.feedback}</div>
+  const secondary = <Show when={props.secondary}><div class="mission-action-texts">{props.secondary}</div></Show>
   return <>
     <Show when={!yielded()}>
       <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
     </Show>
-    <Show when={props.secondary}><div class="mission-action-texts">{props.secondary}</div></Show>
-    <div ref={feedbackRoot} class="mission-action-feedback">{props.feedback}</div>
+    <Show when={mount()} keyed fallback={<>{secondary}{feedback}</>}>{element => <Portal mount={element}>{secondary}{feedback}</Portal>}</Show>
   </>
 }

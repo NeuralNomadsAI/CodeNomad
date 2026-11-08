@@ -13,6 +13,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
   onEdit: (id: string) => void; onDeleted: (id: string) => void; onOpenConversation: (id: string) => void;
   tracking?: JSX.Element; passage?: { reading: boolean; onToggle(): void }; onPassage?: (id: string | undefined) => void;
+  overview?: { reading: boolean; onToggle(): void };
   selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
@@ -62,7 +63,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const editable = () => props.active() && props.enabled() && !list.error() && list.fresh(id)
         && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
-        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : expand(value => !value)}
+        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? props.overview?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : props.overview ? props.overview.onToggle() : expand(value => !value)}
           primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
           onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}

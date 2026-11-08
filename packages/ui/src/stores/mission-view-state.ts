@@ -14,6 +14,8 @@ export interface MissionReaderTarget {
   /** Recurrence readers do not inherit a selected one-shot Mission's authority. */
   instanceId?: string
   projectID?: string
+  /** Configuration reader for a calendar-owned schedule without a current passage. */
+  scheduleOwner?: "scheduled"
 }
 /** One selection at a time: a row (`selected`, a schedule) or, instead, one task of a
  * Mission or passage (`selectedTask`, its Mission id beside it). */

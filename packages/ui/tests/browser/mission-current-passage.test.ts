@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
-import { chromium, type Browser, type Route } from "playwright"
+import { chromium, type Browser, type Page, type Route } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
@@ -19,7 +19,11 @@ import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurre
 import { captureMissionView } from "./mission-view-capture"
 import { inlineMissionEntry, missionMenuTrigger, missionRow, missionToolbar, missionToolbarAction, openTaskReader, selectMission, selectTaskMission,
   selectedMissionTitle } from "./mission-actions"
-import { panelMissions } from "./mission-content-fixture"
+import { missionContentFixture, panelMissions } from "./mission-content-fixture"
+import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
+import { missionDocumentChanges } from "../../../server/src/missions/mission-document-state"
+import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
+import type { MissionJsonValue } from "../../../server/src/missions/model"
 import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
 import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
 import { contentDigest } from "../../../server/src/missions/content-digest"
@@ -53,6 +57,168 @@ const mission: MissionMap = { version: 1, id: "msn_passage", projectID: "project
     { id: "tsk_second", key: "second", title: "Next task has no actor", brief: "Second task brief", role: "specialist", blockedBy: ["first"], status: "ready", createdAt: 1, updatedAt: 3, outstandingExecution: false },
   ], reports: [], briefing: { id: "brf_current", requestID: "briefing_request", basedOnRevision: 3, basedOnUpdatedAt: 3, createdAt: 3, summary: "Exact passage briefing",
     achieved: [{ text: "Reviewed", taskKeys: ["first"] }], ongoing: [], obstacles: [], next: [{ text: "Continue", taskKeys: ["second"] }] } }
+
+const deferred = () => {
+  let resolve!: () => void
+  const promise = new Promise<void>(yes => { resolve = yes })
+  return { promise, resolve }
+}
+
+async function setupReaderFollow(page: Page, nativePending = true) {
+  page.setDefaultTimeout(10_000)
+  const errors: string[] = [], writes: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const ordinary: MissionMap = { ...structuredClone(mission), id: "msn_one", objective: "One-time review", briefing: undefined,
+    reports: [], tasks: [{ ...structuredClone(mission.tasks[1]), blockedBy: [] }], actors: [structuredClone(mission.actors[0])] }
+  const values = new Map<string, MissionJsonValue>()
+  const store = new NativeMissionDocumentStore({ get: async key => values.get(key),
+    compareAndSet: async (key, value) => { values.set(key, structuredClone(value)) } }, "project", "/fixture")
+  const doc = await store.create("msn_native", { title: "Native scheduled review", objective: "Saved native instructions", notes: "Saved native notes",
+    template: "custom", profiles: { coordinator: { agent: "build", model: { providerID: "fixture", id: "fixture" } },
+      roles: { specialist: { agent: "build", model: { providerID: "fixture", id: "fixture" } } } },
+    taskMode: "native", profileID: "profile", executionHost: "local", roots: [{ mode: "directory-only", directory: "/fixture" }],
+    watchedConversationIDs: [], launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } }, Date.now(), () => true)
+  if (nativePending) {
+    missionDocumentChanges.play(doc, "play_native", Date.now(), [])
+    doc.synchronization = null
+    missionDocumentChanges.reserve(doc, { kind: "manual", requestID: "run_native" }, Date.now(), [])
+    missionDocumentChanges.admitted(doc, doc.pending!.id, Date.now())
+  }
+  const passages = {
+    rec_daily: { ...structuredClone(ordinary), id: "msn_daily_passage", objective: "Daily passage instructions" },
+    msn_native: { ...structuredClone(ordinary), id: doc.pending?.missionID ?? "msn_native_passage", objective: "Native passage instructions" },
+  }
+  const passageID = (id: keyof typeof passages) => id === "rec_daily" ? "pas_daily" : doc.pending!.id
+  const held = new Map<string, { started: ReturnType<typeof deferred>; release: ReturnType<typeof deferred>; settled: ReturnType<typeof deferred> }>()
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", async route => {
+    const request = route.request(), link = new URL(request.url()), path = link.pathname
+    if (path === "/api/events") return route.continue()
+    if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([ordinary]), generatedAt: 1, discardedEvents: 0 } })
+    const content = missionContentFixture(request.url(), request.method(), [ordinary])
+    if (content) return route.fulfill({ json: content })
+    if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [missionScheduleView(doc).document] } })
+    if (path.endsWith("/schedule")) return route.fulfill({ json: missionScheduleView(path.includes("/msn_native/") ? doc : undefined) })
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true,
+      origin: null, activation: { available: true, targets: [] } } })
+    if (path.endsWith("/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture",
+      location: { directory: "/fixture" }, schedules: [{ id: "rec_daily", title: "Daily review", revision: 2, state: "paused", clock: { time: "08:15", zone: "UTC" },
+        nextDueAt: null, actions: [], controls: [], pending: { passageID: "pas_daily", status: "running", missionID: passages.rec_daily.id }, latestResult: null, history: [] }] }) })
+    const id = path.match(/\/recurrence\/(rec_daily|msn_native)\/current/)?.[1] as keyof typeof passages | undefined
+    if (id) {
+      const value = passages[id], scheduled = id === "msn_native"
+      if (path.endsWith("/current")) {
+        assert.equal(link.searchParams.get("owner"), scheduled ? "scheduled" : null)
+        const gate = held.get(id)
+        gate?.started.resolve()
+        if (gate) await gate.release.promise
+        try { return await route.fulfill({ json: { version: 1, ownerRevision: doc.revision, projectID: "project", scheduleID: id, passageID: passageID(id),
+          source: { owner: scheduled ? "scheduled" : "daily", projectID: "project", scheduleID: id, passageID: passageID(id), missionID: value.id,
+            digest: "a".repeat(43), ...(scheduled ? { configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration } : {}) } } }) }
+        finally { gate?.settled.resolve() }
+      }
+      if (path.endsWith("/page")) {
+        const input = recurrenceCurrentPageInput.parse(request.postDataJSON()), damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
+        if (input.body) return route.fulfill({ json: missionPanelPage({ source: "mission", field: "body", missionID: value.id, projectID: "project", revision: value.revision,
+          ...damage, passage: input.source, window: { offset: 0, end: 1, total: 1, order: contentDigest(JSON.stringify(input.body)) } },
+        [{ available: true, ...readMissionContent("project", input.body, value) }], input.selector.cursor) })
+        if (input.selector.source === "activity") return route.fulfill({ json: missionPanelPage({ source: "activity", missionID: value.id, projectID: "project", revision: value.revision,
+          ...damage, passage: input.source, phase: "observed", observedAt: 4 }, [{ context: missionActivityContext(value, damage), coverage: "observed",
+          requests: { state: "observed", items: [] }, activity: { actors: [], family: { state: "observed", members: [] } } }], input.selector.cursor) })
+        return route.fulfill({ json: projectMissionPanel(value, input.selector, damage, { passage: input.source }) })
+      }
+    }
+    if (request.method() !== "GET") writes.push(path)
+    return route.fulfill({ json: {} })
+  })
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+  await (await inlineMissionEntry(page, "One-time review")).waitFor()
+  await page.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
+  return { errors, writes, ordinary, passages, passageID, hold(id: keyof typeof passages) {
+    const gate = { started: deferred(), release: deferred(), settled: deferred() }; held.set(id, gate); return gate
+  } }
+}
+
+const readerTarget = (page: Page) => page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").reader)
+const eye = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
+const paint = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+
+test("pressed eye follows one-time → daily passage → native scheduled passage → one-time task", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  try {
+    const f = await setupReaderFollow(page)
+    await selectMission(page, "One-time review"); await eye(page).click()
+    await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
+    for (const [id, title] of [["rec_daily", "Daily review"], ["msn_native", "Native scheduled review"]] as const) {
+      await (await inlineMissionEntry(page, title)).click()
+      await page.locator(".mission-reader").getByText(f.passages[id].objective, { exact: true }).waitFor()
+      assert.equal(await eye(page).getAttribute("aria-pressed"), "true")
+      assert.deepEqual(await readerTarget(page), { missionId: f.passages[id].id, kind: "overview", recurrence: {
+        instanceId: "fixture", projectID: "project", scheduleID: id, passageID: f.passageID(id), ...(id === "msn_native" ? { owner: "scheduled" } : {}) } })
+    }
+    await selectMission(page, "One-time review")
+    await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
+    await page.locator('.mission-tree li[data-task-key="second"] .mission-tree-task').click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Next task has no actor", exact: true }).waitFor()
+    await page.locator(".mission-reader").getByText("No result recorded for this task yet.", { exact: true }).waitFor()
+    assert.deepEqual(await readerTarget(page), { missionId: f.ordinary.id, kind: "task", itemId: "tsk_second" })
+    assert.equal(await eye(page).getAttribute("aria-pressed"), "true")
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { await page.close() }
+})
+
+for (const [id, title] of [["rec_daily", "Daily review"], ["msn_native", "Native scheduled review"]] as const) {
+  for (const close of [false, true]) test(`held ${id} current response cannot ${close ? "reopen the released eye" : "follow after switching selection"}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+    let gate: ReturnType<Awaited<ReturnType<typeof setupReaderFollow>>["hold"]> | undefined
+    try {
+      const f = await setupReaderFollow(page)
+      await selectMission(page, "One-time review"); await eye(page).click()
+      await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
+      gate = f.hold(id)
+      await (await inlineMissionEntry(page, title)).click(); await gate.started.promise
+      assert.equal((await readerTarget(page))?.kind, "recurrence", "the pending read first follows to its schedule")
+      if (close) {
+        await eye(page).click()
+        await page.locator(".mission-reader").waitFor({ state: "detached" })
+      } else {
+        await (await inlineMissionEntry(page, "One-time review")).click()
+        await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
+      }
+      gate.release.resolve(); await gate.settled.promise; await paint(page)
+      if (close) {
+        // The selected schedule still demands its passage: prove it rendered after release.
+        await page.locator(`section.mission-detail[aria-label="${title}"] .mission-tree li[data-task-key="second"]`).waitFor({ state: "attached" })
+        assert.equal(await readerTarget(page), undefined)
+        assert.equal(await eye(page).getAttribute("aria-pressed"), "false")
+        assert.equal(await page.locator(".mission-reader").count(), 0)
+        await (await inlineMissionEntry(page, "One-time review")).click()
+        assert.equal(await page.locator(".mission-reader").count(), 0, "later row selections keep the eye released")
+        await page.locator('.mission-tree li[data-task-key="second"] .mission-tree-task').click()
+        assert.equal(await page.locator(".mission-reader").count(), 0, "later task selections keep the eye released")
+      } else assert.deepEqual(await readerTarget(page), { missionId: f.ordinary.id, kind: "overview" })
+      assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+    } finally { gate?.release.resolve(); await page.close() }
+  })
+}
+
+test("native schedule without a passage opens its saved configuration centrally and follows back to one-time", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  try {
+    const f = await setupReaderFollow(page, false)
+    await (await inlineMissionEntry(page, "Native scheduled review")).click(); await eye(page).click()
+    await page.locator(".mission-reader").getByText("Saved native instructions", { exact: true }).waitFor()
+    await page.locator(".mission-reader").getByText("Saved native notes", { exact: true }).waitFor()
+    assert.deepEqual(await readerTarget(page), { kind: "recurrence", missionId: "msn_native", instanceId: "fixture", projectID: "project", scheduleOwner: "scheduled" })
+    assert.equal(await eye(page).getAttribute("aria-pressed"), "true")
+    await (await inlineMissionEntry(page, "One-time review")).click()
+    await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
+    assert.deepEqual(await readerTarget(page), { missionId: f.ordinary.id, kind: "overview" })
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { await page.close() }
+})
 
 test("actual MissionControl reuses the current task tree and attention, with briefing and identifiers in the central exact-source reader", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } }), errors: string[] = [], writes: string[] = []

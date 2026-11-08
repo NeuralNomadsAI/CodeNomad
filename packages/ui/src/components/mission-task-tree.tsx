@@ -152,7 +152,7 @@ export function MissionTaskTree(props: {
           // uncorrelated global request) only selects.
           // A finished task stays green until seen, like a session's Idle badge.
           const unseen = () => state() === "done" && viewScope !== undefined && missionTaskUnseen(viewScope(), props.mission.id, task())
-          const markSeen = () => { if (viewScope) markMissionTasksSeen(viewScope(), props.mission.id, [task()]) }
+           const markSeen = () => { if (viewScope && state() === "done") markMissionTasksSeen(viewScope(), props.mission.id, [task()]) }
           const select = () => {
             props.onSelect(task())
             markSeen()

@@ -230,9 +230,10 @@ export function MissionEditor(props: {
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
     defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: optionsOpen(), profileDetailsOpen: profileDetailsOpen(),
     requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(),
+    deleteAutoSubmitted: kind === "delete" && !autoSubmit(), deleteError: kind === "delete" ? error() : undefined,
     scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(),
     previousDraft: schedule.previousDraft(), journalMission: schedule.journal() })
-  onCleanup(() => props.onDispose?.(busy() ? undefined : prefilling() ? null : captureDraft()))
+  onCleanup(() => props.onDispose?.(kind === "delete" ? captureDraft() : busy() ? undefined : prefilling() ? null : captureDraft()))
 
   async function useSavedDefaults() {
     if (busy() || defaultsRefreshing() || !isActive()) return
@@ -523,15 +524,22 @@ export function MissionEditor(props: {
   let body: HTMLDivElement | undefined
   const panelScrolls = kind === "create" ? missionPanelScroll(() => body, isActive) : () => false
 
-  // The trash button deletes at once: the form shows only when the deletion failed or is unconfirmed.
-  let form!: HTMLFormElement, submitted = false
-  if (kind === "delete") createEffect(() => {
-    if (submitted || deleteAttempted() || locked() || !isActive()) return
-    submitted = true
-    queueMicrotask(() => form.requestSubmit())
+  // The trash button deletes at once: the form shows only when the deletion failed or is
+  // unconfirmed. Only a freshly opened deletion submits by itself; a restored one (any
+  // saved draft, a refused attempt included) waits for its explicit button.
+  let form!: HTMLFormElement
+  const [autoSubmit, setAutoSubmit] = createSignal(kind === "delete" && !(draft?.deleteAutoSubmitted ?? draft?.deleteAttempted))
+  if (kind === "delete" && draft?.deleteError) setError(draft.deleteError)
+  createEffect(() => {
+    if (!autoSubmit() || deleteAttempted() || locked() || !isActive()) return
+    queueMicrotask(() => {
+      if (!autoSubmit() || locked() || !isActive()) return
+      setAutoSubmit(false)
+      form.requestSubmit()
+    })
   })
   return <form ref={form} class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}
-    hidden={kind === "delete" && !error() && !uncertain() && (pending() || !deleteAttempted())}
+    hidden={kind === "delete" && !error() && !uncertain() && (pending() || autoSubmit())}
     data-scroller={panelScrolls() ? "panel" : undefined}>
     {/* Creation is headed by the panel's own Create button; edit/delete keep their title. */}
     <Show when={kind !== "create"}><header class="window-header"><h3 class="window-title">{t(`missions.control.${kind}`)}</h3></header></Show>
@@ -571,7 +579,7 @@ export function MissionEditor(props: {
       <Show when={kind === "create"} fallback={
           <button type="submit" class="button-primary" disabled={locked() || !isActive() || (kind !== "delete" && (textLocked() || !objective().trim() || !structuralLocked() && !policyReady()))}>
           {t(pending() ? "missions.control.mutation.pending" : kind === "delete"
-            ? deleteAttempted() ? "missions.control.retry" : "missions.control.delete" : "missions.control.save")}
+             ? !autoSubmit() ? "missions.control.retry" : "missions.control.delete" : "missions.control.save")}
         </button>}>
         <button type="submit" class="button-primary" disabled={createDisabled()}>
           {t(pending() || creationPending() ? "missions.control.mutation.pending" : "missions.create.submit")}
