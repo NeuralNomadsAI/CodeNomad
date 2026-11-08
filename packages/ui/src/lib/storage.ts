@@ -5,6 +5,7 @@ import { getLogger } from "./logger"
 import type { MissionPreferenceExpectation } from "./mission-preferences-document"
 
 const log = getLogger("actions")
+const OWNER_READ_TIMEOUT_MS = 10_000
 
 export type OwnerBucket = Record<string, any>
 
@@ -52,6 +53,8 @@ export class ServerStorage {
   private pendingWrites = new Set<Promise<unknown>>()
   private readonly api: ServerApi
   private ownerAuthority?: AbortSignal
+  private ownerWrites = new Map<string, Set<Promise<unknown>>>()
+  private ownerBarriers = new Map<string, Promise<void>>()
 
   /** Owner documents belong to an attachment, even when its client is reused. */
   bindOwnerAuthority(authority: AbortSignal): void {
@@ -66,7 +69,49 @@ export class ServerStorage {
       this.stateOwnerLoadPromises.clear()
     }
     clear()
+    for (const [document, writes] of this.ownerWrites) {
+      const barrier = Promise.allSettled([...writes]).then(() => {
+        if (this.ownerBarriers.get(document) !== barrier) return
+        this.ownerBarriers.delete(document)
+        // Events received while waiting can describe a preceding commit.
+        const cache = document.startsWith("config/") ? this.configOwnerCache : this.stateOwnerCache
+        cache.delete(document.slice(document.indexOf("/") + 1))
+      })
+      this.ownerBarriers.set(document, barrier)
+    }
     authority.addEventListener("abort", clear, { once: true })
+  }
+
+  private async waitForOwnerWrites(document: string, authority: AbortSignal | undefined): Promise<void> {
+    const barrier = this.ownerBarriers.get(document)
+    if (barrier) {
+      // A timeout refuses the read/edit; the sent write and its barrier stay owned.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([barrier, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Storage owner write pending; explicit reload required")), OWNER_READ_TIMEOUT_MS)
+        })])
+      } finally { clearTimeout(timer) }
+    }
+    this.assertOwnerAuthority(authority)
+  }
+
+  private writeOwner(document: string, send: () => Promise<OwnerBucket>): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    const dispatch = () => {
+      this.assertOwnerAuthority(authority)
+      const write = this.trackWrite(send())
+      let writes = this.ownerWrites.get(document)
+      if (!writes) this.ownerWrites.set(document, writes = new Set())
+      writes.add(write)
+      void write.finally(() => {
+        writes.delete(write)
+        if (!writes.size && this.ownerWrites.get(document) === writes) this.ownerWrites.delete(document)
+      }).catch(() => undefined)
+      return write
+    }
+    return this.ownerBarriers.has(document) ? this.waitForOwnerWrites(document, authority).then(dispatch) : dispatch()
   }
 
   private assertOwnerAuthority(authority: AbortSignal | undefined): void {
@@ -94,7 +139,9 @@ export class ServerStorage {
   }
 
   async loadConfigOwner(owner: string): Promise<OwnerBucket> {
-    this.assertOwnerAuthority(this.ownerAuthority)
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    if (this.ownerBarriers.has(`config/${owner}`)) await this.waitForOwnerWrites(`config/${owner}`, authority)
     const cached = this.configOwnerCache.get(owner)
     if (cached) return cached
 
@@ -113,7 +160,7 @@ export class ServerStorage {
     const authority = this.ownerAuthority
     this.assertOwnerAuthority(authority)
     const epoch = this.configOwnerEpochs.get(owner) ?? 0, invalidation = this.configInvalidationEpoch
-    return this.trackWrite(this.api.patchConfigOwner<OwnerBucket>(owner, patch)
+    return this.writeOwner(`config/${owner}`, () => this.api.patchConfigOwner<OwnerBucket>(owner, patch)
       .then(updated => { this.assertOwnerAuthority(authority); return this.acceptConfigWrite(owner, epoch, invalidation, updated) }))
   }
 
@@ -142,7 +189,7 @@ export class ServerStorage {
     const authority = this.ownerAuthority
     this.assertOwnerAuthority(authority)
     const epoch = this.configOwnerEpochs.get("ui") ?? 0, invalidation = this.configInvalidationEpoch
-    return this.trackWrite(this.api.patchMissionPreferences<OwnerBucket>(patch, expected)
+    return this.writeOwner("config/ui", () => this.api.patchMissionPreferences<OwnerBucket>(patch, expected)
       .then(updated => { this.assertOwnerAuthority(authority); return this.acceptConfigWrite("ui", epoch, invalidation, updated) }))
   }
 
@@ -163,11 +210,12 @@ export class ServerStorage {
 
   private async readStableConfigOwner(owner: string): Promise<OwnerBucket> {
     const authority = this.ownerAuthority
+    if (this.ownerBarriers.has(`config/${owner}`)) await this.waitForOwnerWrites(`config/${owner}`, authority)
     for (let attempt = 0; attempt < 3; attempt++) {
       this.assertOwnerAuthority(authority)
       const epoch = this.configOwnerEpochs.get(owner) ?? 0, invalidation = this.configInvalidationEpoch
       try {
-        const value = await this.api.fetchConfigOwner<OwnerBucket>(owner, AbortSignal.timeout(10_000))
+        const value = await this.api.fetchConfigOwner<OwnerBucket>(owner, AbortSignal.timeout(OWNER_READ_TIMEOUT_MS))
         this.assertOwnerAuthority(authority)
         if (!value || typeof value !== "object" || Array.isArray(value)) continue
         // This strict read must not substitute a potentially older display cache.
@@ -182,6 +230,7 @@ export class ServerStorage {
   async loadStateOwner(owner: string): Promise<OwnerBucket> {
     const authority = this.ownerAuthority
     this.assertOwnerAuthority(authority)
+    if (this.ownerBarriers.has(`state/${owner}`)) await this.waitForOwnerWrites(`state/${owner}`, authority)
     const cached = this.stateOwnerCache.get(owner)
     if (cached) return cached
 
@@ -205,7 +254,7 @@ export class ServerStorage {
   patchStateOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
     const authority = this.ownerAuthority
     this.assertOwnerAuthority(authority)
-    return this.trackWrite(this.api.patchStateOwner<OwnerBucket>(owner, patch).then((updated) => {
+    return this.writeOwner(`state/${owner}`, () => this.api.patchStateOwner<OwnerBucket>(owner, patch).then((updated) => {
       this.assertOwnerAuthority(authority)
       this.setOwnerCache("state", owner, updated)
       return updated

@@ -23,6 +23,10 @@ where their authority, lifetime or runtime differs.
   Reattaching the same client starts fresh owner reads; revoked reads and ACKs are
   fenced before cache publication and subscriber delivery, and their cleanup
   releases only their own flight. Already sent mutations retain their durable result.
+  Client/document barriers keep their settlement ahead of replacement reads and edits,
+  including conditional Mission writes sharing `config/ui`. After settlement, fresh
+  reads supersede events received during the wait. A ten-second owner reconciliation
+  budget bounds each wait; expiry fails closed and retains the barrier until settlement.
 - Treat a background update of a displayed collection as data, never as a user
   selection: preserve its open state, stable-key keyboard target and inline actions.
 

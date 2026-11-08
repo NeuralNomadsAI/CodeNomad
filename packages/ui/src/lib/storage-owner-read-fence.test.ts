@@ -50,6 +50,60 @@ test("replacement owner authority separates flights and fences late reads and AC
   }
 })
 
+test("replacement barriers cover each owner write family, release failures and keep documents independent", async () => {
+  for (const family of ["config", "state", "mission"] as const) for (const failure of [false, true]) {
+    let release!: () => void, writes = 0, reads = 0
+    const wait = new Promise<void>(resolve => { release = resolve })
+    const delayed = async <T>() => {
+      writes++
+      if (writes === 1) { await wait; if (failure) throw new Error("write failed") }
+      return { fresh: true } as T
+    }
+    const read = async <T>() => { reads++; return { fresh: true } as T }
+    const storage = new ServerStorage({ api: { ...serverApi, fetchConfigOwner: read, fetchStateOwner: read,
+      patchConfigOwner: delayed, patchStateOwner: delayed, patchMissionPreferences: delayed,
+    }, events: { on: () => () => {} } })
+    const first = new AbortController(), second = new AbortController()
+    storage.bindOwnerAuthority(first.signal)
+    const patch = () => family === "state" ? storage.patchStateOwner("ui", {})
+      : family === "mission" ? storage.patchMissionPreferences({}, []) : storage.patchConfigOwner("ui", {})
+    const old = assert.rejects(patch(), failure ? /write failed/ : /revoked storage authority/)
+    first.abort(); storage.bindOwnerAuthority(second.signal)
+    const loading = family === "state" ? storage.loadStateOwner("ui") : storage.revalidateUiConfigOwner()
+    const editing = patch()
+    await storage.loadConfigOwner("independent")
+    assert.equal(reads, 1, "another document does not wait")
+    assert.equal(writes, 1, "direct writes also wait for the previous attachment")
+    release(); await Promise.all([old, loading, editing])
+    assert.equal(writes, 2)
+    assert.ok(reads >= 2)
+  }
+})
+
+test("a hung owner write bounds replacement waiting and stays fenced until settlement", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  let release!: () => void, reads = 0, writes = 0
+  const wait = new Promise<void>(resolve => { release = resolve })
+  const storage = new ServerStorage({ api: { ...serverApi,
+    fetchStateOwner: async <T>() => { reads++; return { fresh: true } as T },
+    patchStateOwner: async <T>() => { writes++; await wait; return {} as T },
+  }, events: { on: () => () => {} } })
+  const first = new AbortController(), second = new AbortController()
+  storage.bindOwnerAuthority(first.signal)
+  const old = assert.rejects(storage.patchStateOwner("ui", {}), /revoked storage authority/)
+  first.abort(); storage.bindOwnerAuthority(second.signal)
+  const loading = assert.rejects(storage.loadStateOwner("ui"), /write pending/)
+  const editing = assert.rejects(storage.patchStateOwner("ui", {}), /write pending/)
+  t.mock.timers.tick(10_000)
+  await Promise.all([loading, editing])
+  assert.equal(reads, 0)
+  assert.equal(writes, 1, "timeout never dispatches a replacement write")
+  const retry = assert.rejects(storage.loadStateOwner("ui"), /write pending/)
+  t.mock.timers.tick(10_000); await retry
+  release(); await old
+  assert.deepEqual(await storage.loadStateOwner("ui"), { fresh: true })
+})
+
 test("an old initial GET never replaces a newer owned configuration event", async () => {
   const release = holdFetch(), storage = new ServerStorage(), published: unknown[] = []
   storage.onConfigOwnerChanged("ui", owner => published.push(owner))

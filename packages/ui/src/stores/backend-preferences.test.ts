@@ -260,6 +260,8 @@ test("real preference consumers isolate host, server, fallback, instance data an
     hold = undefined
     detach = backendEvents.attach(backend.id, backend.events)
     const fresh = module.preferencesForBackend(backend.id)
+    // Initial loading now waits for the dispatched request to settle.
+    release()
     await fresh.ensureLoaded()
     await fresh.addRecentFolder("/fresh")
     const before = structuredClone(fresh.recentFolders())
@@ -270,6 +272,48 @@ test("real preference consumers isolate host, server, fallback, instance data an
     await fresh.addRecentFolder("/after")
     assert.deepEqual(state.recentFolders.map((folder: any) => folder.path), ["/after", "/fresh", "/initial"])
     assert.equal(state.recentFolders[2].projectName, "Committed name", "a dispatched mutation retains its durable result")
+    detach()
+  })
+
+  for (const nativeEvent of [false, true]) await t.test(`late old commit preserves replacement edits (native event: ${nativeEvent})`, async () => {
+    let state: Bucket = { recentFolders: [{ path: "/initial", lastAccessed: 1 }] }
+    let release!: () => void, first = true, reads = 0, writes = 0
+    const wait = new Promise<void>(resolve => { release = resolve })
+    const backend = createBackendClient({ id: `lateCommit${nativeEvent}`, baseUrl: "https://late.invalid", fetcher: async (input, init) => {
+      if (!String(input).includes("/state/")) return Response.json({})
+      if (init?.method === "PATCH") {
+        writes++
+        const delayed = first
+        if (first) { first = false; await wait }
+        state = applyMergePatch(state, JSON.parse(String(init.body))) as Bucket
+        if (delayed && nativeEvent) (backend.events as any).dispatch({ type: "storage.stateChanged", owner: "ui", value: structuredClone(state) })
+      } else reads++
+      return Response.json(state)
+    } })
+    registry.set(backend.id, backend); registered.push(backend)
+    let detach = backendEvents.attach(backend.id, backend.events)
+    const old = module.preferencesForBackend(backend.id)
+    await old.ensureLoaded()
+    const pending = old.renameRecentFolderProject("/initial", "Late durable name")
+    const rejected = assert.rejects(pending, /Backend unavailable/)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(writes, 1)
+    detach(); detach = backendEvents.attach(backend.id, backend.events)
+    const fresh = module.preferencesForBackend(backend.id)
+    const adding = fresh.addRecentFolder("/fresh") as unknown as Promise<void>
+    for (let turn = 0; turn < 5; turn++) await new Promise<void>(resolve => setImmediate(resolve))
+    const beforeRelease = { reads, writes }
+    release()
+    await Promise.all([rejected, adding])
+    assert.ok(state.recentFolders.some((folder: any) => folder.path === "/fresh"), "the old commit preserves the new durable recent")
+    assert.equal(state.recentFolders.find((folder: any) => folder.path === "/initial").projectName, "Late durable name")
+    await fresh.addRecentFolder("/after")
+    assert.deepEqual(state.recentFolders.map((folder: any) => folder.path), ["/after", "/fresh", "/initial"])
+    assert.equal(state.recentFolders[2].projectName, "Late durable name")
+    assert.deepEqual(fresh.recentFolders(), state.recentFolders)
+    assert.equal(reads, 2, "replacement loads the durable document afresh")
+    assert.equal(beforeRelease.reads, 1, "replacement reads wait for the old sent write")
+    assert.equal(beforeRelease.writes, 1, "replacement edits wait before composing their patch")
     detach()
   })
 

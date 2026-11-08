@@ -153,7 +153,7 @@
   "lib/server-meta.ts": ["api-client:fetchServerMeta x1"],
   "lib/shortcuts/navigation.ts": ["delegated:backend x5"],
   "lib/sse-manager.ts": ["backend-events:on x3","backend-events:onDetach x1","backend-events:onTransportStatus x2","continuation:backend-events:on x1","continuation:backend-events:onTransportStatus x1","delegated:backend x6"],
-  "lib/storage.ts": ["api-client:deleteInstanceData x1","api-client:fetchConfigOwner x2","api-client:fetchStateOwner x1","api-client:patchConfigOwner x1","api-client:patchMissionPreferences x1","api-client:patchStateOwner x1","api-client:readInstanceData x1","api-client:writeInstanceData x1","continuation:then x2","delegated:backend x7","server-events:on x3"],
+  "lib/storage.ts": ["api-client:deleteInstanceData x1","api-client:fetchConfigOwner x2","api-client:fetchStateOwner x1","api-client:patchConfigOwner x1","api-client:patchMissionPreferences x1","api-client:patchStateOwner x1","api-client:readInstanceData x1","api-client:writeInstanceData x1","continuation:delegated x3","continuation:then x2","delegated:backend x7","server-events:on x3"],
   "lib/theme.tsx": ["delegated:backend x3"],
   "main.tsx": ["delegated:backend x3"],
   "stores/app-session-workspace-hydration.ts": ["delegated:backend x4"],
