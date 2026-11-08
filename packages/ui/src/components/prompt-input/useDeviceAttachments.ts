@@ -58,7 +58,10 @@ export function useDeviceAttachments(options: Options) {
     if (textarea?.isConnected && textarea.offsetParent !== null) textarea.focus()
   }
 
-  function enqueue(fileSelection: readonly File[] | Promise<readonly File[]>, clipboard = false, owner = capture()): Promise<void> {
+  // `fallbackText` supplies a paste's text when its file selection resolves empty; it
+  // runs in this batch's queue turn and lands at the batch's paste anchor.
+  function enqueue(fileSelection: readonly File[] | Promise<readonly File[]>, clipboard = false, owner = capture(),
+    fallbackText?: () => string): Promise<void> {
     if (!owner.current()) return Promise.resolve()
     const input = options.getTextarea()
     const anchor = { text: options.prompt(), start: input?.selectionStart ?? options.prompt().length,
@@ -69,8 +72,11 @@ export function useDeviceAttachments(options: Options) {
       try {
         const files = await fileSelection
         if (!owner.current()) return
-        const result = await readDeviceFileSelection(files, getAttachments(owner.instanceId, owner.sessionId), owner.current)
-        if (result.stale || !owner.current()) return
+        const result = files.length
+          ? await readDeviceFileSelection(files, getAttachments(owner.instanceId, owner.sessionId), owner.current)
+          : undefined
+        if (result?.stale || !owner.current()) return
+        if (!result && !fallbackText) return
         const textarea = options.getTextarea()
         const insertion = clipboardInsertion(anchor, options.prompt())
         const selection = textarea && { start: textarea.selectionStart, end: textarea.selectionEnd, direction: textarea.selectionDirection }
@@ -79,7 +85,19 @@ export function useDeviceAttachments(options: Options) {
         let cursor = insertion.start
         let selectionEnd = insertion.end
         let inserted = false
+        const insert = (token: string) => {
+          const text = options.prompt()
+          options.setPrompt(text.slice(0, cursor) + token + text.slice(selectionEnd))
+          cursor += token.length
+          selectionEnd = cursor
+          inserted = true
+        }
         batch(() => {
+          if (!result) {
+            const text = fallbackText!()
+            if (text) insert(text)
+            return
+          }
           for (const { file, data } of result.files) {
             const usage = getInlineFileUsage(getAttachments(owner.instanceId, owner.sessionId))
             if (usage.count >= PROMPT_INLINE_FILE_LIMITS.maxFiles || usage.bytes + data.byteLength > PROMPT_INLINE_FILE_LIMITS.maxTotalBytes) {
@@ -92,11 +110,7 @@ export function useDeviceAttachments(options: Options) {
             if (clipboard && mime.startsWith("image/")) {
               const count = findHighestAttachmentCounters(options.prompt()).highestImage + 1
               const token = formatImagePlaceholder(count)
-              const text = options.prompt()
-              options.setPrompt(text.slice(0, cursor) + token + text.slice(selectionEnd))
-              cursor += token.length
-              selectionEnd = cursor
-              inserted = true
+              insert(token)
               attachment.display = token
             }
             addAttachment(owner.instanceId, owner.sessionId, attachment)
@@ -110,7 +124,7 @@ export function useDeviceAttachments(options: Options) {
             unchangedSelection ? cursor : mapPosition(selection.end), selection.direction,
           )
         }
-        if (result.rejected.length) {
+        if (result?.rejected.length) {
           showToastNotification({ category: "sessions", variant: "warning", title: tGlobal("promptInput.attachFiles.skipped.title"),
             message: result.rejected.map(({ name, reason }) => tGlobal(`promptInput.attachFiles.rejected.${reason}`, { name })).join("\n") })
         }
@@ -155,7 +169,7 @@ export function useDeviceAttachments(options: Options) {
 // Use the paste gesture's selection, never a later one. Map an unchanged anchor
 // around edits before/after it; if an edit overlaps it, append without deleting
 // any new text. This also preserves earlier tokens from queued clipboard batches.
-export function clipboardInsertion(anchor: { text: string; start: number; end: number }, text: string) {
+function clipboardInsertion(anchor: { text: string; start: number; end: number }, text: string) {
   if (text === anchor.text) return anchor
   let prefix = 0, suffix = 0
   while (prefix < text.length && prefix < anchor.text.length && text[prefix] === anchor.text[prefix]) prefix++

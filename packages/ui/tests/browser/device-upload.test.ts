@@ -226,6 +226,43 @@ test("a native read with no attachment keeps the clipboard text at the paste sel
   } finally { await page.close() }
 })
 
+test("text fallbacks keep paste order and leave a newer focus in place", async () => {
+  const { page } = await setup("tauri", "local")
+  try {
+    await page.evaluate(() => {
+      (window as any).pendingReads = []
+      ;(window as any).__TAURI_INTERNALS__.invoke = (command: string) => {
+        if (command !== "read_clipboard_attachments") return Promise.resolve(null)
+        ;(window as any).clipboardReads++
+        return new Promise(resolve => (window as any).pendingReads.push(() => resolve([])))
+      }
+    })
+    const textarea = page.locator("textarea:visible").first()
+    const pending = (count: number) => page.waitForFunction(count => (window as any).pendingReads.length === count, count)
+    await nativePaste(page, "text/uri-list", "file://other-host/first", true)
+    await pending(1)
+    await nativePaste(page, "text/uri-list", "file://other-host/second", true)
+    await pending(2)
+    // The second read answers first; its text still lands after the first paste's.
+    await page.evaluate(() => (window as any).pendingReads[1]())
+    await page.evaluate(() => (window as any).pendingReads[0]())
+    await page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement).value
+      === "file://other-host/firstfile://other-host/second")
+
+    await textarea.fill("before AFTER")
+    await textarea.evaluate((input: HTMLTextAreaElement) => input.setSelectionRange(7, 7))
+    await nativePaste(page, "text/uri-list", `file://other-host/${"long ".repeat(40)}`, true)
+    await pending(3)
+    await page.locator("#outside").focus()
+    await page.evaluate(() => (window as any).pendingReads[2]())
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.equal(await textarea.inputValue(), "before [pasted #1]AFTER")
+    // Let the composer's timers and frames run before checking focus stayed put.
+    await page.evaluate(() => new Promise<void>(resolve => setTimeout(() => requestAnimationFrame(() => resolve()), 0)))
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "outside")
+  } finally { await page.close() }
+})
+
 test("native paste uses the shared size limits and unreadable-file warnings", async () => {
   const { page } = await setup("tauri", "local")
   try {

@@ -1,4 +1,4 @@
-import { createEffect, createSignal, type Accessor } from "solid-js"
+import { batch, createEffect, createSignal, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import { createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
@@ -11,7 +11,7 @@ import {
   imageDisplayCounterRegex,
   pastedDisplayCounterRegex,
 } from "./attachmentPlaceholders"
-import { clipboardInsertion, useDeviceAttachments } from "./useDeviceAttachments"
+import { useDeviceAttachments } from "./useDeviceAttachments"
 import { readClipboardAttachments } from "../../lib/native/clipboard-attachments"
 
 type PromptAttachmentsOptions = {
@@ -242,15 +242,9 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     const nativeFiles = !pastedText || hasFileUris ? readClipboardAttachments(e) : null
     if (nativeFiles) {
       e.preventDefault()
-      const owner = device.capture()
-      const textarea = options.getTextarea()
-      const anchor = { text: options.prompt(), start: textarea?.selectionStart ?? options.prompt().length,
-        end: textarea?.selectionEnd ?? options.prompt().length }
-      // Without attachments the paste stays the text the browser would have inserted.
-      await device.enqueue(nativeFiles.then(files => {
-        if (!files.length && pastedText && owner.current()) insertPastedText(pastedText, anchor)
-        return files
-      }), true, owner)
+      // Without attachments the paste keeps the text the browser would have inserted.
+      await device.enqueue(nativeFiles, true, device.capture(),
+        pastedText ? () => isLongPaste(pastedText) ? addLongPaste(pastedText) : pastedText : undefined)
       return
     }
     if (!pastedText) return
@@ -264,21 +258,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     return text.length > 150 || text.split("\n").length > 3
   }
 
-  // Inserts text at the paste's selection, mapped around edits made while the native read ran.
-  function insertPastedText(text: string, anchor: { text: string; start: number; end: number }) {
-    const at = clipboardInsertion(anchor, options.prompt())
-    const textarea = options.getTextarea()
-    if (isLongPaste(text)) {
-      textarea?.setSelectionRange(at.start, at.end)
-      pasteLongText(text)
-      return
-    }
-    const current = options.prompt()
-    options.setPrompt(current.slice(0, at.start) + text + current.slice(at.end))
-    textarea?.setSelectionRange(at.start + text.length, at.start + text.length)
-  }
-
-  function pasteLongText(pastedText: string) {
+  /** Adds a long paste's text attachment and returns the placeholder that stands for it. */
+  function addLongPaste(pastedText: string) {
     const lineCount = pastedText.split("\n").length
     const charCount = pastedText.length
     // Number above detached tokens too: a new placeholder lands before its
@@ -294,32 +275,36 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     const display = `pasted #${count} (${summary})`
     const filename = `paste-${count}.txt`
 
-    const attachment = createTextAttachment(pastedText, display, filename)
-    const owner = device.capture()
-    const placeholder = formatPastedPlaceholder(count)
-    const textarea = options.getTextarea()
-    // A native insertion keeps the caret and the browser's undo history; the
-    // resulting input event updates the prompt like typing.
-    const insertedNatively = textarea !== null && document.activeElement === textarea
-      && document.execCommand("insertText", false, placeholder)
-    if (!insertedNatively && textarea) {
-      const start = textarea.selectionStart
-      const end = textarea.selectionEnd
-      const currentText = options.prompt()
-      const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
-      options.setPrompt(newText)
+    addAttachment(options.instanceId(), options.sessionId(), createTextAttachment(pastedText, display, filename))
+    return formatPastedPlaceholder(count)
+  }
 
-      setTimeout(() => {
-        if (!owner.current()) return
-        const newCursorPos = start + placeholder.length
-        textarea.setSelectionRange(newCursorPos, newCursorPos)
-        textarea.focus()
-      }, 0)
-    } else if (!insertedNatively) {
-      options.setPrompt(options.prompt() + placeholder)
-    }
+  function pasteLongText(pastedText: string) {
+    batch(() => {
+      const owner = device.capture()
+      const placeholder = addLongPaste(pastedText)
+      const textarea = options.getTextarea()
+      // A native insertion keeps the caret and the browser's undo history; the
+      // resulting input event updates the prompt like typing.
+      const insertedNatively = textarea !== null && document.activeElement === textarea
+        && document.execCommand("insertText", false, placeholder)
+      if (!insertedNatively && textarea) {
+        const start = textarea.selectionStart
+        const end = textarea.selectionEnd
+        const currentText = options.prompt()
+        const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
+        options.setPrompt(newText)
 
-    addAttachment(options.instanceId(), options.sessionId(), attachment)
+        setTimeout(() => {
+          if (!owner.current()) return
+          const newCursorPos = start + placeholder.length
+          textarea.setSelectionRange(newCursorPos, newCursorPos)
+          textarea.focus()
+        }, 0)
+      } else if (!insertedNatively) {
+        options.setPrompt(options.prompt() + placeholder)
+      }
+    })
   }
 
   function handleDragOver(e: DragEvent) {
