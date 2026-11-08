@@ -15,7 +15,10 @@ const KEY = "__codenomadWebkitReadV1"
 const token = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const globalState = globalThis as typeof globalThis & { [KEY]?: State }
 function makeState(): State { return {document,token:token(),next:0,ids:new WeakMap(),nodes:new Map(),observers:new Set(),observed:new WeakSet(),roots:new WeakMap(),hides:new WeakMap()} }
-function parent(node: Node): Node | null { return node.parentNode ?? (node.nodeType === 11 ? (node as ShadowRoot).host : null) }
+function parent(node: Node): Node | null {
+  if (node.nodeType === 9) { try { return (node as Document).defaultView?.frameElement ?? null } catch { return null } }
+  return (node as Element).assignedSlot ?? node.parentNode ?? (node.nodeType === 11 ? (node as ShadowRoot).host : null)
+}
 function live(node: Node): boolean {
   const doc = node.nodeType === 9 ? node as Document : node.ownerDocument
   if (!doc || (node.nodeType !== 9 && !node.isConnected)) return false
@@ -91,10 +94,16 @@ function hidden(element: Element): boolean {
 const collapse=(text: string)=>text.replace(/\s+/g," ").trim()
 function composedText(root: Node,state:State): string {
   if (root.nodeType === 3) return root.textContent ?? ""
-   if (root.nodeType === 1 && (["script","style","template","noscript","head"].includes((root as Element).localName) || hidden(root as Element))) return ""
+  if (root.nodeType === 1 && (["script","style","template","noscript","head"].includes((root as Element).localName) || hidden(root as Element))) return " "
   const element=root.nodeType === 1 ? root as Element : undefined
-  if (element?.localName === "slot") { const nodes=(element as HTMLSlotElement).assignedNodes({flatten:true}); if (nodes.length) return nodes.map(node=>composedText(node,state)).join(" ") }
-  return Array.from((element && shadowRoot(element,state.roots))?.childNodes ?? root.childNodes).map(node=>composedText(node,state)).join(" ")
+  if (element?.localName === "br") return " "
+  if (element && ["iframe","frame"].includes(element.localName)) {
+    try { const body=(element as HTMLIFrameElement).contentDocument?.body; return body ? ` ${composedText(body,state)} ` : " " } catch { return " " }
+  }
+  const assigned=element?.localName === "slot" ? (element as HTMLSlotElement).assignedNodes({flatten:true}) : []
+  const text=Array.from(assigned.length ? assigned : (element && shadowRoot(element,state.roots))?.childNodes ?? root.childNodes).map(node=>composedText(node,state)).join("")
+  const display=element?.ownerDocument.defaultView!.getComputedStyle(element).display ?? ""
+  return /^(block|flow-root|flex|grid|table|list-item)/.test(display) ? ` ${text} ` : text
 }
 function role(element: Element): string {
   const tag=element.localName, type=(element as HTMLInputElement).type

@@ -6,6 +6,7 @@ import { CLOSED_SHADOW_HOOK } from "../../../server/src/automation/page/webkit/h
 import { declaration } from "../../../server/src/automation/page/functions"
 import { nativeDriver } from "../../../server/src/automation/page/native-driver"
 import { waitForText } from "../../../server/src/automation/page/input"
+import { performAction } from "../../../server/src/automation/page/actions"
 import type { PageOperation } from "../../../server/src/automation/page/protocol"
 
 test("WebKit reader finds composed text and accepts shadow descendants without accepting overlays", { timeout: 30_000 }, async () => {
@@ -14,11 +15,19 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
     const page = await browser.newPage()
     await page.addInitScript(CLOSED_SHADOW_HOOK)
     await page.goto("data:text/html," + encodeURIComponent(`<!doctype html><p>Hello <b>world</b></p>
-      <iframe srcdoc="<p>Frame <b>phrase</b></p>"></iframe>
+      <div id="word">Au<span>then</span>tication</div>
+      <div>BlockAlpha</div><div>BlockBeta</div><span>LineAlpha</span><br><span>LineBeta</span>
+      <span>HiddenAlpha</span><span hidden>ignored</span><span>HiddenBeta</span>
+      <div style="display:flex"><span>Flex</span><span>words</span></div>
+      <div style="display:grid"><span>GridAlpha</span><span>GridBeta</span></div>
+      <table><tr><td>CellAlpha</td><td>CellBeta</td></tr></table>
+      <ul><li>ListAlpha</li><li>ListBeta</li></ul>
+      <iframe title="Scrollable frame" srcdoc="<p>Frame <b>phrase</b></p><div style='height:2000px' onclick='document.body.dataset.clicked=event.isTrusted'></div>"></iframe>
       <script>for(const mode of ['open','closed']) {
         const host=document.createElement('x-button');host.id=mode;host.role='button';host.ariaLabel=mode+' Host action';
         host.style='display:block;width:160px;height:40px';
-        host.attachShadow({mode}).innerHTML='<span style="display:block;width:100%;height:100%">Shadow <b>phrase</b></span>';
+        host.attachShadow({mode}).innerHTML='<span style="display:block;width:100%;height:100%">Shadow <b>phrase</b></span><span>Auth<span>enti</span>cated</span><slot></slot>';
+        host.innerHTML='Slot<span>ted</span>';
         host.onclick=event=>host.dataset.clicked=event.isTrusted;document.body.append(host);
       }</script>`))
     const cdp = await page.context().newCDPSession(page)
@@ -26,6 +35,10 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
     const world = await cdp.send("Page.createIsolatedWorld", { frameId: tree.frameTree.frame.id, worldName: "codenomad-webkit" })
     const source = readFileSync(new URL("../../../server/src/automation/page/webkit/read.generated.js", import.meta.url), "utf8")
     const read = async (operation: PageOperation) => {
+      if (operation.op === "pointer" || operation.op === "wheel") {
+        await cdp.send("Input.dispatchMouseEvent", operation.event)
+        return {}
+      }
       const response = await cdp.send("Runtime.evaluate", { contextId: world.executionContextId,
         expression: `(function(request){${source}\n})(${JSON.stringify(JSON.stringify(operation))})`, returnByValue: true })
       assert.equal(response.exceptionDetails, undefined)
@@ -35,12 +48,30 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
     const session = { driver: nativeDriver({ driver: "webkit", contractVersion: 1 }, read, async () => {}),
       markAutomation: false, checkpoint: async () => {} }
     const contains = async (text: string) => (await read({ op: "call", function: "contains", handle: root, args: [text] })).value
-    for (const text of ["Hello world", "Frame phrase", "Shadow phrase"]) assert.equal(await contains(text), true, text)
+    for (const text of ["Hello world", "Authentication", "Frame phrase", "Shadow phrase", "Authenticated", "Slotted", "BlockAlpha BlockBeta", "LineAlpha LineBeta", "HiddenAlpha HiddenBeta", "Flex words", "GridAlpha GridBeta", "CellAlpha CellBeta", "ListAlpha ListBeta"]) assert.equal(await contains(text), true, text)
+    for (const text of ["BlockAlphaBlockBeta", "LineAlphaLineBeta", "HiddenAlphaHiddenBeta", "GridAlphaGridBeta", "CellAlphaCellBeta", "ListAlphaListBeta"]) assert.equal(await contains(text), false, text)
+    assert.equal((await waitForText(session, "Authentication", false, 500)).found, true)
+    await assert.rejects(waitForText(session, "Authentication", true, 50), /still shown/)
+    await page.locator("#word").evaluate(element => element.remove())
+    assert.equal((await waitForText(session, "Authentication", true, 500)).found, false)
     assert.equal((await waitForText(session, "Hello world", false, 500)).found, true)
     await assert.rejects(waitForText(session, "Hello world", true, 50), /still shown/)
     await page.locator("p").first().evaluate(element => element.remove())
     assert.equal((await waitForText(session, "Hello world", true, 500)).found, false)
     const nodes = (await read({ op: "tree" })).nodes
+    const frame = nodes.find((node: any) => node.role === "Iframe")
+    await performAction(session, { kind: "click", ref: "frame", backendNodeId: frame.node })
+    await page.waitForFunction(() => (document.querySelector("iframe")!.contentDocument!.body.dataset.clicked === "true"))
+    await performAction(session, { kind: "scroll", target: { ref: "frame", backendNodeId: frame.node }, direction: "down", amount: 200 })
+    await page.waitForFunction(() => document.querySelector("iframe")!.contentWindow!.scrollY > 0)
+    // The shared CDP program accepts same-origin document ancestry and rejects unrelated hits.
+    assert.deepEqual(await page.evaluate(source => {
+      const frame = document.querySelector("iframe")!, receives = new Function(`return (${source})`)()
+      return [receives.call(frame, frame.contentDocument!.body), receives.call(document.body, frame.contentDocument!.body), typeof receives.call(frame, document.body)]
+    }, declaration("receives", false)), [null, null, "string"])
+    await page.locator("iframe").evaluate(frame => frame.setAttribute("inert", ""))
+    assert.equal(await contains("Frame phrase"), false, "frame ancestors hide child-document text")
+    await page.locator("iframe").evaluate(frame => frame.removeAttribute("inert"))
     for (const mode of ["open", "closed"]) {
       const host = nodes.find((node: any) => node.name === `${mode} Host action`)
       const handle = (await read({ op: "resolve", node: host.node })).handle
@@ -60,6 +91,18 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
       const child = document.createElement("span"); host.append(child)
       const receives = new Function(`return (${source})`)()
       return [receives.call(host, child), receives.call(root.querySelector("section"), child), receives.call(host, document.querySelector("iframe"))]
-    }, declaration("receives", false)), [null, null, "iframe"])
+    }, declaration("receives", false)), [null, null, 'iframe "Scrollable frame"'])
+    assert.equal(await page.evaluate(source => {
+      const input = document.createElement("input"); input.id = "labelled-control"; document.body.append(input)
+      const label = document.createElement("label"); label.htmlFor = input.id
+      const host = document.createElement("span"); label.append(host); document.body.append(label)
+      const root = host.attachShadow({ mode: "open" }); root.innerHTML = "<span>Label text</span>"
+      return new Function(`return (${source})`)().call(input, root.firstChild)
+    }, declaration("receives", false)), null, "associated labels work through shadow ancestry")
+    await page.locator("#open").evaluate(host => {
+      host.shadowRoot!.innerHTML = '<slot aria-hidden="true"></slot>'
+      host.innerHTML = '<span>Hidden slotted text</span>'
+    })
+    assert.equal(await contains("Hidden slotted text"), false, "slot ancestors hide assigned text")
   } finally { await browser.close() }
 })
