@@ -6,7 +6,7 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverApi } from "../../../src/lib/api-client"
-import { createBackendClient } from "../../../src/lib/backend-client"
+import { backends, createBackendClient, type BackendClient } from "../../../src/lib/backend-client"
 import { backendEvents } from "../../../src/lib/backend-events"
 import { addInstance } from "../../../src/stores/instances"
 import { updateMissionProjectView } from "../../../src/stores/mission-view-state"
@@ -15,24 +15,17 @@ import "../../../src/index.css"
 
 const folder = "C:\\Exact\\History\\"
 const mode = new URLSearchParams(location.search).get("mode")
-const reads: string[] = [], schedules: string[] = [], recurrences: string[] = []
+const reads: string[] = []
 // A remote view owns an explicitly attached backend, even with mocked HTTP.
-backendEvents.attach("lab", createBackendClient({ id: "lab", baseUrl: location.origin }).events)
+const lab = createBackendClient({ id: "lab", baseUrl: location.origin, relayProfileId: "lab" })
+;(backends as Map<string, BackendClient>).set("lab", lab)
+backendEvents.attach("lab", lab.events)
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 serverApi.readInstanceData = async key => {
   reads.push(key)
   return { messageHistory: key === folder ? ["legacy local history"] : key === `lab~${folder}` ? ["remote history"] : [], agentModelSelections: {} }
 }
-serverApi.fetchMissionSchedules = async (_id, input) => {
-  schedules.push(input.directory!)
-  return { version: 1, projectID: "p", schedules: [] } as any
-}
-serverApi.fetchMissionRecurrence = async id => {
-  recurrences.push(id)
-  return { version: 1, projectID: "p", schedules: [], actions: [] } as any
-}
-serverApi.fetchMissionPanel = async () => { throw new Error("Inventory unavailable in this fixture") }
 for (const id of ["w1", "lab~w1", "lab~mission"]) {
   addInstance({ id, ...(id.startsWith("lab~") ? { backendId: "lab" } : {}), folder: id.endsWith("mission") ? "/repo" : folder,
     status: "starting", client: null, proxyPath: "", port: 0, pid: 0, metadata: { project: { id: "p" } as any } })
@@ -49,4 +42,4 @@ function Fixture() {
   </>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-;(window as any).backendConsumers = { reads, schedules, recurrences, folder }
+;(window as any).backendConsumers = { reads, folder }

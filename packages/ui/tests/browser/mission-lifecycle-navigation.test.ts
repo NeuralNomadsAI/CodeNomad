@@ -147,6 +147,7 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
     const held = new Promise<void>(resolve => { release = resolve }), sent = new Promise<void>(resolve => { submitted = resolve })
     try {
       await page.route("**/api/**", route => route.fulfill({ json: {} }))
+      await page.route("**/api/panel-extensions", route => route.fulfill({ json: [] }))
       await events.route(page)
       await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
         if (route.request().method() === "GET") {

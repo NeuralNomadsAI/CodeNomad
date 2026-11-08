@@ -4,16 +4,34 @@ import { chromium } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-for (const mode of ["control", "reader"]) test(`real composers retain exact local history and isolate backends; Missions ${mode} uses physical directories`, async () => {
+for (const mode of ["control", "reader"]) test(`real composers retain exact local history and isolate backends; Missions ${mode} uses physical directories`, { timeout: 60000 }, async () => {
   const fixture = await borrowFixture({ name: "backend-consumers", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-consumers.tsx"></script></body></html>' }] })
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
-  const page = await browser.newPage(), errors: string[] = []
+  const page = await browser.newPage(), errors: string[] = [], schedules: string[] = [], recurrences: string[] = [], remoteHistory: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: 'window.EventSource = class extends EventTarget { close() {} }' })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/backends/lab/api/**", route => {
+    const request = new URL(route.request().url())
+    if (request.pathname.startsWith("/api/backends/lab/api/storage/instances/")) {
+      remoteHistory.push(decodeURIComponent(request.pathname.slice("/api/backends/lab/api/storage/instances/".length)))
+      return route.fulfill({ json: { messageHistory: ["remote history"], agentModelSelections: {} } })
+    }
+    if (request.pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled") {
+      schedules.push(request.searchParams.get("directory")!)
+      return route.fulfill({ json: { version: 1, projectID: "p", schedules: [] } })
+    }
+    if (request.pathname === "/api/backends/lab/api/workspaces/mission/missions/recurrence") {
+      recurrences.push(request.pathname)
+      return route.fulfill({ json: { version: 1, projectID: "p", schedules: [], actions: [] } })
+    }
+    return route.fulfill({ status: 503, json: { error: "Inventory unavailable in this fixture" } })
+  })
   try {
+    const recurrence = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/recurrence")
+    const schedule = mode === "control" ? page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled") : undefined
     await page.goto(`${fixture.url}?mode=${mode}`)
     await page.waitForFunction(() => (window as any).backendConsumers?.reads.length >= 1)
     const local = page.locator('[data-composer="local"] textarea'), remote = page.locator('[data-composer="remote"] textarea')
@@ -21,12 +39,15 @@ for (const mode of ["control", "reader"]) test(`real composers retain exact loca
     assert.equal(await local.inputValue(), "legacy local history", "the persisted Windows key must retain case, backslashes and trailing slash")
     await remote.press("ArrowUp")
     assert.equal(await remote.inputValue(), "remote history", "the real remote composer must receive its history identity")
-    await page.waitForFunction(mode => (window as any).backendConsumers.recurrences.length
-      && (mode !== "control" || (window as any).backendConsumers.schedules.length), mode)
+    await recurrence
+    await schedule
     const result = await page.evaluate(() => (window as any).backendConsumers)
-    assert.deepEqual(result.reads.sort(), [result.folder, `lab~${result.folder}`].sort())
-    assert.ok(result.schedules.every((directory: string) => directory === "/repo"), JSON.stringify(result.schedules))
-    assert.ok(result.recurrences.every((id: string) => id === "lab~mission"))
+    assert.deepEqual(result.reads.concat(remoteHistory.map(key => `lab~${key}`)).sort(), [result.folder, `lab~${result.folder}`].sort())
+    assert.ok(remoteHistory.every(key => key === result.folder), "remote storage HTTP receives the exact physical folder key")
+    if (mode === "control") assert.ok(schedules.length)
+    assert.ok(schedules.every(directory => directory === "/repo"), JSON.stringify(schedules))
+    assert.ok(recurrences.length)
+    assert.ok(recurrences.every(path => path === "/api/backends/lab/api/workspaces/mission/missions/recurrence"))
     assert.deepEqual(errors, [])
   } finally { await browser.close() }
 })

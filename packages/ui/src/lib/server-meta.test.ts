@@ -3,7 +3,7 @@ import { it } from "node:test"
 
 import type { ServerMeta } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
-import { getServerMeta } from "./server-meta"
+import { createServerMetaCache, getServerMeta } from "./server-meta"
 
 it("allows a metadata retry after a failed request", async () => {
   const originalFetch = serverApi.fetchServerMeta
@@ -32,4 +32,29 @@ it("allows a metadata retry after a failed request", async () => {
   } finally {
     serverApi.fetchServerMeta = originalFetch
   }
+})
+
+it("publishes refreshes only to the same attachment and rejects revoked metadata replies", async () => {
+  let value: ServerMeta = { localUrl: "http://127.0.0.1:9899", eventsUrl: "http://127.0.0.1:9899/api/events",
+    host: "127.0.0.1", listeningMode: "local", localPort: 9899, hostLabel: "localhost",
+    workspaceRoot: "/workspace", addresses: [] }
+  let release: (() => void) | undefined
+  const cache = createServerMetaCache({ fetchServerMeta: async () => {
+    if (release) await new Promise<void>(resolve => { release = resolve })
+    return value
+  } })
+  const first = new AbortController(), second = new AbortController()
+  await cache.getServerMeta(false, first.signal)
+  assert.equal(cache.meta(first.signal)?.previewsUnavailable, undefined)
+  assert.equal(cache.meta(second.signal), null)
+  value = { ...value, previewsUnavailable: true }
+  await cache.getServerMeta(true, first.signal)
+  assert.equal(cache.meta(first.signal)?.previewsUnavailable, true)
+  assert.equal(cache.meta(second.signal), null)
+  release = () => {}
+  const pending = cache.getServerMeta(false, second.signal)
+  second.abort(); release()
+  await assert.rejects(pending, { name: "AbortError" })
+  assert.equal(cache.meta(second.signal), null)
+  assert.equal(cache.meta(first.signal)?.previewsUnavailable, true)
 })

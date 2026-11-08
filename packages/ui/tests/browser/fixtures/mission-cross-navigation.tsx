@@ -14,15 +14,16 @@ import { openSessionPreview, showSessionChatFor, getSessionPreview } from "../..
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { serverEvents } from "../../../src/lib/server-events"
-import { panelExtensionsApi } from "../../../src/lib/panel-extensions-api"
-import { observePanelReads } from "../panel-read-fixture"
+import { backendOf, localBackend } from "../../../src/lib/backend-client"
+import { observeBackendPanelReads } from "../panel-read-fixture"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
 
-observePanelReads(panelExtensionsApi)
+observeBackendPanelReads()
+if (backendOf("cross-navigation") !== localBackend) throw new Error("Fixture changed the local backend owner")
 await initializeClientState()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
 const id = "cross-navigation", scope = "/fixture", client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -55,7 +56,10 @@ function Fixture() {
   })
   window.missionCrossNavigation = {
     snapshot, history: () => [...history],
-    transport: status => (serverEvents as unknown as { emitTransportStatus(status: string): void }).emitTransportStatus(status),
+    transport: status => {
+      const transport = serverEvents as unknown as { emitTransportStatus(status: string): void }
+      transport.emitTransportStatus(status)
+    },
     coldCatalogue: async () => {
       // Drain this fixture's read before clearing its display marker. This never
       // cancels a shared read and does not change any product cache policy.

@@ -37,6 +37,7 @@ export function usePanelExtensions(instanceId: Accessor<string>, active: Accesso
         try {
           if (!owns()) return
           const entries = await panelExtensionsFor(id, operation.signal).panelExtensionsApi.list(operation.signal)
+          if (!Array.isArray(entries)) throw new TypeError("Invalid panel extension list")
           if (owns() && !owned.again) { setEntries(entries); setFailed(false); setVerified(true) }
         } catch { if (owns() && !owned.again) { setFailed(true) } }
       } while (owns() && owned.again)
@@ -63,7 +64,8 @@ export function usePanelExtensions(instanceId: Accessor<string>, active: Accesso
   }))
   onCleanup(serverEvents.forInstance(instanceId).onTransportStatus(status => {
     const next = status === "connected"
-    if (connected === next) return
+    // Every stream open reconciles the HTTP snapshot, including the first open.
+    if (!next && !connected) return
     connected = next
     clear()
     if (connected) void refresh()

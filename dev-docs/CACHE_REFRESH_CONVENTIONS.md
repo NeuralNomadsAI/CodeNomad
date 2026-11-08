@@ -203,4 +203,7 @@ never re-traversing the whole session inventory.
 
 ## Agent conventions
 
+- Project server metadata publishes refreshes to mounted consumers through its
+  backend/attachment-scoped signal. Revocation clears project presentation;
+  pending replies from a revoked attachment cannot publish into another snapshot.
 - The browser opens only a few connections to the CodeNomad server. The selected transcript and its metadata read directly; secondary panel and timeline reads (plugin controls, outlines/previews) go through `secondaryRead` in `lib/api-client.ts`, sharing the bounded `backgroundReads` budget. Provider usage stays direct (superseded reads run to completion and are fenced), and so does the OpenCode status read awaited by Restart/Start, so daemon-bound reads in the shared budget can never hold it. Startup effects must not track app-wide state they only await (`untrack` readiness gates), or every restored workspace update restarts and requeues the transcript read. Search visibility must be value-diffed before its close effect: reactive instance metadata can change while search stays closed, and running search cleanup then would cancel the initial transcript read. Restore tests must exercise reactive identity accessors and assert visible messages as well as request counts.
