@@ -25,7 +25,7 @@ function assertPolicy(config) {
   ])
   for (const entry of config.updates) {
     assert.equal(entry.schedule.interval, "weekly")
-    assert.equal(entry["open-pull-requests-limit"], 5)
+    assert.equal(entry["open-pull-requests-limit"], 0, "routine version updates stay off; security updates are separate")
     assert.equal(entry.ignore, undefined, "keep security fixes eligible at every version")
     assert.equal(entry["exclude-paths"], undefined, "cover every workspace manifest")
     assert.equal(entry.vendor, undefined, "local Cargo patches require manual re-qualification")
@@ -65,6 +65,7 @@ test("Dependabot keeps broad security coverage and bounded routine updates", () 
 
 test("policy check rejects security restrictions, broad majors and incorrect grouping", () => {
   const mutations = [
+    ...[0, 1, 2, 3].map(index => (config) => { config.updates[index]["open-pull-requests-limit"] = 1 }),
     (config) => { config.updates[0].allow[0]["dependency-name"] = "tauri*" },
     (config) => { config.updates[0].allow[0]["dependency-type"] = "direct" },
     (config) => { config.updates[0]["target-branch"] = "other-branch" },

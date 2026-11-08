@@ -35,12 +35,13 @@
   the installed Electron executable's `process.versions.node` for Electron
   (fetched by `npx --no install-electron`).
   `scripts/verify-bundled-node.cjs` checks the packaged npm version against the pin.
-- npm lifecycle scripts call `node` by name. Tauri's bundled `node` answers to it
-  from PATH, even though Tauri also sets `ELECTRON_RUN_AS_NODE=1`. A runtime
-  executable not named `node` (Electron's) receives a temporary `node` command
-  pointing to it instead. Installation and native upgrade scope it to their
-  child environment and clean it after completion; interrupted installers retain
-  their adapter and prefix lock for safe manual recovery. The command lives in an
+- npm scripts and their children receive temporary `npm` and `npx` commands tied
+  to the selected npm package and Node runtime. Tauri's bundled `node` answers
+  from PATH, even with `ELECTRON_RUN_AS_NODE=1`; an executable not named `node`
+  (Electron's) also receives a temporary `node` command. Installation and native
+  upgrade share these adapters, scope them to their child environment and clean
+  them after completion; interrupted installers retain their adapters and prefix
+  lock for safe manual recovery. The commands live in an
   installer directory inside the npm prefix (`.codenomad-npm-*` for direct npm,
   `.codenomad-upgrade-*` beside the native upgrade's npm shim), never the system
   temporary directory, which may be mounted noexec.
@@ -65,13 +66,12 @@
   the development Electron executable on Windows, Linux and macOS.
 - Dependabot covers every dependency of the Cargo workspace `packages/tauri-app`
   and of the npm workspaces (root lockfile), plus the Cloudflare deployment worker
-  (`packages/cloudflare`, separate lockfile), with weekly version checks against
-  the default branch (`dev`). Keep `target-branch` omitted for npm and Cargo so
-  security updates share the configuration. Each entry's `allow` rule uses
-  `dependency-type: all` and permits routine minor/patch updates; Cargo includes
-  transitive crates. npm additionally allows
-  `electron` major proposals to keep supported runtime majors visible. Other
-  routine major migrations require an explicit maintainer decision.
+  (`packages/cloudflare`, separate lockfile), against the default branch
+  (`dev`). Keep `target-branch` omitted for npm and Cargo so security updates
+  share the configuration. Each entry's `allow` rule uses `dependency-type: all`;
+  Cargo includes transitive crates. Its minor/patch update types and npm's
+  `electron` major rule select version updates only while a job's limit permits
+  them. Routine major migrations require an explicit maintainer decision.
   [`allow.update-types`](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#update-types-allow)
   filters version updates only: security fixes remain eligible for every package,
   including fixes requiring a major. Matching allow rules combine their permitted
@@ -92,9 +92,14 @@
   from the root installation and externalizes the daemon's native SDK/Effect.
   Cargo's workspace covers its application and regression members; local vendor
   manifests and lockfiles remain under the vendored-patch qualification policy.
- - Root workspaces and the Cloudflare worker have separate npm jobs, each with a
-   limit of five open version-update PRs. Routine minor/patch updates are grouped
-   only by related toolchain: the Tauri family
+ - Routine version updates are off: each of the four Dependabot jobs sets
+   `open-pull-requests-limit: 0`, so Dependabot opens security updates only,
+   under GitHub's separate fixed security-update limit. Toolchain and other
+   routine upgrades are maintainer-initiated. `allow` also filters security
+   updates, so its all-dependency rules stay in place. Root workspaces and the
+   Cloudflare worker have separate npm jobs. The version-update groups below
+   apply again only if a job's limit is raised: routine minor/patch updates are
+   grouped only by related toolchain: the Tauri family
   (`tauri`, `tauri-*`, `wry`, including the runtime regression fixture's
   `tests/windows-runner-refcount` requirements), the Electron toolchain, the
    `@tauri-apps/*` packages and the OpenCode client/schema/plugin SDK family in
@@ -112,9 +117,9 @@
   vendored crates (`packages/tauri-app/vendor/README.md`) and keeps
   `@tauri-apps/api` and the plugin JavaScript packages (`packages/ui/package.json`)
   on the crates' major/minor: the CLI's version check runs from
-  `packages/tauri-app` and does not see them. Dependabot's npm entry proposes the
-  `@tauri-apps/*` packages in their own grouped PR (`tauri-js`); merge it with
-  the matching cargo `tauri` PR so the packages never trail the crates' minor. The vendored Tao and updater are
+  `packages/tauri-app` and does not see them. Update the `@tauri-apps/*` packages
+  together with the matching `tauri` crates so the packages never trail the
+  crates' minor. The vendored Tao and updater are
   path patches, which Dependabot does not update;
   `packages/tauri-app/scripts/vendored-patches.test.mjs` fails a PR whose
   lockfile stops resolving them. Platform crates shared with Wry (`webview2-com`,
@@ -123,14 +128,13 @@
   that moves them needs a manual manifest change.
 - WebView2 (Evergreen runtime on Windows), WKWebView (macOS) and WebKitGTK
   (Linux) are system components updated by the operating system.
-- Dependabot checks GitHub Actions weekly and proposes updates against `dev`;
-  merges are manual. Composite actions that follow their upstream
+- GitHub Actions updates are maintainer-initiated; Dependabot proposes only
+  security updates for them. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.
 - Electron's integrated Node is the Electron backend runtime, so the exact
-  `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot
-  proposes Electron toolchain updates (`electron`, `electron-builder`,
-  `electron-vite`) weekly against `dev`: minor and patch updates in the
-  `electron-toolchain` group, and `electron` majors individually.
+  `electron` pin (`packages/electron-app/package.json`) selects it. Electron
+  toolchain updates (`electron`, `electron-builder`, `electron-vite`) are
+  maintainer-initiated; Dependabot proposes only their security updates.
   Keep the pin within Electron's supported majors (the latest three). Before
   merging, the maintainer qualifies the upstream breaking changes of every major
   crossed (<https://www.electronjs.org/docs/latest/breaking-changes>) and its

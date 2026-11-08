@@ -20,6 +20,7 @@
     "notification:allow-show",
     "allow-cli-get-status",
     "allow-cli-restart",
+    "allow-read-clipboard-attachments",
     "allow-wake-lock-start",
     "allow-wake-lock-stop",
     "allow-needs-local-certificate-install",

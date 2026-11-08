@@ -45,9 +45,9 @@ Bunlar talimattır. Bir ajanın gerçekte ne yapabileceğini, ajanının ve proj
 
 ### Size sorulan sorular {#questions}
 
-Size yalnızca koordinatör soru sorar. İşler ve yardımcıları kendi sorularını, onları başlatan konuşmaya seçenekler, kanıtlar, sonuçlar, geri alınabilirlik ve bir öneriyle geri gönderir ve yanıta bağlı olmayan işe devam eder. Koordinatör önce yapabildiğini çözer ve kalan soruları **Yanıtınız gerekiyor** altında tek bir formda toplar; neleri sorduğunu ve kararların nasıl etiketlendiğini [Sorular ve kararlar](missions.md#questions) açıklar. Tek seferlik veya zamanlanmış her koordinatör ve her iş ataması bu kuralı talimat olarak alır; Keşif [aşağıdaki](#wayfinder-checks) karar denetimlerini ekler.
+Size yalnızca koordinatör soru sorar. İşler ve yardımcıları kendi sorularını, onları başlatan konuşmaya seçenekler, kanıtlar, sonuçlar, geri alınabilirlik ve bir öneriyle geri gönderir ve yanıta bağlı olmayan işe devam eder. Koordinatör önce yapabildiğini çözer ve kalan soruları görevin kırmızı satırından açılan tek bir formda toplar; neleri sorduğunu ve kararların nasıl etiketlendiğini [Sorular ve kararlar](missions.md#questions) açıklar. Tek seferlik veya zamanlanmış her koordinatör ve her iş ataması bu kuralı talimat olarak alır; Keşif [aşağıdaki](#wayfinder-checks) karar denetimlerini ekler.
 
-İstek panelinde yanıtlayın (**Yanıtınız gerekiyor** altında **Yanıtla**): yalnızca bu sizin yanıtınız sayılır. Sohbete yazılan bir yanıt sıradan bir mesajdır.
+Kırmızı görevi veya işi seçerek açılan istek panelinde yanıtlayın: yalnızca bu sizin yanıtınız sayılır. Sohbete yazılan bir yanıt sıradan bir mesajdır.
 
 ### Durum özetleri ve son rapor {#briefings}
 
@@ -165,7 +165,7 @@ Sorumlular size asla sormaz; özetleri ve hazır soruları koordinatöre döndü
 
 - Kanıt yeterli ve seçimin geri alınması ucuzsa **kendisi karar verir**.
 - Henüz gerekmeyen bir kararı **erteler**: işi geri çeker ve soruyu notlarda sis olarak tutar.
-- **Size sorar**; bekleyen kararları **Yanıtınız gerekiyor** altında tek bir formda toplar.
+- **Size sorar**; bekleyen kararları görevin kırmızı satırından açılan tek bir formda toplar.
 
 Yanıtınızı asla kendisi yazmaz ve kendi kararını sizinki gibi sunmaz. Sonucu nerede okuyacağınız **Görev oturumları** ayarına bağlıdır:
 
@@ -187,7 +187,7 @@ Yalnızca talimat olanlar: bir seçimin ne zaman geri alınması ucuz sayılaca�
 Bir harita alırsınız: varış noktası, kimin verdiğiyle birlikte kayıtlı kararlar, araştırma bulguları, prototipler, notlarda kalan sis ve bir son rapor. Tek seferlik bir görevin koordinatörü ayrıca sizin başlatacağınız bir devam görevi hazırlayabilir. Tuzaklar:
 
 - Keşif planlar; varış noktasını inşa etmez. Uygulamak için başka bir rehber veya hazırlanan devam görevini kullanın.
-- Sohbette değil, **Yanıtınız gerekiyor** altında yanıtlayın: yalnızca istek panelinde verilen yanıt sizinki sayılır.
+- Sohbette değil, kırmızı satırdan açılan istek panelinde yanıtlayın: yalnızca istek panelinde verilen yanıt sizinki sayılır.
 - **Yerel alt ajanlar** ile **Koordinatör kararı** etiketli sonuçları, **Bağımsız oturumlar** ile **Notlar** içindeki sonuçları okuyun. Bir kararı değiştirmek için **Konuşmayı aç** üzerinden koordinatöre yazın.
 - Belirsiz ifade edilmiş bir varış noktası haritanın çoğunu siste bırakır.
 

@@ -1,10 +1,10 @@
 /**
- * Pure reconciliation for the mission "needs your decision" section.
+ * Pure reconciliation of a mission's open native questions with its actors and
+ * observed family (`mission-questions.ts` attributes them to rows).
  *
- * Kept out of the component so the native Form/permission correlation stays
- * testable without a DOM, and so the rendering layer only formats what this
- * decides. Nothing here writes mission state: a live wait comes from a still-open
- * native request, never from a derived task status.
+ * Kept out of the components so the native Form/permission correlation stays
+ * testable without a DOM. Nothing here writes mission state: a live wait comes
+ * from a still-open native request, never from a derived task status.
  */
 
 import type { MissionActivityProjection } from "../../../server/src/api-types"

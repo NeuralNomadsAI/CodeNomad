@@ -35,13 +35,18 @@ export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) 
     if (apiLogger.isLevelEnabled("trace")) {
       apiLogger.trace(integration ? base : {
         ...base,
-        params: redactSecrets(request.params),
+        params: redactSecrets(routeParams(request.params)),
         query: redactSecrets(request.query),
         body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") ? "<redacted>" : redactSecrets(request.body),
       }, "HTTP request payload")
     }
     done()
   })
+}
+
+/** Fastify builds route parameters, named by the route itself, on a prototype-less object; log them as a plain one. */
+function routeParams(params: unknown): unknown {
+  return typeof params === "object" && params !== null ? { ...params } : params
 }
 
 export function redactSecrets(value: unknown): unknown {

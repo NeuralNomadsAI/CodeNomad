@@ -50,6 +50,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "cli_get_status",
             "cli_restart",
+            "read_clipboard_attachments",
             "wake_lock_start",
             "wake_lock_stop",
             "notification_badge_set",

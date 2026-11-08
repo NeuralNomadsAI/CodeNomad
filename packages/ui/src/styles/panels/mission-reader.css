@@ -3,6 +3,8 @@
 .mission-reader { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: var(--surface-canvas); }
 .mission-reader .window-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mission-reader .window-action { display: flex; gap: var(--space-xs); align-items: center; flex-shrink: 0; }
+/* Content-bearing links (a plan change, a report, a briefing source) wrap within the reader. */
+.mission-reader .window-action.mission-reader-link { flex-shrink: 1; max-width: 100%; justify-content: flex-start; white-space: normal; overflow-wrap: anywhere; text-align: start; }
 .mission-reader article { min-width: 0; max-width: 90ch; margin-block: var(--space-lg); margin-inline: 0; overflow-wrap: anywhere; }
 .mission-reader pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .mission-reader-pagination { display: flex; align-items: center; gap: var(--space-sm); }

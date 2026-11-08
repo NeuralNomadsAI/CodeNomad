@@ -7,7 +7,7 @@ import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page, type Request } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
-import { clickMissionAction, missionPickerField, toggleMissionOverview } from "./mission-actions"
+import { clickMissionAction, missionRows, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-cross-navigation"
 import { panelMissions } from "./mission-content-fixture"
 import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
@@ -74,7 +74,7 @@ async function setup(missing = false, holdEvents = false) {
     await page.goto(url)
     if (!holdEvents) await eventStreamResponse
     // Loaded Missions enable the current-mission field (nothing is selected by default).
-    await missionPickerField(page).and(page.locator(":enabled")).waitFor()
+    await missionRows(page).locator("button.mission-row-select").first().waitFor()
     await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
     return { page, eventStreamResponse, events, panelReads, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
   } catch (error) {

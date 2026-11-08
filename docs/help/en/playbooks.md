@@ -45,9 +45,9 @@ These are instructions. What an agent can actually do is decided by OpenCode's p
 
 ### Questions to you {#questions}
 
-Only the coordinator asks you questions. Tasks and their helpers return theirs to the conversation that launched them, with the options, evidence, consequences, reversibility and a recommendation, and keep working on what does not depend on the answer. The coordinator first settles what it can and groups the remaining questions into one form under **Needs you**; [Questions and decisions](missions.md#questions) explains what it asks and how decisions are labelled. Every coordinator, one-time or scheduled, and every task assignment carries this rule as an instruction; Exploration adds the decision checks [below](#wayfinder-checks).
+Only the coordinator asks you questions. Tasks and their helpers return theirs to the conversation that launched them, with the options, evidence, consequences, reversibility and a recommendation, and keep working on what does not depend on the answer. The coordinator first settles what it can and groups the remaining questions into one form, opened from the mission's red row; [Questions and decisions](missions.md#questions) explains what it asks and how decisions are labelled. Every coordinator, one-time or scheduled, and every task assignment carries this rule as an instruction; Exploration adds the decision checks [below](#wayfinder-checks).
 
-Answer in the interruption dock (**Answer** under **Needs you**): only that counts as your answer. A reply typed in the chat is an ordinary message.
+Answer in the interruption dock, opened by selecting the red mission or task: only that counts as your answer. A reply typed in the chat is an ordinary message.
 
 ### Briefings and the final report {#briefings}
 
@@ -165,7 +165,7 @@ Workers never ask you; they return briefs and ready questions to the coordinator
 
 - **Decides itself** when the evidence suffices and the choice is cheap to reverse.
 - **Defers** a decision not needed yet: it retires the task and keeps the question in the notes as fog.
-- **Asks you**, grouping pending decisions into one form under **Needs you**.
+- **Asks you**, grouping pending decisions into one form, opened from the mission's red row.
 
 It never writes your answer itself or presents its own decision as yours. Where you read the outcome depends on **Task sessions**:
 
@@ -187,7 +187,7 @@ Instructions only: when a choice counts as cheap to reverse, the quality of brie
 You get a map: the destination, recorded decisions with who made them, research findings, prototypes, the fog that remains in the notes and a final report. A one-time coordinator can also prepare a follow-up mission that you start yourself. Pitfalls:
 
 - Exploration plans; it does not build the destination. Use another playbook, or the prepared follow-up, to implement.
-- Answer under **Needs you**, not in the chat: only an answer given in the interruption dock counts as yours.
+- Answer in the interruption dock opened from the red row, not in the chat: only an answer given in the interruption dock counts as yours.
 - With **Native subagents**, read the results labelled **Coordinator decision**; with **Independent sessions**, read the outcomes in the **Notes**. To change a decision, write to the coordinator from **Open conversation**.
 - A destination stated vaguely leaves most of the map in fog.
 
