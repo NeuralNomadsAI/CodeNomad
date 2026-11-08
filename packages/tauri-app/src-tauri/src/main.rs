@@ -8,6 +8,7 @@ mod browser_controller;
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
+mod clipboard_attachments;
 mod client_state;
 mod data_profile;
 mod data_profile_cleanup;
@@ -2007,6 +2008,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
             cli_restart,
             wake_lock_start,
