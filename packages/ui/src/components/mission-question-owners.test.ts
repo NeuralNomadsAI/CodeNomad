@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { coordinatorAsks, missionQuestionOwners, taskQuestion, type MissionQuestion } from "./mission-question-owners"
+import { coordinatorAsks, currentMissionObservations, missionQuestionOwners, taskQuestion, type MissionQuestion } from "./mission-question-owners"
 
 // "ses_native" is a known native task conversation of the coordinator.
 const mission = { coordinatorSessionId: "ses_coordinator", isTaskSession: (id: string) => id === "ses_native" }
@@ -51,4 +51,14 @@ test("splitting many questions over many tasks resolves each task's conversation
   assert.equal(owners.tasks.length, 32)
   assert.equal(missionQuestionOwners(mission, [], tasks, () => { calls++; return undefined }).flag.length, 0)
   assert.equal(calls, tasks.length, "no question, no conversation lookup")
+})
+
+test("current observation pages: own current windows, else current marks, never unknown ones", () => {
+  const page = (state: string, id: string) => ({ id, requests: { state } })
+  const store = (own: ReturnType<typeof page>[], marks: ReturnType<typeof page>[]) => ({ observations: () => own, markObservations: () => marks })
+  assert.deepEqual(currentMissionObservations(store([page("observed", "own")], [page("observed", "mark")]), "i", "m").map(p => p.id), ["own"])
+  // A superseded or failed own window neither counts nor hides current marks evidence.
+  assert.deepEqual(currentMissionObservations(store([page("unknown", "own")], [page("observed", "mark")]), "i", "m").map(p => p.id), ["mark"])
+  assert.deepEqual(currentMissionObservations(store([page("unknown", "own")], [page("unknown", "mark")]), "i", "m"), [])
+  assert.deepEqual(currentMissionObservations(store([], [page("partial", "mark")]), "i", "m").map(p => p.id), ["mark"])
 })

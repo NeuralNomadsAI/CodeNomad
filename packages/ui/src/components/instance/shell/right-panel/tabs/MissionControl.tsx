@@ -16,8 +16,8 @@ import { MissionEditor, type MissionEditorAction } from "../../../../mission-edi
 import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../../../stores/mission-editor-state"
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
-import { currentMissionObservations, missionQuestionContext, missionQuestions, type MissionQuestionStore } from "../../../../mission-questions"
-import { missionQuestionOwners } from "../../../../mission-question-owners"
+import { missionQuestionContext, missionQuestions, type MissionQuestionStore } from "../../../../mission-questions"
+import { currentMissionObservations, missionQuestionOwners } from "../../../../mission-question-owners"
 import { MissionPanelHeader, MissionRows } from "../../../../mission-picker"
 import { MissionActionBar, MissionActionSlot, MissionTaskToolbarActive } from "../../../../mission-action-bar"
 import { missionMark, type MissionPickerEntry } from "../../../../mission-picker-model"
@@ -340,14 +340,25 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     return () => viewCurrent() && operation === intent && epoch === conversationEpoch && !editor()
       && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
   }
-  const [pendingAnswer, setPendingAnswer] = createSignal<{ key: string; current: () => boolean }>()
+  const [pendingAnswer, setPendingAnswer] = createSignal<{ key: string; current: () => boolean; passageID?: string }>()
   createEffect(() => {
     const pending = pendingAnswer()
     if (!pending) return
     if (selectedKey() !== pending.key || !untrack(pending.current)) { setPendingAnswer(undefined); return }
+    // Only the passage first read after the click: a replacement retires the intent.
+    const passageID = currentPassage.snapshot()?.passageID ?? undefined
+    if (passageID && pending.passageID === undefined) pending.passageID = passageID
+    else if (pending.passageID !== undefined && passageID !== pending.passageID) { setPendingAnswer(undefined); return }
     // Tracked: reruns as the passage, its activity and its request windows arrive.
     const question = passageQuestion()
-    if (!question) return
+    if (!question) {
+      // Discovery settled without a question (it was answered meanwhile): retire the
+      // intent, so a later unrelated question never triggers it.
+      const value = mission()
+      if (value && observedActivity()?.missions.some(item => item.missionId === value.id) && !currentPassage.loading()
+        && !passageStore().reading(props.instanceId)) setPendingAnswer(undefined)
+      return
+    }
     setPendingAnswer(undefined)
     untrack(() => void onOpenActor(question.sessionId, question.request))
   })

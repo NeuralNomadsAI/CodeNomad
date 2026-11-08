@@ -4,18 +4,10 @@ import { getPermissionQueue } from "../stores/instances"
 import type { missionStore } from "../stores/missions"
 import { missionDerivedSessionIncludes } from "../stores/mission-task-sessions"
 import { selectMissionAttention, type MissionObservedFamily } from "./mission-attention-model"
-import type { MissionQuestion, MissionQuestionContext } from "./mission-question-owners"
+import { currentMissionObservations, type MissionQuestion, type MissionQuestionContext } from "./mission-question-owners"
 
 type MissionKey = Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId">
 export type MissionQuestionStore = Pick<typeof missionStore, "observations" | "observedActors" | "markObservations">
-
-/** The Mission's current observation pages: its own activity windows once read,
- * else its marks-lane window (a closed row's). Superseded or failed windows are
- * not evidence: they read as `unknown` and never count. */
-export function currentMissionObservations(store: MissionQuestionStore, instanceId: string, missionId: string) {
-  const own = store.observations(instanceId, missionId)
-  return (own.length ? own : store.markObservations(instanceId, missionId)).filter(page => page.requests.state !== "unknown")
-}
 
 /** Open questions of the Mission's declared and observed actors and their observed
  * family, from the native queues and its current observation pages. */

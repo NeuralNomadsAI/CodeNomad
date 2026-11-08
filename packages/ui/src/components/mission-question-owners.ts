@@ -1,5 +1,19 @@
 import type { MissionPanelMap } from "../../../server/src/api-types"
 
+/** An observation page's parts that question attribution reads. */
+interface ObservationPage { requests: { state: string } }
+
+/** The Mission's current observation pages: its own current activity windows, else
+ * its current marks-lane window (a closed row's). Superseded or failed windows read
+ * as `unknown`: never evidence, and never hiding current marks evidence. */
+export function currentMissionObservations<Page extends ObservationPage>(store: {
+  observations: (instanceId: string, missionId: string) => Page[]; markObservations: (instanceId: string, missionId: string) => Page[]
+}, instanceId: string, missionId: string): Page[] {
+  const current = (pages: Page[]) => pages.filter(page => page.requests.state !== "unknown")
+  const own = current(store.observations(instanceId, missionId))
+  return own.length ? own : current(store.markObservations(instanceId, missionId))
+}
+
 /** A still-open native Form or permission request of a Mission's family: the
  * conversation to open and the exact request to focus in its interruption dock. */
 export interface MissionQuestion {
