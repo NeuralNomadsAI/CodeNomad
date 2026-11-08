@@ -27,7 +27,7 @@ export function AgentMemoryEditor(props: { review: ReturnType<typeof createAgent
     if (!blocked() && review.dirty() && review.valid()) void review.save()
   }}>
     <div class="agent-memory-editor-heading">
-      <Show when={selected().entry.flagged}><span class="agent-memory-warning">{t("settings.memory.excluded")}<SettingsInfoTip text={t("settings.memory.warning")} /></span></Show>
+      <Show when={selected().entry.flagged}><span class="agent-memory-warning">{t("settings.memory.excluded")}<SettingsInfoTip text={t("settings.memory.warning")} help={{ page: "settings", anchor: "agent-memory" }} /></span></Show>
       <ActionOverflowMenu triggerClass="window-icon-button" label={t("settings.memory.actions", { title: selected().entry.title })} items={items()} />
     </div>
     <label for={`${id}-title`}>{t("settings.memory.entryTitle")}</label>

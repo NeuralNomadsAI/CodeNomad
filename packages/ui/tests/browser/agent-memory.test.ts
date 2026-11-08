@@ -515,7 +515,7 @@ test("Tidy up and its keyboard-openable info tip stay together at 390 px in ever
     try {
       await page.goto(`${url}?locale=${locale}`)
       const group = card(page).locator(".agent-memory-tidy")
-      const button = group.getByRole("button"), info = group.getByRole("img")
+      const button = group.getByRole("button"), info = group.getByRole("link")
       await button.waitFor()
       const { a, b } = await group.evaluate(node => {
         const a = node.querySelector("button")!.getBoundingClientRect(), b = node.querySelector(".settings-info-tip")!.getBoundingClientRect()
