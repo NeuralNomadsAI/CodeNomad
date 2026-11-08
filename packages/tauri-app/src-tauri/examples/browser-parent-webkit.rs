@@ -52,6 +52,13 @@ const SESSION: &str = "fixture-session";
 #[cfg(not(windows))]
 #[path = "../../tests/browser-parent/mobile-native.rs"]
 mod mobile_fixture;
+#[cfg(not(windows))]
+#[path = "../src/menu_labels.rs"]
+mod menu_labels;
+#[cfg(not(windows))]
+struct AppState {
+    menu_labels: menu_labels::MenuLabels,
+}
 
 #[cfg(not(windows))]
 fn bounds() -> Value {

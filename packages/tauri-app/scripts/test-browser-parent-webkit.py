@@ -95,7 +95,7 @@ def main():
         native = root / 'src-tauri/src/embedded_view'
         manifest.write_text(
             '[package]\nname="codenomad-parent-qualification"\nversion="0.0.0"\nedition="2021"\n'
-            '[dependencies]\ntauri={version="=2.12.5",features=["unstable","test"]}\nserde={version="1",features=["derive"]}\nserde_json="1"\nuuid={version="1",features=["v4"]}\nbase64="0.22"\nsha2="0.10"\n'
+            '[dependencies]\ntauri={version="=2.12.5",features=["unstable","test"]}\ntauri-plugin-dialog="2.8.4"\nserde={version="1",features=["derive"]}\nserde_json="1"\nuuid={version="1",features=["v4"]}\nbase64="0.22"\nsha2="0.10"\n'
             '[target.\'cfg(target_os="linux")\'.dependencies]\ngtk="0.18"\nwebkit2gtk="=2.0.2"\n'
             '[target.\'cfg(target_os="macos")\'.dependencies]\nobjc2="0.6.4"\nobjc2-web-kit={version="0.3.2",default-features=false,features=["std","objc2-app-kit","WKWebView","WKBackForwardList","WKBackForwardListItem","WKNavigation"]}\n'
             '[build-dependencies]\ncc="1"\npkg-config="0.3"\n'

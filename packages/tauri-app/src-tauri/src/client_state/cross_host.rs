@@ -985,9 +985,10 @@ mod tests {
             .read_line(&mut line)
             .unwrap();
         assert!(!line.is_empty());
-        serde_json::from_str::<serde_json::Value>(&line).unwrap()["acquired"]
-            .as_bool()
-            .unwrap()
+        let result: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let acquired = result["acquired"].as_bool().unwrap();
+        if !acquired { eprintln!("Node election result: {result}"); }
+        acquired
     }
 
     fn stop_node(mut child: std::process::Child) {
