@@ -14,7 +14,7 @@ Wählen Sie einen lokalen Desktop-Host oder betreiben Sie den [eigenständigen S
 | Windows | ZIP, x64 | Installationsprogramm, x64 | Windows 10 oder neuer; Tauri verwendet WebView2. |
 | Linux | Debian-Paket, x64 | AppImage, x64 | Unter Ubuntu 24.04 gebaut und getestet; Kompatibilität mit älteren Distributionen ist nicht garantiert. |
 
-Desktop-Releases enthalten die Laufzeitressourcen für Backend und OpenCode-Installation; dafür benötigen Sie keine separate Node.js/npm-Installation. Git wird nicht mitgeliefert. Native Browser-Automatisierung wird in Electron und Windows-Tauri unterstützt; andere Tauri-Plattformen verwenden iframe-Vorschauen.
+Desktop-Releases enthalten die Laufzeitressourcen für Backend und OpenCode-Installation; dafür benötigen Sie keine separate Node.js/npm-Installation. Git wird nicht mitgeliefert. Native Browser-Automatisierung durch Agenten wird in Electron und Tauri unter Windows, macOS und Linux unterstützt. Tauri verwendet unter macOS/Linux WebKit-Vorschauen und native Mobilprofile mit enginespezifischen Grenzen bei Pixeldichte und Eingabe; siehe [Browser-Vorschauen](browser-sidecars.md#signins-automation).
 
 Wird ein überprüfter Download beim Start blockiert, lesen Sie die [plattformbezogene Fehlerbehebung](troubleshooting.md#desktop-launch). Führen Sie niemals ein nicht vertrauenswürdiges Archiv aus, nur um eine Warnung zu umgehen.
 

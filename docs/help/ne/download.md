@@ -14,7 +14,7 @@ Windows, macOS र Linux का लागि निःशुल्क र खु
 | macOS — Tauri: 14 वा पछिको; Electron: 13.5 वा पछिको | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (Ubuntu 24.04 मा परीक्षण गरिएको) | [AppImage, x64](release:tauri-linux-x64) | [Debian प्याकेज, x64](release:electron-linux-x64) |
 
-दुवै build ले उही कार्यस्थान दिन्छन्। Tauri ले एपभित्रैबाट अपडेट स्थापना गर्न सक्छ; Electron नयाँ रिलिज डाउनलोड गरेर अपडेट हुन्छ र हरेक प्लेटफर्ममा नेटिभ ब्राउजर स्वचालन समर्थन गर्छ (Tauri ले Windows मा मात्र)। [build हरू तुलना गर्नुहोस्](install.md#desktop-downloads)।
+दुवै build ले उही कार्यस्थान र Windows, macOS तथा Linux मा एजेन्टद्वारा नेटिभ ब्राउजर स्वचालन दिन्छन्। Tauri ले एपभित्रैबाट अपडेट स्थापना गर्न सक्छ; Electron नयाँ रिलिज डाउनलोड गरेर अपडेट हुन्छ। macOS/Linux मा Tauri ले इन्जिनअनुसार घनत्व र इनपुट सीमाहरू भएका नेटिभ WebKit मोबाइल प्रोफाइलहरू प्रयोग गर्छ। [build हरू तुलना गर्नुहोस्](install.md#desktop-downloads)।
 
 ## प्याकेज म्यानेजर {#package-managers}
 

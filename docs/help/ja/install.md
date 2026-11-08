@@ -14,7 +14,7 @@
 | Windows | ZIP、x64 | インストーラー、x64 | Windows 10 以降。Tauri は WebView2 を使用します。 |
 | Linux | Debian パッケージ、x64 | AppImage、x64 | Ubuntu 24.04 でビルド・テスト済み。古いディストリビューションとの互換性は保証されません。 |
 
-デスクトップリリースには、バックエンドと OpenCode インストーラーに必要なランタイムリソースが含まれるため、別途 Node.js/npm をインストールする必要はありません。Git は同梱されません。ネイティブのブラウザー自動操作は Electron と Windows Tauri でサポートされ、その他の Tauri 環境は iframe プレビューを使用します。
+デスクトップリリースには、バックエンドと OpenCode インストーラーに必要なランタイムリソースが含まれるため、別途 Node.js/npm をインストールする必要はありません。Git は同梱されません。Electron と Tauri は Windows、macOS、Linux でエージェントによるネイティブのブラウザー自動操作をサポートします。macOS/Linux の Tauri は WebKit プレビューとネイティブのモバイルプロファイルを使用し、密度と入力にはエンジン固有の制限があります。[ブラウザープレビュー](browser-sidecars.md#signins-automation)を参照してください。
 
 確認済みのダウンロードが起動時にブロックされる場合は、[プラットフォーム別のトラブルシューティング](troubleshooting.md#desktop-launch)を参照してください。警告を回避するためだけに、信頼できないアーカイブを実行しないでください。
 

@@ -14,7 +14,7 @@ Windows, macOS ve Linux için ücretsiz ve açık kaynaklı (MIT) masaüstü uyg
 | macOS — Tauri 14+; Electron 13.5+ | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (Ubuntu 24.04'te test edildi) | [AppImage, x64](release:tauri-linux-x64) | [Debian paketi, x64](release:electron-linux-x64) |
 
-Her iki sürüm de aynı çalışma alanını sunar. Tauri güncellemeleri uygulamanın içinden yükleyebilir; Electron yeni bir sürüm indirilerek güncellenir ve her platformda yerel tarayıcı otomasyonunu destekler (Tauri yalnızca Windows'ta). [Sürümleri karşılaştırın](install.md#desktop-downloads).
+Her iki sürüm de aynı çalışma alanını ve Windows, macOS ve Linux'ta ajanlar için yerel tarayıcı otomasyonunu sunar. Tauri güncellemeleri uygulamanın içinden yükleyebilir; Electron yeni bir sürüm indirilerek güncellenir. macOS/Linux'ta Tauri, motora özgü yoğunluk ve girdi sınırları olan yerel WebKit mobil profillerini kullanır. [Sürümleri karşılaştırın](install.md#desktop-downloads).
 
 ## Paket yöneticileri {#package-managers}
 

@@ -14,7 +14,7 @@
 | Windows | ZIP，x64 | 安装程序，x64 | Windows 10 或更高版本；Tauri 使用 WebView2。 |
 | Linux | Debian 软件包，x64 | AppImage，x64 | 在 Ubuntu 24.04 上构建和测试；不保证兼容更早的发行版。 |
 
-桌面发行包包含后端和 OpenCode 安装程序所需的运行时资源，无需另行安装 Node.js/npm。不附带 Git。Electron 和 Windows Tauri 支持原生浏览器自动化；其他 Tauri 平台使用 iframe 预览。
+桌面发行包包含后端和 OpenCode 安装程序所需的运行时资源，无需另行安装 Node.js/npm。不附带 Git。Electron 和 Tauri 在 Windows、macOS 和 Linux 上均支持代理原生浏览器自动化。macOS/Linux 上的 Tauri 使用 WebKit 预览和原生移动配置，其像素密度和输入受引擎原生限制；请参阅[浏览器预览](browser-sidecars.md#signins-automation)。
 
 已验证的下载若在启动时被阻止，请参阅[平台故障排查](troubleshooting.md#desktop-launch)。切勿仅为绕过警告而运行不可信的压缩包。
 

@@ -14,7 +14,7 @@ Yerel bir masaüstü ana bilgisayarı seçin veya [bağımsız sunucu](server.md
 | Windows | ZIP, x64 | Yükleyici, x64 | Windows 10 veya sonrası; Tauri WebView2 kullanır. |
 | Linux | Debian paketi, x64 | AppImage, x64 | Ubuntu 24.04'te oluşturulmuş ve test edilmiştir; eski dağıtımlarla uyumluluk garanti edilmez. |
 
-Masaüstü sürümleri, arka uç ve OpenCode yükleyicisinin ihtiyaç duyduğu çalışma zamanı kaynaklarını içerir; dolayısıyla bunları kullanmak için ayrı bir Node.js/npm kurulumuna ihtiyacınız yoktur. Git pakete dahil değildir. Yerel tarayıcı otomasyonu Electron ve Windows Tauri'de desteklenir; diğer Tauri platformları iframe önizlemelerini kullanır.
+Masaüstü sürümleri, arka uç ve OpenCode yükleyicisinin ihtiyaç duyduğu çalışma zamanı kaynaklarını içerir; dolayısıyla bunları kullanmak için ayrı bir Node.js/npm kurulumuna ihtiyacınız yoktur. Git pakete dahil değildir. Ajanlar için yerel tarayıcı otomasyonu Windows, macOS ve Linux'ta Electron ve Tauri'de desteklenir. macOS/Linux'ta Tauri, motora özgü yoğunluk ve girdi sınırları olan WebKit önizlemelerini ve yerel mobil profilleri kullanır; [tarayıcı önizlemelerine](browser-sidecars.md#signins-automation) bakın.
 
 Başlatma sırasında engellenen doğrulanmış bir indirme için, bkz. [platform sorunlarını giderme](troubleshooting.md#desktop-launch). Asla güvenilmeyen bir arşivi yalnızca bir uyarıyı atlamak için çalıştırmayın.
 

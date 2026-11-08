@@ -14,7 +14,7 @@ Application de bureau libre et open source (MIT) pour Windows, macOS et Linux. E
 | macOS – Tauri 14+ ; Electron 13.5+ | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (testé sur Ubuntu 24.04) | [AppImage, x64](release:tauri-linux-x64) | [Paquet Debian, x64](release:electron-linux-x64) |
 
-Les deux distributions offrent le même espace de travail. Tauri peut installer les mises à jour depuis l’application ; Electron se met à jour en téléchargeant une nouvelle version et prend en charge l’automatisation native du navigateur sur toutes les plateformes (Tauri uniquement sous Windows). [Comparer les distributions](install.md#desktop-downloads).
+Les deux distributions offrent le même espace de travail et l’automatisation native du navigateur par les agents sous Windows, macOS et Linux. Tauri peut installer les mises à jour depuis l’application ; Electron se met à jour en téléchargeant une nouvelle version. Sous macOS/Linux, Tauri utilise des profils mobiles WebKit natifs avec des limites de densité et de saisie propres au moteur. [Comparer les distributions](install.md#desktop-downloads).
 
 ## Gestionnaires de paquets {#package-managers}
 

@@ -14,7 +14,7 @@
 | macOS — Tauri: ‏14 ואילך; Electron: ‏13.5 ואילך | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (נבדק ב־Ubuntu 24.04) | [AppImage, x64](release:tauri-linux-x64) | [חבילת Debian, x64](release:electron-linux-x64) |
 
-שתי הגרסאות מספקות את אותה סביבת עבודה. Tauri יכול להתקין עדכונים מתוך היישום; Electron מתעדכן בהורדת גרסה חדשה ותומך באוטומציית דפדפן מקורית בכל הפלטפורמות (Tauri ב־Windows בלבד). [השוואת הגרסאות](install.md#desktop-downloads).
+שתי הגרסאות מספקות את אותה סביבת עבודה ואוטומציית דפדפן מקורית באמצעות סוכנים ב־Windows, ב־macOS וב־Linux. Tauri יכול להתקין עדכונים מתוך היישום; Electron מתעדכן בהורדת גרסה חדשה. ב־macOS וב־Linux, ‏Tauri משתמש בפרופילי מובייל מקוריים של WebKit עם מגבלות צפיפות וקלט התלויות במנוע. [השוואת הגרסאות](install.md#desktop-downloads).
 
 ## מנהלי חבילות {#package-managers}
 

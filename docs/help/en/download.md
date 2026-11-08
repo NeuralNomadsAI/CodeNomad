@@ -14,7 +14,7 @@ Free and open-source (MIT) desktop app for Windows, macOS and Linux. It connects
 | macOS — Tauri 14+; Electron 13.5+ | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (tested on Ubuntu 24.04) | [AppImage, x64](release:tauri-linux-x64) | [Debian package, x64](release:electron-linux-x64) |
 
-Both builds provide the same workspace. Tauri can install updates from within the app; Electron is updated by downloading a new release and supports native browser automation on every platform (Tauri on Windows only). [Compare the builds](install.md#desktop-downloads).
+Both builds provide the same workspace and native agent browser automation on Windows, macOS and Linux. Tauri can install updates from within the app; Electron is updated by downloading a new release. Tauri macOS/Linux use native WebKit mobile profiles with engine-specific density and input limits. [Compare the builds](install.md#desktop-downloads).
 
 ## Package managers {#package-managers}
 

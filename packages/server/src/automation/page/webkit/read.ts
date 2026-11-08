@@ -2,7 +2,7 @@ import { computeAccessibleName, computeAccessibleDescription, getRole, isInacces
 import { readCalls } from "./calls.generated"
 import type { SemanticNode, PageOperation } from "../protocol"
 import { shadowRoot } from "./shadow"
-import { geometry, scrollIntoView, hitTest, activeElement } from "./geometry"
+import { geometry, scrollIntoView, hitTest, activeElement, GeometryUnsupportedError } from "./geometry"
 
 type State = {
   document: Document; token: string; next: number; ids: WeakMap<Node,number>; nodes: Map<number,WeakRef<Node>>
@@ -217,7 +217,7 @@ export function read(operation: PageOperation): {document: string; result: Recor
   const state=globalState[KEY]!
   watch(state,document); flush(state)
   let result: Record<string,unknown>
-  switch (operation.op) {
+  try { switch (operation.op) {
     case "tree": result={nodes:semanticTree(state)}; break
     case "checkpoint": result={}; break
     case "release-handles": result={}; break // All entries are weak; numeric document identity remains stable.
@@ -255,6 +255,9 @@ export function read(operation: PageOperation): {document: string; result: Recor
       break
     }
     default: result={error:{code:"unsupported",driver:"webkit",operation:operation.op}}
+  } } catch(error) {
+    if(!(error instanceof GeometryUnsupportedError)) throw error
+    result={error:{code:"unsupported",driver:"webkit",operation:`${operation.op}: ${error.message}`}}
   }
   return {document:state.token,result}
 }

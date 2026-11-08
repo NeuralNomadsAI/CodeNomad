@@ -14,7 +14,7 @@ Windows、macOS、Linux 向けの無料のオープンソース（MIT）デス�
 | macOS — Tauri は 14 以降、Electron は 13.5 以降 | [ZIP、Apple Silicon](release:tauri-macos-arm64) · [ZIP、Intel](release:tauri-macos-x64) | [ZIP、Apple Silicon](release:electron-macos-arm64) · [ZIP、Intel](release:electron-macos-x64) |
 | Linux x64（Ubuntu 24.04 でテスト済み） | [AppImage、x64](release:tauri-linux-x64) | [Debian パッケージ、x64](release:electron-linux-x64) |
 
-どちらのビルドも同じワークスペースを提供します。Tauri はアプリ内から更新をインストールできます。Electron は新しいリリースをダウンロードして更新し、すべてのプラットフォームでネイティブのブラウザー自動操作をサポートします（Tauri は Windows のみ）。[ビルドを比較する](install.md#desktop-downloads)。
+どちらのビルドも同じワークスペースを提供し、Windows、macOS、Linux でエージェントによるネイティブのブラウザー自動操作をサポートします。Tauri はアプリ内から更新をインストールでき、Electron は新しいリリースをダウンロードして更新します。macOS/Linux の Tauri はネイティブの WebKit モバイルプロファイルを使用し、密度と入力にはエンジン固有の制限があります。[ビルドを比較する](install.md#desktop-downloads)。
 
 ## パッケージマネージャー {#package-managers}
 
