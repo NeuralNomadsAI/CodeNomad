@@ -20,6 +20,7 @@ test('WebKit qualification runs authorized drafts on Intel, ARM64 and Linux with
   assert.doesNotMatch(job, /pull_request\.draft|secrets\.|secrets:|actions: write/)
   for (const runner of ['macos-15-intel', 'macos-26', 'ubuntu-24.04']) assert.ok(job.includes(`os: ${runner}`))
   for (const command of ['cargo check --locked', 'cargo clippy --locked', 'cargo test --locked', 'tauri build --no-bundle', 'tauri bundle --bundles app ', 'tauri bundle --bundles appimage']) assert.ok(job.includes(command), command)
+  assert.ok(job.includes('cargo build --locked --example browser-parent-webkit --features browser-parent-qualification'))
   assert.match(job, /Print :LSMinimumSystemVersion/)
   assert.match(job, /test "\$minimum" = '14\.0'/)
   assert.ok(job.includes('lipo "${apps[0]}/Contents/MacOS/$executable" -verify_arch "$EXPECTED_ARCH"'))

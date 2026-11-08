@@ -24,6 +24,14 @@ pub fn build(directory: &std::path::Path) {
     ));
     println!("cargo:rerun-if-changed={}", mobile.display());
     build.file(mobile);
+    if std::env::var_os("CARGO_FEATURE_BROWSER_PARENT_QUALIFICATION").is_some() {
+        let trial = directory.join(format!(
+            "../../../tests/browser-parent/mobile-trial-{os}.{}",
+            if os == "macos" { "m" } else { "c" }
+        ));
+        println!("cargo:rerun-if-changed={}", trial.display());
+        build.file(trial);
+    }
     if os == "macos" {
         let navigation = directory.join("input_navigation_macos.m");
         println!("cargo:rerun-if-changed={}", navigation.display());

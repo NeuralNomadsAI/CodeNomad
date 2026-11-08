@@ -4,6 +4,13 @@ version = "1.0.1"
 edition = "2021"
 license = "MIT"
 
+[features]
+browser-parent-qualification = []
+
+[[example]]
+name = "browser-parent-webkit"
+required-features = ["browser-parent-qualification"]
+
 [build-dependencies]
 tauri-build = { version = "2.7.4", features = [] }
 cc = "1"
