@@ -10,6 +10,7 @@ import { OTHER_TOOL_NAME, resolveToolVisibility } from "../../components/tool-ca
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
 import { isLocalTauriHost } from "../runtime-env"
+import type { HelpDestination } from "../help-url"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -20,6 +21,7 @@ export type BehaviorToggleSetting = {
   subtitleKey?: string
   /** Secondary explanation shown behind an "i" beside the title. */
   infoKey?: string
+  help?: HelpDestination
   get: (preferences: Preferences) => boolean
   set: (next: boolean) => void | Promise<unknown>
   disabled?: () => boolean
@@ -31,6 +33,7 @@ export type BehaviorEnumSetting<T extends string = string> = {
   titleKey: string
   subtitleKey?: string
   infoKey?: string
+  help?: HelpDestination
   get: (preferences: Preferences) => T
   set: (next: T) => void
   options: Array<{ value: T; labelKey: string }>
@@ -271,6 +274,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.autoExpandActiveSubsessions",
       titleKey: "settings.behavior.autoExpandActiveSubsessions.title",
       infoKey: "settings.behavior.autoExpandActiveSubsessions.info",
+      help: { page: "conversations", anchor: "navigate-conversations" },
       get: (p) => p.autoExpandActiveSubsessions,
       set: (next) => updatePreferences?.({ autoExpandActiveSubsessions: next }),
     },
@@ -301,6 +305,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.hideDiffWhitespaceChanges",
       titleKey: "advancedSettings.hideDiffWhitespace.title",
       infoKey: "advancedSettings.hideDiffWhitespace.subtitle",
+      help: { page: "files", anchor: "whitespace-line-endings" },
       get: (p) => p.hideDiffWhitespaceChanges ?? true,
       set: (next) => updatePreferences?.({ hideDiffWhitespaceChanges: next }),
     },
@@ -323,6 +328,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.promptVoiceInput",
       titleKey: "settings.behavior.promptVoiceInput.title",
       infoKey: "settings.behavior.promptVoiceInput.subtitle",
+      help: { page: "voice", anchor: "dictate" },
       get: (p) => Boolean(p.showPromptVoiceInput ?? true),
       set: (next) => {
         if (updatePreferences) {
@@ -349,6 +355,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.keepComputerAwake",
       titleKey: "settings.behavior.keepComputerAwake.title",
       infoKey: "settings.behavior.keepComputerAwake.info",
+      help: { page: "settings", anchor: "keep-computer-awake" },
       get: (p) => p.keepComputerAwake === true,
       set: async (next) => {
         if (await updatePreferences?.({ keepComputerAwake: next }) === false) {

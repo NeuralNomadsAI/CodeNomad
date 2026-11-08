@@ -10,6 +10,9 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
+import { protectBrowserGuest, isBrowserAuxiliaryWindow, configureBrowserGuests } from "./browser-guests"
+import { configureBrowserDownloads } from "./browser-downloads"
+import { configureBrowserPromptSession } from "./browser-prompt"
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
@@ -215,7 +218,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
-    isSupportWindow: (window) => preferencesWindows.current() === window,
+    isSupportWindow: (window) => preferencesWindows.current() === window || isBrowserAuxiliaryWindow(window),
     isLaunchWindow: (window) => launchWindows.has(window),
     flushSupportWindows: async () => {
       const window = preferencesWindows.current()
@@ -290,6 +293,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     (error) => console.error("[cli] bootstrap token exchange failed", error),
   )
 
+  configureBrowserGuests()
   const createWindow = (windowId: string, persisted = true, connectOnly = false): LocalWindowRecord => {
     const saved = persisted ? clientState.getWindowState(windowId) : undefined
     const minimum = zoomedWindowMinimum(saved?.zoomFactor ?? 1)
@@ -333,27 +337,16 @@ function runPrimary(firstIntent: LaunchIntent) {
         return
       }
       const browserSession = session.fromPartition(params.partition)
+      configureBrowserPromptSession(browserSession, join(mainDirname, "../preload/browser-prompt.js"))
       if (!securedBrowserSessions.has(browserSession)) {
         securedBrowserSessions.add(browserSession)
         configureBrowserPermissionHandlers(browserSession)
-        browserSession.on("will-download", (downloadEvent) => downloadEvent.preventDefault())
+        configureBrowserDownloads(browserSession, app.getPath("downloads"))
       }
     })
     window.webContents.on("did-attach-webview", (_event, guest) => {
       browserController.observeGuest(window.webContents, guest)
-      const guardNavigation = (event: Electron.Event, url: string) => {
-        if (!isBrowserUrlAllowed(url)) event.preventDefault()
-      }
-      guest.on("will-navigate", guardNavigation)
-      guest.on("will-redirect", guardNavigation)
-      guest.setWindowOpenHandler(({ url }) => {
-        if (isBrowserUrlAllowed(url)) queueMicrotask(() => {
-          try {
-            if (!guest.isDestroyed()) void guest.loadURL(url).catch(() => undefined)
-          } catch {}
-        })
-        return { action: "deny" }
-      })
+      protectBrowserGuest(window, guest)
     })
     window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
       if (isMainFrame) setWorkspaceMenuEnabled(window, false)

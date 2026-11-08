@@ -46,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projeler, konuşmalar, dosyalar ve geçmiş | Arka ucun klasörleri ve OpenCode oturumları | Bağlı sunucunun klasörleri ve oturumları | Ana bilgisayarın yetkili çalışma alanı yüzeyleri |
 | Yerel Tercihler ve masaüstü pencereleri | Mevcut | Tarayıcı/uzaktan ayarlar istemcide kalır | Yalnızca ana bilgisayar masaüstü denetimleri kullanılamıyor |
-| Oturum tarayıcı önizlemesi | Electron ve Windows Tauri'de yerel; diğer Tauri platformlarında iframe | Mevcut olduğunda Iframe | Ana makine web önizlemelerine izin verdiği sürece iframe (varsayılan) |
+| Oturum tarayıcı önizlemesi | Windows, macOS ve Linux'ta Electron ve Tauri'de yerel | Mevcut olduğunda Iframe | Ana makine web önizlemelerine izin verdiği sürece iframe (varsayılan) |
 | Yerel masaüstü/tarayıcı otomasyonu | Sahip olunan yerel pencereler/önizlemeler | Yerel masaüstü otomasyonunun yerini almaz | Yalnızca ana makine otomasyon uç noktaları kullanılamıyor |
 | Kimlik doğrulama | Yerel önyükleme veya parola oturumu | Sunucu şifre oturumu | Eşleştirilmiş cihaz kimlik bilgisi |
 | PWA kurulumu | Yerel uygulamayı veya tarayıcıyı kullanın | Tarayıcıya bağımlı; güvenli bağlam gerekli | Tarayıcıya bağımlı; eşleştirme hala gerekli |

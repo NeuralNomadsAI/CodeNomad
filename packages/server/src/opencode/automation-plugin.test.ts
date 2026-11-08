@@ -20,6 +20,7 @@ import {
   removeLegacyAutomationPlugin,
   setupAutomationPlugin,
   sendMissionInput,
+  executeBrowserTool,
 } from "./automation-plugin"
 
 type ToolDefinition = {
@@ -27,13 +28,13 @@ type ToolDefinition = {
   execute(input: unknown, context: { sessionID: string }): Promise<{ content: unknown }>
 }
 
-function listen(handler: (body: Record<string, unknown>) => Promise<Record<string, unknown>>) {
+function listen(handler: (body: Record<string, unknown>, response: http.ServerResponse) => Promise<Record<string, unknown>>) {
   return new Promise<{ server: http.Server; url: string }>((resolve) => {
     const server = http.createServer((request, response) => {
       const chunks: Buffer[] = []
       request.on("data", (chunk) => chunks.push(Buffer.from(chunk)))
       request.on("end", () => {
-        void handler(JSON.parse(Buffer.concat(chunks).toString("utf8"))).then((body) => {
+        void handler(JSON.parse(Buffer.concat(chunks).toString("utf8")), response).then((body) => {
           response.setHeader("content-type", "application/json")
           response.end(JSON.stringify(body))
         })
@@ -173,6 +174,29 @@ test("mission discovery waits for cold ownership validation and still rejects co
   } finally {
     await Promise.all(removals.map(remove => remove()))
     await Promise.all(servers.map(closeServer))
+    restore()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("browser discovery executes native WebKit open, snapshot and screenshot actions", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-webkit-browser-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  const calls: unknown[] = []
+  let remove: (() => Promise<void>) | undefined
+  const { server, url } = await listen(async (body, response) => {
+    calls.push(body.mode)
+    return { result: body.mode === "browser-execute" ? { text: "WebKit native result" } : { available: true } }
+  })
+  try {
+    remove = await publishAutomationBridge(createAutomationBridgeRegistration(url))
+    for (const command of [{ action: "open", url: "https://example.com" }, { action: "snapshot" }, { action: "screenshot" }]) {
+      assert.match((await executeBrowserTool("ses_webkit", command)).content as string, /WebKit native result/)
+    }
+    assert.deepEqual(calls, ["browser-claim", "browser-execute", "browser-probe", "browser-execute", "browser-probe", "browser-execute"])
+  } finally {
+    await remove?.()
+    await closeServer(server)
     restore()
     await rm(root, { recursive: true, force: true })
   }

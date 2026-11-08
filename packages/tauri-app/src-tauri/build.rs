@@ -1,4 +1,6 @@
+mod build_webkit;
 fn main() {
+    build_webkit::build(std::path::Path::new("src/embedded_view"));
     let manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");

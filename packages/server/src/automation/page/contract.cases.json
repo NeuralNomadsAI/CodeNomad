@@ -1,0 +1,40 @@
+{
+  "valid": [
+    {"op":"tree"}, {"op":"viewport"}, {"op":"checkpoint"}, {"op":"release-handles"},
+    {"op":"resolve","node":42}, {"op":"geometry","node":42}, {"op":"scroll-into-view","node":42},
+    {"op":"hit-test","x":1,"y":2},
+    {"op":"call","function":"select","handle":"h","args":[["é漢🙂"]]},
+    {"op":"call","function":"field","handle":"h","args":[]},
+    {"op":"call","function":"set-value","handle":"h","args":["",false]},
+    {"op":"call","function":"receives","handle":"h","args":[{"handle":"other"}]},
+    {"op":"call","function":"document-root","args":[]},
+    {"op":"call","function":"active-element","args":[]},
+    {"op":"call","function":"input-acceptance","args":[]},
+    {"op":"pointer","event":{"type":"mousePressed","x":4,"y":5,"button":"left","buttons":1,"clickCount":1}},
+    {"op":"wheel","event":{"type":"mouseWheel","x":4,"y":5,"deltaX":0,"deltaY":100}},
+    {"op":"keyboard","event":{"type":"keyDown","key":" ","code":"Space","text":" ","windowsVirtualKeyCode":32,"modifiers":0}},
+    {"op":"keyboard","event":{"type":"keyUp","key":"Control","buttons":0,"modifiers":0}},
+    {"op":"insert-text","text":""}
+  ],
+  "invalid": [
+    null, [], "tree", {}, {"op":"evaluate","source":"alert(1)"},
+    {"op":"tree","extra":true}, {"op":"viewport","extra":true}, {"op":"checkpoint","extra":true}, {"op":"release-handles","extra":true},
+    {"op":"resolve","node":0}, {"op":"resolve","node":1.5}, {"op":"resolve","node":1,"extra":true},
+    {"op":"call","function":"mark-input","args":[]}, {"op":"call","function":"unmark-input","args":[]},
+    {"op":"call","function":"__proto__","args":[]}, {"op":"call","function":"constructor","args":[]},
+    {"op":"call","function":"select","handle":"h","args":["label"]},
+    {"op":"call","function":"focus","args":[]}, {"op":"call","function":"focus","handle":null,"args":[]},
+    {"op":"call","function":"document-root","handle":null,"args":[]},
+    {"op":"call","function":"focus","handle":"h","args":[],"source":"evil"},
+    {"op":"call","function":"receives","handle":"h","args":[{"handle":"other","value":"evil"}]},
+    {"op":"pointer","event":{"type":["mouseMoved"],"x":0,"y":0}},
+    {"op":"pointer","event":{"type":"mouseMoved","x":0,"y":0,"button":["left"]}},
+    {"op":"pointer","event":{"type":"mouseMoved","x":0,"y":0,"unknown":true}},
+    {"op":"pointer","event":{"type":"mouseWheel","x":0,"y":0}},
+    {"op":"pointer","event":{"type":"mousePressed","x":0,"y":0,"modifiers":16}},
+    {"op":"keyboard","event":{"type":"keyDown","key":null}},
+    {"op":"keyboard","event":{"type":"char","key":"a"}},
+    {"op":"keyboard","event":{"type":"keyUp","modifiers":null}},
+    {"op":"insert-text","text":null}, {"op":"insert-text","text":"ok","script":"evil"}
+  ]
+}
