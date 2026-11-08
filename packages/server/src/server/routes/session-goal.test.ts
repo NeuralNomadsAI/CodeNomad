@@ -1,13 +1,14 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import Fastify from "fastify"
+import { ROUTER_OPTIONS } from "../routed-path"
 import { registerSessionGoalRoute } from "./session-goal"
 
 const goal = { id: "g1", objective: "Ship it", status: "paused", reason: "Paused by the user", rounds: 3, maxRounds: 50,
   stalls: 1, boot: "process", updatedAt: 10 }
 
 function fixture() {
-  const app = Fastify()
+  const app = Fastify({ routerOptions: ROUTER_OPTIONS })
   const state = { owned: true, missing: false, session: { id: "ses_a", location: { directory: "/repo/worktree", workspaceID: "wrk" } } as any,
     answer: (): unknown => ({ output: goal }) }
   const calls: any[] = [], ownership: any[] = []
