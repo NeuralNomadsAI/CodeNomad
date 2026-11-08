@@ -33,8 +33,7 @@ async function setup(query = "", prepare?: (page: Page) => void) {
   await page.route("**/api/storage/state/ui", route => route.fulfill({ json: { theme, colorScheme: theme === "light" ? "porcelain" : "mist" } }))
   await page.goto(url + query)
   await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, theme)
-  await page.locator(".mission-scheduling > summary").waitFor()
-  await page.locator(".mission-scheduling > summary").click()
+  await page.locator("section.mission-scheduling").waitFor()
   return { page, errors }
 }
 const policy = (page: Page) => page.evaluate(() => (window as any).schedulingFixture.policy())
@@ -56,27 +55,31 @@ async function drag(page: Page, from: number, to: number) {
   return async () => { await page.mouse.up() }
 }
 
-test("an empty form is a one-time Mission; the i explains if and else; connectors between cards follow their kinds", async () => {
+test("the first criterion defaults to once; Add appends a daily card; connectors follow their kinds", async () => {
   const { page, errors } = await setup()
   try {
     const schedule = page.locator(".mission-scheduling")
     assert.equal(await schedule.locator("p:not(.sr-only)").count(), 0)
-    assert.deepEqual(await policy(page), { when: [] })
+    assert.deepEqual(await policy(page), { when: [{ kind: "now" }] })
+    assert.equal(await label(page, "Criterion 1 type").inputValue(), "now")
+    assert.equal(await schedule.locator("details, summary").count(), 0, "scheduling is always expanded")
     assert.equal(await page.getByRole("checkbox").count(), 0)
-    // One "i" beside Launch when, at most two sentences, then the OpenCode start setting link.
-    assert.equal(await page.locator(".mission-scheduling-when-head .settings-info-tip").count(), 1)
-    await page.getByRole("button", { name: /An event after a schedule is its condition/ }).focus(); await page.keyboard.press("Enter")
-    const tip = page.getByRole("dialog", { name: "Launch when" })
-    await tip.filter({ hasText: /^An event after a schedule is its condition \(if\); a schedule after events is a fallback that launches only if the cards above launched no passage since its previous slot \(else\)\. The Mission only runs while OpenCode is running\. \S/ }).waitFor()
-    await page.keyboard.press("Escape")
-    await page.locator(".settings-info-link-content").waitFor({ state: "detached" })
+    const help = page.locator(".mission-scheduling-when-head").getByRole("link")
+    assert.equal(await help.count(), 1)
     await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    assert.equal(await label(page, "Criterion 1 type").inputValue(), "now")
+    assert.equal(await label(page, "Criterion 2 type").inputValue(), "daily")
+    assert.deepEqual(await policy(page), { when: [{ kind: "now" }, { kind: "cron", expression: "0 9 * * *", zone: "UTC" }] })
+    assert.equal(await roleOf(page, 2).innerText(), "or")
+    await page.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
+    await label(page, "Criterion 1 type").selectOption("daily")
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
-    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 10)
+    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 11)
     assert.equal(await roleOf(page, 1).count(), 0, "Launch when titles the first card")
     assert.equal(await handle(page, 1).isDisabled(), true, "a single card has nothing to reorder")
     assert.equal(await schedule.locator("time, ol, input[type=datetime-local], [aria-pressed]").count(), 0, "no preview, end date or role switch")
     await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    assert.equal(await label(page, "Criterion 2 type").inputValue(), "daily")
     await label(page, "Criterion 2 type").selectOption("files-changed")
     await page.getByRole("alert").waitFor()
     await label(page, "Criterion 2 file paths").fill("src/main.ts")
@@ -129,11 +132,7 @@ test("dragging and keyboard moves keep every card mounted, its typed values and 
 test("every invalid field exposes its exact translated error and keeps focus", async () => {
   const { page, errors } = await setup()
   try {
-    const summary = page.locator(".mission-scheduling > summary")
-    await summary.focus(); await page.keyboard.press("Enter")
-    assert.equal(await page.locator(".mission-scheduling").getAttribute("open"), null)
-    await page.keyboard.press("Space")
-    assert.equal(await page.locator(".mission-scheduling").getAttribute("open"), "")
+    assert.equal(await page.locator(".mission-scheduling summary").count(), 0)
     for (const [kind, fields, name, extra] of [
       ["hours", { hours: "24" }, "Criterion 1 hours"], ["daily", { time: "" }, "Criterion 1 time"],
       ["monthly", { monthDay: "32" }, "Criterion 1 day of month"], ["cron", { expression: "invalid" }, "Criterion 1 cron expression"],
@@ -158,7 +157,8 @@ test("typing keeps focus and rows; shortcuts write their cron; the list stops at
   const { page, errors } = await setup()
   try {
     const add = page.getByRole("button", { name: "Add a criterion", exact: true })
-    for (let index = 0; index < 3; index++) await add.click()
+    await label(page, "Criterion 1 type").selectOption("daily")
+    for (let index = 0; index < 2; index++) await add.click()
     await label(page, "Criterion 2 type").selectOption("hours")
     await label(page, "Criterion 2 hours").selectOption("12")
     assert.deepEqual(await label(page, "Criterion 2 hours").locator("option").allInnerTexts(), ["1", "2", "3", "4", "6", "8", "12"],
@@ -293,12 +293,12 @@ test("stored policies reopen in order, legacy frequency + condition reads as a s
     assert.equal(await page.getByRole("button", { name: "Replace with a new scheduling policy", exact: true }).isDisabled(), true)
     await page.evaluate(() => (window as any).schedulingFixture.lock(null))
     await page.getByRole("button", { name: "Replace with a new scheduling policy", exact: true }).click()
-    assert.deepEqual(await policy(page), { when: [] })
+    assert.deepEqual(await policy(page), { when: [{ kind: "now" }] })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
 
-test("retained policy explanation and exact JSON fit French/Hebrew narrow light views; invalid fields open their section", async () => {
+test("retained policy explanation and exact JSON fit French/Hebrew narrow light views; invalid fields stay visible", async () => {
   for (const locale of ["fr", "he"]) {
     const { page, errors } = await setup(`?locale=${locale}&light`)
     try {
@@ -312,15 +312,14 @@ test("retained policy explanation and exact JSON fit French/Hebrew narrow light 
   }
   const { page } = await setup()
   try {
-    await page.locator(".mission-scheduling > summary").click()
     await rows(page, [["hours", { hours: "0" }]])
     await page.getByRole("alert").waitFor()
-    assert.equal(await page.locator(".mission-scheduling").getAttribute("open"), "")
+    assert.equal(await label(page, "Criterion 1 hours").isVisible(), true)
     assert.equal(await policy(page), undefined)
   } finally { await page.close() }
 })
 
-test("the scheduling i links to the OpenCode login-start row by its stable anchor without reading that setting", async () => {
+test("scheduling help opens the localized guide by keyboard without reading the OpenCode login-start setting", async () => {
   for (const locale of ["en", "fr"]) {
     const supervision: string[] = []
     const { page, errors } = await setup(locale === "fr" ? "?locale=fr" : "", page => page.on("request", request => {
@@ -328,30 +327,21 @@ test("the scheduling i links to the OpenCode login-start row by its stable ancho
     try {
       await page.waitForFunction(locale => document.documentElement.lang.startsWith(locale), locale)
       await rows(page, [["daily"]])
-      const sentence = locale === "fr" ? "La Mission ne tourne que si OpenCode tourne." : "The Mission only runs while OpenCode is running."
-      const info = page.locator(".mission-scheduling-when-head").getByRole("button", { name: new RegExp(`${sentence.replace(/\./g, "\\.")}$`) })
+      await page.evaluate(() => {
+        ;(window as any).schedulingOpens = []
+        window.open = url => { (window as any).schedulingOpens.push(String(url)); return null }
+      })
+      const info = page.locator(".mission-scheduling-when-head").getByRole("link")
       await info.focus(); await page.keyboard.press("Enter")
-      const popover = page.locator(".settings-info-link-content")
-      await popover.waitFor()
-      assert.equal((await popover.innerText()).includes(sentence), true)
+      await page.waitForFunction(() => (window as any).schedulingOpens.length === 1)
+      const opened = await page.evaluate(() => (window as any).schedulingOpens as string[])
+      assert.match(opened[0], new RegExp(`/${locale}/missions\\.html#native-scheduling$`))
       await page.screenshot({ path: path.join(captures, `runtime-info-${locale}.png`) })
-      assert.deepEqual(supervision, [], "Missions never reads the login-start setting")
-      const link = popover.getByRole("button")
-      await page.waitForFunction(() => document.activeElement?.classList.contains("settings-info-link-action"))
-      assert.equal(await link.evaluate(element => element === document.activeElement), true, "opening by keyboard moves focus to the link")
-      const label = await link.innerText()
-      await page.keyboard.press("Enter")
-      const row = page.locator("#opencode-login-start")
-      await row.waitFor()
-      await page.waitForFunction(() => document.activeElement?.id === "opencode-login-start")
-      assert.equal(await popover.count(), 0)
-      assert.equal(await row.locator("h3").innerText(), label, "the link names the setting by its own title, whatever it is")
-      for (let wait = 0; wait < 100 && !supervision.length; wait++) await page.waitForTimeout(50)
-      assert.ok(supervision.length > 0 && supervision.every(method => method === "GET"), "only the opened setting reads its own state")
+      assert.deepEqual(supervision, [], "help never reads the login-start setting")
       await page.evaluate(() => (window as any).schedulingFixture.lock("passage"))
-      assert.equal(await info.isDisabled(), false, "a lock never hides the information or its link")
-      await info.click()
-      assert.equal(await popover.getByRole("button").isDisabled(), false)
+      assert.equal(await info.isVisible(), true, "a lock keeps help available")
+      await info.focus(); await page.keyboard.press("Enter")
+      await page.waitForFunction(() => (window as any).schedulingOpens.length === 2)
       assert.deepEqual(errors, [])
     } finally { await page.close() }
   }

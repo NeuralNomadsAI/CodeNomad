@@ -73,7 +73,7 @@ const fields = (page: Page) => page.locator("form.mission-editor textarea")
 const status = (page: Page) => page.locator("form.mission-editor").getByRole("status")
 // Save as brief is the selected toolbar's overflow-menu item; it opens the name field in the detail.
 const openBrief = async (page: Page) => (await missionMenuItem(page, "save-brief")).click()
-const saveBrief = (page: Page) => page.locator(".mission-brief-save").getByRole("button", { name: "Save brief", exact: true })
+const saveBrief = (page: Page) => page.locator(".mission-brief-save").getByRole("button", { name: "Save configuration", exact: true })
 const briefStatus = (page: Page) => page.locator(".mission-brief-save").getByRole("status")
 
 test("an edit prefills only the fields of the map it opened: a warm older body never, a newer one only after Reopen", { timeout: 90_000 }, async () => {
@@ -82,9 +82,9 @@ test("an edit prefills only the fields of the map it opened: a warm older body n
   try {
     // Warm the cache at revision 1: Save as brief reads both fields whole, then its field closes.
     await openBrief(f.page)
-    await f.page.getByLabel("Brief name", { exact: true }).fill("Warm")
+    await f.page.getByLabel("Configuration name", { exact: true }).fill("Warm")
     await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
-    await f.page.locator(".mission-brief-save").getByRole("button", { name: "Cancel saving the brief", exact: true }).click()
+    await f.page.locator(".mission-brief-save").getByRole("button", { name: "Cancel saving the configuration", exact: true }).click()
     // Revision 3 changes both fields; Edit opens on it while its reads are held.
     listed = served = mission(3, "new-objective", "new-notes")
     await refresh(f.page)
@@ -196,7 +196,7 @@ test("Save as brief stays ready through unrelated revisions and reads each input
   const f = await panel({ list: () => listed, content: () => listed, onContent: () => { listed = { ...listed, revision: listed.revision + 1, updatedAt: listed.revision + 1 } } })
   try {
     await openBrief(f.page)
-    await f.page.getByLabel("Brief name", { exact: true }).fill("Busy brief")
+    await f.page.getByLabel("Configuration name", { exact: true }).fill("Busy brief")
     await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
     for (let cycle = 0; cycle < 12; cycle++) {
       listed = { ...listed, revision: listed.revision + 1, updatedAt: listed.revision + 1 }
@@ -217,7 +217,7 @@ test("a map without notes names no notes body: Save as brief and the edit form r
   const f = await panel({ list: () => listed, content: () => listed })
   try {
     await openBrief(f.page)
-    await f.page.getByLabel("Brief name", { exact: true }).fill("No notes")
+    await f.page.getByLabel("Configuration name", { exact: true }).fill("No notes")
     await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
     const saved = f.page.waitForResponse(response => response.url().includes("/storage/config/ui") && response.request().method() !== "GET")
     await saveBrief(f.page).click(); await saved
@@ -239,7 +239,7 @@ test("Save as brief saves both inputs of one snapshot, an absent field included,
   const f = await panel({ list: () => listed, content: () => served, onContent: () => { listed = served } })
   try {
     await openBrief(f.page)
-    await f.page.getByLabel("Brief name", { exact: true }).fill("Coherent brief")
+    await f.page.getByLabel("Configuration name", { exact: true }).fill("Coherent brief")
     await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
     const saved = f.page.waitForResponse(response => response.url().includes("/storage/config/ui") && response.request().method() !== "GET")
     await saveBrief(f.page).click(); await saved
@@ -253,7 +253,7 @@ test("Save as brief saves both inputs of one snapshot, an absent field included,
   const g = await panel({ list: edit, content: () => changing, onContent: address => { if (address.searchParams.get("field") === "objective") edit() } })
   try {
     await openBrief(g.page)
-    await g.page.getByLabel("Brief name", { exact: true }).fill("Moving brief")
+    await g.page.getByLabel("Configuration name", { exact: true }).fill("Moving brief")
     await briefStatus(g.page).filter({ hasText: "This mission changed since you opened it." }).waitFor()
     assert.equal(await saveBrief(g.page).isDisabled(), true)
     const settled = g.reads.length

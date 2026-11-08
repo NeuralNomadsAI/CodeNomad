@@ -1,7 +1,11 @@
 .mission-scheduling { margin-block: var(--space-sm); min-inline-size: 0; }
-.mission-scheduling > summary { overflow-wrap: anywhere; }
+.mission-scheduling > h4 { font-size: var(--font-size-sm); margin-block: var(--space-sm); }
 .mission-scheduling fieldset { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
-.mission-scheduling label { display: flex; flex-direction: column; gap: var(--space-xs); margin-block: var(--space-sm); min-inline-size: 0; }
+.mission-scheduling label { display: flex; flex-direction: row; align-items: center; gap: var(--space-xs); margin-block: var(--space-sm); min-inline-size: 0; }
+.mission-scheduling label > span { flex-shrink: 0; }
+.mission-scheduling label > :is(input, textarea, select) { flex: 1; }
+.mission-scheduling .mission-scheduling-autostart { display: flex; }
+.mission-scheduling .mission-scheduling-autostart input { inline-size: auto; flex: none; }
 .mission-scheduling :is(input, textarea, select) { inline-size: 100%; min-inline-size: 0; }
 .mission-scheduling :is(input, textarea) { background: var(--surface-field); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-xs); border-radius: 0; }
 .mission-scheduling :is(p, li) { font-size: var(--font-size-xs); overflow-wrap: anywhere; }

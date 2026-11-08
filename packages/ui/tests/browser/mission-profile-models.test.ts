@@ -95,13 +95,13 @@ test("Settings model selects show the conversation selector's named, filtered li
   } finally { await page.close() }
 })
 
-test("the editor and Compare follow favorites-only, keep hidden or non-favorite saved choices and summarize with names", async () => {
+test("the editor and Compare follow favorites-only and keep hidden or non-favorite saved choices under their names", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {
     const fixture = await setup(page, { missionProfileDefaults: [
       { template: "all", profiles: { coordinator: { agent: "build", model: { ...OPUS, variant: "high" } }, roles: { specialist: { model: SECRET } } } },
     ] }, { favorites: [{ providerId: "openai", modelId: "gpt-6.1-sol-fast" }], favoritesOnly: true })
-    const native = await text(page, "missions.control.execution.nativeDefault"), summary = await text(page, "missions.defaults.summary")
+    const native = await text(page, "missions.control.execution.nativeDefault")
     await page.evaluate(async () => {
       const path = "/src/stores/preferences.tsx", { uiState } = await import(path)
       for (let attempt = 0; !uiState().models.favoritesOnly; attempt++) {
@@ -109,25 +109,17 @@ test("the editor and Compare follow favorites-only, keep hidden or non-favorite 
         await new Promise(resolve => setTimeout(resolve, 10))
       }
     })
-    await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
-    await page.getByLabel(summary).filter({ hasText: "build / claude-code/claude-opus-5-5[1m] / high" }).waitFor()
-    // The conversation catalog names models without a Missions catalog read.
     await publishConversationCatalog(page, CATALOG)
-    await page.getByLabel(summary).filter({ hasText: "Coordinator: build / Opus 5.5 Fast / high · Tasks: Secret Preview" }).waitFor()
-    assert.deepEqual(fixture.reads, [])
-
-    await page.locator("form.mission-editor summary").filter({ hasText: /^Agents and models$/ }).click()
     await loadedCatalog(page, "Coordinator · Model")
     assert.deepEqual(await listing(page, "Coordinator · Model"), { value: key(OPUS.providerID, OPUS.id), shown: "Opus 5.5 Fast",
       options: [native, ["Claude Code", ["Opus 5.5 Fast"]], ["OpenAI", ["GPT-6.1 Sol Fast"]]] }, "favorites only, plus the saved non-favorite")
     assert.deepEqual(await listing(page, "Tasks · Model"), { value: key(SECRET.providerID, SECRET.id), shown: "Secret Preview",
       options: [native, ["OpenAI", ["GPT-6.1 Sol Fast", "Secret Preview"]]] }, "a saved hidden model stays selected under its name")
 
-    // A conversation catalog refreshed after that Missions read renames the model: the summary
-    // follows the fresher catalog without a read of its own.
+    // A fresher conversation catalog names the selected model without another Missions read.
     const reads = fixture.reads.length
     await publishConversationCatalog(page, CATALOG.map(item => item.id === OPUS.id ? { ...item, name: "Opus 5.5 Turbo" } : item))
-    await page.getByLabel(summary).filter({ hasText: "Coordinator: build / Opus 5.5 Turbo / high" }).waitFor()
+    await page.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Opus 5.5 Turbo" }).waitFor({ state: "attached" })
     assert.equal(fixture.reads.length, reads)
 
     await page.getByLabel("Playbook", { exact: true }).selectOption("compare")

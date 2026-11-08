@@ -324,7 +324,7 @@ test("Delegation depth is one labelled menu, read only on demand: Inherit then 1
     // One row: the label and its menu. Everything else is behind the one info tip.
     assert.equal(await controls.locator(".settings-info-tip").count(), 1)
     assert.equal(await controls.locator("p:not(.sr-only)").count(), 0, "no prose under the row")
-    assert.equal(await controls.getByRole("button").count(), 0, "no Inherit or Save button; refreshing is only a recovery")
+    assert.equal(await controls.locator("button:not(.settings-info-tip)").count(), 0, "the information trigger is the only button; refreshing is only a recovery")
     assert.deepEqual(await depthInfo(page), [await fixtureText(page, "missions.depth.hint"), await fixtureText(page, "missions.depth.nesting.rule"),
       "OpenCode effective depth: 3", "Project write target: fixture/opencode.jsonc", "OpenCode configuration file: No document path"])
     for (const width of [1100, 640, 390]) {
@@ -506,7 +506,6 @@ test("the mission editor's Scheduling never displays an OpenCode configuration p
       origin = path
       await missionGeneralAction(page, "Create mission").click()
       const editor = page.locator("form.mission-editor"), scheduling = editor.locator(".mission-scheduling")
-      await scheduling.locator("summary").click()
       await page.waitForFunction(() => !document.querySelector<HTMLOptionElement>('form.mission-editor .mission-scheduling option[value="daily"]')?.disabled)
       assert.equal(await scheduling.getByText(/OpenCode configuration file:|No document path|opencode\.jsonc/).count(), 0)
       assert.equal(await scheduling.locator("code").count(), 0)
@@ -536,7 +535,6 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await missionGeneralAction(page, "Create mission").click()
-    await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
     const form = page.locator("form.mission-editor"), controls = form.locator(".mission-depth"), menu = depthMenu(form)
     const locked = () => menu.evaluate(element => element.getAttribute("aria-disabled") === "true")
     await reading.promise
@@ -590,10 +588,9 @@ test("choosing a depth in the creation form, then Enter on its menu, saves the d
     await missionGeneralAction(page, "Create mission").click()
     const form = page.locator("form.mission-editor")
     await form.getByLabel("What should the mission do?", { exact: true }).fill("Do not create until I press Create")
-    await form.locator("summary").filter({ hasText: /^Options$/ }).click()
-    // The footer's Save as brief is a bookmark icon named by its tooltip.
-    const brief = form.locator(".window-footer").getByRole("button", { name: "Save as brief", exact: true })
-    assert.deepEqual([await brief.innerText(), await brief.getAttribute("title"), await brief.locator("svg").count()], ["", "Save as brief", 1])
+    // The footer's configuration action is a bookmark icon named by its tooltip.
+    const brief = form.locator(".window-footer").getByRole("button", { name: "Save configuration", exact: true })
+    assert.deepEqual([await brief.innerText(), await brief.getAttribute("title"), await brief.locator("svg").count()], ["", "Save configuration", 1])
     // The depth is a row of the Delegation group, under Task sessions.
     const delegation = form.getByRole("group", { name: "Delegation", exact: true }), menu = depthMenu(delegation)
     await waitForDepthReady(form)

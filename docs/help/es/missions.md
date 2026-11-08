@@ -11,18 +11,18 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 ## Crear y después iniciar explícitamente {#create}
 
 1. Abre **Misiones** en el panel derecho y elige **Crear misión**. El formulario sustituye el árbol de misiones hasta que crees o canceles.
-2. Completa **¿Qué debe hacer la misión?** y comprueba el **Título**, rellenado a partir de la primera frase (hasta 60 caracteres).
-3. Deja **Programación** plegada para **Una vez, inmediatamente**, o despliégala y usa **Añadir un criterio** en **Lanzar cuando** para añadir horarios o eventos. Su orden fija cómo se combinan.
-4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, la **Profundidad de subagentes** del proyecto, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
-5. Elige **Crear**. Selecciona la entrada en pausa, revísala y usa ▶ **Iniciar** cuando estés listo. Sin criterios de lanzamiento, Iniciar ejecuta una misión; con criterios, activa la programación nativa.
+2. Si quieres, elige arriba **Empezar desde una configuración**; revisa **¿Qué debe hacer la misión?**, **Notas** y **Título** (hasta 60 caracteres). La carga sustituye objetivo, notas y título; este se deriva del nombre de la configuración y puedes editarlo después.
+3. El formulario compacto muestra directamente **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, **Profundidad de subagentes**, conversaciones seguidas y **Programación**. Con **Comparar dos modelos**, revisa también **Modelo A** y **Modelo B**.
+4. **Lanzar cuando** empieza con **Una vez, ahora**. **Añadir un criterio** combina horarios y eventos; su orden determina **o**, **si** y **si no**.
+5. Deja **Iniciar al crear** desactivado para guardar una misión en pausa e iniciarla después con ▶ **Iniciar**. Actívalo para solicitar el mismo inicio protegido tras confirmar la creación y elige **Crear**.
 
-**Crear guarda una Misión en pausa.** Solo ▶ **Iniciar** activa el trabajo y los calendarios nativos. La creación pertenece al proyecto/Location seleccionado y registra los perfiles solicitados y la política de sesiones de tareas. La validación aparece junto al campo afectado; un rechazo que indique que no se envió nada conserva el borrador para corregirlo. Un coordinador puntual también puede preparar un seguimiento independiente: aparece como **Preparada** y se inicia desde su propia acción ▶.
+**Iniciar al crear está desactivado por defecto.** Primero se guarda una Misión en pausa en el proyecto/Location seleccionado, con los perfiles y la política de sesiones solicitados. El inicio posterior usa las comprobaciones normales de Play y la confirmación de ajustes nativos cuando corresponda. Si se pierde la confirmación de creación, leer su recibo deja el inicio manual. La validación aparece junto al campo; un rechazo sin envío conserva el borrador. Un seguimiento del coordinador aparece como **Preparada** y se inicia desde su propia acción ▶.
 
 Las misiones puntuales guardadas conservan sus controles de ejecución, árbol de tareas, conversaciones e informes finales. Las programaciones diarias existentes siguen en la lista con sus controles diarios y sus [reglas horarias diarias](#existing-daily-schedules). Selecciona la entrada y usa los controles disponibles para ese objeto.
 
 ### Guiones {#playbooks}
 
-El selector **Guion** muestra justo debajo una descripción de una frase del guion seleccionado. **Ver detalles** abre el guion seleccionado en el lector central: sus pasos, sus roles y, plegadas al final, las instrucciones exactas en inglés que reciben sus agentes. [Guiones](playbooks.md) explica los pasos, roles y preguntas de cada guion, y lo que CodeNomad comprueba.
+El **ⓘ** junto a **Guion** abre la guía en tu idioma en la sección del guion seleccionado. [Guiones](playbooks.md) explica sus pasos, roles y preguntas, y lo que CodeNomad comprueba.
 
 | Guion | Trabajo previsto |
 | --- | --- |
@@ -40,7 +40,7 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 
 1. Selecciona la fila de una misión: sus tareas aparecen debajo y sus acciones en la segunda línea del encabezado. El chevrón de la fila pliega o despliega sus tareas; el chevrón de otra misión muestra sus tareas sin seleccionarla. **Filtrar misiones** acota las demás filas.
 2. Elige **Resumen** (ojo) para la vista central general; mientras está abierta, seleccionar otra misión muestra la vista general de esa misión. Selecciona una tarea para ver su resultado, encargo y evidencias exactos: mientras su lector está abierto, las acciones del encabezado se aplican a esa tarea, con **Abrir la conversación de la tarea** y, si falta su informe, **Verificar y recuperar el informe faltante**. **Resumen** cierra entonces el lector de la tarea.
-3. **Más acciones** (⋯) agrupa **Pedir una actualización**, **Interrumpir ahora**, **Guardar como descripción** y **Editar la misión seleccionada**; las acciones que no corresponden quedan desactivadas.
+3. **Más acciones** (⋯) agrupa **Pedir una actualización**, **Interrumpir ahora**, **Guardar configuración** y **Editar la misión seleccionada**; las acciones que no corresponden quedan desactivadas.
 4. Sigue los enlaces de dependencias y los **Informes**; usa **Abrir conversación** para el coordinador cuando necesites su transcripción.
 5. Cuando una misión o una de sus tareas se pone en rojo, selecciónala: se abre la conversación que pregunta, con su pregunta en el panel de interrupciones.
 
@@ -123,8 +123,8 @@ Guardar una profundidad conserva las programaciones nativas activadas en la conf
 1. Usa el engranaje de Misiones o **Configuración → Misiones** para editar **Valores para nuevas misiones**.
 2. En **Aplicar a**, elige **Todas las misiones** o un guion; después establece **Sesiones de tareas** y, en **Agentes y modelos**, una fila por rol (el coordinador y luego los roles del guion). Cada elección se guarda de inmediato; no hay botón Guardar.
 3. En el ámbito de un guion, las filas muestran los valores globales marcados como **Global**. Cambiar un campo personaliza ese rol a partir de ellos; su icono de revertir vuelve a usar los valores globales. **Restablecer** (tras confirmar) borra solo los agentes y modelos del ámbito mostrado.
-4. Durante la creación, usa **Opciones → Agentes y modelos** para solicitar perfiles específicos; **Usar valores predeterminados guardados** restaura los guardados.
-5. Para límites de recursión nativa, elige una **Profundidad de subagentes**, aquí o en **Opciones → Delegación** al crear: **Heredar** (seguido de la profundidad heredada cuando se conoce) o de 1 a 10. Tu elección se guarda de inmediato. El icono de información junto a la etiqueta indica la profundidad efectiva, si los subagentes pueden anidarse y los archivos de configuración.
+4. Durante la creación, usa **Agentes y modelos** para solicitar perfiles específicos; **Usar valores predeterminados guardados** restaura los guardados.
+5. Elige una **Profundidad de subagentes**, aquí o en los controles de delegación del formulario: **Heredar** (con la profundidad heredada cuando se conoce) o de 1 a 10. Se guarda de inmediato. El icono de información indica la profundidad efectiva, el anidamiento y los archivos de configuración.
 
 | Ajuste | Ámbito y efecto |
 | --- | --- |
@@ -140,13 +140,13 @@ Cada lista **Modelo** muestra lo mismo que el selector **Modelo** de la conversa
 
 Una elección rechazada o sin confirmar nunca se reenvía: se vuelven a mostrar los valores guardados, y **Recargar** solo aparece cuando no se pueden leer. Si un cambio de profundidad no está confirmado, tu valor se conserva; usa **Actualizar profundidad del proyecto** antes de otro cambio. No interpretes **Profundidad efectiva de OpenCode desconocida** como cero o desactivada.
 
-## Reutilizar una descripción guardada {#saved-briefs}
+## Reutilizar una configuración guardada {#saved-briefs}
 
-1. Durante la creación, expande **Opciones → Empezar desde una descripción** y selecciona la descripción guardada.
+1. Elige arriba **Empezar desde una configuración**. Sustituye objetivo, notas y título; el título se deriva del nombre de la configuración. Puedes editar los campos después.
 2. Revisa el objetivo, las notas, el guion, los perfiles y la delegación copiados antes de **Crear**.
-3. Usa el icono de marcador del pie del formulario de creación (**Guardar como descripción**) para dar nombre a un borrador reutilizable. Una misión puntual seleccionada, incluso terminada, también ofrece **Guardar como descripción** en **Más acciones** (⋯).
+3. Usa **Guardar configuración** para dar nombre a un borrador reutilizable. Una misión puntual seleccionada, incluso terminada, también ofrece **Guardar configuración** en **Más acciones** (⋯).
 
-Las descripciones guardan instrucciones y elecciones solicitadas, no planes de tareas, resultados, conversaciones, relojes de programación ni autoridad de ejecución. Cargar una rellena un borrador de creación normal; no inicia ni programa nada. Eliminar una descripción conserva las misiones/conversaciones existentes. **Configuración → Misiones → Descripciones guardadas** gestiona la biblioteca; si la biblioteca deja de poder leerse, **Restablecer la biblioteca guardada** (tras confirmar) elimina las descripciones guardadas, no las ejecuciones. Las programaciones no tienen acción para guardarlas como descripción.
+Las configuraciones guardan instrucciones, guion y elecciones de perfiles y delegación. Los planes, resultados, conversaciones, horarios y permisos de ejecución permanecen en sus misiones. Cargar rellena un borrador; revisa aparte la programación e **Iniciar al crear**. Eliminar conserva las misiones y conversaciones. **Configuración → Misiones → Configuraciones guardadas** gestiona la biblioteca; **Restablecer la biblioteca de configuraciones** elimina las configuraciones tras confirmar y conserva las ejecuciones. Las programaciones no ofrecen guardar configuración.
 
 ## Programación, recuperación y conversaciones seguidas {#daily-schedules}
 
@@ -154,7 +154,9 @@ Las descripciones guardan instrucciones y elecciones solicitadas, no planes de t
 
 Los iconos **i** junto a las etiquetas explican las opciones: pasa el puntero, enfócalos con el teclado o tócalos.
 
-Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×. El **i** junto a **Lanzar cuando** se abre con un clic, Intro o Espacio: explica **si** y **si no**, recuerda que la misión solo se ejecuta mientras OpenCode está en marcha y enlaza al [ajuste de inicio de OpenCode](opencode.md#login-start). Las nuevas programaciones usan la zona horaria del sistema; **Zona horaria guardada (IANA)** solo aparece si la zona guardada es distinta.
+**Programación** está visible al crear y editar. **Lanzar cuando** empieza con **Una vez, ahora**, la primera opción de horario. Es una fuente de horario normal: combínala con otros horarios (**o**), con un evento posterior como condición (**si**) o después de eventos como alternativa (**si no**). **Añadir un criterio** añade y × elimina. El **i** se abre con clic, Intro o Espacio y enlaza al [ajuste de inicio de OpenCode](opencode.md#login-start). Las misiones se ejecutan mientras OpenCode funciona. Los horarios civiles usan la zona del sistema; **Zona horaria guardada (IANA)** aparece si difiere.
+
+**Una vez, ahora** ofrece una sola oportunidad, anclada cuando Play activa el horario, en vez de al abrir el formulario o guardarlo. Evento antes de ahora es una alternativa; ahora antes de evento es condicional. Una condición bloqueante puede consumir esa única oportunidad sin iniciar nada. Usa recurrencia o un evento desencadenante para tener oportunidades posteriores.
 
 | Horario | Momento |
 | --- | --- |
@@ -164,7 +166,7 @@ Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los cri
 | Un día de cada mes | El día 1–31 a la hora elegida; se omiten los meses sin ese día. |
 | Avanzado (cron) | Una expresión cron nativa, como máximo una vez por minuto. |
 
-Añade varios horarios para varias horas, como 09:15 y 17:45. Cada uno es un cron; las expresiones reconocidas se reabren como su atajo. Los [eventos](#scheduling-conditions) son los demás criterios: los eventos que lanzan la misión se comprueban cada 15 minutos, sin frecuencia que ajustar; las condiciones se leen en los momentos que las necesitan.
+Añade varios horarios para varias horas, como 09:15 y 17:45. Los atajos civiles usan cron; las expresiones reconocidas se reabren como su atajo. Los [eventos](#scheduling-conditions) son los demás criterios: los eventos que lanzan la misión se comprueban cada 15 minutos, sin frecuencia que ajustar; las condiciones se leen en los momentos que las necesitan.
 
 Entre dos tarjetas, un pequeño conector muestra cómo se combinan: **o** entre dos horarios o dos eventos, **si** de un horario a un evento, **si no** de un evento a un horario. Los eventos al principio lanzan la misión cada vez que ocurren; los horarios al principio la lanzan a sus horas. Los eventos tras horarios son sus condiciones: en cada una de esas horas, la misión solo se lanza si alguno de ellos ocurrió desde la última pasada exitosa; si no, esa hora se omite. Los horarios tras eventos son un respaldo para todo lo que está encima: en cada una de sus horas, un horario de respaldo solo lanza si las tarjetas de encima no lanzaron ninguna pasada desde su hora anterior (o desde que se configuró); **Ejecutar ahora** también cuenta, y también una pasada fallida. Los eventos tras él condicionan solo ese respaldo. Por ejemplo, nuevos commits, luego 18:00, luego nuevos mensajes, luego 20:00 lanza con cada commit; si no, a las 18:00 si hubo mensajes nuevos; si no, a las 20:00. Arrastra una tarjeta por su asa para cambiar el orden, o enfoca el asa y pulsa Alt+Flecha arriba o Alt+Flecha abajo; los conectores se actualizan.
 
@@ -180,7 +182,7 @@ Un criterio de evento indica su fuente en este proyecto: **Otra programación ti
 
 El primer inicio establece la referencia inicial. Reanudar la conserva, incluidos los cambios observados tras una pausa. Las fuentes de éxito exigen un resultado exitoso verificado y una familia nativa resuelta. Las comprobaciones de ramas usan commits locales y su ascendencia sin obtener datos remotos. Las comprobaciones de conversaciones esperan mensajes nuevos completos y estables, y excluyen las activaciones técnicas y las propias conversaciones de la pasada. Los archivos usan hasta 128 rutas explícitas relativas al proyecto, una por línea; se rechazan los patrones recursivos y las rutas enlazadas. Una fuente ausente, movida, ambigua o que supere la capacidad bloquea la admisión con una explicación. Los cambios entre comprobaciones necesitan dejar una huella duradera en la fuente para detectarse.
 
-Los cambios observados juntos se agrupan. Una pasada fija las evidencias observadas de las fuentes; la resolución exitosa consume esa instantánea y deja los cambios posteriores para una comprobación futura. Una pasada fallida conserva su punto de control de la fuente y exige intervención. **Conversaciones seguidas (opcional)** en **Opciones** aporta contexto independientemente de elegir un evento de mensaje de conversación.
+Los cambios observados juntos se agrupan. Una pasada fija las evidencias observadas de las fuentes; la resolución exitosa consume esa instantánea y deja los cambios posteriores para una comprobación futura. Una pasada fallida conserva su punto de control de la fuente y exige intervención. **Conversaciones seguidas (opcional)** aporta contexto independientemente de elegir un evento de mensaje de conversación.
 
 ### Recuentos y programaciones guardadas {#scheduling-limits}
 
@@ -268,7 +270,7 @@ La fuente de ramas locales incluye ramas sin worktree y lee solo referencias loc
 
 Una confirmación directa de la activación puede continuar la acción que acabas de solicitar. Si la activación se confirma más tarde mediante **Actualizar la solicitud guardada**, espera a la vista actualizada y elige **Iniciar** o **Reanudar** por tu cuenta. La recuperación conserva la solicitud original y deja el inicio del trabajo para tu próxima acción explícita.
 
-Antes del primer Play puede quitar todos los criterios de lanzamiento para un único inicio, conservando las conversaciones seguidas en **Opciones**. Play lee y fija su prefijo de mensajes completos y estables (hasta 32 mensajes por fuente, dentro de una entrada de 16 384 caracteres). Una fuente ausente, movida o demasiado grande bloquea el inicio con una explicación. Un reintento conserva el contexto fijado y la identidad del inicio original.
+Antes del primer Play puede elegir **Una vez, ahora** conservando las conversaciones seguidas. Play lee y fija su prefijo de mensajes completos y estables (hasta 32 mensajes por fuente, dentro de una entrada de 16 384 caracteres). Una fuente ausente, movida o demasiado grande bloquea el inicio con una explicación. Un reintento conserva el contexto fijado y la identidad del inicio original.
 
 Cuando la lectura del recibo confirma una preparación parcial, aparece **Intentar de nuevo**. El clic vuelve a comprobar ese mismo recibo y reanuda únicamente el cambio guardado original, manteniendo la misión en pausa.
 

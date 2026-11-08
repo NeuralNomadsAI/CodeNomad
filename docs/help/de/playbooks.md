@@ -2,7 +2,7 @@
 
 Ein Playbook ist die Arbeitsmethode, der der Koordinator einer Mission folgt: die Schritte, die Rollen, die er Aufgaben geben kann, und die Anweisungen, die jeder Agent erhält. Diese Seite beschreibt jedes Playbook, was CodeNomad selbst durchsetzt und was eine Anweisung bleibt, der das Modell folgen soll.
 
-Um die genaue Definition eines Playbooks zu lesen, öffnen Sie im Formular zur Missionserstellung **Optionen**, wählen ein **Playbook** und wählen unter seiner Beschreibung **Details anzeigen**. Der zentrale Leser zeigt Schritte und Rollen; **Anweisungen, die die Agenten erhalten (englischer Prompt-Text)** klappt für die gewählte Einstellung **Aufgabensitzungen** den vollständigen Text ein, den der Koordinator in jeder Runde erhält, und die vollständige Zuweisungsnachricht jeder Rolle (mit **Unabhängige Sitzungen** auch den Kontext, den jede Runde der Aufgabensitzung hinzufügt). Felder in eckigen Klammern wie [objective] stehen für die eigenen Daten jeder Mission; eigene Nachrichten starten die Mission oder setzen sie fort und liefern Aufgabenergebnisse. In diesen Anweisungen heißt Erkundung *Wayfinder Map*.
+Das **ⓘ** neben **Playbook** im Missionsformular öffnet diesen Leitfaden in Ihrer Sprache beim ausgewählten Playbook. Wählen Sie unten ein Playbook für Schritte, Rollen, Fragen und Prüfungen. In den Agentenanweisungen heißt Erkundung *Wayfinder Map*.
 
 ## Ein Playbook wählen {#choose}
 
@@ -125,7 +125,7 @@ Lässt sich keine fehlschlagende Reproduktion bauen, meldet der Diagnostiker, wa
 - Nur die sechs Rollen der Fehlersuche werden akzeptiert.
 - Reihenfolge: Ein Implementierer muss von einer Diagnose abhängen, jeder Prüfer von einer Implementierung, die Fortsetzung von beiden Prüfungen und der Validator von der Fortsetzung. Ein Schritt startet erst, wenn der Schritt, von dem er abhängt, abgeschlossen ist.
 - Die Prüfer und der Validator müssen in neuen Unterhaltungen laufen; die Fortsetzung muss die Unterhaltung des abgeschlossenen Implementierers fortsetzen.
-- Jeder abgeschlossene Rollenbericht muss den strukturierten Bericht seiner Rolle im genauen Format enthalten (von **Details anzeigen** gezeigt), sonst wird er abgelehnt. Die Korrektur muss zum Beispiel angeben, dass der Regressionstest fehlschlagend und bestanden beobachtet wurde, und die Validierung muss alle vier Prüfarten ohne Fehlschlag auflisten.
+- Jeder abgeschlossene Rollenbericht muss den strukturierten Bericht seiner Rolle im erforderlichen Format enthalten, sonst wird er abgelehnt. Die Korrektur muss zum Beispiel angeben, dass der Regressionstest fehlschlagend und bestanden beobachtet wurde, und die Validierung muss alle vier Prüfarten ohne Fehlschlag auflisten.
 - Die Mission endet nur grün, wenn die neueste Implementierung eine abgeschlossene Diagnose vor sich und zwei Prüfungen, eine Fortsetzung und eine Validierung nach sich hat, alle durch Abhängigkeiten verbunden und mit gültigen strukturierten Berichten.
 
 Nur Anweisungen: die Qualität der Diagnose, dass Prüfer und Validator keine Dateien ändern, und die Wahrheit dessen, was ein Bericht behauptet. CodeNomad prüft, dass die Korrektur angibt, der Test sei von Rot zu Grün gewechselt, nicht, dass sie ihn ausgeführt hat.

@@ -47,11 +47,10 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
     await missionRows(page).locator("button.mission-row-select").first().waitFor()
     if (consumer === "tree") await selectMission(page, "Focus migration")
     else {
+      const requested = holdDepth ? page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/subagent-depth")) : undefined
       await missionGeneralAction(page, "Create mission").click()
       await page.locator("form.mission-editor").getByLabel("What should the mission do?", { exact: true }).fill("Inspect focus ownership")
       await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('form.mission-editor button[type="submit"]')?.disabled)
-      const requested = holdDepth ? page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/subagent-depth")) : undefined
-      await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
       if (requested) await requested
       else await page.waitForFunction(() => Boolean(document.querySelector(".mission-depth [role=alert]")))
     }
@@ -61,7 +60,7 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
 }
 
 const region = (consumer: string) => consumer === "tree" ? ".mission-tree" : "form.mission-editor > .window-body"
-const target = (page: Page, consumer: string) => page.locator(consumer === "tree" ? '.mission-tree-node[data-task-key="t20"] .mission-tree-task' : ".mission-scheduling > summary")
+const target = (page: Page, consumer: string) => page.locator(consumer === "tree" ? '.mission-tree-node[data-task-key="t20"] .mission-tree-task' : '.mission-scheduling input[type="checkbox"]')
 const frames = (page: Page) => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))))
 const visible = (page: Page) => page.evaluate(() => {
   const focused = document.activeElement!, box = focused.getBoundingClientRect(), hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
@@ -224,8 +223,8 @@ test("a depth reply preserves horizontal owners and the original native Create p
       window.scrollTo(200, 0) // Initial non-zero horizontal owner, before the focus/HTTP transition.
     })
     const form = f.page.locator("form.mission-editor")
-    await form.getByRole("button", { name: "Save as brief", exact: true }).click()
-    await form.getByRole("textbox", { name: "Brief name", exact: true }).waitFor()
+    await form.getByRole("button", { name: "Save configuration", exact: true }).click()
+    await form.getByRole("textbox", { name: "Configuration name", exact: true }).waitFor()
     await target(f.page, "creation").focus(); await frames(f.page)
     const position = await f.page.evaluate(() => ({ x: scrollX, owners: Array.from(document.querySelectorAll(".mission-control, #tab-body, form.mission-editor > .window-body"), element => element.scrollLeft) }))
     assert(position.x > 0, "the outer horizontal owner starts away from its origin")

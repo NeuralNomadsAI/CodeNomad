@@ -11,18 +11,18 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 ## Créer, puis démarrer explicitement {#create}
 
 1. Ouvrez **Missions** dans le panneau droit et choisissez **Créer une mission**. Le formulaire remplace l’arbre des missions jusqu’à ce que vous créiez ou annuliez.
-2. Remplissez **Que doit faire la mission ?** et vérifiez **Titre**, prérempli depuis la première phrase (jusqu’à 60 caractères).
-3. Laissez **Programmation** repliée pour **Une fois, immédiatement**, ou développez-la et utilisez **Ajouter un critère** sous **Lancer quand** pour ajouter des horaires ou des événements. Leur ordre fixe leur combinaison.
-4. Développez **Options** pour **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, la **Profondeur des sous-agents** du projet, les consignes enregistrées et les conversations suivies facultatives. Avec **Comparer deux modèles**, les sélecteurs **Modèle A** et **Modèle B** apparaissent dans le formulaire principal.
-5. Choisissez **Créer**. Sélectionnez l’entrée en pause, examinez-la, puis utilisez ▶ **Démarrer** lorsque vous êtes prêt. Sans critère de lancement, Démarrer lance une mission ; avec des critères, il arme la programmation native.
+2. Utilisez éventuellement **Partir d’une configuration** en haut du formulaire, puis vérifiez **Que doit faire la mission ?**, **Notes** et **Titre**. Pour une mission vierge, le titre suit la première phrase (60 caractères au plus). Charger une configuration remplace l’objectif, les notes et le titre ; celui-ci est dérivé du nom de la configuration et reste modifiable ensuite.
+3. Le formulaire compact garde visibles **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, la **Profondeur des sous-agents**, les conversations suivies et **Programmation**. Avec **Comparer deux modèles**, vérifiez aussi **Modèle A** et **Modèle B**.
+4. **Lancer quand** commence par **Une fois, maintenant**. **Ajouter un critère** combine programmes et événements ; leur ordre fixe **ou**, **si** et **sinon**.
+5. Laissez **Démarrer à la création** décoché pour enregistrer une mission en pause et utiliser ▶ **Démarrer** plus tard. Cochez-le pour demander le même démarrage contrôlé après confirmation de la création, puis choisissez **Créer**.
 
-**Créer enregistre une Mission en pause.** Seule l’action ▶ **Démarrer** arme le travail et les calendriers natifs. La création appartient au projet/à la Location sélectionné et enregistre les profils demandés et la politique des sessions de tâches. La validation apparaît près du champ concerné ; un refus indiquant que rien n’a été envoyé conserve le brouillon pour correction. Un coordinateur ponctuel peut aussi préparer une mission de suite distincte : elle apparaît comme **Préparée** et démarre depuis sa propre action ▶.
+**Démarrer à la création est décoché par défaut.** La création enregistre d’abord une Mission en pause ; si l’option est cochée, la suite utilise les contrôles ordinaires de Play et l’éventuelle confirmation des réglages natifs. Si l’accusé de création est perdu, la lecture de sa preuve laisse le démarrage manuel. La création appartient au projet/à la Location sélectionné et enregistre les profils et la politique des sessions de tâches. La validation apparaît près du champ concerné ; un refus indiquant que rien n’a été envoyé conserve le brouillon. Un coordinateur ponctuel peut préparer une suite **Préparée**, qui démarre depuis sa propre action ▶.
 
 Les missions ponctuelles enregistrées conservent leurs commandes d’exécution, leur arbre de tâches, leurs conversations et leurs rapports finaux. Les programmations quotidiennes existantes restent dans la liste avec leurs commandes quotidiennes et leurs [règles horaires quotidiennes](#existing-daily-schedules). Sélectionnez l’entrée et utilisez les commandes disponibles pour cet objet.
 
 ### Scénarios {#playbooks}
 
-Le sélecteur **Scénario** affiche juste en dessous une description en une phrase du scénario sélectionné. **Voir les détails** ouvre le scénario sélectionné dans le lecteur central : ses étapes, ses rôles et, repliées à la fin, les instructions exactes en anglais que reçoivent ses agents. [Scénarios](playbooks.md) explique les étapes, les rôles et les questions de chaque scénario, ainsi que ce que CodeNomad vérifie.
+L’**ⓘ** à côté de **Scénario** ouvre le guide dans votre langue à la section du scénario sélectionné. [Scénarios](playbooks.md) explique ses étapes, rôles et questions, ainsi que ce que CodeNomad vérifie.
 
 | Scénario | Travail prévu |
 | --- | --- |
@@ -40,7 +40,7 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 
 1. Sélectionnez la ligne d’une mission : ses tâches apparaissent en dessous et ses actions sur la deuxième ligne de l’en-tête. Le chevron de la ligne replie ou déplie ses tâches ; le chevron d’une autre mission affiche ses tâches sans la sélectionner. **Filtrer les missions** restreint les autres lignes.
 2. Choisissez **Résumé** (œil) pour la vue centrale ; tant qu’elle est ouverte, sélectionner une autre mission affiche la vue de cette mission. Sélectionnez une tâche pour son résultat, sa consigne et ses preuves exacts : tant que son lecteur est ouvert, les actions de l’en-tête s’appliquent à cette tâche, avec **Ouvrir la conversation de la tâche** et, si son rapport manque, **Vérifier et récupérer le rapport manquant**. **Résumé** ferme alors le lecteur de la tâche.
-3. **Plus d'actions** (⋯) regroupe **Demander un point**, **Interrompre maintenant**, **Enregistrer comme consigne** et **Modifier la mission sélectionnée** ; les actions qui ne s’appliquent pas restent désactivées.
+3. **Plus d'actions** (⋯) regroupe **Demander un point**, **Interrompre maintenant**, **Enregistrer la configuration** et **Modifier la mission sélectionnée** ; les actions qui ne s’appliquent pas restent désactivées.
 4. Suivez les liens de dépendance et **Rapports** ; utilisez **Ouvrir la conversation** pour le coordinateur si vous avez besoin de sa transcription.
 5. Quand une mission ou l’une de ses tâches passe au rouge, sélectionnez-la : la conversation qui pose la question s’ouvre, avec cette question dans le dock d’interruption.
 
@@ -123,8 +123,8 @@ Enregistrer une profondeur préserve les programmations natives activées dans l
 1. Utilisez l’engrenage des Missions ou **Paramètres → Missions** pour modifier **Défauts des nouvelles missions**.
 2. Sous **Appliquer à**, choisissez **Toutes les missions** ou un scénario, puis réglez **Sessions des tâches** et, sous **Agents et modèles**, une ligne par rôle (coordinateur, puis les rôles du scénario). Chaque choix est enregistré immédiatement ; il n’y a pas de bouton Enregistrer.
 3. Dans la portée d’un scénario, les lignes affichent les valeurs globales marquées **Global**. Modifier un champ personnalise ce rôle à partir de ces valeurs ; son icône de retour réutilise les valeurs globales. **Réinitialiser** (après confirmation) efface seulement les agents et modèles de la portée affichée.
-4. À la création, utilisez **Options → Agents et modèles** pour des profils demandés spécifiques ; **Utiliser les réglages enregistrés** rétablit ceux qui sont enregistrés.
-5. Pour les limites de récursion native, choisissez une **Profondeur des sous-agents**, ici ou sous **Options → Délégation** à la création : **Hériter** (suivi de la profondeur héritée lorsqu’elle est connue) ou 1 à 10. Votre choix est enregistré aussitôt. L’icône d’information à côté du libellé indique la profondeur effective, si les sous-agents peuvent s’imbriquer et les fichiers de configuration.
+4. À la création, utilisez **Agents et modèles** pour des profils demandés spécifiques ; **Utiliser les réglages enregistrés** rétablit ceux qui sont enregistrés.
+5. Pour les limites de récursion native, choisissez une **Profondeur des sous-agents**, ici ou dans les contrôles de délégation du formulaire : **Hériter** (suivi de la profondeur héritée lorsqu’elle est connue) ou 1 à 10. Votre choix est enregistré aussitôt. L’icône d’information indique la profondeur effective, si les sous-agents peuvent s’imbriquer et les fichiers de configuration.
 
 | Réglage | Portée et effet |
 | --- | --- |
@@ -140,13 +140,13 @@ Chaque liste **Modèle** affiche ce qu’affiche le sélecteur **Modèle** de la
 
 Un choix refusé ou non confirmé n’est jamais renvoyé : les valeurs enregistrées sont réaffichées, et **Recharger** n’apparaît que lorsqu’elles ne peuvent pas être lues. Si un changement de profondeur n’est pas confirmé, votre valeur est conservée ; utilisez **Actualiser la profondeur du projet** avant un autre changement. N’interprétez pas **Profondeur OpenCode effective inconnue** comme zéro ou désactivée.
 
-## Réutiliser une consigne enregistrée {#saved-briefs}
+## Réutiliser une configuration enregistrée {#saved-briefs}
 
-1. À la création, développez **Options → Partir d’une consigne** et sélectionnez la consigne enregistrée.
+1. À la création, sélectionnez une configuration sous **Partir d’une configuration**, en haut du formulaire. Elle remplace l’objectif, les notes et le titre ; celui-ci est dérivé du nom de la configuration. Vous pouvez ensuite modifier ces champs.
 2. Vérifiez l’objectif, les notes, le scénario, les profils et la délégation copiés avant **Créer**.
-3. Utilisez l’icône de signet du pied du formulaire de création (**Enregistrer comme consigne**) pour nommer un brouillon réutilisable. Une mission ponctuelle sélectionnée, même terminée, propose aussi **Enregistrer comme consigne** sous **Plus d'actions** (⋯).
+3. Utilisez **Enregistrer la configuration** à la création pour nommer un brouillon réutilisable. Une mission ponctuelle sélectionnée, même terminée, propose aussi **Enregistrer la configuration** sous **Plus d'actions** (⋯).
 
-Les consignes stockent les instructions et choix demandés, pas les plans de tâches, résultats, conversations, horaires de programme ou autorité d’exécution. En charger une remplit un brouillon de création ordinaire ; cela ne démarre ni ne planifie rien. Retirer une consigne conserve les missions/conversations existantes. **Paramètres → Missions → Consignes enregistrées** gère la bibliothèque ; si celle-ci devient illisible, **Réinitialiser la bibliothèque enregistrée** (après confirmation) retire les consignes enregistrées, pas les exécutions. Les programmes eux-mêmes n’ont pas d’action d’enregistrement comme consigne.
+Les configurations stockent les instructions, le scénario et les choix de profils et de délégation demandés. Les plans de tâches, résultats, conversations, horaires et autorité d’exécution restent attachés aux missions. Charger une configuration remplit un brouillon ; vérifiez séparément la programmation et **Démarrer à la création**. Supprimer une configuration conserve les missions et conversations. **Paramètres → Missions → Configurations enregistrées** gère la bibliothèque ; **Réinitialiser la bibliothèque de configurations** (après confirmation) supprime les configurations en conservant les exécutions. Les programmes eux-mêmes n’ont pas d’action d’enregistrement de configuration.
 
 ## Programmation, rattrapage et conversations suivies {#daily-schedules}
 
@@ -154,7 +154,9 @@ Les consignes stockent les instructions et choix demandés, pas les plans de tâ
 
 Les icônes **i** près des libellés expliquent les choix : survolez-les, placez-y le focus au clavier ou touchez-les.
 
-Développez **Programmation** dans le formulaire de création ou de modification. **Lancer quand** liste les critères qui lancent la mission : choisissez **Ajouter un critère**, puis son type. Sans aucun critère, elle part une fois au démarrage (**Une fois, immédiatement**). Retirez un critère avec son bouton ×. L’**i** à côté de **Lancer quand** s’ouvre au clic, avec Entrée ou Espace : il explique **si** et **sinon**, rappelle que la mission ne tourne que si OpenCode tourne et mène au [réglage de démarrage d’OpenCode](opencode.md#login-start). Les nouvelles programmations utilisent le fuseau du système ; **Fuseau enregistré (IANA)** n’apparaît que si le fuseau enregistré en diffère.
+**Programmation** est visible à la création et à la modification. **Lancer quand** commence par **Une fois, maintenant**, le premier choix de programme. Cette source ordinaire se combine avec d’autres programmes (**ou**), avec un événement placé après comme condition (**si**), ou après des événements comme repli (**sinon**). Choisissez **Ajouter un critère**, puis son type ; retirez-le avec ×. L’**i** s’ouvre au clic, avec Entrée ou Espace et mène au [réglage de démarrage d’OpenCode](opencode.md#login-start). Les missions tournent quand OpenCode tourne. Les nouveaux programmes civils utilisent le fuseau système ; **Fuseau enregistré (IANA)** apparaît si le fuseau enregistré diffère.
+
+**Une fois, maintenant** offre une seule occasion, ancrée lorsque Play arme le programme, plutôt qu’à l’ouverture du formulaire ou à l’enregistrement. Événement puis maintenant forme un repli ; maintenant puis événement est conditionnel. Une condition bloquante peut consommer cette unique occasion sans lancement. Choisissez une récurrence ou un événement déclencheur pour disposer d’occasions ultérieures.
 
 | Horaire | Déclenchement |
 | --- | --- |
@@ -164,7 +166,7 @@ Développez **Programmation** dans le formulaire de création ou de modification
 | Un jour de chaque mois | Le jour 1–31 à l’heure choisie ; les mois dépourvus de ce jour sont sautés. |
 | Avancé (cron) | Une expression cron native, au plus une fois par minute. |
 
-Ajoutez plusieurs horaires pour plusieurs heures, comme 09:15 et 17:45. Chacun est un cron ; les expressions reconnues se rouvrent sous leur raccourci. Les [événements](#scheduling-conditions) sont les autres critères : les événements qui lancent la mission sont vérifiés toutes les 15 minutes, sans fréquence à régler ; les conditions sont lues aux moments qui en ont besoin.
+Ajoutez plusieurs horaires pour plusieurs heures, comme 09:15 et 17:45. Les raccourcis civils utilisent cron ; les expressions reconnues se rouvrent sous leur raccourci. Les [événements](#scheduling-conditions) sont les autres critères : les événements qui lancent la mission sont vérifiés toutes les 15 minutes, sans fréquence à régler ; les conditions sont lues aux moments qui en ont besoin.
 
 Entre deux cartes, un petit connecteur indique comment elles se combinent : **ou** entre deux horaires ou deux événements, **si** d’un horaire vers un événement, **sinon** d’un événement vers un horaire. Les événements en tête lancent la mission chaque fois qu’ils se produisent ; les horaires en tête la lancent à leurs heures. Les événements placés après des horaires sont leurs conditions : à chacune de ces heures, la mission ne part que si l’un d’eux s’est produit depuis le dernier passage réussi ; sinon cette heure est sautée. Les horaires placés après des événements sont un repli pour tout ce qui est au-dessus : à chacune de ses heures, un horaire de repli ne lance que si les cartes au-dessus de lui n’ont lancé aucun passage depuis son heure précédente (ou depuis sa mise en place) ; un **Lancer maintenant** compte aussi, tout comme un passage échoué. Les événements placés après lui conditionnent seulement ce repli. Par exemple, nouveaux commits, puis 18:00, puis nouveaux messages, puis 20:00 lance à chaque commit ; sinon à 18:00 s’il y a eu de nouveaux messages ; sinon à 20:00. Faites glisser une carte par sa poignée pour changer l’ordre, ou placez le focus sur la poignée et appuyez sur Alt+Flèche haut ou Alt+Flèche bas ; les connecteurs suivent.
 
@@ -180,7 +182,7 @@ Un critère d’événement désigne sa source dans ce projet : **Réussite d’
 
 Le premier démarrage établit la référence initiale. La reprise la conserve, y compris les changements observés après une pause. Les sources de réussite exigent un résultat réussi vérifié et une famille native dont l’exécution est réglée. Les vérifications de branche utilisent les commits locaux et leur ascendance sans récupération distante. Celles de conversations attendent des messages nouveaux complets et stables et excluent les réveils techniques et les conversations du passage lui-même. Les fichiers utilisent jusqu’à 128 chemins explicites relatifs au projet, un par ligne ; les motifs récursifs et les chemins liés sont refusés. Une source absente, déplacée, ambiguë ou dépassant la capacité bloque l’admission avec une explication. Pour être détectés, les changements entre vérifications doivent laisser une trace durable dans la source.
 
-Les changements observés ensemble sont regroupés. Un passage fige les preuves observées dans la source ; un règlement réussi consomme cet instantané, laissant les changements ultérieurs pour une prochaine vérification. Un passage échoué conserve son point de contrôle de source et exige une intervention. **Conversations suivies (facultatif)** sous **Options** fournit du contexte indépendamment du choix d’un événement de message de conversation.
+Les changements observés ensemble sont regroupés. Un passage fige les preuves observées dans la source ; un règlement réussi consomme cet instantané, laissant les changements ultérieurs pour une prochaine vérification. Un passage échoué conserve son point de contrôle de source et exige une intervention. **Conversations suivies (facultatif)** fournit du contexte indépendamment du choix d’un événement de message de conversation.
 
 ### Décomptes et programmations enregistrées {#scheduling-limits}
 
@@ -268,7 +270,7 @@ La source de branche locale comprend les branches sans worktree et lit uniquemen
 
 Une confirmation directe de l’activation peut poursuivre l’action que vous venez de demander. Si l’activation est confirmée plus tard par **Actualiser la requête enregistrée**, attendez la vue actualisée, puis choisissez vous-même **Démarrer** ou **Reprendre**. La récupération conserve la requête d’origine et attend votre prochaine action explicite pour démarrer le travail.
 
-Avant le premier Play, vous pouvez retirer tous les critères de lancement pour un lancement unique au démarrage en gardant les conversations suivies dans **Options**. Play lit et fige leur préfixe de messages complets et stables (32 messages par source au plus, dans une enveloppe de lancement de 16 384 caractères). Une source absente, déplacée ou dépassant la capacité bloque le lancement avec une explication. Une reprise conserve le contexte figé et l’identité du lancement d’origine.
+Avant le premier Play, vous pouvez choisir **Une fois, maintenant** en gardant les conversations suivies. Play lit et fige leur préfixe de messages complets et stables (32 messages par source au plus, dans une enveloppe de lancement de 16 384 caractères). Une source absente, déplacée ou dépassant la capacité bloque le lancement avec une explication. Une reprise conserve le contexte figé et l’identité du lancement d’origine.
 
 Lorsqu’une lecture du reçu confirme une préparation partielle, **Réessayer** apparaît. Ce clic vérifie de nouveau le même reçu et reprend uniquement la modification enregistrée d’origine, en gardant la mission en pause.
 

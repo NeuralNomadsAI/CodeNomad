@@ -210,7 +210,6 @@ for (const method of ["POST", "PATCH"] as const) test(`an unsent ${method} draft
     const form = page.locator("form.mission-editor"), submit = form.locator("button[type=submit]")
     await form.locator("textarea").first().fill("Kept draft")
     if (method === "POST") {
-      await form.locator("summary").filter({ hasText: /^Options$/ }).click()
       await form.getByLabel("Playbook", { exact: true }).selectOption("debug")
       await form.getByLabel("Notes", { exact: true }).fill("Kept notes")
     }
@@ -269,7 +268,6 @@ test("creation-uncertain retains original request/draft across close, remount an
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.locator("form.mission-editor textarea").first().fill("Uncertain create")
-    await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
     await page.getByLabel("Notes", { exact: true }).fill("Original notes")
     await page.locator("form.mission-editor button[type=submit]").first().click()
     const uncertain = page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" })
