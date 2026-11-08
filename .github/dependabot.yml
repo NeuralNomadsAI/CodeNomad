@@ -1,4 +1,8 @@
 version: 2
+# Routine version updates are off: every job sets open-pull-requests-limit 0.
+# Dependabot opens security updates only (GitHub's separate fixed limit). The
+# allow rules also filter security updates, so they stay broad; the
+# version-update groups apply again if a limit is raised.
 updates:
   # All Cargo dependencies, including transitives, from the workspace lockfile.
   # allow.update-types limits routine updates only; security fixes may cross majors.
@@ -11,7 +15,7 @@ updates:
     directory: /packages/tauri-app
     schedule:
       interval: weekly
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 0
     allow:
       - dependency-type: all
         update-types:
@@ -39,7 +43,7 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 0
 
   # Keep root workspaces and the separately deployed worker in independent jobs.
   # Fastify security fixes share a family PR; unmatched dependencies stay individual.
@@ -49,7 +53,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 0
     allow:
       - dependency-type: all
         update-types:
@@ -94,7 +98,7 @@ updates:
     directory: /packages/cloudflare
     schedule:
       interval: weekly
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 0
     allow:
       - dependency-type: all
         update-types:
