@@ -31,6 +31,7 @@ PAGE = b'''<!doctype html><meta charset="utf-8"><title>WebKit capabilities</titl
 <button onclick="window.onbeforeunload=()=>true;report('beforeunload','armed');report('activation',navigator.userActivation?.hasBeenActive)">Arm beforeunload</button><a href="/next">Navigate</a>
 <button onclick="location.reload()">Reload page</button>
 <button onclick="window.open('/close-test','close-test','width=800,height=700')">Close-test popup</button>
+<button onclick="window.close=()=>{};report('close-override',window.close.toString())">Override window.close</button>
 <button onclick="window.print();report('print','requested')">Print</button>
 <input type="file" onchange="report('file',this.files[0]?.name)">
 <div style="height:80px;border:1px solid" ondragenter="report('drag-enter',Array.from(event.dataTransfer.types).join(','))" ondragover="event.preventDefault();event.dataTransfer.dropEffect='copy'" ondrop="event.preventDefault();report('drop-count',event.dataTransfer.files.length);report('drop',event.dataTransfer.files[0]?.name)">Drop file</div>

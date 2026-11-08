@@ -65,6 +65,7 @@ export async function qualifyBeforeUnload(owner: BrowserWindow, root: WebContent
     const popup = BrowserWindow.getAllWindows().find(window => window !== owner && !isBrowserDialog(window))!
     assert.ok(popup)
     while (popup.webContents.isLoading()) await pause()
+    await popup.webContents.executeJavaScript("window.close=()=>{};void 0")
     await arm(popup.webContents)
     await decide(popup.webContents, "popup-close-stay", "stay", () => popup.close())
     const closed = new Promise<void>(resolve => popup.once("closed", () => resolve()))

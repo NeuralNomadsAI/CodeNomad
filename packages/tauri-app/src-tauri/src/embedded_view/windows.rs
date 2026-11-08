@@ -2,10 +2,44 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 pub(super) fn request_close<R: tauri::Runtime>(view: &tauri::Webview<R>) -> Result<(), String> {
-    // These windows were opened by script. WebView2's supported close request
-    // is window.close(), which emits WindowCloseRequested after beforeunload.
-    view.eval("window.close()")
-        .map_err(|error| error.to_string())
+    use tauri::Manager;
+    use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR};
+    let policy = view
+        .app_handle()
+        .try_state::<super::EmbeddedViews>()
+        .ok_or("Missing browser registry")?
+        .inner()
+        .clone();
+    let label = view.label().to_string();
+    let token = policy.token(&label).ok_or("Expired browser view")?;
+    view.with_webview(move |native| {
+        if !policy.current(&label, token) {
+            return;
+        }
+        // Page.close runs beforeunload and requests native window closure without
+        // evaluating the site's replaceable window.close. Never wait on the UI thread.
+        let result = (|| unsafe {
+            let core = native.controller().CoreWebView2()?;
+            let method = CoTaskMemPWSTR::from("Page.close");
+            let params = CoTaskMemPWSTR::from("{}");
+            let callback =
+                CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|result, _| {
+                    if let Err(error) = result {
+                        eprintln!("[browser-close] {error}");
+                    }
+                    Ok(())
+                }));
+            core.CallDevToolsProtocolMethod(
+                *method.as_ref().as_pcwstr(),
+                *params.as_ref().as_pcwstr(),
+                &callback,
+            )
+        })();
+        if let Err(error) = result {
+            eprintln!("[browser-close] {error}");
+        }
+    })
+    .map_err(|error| error.to_string())
 }
 
 pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<(), String> {

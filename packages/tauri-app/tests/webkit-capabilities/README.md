@@ -66,6 +66,12 @@ availability; **WebAuthn availability** reports platform-authenticator availabil
 
 ## Isolated native inputs
 
+`windows-beforeunload.ps1 -CloseOnly` focuses the native close regression. It
+redefines the page's `window.close`, verifies an unarmed popup closes, then
+checks that Stay retains an armed popup and Leave closes it. The default run
+also covers navigation and reload confirmations. Native closure uses the engine
+path independently of page globals on every host.
+
 Set `CODENOMAD_FIXTURE_CONTROLS=1` and `CODENOMAD_FIXTURE_ZOOM_EVIDENCE=1` for
 focused WebKit zoom trials. Native Cmd/Ctrl +, − and 0 and the fixture's **View**
 menu exercise the production native zoom handlers and focused-menu routing.

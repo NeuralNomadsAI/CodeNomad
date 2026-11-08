@@ -975,7 +975,11 @@ impl BrowserController {
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    fn resolve(&self, app: &AppHandle, session_id: &str) -> Result<Registration, String> {
+    fn resolve<R: tauri::Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        session_id: &str,
+    ) -> Result<Registration, String> {
         validate_id(session_id, 256)?;
         let registrations = self
             .inner
@@ -1014,7 +1018,7 @@ impl BrowserController {
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
     ) -> Result<(), String> {
-        self.check_target(app, registration, deadline, fence)?;
+        self.check_target_identity(app, registration, deadline, fence)?;
         self.invalidate_page(&registration.registration_id);
         let sequence = self.prepare_page_load(&registration.registration_id, url.as_str())?;
         let controller = self.clone();
@@ -1068,9 +1072,9 @@ impl BrowserController {
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    fn check_target(
+    fn check_target<R: tauri::Runtime>(
         &self,
-        app: &AppHandle,
+        app: &AppHandle<R>,
         expected: &Registration,
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
@@ -1085,9 +1089,9 @@ impl BrowserController {
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    fn check_target_identity(
+    fn check_target_identity<R: tauri::Runtime>(
         &self,
-        app: &AppHandle,
+        app: &AppHandle<R>,
         expected: &Registration,
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
@@ -1606,9 +1610,13 @@ mod tests {
     #[test]
     fn webkit_hosts_publish_native_browser_profiles_and_automation() {
         let source = include_str!("local_windows.rs");
-        let webkit = source.lines().find(|line| line.contains("reason:'webkit'")).unwrap();
+        let webkit = source
+            .lines()
+            .find(|line| line.contains("reason:'webkit'"))
+            .unwrap();
         assert!(webkit.contains("emulation:true,automation:true"));
-        assert!(include_str!("cli_manager.rs").contains("cfg!(any(windows, target_os = \"macos\", target_os = \"linux\"))"));
+        assert!(include_str!("cli_manager.rs")
+            .contains("cfg!(any(windows, target_os = \"macos\", target_os = \"linux\"))"));
     }
 
     #[test]

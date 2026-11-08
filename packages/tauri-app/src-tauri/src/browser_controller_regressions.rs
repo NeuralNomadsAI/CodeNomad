@@ -161,6 +161,73 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn windows_and_webkit_navigation_recover_from_blank_without_relaxing_reads() {
+    // Both dispatchers must admit recovery by identity, not the current document's URL.
+    for source in [
+        include_str!("browser_controller.rs"),
+        include_str!("browser_navigation_webkit.rs"),
+    ] {
+        let admission = source
+            .split("fn navigate_and_wait(")
+            .nth(1)
+            .unwrap()
+            .split("self.invalidate_page(")
+            .next()
+            .unwrap();
+        assert!(admission.contains("self.check_target_identity("));
+        assert!(!admission.contains("self.check_target("));
+
+        let (app, _, child) = app_with_preview();
+        let (controller, registration) = controller_with_registration();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let expires = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            + 10_000;
+        let fence = crate::native_request::RequestFence::new(expires, || true);
+        controller
+            .check_target(app.handle(), &registration, deadline, &fence)
+            .unwrap();
+        child.navigate("about:blank".parse().unwrap()).unwrap();
+        controller
+            .check_target_identity(app.handle(), &registration, deadline, &fence)
+            .unwrap();
+        assert!(controller
+            .check_target(app.handle(), &registration, deadline, &fence)
+            .is_err());
+        assert!(allowed_url("file:///private").is_err());
+        let target = allowed_url("https://example.com/recovered").unwrap();
+        child.navigate(target).unwrap();
+        controller
+            .check_target(app.handle(), &registration, deadline, &fence)
+            .unwrap();
+        assert_eq!(
+            child.url().unwrap().as_str(),
+            "https://example.com/recovered"
+        );
+
+        // Results and visibility retain their stricter checks after recovery.
+        child.navigate("about:blank".parse().unwrap()).unwrap();
+        assert!(controller
+            .check_target(app.handle(), &registration, deadline, &fence)
+            .is_err());
+        controller
+            .inner
+            .0
+            .lock()
+            .unwrap()
+            .registrations
+            .get_mut(&registration.registration_id)
+            .unwrap()
+            .visible = false;
+        assert!(controller
+            .check_target_identity(app.handle(), &registration, deadline, &fence)
+            .is_err());
+    }
+}
+
+#[test]
 fn replacing_a_registration_clears_its_emulation_profile() {
     let (controller, mut current) = controller_with_registration();
     controller
