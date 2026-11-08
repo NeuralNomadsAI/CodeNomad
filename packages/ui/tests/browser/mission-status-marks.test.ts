@@ -220,8 +220,8 @@ test("a recurring passage waiting for an answer is red; stopped and paused sched
     await (await inlineMissionEntry(page, "Waiting review")).waitFor()
     assert.deepEqual(await Promise.all(["Waiting review", "Stopped review", "Paused review"].map(title => mark(page, title))),
       ["working", "idle", "paused"])
-    // Selected, its read passage counts exactly what Needs you lists: a loaded
-    // subsession outside the observed family does not, its declared actors do.
+    // Selected, its read passage counts its open questions: a loaded subsession
+    // outside the observed family does not, its declared actors do.
     await page.evaluate(() => (window as any).missionFixture.seedCoordinators(["ses_passage", "ses_child"], { ses_child: "ses_passage" }))
     await selectMission(page, "Waiting review")
     await page.locator('.mission-tree [data-task-key="task-one"]').waitFor()

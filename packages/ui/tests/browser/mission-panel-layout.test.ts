@@ -10,7 +10,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { captureMissionView } from "./mission-view-capture"
 import { missionContentFixture } from "./mission-content-fixture"
 import { inlineMissionEntry, missionDetail, missionEntryStatus, missionGeneralAction, missionMenuItemState, missionPicker, missionRows,
-  missionToolbar, selectMission, selectedMissionTitle } from "./mission-actions"
+  missionRow, missionToolbar, selectMission, selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -130,7 +130,7 @@ test("the list is a list: one-line titled entries, nothing below until a selecti
   } finally { await page.close() }
 })
 
-test("one-time selected: Needs you, icon toolbar, Summary eye and the dependency tree as the single task view", async () => {
+test("one-time selected: red task questions, icon toolbar, Summary eye and the dependency tree as the single task view", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 1000 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -138,17 +138,17 @@ test("one-time selected: Needs you, icon toolbar, Summary eye and the dependency
     await open(page, [active, finished])
     await selectMission(page, /^Migrate the storage layer/)
     assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")
-    assert.equal(await detail(page).locator(".mission-needs").count(), 0, "Needs you appears only for an open request")
+    const schema = detail(page).locator('li[data-task-key="schema"] .mission-tree-task')
+    assert.equal(await schema.getAttribute("aria-description"), "Opens its question", "a task awaiting input opens its conversation")
     await page.evaluate(async () => {
       const path = "/src/stores/forms.ts", { replaceFormQueue } = await import(path)
       replaceFormQueue("fixture", [{ id: "form-1", sessionID: "ses_worker", title: "Which index strategy should the migration keep?", fields: [{}], location: { directory: "fixture" } }])
     })
-    const need = detail(page).locator(".mission-needs-item")
-    await need.waitFor()
-    assert.equal(await need.count(), 1)
-    assert.equal(await need.locator(".mission-needs-title").innerText(), "Which index strategy should the migration keep?")
-    assert.match(await need.locator(".mission-needs-title").getAttribute("title") ?? "", /Question from Schema reviewer/)
-    assert.equal(await need.getByRole("button", { name: "Answer", exact: true }).count(), 1)
+    // The worker's open question is its task's: the chevron carries it, the flag stays the mission's own.
+    const row = missionRow(page, /^Migrate the storage layer/)
+    await row.locator('.session-item-expander[data-child-activity="permission"]').waitFor()
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0)
+    assert.equal(await page.locator(".mission-control").getByText("Which index strategy should the migration keep?").count(), 0, "questions open in the dock, never in the panel")
     assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-label"), "Summary")
     // The tree merges status into the dependency graph.
     const states = await detail(page).locator(".mission-tree li").evaluateAll(items => items.map(item => [(item as HTMLElement).dataset.taskKey, (item as HTMLElement).dataset.state]))

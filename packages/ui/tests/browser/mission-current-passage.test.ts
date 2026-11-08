@@ -133,7 +133,9 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.equal(reads, 1)
     assert.equal(await page.locator(".mission-picker section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")
     assert(!(await card.innerText()).includes("Exact passage briefing"), "briefing prose belongs to the central reader")
-    assert.equal(await card.locator(".mission-needs").getByText("Real child request", { exact: true }).count(), 1)
+    // The passage's open child request shows on the schedule's row; the question opens in the dock.
+    await page.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor()
+    assert.equal(await card.getByText("Real child request", { exact: true }).count(), 0)
     // Schedule controls name their schedule; the isolated passage never offers one-time Mission mutations.
     // Toolbar buttons stay in place; a schedule without actions keeps them all disabled.
     const mutations = await page.getByRole("button", { name: /^(Start|Pause|Resume|Stop|Run|Send|Request an update)/ })
@@ -143,11 +145,6 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.equal(await missionToolbarAction(page, "Delete selected mission…").isDisabled(), true, "Delete stays disabled for a schedule")
     assert.equal(await card.locator("form, textarea").count(), 0, "no coordinator field in the panel")
     assert.equal(await missionMenuTrigger(page).isDisabled(), true, "the overflow menu (Edit included) has nothing to offer")
-    const order = await card.evaluate(node => {
-      const request = node.querySelector(".mission-needs")!, tasks = node.querySelector(".mission-tree")!
-      return Boolean(request.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING)
-    })
-    assert.equal(order, true, "human requests precede the tasks")
     assert.equal(await card.getByRole("button", { name: /Technical details|More|Conversations/ }).count(), 0, "no secondary disclosures in the panel")
     await captureMissionView(page, "current-tracking-desktop")
     if (process.env.CODENOMAD_MISSION_VIEW_EVIDENCE) {

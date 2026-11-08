@@ -126,7 +126,7 @@ test("actual picker discovers a bounded first inventory without maps, traverses/
   } finally { await f.close() }
 })
 
-test("601-actor selection keeps its header small and reaches real off-page Needs you via explicit actor windows", async t => {
+test("601-actor selection keeps its header small and reaches a real off-page question via explicit actor windows", async t => {
   const f = await open()
   try {
     await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: "msn_inventory_119" }))
@@ -138,7 +138,8 @@ test("601-actor selection keeps its header small and reaches real off-page Needs
     })
     const before = f.native.length
     await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.more("fixture", "activity:msn_inventory_119"))
-    await f.page.getByText("Off-page native question", { exact: true }).waitFor()
+    // The off-page actor's question turns its row red: a loaded task's, else the Mission's own flag.
+    await f.page.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"], .mission-tree-node[data-state="input"]').first().waitFor()
     assert.ok(f.native.slice(before).filter(item => item.startsWith("get:")).length <= 160)
     assert.equal(await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.observations("fixture", "msn_inventory_119").every(page => page.coverage !== "observed")), true)
     assert.ok(f.requests.filter(item => item.source === "mission").every(item => item.header === true))

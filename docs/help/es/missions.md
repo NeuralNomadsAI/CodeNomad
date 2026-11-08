@@ -42,7 +42,7 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 2. Elige **Resumen** (ojo) para la vista central general; mientras está abierta, seleccionar otra misión muestra la vista general de esa misión. Selecciona una tarea para ver su resultado, encargo y evidencias exactos: mientras su lector está abierto, las acciones del encabezado se aplican a esa tarea, con **Abrir la conversación de la tarea** y, si falta su informe, **Verificar y recuperar el informe faltante**. **Resumen** cierra entonces el lector de la tarea.
 3. **Más acciones** (⋯) agrupa **Interrumpir ahora**, **Pedir una actualización** y **Editar la misión seleccionada**; las acciones que no corresponden quedan desactivadas.
 4. Sigue los enlaces de dependencias y los **Informes**; usa **Abrir conversación** para el coordinador cuando necesites su transcripción.
-5. En **Te necesita**, elige **Responder** para abrir la conversación y el panel de interrupciones del actor solicitante.
+5. Cuando una misión o una de sus tareas se pone en rojo, selecciónala: se abre la conversación que pregunta, con su pregunta en el panel de interrupciones.
 
 | Indicador | Qué demuestra |
 | --- | --- |
@@ -50,7 +50,7 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 | Activa | Se observó actividad nativa. |
 | En espera | Las dependencias declaradas aún no se cumplen. |
 | Bloqueada | Se informó de un bloqueo, no necesariamente una pregunta para ti. |
-| Espera tu respuesta | Un formulario/pregunta nativo abierto o un permiso necesita respuesta; aparece en **Te necesita**. |
+| Espera tu respuesta | Un formulario/pregunta nativo abierto o un permiso necesita respuesta; selecciona la tarea para abrirlo. |
 | Completada | Se registró un resultado de tarea; inspecciona sus evidencias y cualquier trabajo nativo restante. |
 | Fallida / Retirada | La tarea falló, o el coordinador la sustituyó o la abandonó. |
 
@@ -66,7 +66,7 @@ Las banderas de las misiones y los iconos de las tareas usan los colores de la l
 
 | Color | Significado |
 | --- | --- |
-| Rojo | Se espera una respuesta tuya; aparece en **Te necesita**. |
+| Rojo | Se espera una respuesta tuya. La bandera de una misión se pone en rojo por una pregunta de su coordinador, una tarea por la suya propia, y el chevrón de la misión indica que una de sus tareas pregunta. Selecciona la misión o la tarea en rojo para abrir la pregunta. |
 | Amarillo, pulsante | Hay trabajo en curso. |
 | Naranja | La misión está en pausa o interrumpida, con una acción para continuarla. |
 | Verde | Una misión terminada que aún no has abierto en esta ventana; vuelve a ser neutral en cuanto la seleccionas. |
@@ -74,11 +74,11 @@ Las banderas de las misiones y los iconos de las tareas usan los colores de la l
 
 Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos.
 
-Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando nada puede avanzar sin ti, te hace una pregunta en **Te necesita**. Solo tú detienes una misión.
+Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando nada puede avanzar sin ti, te hace una pregunta y su fila se pone en rojo. Solo tú detienes una misión.
 
 ### Preguntas y decisiones {#questions}
 
-Solo el coordinador te hace preguntas. Las tareas y los subagentes que lanzan le devuelven sus preguntas abiertas, con las opciones, las evidencias y una recomendación. Antes de preguntar, el coordinador intenta resolver la cuestión por sí mismo: lee el proyecto, investiga, encarga una investigación a una tarea o adopta un valor por defecto fácil de deshacer y lo registra como supuesto. Solo pregunta lo que no puede resolver: tu consentimiento, credenciales, elecciones costosas de deshacer o decisiones de producto que el objetivo deja abiertas. Agrupa las preguntas pendientes en un solo formulario en **Te necesita** y antes pone en marcha el trabajo no relacionado.
+Solo el coordinador te hace preguntas. Las tareas y los subagentes que lanzan le devuelven sus preguntas abiertas, con las opciones, las evidencias y una recomendación. Antes de preguntar, el coordinador intenta resolver la cuestión por sí mismo: lee el proyecto, investiga, encarga una investigación a una tarea o adopta un valor por defecto fácil de deshacer y lo registra como supuesto. Solo pregunta lo que no puede resolver: tu consentimiento, credenciales, elecciones costosas de deshacer o decisiones de producto que el objetivo deja abiertas. Agrupa las preguntas pendientes en un solo formulario, que se abre desde la fila roja de la misión, y antes pone en marcha el trabajo no relacionado.
 
 En **Exploración**, las tareas de decisión preparan un resumen y el coordinador resuelve cada decisión: decide por sí mismo cuando las evidencias bastan y la elección es fácil de deshacer, deja la pregunta en las **Notas** para más adelante o te la hace. Con **Subagentes nativos**, el resultado de la tarea de decisión indica quién decidió:
 

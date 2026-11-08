@@ -257,7 +257,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
         </button></li>}</For></ol>
     </section></Show>
   // Open Forms/permissions of a passage. The selected schedule's read live passage
-  // counts its actors and observed family (as under Needs you), zero included; other
+  // counts its actors and observed family (like a Mission's questions), zero included; other
   // rows rely on the live passage's conversation and its loaded descendants.
   const passageRequests = (schedule: RecurrenceSchedule) => {
     const selected = schedule.id === props.selectedSchedule ? props.selectedRequests : undefined

@@ -7,6 +7,8 @@ import { missionDerivedSessionActive } from "../stores/mission-task-sessions"
 import { sessions } from "../stores/session-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { useMissionPanelStore } from "./mission-panel-scope"
+import { taskQuestion, type MissionQuestion } from "./mission-question-owners"
+import { missionQuestionContext } from "./mission-questions"
 import { missionPanelScroll } from "./mission-panel-scroll"
 import type { MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
@@ -45,14 +47,18 @@ const ICONS = { done: Check, active: CircleDot, input: MessageCircleQuestion, as
 
 /** The Mission's single task view, its row's children: declared dependencies drawn
  * beside one row per task, each row a status icon and title toggling the exact task
- * reader. A task's actions (its conversation, report recovery) are the header
- * toolbar's while its reader is open. */
+ * reader, or, while the task waits for an answer, opening its question. A task's
+ * actions (its conversation, report recovery) are the header toolbar's while its
+ * reader is open. */
 export function MissionTaskTree(props: {
   mission: MissionPanelMap; instanceId: string; activity?: MissionActorActivity[]
   reading: (task: MissionPanelTask) => boolean; onRead: (task: MissionPanelTask) => void
   /** The task's exact owned conversation, once one is known. */
   conversation: (task: MissionPanelTask) => string | undefined
   active?: boolean
+  /** The Mission's open questions; a task carrying one is red and opens it. */
+  questions?: readonly MissionQuestion[]
+  onAnswer?: (sessionId: string, request?: MissionQuestion["request"]) => void
 }) {
   const missionStore = useMissionPanelStore()
   const { t } = useI18n()
@@ -76,6 +82,7 @@ export function MissionTaskTree(props: {
   // Rows read their task and actor activity by identity: hundreds of rows stay linear.
   const byID = createMemo(() => new Map(props.mission.tasks.map(task => [task.id, task])))
   const activities = createMemo(() => new Map(props.activity?.map(value => [value.sessionId, value.state])))
+  const questionContext = createMemo(() => missionQuestionContext(props.instanceId, props.mission))
   // Dependencies and dependents of a shown row that are not shown, from its whole map.
   const omitted = createMemo(() => {
     const keys = new Set(ordered().map(task => task.key)), shown = new Map<string, number>()
@@ -128,11 +135,21 @@ export function MissionTaskTree(props: {
             const linked = props.conversation(task())
             return linked ? conversationActivity(props.instanceId, props.mission, linked) : undefined
           }
-          const state = () => missionTaskState(task(), activity())
+          const question = () => props.questions?.length
+            ? taskQuestion(questionContext(), props.questions, task(), props.conversation(task())) : undefined
+          const state = () => question() ? "input" : missionTaskState(task(), activity())
           const word = () => t(`missionsPanel.task.${state()}`)
+          // A red task opens its question, like a session row waiting for an answer.
+          const answer = () => {
+            const asked = question(), conversation = props.conversation(task()) ?? task().actorSessionId
+            return asked ? () => props.onAnswer?.(asked.sessionId, asked.request)
+              : state() === "input" && conversation && props.onAnswer ? () => props.onAnswer?.(conversation) : undefined
+          }
           return <li class="mission-tree-node" data-task-key={task().key} data-status={task().status} data-state={state()}>
             <button type="button" class="mission-tree-task" aria-pressed={props.reading(task())}
-              title={[task().title, word(), omittedText(task())].filter(Boolean).join(" · ")} onClick={() => props.onRead(task())}>
+              aria-description={answer() ? t("missionsPanel.task.answer") : undefined}
+              title={[task().title, word(), answer() ? t("missionsPanel.task.answer") : "", omittedText(task())].filter(Boolean).join(" · ")}
+              onClick={() => { const open = answer(); if (open) open(); else props.onRead(task()) }}>
               <span class="mission-tree-mark" data-graph-anchor aria-hidden="true"><Dynamic component={ICONS[state()]} class="h-4 w-4" /></span>
               <span class="mission-tree-title">{task().title}</span>
               <span class="sr-only">{[word(), omittedText(task())].filter(Boolean).join(" · ")}</span>

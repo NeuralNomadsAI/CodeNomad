@@ -134,12 +134,13 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     assert.equal(await page.locator(".mission-control").getByText(/^Activity and requests cover|^Read in this traversal/).count(), 0)
     await screenshot("during")
     releaseActivity()
-    await page.locator(".mission-control").getByText("Off-page current question", { exact: true }).waitFor().catch(async error => {
+    // The off-page actor's question reaches the selected row's flag; the panel never lists it.
+    await page.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor().catch(async error => {
       throw new Error(`${error}\n${JSON.stringify({ activityRows, errors, selectors: selections.map(input => input.selector) })}\n${(await page.locator(".mission-control").innerText()).slice(0, 1000)}`)
     })
     assert.ok(selections.some(input => input.selector.source === "activity" && input.selector.actorOffset === 160))
     await screenshot("after")
-    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") === "permission")
+    assert.equal(await page.locator(".mission-control").getByText("Off-page current question", { exact: true }).count(), 0)
     const taskReads = selections.filter(input => input.selector.source === "tasks").length, bodyReads = selections.filter(input => input.body).length
     await f.control.update({ missionID: map.id, requestID: "notes-only", expectedRevision: map.revision, objective: map.objective, notes: "Unrelated root notes" })
     const refreshed = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.selector?.header === true)

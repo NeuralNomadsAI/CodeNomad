@@ -16,6 +16,8 @@ import { MissionEditor, type MissionEditorAction } from "../../../../mission-edi
 import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../../../stores/mission-editor-state"
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
+import { missionQuestionContext, missionQuestions } from "../../../../mission-questions"
+import { missionQuestionOwners } from "../../../../mission-question-owners"
 import { MissionPanelHeader, MissionRows } from "../../../../mission-picker"
 import { MissionActionBar, MissionActionSlot, MissionTaskToolbarActive } from "../../../../mission-action-bar"
 import { missionMark, type MissionPickerEntry } from "../../../../mission-picker-model"
@@ -85,10 +87,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const missions = () => state().missions
   const rows = () => state().summaries
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
-  const includesSession = (value: MissionPanelMap, id: string) => value.coordinatorSessionId === id
+  // A full map, or a list row before its map is read (its declared actors only).
+  const includesSession = (value: Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId"> & { actors: readonly { sessionId: string }[] }, id: string) =>
+    value.coordinatorSessionId === id
     || missionIncludesSession([...value.actors, ...missionStore.observedActors(props.instanceId, value.id)], id, family(value.id))
     || missionStore.observations(props.instanceId, value.id).some(page => page.requests.state !== "unknown" && page.requests.items.some(item => item.request.sessionID === id))
-    || missionDerivedSessionIncludes(props.instanceId, value, id)
+    || missionDerivedSessionIncludes(props.instanceId, value as MissionPanelMap, id)
   const directory = () => instances().get(props.instanceId)?.folder
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? state().projectID ?? missions()[0]?.projectID
   const completionScope = () => JSON.stringify([scope(), projectID()])
@@ -179,7 +183,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
   })
   const observedActivity = () => passageSchedule() ? currentPassage.snapshot()?.activity : state().activity
-  // Answers requested by a mission's declared actors and observed family, as listed under Needs you.
+  // Open questions of a mission's declared actors and observed family.
   const openRequests = (id: string, actors: readonly { sessionId: string }[], activity?: MissionActivityProjection) => selectMissionAttention({ actors,
     forms: getFormQueue(props.instanceId), permissions: getPermissionQueue(props.instanceId), tasks: [],
     family: activity?.missions.find(item => item.missionId === id)?.family })
@@ -212,15 +216,16 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     }
   }
 
-  const openActor = async (sessionId: string, origin = navigationOrigin(), afterSelection?: () => void): Promise<boolean> => {
-    const missionId = mission()?.id
+  const openActor = async (sessionId: string, origin = navigationOrigin(), afterSelection?: () => void,
+    missionId = mission()?.id): Promise<boolean> => {
     const scheduleID = passageSchedule(), passageID = currentPassage.snapshot()?.passageID
     const client = instances().get(origin.instanceId)?.client, generation = getOpenCodeInstanceGeneration(origin.instanceId)
     const authorized = () => passageSchedule() === scheduleID && (!scheduleID || currentPassage.snapshot()?.passageID === passageID)
       && (scheduleID ? Boolean(mission()?.id === missionId && (mission()!.coordinatorSessionId === sessionId
         || missionIncludesSession(mission()!.actors, sessionId, selectedFamily())
         || missionDerivedSessionIncludes(props.instanceId, mission()!, sessionId)))
-        : missions().some(value => value.id === missionId && includesSession(value, sessionId)))
+        : missions().some(value => value.id === missionId && includesSession(value, sessionId))
+          || rows().some(row => row.id === missionId && includesSession({ ...row, projectID: projectID() ?? "", actors: row.actorSessionIds.map(id => ({ sessionId: id })) }, sessionId)))
     const admitted = () => origin.current() && authorized()
       && instances().get(origin.instanceId)?.client === client && getOpenCodeInstanceGeneration(origin.instanceId) === generation
       && !getAuthoritativelyDeletedSessionIdsForInstance(origin.instanceId).has(sessionId)
@@ -285,13 +290,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     if (!origin.current()) return
     props.onRevealConversation?.()
   }
-  const onOpenActor = async (id: string, request?: { id: string; kind: "form" | "permission" }) => {
+  const onOpenActor = async (id: string, request?: { id: string; kind: "form" | "permission" }, missionId?: string) => {
     const origin = navigationOrigin()
     await openActor(id, origin, () => {
       if (!origin.current() || !request) return
       const queue = request.kind === "form" ? getFormQueue(origin.instanceId) : getPermissionQueue(origin.instanceId)
       if (queue.some(item => item.id === request.id && item.sessionID === id)) focusInterruption(origin.instanceId, id, request.id, request.kind)
-    })
+    }, missionId)
   }
   // Pending cleanups need an explicit retry and stay in the panel; settled
   // history belongs to the overview reader.
@@ -338,18 +343,34 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       return { reading: isReading(overview), onToggle: () => void read(overview),
         onOpenConversation: () => void openActor(passage.coordinatorSessionId) }
     } })
+  // Each row's questions: the flag's (the coordinator's, or none of its loaded tasks'),
+  // answered by selecting the row, and its tasks', carried by the chevron.
+  const rowQuestions = createMemo(() => new Map(rows().map(value => {
+    const family = state().activity?.missions.find(item => item.missionId === value.id)?.family
+    const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
+    const key = map ?? { ...value, projectID: projectID() ?? "" }
+    // A read map's declared actors, else the row's.
+    const questions = missionQuestions({ instanceId: props.instanceId, mission: key, actors: map?.actors ?? value.actorSessionIds.map(sessionId => ({ sessionId })),
+      family, store: missionStore })
+    return [value.id, missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, map?.tasks,
+      map ? task => missionTaskConversation(map, task, family, missionDerivedTaskSession(props.instanceId, map, task.key),
+        [...map.actors, ...missionStore.observedActors(props.instanceId, map.id)]) : undefined)]
+  })))
   const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {
     const observed = state().activity?.missions.find(item => item.missionId === value.id)
-    const actors = value.actorSessionIds.map(sessionId => ({ sessionId }))
-    const knownRequests = missionStore.observations(props.instanceId, value.id).reduce((sum, page) => sum + page.requests.items.length, 0)
-    const mark = missionMark(value, { openRequests: Math.max(knownRequests, openRequests(value.id, actors, state().activity)), actorStates: observed?.actors.map(actor => actor.state),
+    const questions = rowQuestions().get(value.id)
+    const others = observed?.actors.filter(actor => actor.sessionId !== value.coordinatorSessionId).map(actor => actor.state) ?? []
+    const mark = missionMark(value, { openRequests: questions?.flag.length ?? 0, actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
       seen: missionFinishedSeen(completionScope(), value) })
+    const childActivity = questions?.tasks.length || others.some(state => state === "permission" || state === "form") ? "permission" as const
+      : others.some(state => state === "running" || state === "queued" || state === "background") ? "working" as const : undefined
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
       ? `missions.control.run.${value.runState}` : value.status === "active" && mark === "interrupted" ? "missionsPanel.state.interrupted"
         : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
-    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark,
+    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity,
       status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
+        childActivity === "permission" ? props.t("missionsPanel.row.taskInput") : "",
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
   // The saved Mission ID survives ownership conversion in another window, including
@@ -504,13 +525,20 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
           if (kind === "schedule") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: id, selectedScheduled: undefined }) }
           else if (kind === "scheduled") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: undefined, selectedScheduled: id }) }
-          else batch(() => { followReader(id); selectMission(id) })
+          else {
+            batch(() => { followReader(id); selectMission(id) })
+            // A red flag asks for an answer: like a session row, open the asking
+            // conversation with its question focused in the dock.
+            const question = rowQuestions().get(id)?.flag[0]
+            if (question) void onOpenActor(question.sessionId, question.request, id)
+          }
         }}
         expandable={key => key.startsWith("mission:")}
         preview={key => <MissionTaskPreview instanceId={props.instanceId} missionId={key.slice("mission:".length)} activity={state().activity}
           active={treeShown()}
           reading={(value, task) => isReading({ missionId: value.id, kind: "task", itemId: task.id })}
-          onRead={(value, task) => { batch(() => selectMission(value.id)); void read({ missionId: value.id, kind: "task", itemId: task.id }) }} />}
+          onRead={(value, task) => { batch(() => selectMission(value.id)); void read({ missionId: value.id, kind: "task", itemId: task.id }) }}
+          onAnswer={(value, sessionId, request) => { batch(() => selectMission(value.id)); void onOpenActor(sessionId, request, value.id) }} />}
         detail={<>
       {recurrence.view()}
       {scheduled.view()}

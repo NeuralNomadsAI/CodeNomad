@@ -42,7 +42,7 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 2. Choisissez **Résumé** (œil) pour la vue centrale ; tant qu’elle est ouverte, sélectionner une autre mission affiche la vue de cette mission. Sélectionnez une tâche pour son résultat, sa consigne et ses preuves exacts : tant que son lecteur est ouvert, les actions de l’en-tête s’appliquent à cette tâche, avec **Ouvrir la conversation de la tâche** et, si son rapport manque, **Vérifier et récupérer le rapport manquant**. **Résumé** ferme alors le lecteur de la tâche.
 3. **Plus d'actions** (⋯) regroupe **Interrompre maintenant**, **Demander un point** et **Modifier la mission sélectionnée** ; les actions qui ne s’appliquent pas restent désactivées.
 4. Suivez les liens de dépendance et **Rapports** ; utilisez **Ouvrir la conversation** pour le coordinateur si vous avez besoin de sa transcription.
-5. Sous **Votre réponse est attendue**, choisissez **Répondre** pour ouvrir la conversation de l’acteur demandeur et le dock d’interruption.
+5. Quand une mission ou l’une de ses tâches passe au rouge, sélectionnez-la : la conversation qui pose la question s’ouvre, avec cette question dans le dock d’interruption.
 
 | Indicateur | Ce qu’il établit |
 | --- | --- |
@@ -50,7 +50,7 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 | En cours | Une activité native a été observée. |
 | En attente | Les dépendances déclarées ne sont pas encore satisfaites. |
 | Bloquée | Un blocage a été signalé, pas nécessairement une question pour vous. |
-| Attend votre réponse | Un Form/une question ou autorisation native ouverte attend une réponse ; elle figure sous **Votre réponse est attendue**. |
+| Attend votre réponse | Un Form/une question ou autorisation native ouverte attend une réponse ; sélectionnez la tâche pour l’ouvrir. |
 | Terminée | Un résultat de tâche a été enregistré ; vérifiez ses preuves et le travail natif restant. |
 | Échec / Retirée | La tâche a échoué, ou le coordinateur l’a remplacée ou abandonnée. |
 
@@ -66,7 +66,7 @@ Les drapeaux des missions et les icônes des tâches reprennent les couleurs de 
 
 | Couleur | Signification |
 | --- | --- |
-| Rouge | Une réponse de votre part est attendue ; elle figure sous **Votre réponse est attendue**. |
+| Rouge | Une réponse de votre part est attendue. Le drapeau d’une mission passe au rouge pour une question de son coordinateur, une tâche pour la sienne, et le chevron de la mission signale qu’une de ses tâches pose une question. Sélectionnez la mission ou la tâche en rouge pour ouvrir la question. |
 | Jaune, pulsant | Un travail est en cours. |
 | Orange | La mission est en pause ou interrompue, avec une action pour la poursuivre. |
 | Vert | Une mission terminée que vous n'avez pas encore ouverte dans cette fenêtre ; elle redevient neutre dès que vous la sélectionnez. |
@@ -74,11 +74,11 @@ Les drapeaux des missions et les icônes des tâches reprennent les couleurs de 
 
 Tout le reste est neutre, y compris les tâches terminées ou en échec : les résultats figurent dans le texte d'état et les icônes.
 
-Une mission est **Interrompue** quand son coordinateur s'est arrêté sans conclure alors que rien d'autre ne tourne. Une mission affichée **Échouée** peut aussi être reprise. Dans les deux cas, le premier bouton de la barre d'outils devient **Reprendre la mission interrompue** : il demande au coordinateur de refaire le point à partir du plan et des résultats enregistrés, et rouvre d'abord une mission échouée. Un coordinateur ne termine pas une mission ponctuelle en échec : quand plus rien ne peut avancer sans vous, il vous pose une question sous **Votre réponse est attendue**. Vous seul arrêtez une mission.
+Une mission est **Interrompue** quand son coordinateur s'est arrêté sans conclure alors que rien d'autre ne tourne. Une mission affichée **Échouée** peut aussi être reprise. Dans les deux cas, le premier bouton de la barre d'outils devient **Reprendre la mission interrompue** : il demande au coordinateur de refaire le point à partir du plan et des résultats enregistrés, et rouvre d'abord une mission échouée. Un coordinateur ne termine pas une mission ponctuelle en échec : quand plus rien ne peut avancer sans vous, il vous pose une question et sa ligne passe au rouge. Vous seul arrêtez une mission.
 
 ### Questions et décisions {#questions}
 
-Seul le coordinateur vous pose des questions. Les tâches et les sous-agents qu’elles lancent lui renvoient leurs questions ouvertes, avec les options, les éléments à l’appui et une recommandation. Avant de demander, le coordinateur essaie de trancher lui-même : il lit le projet, fait des recherches, confie une investigation à une tâche, ou adopte un choix par défaut facile à défaire qu’il consigne comme hypothèse. Il ne demande que ce qu’il ne peut pas trancher : votre accord, des identifiants, des choix coûteux à défaire ou des décisions produit que l’objectif laisse ouvertes. Il regroupe les questions en attente dans un seul formulaire sous **Votre réponse est attendue** et lance d’abord le travail sans rapport.
+Seul le coordinateur vous pose des questions. Les tâches et les sous-agents qu’elles lancent lui renvoient leurs questions ouvertes, avec les options, les éléments à l’appui et une recommandation. Avant de demander, le coordinateur essaie de trancher lui-même : il lit le projet, fait des recherches, confie une investigation à une tâche, ou adopte un choix par défaut facile à défaire qu’il consigne comme hypothèse. Il ne demande que ce qu’il ne peut pas trancher : votre accord, des identifiants, des choix coûteux à défaire ou des décisions produit que l’objectif laisse ouvertes. Il regroupe les questions en attente dans un seul formulaire, ouvert depuis la ligne rouge de la mission, et lance d’abord le travail sans rapport.
 
 Dans **Exploration**, les tâches de décision préparent une synthèse et le coordinateur tranche chaque décision : il décide lui-même quand les éléments suffisent et que le choix est facile à défaire, garde la question dans les **Notes** pour plus tard, ou vous la pose. Avec **Sous-agents natifs**, le résultat de la tâche de décision indique qui a décidé :
 

@@ -103,6 +103,7 @@ export function MissionRows(props: {
     return <><div class="session-list-item mission-row" data-mission-key={key}>
       <div class={`session-item-base ${isSelected() ? "session-item-active" : "session-item-inactive"}`}>
         <button type="button" class="session-item-expander opacity-80 hover:opacity-100 hover:bg-surface-hover" aria-expanded={open()}
+          data-child-activity={entry().childActivity}
           aria-label={label()} title={label()}
           onClick={() => {
             if (isSelected()) setFolded(open() ? key : undefined)

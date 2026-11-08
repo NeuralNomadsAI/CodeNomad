@@ -42,7 +42,7 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 2. Wählen Sie **Zusammenfassung** (Auge) für die zentrale Übersicht; solange sie geöffnet ist, zeigt die Auswahl einer anderen Mission deren Übersicht. Wählen Sie eine Aufgabe für ihr exaktes Ergebnis, ihren Auftrag und ihre Belege: Solange ihr Leser geöffnet ist, gelten die Aktionen der Kopfzeile für diese Aufgabe, mit **Unterhaltung der Aufgabe öffnen** und, wenn ihr Bericht fehlt, **Fehlenden Bericht prüfen und wiederherstellen**. **Zusammenfassung** schließt dann den Leser der Aufgabe.
 3. **Weitere Aktionen** (⋯) enthält **Jetzt unterbrechen**, **Update anfordern** und **Ausgewählte Mission bearbeiten**; nicht zutreffende Aktionen bleiben deaktiviert.
 4. Folgen Sie Abhängigkeitslinks und **Berichte**; verwenden Sie **Unterhaltung öffnen** für den Koordinator, wenn Sie dessen Verlauf benötigen.
-5. Wählen Sie unter **Braucht Sie** die Aktion **Antworten**, um Unterhaltung und Unterbrechungsdock des anfragenden Akteurs zu öffnen.
+5. Wird eine Mission oder eine ihrer Aufgaben rot, wählen Sie sie aus: Die fragende Unterhaltung öffnet sich mit ihrer Frage im Unterbrechungsdock.
 
 | Anzeige | Was sie belegt |
 | --- | --- |
@@ -50,7 +50,7 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 | Aktiv | Native Aktivität wurde beobachtet. |
 | Wartend | Erklärte Abhängigkeiten sind noch nicht erfüllt. |
 | Blockiert | Eine Blockade wurde gemeldet, nicht unbedingt eine Frage an Sie. |
-| Wartet auf Ihre Eingabe | Ein offenes natives Form/eine Frage oder Berechtigung benötigt eine Antwort; es steht unter **Braucht Sie**. |
+| Wartet auf Ihre Eingabe | Ein offenes natives Form/eine Frage oder Berechtigung benötigt eine Antwort; wählen Sie die Aufgabe aus, um es zu öffnen. |
 | Erledigt | Ein Aufgabenergebnis wurde erfasst; prüfen Sie dessen Belege und verbleibende native Arbeit. |
 | Fehlgeschlagen / Zurückgezogen | Die Aufgabe ist fehlgeschlagen, oder der Koordinator hat sie ersetzt oder aufgegeben. |
 
@@ -66,7 +66,7 @@ Missionsflaggen und Aufgabensymbole verwenden die Farben der Sitzungsliste: Farb
 
 | Farbe | Bedeutung |
 | --- | --- |
-| Rot | Eine Antwort von Ihnen wird erwartet; sie steht unter **Braucht Sie**. |
+| Rot | Eine Antwort von Ihnen wird erwartet. Die Flagge einer Mission wird bei einer Frage ihres Koordinators rot, eine Aufgabe bei ihrer eigenen, und der Pfeil der Mission zeigt, dass eine ihrer Aufgaben fragt. Wählen Sie die rote Mission oder Aufgabe aus, um die Frage zu öffnen. |
 | Gelb, pulsierend | Es wird gearbeitet. |
 | Orange | Die Mission ist pausiert oder unterbrochen, mit einer Aktion zum Fortsetzen. |
 | Grün | Eine abgeschlossene Mission, die Sie in diesem Fenster noch nicht geöffnet haben; sie wird neutral, sobald Sie sie auswählen. |
@@ -74,11 +74,11 @@ Missionsflaggen und Aufgabensymbole verwenden die Farben der Sitzungsliste: Farb
 
 Alles andere ist neutral, auch erledigte und fehlgeschlagene Aufgaben: Ergebnisse stehen im Statustext und in den Symbolen.
 
-Eine Mission ist **Unterbrochen**, wenn ihr Koordinator ohne Abschluss angehalten hat, während nichts anderes läuft. Eine als **Fehlgeschlagen** angezeigte Mission kann ebenfalls fortgesetzt werden. In beiden Fällen wird die erste Schaltfläche der Werkzeugleiste zu **Unterbrochene Mission wiederherstellen**: Sie bittet den Koordinator, anhand des gespeicherten Plans und der Ergebnisse neu zu bewerten, und öffnet eine fehlgeschlagene Mission zuvor wieder. Ein Koordinator beendet eine einmalige Mission nicht als fehlgeschlagen: Kann ohne Sie nichts mehr weitergehen, stellt er Ihnen eine Frage unter **Braucht Sie**. Nur Sie stoppen eine Mission.
+Eine Mission ist **Unterbrochen**, wenn ihr Koordinator ohne Abschluss angehalten hat, während nichts anderes läuft. Eine als **Fehlgeschlagen** angezeigte Mission kann ebenfalls fortgesetzt werden. In beiden Fällen wird die erste Schaltfläche der Werkzeugleiste zu **Unterbrochene Mission wiederherstellen**: Sie bittet den Koordinator, anhand des gespeicherten Plans und der Ergebnisse neu zu bewerten, und öffnet eine fehlgeschlagene Mission zuvor wieder. Ein Koordinator beendet eine einmalige Mission nicht als fehlgeschlagen: Kann ohne Sie nichts mehr weitergehen, stellt er Ihnen eine Frage, und ihre Zeile wird rot. Nur Sie stoppen eine Mission.
 
 ### Fragen und Entscheidungen {#questions}
 
-Nur der Koordinator stellt Ihnen Fragen. Aufgaben und die Subagenten, die sie starten, geben ihre offenen Fragen an ihn zurück, mit den Optionen, den Belegen und einer Empfehlung. Bevor er fragt, versucht der Koordinator, eine Frage selbst zu klären: Er liest das Projekt, recherchiert, lässt eine Aufgabe nachforschen oder wählt eine leicht umkehrbare Vorgabe und hält sie als Annahme fest. Er fragt nur, was er nicht selbst klären kann: Ihre Zustimmung, Zugangsdaten, schwer umkehrbare Entscheidungen oder Produktentscheidungen, die das Ziel offenlässt. Offene Fragen bündelt er in einem Formular unter **Braucht Sie** und startet zuvor die davon unabhängige Arbeit.
+Nur der Koordinator stellt Ihnen Fragen. Aufgaben und die Subagenten, die sie starten, geben ihre offenen Fragen an ihn zurück, mit den Optionen, den Belegen und einer Empfehlung. Bevor er fragt, versucht der Koordinator, eine Frage selbst zu klären: Er liest das Projekt, recherchiert, lässt eine Aufgabe nachforschen oder wählt eine leicht umkehrbare Vorgabe und hält sie als Annahme fest. Er fragt nur, was er nicht selbst klären kann: Ihre Zustimmung, Zugangsdaten, schwer umkehrbare Entscheidungen oder Produktentscheidungen, die das Ziel offenlässt. Offene Fragen bündelt er in einem Formular, das sich über die rote Zeile der Mission öffnet, und startet zuvor die davon unabhängige Arbeit.
 
 In der **Erkundung** bereiten Entscheidungsaufgaben eine Zusammenfassung vor, und der Koordinator klärt jede Entscheidung: Er entscheidet selbst, wenn die Belege reichen und die Wahl leicht umkehrbar ist, hält die Frage für später in den **Notizen** fest oder fragt Sie. Mit **Native Unteragenten** zeigt das Ergebnis der Entscheidungsaufgabe, wer entschieden hat:
 

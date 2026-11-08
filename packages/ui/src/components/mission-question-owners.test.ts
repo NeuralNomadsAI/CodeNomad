@@ -1,0 +1,43 @@
+import assert from "node:assert/strict"
+import { test } from "node:test"
+import { coordinatorAsks, missionQuestionOwners, taskQuestion, type MissionQuestion } from "./mission-question-owners"
+
+// "ses_native" is a known native task conversation of the coordinator.
+const mission = { coordinatorSessionId: "ses_coordinator", isTaskSession: (id: string) => id === "ses_native" }
+const ask = (sessionId: string, actorSessionId: string, id = sessionId): MissionQuestion =>
+  ({ sessionId, actorSessionId, request: { kind: "form", id: `form-${id}` } })
+const live = { status: "dispatching" as const, actorSessionId: "ses_worker" }
+
+test("only the coordinator's own question, or one of its family no task conversation carries, is the Mission's", () => {
+  assert.equal(coordinatorAsks(mission, ask("ses_coordinator", "ses_coordinator")), true)
+  // An ordinary child of the coordinator that is not a known task conversation.
+  assert.equal(coordinatorAsks(mission, ask("ses_helper", "ses_coordinator")), true)
+  // A declared task actor's (or its descendant's) question is its task's.
+  assert.equal(coordinatorAsks(mission, ask("ses_worker", "ses_worker")), false)
+  assert.equal(coordinatorAsks(mission, ask("ses_grandchild", "ses_worker")), false)
+})
+
+test("a live task carries its actor's or its exact conversation's question; a finished one never does", () => {
+  const worker = ask("ses_grandchild", "ses_worker")
+  assert.equal(taskQuestion(mission, [worker], live, undefined), worker)
+  assert.equal(taskQuestion(mission, [worker], { ...live, status: "completed" as const }, undefined), undefined)
+  assert.equal(taskQuestion(mission, [worker], { ...live, replacedByTaskKey: "next" }, undefined), undefined)
+  assert.equal(taskQuestion(mission, [worker], { status: "dispatching", actorSessionId: "ses_other" }, undefined), undefined)
+  // A native task conversation of the coordinator, matched exactly.
+  const native = ask("ses_native", "ses_coordinator"), unknown = ask("ses_unknown", "ses_coordinator")
+  assert.equal(taskQuestion(mission, [native], { status: "dispatching" }, "ses_native"), native, "a known native task conversation's question is its task's")
+  assert.equal(taskQuestion(mission, [unknown], { status: "dispatching" }, "ses_unknown"), undefined, "an unknown one stays the coordinator's (its flag)")
+  // The coordinator's own question is never a task's, whatever the task's actor.
+  assert.equal(taskQuestion(mission, [ask("ses_coordinator", "ses_coordinator")], { status: "dispatching", actorSessionId: "ses_coordinator" }, "ses_coordinator"), undefined)
+})
+
+test("with the map known, a task's question no loaded live row carries goes to the flag", () => {
+  const coordinator = ask("ses_coordinator", "ses_coordinator"), worker = ask("ses_worker", "ses_worker"), far = ask("ses_far", "ses_far")
+  const questions = [coordinator, worker, far]
+  // Without the map (a closed row), every non-coordinator question is its tasks'.
+  assert.deepEqual(missionQuestionOwners(mission, questions), { flag: [coordinator], tasks: [worker, far] })
+  // With it, the off-page actor's question is the flag's, so it stays one click away.
+  assert.deepEqual(missionQuestionOwners(mission, questions, [live]), { flag: [coordinator, far], tasks: [worker] })
+  assert.deepEqual(missionQuestionOwners(mission, questions, [{ ...live, status: "completed" as const }]),
+    { flag: [coordinator, worker, far], tasks: [] })
+})

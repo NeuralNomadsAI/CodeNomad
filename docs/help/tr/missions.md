@@ -42,7 +42,7 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 2. Merkezi genel bakış için **Özet** (göz) eylemini seçin; açıkken başka bir görevi seçmek o görevin genel bakışını gösterir. İlgili sonucu, iş özetini ve kanıtları görmek için bir görev düğümünü seçin: okuyucusu açıkken üst bilgideki eylemler o düğüme uygulanır; **Görevin konuşmasını aç** ve raporu eksikse **Eksik raporu doğrula ve kurtar** da bunlar arasındadır. Ardından **Özet**, düğümün okuyucusunu kapatır.
 3. **Diğer eylemler** (⋯), **Şimdi kes**, **Güncelleme iste** ve **Seçili görevi düzenle** eylemlerini içerir; geçerli olmayan eylemler devre dışı kalır.
 4. Bağımlılık bağlantılarını ve **Raporlar** bölümünü izleyin; koordinatörün konuşma dökümüne ihtiyaç duyduğunuzda **Konuşmayı aç** eylemini kullanın.
-5. **Yanıtınız gerekiyor** altında **Yanıtla** eylemiyle istekte bulunan aktörün konuşmasını ve istek panelini açın.
+5. Bir görev veya görev düğümlerinden biri kırmızıya döndüğünde onu seçin: soruyu soran konuşma, sorusu istek panelinde olacak şekilde açılır.
 
 | Gösterge | Neyi gösterir |
 | --- | --- |
@@ -50,7 +50,7 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 | Etkin | OpenCode etkinliği gözlemlenmiştir. |
 | Bekliyor | Bildirilen bağımlılıklar henüz karşılanmamıştır. |
 | Engellendi | Bir engel bildirilmiştir; bu mutlaka size yöneltilmiş bir soru değildir. |
-| Yanıtınızı bekliyor | Açık bir OpenCode Formu/sorusu veya izin isteği yanıt beklemektedir; **Yanıtınız gerekiyor** altında listelenir. |
+| Yanıtınızı bekliyor | Açık bir OpenCode Formu/sorusu veya izin isteği yanıt beklemektedir; açmak için görev düğümünü seçin. |
 | Tamamlandı | Bir görev sonucu kaydedilmiştir; kanıtlarını ve OpenCode'da kalan işleri inceleyin. |
 | Başarısız / Geri çekildi | Görev başarısız oldu ya da koordinatör onu değiştirdi veya bıraktı. |
 
@@ -66,7 +66,7 @@ Görev bayrakları ve görev düğümü simgeleri oturum listesinin renklerini k
 
 | Renk | Anlamı |
 | --- | --- |
-| Kırmızı | Sizden bir yanıt bekleniyor; **Yanıtınız gerekiyor** altında listelenir. |
+| Kırmızı | Sizden bir yanıt bekleniyor. Bir görevin bayrağı koordinatörünün sorusu için, bir görev düğümü kendi sorusu için kırmızıya döner; görevin oku ise görev düğümlerinden birinin soru sorduğunu gösterir. Soruyu açmak için kırmızı görevi veya görev düğümünü seçin. |
 | Sarı, yanıp sönen | Çalışma sürüyor. |
 | Turuncu | Görev duraklatıldı veya kesintiye uğradı; devam ettirmek için bir eylem var. |
 | Yeşil | Bu pencerede henüz açmadığınız tamamlanmış bir görev; seçtiğiniz anda nötr olur. |
@@ -74,11 +74,11 @@ Görev bayrakları ve görev düğümü simgeleri oturum listesinin renklerini k
 
 Geri kalan her şey nötrdür; tamamlanan ve başarısız görev düğümleri de: sonuçlar durum metninde ve simgelerde yer alır.
 
-Koordinatörü sonuca varmadan durduğunda ve başka hiçbir şey çalışmıyorken bir görev **Kesintiye uğradı** olur. **Başarısız** olarak gösterilen bir görev de sürdürülebilir. İki durumda da araç çubuğunun ilk düğmesi **Kesintiye uğrayan görevi kurtar** olur: koordinatörden kayıtlı plan ve sonuçlara göre yeniden değerlendirme yapmasını ister ve başarısız bir görevi önce yeniden açar. Koordinatör tek seferlik bir görevi başarısız olarak bitirmez: sizsiz hiçbir şey ilerleyemediğinde **Yanıtınız gerekiyor** altında size bir soru sorar. Bir görevi yalnızca siz durdurursunuz.
+Koordinatörü sonuca varmadan durduğunda ve başka hiçbir şey çalışmıyorken bir görev **Kesintiye uğradı** olur. **Başarısız** olarak gösterilen bir görev de sürdürülebilir. İki durumda da araç çubuğunun ilk düğmesi **Kesintiye uğrayan görevi kurtar** olur: koordinatörden kayıtlı plan ve sonuçlara göre yeniden değerlendirme yapmasını ister ve başarısız bir görevi önce yeniden açar. Koordinatör tek seferlik bir görevi başarısız olarak bitirmez: sizsiz hiçbir şey ilerleyemediğinde size bir soru sorar ve satırı kırmızıya döner. Bir görevi yalnızca siz durdurursunuz.
 
 ### Sorular ve kararlar {#questions}
 
-Size yalnızca koordinatör soru sorar. Görevler ve başlattıkları alt ajanlar açık sorularını seçenekler, kanıtlar ve bir öneriyle birlikte ona geri verir. Sormadan önce koordinatör soruyu kendisi çözmeye çalışır: projeyi okur, araştırır, bir göreve inceleme yaptırır veya kolayca geri alınabilen bir varsayılanı benimseyip varsayım olarak kaydeder. Yalnızca kendisinin çözemediği şeyleri sorar: onayınız, kimlik bilgileri, geri alınması pahalı seçimler veya hedefin açık bıraktığı ürün kararları. Bekleyen soruları **Yanıtınız gerekiyor** altında tek bir formda toplar ve ilgisiz işleri önce başlatır.
+Size yalnızca koordinatör soru sorar. Görevler ve başlattıkları alt ajanlar açık sorularını seçenekler, kanıtlar ve bir öneriyle birlikte ona geri verir. Sormadan önce koordinatör soruyu kendisi çözmeye çalışır: projeyi okur, araştırır, bir göreve inceleme yaptırır veya kolayca geri alınabilen bir varsayılanı benimseyip varsayım olarak kaydeder. Yalnızca kendisinin çözemediği şeyleri sorar: onayınız, kimlik bilgileri, geri alınması pahalı seçimler veya hedefin açık bıraktığı ürün kararları. Bekleyen soruları görevin kırmızı satırından açılan tek bir formda toplar ve ilgisiz işleri önce başlatır.
 
 **Keşif** akışında karar görevleri bir özet hazırlar ve koordinatör her kararı sonuçlandırır: kanıt yeterli ve seçim kolayca geri alınabiliyorsa kendisi karar verir, soruyu sonrası için **Notlar** içinde tutar ya da size sorar. **Yerel alt ajanlar** ile karar görevinin sonucu kimin karar verdiğini gösterir:
 
