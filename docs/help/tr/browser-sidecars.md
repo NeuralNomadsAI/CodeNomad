@@ -20,8 +20,8 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 | --- | --- | --- | --- |
 | Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
 | Windows Tauri | Yerel WebView2 alt öğesi | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
-| macOS Tauri | Yerel WKWebView alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
-| Linux Tauri | Yerel WebKitGTK alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
+| macOS Tauri | Yerel WKWebView alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | WebKit mobil kimliği ve CSS görünümü; yerel giriş sınırları |
+| Linux Tauri | Yerel WebKitGTK alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | WebKit mobil kimliği ve CSS görünümü; yerel yoğunluk/giriş sınırları |
 | Normal tarayıcı/uzak görünüm | Alternatif iframe görünümü | Yerel native önizleme hedefi yok | Yalnızca boyutlar |
 
 Electron ve Windows Tauri'de yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anlık görüntü, ekran görüntüsü ve sayfa eylemleri için oturuma bağlı `codenomad.browser` aracını kullanır: tıklama, yazma, seçme, üzerine gelme, sürükleme, kaydırma, tuşa basma ve metin bekleme. Aracın kullanılabilirliği her pencere için yetkilendirme değildir: yürütme, sahip olunan arka ucu, yerel yetenekleri, oturumu ve görünür hedefi kontrol eder. Sayfası bu arada gizlenmiş, değiştirilmiş veya başka bir adrese gitmiş bir eylem başka bir sayfaya gönderilmek yerine reddedilir ve hiçbir eylem otomatik olarak tekrarlanmaz. Sayfa içerikleri güvenilmez durumda kalıyor. Hedef yerleştirmeyi yasakladığından iframe başarısız olabilir; korumalarını zayıflatmak yerine harici bir tarayıcı kullanın.
@@ -43,7 +43,7 @@ Tauri macOS/Linux önizlemeleri elle açılır, paylaşılan oturum açma bilgil
 | Mobil dikey | 390 × 844 |
 | Mobil yatay | 844 × 390 |
 
-Electron ve Windows Tauri'de mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve DPR 2.75'i yalnızca sahip olunan misafir için ayarlar. Duyarlı/masaüstü/tablete geri dönmek, bu geçersiz kılmaları temizler ve sayfayı yeniden yükler. Tauri macOS/Linux ve iframe geri dönüşü yalnızca yeniden boyutlandırılır. Bunlar tekrarlanabilir düzen referanslarıdır; Safari/Firefox emülasyonu veya telefon klavyelerinin, tarayıcı/sistem çubuklarının veya mobil işletim sistemi metin ayarlarının simülasyonları değildir. Yeniden yükleme gönderilmemiş sayfa durumunu atabileceği için şablonları değiştirmeden önce sayfa çalışmasını kaydedin.
+Electron ve Windows Tauri'de mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve DPR 2.75'i yalnızca sahip olunan misafir için ayarlar. Duyarlı/masaüstü/tablete geri dönmek, bu geçersiz kılmaları temizler ve sayfayı yeniden yükler. Tauri macOS/Linux, HTTP ve JavaScript için genel WebKit mobil kimliğini uygular ve CSS görünümünü uygulama yakınlaştırması/DPI'dan bağımsız ayarlar; şablon değişimi ve sıfırlama sayfayı yeniden yükler. macOS desteklendiğinde yerel DPR 2,75 kullanır; GTK yoğunluğu sığdırma yakınlaştırmasına ve monitöre bağlıdır. Ekran, platform, işaretçi/üzerine gelme medyası ve en fazla dokunma noktası yerel masaüstü değerlerini korur. GTK mobil tıklamaları yerel dokunma ve fare uyumluluk olayları üretir; macOS fare girişini korur. iframe yalnızca boyutlandırılır. Profiller düzen referansıdır; telefon klavyeleri, sistem çubukları ve mobil metin ayarları kapsam dışındadır. Yeniden yükleme gönderilmemiş sayfa durumunu atabileceği için şablonları değiştirmeden önce sayfa çalışmasını kaydedin.
 
 ## SideCar kaydedin {#register-sidecar}
 

@@ -17,6 +17,9 @@ mod windows;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "embedded_view/input.rs"]
 pub(crate) mod input;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "embedded_view/mobile.rs"]
+pub(crate) mod mobile;
 
 /// Full, normalized desktop identity. The caller resolves config aliases before startup.
 pub(crate) struct StorageIdentity {

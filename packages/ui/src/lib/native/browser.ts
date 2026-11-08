@@ -10,6 +10,10 @@ export interface BrowserTargetBounds {
   width: number
   height: number
 }
+export interface BrowserPresentation {
+  css: boolean
+  viewport?: { width: number; height: number }
+}
 
 export function selectBrowserOpenOwner<T extends { id: string }>(
   owners: readonly T[],
@@ -62,6 +66,7 @@ export async function registerTauriBrowserTarget(payload: {
   registrationId: string
   url: string
   bounds: BrowserTargetBounds
+  presentation?: BrowserPresentation
 }): Promise<void> {
   await invoke("browser_target_register", { payload: { ...payload, visible: false } })
 }
@@ -70,8 +75,9 @@ export async function updateTauriBrowserTarget(
   registrationId: string,
   bounds: BrowserTargetBounds | undefined,
   visible = true,
+  presentation?: BrowserPresentation,
 ): Promise<void> {
-  await invoke("browser_target_update", { payload: { registrationId, bounds, visible } })
+  await invoke("browser_target_update", { payload: { registrationId, bounds, visible, ...(presentation ? { presentation } : {}) } })
 }
 
 export async function controlTauriBrowserTarget(registrationId: string, action: "back" | "reload" | "navigate", url?: string): Promise<void> {
@@ -97,9 +103,9 @@ export async function unregisterTauriBrowserTarget(registrationId: string): Prom
   await invoke("browser_target_unregister", { registrationId })
 }
 
-export async function emulateBrowserTarget(registrationId: string, preset: BrowserEmulationPreset): Promise<void> {
+export async function emulateBrowserTarget(registrationId: string, preset: BrowserEmulationPreset, viewport?: { width: number; height: number }): Promise<void> {
   if (window.electronAPI?.emulateBrowserTarget) return window.electronAPI.emulateBrowserTarget(registrationId, preset)
-  await invoke("browser_target_action", { payload: { registrationId, action: "emulate", preset } })
+  await invoke("browser_target_action", { payload: { registrationId, action: "emulate", preset, ...(viewport ? { viewport } : {}) } })
 }
 
 export async function onNativeBrowserOpen(

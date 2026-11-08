@@ -157,6 +157,29 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn replacing_a_registration_clears_its_emulation_profile() {
+    let (controller, mut current) = controller_with_registration();
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .emulation_profiles
+        .insert(current.registration_id.clone(), "mobile".into());
+    current.generation += 1;
+    controller
+        .publish_registration(current.clone(), 0, "https://example.com/")
+        .unwrap();
+    assert!(!controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .emulation_profiles
+        .contains_key(&current.registration_id));
+}
+
+#[test]
 fn capture_document_identity_changes_on_navigation_hide_and_replacement() {
     let (controller, expected) = controller_with_registration();
     let document = controller.document_version(&expected).unwrap();
@@ -398,6 +421,7 @@ fn hiding_revokes_page_authority_even_when_native_hide_fails() {
                 registration_id: "preview".into(),
                 bounds: None,
                 visible: Some(false),
+                presentation: None,
             }
         )
         .is_err());

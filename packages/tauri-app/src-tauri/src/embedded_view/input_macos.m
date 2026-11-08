@@ -184,6 +184,7 @@ static NSEventModifierFlags modifiers(unsigned flags) {
         ((flags & CN_META) ? NSEventModifierFlagCommand : 0);
 }
 static BOOL target(WKWebView *view, double x, double y, NSPoint *point) {
+    x*=view.pageZoom;y*=view.pageZoom;
     if (!view.window || view.hidden || !isfinite(x) || !isfinite(y) ||
         x < 0 || y < 0 || x >= view.bounds.size.width || y >= view.bounds.size.height) return NO;
     NSPoint local = NSMakePoint(x, view.isFlipped ? y : view.bounds.size.height - y);
@@ -230,7 +231,7 @@ int cn_wheel(void *opaque, double x, double y, double dx, double dy, unsigned fl
     NSPoint point;
     if (!target(view, x, y, &point) || !isfinite(dx) || !isfinite(dy)) return 0;
     /* Construct a native event value; never post it to the system queue. */
-    CGEventRef cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, (int32_t)-dy, (int32_t)-dx);
+    CGEventRef cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, (int32_t)(-dy*view.pageZoom), (int32_t)(-dx*view.pageZoom));
     if (!cg) return 0;
     CGEventSetFlags(cg, (CGEventFlags)modifiers(flags));
     CGEventSetLocation(cg, point);

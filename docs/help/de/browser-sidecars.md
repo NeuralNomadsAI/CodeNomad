@@ -20,8 +20,8 @@ Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte
 | --- | --- | --- | --- |
 | Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
 | Windows-Tauri | Natives WebView2-Unterfenster | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| macOS-Tauri | Natives WKWebView-Unterfenster | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Nur Abmessungen |
-| Linux-Tauri | Natives WebKitGTK-Unterfenster | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Nur Abmessungen |
+| macOS-Tauri | Natives WKWebView-Unterfenster | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Mobile WebKit-Identität und CSS-Viewport; native Eingabegrenzen |
+| Linux-Tauri | Natives WebKitGTK-Unterfenster | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Mobile WebKit-Identität und CSS-Viewport; native Dichte-/Eingabegrenzen |
 | Normaler Browser/Remote-Ansicht | Iframe-Ersatz | Kein lokales natives Vorschauziel | Nur Abmessungen |
 
 Unter Electron und Windows-Tauri wird native Automatisierung beim Desktop-Start vorbereitet und nutzt das sitzungsgebundene Werkzeug `codenomad.browser` zum Öffnen, Navigieren, Schnappschuss, Screenshot und für Seitenaktionen: Klicken, Tippen, Auswählen, Überfahren, Ziehen, Scrollen, Tastendrücke und Warten auf Text. Werkzeugverfügbarkeit autorisiert nicht jedes Fenster: Ausführung prüft zuständiges Backend, native Fähigkeiten, Sitzung und sichtbares Ziel. Eine Aktion, deren Seite inzwischen verborgen, ersetzt oder weiternavigiert wurde, wird abgelehnt statt an eine andere Seite gesendet, und eine Aktion wird nie automatisch wiederholt. Seiteninhalte bleiben nicht vertrauenswürdig. Ein iframe kann scheitern, weil das Ziel Einbettung verbietet; nutzen Sie einen externen Browser, statt Schutzmaßnahmen zu schwächen.
@@ -43,7 +43,7 @@ Tauri-Vorschauen unter macOS/Linux werden manuell geöffnet, behalten gemeinsame
 | Mobile Ansichtsgröße | 390 × 844 |
 | Mobiles Querformat | 844 × 390 |
 
-Unter Electron und Windows-Tauri setzen Mobilvorlagen Android-/Chromium-Identität, Ausrichtung, Touch und DPR 2.75 nur auf dem zugehörigen Gast. Rückkehr zu responsiv/Desktop/Tablet entfernt diese Überschreibungen und lädt neu. Tauri macOS/Linux und der Iframe-Ersatz ändern nur die Größe. Dies sind reproduzierbare Layoutreferenzen, keine Safari-/Firefox-Emulation oder Simulation von Telefontastaturen, Browser-/Systemleisten oder mobilen OS-Texteinstellungen. Sichern Sie Seitenarbeit vor Vorlagenwechsel, da Neuladen ungesendeten Seitenzustand verwerfen kann.
+Unter Electron und Windows-Tauri setzen Mobilvorlagen Android-/Chromium-Identität, Ausrichtung, Touch und DPR 2.75 nur auf dem zugehörigen Gast. Rückkehr zu responsiv/Desktop/Tablet entfernt diese Überschreibungen und lädt neu. Tauri macOS/Linux verwenden eine generische mobile WebKit-Kennung für HTTP und JavaScript und passen CSS-Viewports unabhängig von App-Zoom/DPI ein; Vorlagenwechsel und Zurücksetzen laden neu. macOS nutzt DPR 2,75, soweit nativ verfügbar; GTK-Dichte folgt Einpassungszoom und Monitor. Bildschirm, Plattform, Zeiger-/Hover-Medien und maximale Touchpunkte behalten native Desktopwerte. Mobile GTK-Klicks erzeugen native Touch- und kompatible Mausereignisse; macOS behält Mauseingabe. Der Iframe-Ersatz ändert nur die Größe. Die Profile dienen als Layoutreferenz; Telefontastaturen, Systemleisten und mobile Texteinstellungen liegen außerhalb ihres Umfangs. Sichern Sie Seitenarbeit vor Vorlagenwechsel, da Neuladen ungesendeten Seitenzustand verwerfen kann.
 
 ## SideCar registrieren {#register-sidecar}
 

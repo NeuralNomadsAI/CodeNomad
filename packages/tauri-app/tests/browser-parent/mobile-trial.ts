@@ -17,6 +17,9 @@ async function main(){
  await request('fixture.mobile-trial',{})
  for(const phase of [0,1,2]) await request('fixture.mobile-touch',{phase})
  rows.push({name:'touch',guest:await request('fixture.mobile-probe')})
- writeFileSync(output+'/mobile-trial.json',JSON.stringify(rows,null,2));console.error(JSON.stringify(rows));parent.close();process.exit(0)
+ await request('fixture.mobile-trial',{})
+ for(const phase of [10,11,12]) await request('fixture.mobile-touch',{phase})
+ rows.push({name:'touchNoEmulation',guest:await request('fixture.mobile-probe')})
+ writeFileSync(output+'/mobile-trial.json',JSON.stringify(rows,null,2));console.error(JSON.stringify(rows.map(row=>({name:row.name,inner:row.guest.inner,dpr:row.guest.dpr,events:row.guest.events}))));parent.close();process.exit(0)
 }
 main().catch(e=>{console.error(e);parent.close();process.exit(1)})

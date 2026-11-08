@@ -18,6 +18,12 @@ pub fn build(directory: &std::path::Path) {
     );
     let mut build = cc::Build::new();
     build.file(source);
+    let mobile = directory.join(format!(
+        "mobile_{os}.{}",
+        if os == "macos" { "m" } else { "c" }
+    ));
+    println!("cargo:rerun-if-changed={}", mobile.display());
+    build.file(mobile);
     if os == "macos" {
         let navigation = directory.join("input_navigation_macos.m");
         println!("cargo:rerun-if-changed={}", navigation.display());

@@ -20,8 +20,8 @@
 | --- | --- | --- | --- |
 | समर्थित desktop प्लेटफर्ममा Electron | नेटिभ Chromium guest | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
 | Windows Tauri | नेटिभ WebView2 child | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
-| macOS Tauri | नेटिभ WKWebView child | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
-| Linux Tauri | नेटिभ WebKitGTK child | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
+| macOS Tauri | नेटिभ WKWebView child | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | WebKit मोबाइल पहिचान र CSS भ्युपोर्ट; नेटिभ इनपुट सीमा |
+| Linux Tauri | नेटिभ WebKitGTK child | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | WebKit मोबाइल पहिचान र CSS भ्युपोर्ट; नेटिभ घनत्व/इनपुट सीमा |
 | सामान्य browser/remote दृश्य | iframe fallback | स्थानीय native preview target छैन | आयाम मात्र |
 
 Electron र Windows Tauri मा नेटिभ automation desktop startup मै तयार हुन्छ र open, navigate, snapshot, screenshot र page action (click, type, select, hover, drag, scroll, key press र text पर्खने) का लागि session-bound `codenomad.browser` tool प्रयोग गर्छ। tool उपलब्धता हरेक विन्डोको अनुमति होइन: execution ले स्वामी backend, native capability, session र visible target जाँच्छ। बीचमै पृष्ठ लुकेको, बदलिएको वा अर्कै ठाउँ नेभिगेट भएको action अर्को पृष्ठमा पठाइँदैन, अस्वीकार गरिन्छ; कुनै action स्वतः दोहोर्‍याइँदैन। पृष्ठ सामग्री अविश्वसनीय नै हुन्छ। target ले embedding निषेध गर्दा iframe असफल हुन सक्छ; सुरक्षा कमजोर पार्नुको सट्टा बाह्य browser प्रयोग गर्नुहोस्।
@@ -43,7 +43,7 @@ macOS/Linux Tauri पूर्वावलोकन म्यानुअल र
 | Mobile viewport | 390 × 844 |
 | Mobile landscape | 844 × 390 |
 
-Electron र Windows Tauri मा mobile template ले स्वामित्वको guest मा मात्र Android/Chromium पहिचान, orientation, touch र DPR 2.75 सेट गर्छन्। responsive/desktop/tablet मा फर्कँदा override हटेर reload हुन्छ। macOS/Linux Tauri र iframe fallback ले आकार मात्र बदल्छन्। यी पुनरुत्पादनयोग्य layout सन्दर्भ हुन्, Safari/Firefox emulation वा phone keyboard, browser/system bar वा mobile OS text setting को simulation होइनन्। reload ले नपठाइएको page state हटाउन सक्ने भएकाले template बदल्नुअघि पृष्ठ काम बचत गर्नुहोस्।
+Electron र Windows Tauri मा mobile template ले स्वामित्वको guest मा मात्र Android/Chromium पहिचान, orientation, touch र DPR 2.75 सेट गर्छन्। responsive/desktop/tablet मा फर्कँदा override हटेर reload हुन्छ। macOS/Linux Tauri ले HTTP र JavaScript मा सामान्य WebKit मोबाइल पहिचान लागू गर्छन् र एपको zoom/DPI बाट स्वतन्त्र CSS भ्युपोर्ट मिलाउँछन्; template परिवर्तन वा reset गर्दा reload हुन्छ। उपलब्ध हुँदा macOS ले नेटिभ DPR 2.75 प्रयोग गर्छ; GTK घनत्व फिट गर्ने zoom र मनिटरअनुसार हुन्छ। screen, platform, pointer/hover media र अधिकतम touch point मा नेटिभ desktop मान रहन्छन्। GTK मोबाइल click ले नेटिभ touch र mouse compatibility event दिन्छ; macOS मा mouse input रहन्छ। iframe fallback ले आकार मात्र बदल्छ। यी layout सन्दर्भ हुन्; फोन keyboard, system bar र मोबाइल text setting दायराबाहिर छन्। reload ले नपठाइएको page state हटाउन सक्ने भएकाले template बदल्नुअघि पृष्ठ काम बचत गर्नुहोस्।
 
 ## SideCar दर्ता गर्नुहोस् {#register-sidecar}
 

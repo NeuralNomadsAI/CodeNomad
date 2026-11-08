@@ -97,6 +97,7 @@ static int deliver(GdkEvent *event) {
 }
 
 int cn_pointer(void *opaque, int action, double x, double y, unsigned flags) {
+    double zoom=webkit_web_view_get_zoom_level(WEBKIT_WEB_VIEW(opaque));x*=zoom;y*=zoom;
     GtkWidget *view = GTK_WIDGET(opaque);
     if (!valid_point(view, x, y) || action < CN_MOVE || action > CN_DRAG) return 0;
     GdkEventType type = (action == CN_MOVE || action == CN_DRAG) ? GDK_MOTION_NOTIFY :
@@ -118,6 +119,7 @@ int cn_pointer(void *opaque, int action, double x, double y, unsigned flags) {
 }
 
 int cn_wheel(void *opaque, double x, double y, double dx, double dy, unsigned flags) {
+    double zoom=webkit_web_view_get_zoom_level(WEBKIT_WEB_VIEW(opaque));x*=zoom;y*=zoom;dx*=zoom;dy*=zoom;
     GtkWidget *view = GTK_WIDGET(opaque);
     if (!valid_point(view, x, y) || !isfinite(dx) || !isfinite(dy)) return 0;
     GdkEvent *event = event_for(view, GDK_SCROLL, 0);

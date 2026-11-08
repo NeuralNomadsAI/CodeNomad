@@ -68,7 +68,7 @@ for (const platform of ["macos", "linux"]) {
   test(`Tauri ${platform} keeps dimensions, history and hidden registration independent of emulation`, async () => {
     const page = await browser.newPage({ userAgent: `${platform} WebKit fixture` })
     try {
-      await page.goto(`${url}?platform=${platform}&history`)
+      await page.goto(`${url}?platform=${platform}&history&dimensionsOnly`)
       await page.getByRole("region", { name: "Preview", exact: true }).waitFor()
       await page.waitForFunction(() => (window as any).nativeFixture?.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
       assert.equal(await page.locator("iframe").count(), 0)
@@ -152,6 +152,33 @@ test("viewport menu distinguishes size from device emulation and restores deskto
     assert.deepEqual((await snapshot(page)).calls.filter((c: any) => c.payload?.action === "emulate").map((c: any) => c.payload.preset), ["mobile", "mobileLandscape", "mobile", "none"])
   } finally { await page.close() }
 })
+
+for(const platform of ['macos','linux']) {
+  test(`WebKit ${platform} applies six native viewports with CSS bounds and commits only successful profiles`,async()=>{
+    const page=await browser.newPage({deviceScaleFactor:2,viewport:{width:1000,height:800}})
+    try {
+      await page.goto(`${url}?platform=${platform}`)
+      await page.waitForFunction(()=>(window as any).nativeFixture?.calls.some((call:any)=>call.command==='browser_target_update'&&call.payload.visible))
+      const registration=(await snapshot(page)).calls.find((call:any)=>call.command==='browser_target_register')
+      assert.equal(registration.payload.presentation.css,true)
+      for(const name of [/1440 × 900/,/768 × 1024/,/1024 × 768/,/390 × 844/,/844 × 390/,/^Responsive$/]) {
+        await page.getByRole('button',{name:'Viewport',exact:true}).click()
+        if(String(name).includes('390')) assert.match(await page.getByRole('menuitemradio',{name}).getAttribute('title')??'',/WebKit mobile identity/)
+        await page.getByRole('menuitemradio',{name}).click()
+      }
+      const calls=(await snapshot(page)).calls.filter((call:any)=>call.payload?.action==='emulate')
+      assert.deepEqual(calls.map((call:any)=>call.payload.preset),['none','none','none','mobile','mobileLandscape','none'])
+      assert.deepEqual(calls.map((call:any)=>call.payload.viewport),[{width:1440,height:900},{width:768,height:1024},{width:1024,height:768},{width:390,height:844},{width:844,height:390},undefined])
+      await page.evaluate(()=>{(window as any).nativeFixture.failEmulation=true})
+      await page.getByRole('button',{name:'Viewport',exact:true}).click()
+      await page.getByRole('menuitemradio',{name:/390 × 844/}).click()
+      await page.getByRole('alertdialog').waitFor()
+      await page.evaluate(()=>{(window as any).nativeFixture.overlay(false)})
+      await page.getByRole('button',{name:'Viewport',exact:true}).click()
+      assert.equal(await page.getByRole('menuitemradio',{name:/^Responsive$/}).getAttribute('aria-checked'),'true')
+    } finally {await page.close()}
+  })
+}
 
 for (const host of ["electron", "tauri"]) {
   test(`${host} mobile emulation remains retryable after retained-profile application fails`, async () => {

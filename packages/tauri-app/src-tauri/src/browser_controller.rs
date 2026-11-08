@@ -15,6 +15,11 @@ use tauri::{PhysicalPosition, PhysicalSize};
 #[cfg(windows)]
 #[path = "browser_emulation.rs"]
 mod emulation;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "browser_emulation_webkit.rs"]
+mod emulation;
+#[path = "browser_emulation_layout.rs"]
+mod viewport;
 
 #[path = "browser_controller_page.rs"]
 mod page;
@@ -38,6 +43,7 @@ pub(crate) struct BrowserTargetRegistration {
     url: String,
     bounds: BrowserTargetBounds,
     visible: Option<bool>,
+    presentation: Option<viewport::Presentation>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -46,6 +52,7 @@ pub(crate) struct BrowserTargetUpdate {
     registration_id: String,
     bounds: Option<BrowserTargetBounds>,
     visible: Option<bool>,
+    presentation: Option<viewport::Presentation>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -56,6 +63,7 @@ pub(crate) struct BrowserTargetAction {
     url: Option<String>,
     preset: Option<String>,
     entry_id: Option<i64>,
+    viewport: Option<viewport::Viewport>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -88,6 +96,8 @@ struct OpenClaim {
 #[derive(Default)]
 struct Inner {
     emulation_profiles: HashMap<String, String>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    canvases: HashMap<String, viewport::Canvas>,
     registrations: HashMap<String, Registration>,
     published_generations: HashMap<String, (String, u64)>,
     renderer_versions: HashMap<String, u64>,
@@ -220,6 +230,24 @@ impl BrowserController {
                 &previous.webview_label,
             );
         }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let current = self.owned_registration(window.label(), &input.registration_id)?;
+            if let Err(error) = self.resize_webkit(
+                window.app_handle(),
+                &current,
+                input.bounds,
+                input.presentation,
+            ) {
+                let _ = self.unregister_generation(
+                    window.app_handle(),
+                    window.label(),
+                    &input.registration_id,
+                    Some(generation),
+                );
+                return Err(error);
+            }
+        }
         if let Err(error) = webview.navigate(url) {
             let _ = self.unregister_generation(
                 window.app_handle(),
@@ -307,6 +335,9 @@ impl BrowserController {
             (registration.window_label.clone(), registration.generation),
         );
         let previous = inner.registrations.insert(id.clone(), registration);
+        inner.emulation_profiles.remove(&id);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        inner.canvases.remove(&id);
         inner
             .page_leases
             .retain(|_, lease| lease.registration.registration_id != id);
@@ -348,6 +379,9 @@ impl BrowserController {
             let bounds = input
                 .bounds
                 .ok_or_else(|| "Visible browser target bounds are required".to_string())?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            self.resize_webkit(app, &registration, bounds, input.presentation)?;
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             self.embedded_views.set_bounds(
                 app,
                 window_label,
@@ -477,6 +511,9 @@ impl BrowserController {
             .get_webview(&registration.webview_label)
             .ok_or("Browser preview is no longer available")?;
         match input.action.as_str() {
+            "emulate" => self
+                .emulate(app, window_label, &input)
+                .map(|()| Value::Null),
             "history" => webkit_history::action(self, &webview, &registration, None),
             "history-go" => webkit_history::action(
                 self,
@@ -544,6 +581,8 @@ impl BrowserController {
         }
         let registration = inner.registrations.remove(registration_id).unwrap();
         inner.emulation_profiles.remove(registration_id);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        inner.canvases.remove(registration_id);
         inner
             .page_leases
             .retain(|_, lease| lease.registration.registration_id != registration_id);
@@ -658,6 +697,8 @@ impl BrowserController {
                 inner.page_load_expectations.remove(&id);
                 inner.registrations.remove(&id);
                 inner.emulation_profiles.remove(&id);
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                inner.canvases.remove(&id);
             }
             let retries = inner
                 .open_claims

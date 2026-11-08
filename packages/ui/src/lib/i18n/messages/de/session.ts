@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "browser.viewport.webkitEmulationHint": "Mobile WebKit-Kennung und CSS-Viewport. Pixeldichte und Eingabe unterliegen nativen Grenzen.",
   "browser.viewport.emulationHint": "Lädt mit mobiler Kennung, Touch und Pixeldichte neu. Browser-Engine, Tastatur und Systemleisten werden nicht simuliert.",
   "browser.viewport.emulationUnavailable": "Nur Abmessungen. Geräteemulation ist in dieser Vorschau nicht verfügbar.",
   "sessionList.filter.includeMainSessions": "Hauptsitzungen",
