@@ -53,6 +53,8 @@ for (const host of ["electron", "tauri"]) for (const windowContext of ["local", 
     const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, locale: "en-US" })
     await page.addInitScript(({ host, windowContext }) => Object.assign(window, {
       __CODENOMAD_RUNTIME_HOST__: host, __CODENOMAD_WINDOW_CONTEXT__: windowContext,
+      open: () => null,
+      __TAURI_INTERNALS__: { invoke: async () => undefined },
     }), { host, windowContext })
     let config: any = {}
     const patches: unknown[] = []
@@ -66,7 +68,7 @@ for (const host of ["electron", "tauri"]) for (const windowContext of ["local", 
     })
     const option = page.getByRole("checkbox", { name: keepAwakeTitle, exact: true })
     const row = page.locator(".settings-choice-row").filter({ has: option })
-    const info = row.getByRole("img", { name: keepAwakeInfo, exact: true })
+    const info = row.getByRole("link", { name: keepAwakeInfo, exact: true })
     const waitChecked = (checked: boolean) => page.waitForFunction(({ title, checked }) =>
       document.querySelector<HTMLInputElement>(`input[aria-label="${title}"]`)?.checked === checked,
     { title: keepAwakeTitle, checked })
