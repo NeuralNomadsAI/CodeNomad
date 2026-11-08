@@ -69,6 +69,12 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
       const frame = document.querySelector("iframe")!, receives = new Function(`return (${source})`)()
       return [receives.call(frame, frame.contentDocument!.body), receives.call(document.body, frame.contentDocument!.body), typeof receives.call(frame, document.body)]
     }, declaration("receives", false)), [null, null, "string"])
+    await page.locator("iframe").evaluate(frame => {
+      frame.setAttribute("aria-disabled", "true")
+      frame.contentDocument!.body.insertAdjacentHTML("beforeend", '<input aria-label="Frame disabled field">')
+    })
+    const frameField = (await read({ op: "tree" })).nodes.find((node: any) => node.name === "Frame disabled field")
+    assert.ok(frameField.properties.some((property: any) => property.name === "disabled" && property.value === true), "disabled state crosses frame ancestry")
     await page.locator("iframe").evaluate(frame => frame.setAttribute("inert", ""))
     assert.equal(await contains("Frame phrase"), false, "frame ancestors hide child-document text")
     await page.locator("iframe").evaluate(frame => frame.removeAttribute("inert"))
@@ -104,5 +110,11 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
       host.innerHTML = '<span>Hidden slotted text</span>'
     })
     assert.equal(await contains("Hidden slotted text"), false, "slot ancestors hide assigned text")
+    await page.locator("#open").evaluate(host => {
+      host.shadowRoot!.innerHTML = '<slot aria-disabled="true"></slot>'
+      host.innerHTML = '<input aria-label="Slot disabled field">'
+    })
+    const slotField = (await read({ op: "tree" })).nodes.find((node: any) => node.name === "Slot disabled field")
+    assert.ok(slotField.properties.some((property: any) => property.name === "disabled" && property.value === true), "disabled state crosses slot ancestry")
   } finally { await browser.close() }
 })
