@@ -1,4 +1,21 @@
 import type { MissionPanelMap } from "../../../server/src/api-types"
+import { selectMissionAttention, type MissionAttentionForm, type MissionAttentionPermission, type MissionObservedFamily } from "./mission-attention-model"
+
+/** Open native queue requests of a Mission: its actors' and their observed family's,
+ * and those of conversations proven to be its native task conversations (exact
+ * evidence, kept when family coverage is unknown). Unknown descendants and global
+ * requests never count. */
+export function nativeMissionQuestions(input: {
+  actors: readonly { sessionId: string }[]; family?: MissionObservedFamily
+  forms: readonly MissionAttentionForm[]; permissions: readonly MissionAttentionPermission[]
+  isTaskSession: (sessionId: string) => boolean
+}): MissionQuestion[] {
+  const tasks = [...new Set([...input.forms, ...input.permissions].map(item => item.sessionID).filter(id => id && input.isTaskSession(id)))]
+  return selectMissionAttention({ actors: [...input.actors, ...tasks.map(sessionId => ({ sessionId }))], forms: input.forms, permissions: input.permissions,
+    tasks: [], family: input.family })
+    .flatMap(item => item.open && item.sessionId && item.kind !== "blocked"
+      ? [{ sessionId: item.sessionId, actorSessionId: item.actorSessionId, request: { kind: item.kind, id: item.id.slice(item.kind.length + 1) } }] : [])
+}
 
 /** An observation page's parts that question attribution reads. */
 interface ObservationPage { requests: { state: string } }

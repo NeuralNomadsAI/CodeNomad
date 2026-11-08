@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { coordinatorAsks, currentMissionObservations, missionQuestionOwners, taskQuestion, type MissionQuestion } from "./mission-question-owners"
+import { coordinatorAsks, currentMissionObservations, missionQuestionOwners, nativeMissionQuestions, taskQuestion, type MissionQuestion } from "./mission-question-owners"
 
 // "ses_native" is a known native task conversation of the coordinator.
 const mission = { coordinatorSessionId: "ses_coordinator", isTaskSession: (id: string) => id === "ses_native" }
@@ -61,4 +61,14 @@ test("current observation pages: own current windows, else current marks, never 
   assert.deepEqual(currentMissionObservations(store([page("unknown", "own")], [page("observed", "mark")]), "i", "m").map(p => p.id), ["mark"])
   assert.deepEqual(currentMissionObservations(store([page("unknown", "own")], [page("unknown", "mark")]), "i", "m"), [])
   assert.deepEqual(currentMissionObservations(store([], [page("partial", "mark")]), "i", "m").map(p => p.id), ["mark"])
+})
+
+test("a proven native task conversation keeps its queued question when family coverage is unknown", () => {
+  const forms = [{ id: "task-form", sessionID: "ses_native", title: "Task question", fields: [] },
+    { id: "descendant-form", sessionID: "ses_unknown_child", title: "Unknown descendant", fields: [] },
+    { id: "global-form", sessionID: "global", title: "Global", fields: [] }]
+  const questions = nativeMissionQuestions({ actors: [{ sessionId: "ses_coordinator" }], family: { state: "unknown", members: [] }, forms, permissions: [],
+    isTaskSession: id => id === "ses_native" })
+  assert.deepEqual(questions.map(question => question.request.id), ["task-form"], "only exact task evidence, never unknown descendants or global requests")
+  assert.equal(taskQuestion(mission, questions, { status: "dispatching" }, "ses_native"), questions[0], "its task row carries it")
 })
