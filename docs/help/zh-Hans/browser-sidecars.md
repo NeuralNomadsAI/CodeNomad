@@ -18,15 +18,19 @@
 
 | 客户端 | 预览实现 | 智能体浏览器自动化 | 移动模板 |
 | --- | --- | --- | --- |
-| 支持的桌面平台上的 Electron | 原生 Chromium 访客页面 | 支持可见且归属已确认的会话预览 | Android/Chromium 身份、触摸和像素密度仿真 |
-| Windows Tauri | 原生 WebView2 子窗口 | 支持可见且归属已确认的会话预览 | Android/Chromium 身份、触摸和像素密度仿真 |
-| macOS Tauri | 原生 WKWebView 子窗口 | 不可用；请使用 Electron 或 Windows Tauri | WebKit 移动标识和 CSS 视口；输入受原生限制 |
-| Linux Tauri | 原生 WebKitGTK 子窗口 | 不可用；请使用 Electron 或 Windows Tauri | WebKit 移动标识和 CSS 视口；密度和输入受原生限制 |
+| 支持的桌面平台上的 Electron | 原生 Chromium 访客页面；支持 OAuth 弹窗、下载和对话框 | 支持可见且归属已确认的会话预览 | Android/Chromium 身份、触摸和像素密度仿真 |
+| Windows Tauri | 原生 WebView2 子窗口；支持 OAuth 弹窗、下载和对话框 | 支持可见且归属已确认的会话预览 | Android/Chromium 身份、触摸和像素密度仿真 |
+| macOS Tauri (14+) | 原生 WKWebView 子窗口；支持 OAuth 弹窗、下载和对话框 | 支持可见且归属已确认的会话预览 | WebKit 移动标识和 CSS 视口；输入受原生限制 |
+| Linux Tauri | 原生 WebKitGTK 子窗口；支持 OAuth 弹窗、下载和对话框 | 支持可见且归属已确认的会话预览 | WebKit 移动标识和 CSS 视口；密度和输入受原生限制 |
 | 普通浏览器/远程视图 | iframe 后备实现 | 无本地原生预览目标 | 仅尺寸 |
 
 在 Electron 和 Windows Tauri 上，原生自动化在桌面启动时准备好，使用会话绑定的 `codenomad.browser` 工具进行打开、导航、快照、截图和页面操作：点击、输入、选择、悬停、拖动、滚动、按键以及等待文本出现。工具可用不代表对每个窗口都已获授权：执行会检查所属后端、原生能力、会话和可见目标。如果操作所针对的页面在此期间已被隐藏、替换或导航离开，该操作会被拒绝，而不会发送到其他页面；操作也绝不会被自动重复。页面内容仍不可信。目标禁止嵌入时 iframe 可能失败；请使用外部浏览器，不要削弱保护。
 
 Tauri macOS/Linux 预览需手动打开，共享登录状态在重启后仍会保留，并使用原生后退/前进历史。原生预览会在应用内菜单和对话框下方隐藏；原生模式不支持元素评论。即使预览可见，`codenomad.browser` 也会拒绝 Tauri macOS/Linux 上的所有操作。
+
+原生弹窗共享预览登录状态，保留 `opener`/`postMessage`，并随打开它的页面关闭。输入或恢复的地址仅允许无凭据的 HTTP(S)；网站还可打开空白文档和同源 blob 文档。文件及应用协议被阻止。下载使用清理后的唯一名称保存到“下载”文件夹，不覆盖文件，也不自动打开。摄像头、麦克风、位置和通知始终被拒绝；已分类权限需要同意，未知请求显示错误。Tauri 和 Electron 支持 `alert`/`confirm`/`prompt`；Electron 的 prompt 对话框适用于预览顶层页面、弹窗和子框架。设备及屏幕选择列表可滚动查看可用项目。其他 API 取决于引擎和硬件。
+
+网站可在关闭原生弹窗时要求确认。Linux 的指针锁定同意控件显示在所属窗口顶部。受 [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) 影响的 WebKitGTK 版本（包括 2.52.6）因安全措施阻止访问拖放的文件，上传时请使用页面的文件选择器。关闭或重新加载所属 CodeNomad 窗口前，请保存页面中的工作。
 
 ## 选择六种视口模板之一 {#templates}
 

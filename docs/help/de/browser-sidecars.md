@@ -18,15 +18,19 @@ Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |
-| Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| Windows-Tauri | Natives WebView2-Unterfenster | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| macOS-Tauri | Natives WKWebView-Unterfenster | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Mobile WebKit-Identität und CSS-Viewport; native Eingabegrenzen |
-| Linux-Tauri | Natives WebKitGTK-Unterfenster | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Mobile WebKit-Identität und CSS-Viewport; native Dichte-/Eingabegrenzen |
+| Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
+| Windows-Tauri | Natives WebView2-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
+| macOS-Tauri (14+) | Natives WKWebView-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Mobile WebKit-Identität und CSS-Viewport; native Eingabegrenzen |
+| Linux-Tauri | Natives WebKitGTK-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Mobile WebKit-Identität und CSS-Viewport; native Dichte-/Eingabegrenzen |
 | Normaler Browser/Remote-Ansicht | Iframe-Ersatz | Kein lokales natives Vorschauziel | Nur Abmessungen |
 
 Unter Electron und Windows-Tauri wird native Automatisierung beim Desktop-Start vorbereitet und nutzt das sitzungsgebundene Werkzeug `codenomad.browser` zum Öffnen, Navigieren, Schnappschuss, Screenshot und für Seitenaktionen: Klicken, Tippen, Auswählen, Überfahren, Ziehen, Scrollen, Tastendrücke und Warten auf Text. Werkzeugverfügbarkeit autorisiert nicht jedes Fenster: Ausführung prüft zuständiges Backend, native Fähigkeiten, Sitzung und sichtbares Ziel. Eine Aktion, deren Seite inzwischen verborgen, ersetzt oder weiternavigiert wurde, wird abgelehnt statt an eine andere Seite gesendet, und eine Aktion wird nie automatisch wiederholt. Seiteninhalte bleiben nicht vertrauenswürdig. Ein iframe kann scheitern, weil das Ziel Einbettung verbietet; nutzen Sie einen externen Browser, statt Schutzmaßnahmen zu schwächen.
 
 Tauri-Vorschauen unter macOS/Linux werden manuell geöffnet, behalten gemeinsame Anmeldungen über Neustarts hinweg und verwenden den nativen Zurück-/Vorwärts-Verlauf. Native Vorschauen werden unter lokalen Menüs und Dialogen ausgeblendet; Elementkommentare sind im nativen Modus nicht verfügbar. `codenomad.browser` lehnt unter Tauri macOS/Linux alle Aktionen ab, auch bei sichtbarer Vorschau.
+
+Native Pop-ups teilen Vorschau-Anmeldungen, behalten `opener`/`postMessage` und schließen mit ihrer Ursprungsseite. Eingegebene/wiederhergestellte Adressen erlauben HTTP(S) ohne Zugangsdaten; Websites können auch leere und gleichursprüngliche Blob-Dokumente öffnen. Datei- und App-Schemata bleiben gesperrt. Downloads landen mit bereinigten, eindeutigen Namen im Downloads-Ordner, ohne Überschreiben oder automatisches Öffnen. Kamera, Mikrofon, Standort und Benachrichtigungen werden verweigert; klassifizierte Berechtigungen benötigen Zustimmung, unbekannte Anfragen zeigen einen Fehler. Tauri und Electron unterstützen `alert`/`confirm`/`prompt`; Electrons Prompt-Dialog gilt für Hauptseiten der Vorschau, Pop-ups und Unterframes. Geräte- und Bildschirmauswahlen zeigen die verfügbaren Einträge in einer scrollbaren Liste. Weitere APIs hängen von Engine und Hardware ab.
+
+Websites können beim Schließen eines nativen Pop-ups eine Bestätigung verlangen. Unter Linux erscheint die Zustimmung zur Zeigersperre oben im zugehörigen Fenster. Von [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) betroffene WebKitGTK-Versionen, einschließlich 2.52.6, benötigen für Uploads die Dateiauswahl der Seite, da der Zugriff auf abgelegte Dateien aus Sicherheitsgründen gesperrt ist. Speichern Sie die Arbeit auf der Seite, bevor Sie das zugehörige CodeNomad-Fenster schließen oder neu laden.
 
 ## Eine von sechs Ansichtsgrößenvorlagen wählen {#templates}
 

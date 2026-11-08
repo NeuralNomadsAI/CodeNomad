@@ -46,7 +46,7 @@ use webkit2gtk::{
 };
 use webkit2gtk_sys::{
   webkit_get_major_version, webkit_get_micro_version, webkit_get_minor_version,
-  webkit_policy_decision_ignore, webkit_policy_decision_use,
+  webkit_policy_decision_download, webkit_policy_decision_ignore, webkit_policy_decision_use,
 };
 #[cfg(feature = "x11")]
 use x11_dl::xlib::*;
@@ -468,7 +468,25 @@ impl InnerWebView {
     attributes: &mut WebViewAttributes,
   ) {
     // window.close()
-    webview.connect_close(move |webview| unsafe { webview.destroy() });
+    let browser = attributes.id.is_some_and(|id| id.starts_with("browser-"));
+    let popup = attributes
+      .id
+      .is_some_and(|id| id.starts_with("browser-popup-"));
+    webview.connect_close(move |webview| unsafe {
+      if popup {
+        if let Some(window) = webview
+          .toplevel()
+          .and_then(|widget| widget.downcast::<gtk::Window>().ok())
+        {
+          window.destroy();
+          return;
+        }
+      }
+      // Embedded preview roots are closed by their host, like WKWebView roots.
+      if !browser {
+        webview.destroy();
+      }
+    });
 
     // Synthetic mouse events
     synthetic_mouse_events::setup(webview);
@@ -556,6 +574,7 @@ impl InnerWebView {
     }
 
     // Navigation handler
+    let browser_downloads = attributes.id.is_some_and(|id| id.starts_with("browser-"));
     if let Some(navigation_handler) = attributes.navigation_handler.take() {
       webview.connect_decide_policy(move |_webview, policy_decision, policy_type| {
         let handler = match policy_type {
@@ -572,6 +591,12 @@ impl InnerWebView {
                 unsafe {
                   if allow {
                     webkit_policy_decision_use(pointer)
+                  } else if browser_downloads
+                    && (uri.starts_with("blob:") || uri.starts_with("data:"))
+                  {
+                    // Generated content can be saved, but never becomes a document
+                    // in a browser preview whose navigation policy rejected it.
+                    webkit_policy_decision_download(pointer)
                   } else {
                     webkit_policy_decision_ignore(pointer)
                   }
@@ -679,6 +704,7 @@ impl InnerWebView {
       || attributes.download_completed_handler.is_some()
     {
       web_context.register_download_handler(
+        &webview,
         attributes.download_started_handler.take(),
         attributes.download_completed_handler.take(),
       )
@@ -714,11 +740,9 @@ impl InnerWebView {
         .dynamic_cast_ref::<gtk::Fixed>()
         .unwrap()
         .put(webview, x, y);
-
     } else {
       container.add(webview);
     }
-
   }
 
   fn attach_ipc_handler(webview: WebView, ipc_handler: Box<dyn Fn(Request<String>)>) {

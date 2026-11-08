@@ -18,15 +18,19 @@ Native previews share cookies, sign-ins and site storage across projects/session
 
 | Client | Preview implementation | Agent browser automation | Mobile templates |
 | --- | --- | --- | --- |
-| Electron on supported desktop platforms | Native Chromium guest | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
-| Windows Tauri | Native WebView2 child | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
-| macOS Tauri | Native WKWebView child | Unavailable; use Electron or Windows Tauri | WebKit mobile identity and CSS viewport; native input limits |
-| Linux Tauri | Native WebKitGTK child | Unavailable; use Electron or Windows Tauri | WebKit mobile identity and CSS viewport; native density/input limits |
+| Electron on supported desktop platforms | Native Chromium guest; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
+| Windows Tauri | Native WebView2 child; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
+| macOS Tauri (14+) | Native WKWebView child; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | WebKit mobile identity and CSS viewport; native input limits |
+| Linux Tauri | Native WebKitGTK child; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | WebKit mobile identity and CSS viewport; native density/input limits |
 | Plain browser/remote view | Iframe fallback | No local native preview target | Dimensions only |
 
 On Electron and Windows Tauri, native automation is prepared at desktop startup and uses the session-bound `codenomad.browser` tool for open, navigate, snapshot, screenshot and page actions: click, type, select, hover, drag, scroll, key presses and waiting for text. Tool availability is not authorization for every window: execution checks the owning backend, native capabilities, session and visible target. An action whose page was hidden, replaced or navigated meanwhile is refused rather than sent to another page, and an action is never repeated automatically. Page contents remain untrusted. An iframe may fail because the target forbids embedding; use an external browser rather than weakening its protections.
 
 Tauri macOS/Linux previews open manually, retain shared sign-ins across restarts and use native Back/Forward history. Native previews hide beneath local menus and dialogs; element comments are unavailable in native mode. `codenomad.browser` refuses all actions on Tauri macOS/Linux, even with a visible preview.
+
+Native pop-ups share preview sign-ins, preserve `opener`/`postMessage` and close with their opener. Typed/restored addresses accept credential-free HTTP(S); sites can also open blank and same-origin blob documents. File and app schemes are blocked. Downloads save to Downloads with sanitized unique names, never overwrite files and never auto-open. Camera, microphone, location and notifications are denied; classified permissions use consent, unknown requests show an error. Tauri and Electron support `alert`/`confirm`/`prompt`; Electron's prompt dialog covers top-level preview pages, pop-ups and subframes. Device and screen selectors scroll through the available entries. Other APIs depend on the engine and hardware.
+
+Sites can ask for confirmation when closing a native pop-up. Linux pointer-lock consent appears at the top of its owning window. WebKitGTK builds affected by [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), including 2.52.6, require the page's file input for uploads because dropped-file access is blocked for security. Save page work before closing or reloading the owning CodeNomad window.
 
 ## Choose one of six viewport templates {#templates}
 

@@ -10,7 +10,10 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
 - Published SHA-256: runtime `e1aa9d8b7a120f879f44fdc1053f7b7dbf416bf0bbc6a72b714dec46b782b52f`;
   Wry `759c50ddad0ef9913bb5496cb9d509a50433a3b78cb0238d61105526589cf0e9`.
 - Local changes: `patches/tauri-runtime-wry-gtk.patch` and
-  `patches/wry-gtk.patch`; native trials ship beside the runtime examples.
+  `patches/wry-gtk.patch`, then `patches/wry-webkit-capabilities.patch`,
+   `patches/wry-browser-isolation.patch`, `patches/runtime-browser-isolation.patch`
+   and `patches/wry-browser-print.patch`;
+  native trials ship beside the runtime examples.
 - GTK: the runtime lazily installs a window-owned `GtkOverlay` inside Tao's
   content box, below its menu bar. Primary content stays boxed; child webviews use
   `GtkFixed`. The overlay passes uncovered input through to the primary view.
@@ -28,6 +31,26 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
   renderer keeps its own permission policy. Requalify WebKit's engine-default
   handling of location, notifications, display capture and storage access when
   changing runtime or OS support.
+- Browser previews' WKWebView delegate presents native JavaScript dialogs labeled
+  with the initiating host; the `browser-popup-` delegate closes its native window
+  on `window.close()`. WebKitGTK closes the corresponding popup window before
+  destroying its view, and scopes shared-context download callbacks to the
+  originating view with overwriting disabled and native file-URI destinations.
+  Rejected browser blob/data document requests become downloads, preserving the
+  preview's HTTP(S)-only document policy.
+  Browser pop-ups use Tauri's related-view/configuration API, retaining the native
+  opener and shared site state. The backend-free fixture in
+  `../tests/webkit-capabilities/` exercises these paths on both engines.
+- Browser labels select a runtime fence around application initialization scripts,
+  IPC and app resource protocols. Native browser globals and synchronous dialogs
+  stay owned by the engine. Preview navigation gestures use Wry's native setting.
+  WebView2 popup script closure disposes the top-level popup instead of only its
+   child container; embedded roots remain host-owned.
+- WKWebView preview printing and beforeunload use the native delegate selectors
+   in WebKit's `WKUIDelegatePrivate.h`: both printFrame variants and the
+   initiating-frame beforeunload completion. Printing uses the public
+   `printOperationWithPrintInfo:` operation and system panel. Qualify these
+   selectors on supported macOS/WebKit updates with the native fixture.
 
 Keep these overrides until the resolved upstream runtime supports the same child
 layout, persistent geometry policy. Requalify both GTK

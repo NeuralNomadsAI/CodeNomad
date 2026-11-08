@@ -37,7 +37,7 @@ fn child_policy_is_registered_before_creation_and_fails_closed() {
     views.finish_creation("browser-child", &record).unwrap();
     assert_eq!(
         views.navigation_allowed("browser-child", &blank),
-        Some(false)
+        Some(true)
     );
     for raw in [
         "file:///secret",
@@ -136,7 +136,7 @@ fn native_creation_installs_protections_before_return_and_rolls_back_failure() {
     ));
     assert_eq!(
         views.navigation_allowed(child.label(), &"about:blank".parse().unwrap()),
-        Some(false)
+        Some(true)
     );
     let record = views.owned(OWNER, child.label()).unwrap();
     views.remove_exact(child.label(), &record);
@@ -172,6 +172,109 @@ fn native_creation_installs_protections_before_return_and_rolls_back_failure() {
     assert!(reloaded.is_err());
     assert!(views.owned(OWNER, "browser-reloading").is_err());
     assert!(app.get_webview("browser-reloading").is_none());
+}
+
+#[test]
+fn document_policy_allows_blank_and_only_owned_blob_origins() {
+    let views = EmbeddedViews::for_test(OWNER, "browser-origin");
+    views.observe_origin(
+        "browser-origin",
+        views.owned(OWNER, "browser-origin").unwrap().token,
+        &"https://example.com/page".parse().unwrap(),
+    );
+    for url in [
+        "https://example.com/page",
+        "about:blank",
+        "blob:https://example.com/id",
+    ] {
+        assert_eq!(
+            views.navigation_allowed("browser-origin", &url.parse().unwrap()),
+            Some(true)
+        );
+    }
+    for url in [
+        "blob:https://other.example/id",
+        "blob:null/id",
+        "file:///private",
+        "tauri://localhost",
+    ] {
+        assert_eq!(
+            views.navigation_allowed("browser-origin", &url.parse().unwrap()),
+            Some(false)
+        );
+    }
+    assert!(!is_allowed_url(&"about:blank".parse().unwrap()));
+    assert!(!is_allowed_url(
+        &"blob:https://example.com/id".parse().unwrap()
+    ));
+}
+
+#[test]
+fn tree_invalidation_includes_pending_descendants_and_fences_stale_callbacks() {
+    let views = EmbeddedViews::default();
+    let root = views.reserve(OWNER, "browser-tree").unwrap();
+    let child = views.reserve(OWNER, "browser-popup-child").unwrap();
+    let grandchild = views.reserve(OWNER, "browser-popup-grandchild").unwrap();
+    let peer = views.reserve(OWNER, "browser-peer").unwrap();
+    {
+        let mut inner = views.0.lock().unwrap();
+        inner.records.get_mut("browser-popup-child").unwrap().opener = Some("browser-tree".into());
+        inner
+            .records
+            .get_mut("browser-popup-grandchild")
+            .unwrap()
+            .opener = Some("browser-popup-child".into());
+        let removed = EmbeddedViews::take_tree(&mut inner, "browser-tree", root.token, true);
+        assert_eq!(removed.len(), 3);
+        assert_eq!(inner.records.len(), 1);
+    }
+    assert!(views
+        .finish_creation("browser-popup-child", &child)
+        .is_err());
+    assert!(views
+        .finish_creation("browser-popup-grandchild", &grandchild)
+        .is_err());
+    let replacement = views.reserve(OWNER, "browser-tree").unwrap();
+    assert!(!views.current("browser-tree", root.token));
+    views.observe_origin(
+        "browser-tree",
+        root.token,
+        &"https://stale.invalid".parse().unwrap(),
+    );
+    assert_eq!(views.owned(OWNER, "browser-tree").unwrap().origin, None);
+    assert!(EmbeddedViews::take_tree(
+        &mut views.0.lock().unwrap(),
+        "browser-tree",
+        root.token,
+        true
+    )
+    .is_empty());
+    assert!(views.current("browser-tree", replacement.token));
+    assert!(views.current("browser-peer", peer.token));
+}
+
+#[test]
+fn reload_tree_invalidation_retains_root_and_isolates_other_owners() {
+    let views = EmbeddedViews::default();
+    let root = views.reserve(OWNER, "browser-reload-tree").unwrap();
+    let child = views.reserve(OWNER, "browser-popup-reload").unwrap();
+    let other = "local-22222222-2222-4222-8222-222222222222";
+    let peer = views.reserve(other, "browser-popup-peer").unwrap();
+    let mut inner = views.0.lock().unwrap();
+    for label in ["browser-popup-reload", "browser-popup-peer"] {
+        inner.records.get_mut(label).unwrap().opener = Some("browser-reload-tree".into());
+    }
+    let removed = EmbeddedViews::take_tree(&mut inner, "browser-reload-tree", root.token, false);
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].1.token, child.token);
+    assert_eq!(
+        inner.records.get("browser-reload-tree").unwrap().token,
+        root.token
+    );
+    assert_eq!(
+        inner.records.get("browser-popup-peer").unwrap().token,
+        peer.token
+    );
 }
 
 #[test]
@@ -215,6 +318,63 @@ fn owner_cleanup_removes_ready_and_pending_children_without_touching_other_owner
     assert!(views.owned(OTHER, "browser-other").is_ok());
     views.close(app.handle(), OWNER, "browser-ready").unwrap();
     assert!(app.get_webview(OWNER).is_some());
+}
+
+#[test]
+fn fullscreen_keeps_normal_bounds_and_owner_cleanup_restores_the_window() {
+    let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+    WebviewWindowBuilder::new(&app, OWNER, WebviewUrl::default())
+        .build()
+        .unwrap();
+    let window = app.get_window(OWNER).unwrap();
+    let child = window
+        .add_child(
+            tauri::webview::WebviewBuilder::new("browser-fullscreen", WebviewUrl::default()),
+            PhysicalPosition::new(10, 20),
+            PhysicalSize::new(300, 200),
+        )
+        .unwrap();
+    let views = EmbeddedViews::for_test(OWNER, child.label());
+    let normal = Bounds {
+        x: 10,
+        y: 20,
+        width: 300,
+        height: 200,
+    };
+    views
+        .set_bounds(app.handle(), OWNER, child.label(), normal)
+        .unwrap();
+    views
+        .set_fullscreen(app.handle(), child.label(), true)
+        .unwrap();
+    let saved = views.owned(OWNER, child.label()).unwrap().bounds;
+    views
+        .set_bounds(
+            app.handle(),
+            OWNER,
+            child.label(),
+            Bounds {
+                width: 1600,
+                height: 900,
+                ..normal
+            },
+        )
+        .unwrap();
+    assert_eq!(views.owned(OWNER, child.label()).unwrap().bounds, saved);
+    views
+        .set_fullscreen(app.handle(), child.label(), false)
+        .unwrap();
+    assert!(views
+        .owned(OWNER, child.label())
+        .unwrap()
+        .fullscreen
+        .is_none());
+    views
+        .set_fullscreen(app.handle(), child.label(), true)
+        .unwrap();
+    views.remove_owner(app.handle(), OWNER);
+    assert!(app.get_webview(child.label()).is_none());
+    assert!(!window.is_fullscreen().unwrap());
 }
 #[test]
 fn storage_identifiers_share_only_the_same_full_identity_and_domain() {

@@ -18,15 +18,19 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 
 | İstemci | Önizleme uygulaması | Ajan tarayıcı otomasyonu | Mobil şablonlar |
 | --- | --- | --- | --- |
-| Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
-| Windows Tauri | Yerel WebView2 alt öğesi | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
-| macOS Tauri | Yerel WKWebView alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | WebKit mobil kimliği ve CSS görünümü; yerel giriş sınırları |
-| Linux Tauri | Yerel WebKitGTK alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | WebKit mobil kimliği ve CSS görünümü; yerel yoğunluk/giriş sınırları |
+| Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
+| Windows Tauri | Yerel WebView2 alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
+| macOS Tauri (14+) | Yerel WKWebView alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | WebKit mobil kimliği ve CSS görünümü; yerel giriş sınırları |
+| Linux Tauri | Yerel WebKitGTK alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | WebKit mobil kimliği ve CSS görünümü; yerel yoğunluk/giriş sınırları |
 | Normal tarayıcı/uzak görünüm | Alternatif iframe görünümü | Yerel native önizleme hedefi yok | Yalnızca boyutlar |
 
 Electron ve Windows Tauri'de yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anlık görüntü, ekran görüntüsü ve sayfa eylemleri için oturuma bağlı `codenomad.browser` aracını kullanır: tıklama, yazma, seçme, üzerine gelme, sürükleme, kaydırma, tuşa basma ve metin bekleme. Aracın kullanılabilirliği her pencere için yetkilendirme değildir: yürütme, sahip olunan arka ucu, yerel yetenekleri, oturumu ve görünür hedefi kontrol eder. Sayfası bu arada gizlenmiş, değiştirilmiş veya başka bir adrese gitmiş bir eylem başka bir sayfaya gönderilmek yerine reddedilir ve hiçbir eylem otomatik olarak tekrarlanmaz. Sayfa içerikleri güvenilmez durumda kalıyor. Hedef yerleştirmeyi yasakladığından iframe başarısız olabilir; korumalarını zayıflatmak yerine harici bir tarayıcı kullanın.
 
 Tauri macOS/Linux önizlemeleri elle açılır, paylaşılan oturum açma bilgilerini yeniden başlatmalar arasında korur ve yerel Geri/İleri geçmişini kullanır. Yerel önizlemeler, uygulama içindeki menü ve iletişim kutularının altında gizlenir; yerel modda öğe yorumları kullanılamaz. `codenomad.browser`, görünür bir önizleme olsa bile Tauri macOS/Linux'ta tüm eylemleri reddeder.
+
+Yerel açılır pencereler önizleme oturumlarını paylaşır, `opener`/`postMessage` ilişkisini korur ve açan sayfayla kapanır. Yazılan veya geri yüklenen adresler kimlik bilgisiz HTTP(S) ile sınırlıdır; siteler boş ve aynı kökenli blob belgeleri de açabilir. Dosya ve uygulama şemaları engellenir. İndirmeler temizlenmiş benzersiz adlarla İndirilenler'e kaydedilir; üzerine yazılmaz ve otomatik açılmaz. Kamera, mikrofon, konum ve bildirimler reddedilir; sınıflandırılmış izinler onay ister, bilinmeyen istekler hata gösterir. Tauri ve Electron `alert`/`confirm`/`prompt` destekler; Electron'un prompt iletişim kutusu önizlemenin ana sayfalarında, açılır pencerelerde ve alt çerçevelerde kullanılabilir. Aygıt ve ekran seçicilerinde mevcut girdiler arasında kaydırma yapılabilir. Diğer API'ler motora ve donanıma bağlıdır.
+
+Siteler yerel açılır pencere kapanırken onay isteyebilir. Linux'ta işaretçi kilidi onayı ilgili pencerenin üstünde görünür. 2.52.6 dahil [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) sorunundan etkilenen WebKitGTK sürümlerinde, bırakılan dosyalara erişim güvenlik nedeniyle engellendiği için yüklemelerde sayfanın dosya seçicisini kullanın. İlgili CodeNomad penceresini kapatmadan veya yeniden yüklemeden önce sayfadaki çalışmanızı kaydedin.
 
 ## Altı görünüm alanı şablonundan birini seçin {#templates}
 

@@ -83,6 +83,8 @@ pub struct WryWebViewUIDelegateIvars {
   #[cfg(target_os = "macos")]
   new_windows: Rc<RefCell<Vec<NewWindow>>>,
   permission_handler: Option<Box<dyn Fn(PermissionKind) -> PermissionResponse + Send + Sync>>,
+  preview_dialogs: bool,
+  popup: bool,
 }
 
 define_class!(
@@ -93,7 +95,147 @@ define_class!(
 
   unsafe impl NSObjectProtocol for WryWebViewUIDelegate {}
 
+  // WebKit's native window.print/beforeunload hooks are declared in
+  // Source/WebKit/UIProcess/API/Cocoa/WKUIDelegatePrivate.h (macOS 12+).
+  // They are confined to preview delegates; the page receives no app bridge.
+  impl WryWebViewUIDelegate {
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:printFrame:))]
+    fn print_frame(&self, webview: &WryWebView, _frame: &NSObject) {
+      if self.ivars().preview_dialogs { preview_print(webview); }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:printFrame:pdfFirstPageSize:completionHandler:))]
+    fn print_frame_with_completion(&self, webview: &WryWebView, _frame: &NSObject,
+      _size: objc2_foundation::NSSize, completion: &Block<dyn Fn()>) {
+      if self.ivars().preview_dialogs { preview_print(webview); }
+      completion.call(());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:runBeforeUnloadConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
+    fn before_unload(&self, webview: &WryWebView, message: &objc2_foundation::NSString,
+      frame: &WKFrameInfo, completion: &Block<dyn Fn(objc2::runtime::Bool)>) {
+      if !self.ivars().preview_dialogs { completion.call((true.into(),)); return; }
+      self.javascript_confirm(objc2::sel!(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:), webview, message, frame, completion);
+    }
+  }
+
   unsafe impl WKUIDelegate for WryWebViewUIDelegate {
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:requestDeviceOrientationAndMotionPermissionForOrigin:initiatedByFrame:decisionHandler:))]
+    fn request_orientation_permission(
+      &self,
+      _webview: &WryWebView,
+      _origin: &WKSecurityOrigin,
+      _frame: &WKFrameInfo,
+      completion: &Block<dyn Fn(WKPermissionDecision)>,
+    ) {
+      let decision = if self.ivars().preview_dialogs {
+        match self
+          .ivars()
+          .permission_handler
+          .as_ref()
+          .map(|handler| handler(PermissionKind::Sensors))
+        {
+          Some(PermissionResponse::Deny) => WKPermissionDecision::Deny,
+          _ => WKPermissionDecision::Prompt,
+        }
+      } else {
+        WKPermissionDecision::Prompt
+      };
+      completion.call((decision,));
+    }
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webViewDidClose:))]
+    fn web_view_did_close(&self, webview: &WryWebView) {
+      if self.ivars().popup {
+        if let Some(window) = webview.window() {
+          window.close();
+        }
+      }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:))]
+    fn javascript_alert(
+      &self,
+      webview: &WryWebView,
+      message: &objc2_foundation::NSString,
+      frame: &WKFrameInfo,
+      completion: &Block<dyn Fn()>,
+    ) {
+      let Some(window) = webview.window().filter(|_| self.ivars().preview_dialogs) else {
+        completion.call(());
+        return;
+      };
+      let alert = preview_alert(message, frame, false);
+      let completion = completion.copy();
+      let callback = block2::RcBlock::new(move |_| completion.call(()));
+      alert.beginSheetModalForWindow_completionHandler(&window, Some(&callback));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
+    fn javascript_confirm(
+      &self,
+      webview: &WryWebView,
+      message: &objc2_foundation::NSString,
+      frame: &WKFrameInfo,
+      completion: &Block<dyn Fn(objc2::runtime::Bool)>,
+    ) {
+      let Some(window) = webview.window().filter(|_| self.ivars().preview_dialogs) else {
+        completion.call((false.into(),));
+        return;
+      };
+      let alert = preview_alert(message, frame, true);
+      let completion = completion.copy();
+      let callback = block2::RcBlock::new(move |response| {
+        completion.call(((response == objc2_app_kit::NSAlertFirstButtonReturn).into(),))
+      });
+      alert.beginSheetModalForWindow_completionHandler(&window, Some(&callback));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:))]
+    fn javascript_prompt(
+      &self,
+      webview: &WryWebView,
+      message: &objc2_foundation::NSString,
+      default_text: Option<&objc2_foundation::NSString>,
+      frame: &WKFrameInfo,
+      completion: &Block<dyn Fn(*const objc2_foundation::NSString)>,
+    ) {
+      let Some(window) = webview.window().filter(|_| self.ivars().preview_dialogs) else {
+        completion.call((std::ptr::null(),));
+        return;
+      };
+      let mtm = MainThreadMarker::new().unwrap();
+      let alert = preview_alert(message, frame, true);
+      let input = objc2_app_kit::NSTextField::initWithFrame(
+        mtm.alloc(),
+        objc2_foundation::NSRect::new(
+          objc2_foundation::NSPoint::new(0.0, 0.0),
+          objc2_foundation::NSSize::new(320.0, 24.0),
+        ),
+      );
+      if let Some(text) = default_text {
+        input.setStringValue(text);
+      }
+      alert.setAccessoryView(Some(&input));
+      let completion = completion.copy();
+      let callback = block2::RcBlock::new(move |response| {
+        if response == objc2_app_kit::NSAlertFirstButtonReturn {
+          let value = input.stringValue();
+          completion.call((Retained::as_ptr(&value),));
+        } else {
+          completion.call((std::ptr::null(),));
+        }
+      });
+      alert.beginSheetModalForWindow_completionHandler(&window, Some(&callback));
+    }
+
     #[cfg(target_os = "macos")]
     #[unsafe(method(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:))]
     fn run_file_upload_panel(
@@ -297,6 +439,8 @@ impl WryWebViewUIDelegate {
     mtm: MainThreadMarker,
     new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
     permission_handler: Option<Box<dyn Fn(PermissionKind) -> PermissionResponse + Send + Sync>>,
+    preview_dialogs: bool,
+    popup: bool,
   ) -> Retained<Self> {
     #[cfg(target_os = "ios")]
     let _new_window_req_handler = new_window_req_handler;
@@ -309,7 +453,50 @@ impl WryWebViewUIDelegate {
         #[cfg(target_os = "macos")]
         new_windows: Rc::new(RefCell::new(vec![])),
         permission_handler,
+        preview_dialogs,
+        popup,
       });
     unsafe { msg_send![super(delegate), init] }
   }
+}
+
+#[cfg(target_os = "macos")]
+fn preview_print(webview: &WryWebView) {
+  // Use the same public print operation as Wry's host-initiated printing.
+  unsafe {
+    if webview.window().is_none()
+      || objc2_app_kit::NSPrintOperation::currentOperation(MainThreadMarker::new().unwrap())
+        .is_some()
+    {
+      return;
+    }
+    let info = objc2_app_kit::NSPrintInfo::sharedPrintInfo();
+    let operation = webview.printOperationWithPrintInfo(&info);
+    operation.setCanSpawnSeparateThread(true);
+    operation.runOperation();
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn preview_alert(
+  message: &objc2_foundation::NSString,
+  frame: &WKFrameInfo,
+  cancel: bool,
+) -> Retained<objc2_app_kit::NSAlert> {
+  use objc2::ClassType;
+  use objc2_foundation::{NSBundle, NSString};
+  let alert = objc2_app_kit::NSAlert::new(MainThreadMarker::new().unwrap());
+  // Site-controlled text is always identified by the initiating frame's host.
+  let host = unsafe { frame.securityOrigin().host() };
+  alert.setMessageText(&host);
+  alert.setInformativeText(message);
+  if cancel {
+    let bundle = unsafe { NSBundle::bundleForClass(objc2_app_kit::NSAlert::class()) };
+    for key in ["OK", "Cancel"] {
+      let key = NSString::from_str(key);
+      let title = bundle.localizedStringForKey_value_table(&key, Some(&key), None);
+      alert.addButtonWithTitle(&title);
+    }
+  }
+  alert
 }

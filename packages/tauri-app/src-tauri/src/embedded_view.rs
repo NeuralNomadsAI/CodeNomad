@@ -1,10 +1,15 @@
 //! Owner-fenced native child views. Business/session state belongs to consumers.
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
 
+#[cfg(any(windows, target_os = "linux", target_os = "macos", test))]
+#[path = "embedded_view/browser.rs"]
+mod browser;
+#[path = "embedded_view/fullscreen.rs"]
+mod fullscreen;
 #[cfg(target_os = "linux")]
 #[path = "embedded_view/linux.rs"]
 mod linux;
@@ -45,7 +50,7 @@ impl StorageIdentity {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 pub(crate) struct Bounds {
     pub(crate) x: i32,
     pub(crate) y: i32,
@@ -65,6 +70,16 @@ pub(crate) fn is_allowed_url(url: &tauri::Url) -> bool {
         && url.host().is_some()
         && url.username().is_empty()
         && url.password().is_none()
+}
+
+fn site_url_allowed(url: &tauri::Url, origin: Option<&str>) -> bool {
+    is_allowed_url(url)
+        || (url.scheme() == "about" && url.path() == "blank")
+        || (url.scheme() == "blob"
+            && tauri::Url::parse(url.path()).is_ok_and(|inner| {
+                is_allowed_url(&inner)
+                    && Some(inner.origin().ascii_serialization().as_str()) == origin
+            }))
 }
 
 pub(crate) fn browser_storage(profile: &Path) -> PathBuf {
@@ -94,13 +109,19 @@ fn reserved_label(label: &str) -> bool {
 struct Inner {
     records: HashMap<String, Record>,
     sequence: u64,
+    fullscreen_windows: HashSet<String>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
 struct Record {
     owner: String,
     token: u64,
+    document: u64,
     preparing: bool,
+    opener: Option<String>,
+    origin: Option<String>,
+    bounds: Option<Bounds>,
+    fullscreen: Option<bool>,
 }
 
 #[derive(Clone, Default)]
@@ -128,7 +149,12 @@ impl EmbeddedViews {
         let record = Record {
             owner: owner.into(),
             token: inner.sequence,
+            document: 0,
             preparing: true,
+            opener: None,
+            origin: None,
+            bounds: None,
+            fullscreen: None,
         };
         inner.records.insert(label.into(), record.clone());
         Ok(record)
@@ -178,11 +204,155 @@ impl EmbeddedViews {
     pub(crate) fn navigation_allowed(&self, label: &str, url: &tauri::Url) -> Option<bool> {
         let inner = self.0.lock().ok();
         if let Some(record) = inner.as_ref().and_then(|inner| inner.records.get(label)) {
-            return Some(
-                is_allowed_url(url) || (record.preparing && url.as_str() == "about:blank"),
-            );
+            let allowed = if label.starts_with("browser-") {
+                site_url_allowed(url, record.origin.as_deref())
+            } else {
+                is_allowed_url(url) || (record.preparing && url.as_str() == "about:blank")
+            };
+            return Some(allowed);
         }
         reserved_label(label).then_some(false)
+    }
+
+    fn current(&self, label: &str, token: u64) -> bool {
+        self.0.lock().is_ok_and(|inner| {
+            inner
+                .records
+                .get(label)
+                .is_some_and(|record| record.token == token)
+        })
+    }
+
+    fn token(&self, label: &str) -> Option<u64> {
+        self.0
+            .lock()
+            .ok()?
+            .records
+            .get(label)
+            .map(|record| record.token)
+    }
+
+    fn observe_origin(&self, label: &str, token: u64, url: &tauri::Url) {
+        if is_allowed_url(url) {
+            if let Ok(mut inner) = self.0.lock() {
+                if let Some(record) = inner
+                    .records
+                    .get_mut(label)
+                    .filter(|record| record.token == token)
+                {
+                    record.origin = Some(url.origin().ascii_serialization());
+                }
+            }
+        }
+    }
+
+    /// Invalidate the whole tree before native destruction dispatches callbacks.
+    fn take_tree(
+        inner: &mut Inner,
+        label: &str,
+        token: u64,
+        include_root: bool,
+    ) -> Vec<(String, Record)> {
+        let Some(root) = inner
+            .records
+            .get(label)
+            .filter(|record| record.token == token)
+        else {
+            return Vec::new();
+        };
+        let owner = root.owner.clone();
+        let mut labels = HashSet::from([label.to_string()]);
+        // ponytail: scan per tree depth; index parents if preview trees become large.
+        loop {
+            let count = labels.len();
+            for (child, record) in &inner.records {
+                if record.owner == owner
+                    && record
+                        .opener
+                        .as_ref()
+                        .is_some_and(|parent| labels.contains(parent))
+                {
+                    labels.insert(child.clone());
+                }
+            }
+            if labels.len() == count {
+                break;
+            }
+        }
+        if !include_root {
+            labels.remove(label);
+        }
+        labels
+            .into_iter()
+            .filter_map(|label| inner.records.remove(&label).map(|record| (label, record)))
+            .collect()
+    }
+
+    fn dispose_records<R: Runtime>(
+        app: &AppHandle<R>,
+        records: Vec<(String, Record)>,
+    ) -> Result<(), String> {
+        let mut failure = None;
+        for (label, record) in records {
+            if let Some(before) = record.fullscreen {
+                if let Some(view) = app.get_webview(&label) {
+                    let _ = view.window().set_fullscreen(before);
+                }
+            }
+            let result = if record.opener.is_some() {
+                app.get_webview_window(&label)
+                    .map(|window| window.destroy())
+            } else {
+                app.get_webview(&label).map(|view| view.close())
+            };
+            if let Some(Err(error)) = result {
+                eprintln!("[browser-cleanup] {label}: {error}");
+                failure.get_or_insert_with(|| error.to_string());
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
+    fn dispose_tree<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        label: &str,
+        token: u64,
+    ) -> Result<(), String> {
+        let records = self
+            .0
+            .lock()
+            .map(|mut inner| Self::take_tree(&mut inner, label, token, true))
+            .unwrap_or_default();
+        Self::dispose_records(app, records)
+    }
+
+    fn page_load<R: Runtime>(
+        &self,
+        view: &tauri::Webview<R>,
+        token: u64,
+        payload: &tauri::webview::PageLoadPayload<'_>,
+    ) -> bool {
+        let Ok(mut inner) = self.0.lock() else {
+            return false;
+        };
+        let Some(record) = inner
+            .records
+            .get_mut(view.label())
+            .filter(|record| record.token == token)
+        else {
+            return false;
+        };
+        let records = if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+            record.document = record.document.wrapping_add(1);
+            Self::take_tree(&mut inner, view.label(), token, false)
+        } else {
+            Vec::new()
+        };
+        drop(inner);
+        let _ = Self::dispose_records(view.app_handle(), records);
+        self.observe_origin(view.label(), token, payload.url());
+        self.current(view.label(), token)
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -236,7 +406,9 @@ impl EmbeddedViews {
         on_navigation: impl Fn(&tauri::Url) -> bool + Send + Sync + 'static,
         install: impl FnOnce(&tauri::Webview<R>) -> Result<(), String>,
     ) -> Result<tauri::Webview<R>, String> {
-        use tauri::webview::{NewWindowResponse, WebviewBuilder};
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        use tauri::webview::NewWindowResponse;
+        use tauri::webview::WebviewBuilder;
         let storage = storage.into();
         validate_bounds(bounds)?;
         #[cfg(target_os = "macos")]
@@ -254,22 +426,68 @@ impl EmbeddedViews {
         }
         // Register before add_child: the host navigation interceptor runs during creation.
         let record = self.reserve(window.label(), label)?;
+        if label.starts_with("browser-") {
+            self.install_fullscreen_window(window);
+        }
         let policy = self.clone();
         let navigation_label = label.to_string();
+        let page_policy = self.clone();
+        let token = record.token;
         let builder = WebviewBuilder::new(
             label,
             tauri::WebviewUrl::External("about:blank".parse().expect("static neutral URL")),
         )
-        .data_directory(storage.directory)
+        .data_directory(storage.directory.clone())
         .focused(false)
-        .on_page_load(on_page_load)
+        .disable_drag_drop_handler()
+        .zoom_hotkeys_enabled(true)
+        .on_page_load(move |view, payload| {
+            if page_policy.page_load(&view, token, &payload) {
+                on_page_load(view, payload);
+            }
+        })
         .on_navigation(move |url| {
-            let allowed = policy.navigation_allowed(&navigation_label, url) == Some(true);
+            let allowed = policy.current(&navigation_label, token)
+                && policy.navigation_allowed(&navigation_label, url) == Some(true);
             allowed && on_navigation(url)
         })
-        .on_new_window(|_, _| NewWindowResponse::Deny)
-        .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
-        .on_download(|_, _| false);
+        .on_permission_request({
+            let permissions = self.clone();
+            let permission_label = label.to_string();
+            move |view, kind| {
+                if permissions.current(&permission_label, token) {
+                    browser::permission(view, kind)
+                } else {
+                    tauri::webview::PermissionResponse::Deny
+                }
+            }
+        });
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        let builder = builder
+            .on_new_window(|_, _| NewWindowResponse::Deny)
+            .on_download(|_, _| false);
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        let builder = {
+            let views = self.clone();
+            let app = window.app_handle().clone();
+            let owner = window.label().to_string();
+            let opener = label.to_string();
+            let browser = label.starts_with("browser-");
+            let downloads = self.clone();
+            let download_label = label.to_string();
+            builder
+                .on_download(move |webview, event| {
+                    browser
+                        && downloads.current(&download_label, token)
+                        && browser::download(webview, event)
+                })
+                .on_new_window(move |url, features| {
+                    if !views.current(&opener, token) {
+                        return tauri::webview::NewWindowResponse::Deny;
+                    }
+                    views.open_popup(&app, &owner, &opener, &storage, url, features)
+                })
+        };
         #[cfg(target_os = "macos")]
         let builder = builder.data_store_identifier(storage_identifier);
         // Tauri has no hidden-child builder flag. Keep the neutral child off-canvas
@@ -311,6 +529,14 @@ impl EmbeddedViews {
     ) -> Result<(), String> {
         validate_bounds(bounds)?;
         let webview = self.webview(app, owner, label)?;
+        if let Ok(mut inner) = self.0.lock() {
+            if let Some(record) = inner.records.get_mut(label) {
+                if record.fullscreen.is_some() {
+                    return Ok(());
+                }
+                record.bounds = Some(bounds);
+            }
+        }
         webview
             .set_position(PhysicalPosition::new(bounds.x, bounds.y))
             .and_then(|()| webview.set_size(PhysicalSize::new(bounds.width, bounds.height)))
@@ -325,6 +551,9 @@ impl EmbeddedViews {
         visible: bool,
     ) -> Result<(), String> {
         let webview = self.webview(app, owner, label)?;
+        if !visible {
+            let _ = self.set_fullscreen(app, label, false);
+        }
         if visible {
             webview.show()
         } else {
@@ -374,12 +603,7 @@ impl EmbeddedViews {
         {
             return Err("Embedded view belongs to another window".into());
         }
-        if self.remove_exact(label, &record) {
-            if let Some(webview) = webview {
-                webview.close().map_err(|error| error.to_string())?;
-            }
-        }
-        Ok(())
+        self.dispose_tree(app, label, record.token)
     }
 
     pub(crate) fn remove_owner<R: Runtime>(&self, app: &AppHandle<R>, owner: &str) {
@@ -388,22 +612,16 @@ impl EmbeddedViews {
                 .records
                 .iter()
                 .filter(|(_, record)| record.owner == owner)
-                .map(|(label, _)| label.clone())
+                .map(|(label, record)| (label.clone(), record.clone()))
                 .collect::<Vec<_>>();
-            for label in &labels {
+            for (label, _) in &labels {
                 inner.records.remove(label);
             }
             labels
         } else {
             Vec::new()
         };
-        for label in labels {
-            if let Some(webview) = app.get_webview(&label) {
-                if webview.window().label() == owner {
-                    let _ = webview.close();
-                }
-            }
-        }
+        let _ = Self::dispose_records(app, labels);
     }
 }
 

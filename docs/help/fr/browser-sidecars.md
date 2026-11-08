@@ -18,15 +18,19 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 
 | Client | Implémentation de l’aperçu | Automatisation navigateur par agent | Modèles mobiles |
 | --- | --- | --- | --- |
-| Electron sur les plateformes de bureau prises en charge | Invité Chromium natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri Windows | Enfant WebView2 natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri macOS | Vue enfant WKWebView native | Indisponible ; utilisez Electron ou Tauri Windows | Identité mobile WebKit et viewport CSS ; limites de saisie natives |
-| Tauri Linux | Vue enfant WebKitGTK native | Indisponible ; utilisez Electron ou Tauri Windows | Identité mobile WebKit et viewport CSS ; limites natives de densité/saisie |
+| Electron sur les plateformes de bureau prises en charge | Invité Chromium natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
+| Tauri Windows | Enfant WebView2 natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
+| Tauri macOS (14+) | Vue enfant WKWebView native ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Identité mobile WebKit et viewport CSS ; limites de saisie natives |
+| Tauri Linux | Vue enfant WebKitGTK native ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Identité mobile WebKit et viewport CSS ; limites natives de densité/saisie |
 | Navigateur ordinaire/vue distante | Iframe de repli | Aucune cible locale d’aperçu natif | Dimensions seules |
 
 Sur Electron et Tauri Windows, l’automatisation native est préparée au démarrage du bureau et utilise l’outil `codenomad.browser` lié à la session pour ouvrir, naviguer, capturer l’état, prendre une capture d’écran et agir sur la page : cliquer, saisir, sélectionner, survoler, glisser, faire défiler, appuyer sur des touches et attendre un texte. La disponibilité d’un outil n’autorise pas toutes les fenêtres : l’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Une action dont la page a été masquée, remplacée ou a changé d’adresse entre-temps est refusée plutôt qu’envoyée à une autre page, et une action n’est jamais répétée automatiquement. Le contenu des pages reste non fiable. Une iframe peut échouer si la cible interdit l’intégration ; utilisez un navigateur externe plutôt que d’affaiblir ses protections.
 
 Les aperçus Tauri macOS/Linux s’ouvrent manuellement, conservent les connexions partagées entre les redémarrages et utilisent l’historique natif arrière/avant. Les aperçus natifs sont masqués sous les menus et boîtes de dialogue locaux ; les commentaires sur les éléments sont indisponibles en mode natif. `codenomad.browser` refuse toutes les actions sur Tauri macOS/Linux, même avec un aperçu visible.
+
+Les pop-ups natifs partagent les connexions de l’aperçu, conservent `opener`/`postMessage` et se ferment avec leur page d’origine. Les adresses saisies/restaurées acceptent HTTP(S) sans identifiants ; les sites peuvent aussi ouvrir des documents vierges et blob de même origine. Les schémas de fichiers et applicatifs sont bloqués. Les téléchargements vont dans Téléchargements, avec des noms assainis et uniques, sans écrasement ni ouverture automatique. Caméra, microphone, localisation et notifications sont refusés ; les permissions classifiées demandent un consentement, les requêtes inconnues affichent une erreur. Tauri et Electron prennent en charge `alert`/`confirm`/`prompt` ; le dialogue prompt d’Electron couvre les pages principales de l’aperçu, les pop-ups et les sous-frames. Les sélecteurs de périphériques et d’écrans permettent de faire défiler les entrées disponibles. Les autres API dépendent du moteur et du matériel.
+
+Les sites peuvent demander confirmation à la fermeture d’un pop-up natif. Sous Linux, le consentement au verrouillage du pointeur apparaît en haut de sa fenêtre. Les versions de WebKitGTK affectées par [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), dont 2.52.6, nécessitent le sélecteur de fichiers de la page pour les envois : l’accès aux fichiers déposés est bloqué pour des raisons de sécurité. Enregistrez le travail de la page avant de fermer ou recharger la fenêtre CodeNomad qui l’héberge.
 
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 

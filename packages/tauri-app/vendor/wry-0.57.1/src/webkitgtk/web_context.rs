@@ -117,6 +117,7 @@ pub trait WebContextExt {
 
   fn register_download_handler(
     &mut self,
+    webview: &WebView,
     download_started_callback: Option<Box<dyn FnMut(String, &mut PathBuf) -> bool>>,
     download_completed_callback: Option<Rc<dyn Fn(String, Option<PathBuf>, bool) + 'static>>,
   );
@@ -306,14 +307,23 @@ impl WebContextExt for super::WebContext {
 
   fn register_download_handler(
     &mut self,
+    webview: &WebView,
     download_started_handler: Option<Box<dyn FnMut(String, &mut PathBuf) -> bool>>,
     download_completed_handler: Option<Rc<dyn Fn(String, Option<PathBuf>, bool) + 'static>>,
   ) {
     let context = &self.os.context;
 
     let download_started_handler = Rc::new(RefCell::new(download_started_handler));
+    let webview = webview.downgrade();
 
     context.connect_download_started(move |_context, download| {
+      let Some(webview) = webview.upgrade() else {
+        return;
+      };
+      if download.web_view().as_ref() != Some(&webview) {
+        return;
+      }
+      download.set_allow_overwrite(false);
       // Failure belongs to this download, not every download in the context.
       let failed = Rc::new(RefCell::new(false));
       let download_started_handler = download_started_handler.clone();
@@ -354,7 +364,9 @@ impl WebContextExt for super::WebContext {
             }
 
             if download_started_handler(uri, &mut download_destination) {
-              download.set_destination(&download_destination.to_string_lossy());
+              use gtk::gio::prelude::FileExt;
+              let uri = gtk::gio::File::for_path(&download_destination).uri();
+              download.set_destination(&uri);
             } else {
               download.cancel();
             }
