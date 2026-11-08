@@ -271,6 +271,22 @@ test("web previews reach Remote Control through their capability while the host 
   assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined]])
 })
 
+test("web previews served through Remote Control stay on the preview origin", async (t) => {
+  const { previewManager, target, code } = await startRemoteSurface(t)
+  const cookie = await pair(target(), code)
+  const upstream = await startPreviewUpstream(t)
+  const other = await startPreviewUpstream(t)
+  const { token } = previewManager.create("session", upstream.url)
+  const host = other.url.slice("http://".length)
+  for (const pathname of [`/previews/${token}/%5C%5C${host}/x`, `/previews/${token}/%5C/${host}/x`, `/previews/${token}/\\\\${host}/x`]) {
+    await send(target(), pathname)
+  }
+  await send(target(), `/\\\\${host}/x`, { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })
+  assert.deepEqual(other.requests, [])
+  assert.equal((await send(target(), `/previews/${token}/@vite/client?t=1`)).status, 200)
+  assert.deepEqual(upstream.requests.at(-1), ["GET", "/@vite/client?t=1", undefined])
+})
+
 test("revoking a device ends its live streams and later requests", async (t) => {
   const { manager, target, code } = await startRemoteSurface(t)
   const cookie = await pair(target(), code)

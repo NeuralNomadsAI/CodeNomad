@@ -37,13 +37,17 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       criteria(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
   const refresh = () => setRevision(value => value + 1)
   const publishing = () => unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, props.selected]))?.phase === "publication"
-  const view = () => <>
+  /** Inventory-wide notices and paging, independent of the selection. */
+  const listView = () => <>
     <Show when={list.error()}><p role="status" class="mission-control-stale">{t("missions.scheduleList.readFailed")}</p></Show>
+    <Show when={list.next()}><button type="button" class="window-text-button" disabled={list.loading() || !props.active()}
+      onClick={list.more}>{t("missions.scheduleList.more")}</button></Show>
+  </>
+  /** The selected schedule's detail. */
+  const view = () => <>
     <Show when={list.selectionError()}>{error => <p class="mission-control-stale" role="status">
       {t(error() === "pending" ? publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain" : "missions.scheduleList.readFailed")}
     </p>}</Show>
-    <Show when={list.next()}><button type="button" class="window-text-button" disabled={list.loading() || !props.active()}
-      onClick={list.more}>{t("missions.scheduleList.more")}</button></Show>
     <Show when={props.selected && schedules().some(row => row.id === props.selected) ? props.selected : undefined} keyed>{id => {
       const doc = createMemo<UnifiedMissionSchedule>(previous => schedules().find(row => row.id === id) ?? previous!)
       const controls = createMissionScheduleControls({ get instanceId() { return props.instanceId }, get projectID() { return props.projectID },
@@ -106,6 +110,6 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   </>
   const ownsSession = (sessionID: string) => schedules().some(doc => doc.id === props.selected
     && (doc.pendingPassage?.coordinatorSessionID === sessionID || doc.history.some(item => item.coordinatorSessionID === sessionID)))
-  return { entries, view, refresh, ownsSession, loading: list.loading,
+  return { entries, view, listView, refresh, ownsSession, loading: list.loading,
     representation: (id: string) => list.error() || list.loading() || !list.fresh(id) ? undefined : list.rows().find(row => row.id === id)?.kind }
 }

@@ -58,7 +58,15 @@ keeps PATH priority and the automatic npm updater never overwrites it.
 
 Default host installation runs the backend's npm (bundled in Electron's resources
 for its integrated Node, beside Tauri's bundled Node, or beside a standalone server's
-own Node) to run a standard global npm installation of `@opencode/cli`. Existing writable npm installations on PATH are
+own Node) to run a standard global npm installation of `@opencode/cli`. Both desktop
+hosts bundle the npm release pinned in `.npm-version` (`dev-docs/RUNTIME_MAINTENANCE.md`);
+a standalone server uses the npm installed with its Node. npm blocks dependency install
+scripts unless its `allow-scripts` policy lists them (the default from npm 12), and the
+package's postinstall links the platform executable. CodeNomad's global installation
+therefore allows exactly the `@opencode/cli@<version>` it installs:
+`--allow-scripts` on direct npm, `npm_config_allow_scripts` (with inherited values
+removed) for the npm a native upgrade runs. The platform packages have no install
+scripts. Never enable all scripts or write an npmrc for this. Existing writable npm installations on PATH are
 reused after verifying their manifest and launcher identity; standalone/curl,
 Homebrew and custom installations remain user-managed. With no PATH installation,
 the user prefix is `%APPDATA%/npm` on Windows and `~/.local` on POSIX, or an explicit
@@ -153,8 +161,9 @@ and pins the verified prefix
 and registry, including when the desktop runtime has no npm launcher on PATH. It is
 also the command's working directory, preventing cwd from shadowing npm on Windows.
 Installer commands live in directories beside the lock inside the npm prefix:
-`.codenomad-upgrade-*` for this adapter and `.codenomad-npm-*` for Electron's
-lifecycle `node` command during direct npm. The prefix must allow execution for its
+`.codenomad-upgrade-*` for native upgrade and `.codenomad-npm-*` for direct npm.
+Both supply `npm`/`npx` bound to the selected package and runtime, plus Electron's
+lifecycle `node` command. The prefix must allow execution for its
 installed commands, unlike a temporary directory that may be mounted noexec, and
 npm and the OpenCode command lookup ignore these dot directories.
 If the outer supervisor is terminated by timeout, signal or output limit, descendant

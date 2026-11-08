@@ -8,7 +8,7 @@ import { createServer } from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { installSharedOpenCode, npmExecutable } from "../packages/server/src/opencode-update/shared-installation.ts"
-import { executeNpm } from "../packages/server/src/opencode-update/npm-runtime.ts"
+import { executeNpm, openCodeAllowScripts } from "../packages/server/src/opencode-update/npm-runtime.ts"
 import { fixtureRuntime } from "./opencode-fixture-runtime.mjs"
 import { RECOMMENDED_OPENCODE_VERSION } from "../packages/server/src/opencode/runtime-support.ts"
 
@@ -50,8 +50,10 @@ const result = { root, port }
 try {
   // Seed the historical native-upgrade boundary using npm in this fixture's
   // private prefix. Production installation correctly refuses pre-minimum targets.
+  // Like production, allow exactly this package's postinstall (npm 12+ blocks it).
   await executeNpm(node, [npm, "install", "--global", "--prefix", env.npm_config_prefix,
-    "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org", "@opencode/cli@2.0.15"], env, process.platform, env.npm_config_prefix)
+    "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org", `--allow-scripts=${openCodeAllowScripts("2.0.15")}`,
+    "@opencode/cli@2.0.15"], env, process.platform, env.npm_config_prefix)
   // Keep an independent controller so cleanup still works after failed replacement.
   await copyFile(binary, bootstrap)
   await run(bootstrap, ["service", "set", "port", String(port)])

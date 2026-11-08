@@ -1,119 +1,36 @@
-/* Mission picker (mission-picker.tsx): a right-aligned toolbar of general actions
-   (create, settings, refresh) above the full-width "current mission"
-   line (chevron, selected title field). */
+/* Missions panel header (mission-picker.tsx `MissionPanelHeader`): the panel-wide
+   toolbar (create, preferences, refresh) aligned to the end, then the selection
+   line: its icon toolbar (mounted by mission-action-bar.tsx, or the same buttons
+   disabled while nothing is selected) and the mission filter in the remaining width.
+   No rule between the two lines; one rule under the header (mission-control.css).
+   A panel too narrow for the filter beside the toolbar wraps it onto its own line. */
 .mission-control-header > .mission-picker { display: grid; flex: 1 1 auto; gap: var(--space-xs); min-width: 0; }
-.mission-picker-control { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; }
-.mission-picker-control[hidden] { display: none; }
-.mission-picker-expander {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-height-sm);
-  height: var(--control-height-sm);
-  color: var(--text-secondary);
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  opacity: 0.8;
-}
-.mission-picker-expander:hover:not(:disabled) { opacity: 1; background: var(--surface-hover-overlay); }
-.mission-picker-expander:disabled { opacity: 0.35; cursor: default; }
-.mission-picker-field {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: var(--space-xs);
-  min-width: 0;
-  min-height: var(--control-height-sm);
-  padding-inline: var(--space-xs);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  text-align: start;
-  background: transparent;
-  border: 1px solid var(--border-base);
-  border-radius: 0;
-}
-.mission-picker-field:hover:not(:disabled) { background: var(--surface-hover-overlay); }
-.mission-picker-field[aria-expanded="true"] { border-color: var(--accent-primary); }
-.mission-picker-field:disabled { cursor: default; }
-.mission-picker-placeholder { color: var(--text-muted); }
-.mission-picker :is(.mission-picker-expander, .mission-picker-field):focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
-.mission-picker-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mission-picker-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; }
-/* Margins match the mission line / toolbar gap: above the toolbar and between it and the mission line. */
-.mission-control-header > .mission-picker { margin-block-start: var(--space-sm); }
-.mission-picker > .mission-picker-actions { margin-block-end: var(--space-sm); }
+.mission-picker-selection { display: flex; flex-wrap: wrap-reverse; align-items: center; gap: var(--space-xs); min-width: 0; }
+.mission-picker-selection[hidden] { display: none; }
+.mission-picker-selection-actions > div { display: contents; }
+.mission-picker-selection-actions:empty { display: none; }
+.mission-picker-selection-actions:not(:empty) + .mission-picker-idle-actions { display: none; }
+.mission-picker-idle-actions > .mission-action-feedback { display: none; }
+.mission-picker-search { flex: 1 1 8rem; min-width: 0; min-height: var(--control-height-sm); }
 
-/* Small square status mark on the session status palette (mission-picker-model.ts):
-   the full state is in the tooltip and screen-reader text. */
-.mission-picker-mark { flex: 0 0 auto; width: 6px; height: 6px; background: var(--text-muted); }
-.mission-picker-mark[data-mark="working"] { background: var(--session-status-working-fg); animation: pulse 1.5s ease-in-out infinite; }
-.mission-picker-mark[data-mark="permission"] { background: var(--session-status-permission-fg); }
-.mission-picker-mark[data-mark="done"] { background: var(--session-status-idle-fg); }
-.mission-picker-mark:is([data-mark="paused"], [data-mark="interrupted"]) { background: var(--status-warning); }
-.mission-picker-mark[data-mark="prepared"] { background: var(--accent-primary); }
-
-/* Rows: bounded native scrolling and the session list's row states. */
-.mission-picker-list { display: grid; gap: var(--space-xs); min-width: 0; }
-.mission-picker-search { min-height: var(--control-height-sm); }
-.mission-picker-options { max-height: min(16rem, 45vh); margin: 0; padding: 0; overflow-y: auto; list-style: none; }
-.mission-picker-option {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  width: 100%;
-  min-width: 0;
-  min-height: var(--touch-target-size-compact);
-  padding: 2px 6px;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: start;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  cursor: pointer;
-  transition: color 150ms, background-color 150ms;
-}
-.mission-picker-option:hover, .mission-picker-option-active { color: var(--text-primary); background-color: var(--surface-hover-overlay); }
-.mission-picker-option-selected {
-  color: var(--text-primary);
-  background-color: var(--list-item-highlight-bg);
-  box-shadow: inset 0 0 0 1px var(--list-item-highlight-border);
-}
-.mission-picker-option-selected:is(:hover, .mission-picker-option-active) {
-  background-color: var(--list-item-highlight-bg);
-  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
-}
-button.mission-picker-option:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
-.mission-picker-empty { padding: var(--space-xs) 6px; color: var(--text-muted); font-size: var(--font-size-xs); }
-
-/* Inline list spans the panel edge to edge, like the session list. */
-.mission-picker-inline { margin-block-start: var(--space-xs); margin-inline: calc(-1 * var(--space-sm)); }
-.mission-picker-inline .mission-picker-search { margin-inline: var(--space-sm); width: auto; }
-.mission-picker-popup {
-  position: absolute;
-  inset-block-start: calc(100% + 2px);
-  inset-inline: 0;
-  z-index: 1000;
-  padding: 2px;
-  color: var(--text-primary);
-  background-color: var(--surface-secondary);
-  border: 1px solid var(--border-base);
-  box-shadow: var(--popover-shadow);
-}
-.mission-picker-popup .mission-picker-search { margin: 2px; width: auto; }
-
-/* Collapsed chevron attention among the other missions, aliasing session-child-activity.css. */
-.mission-picker-expander[data-attention] { opacity: 1; color: var(--mission-attention-color); }
-.mission-picker-expander[data-attention="permission"] { --mission-attention-color: var(--session-status-permission-fg); }
-.mission-picker-expander[data-attention="working"] { --mission-attention-color: var(--session-status-working-fg); }
-.mission-picker-expander[data-attention="done"] { --mission-attention-color: var(--session-status-idle-fg); }
-.mission-picker-expander[data-attention="working"] .disclosure-chevron { animation: pulse 1.5s ease-in-out infinite; }
-.mission-picker-expander[data-attention] .disclosure-chevron { stroke-width: 3; }
+/* Rows (`MissionRows`) reuse the session rows; they span the panel edge to edge.
+   The flag carries the mark on the session status palette (mission-picker-model.ts). */
+.mission-rows { margin-inline: calc(-1 * var(--space-sm)); }
+.mission-rows[hidden] { display: none; }
+.mission-rows > ul { margin: 0; padding: 0; list-style: none; }
+.mission-row-flag { color: var(--text-muted); }
+.mission-row-flag[data-mark="working"] { color: var(--session-status-working-fg); animation: pulse 1.5s ease-in-out infinite; }
+.mission-row-flag[data-mark="permission"] { color: var(--session-status-permission-fg); }
+.mission-row-flag[data-mark="done"] { color: var(--session-status-idle-fg); }
+.mission-row-flag:is([data-mark="paused"], [data-mark="interrupted"]) { color: var(--status-warning); }
+.mission-row-flag[data-mark="prepared"] { color: var(--accent-primary); }
+/* The selection's detail: the selected row's children, indented like subsessions. */
+.mission-row-children { padding-inline: calc(var(--space-sm) + var(--space-lg)) var(--space-sm); border-block-end: 1px solid var(--border-base); }
+.mission-row-children:empty, .mission-row-children[hidden] { display: none; }
+.mission-row-children > .mission-detail { border-block-end: 0; }
+.mission-picker-empty { padding: var(--space-xs) var(--space-sm); color: var(--text-muted); font-size: var(--font-size-xs); }
 
 @media (pointer: coarse) {
-  .mission-picker-expander { width: var(--touch-target-size); height: var(--touch-target-size); }
-  .mission-picker-field { min-height: var(--touch-target-size); }
-  .mission-picker-option { min-height: var(--touch-target-size); }
+  .mission-picker-search { min-height: var(--touch-target-size); }
 }

@@ -11,7 +11,7 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum runtime **2.2.3**, recommended **2.2.5** (`runtime-support.ts`), with
+Minimum runtime **2.2.3**, recommended **2.2.6** (`runtime-support.ts`), with
 **2.2.3** client/schema/plugin pins. The minimum carries the image tool contract of
 upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
 the Images gallery, the Design agent and skills and the Images settings: one
@@ -25,7 +25,7 @@ The minimum also provides the replay contract (below) consumed by the pinned
 reducer and Code Mode JavaScript run-to-completion, whose regression
 `scripts/test-codemode-jobs-native.mjs` runs in CI against minimum and latest.
 Daemons below the minimum are refused with `native_contract`. Plugins share the
-host Effect 4.0.6/Schema runtime. Unlisted/prerelease/custom/future labels
+host-provided Effect/Schema runtime. Unlisted/prerelease/custom/future labels
 undergo authenticated contract recognition; missing canonical APIs, session
 environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.
@@ -35,7 +35,10 @@ Missions schedules qualify the consumed Schedule API, effective
 of general runtime admission: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
 and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
 consumed capabilities, including on future versions. Schedule delivery qualification
-uses the recommended 2.2.5 runtime; keep results in PR/CI evidence.
+uses the minimum/latest CI matrix, including cold scheduled passage admission with
+the retained product bundle and CodeNomad backend closed; keep results in PR/CI evidence.
+Context hooks retain native message IDs; Missions consumes the transport's
+[native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
 
 ### Native Codex subscription usage
 
@@ -144,6 +147,16 @@ connections and Missions authority checks keep their blocking contracts. See
   discovery and event-relay mitigations.
 
 ### Replay contract
+
+Stored-part coverage: [history query storage contract](SESSION_HISTORY_QUERIES.md#stored-part-coverage).
+
+SQL history/search, navigation/outline, gallery and pruning consume assistant
+`session_part` rows in ordinal order followed by inline content. The shared bounded
+`message-storage.ts` relation mirrors native history, including mixed messages and
+stored split rows while `experimental.part_rows` is disabled. Pruning deletes only
+selected split rows and inline entries under its existing claim and transaction fences.
+Missions assistant-message projections use the same ordered-content SQL expression,
+retaining their own read budgets and source fences for mixed messages.
 
 Text/reasoning/tool/step provider data is one `native` field (on a key shared by
 a tool call and its result, the result wins). Summary compactions reference

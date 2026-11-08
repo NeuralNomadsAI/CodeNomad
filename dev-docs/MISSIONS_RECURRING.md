@@ -321,6 +321,8 @@ mutation takes the document exclusion before the existing journal writer. Native
 permissions, original message identities and whole-family H11 settlement apply.
 Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
 local title/compaction hooks and authoritative ordinary-input guards.
+Context classification and recovery follow the schedule transport's
+[native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
 Ordinary sidebar browsing/search and both Mission conversation-source pickers
 exclude this namespace through the shared carrier-identity predicate; native
 observations remain available to ownership and reconciliation readers.

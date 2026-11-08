@@ -9,7 +9,7 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
-import { missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { missionDetail, missionMenuItem, missionMenuItemState, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, server: ViteDevServer, url: string
@@ -295,12 +295,12 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
     })
     await open(page)
     await pause(page).click()
-    const interrupt = page.getByRole("button", { name: "Interrupt now", exact: true })
-    await interrupt.waitFor()
+    // Interrupt now lives in the selection's overflow menu, disabled while it does not apply.
+    const interrupt = () => missionMenuItemState(page, "interrupt")
     await observed.promise
-    // The header can publish before the directory reconciliation finishes. Presence
-    // alone is not readiness: this is still the pending operation's Saving state.
-    assert.equal(await interrupt.isDisabled(), true)
+    // The header can publish before the directory reconciliation finishes: this is
+    // still the pending operation's Saving state.
+    assert.equal((await interrupt()).enabled, false)
     assert.equal(await page.getByRole("status").filter({ hasText: "Saving…" }).count(), 1)
     release.resolve()
     await page.getByRole("status").filter({ hasText: "Pausing: the steps in progress are finishing." }).waitFor()
@@ -309,8 +309,10 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
     assert.equal(calls[0].expectedRevision, 1)
     assert.equal(await page.getByRole("button", { name: "Resume mission", exact: true }).isEnabled(), true)
 
-    await interrupt.click()
-    await interrupt.waitFor({ state: "detached" })
+    assert.equal((await interrupt()).enabled, true, "offered while steps are still finishing")
+    await (await missionMenuItem(page, "interrupt")).click()
+    for (let attempt = 0; calls.length < 2 && attempt < 200; attempt++) await page.waitForTimeout(25)
+    await page.getByText("Pausing: the steps in progress are finishing.").waitFor({ state: "detached" })
     assert.deepEqual(calls.map(call => [call.action, call.graceful]), [["pause", true], ["pause", undefined]], "Interrupt now is an immediate Pause")
     assert.equal(calls[1].expectedRevision, 2)
     assert.notEqual(calls[1].requestId, calls[0].requestId)
@@ -321,7 +323,7 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
       action: "pause", graceful: true, targets: [], pending: [] } }
     working = false
     await missionRefresh(page).click(); await settled(page)
-    assert.equal(await interrupt.count(), 0)
+    assert.equal((await interrupt()).enabled, false)
     assert.equal(await page.getByText("Pausing: the steps in progress are finishing.").count(), 0)
     assert.equal(calls.length, 2, "ordinary refresh reads send no lifecycle control")
     assert.deepEqual(errors, [])

@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { bundledNpm, executeInstaller, executeNpm } from "./npm-runtime"
+import { bundledNpm, executeInstaller, executeNpm, openCodeAllowScripts } from "./npm-runtime"
 import { isRetiredInstallation } from "./retired-installation"
 import { registerUserPath } from "./user-path"
 import { probeBinaryVersionAsync, buildSpawnSpec } from "../workspaces/spawn"
@@ -330,7 +330,8 @@ export async function installSharedOpenCode(version: string, options: Installati
       } else {
         await assertExecutableWritable(oldBinary, platform)
         await executeNpm(node, [npm, "install", "--global", "--prefix", prefix,
-          "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", `@opencode/cli@${target}`], options.env ?? process.env, platform, prefix, options.execute)
+          "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", `--allow-scripts=${openCodeAllowScripts(target)}`,
+          `@opencode/cli@${target}`], options.env ?? process.env, platform, prefix, options.execute)
       }
     }
     const result = await probe(binary)

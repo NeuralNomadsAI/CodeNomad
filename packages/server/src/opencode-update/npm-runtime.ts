@@ -16,6 +16,17 @@ export function bundledNpm(execPath = process.execPath,
   return candidates.find(candidate => existsSync(candidate))
 }
 
+/** npm's `allow-scripts` value for CodeNomad's global OpenCode installation. Its
+ * postinstall links the platform executable; the platform packages have no
+ * install scripts. npm blocks unlisted dependency install scripts by default
+ * (12+) and accepts this list per invocation for global installs, as a CLI flag
+ * or as `npm_config_allow_scripts`; it is never written to an npmrc. Only this
+ * exact package version is allowed. */
+export function openCodeAllowScripts(version: string): string {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Installation requires an exact stable OpenCode version")
+  return `@opencode/cli@${version}`
+}
+
 /** npm lifecycle scripts invoke `node` by name. Tauri's Node already answers to
  * it beside npm; Electron's executable (CodeNomad) needs a scoped `node` command. */
 export function npmNeedsNodeCommand(node: string, platform: NodeJS.Platform): boolean {
@@ -34,36 +45,43 @@ const HIDE_CHILD_WINDOWS = [
   "",
 ].join("\n")
 
-/** Writes Electron's `node` command and returns the runtime arguments npm itself needs. */
-export async function writeNpmNodeCommand(directory: string, node: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Promise<string[]> {
+/** Scopes npm/npx to this runtime; Electron also needs a node command and Windows preload. */
+export async function writeNpmCommands(directory: string, node: string, npm: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Promise<string[]> {
+  const needsNode = npmNeedsNodeCommand(node, platform)
+  const hideWindows = needsNode && platform === "win32"
   env.CODENOMAD_NPM_NODE = node
-  if (platform !== "win32") {
-    await writeFile(path.join(directory, "node"), '#!/bin/sh\nexec "$CODENOMAD_NPM_NODE" "$@"\n', { mode: 0o700 })
-    return []
-  }
+  env.CODENOMAD_NPM_CLI = npm
+  env.CODENOMAD_NPX_CLI = path.join(path.dirname(npm), "npx-cli.js")
   const preload = path.join(directory, "hide-child-windows.cjs")
-  await writeFile(preload, HIDE_CHILD_WINDOWS)
-  env.CODENOMAD_NPM_PRELOAD = preload
-  await writeFile(path.join(directory, "node.cmd"), '@echo off\r\n"%CODENOMAD_NPM_NODE%" --require "%CODENOMAD_NPM_PRELOAD%" %*\r\n')
-  return ["--require", preload]
+  if (hideWindows) {
+    await writeFile(preload, HIDE_CHILD_WINDOWS)
+    env.CODENOMAD_NPM_PRELOAD = preload
+  }
+  for (const [name, cli] of [["npm", "CODENOMAD_NPM_CLI"], ["npx", "CODENOMAD_NPX_CLI"], ...(needsNode ? [["node", ""]] : [])]) {
+    const command = platform === "win32"
+      ? `@echo off\r\n"%CODENOMAD_NPM_NODE%" ${hideWindows ? '--require "%CODENOMAD_NPM_PRELOAD%" ' : ""}${cli ? `"%${cli}%" ` : ""}%*\r\n`
+      : `#!/bin/sh\nexec "$CODENOMAD_NPM_NODE" ${cli ? `"$${cli}" ` : ""}"$@"\n`
+    await writeFile(path.join(directory, name + (platform === "win32" ? ".cmd" : "")), command, { mode: 0o700 })
+  }
+  const key = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH"
+  env[key] = [directory, path.dirname(node), env[key] || ""].join(platform === "win32" ? ";" : ":")
+  return hideWindows ? ["--require", preload] : []
 }
 
-/** Runs npm for the locked `prefix`; Electron's `node` command lives in that prefix. */
+/** args starts with the selected npm-cli.js; all command adapters live in the locked prefix. */
 export async function executeNpm(node: string, args: string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform,
   prefix: string, execute = executeInstaller): Promise<void> {
-  const directory = npmNeedsNodeCommand(node, platform) ? await createInstallerDirectory(prefix, "npm") : undefined
+  const directory = await createInstallerDirectory(prefix, "npm")
   let retain = false
   try {
     const childEnv = { ...env }
-    const runtimeArgs = directory ? await writeNpmNodeCommand(directory, node, childEnv, platform) : []
-    const key = Object.keys(childEnv).find(key => key.toLowerCase() === "path") ?? "PATH"
-    childEnv[key] = [...(directory ? [directory] : []), path.dirname(node), childEnv[key] || ""].join(platform === "win32" ? ";" : ":")
-    await execute(node, [...runtimeArgs, ...args], childEnv, directory ? { cwd: directory } : undefined)
+    const runtimeArgs = await writeNpmCommands(directory, node, args[0]!, childEnv, platform)
+    await execute(node, [...runtimeArgs, ...args], childEnv, { cwd: directory })
   } catch (error) {
     retain = error instanceof InstallationInterruptedError
     throw error
   } finally {
-    if (directory && !retain) await rm(directory, { recursive: true, force: true }).catch(() => {})
+    if (!retain) await rm(directory, { recursive: true, force: true }).catch(() => {})
   }
 }
 

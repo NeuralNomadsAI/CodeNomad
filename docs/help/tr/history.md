@@ -1,5 +1,7 @@
 # Geçmiş, arama ve temizleme
 
+Arama, zaman çizelgesi, görsel galerisi ve teknik temizleme, OpenCode'un deneysel `part_rows` depolamasını ve ayrı parçalarla satır içi parçaları birlikte içeren iletileri de destekler. Seçenek kapatıldıktan sonra da önceden ayrılmış parçalar okunabilir.
+
 Saklanan geçmiş, konuşma dökümünün şu anda görüntüledikleri ve modelin sıkıştırılmış bağlamı ayrıdır. Herhangi bir şeyi silmeden önce gezinmeyi veya filtrelemeyi seçin.
 
 ## Tüm geçmişi ara {#full-history-search}

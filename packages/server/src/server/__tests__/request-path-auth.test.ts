@@ -1,14 +1,14 @@
 import assert from "node:assert/strict"
 import net from "node:net"
 import test from "node:test"
-import { startRemoteSurface } from "../../remote-control/test-support/surface"
+import { FAKE_TUNNEL_HOST, startRemoteSurface } from "../../remote-control/test-support/surface"
 
 // Writes a raw request line, so the target reaches the server exactly as written.
-function send(target: string, requestTarget: string, options: { method?: string; cookie?: string; body?: string } = {}): Promise<{ status: number; head: string }> {
+function send(target: string, requestTarget: string, options: { method?: string; cookie?: string; body?: string; host?: string } = {}): Promise<{ status: number; head: string; body: string }> {
   const [hostname, port] = target.split(":")
   const body = options.body ?? ""
   const headers = [
-    `${options.method ?? "GET"} ${requestTarget} HTTP/1.1`, `Host: ${target}`, "Connection: close",
+    `${options.method ?? "GET"} ${requestTarget} HTTP/1.1`, `Host: ${options.host ?? target}`, "Connection: close",
     ...(options.cookie ? [`Cookie: ${options.cookie}`] : []),
     ...(body ? ["Content-Type: application/json", `Content-Length: ${Buffer.byteLength(body)}`] : []),
   ]
@@ -17,7 +17,7 @@ function send(target: string, requestTarget: string, options: { method?: string;
     const socket = net.connect(Number(port), hostname, () => socket.write(`${headers.join("\r\n")}\r\n\r\n${body}`))
     let data = ""
     socket.on("data", (chunk) => { data += chunk })
-    socket.on("close", () => resolve({ status: Number(data.split(" ")[1]), head: data.split("\r\n\r\n")[0] ?? "" }))
+    socket.on("close", () => resolve({ status: Number(data.split(" ")[1]), head: data.split("\r\n\r\n")[0] ?? "", body: data.split("\r\n\r\n").slice(1).join("\r\n\r\n") }))
     socket.on("error", reject)
   })
 }
@@ -45,4 +45,20 @@ test("local authentication judges the path the router routes, not the raw reques
   const cookie = login.head.match(/^set-cookie: ([^;]+)/im)?.[1]
   assert.ok(cookie, login.head)
   assert.equal((await send(local, "/%61pi/test/echo", { cookie })).status, 200)
+})
+
+test("an over-long route parameter still meets Remote Control admission and local authentication first", async (t) => {
+  const { local, target } = await startRemoteSurface(t)
+  const long = "x".repeat(101)
+  const replies = [
+    // The ingress refuses another Host, and a mutation without the public Origin, before routing.
+    [await send(target(), `/api/workspaces/${long}`, { method: "DELETE" }), 421],
+    [await send(target(), `/api/workspaces/${long}`, { method: "DELETE", host: FAKE_TUNNEL_HOST }), 403],
+    // The local listener asks for a session first.
+    [await send(local, `/sidecars/${long}/x`, { method: "POST" }), 401],
+  ] as const
+  for (const [reply, status] of replies) {
+    assert.equal(reply.status, status, reply.head)
+    assert.equal(reply.body.includes(long), false, "the refusal does not echo the target")
+  }
 })

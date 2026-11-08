@@ -13,6 +13,8 @@ import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import pino from "pino"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildState, observeFixtureReload } from "./native-fixture-diagnostics.mjs"
+import { performance } from "node:perf_hooks"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute isolated CLI executable")
@@ -65,6 +67,7 @@ let child, stopped, manager, plugin, removeBridge, output = "", failure, held, h
 const diagnosticReads = []
 const gates = [], failedGates = [], failures = []
 const receipt = { status: "running", cli, cliVersion: version, nodeVersion: process.version, artifacts: root, gates, failedGates, failures }
+const reloadDiagnostics = {}
 let previousFailures = 0
 const gate = name => {
   if (failures.length > previousFailures) { failedGates.push(name); console.error(`FAIL ${name}`) }
@@ -915,6 +918,8 @@ try {
   const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const journalEntries = (database, range) => database.prepare("SELECT COUNT(*) AS count FROM kv WHERE substr(key, 1, ?) = ?").get(range.length, range).count
   let journalRange
+  const seedStarted = performance.now()
+  reloadDiagnostics.seed = { startedAt: new Date().toISOString() }
   const seeding = new DatabaseSync(process.env.OPENCODE_DB)
   try {
     seeding.exec("PRAGMA busy_timeout = 10000")
@@ -933,8 +938,16 @@ try {
     }
     seeding.exec("COMMIT")
     assert.ok(journalEntries(seeding, journalRange) > 2_000, "The project holds more than one mission's bound")
-  } finally { seeding.close() }
-  await client.location.reload({ signal: AbortSignal.timeout(20_000) })
+  } finally {
+    seeding.close()
+    Object.assign(reloadDiagnostics.seed, { finishedAt: new Date().toISOString(), durationMs: performance.now() - seedStarted })
+  }
+  const reload = observeFixtureReload(url)
+  reloadDiagnostics.reload = reload.diagnostics
+  let reloadError
+  try { await client.location.reload({ signal: AbortSignal.timeout(20_000) }) }
+  catch (error) { reloadError = error; throw error }
+  finally { reload.stop(reloadError) }
   await until(async () => { try { return Boolean(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })) } catch { return false } })
   const live = (await createPrepared({ requestID: "native-history-live", objective: "Live beside history", template: "custom" })).mission
   const liveCoordinator = live.coordinatorSessionId
@@ -1057,6 +1070,11 @@ try {
   console.error(`Fixture failed during ${stage} at ${root}: ${output.slice(-8000)}`)
   throw error
 } finally {
+  receipt.beforeCleanup = reloadDiagnostics.beforeCleanup = fixtureChildState(child)
+  await writeFile(path.join(root, "reload-diagnostics.json"), JSON.stringify(reloadDiagnostics, null, 2)).catch(() => {
+    console.error("Could not write private reload diagnostics")
+    process.exitCode ||= 1
+  })
   held?.()
   await Promise.allSettled(diagnosticReads)
   await removeBridge?.()

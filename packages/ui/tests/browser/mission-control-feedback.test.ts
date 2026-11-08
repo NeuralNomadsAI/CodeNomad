@@ -11,6 +11,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-navigation"
 import { panelMissions } from "./mission-content-fixture"
+import { missionMenuItem, missionMenuItemState } from "./mission-actions"
 
 // Real MissionControl/RightPanel fixtures for feedback that must survive hidden
 // views: certified lifecycle rejection, superseded exact briefing responses and
@@ -49,7 +50,7 @@ const select = (page: Page, id: string, scope = "/fixture") => page.evaluate(asy
   ;(await import(view)).updateMissionProjectView(scope, { selected: id })
 }, { id, scope })
 const detail = (page: Page) => page.locator("section.mission-detail")
-const toolbar = (page: Page) => detail(page).getByRole("toolbar")
+const toolbar = (page: Page) => page.locator(".mission-picker-selection-actions .mission-action-bar")
 const alerts = (page: Page) => detail(page).locator(".mission-action-feedback [role=alert]")
 const toasts = (page: Page) => page.evaluate(async () => {
   const path = "/src/lib/notifications.tsx"
@@ -207,9 +208,10 @@ for (const exact of [true, false]) {
   test(`${exact ? "an exact" : "a foreign"} briefing response superseded by an automatic milestone while hidden ${exact ? "resolves" : "keeps"} the request after activation`, async () => {
     const values = [mission("A", "project")]
     const { page, errors, prompts, counter } = await navigable(values)
-    const request = detail(page).locator(".mission-action-request"), feedback = detail(page).locator(".mission-briefing-feedback")
+    const feedback = detail(page).locator(".mission-briefing-feedback")
+    const requestEnabled = async () => (await missionMenuItemState(page, "request")).enabled
     try {
-      await request.click()
+      await (await missionMenuItem(page, "request")).click()
       await feedback.getByText("Request sent.", { exact: false }).waitFor()
       const requestID = /Request ID: ([^\n]+)/.exec(prompts[0].text)![1]
       await page.evaluate(() => window.missionNavigation.activate(false)); await frames(page)
@@ -222,7 +224,7 @@ for (const exact of [true, false]) {
       await page.evaluate(() => window.missionNavigation.activate(true)); await revalidated
       if (exact) {
         await feedback.waitFor({ state: "detached" })
-        assert.equal(await request.isEnabled(), true)
+        assert.equal(await requestEnabled(), true)
         const stored = await page.evaluate(async () => {
           const path = "/src/stores/mission-briefing-request.ts"
           return (await import(path)).missionBriefingRequest(JSON.stringify(["fixture", "/fixture", "project", "project", "A", "ses_A"]))
@@ -231,7 +233,7 @@ for (const exact of [true, false]) {
       } else {
         await frames(page)
         await feedback.getByText("Request sent.", { exact: false }).waitFor()
-        assert.equal(await request.isDisabled(), true, "an automatic or foreign briefing never answers the request")
+        assert.equal(await requestEnabled(), false, "an automatic or foreign briefing never answers the request")
       }
       assert.equal(prompts.length, 1, "never resent")
       assert.deepEqual(errors, [])

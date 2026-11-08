@@ -172,6 +172,11 @@ jobs:
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
+          $fixtures = Join-Path $env:RUNNER_TEMP 'runtime-contract-fixtures'
+          New-Item -ItemType Directory -Force $fixtures | Out-Null
+          "RUNTIME_CONTRACT_FIXTURES=$fixtures" >> $env:GITHUB_ENV
+          $env:TEMP = $fixtures
+          $env:TMP = $fixtures
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
           $version = '${{ matrix.runtime }}'
           if ($version -eq 'minimum') {
@@ -197,6 +202,10 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node scripts/test-session-pruning-native.mjs $cli --part-rows
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           # Shipped Missions bundle: loading, model-visible tools through the
           # ordinary prompt loop, journal RPC and recurrence capability.
           node scripts/test-missions-native-contract.mjs $cli
@@ -209,6 +218,14 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Parallel siblings, a recursive grandchild and coordinator readout.
           node scripts/test-missions-native-trajectory.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Context IDs must resolve native schedule metadata; the retained product
+          # bundle must admit cold scheduled passages with the backend closed.
+          node scripts/test-native-schedule-context.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $scheduleParent = node -p "require('node:path').join(require('node:os').tmpdir(), 'opencode')"
+          $scheduleScratch = Join-Path $scheduleParent "schedule-wakes-$([guid]::NewGuid().ToString('N'))"
+          node --import tsx scripts/test-native-mission-schedule-product.mjs $cli $scheduleScratch --parent-ready --kinds=at,in
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ('${{ matrix.runtime }}' -eq 'latest') {
             # Missions Preferences' Location subagent-depth editor against the
@@ -258,6 +275,39 @@ jobs:
             node scripts/test-recurring-simple-native.mjs $cli ABCD
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
+
+      - name: Upload isolated schedule product failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_PRODUCT_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-product-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/receipt.json
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload isolated schedule foundation failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-foundation-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload isolated runtime contract failure diagnostics
+        if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: runtime-contract-failure-windows-${{ matrix.runtime }}
+          path: |
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/runtime.log
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/receipt.json
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/reload-diagnostics.json
+          if-no-files-found: warn
+          retention-days: 7
 
   tests:
     needs: authorize
@@ -317,7 +367,7 @@ jobs:
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs
 
       - name: Test Electron client state
         env:
@@ -716,6 +766,19 @@ jobs:
       - name: Test first installation without system Node
         timeout-minutes: 10
         run: node scripts/test-opencode-install-native.mjs
+
+      # Tauri's resources: the pinned Node archive's executable with the pinned
+      # npm (`.npm-version`), so an npm update runs OpenCode's real postinstall.
+      - name: Test first installation with Tauri's Node and pinned npm
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          resources="$RUNNER_TEMP/tauri-node-resources"
+          node -e "require('./scripts/prepare-node-runtime.cjs').prepareBundledNodeRuntime({ resourcesRoot: process.argv[1] }).catch(error => { console.error(error); process.exit(1) })" "$resources"
+          target="$(node -p "require('./scripts/prepare-node-runtime.cjs').currentTarget()")"
+          executable="$(node -p "process.platform === 'win32' ? 'node.exe' : 'bin/node'")"
+          CODENOMAD_FIXTURE_NODE="$resources/node/$target/$executable" \
+            node scripts/test-opencode-install-native.mjs
 
       # Electron's npm-only resources and its executable as Node: OpenCode's real
       # postinstall runs through the scoped `node` command (sh adapter or node.cmd).

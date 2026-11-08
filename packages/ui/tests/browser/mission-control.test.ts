@@ -5,9 +5,9 @@ import path from "node:path"
 import os from "node:os"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
-import { chromium, type Browser, type Locator, type Page } from "playwright"
+import { chromium, type Browser, type Locator, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
-import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionPopupOption,
+import { clickMissionAction, inlineMissionEntry, missionEntryStatus, missionGeneralAction, missionRow, missionMenuTrigger, missionPicker, missionRows, missionToolbar,
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 
 import { borrowFixture } from "./fixture-borrow"
@@ -66,20 +66,19 @@ async function until(condition: () => boolean, timeout = 5_000) {
 }
 /** The selected Mission's detail: a separate section below the picker. */
 const selectedCard = (page: Page) => page.locator("section.mission-detail")
-/** Screen-reader status ("State · time") of the Mission shown in the current-mission field. */
-const selectedStatus = (page: Page, state: string) => missionPickerField(page).locator(".sr-only").filter({ hasText: new RegExp(`^${state} · `) })
+/** Screen-reader status ("State · time") of the selected Mission's row. */
+const selectedStatus = (page: Page, state: string) => page.locator(".mission-row-select[aria-current=true] .sr-only").filter({ hasText: new RegExp(`^${state} · `) })
 /** The selected Mission's contextual Play/Pause/Check control: the toolbar's first button. */
-const primaryControl = (page: Page) => selectedCard(page).locator(".mission-action-bar > button").first()
+const primaryControl = (page: Page) => missionToolbar(page).locator("button").first()
 const taskRow = (page: Page, key: string) => page.locator(`.mission-tree li[data-task-key="${key}"]`)
 const taskButton = (page: Page, key: string) => taskRow(page, key).locator(".mission-tree-task")
 const taskState = (page: Page, key: string, state: string) => page.locator(`.mission-tree li[data-task-key="${key}"][data-state="${state}"]`)
-const readAll = (page: Page) => selectedCard(page).locator(".mission-overview-toggle")
+const readAll = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const fixtureText = (page: Page, key: string) => fixtureCall(page, "text", key) as Promise<string>
-/** Locale-neutral explicit picker choice (the field's accessible name is localized). */
+/** Locale-neutral explicit choice of a row by its title. */
 async function pickLocalized(page: Page, title: string) {
-  await missionPicker(page).locator("button.mission-picker-field").click()
-  await missionPopupOption(page, title).click()
+  await (await inlineMissionEntry(page, title)).click()
   await selectedCard(page).waitFor()
 }
 async function localizedPreferences(page: Page, name: string) {
@@ -108,6 +107,8 @@ const settingsFits = (page: Page) => page.locator(".settings-screen-scroll").eva
 /** Plan changes, reports, cleanup history and identifiers are folded at the
  * bottom of the central overview reader; the panel keeps none of them. */
 async function openOverviewFold(page: Page, label: string) {
+  // An open task reader holds the Summary eye: it closes first.
+  if (await page.locator(".mission-task-reader").count()) await readAll(page).click()
   if (await readAll(page).getAttribute("aria-pressed") !== "true") await readAll(page).click()
   const fold = page.locator(".mission-reader details.mission-report-technical").filter({ has: page.locator(":scope > summary", { hasText: new RegExp(`^${label}$`) }) })
   if (!await fold.evaluate(element => (element as HTMLDetailsElement).open)) await fold.locator(":scope > summary").click()
@@ -726,6 +727,43 @@ test("depth uncertainty stays at its original Location through pending navigatio
   } finally { release(); await page.close() }
 })
 
+for (const close of [false, true]) test(`an open task reader's native task reads ${close ? "stop when it closes" : "go on while it stays open"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  try {
+    await setup(page)
+    const value = mission("reader-demand")
+    value.coordinatorSessionId = "ses_reader_root"
+    value.tasks[0].status = "dispatching"
+    await page.route("**/api/workspaces/fixture/missions**", route => {
+      if (isMissionContentRequest(route.request().url())) return route.fallback()
+      return route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: value.revision, discardedEvents: 0 } })
+    })
+    // Hold the coordinator's message read: the children read only follows it.
+    let held: Route | undefined
+    const children: string[] = []
+    page.on("request", request => { if (request.url().includes("parentID=ses_reader_root")) children.push(request.url()) })
+    await page.route(target => target.href.includes("ses_reader_root") && target.pathname.includes("/message"), route => {
+      if (!held) { held = route; return }
+      return route.fulfill({ json: { data: [] } })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await selectMission(page, "Objective reader-demand")
+    await until(() => Boolean(held), 15_000)
+    await taskButton(page, "task-one").click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Inspect evidence", level: 2 }).waitFor()
+    // The hidden panel's tree releases its demand; the open reader is the last owner.
+    await fixtureCall(page, "active", false)
+    if (close) {
+      await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+      await page.locator(".mission-reader").waitFor({ state: "detached" })
+    }
+    await held!.fulfill({ json: { data: [] } })
+    if (close) await page.waitForTimeout(1_000)
+    else await until(() => children.length > 0).catch(() => undefined)
+    assert.equal(children.length > 0, !close, close ? `a closed reader reads nothing further: ${children.join(", ")}` : "an open reader lists the coordinator's children")
+  } finally { await page.close() }
+})
+
 test("reader toggles highlight the exact visible content and toggle it off without navigation or writes", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
   try {
@@ -748,7 +786,7 @@ test("reader toggles highlight the exact visible content and toggle it off witho
     await fixtureCall(page, "panelWidth", "280px")
     await task.click()
     assert.equal(await task.getAttribute("aria-pressed"), "true")
-    assert.equal(await overview.getAttribute("aria-pressed"), "false")
+    assert.equal(await overview.getAttribute("aria-pressed"), "true", "the eye shows the task's open reader")
     await fixtureCall(page, "refresh")
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
     assert.equal(await task.getAttribute("aria-pressed"), "true")
@@ -841,7 +879,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
           if (name.includes("human-request")) {
             await fixtureCall(target, "seedActor")
             await fixtureCall(target, "event", { type: "form.created", data: { form: { id: "form-mobile", sessionID: "ses_background", title: "Choose a supported build route", fields: [{ type: "text", name: "route", label: "Build route" }] } } })
-            await target.locator(".mission-attention-list").getByText("Choose a supported build route", { exact: true }).waitFor()
+            await taskState(target, "inspect", "input").waitFor()
           }
         } else await target.setViewportSize({ width, height: 900 })
         await fixtureCall(target, "panelWidth", panelWidth)
@@ -857,7 +895,6 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await checklist.getByText("Ready to start. Start the mission to build its plan.", { exact: true }).waitFor()
     assert.equal(await card.locator("form, textarea, .mission-disclosure:not(.mission-tree)").count(), 0, "no coordinator field or secondary disclosure besides the task tree")
     assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
-    assert.equal(await page.locator(".mission-needs").count(), 0)
     await capture("before-wide", 1280, "440px")
 
     value.runState = "running"
@@ -888,7 +925,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await taskState(page, "inspect", "blocked").waitFor()
     assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).filter({ visible: true }).count(), 0,
       "source prose belongs in the central reader, not duplicated in the tree")
-    assert.equal(await page.locator(".mission-needs").count(), 0, "a reported blockage is not a human request")
+    assert.equal(await missionRow(page, value.objective).locator(".session-item-expander").getAttribute("data-child-activity"), null, "a reported blockage is not a human request")
     await capture("technical-blocked-narrow", 1100, "280px")
     await capture("technical-blocked-mobile", 390, "390px", true)
     await page.setViewportSize({ width: 1280, height: 900 })
@@ -913,25 +950,22 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
 
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "form-journey", sessionID: "ses_background", title: "Choose a supported build route", fields: [{ type: "text", name: "route", label: "Build route" }] } } })
-    const attention = card.locator(".mission-needs")
-    await attention.waitFor()
-    assert.equal(await attention.evaluate(element => Boolean(element.compareDocumentPosition(document.querySelector(".mission-tree")!) & Node.DOCUMENT_POSITION_FOLLOWING)), true,
-      "human decisions precede the tasks")
-    const needs = attention.locator(".mission-needs-item")
-    assert.equal(await needs.count(), 1)
-    assert.equal(await needs.evaluate(element => element.getBoundingClientRect().height <= 44), true, "one compact line per request")
-    await page.locator(".mission-attention-list").getByText("Choose a supported build route", { exact: true }).waitFor()
+    // The asking task turns red and opens its question; the chevron carries it, the flag stays the mission's own.
+    const row = missionRow(page, value.objective)
+    await taskState(page, "inspect", "input").waitFor()
+    assert.equal(await taskButton(page, "inspect").getAttribute("aria-description"), "Opens its question")
+    assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), "permission")
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0, "a task's question is never the mission's flag")
+    assert.equal(await card.locator(".mission-needs, .mission-attention-list").count(), 0, "questions live on their rows")
     await capture("human-request-mobile", 390, "390px", true)
     await fixtureCall(page, "event", { type: "permission.asked", data: { id: "permission-journey", sessionID: "ses_background", action: "shell", resources: ["npm run verify"] } })
-    await page.waitForFunction(() => document.querySelectorAll(".mission-needs-item").length === 2)
-    await page.locator(".mission-attention-list .sr-only", { hasText: "npm run verify" }).waitFor({ state: "attached" })
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "unrelated-form", sessionID: "ses_unrelated", title: "Unrelated request", fields: [] } } })
-    assert.equal(await page.locator(".mission-attention-list").getByText("Unrelated request", { exact: true }).count(), 0)
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-journey", sessionID: "ses_background", answers: { route: "Windows" } } })
-    await page.waitForFunction(() => document.querySelectorAll(".mission-needs-item").length === 1)
+    await taskState(page, "inspect", "input").waitFor()
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0, "an unrelated request belongs to no mission")
     await fixtureCall(page, "event", { type: "permission.replied", data: { requestID: "permission-journey", sessionID: "ses_background", response: "once" } })
-    await attention.waitFor({ state: "detached" })
     await taskState(page, "inspect", "blocked").waitFor()
+    assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), null)
     assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).filter({ visible: true }).count(), 0)
 
     const old = { ...blocked, id: "old-report", taskKey: "retired", summary: "Obsolete failure from the cancelled build.", createdAt: 100 }
@@ -1103,7 +1137,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     await fixtureCall(page, "mount", true)
     assert.equal(await play.isDisabled(), true)
     assert.equal(await stop.isDisabled(), true)
-    assert.equal(await page.getByRole("button", { name: "More actions", exact: true }).count(), 0, "no overflow menu in the panel")
+    assert.equal(await missionMenuTrigger(page).count(), 1, "secondary actions live in the selection's overflow menu")
     await page.screenshot({ path: screenshotPath("mission-lifecycle-stopped") })
     assert.deepEqual(calls.map(call => call.action), ["start", "pause", "pause", "start", "stop"])
   } finally { await page.close() }
@@ -1207,7 +1241,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
     // Only the picker selects: deleting the selected Mission never falls back to
     // another one, even the current conversation's coordinator Mission.
-    await missionPickerField(page).locator(".mission-picker-placeholder").waitFor()
+    await selectedMissionTitle(page).waitFor({ state: "detached" })
     assert.equal(await selectedCard(page).count(), 0)
     await (await inlineMissionEntry(page, "Objective one")).waitFor()
     assert.equal(deletions.length, 2)
@@ -1296,14 +1330,19 @@ test("background native questions settle and requested execution remains distinc
     await page.locator(".mission-execution-cell", { hasText: "native/observed" }).waitFor()
     await page.locator('.mission-execution-cell[data-state="unknown"]', { hasText: "Unknown" }).waitFor()
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "form-background", sessionID: "ses_background", title: "Choose the scope", fields: [{ type: "text", name: "scope", label: "Scope" }] } } })
-    await page.getByText("Choose the scope", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-attention-list").getByRole("button", { name: "Answer", exact: true }).getAttribute("aria-description"), "Open Background assistant")
+    // Its only task is done: no live task row carries the actor's question, so the flag does.
+    const flag = missionRow(page, value.objective).locator('.mission-row-flag[data-mark="permission"]')
+    await flag.waitFor()
+    assert.match(await missionEntryStatus(page, value.objective), /Awaiting your input/)
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-background", sessionID: "ses_background", answers: {} } })
-    await page.getByText("Choose the scope", { exact: true }).waitFor({ state: "detached" })
-    assert.equal(await page.locator(".mission-needs").count(), 0)
+    await flag.waitFor({ state: "detached" })
+    // The coordinator's conversation is the mission's toolbar once the task's reader closes.
+    await page.getByRole("button", { name: "Back to chat" }).click()
     await clickMissionAction(page, "Open conversation")
     await page.getByRole("alert").getByText("Unable to reload session").waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+    await taskButton(page, "task-one").click()
+    await openTaskTechnicalDetails(page)
     await page.locator(".mission-execution").scrollIntoViewIfNeeded()
     await page.screenshot({ path: screenshotPath("mission-execution-browser"), fullPage: true })
   } finally { await page.close() }
@@ -1377,10 +1416,9 @@ test("compact mission rows retain a completed branching plan, direct readers and
     const lastTask = await page.locator(".mission-tree li").last().boundingBox()
     assert.ok(lastTask && lastTask.y + lastTask.height < 800, "the complete plan fits at a normal panel height")
     await inlineMissionEntry(page, "Ship the Mission Centre")
-    const indexRows = await missionPicker(page).locator(".mission-picker-inline button.mission-picker-option").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
+    const indexRows = await missionRows(page).locator("button.mission-row-select").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
     assert.equal(indexRows.length, 2)
     assert.ok(indexRows[1].top >= indexRows[0].bottom)
-    await missionPickerExpander(page).click()
     assert.equal(await page.locator(".mission-control-metrics").count(), 0)
     // Creation is a labelled icon in the general toolbar (accessible name and tooltip).
     const create = missionGeneralAction(page, "Create mission")
@@ -1397,7 +1435,19 @@ test("compact mission rows retain a completed branching plan, direct readers and
     await taskButton(page, "review").click()
     await page.locator(".mission-reader").getByRole("heading", { name: "Independent review", exact: true }).waitFor()
     assert.equal(await edge.getAttribute("d"), compactPath, "reading no longer expands task rows or changes graph geometry")
+    // The task's open reader takes the header toolbar; Summary hands it back to the mission.
+    assert.equal(await taskRow(page, "review").locator("button").count(), 1, "task rows carry no per-row controls")
+    await missionToolbar(page).getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
+    assert.equal(await missionToolbar(page).locator(".action-overflow-trigger").isDisabled(), true, "the mission's menu actions do not apply to a task")
+    assert.equal(await missionToolbar(page).getByRole("button", { name: "Delete selected mission…", exact: true }).isDisabled(), true)
+    await missionToolbar(page).locator(".mission-overview-toggle").click()
+    await missionToolbar(page).getByRole("button", { name: "Open conversation", exact: true }).waitFor()
+    assert.equal(await taskButton(page, "review").getAttribute("aria-pressed"), "false")
+    await taskButton(page, "review").click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Independent review", exact: true }).waitFor()
     await page.getByRole("button", { name: "Back to chat" }).click()
+    await missionToolbar(page).getByRole("button", { name: "Open conversation", exact: true }).waitFor()
     await page.evaluate(() => { document.querySelector<HTMLElement>(".mission-control")!.style.zoom = "1.25" })
     // At fractional zoom an edge still ends on its dependent's status icon.
     await page.waitForFunction(() => {
@@ -1445,26 +1495,26 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     assert.equal(await selectedCard(page).count(), 0, "no detail until a Mission is selected")
     assert.equal(await selectedMissionTitle(page).count(), 0)
     // Each entry is one line: a status mark and the title; the state · time stays in the tooltip and screen-reader text.
-    const parts = await rows[0].evaluate(el => [...el.children].map(child => child.className))
-    assert.deepEqual(parts, ["mission-picker-mark", "mission-picker-title", "sr-only"])
+    const parts = await rows[0].evaluate(el => [...el.children].map(child => child.getAttribute("class")!.split(" ")[0]))
+    assert.deepEqual(parts, ["lucide", "session-item-title", "sr-only"])
     assert.match(await rows[0].locator(".sr-only").textContent() ?? "", /^In progress · /)
     assert.match(await rows[0].getAttribute("title") ?? "", new RegExp(`^${titleOf(0).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} — In progress · `))
-    const title = await rows[0].locator(".mission-picker-title").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))
+    const title = await rows[0].locator(".session-item-title").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))
     assert.deepEqual(title, { overflow: "ellipsis", wrap: "nowrap" })
-    assert.equal(await rows[0].locator(".mission-picker-title").evaluate(el => el.scrollWidth > el.clientWidth), true, "the long title is visually shortened")
+    assert.equal(await rows[0].locator(".session-item-title").evaluate(el => el.scrollWidth > el.clientWidth), true, "the long title is visually shortened")
     const heights = await Promise.all(rows.map(row => row.evaluate(el => el.getBoundingClientRect().height)))
-    const titleHeight = await rows[0].locator(".mission-picker-title").evaluate(el => el.getBoundingClientRect().height)
+    const titleHeight = await rows[0].locator(".session-item-title").evaluate(el => el.getBoundingClientRect().height)
     assert.ok(heights.every(height => height < titleHeight * 2), "single-line rows")
-    const marks = await Promise.all(rows.map(row => row.locator(".mission-picker-mark").getAttribute("data-mark")))
+    const marks = await Promise.all(rows.map(row => row.locator(".mission-row-flag").getAttribute("data-mark")))
     assert.deepEqual(marks, ["idle", "idle", "interrupted"], "only the resumable failure needs attention; history already present reads as seen")
-    const colors = await missionPicker(page).locator(".mission-picker-inline .mission-picker-mark").evaluateAll(items => items.map(el => getComputedStyle(el).backgroundColor))
+    const colors = await missionRows(page).locator(".mission-row-flag").evaluateAll(items => items.map(el => getComputedStyle(el).color))
     assert.equal(new Set(colors).size, 2, "idle rows share the neutral mark")
     await rows[1].click()
     await selectedCard(page).waitFor()
-    // The detail follows the whole picker as its own section, never inside the selected row.
+    // The detail is the selected row's children: right after it in the tree, before the next row.
     assert.equal(await page.locator(".mission-control").evaluate(panel => {
-      const index = panel.querySelector(".mission-picker")!, detail = panel.querySelector("section.mission-detail")!
-      return !index.contains(detail) && Boolean(index.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
+      const selected = panel.querySelector(".mission-row:has(.mission-row-select[aria-current=true])")!, detail = panel.querySelector("section.mission-detail")!
+      return selected.parentElement!.contains(detail) && Boolean(selected.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
     }), true)
     assert.equal(await selectedCard(page).locator("form, textarea, .mission-disclosure:not(.mission-tree), .mission-result").count(), 0)
     assert.equal(await rows[1].getAttribute("aria-current"), "true")
@@ -1472,14 +1522,15 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     const highlight = await page.evaluate(() => { const probe = document.createElement("div"); probe.style.background = "var(--list-item-highlight-bg)"; document.body.append(probe)
       const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color })
     // Rows animate their background; compare settled values, with and without the pointer over the row.
+    const rowBase = rows[1].locator("xpath=ancestor::div[contains(@class, 'session-item-base')]")
     const settledBackground = async () => {
-      await rows[1].evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
-      return rows[1].evaluate(el => getComputedStyle(el).backgroundColor)
+      await rowBase.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
+      return rowBase.evaluate(el => getComputedStyle(el).backgroundColor)
     }
     await page.mouse.move(0, 0)
     assert.equal(await settledBackground(), highlight, "selection uses the shared list highlight, never the input-field surface")
     await rows[1].hover()
-    await page.waitForFunction(() => Boolean(document.querySelector("button.mission-picker-option-selected:hover")))
+    await page.waitForFunction(() => Boolean(document.querySelector(".mission-row-select[aria-current=true]:hover")))
     assert.equal(await settledBackground(), highlight, "rollover overlays the selected highlight instead of replacing it")
     await readAll(page).click()
     await page.locator(".mission-reader").getByText("Full context for mission 1", { exact: true }).waitFor()

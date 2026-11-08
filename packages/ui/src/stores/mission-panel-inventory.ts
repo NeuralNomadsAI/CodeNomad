@@ -433,6 +433,11 @@ export function createMissionPanelInventory(input: {
       version(); const own = entries.get(instanceId)
       return own ? (values(own, `activity:${id}`) as PanelObservation[]).filter(page => currentObservation(own, page)).flatMap(page => page.context.actors) : []
     },
+    /** A Mission's current pages of the marks lane (every listed row's first actor window). */
+    markObservations: (instanceId: string, id: string): PanelObservation[] => {
+      version(); const own = entries.get(instanceId)
+      return own ? (values(own, "marks") as PanelObservation[]).filter(page => page.context.id === id && currentObservation(own, page)) : []
+    },
     refresh: (instanceId: string, explicit = true) => refresh(instanceId, false, explicit),
     ensure: (instanceId: string) => refresh(instanceId, true, false),
     mapMissing: (instanceId: string, id: string) => { version(); return entries.get(instanceId)?.missing.has(id) ?? false },

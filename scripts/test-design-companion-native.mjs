@@ -150,7 +150,7 @@ const password = randomUUID()
 const env = await fixtureEnvironment(root, {
   OPENCODE_CONFIG_DIR: configDirectory, OPENCODE_DB: path.join(root, "fixture.db"), OPENCODE_SERVER_PASSWORD: password,
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
-  OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "fixture/vision", small_model: "fixture/vision", enabled_providers: ["fixture", "fiximg"], experimental: { image_generate: { model: "fiximg/image" } }, providers: {
+  OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "fixture/vision", small_model: "fixture/vision", enabled_providers: ["fixture", "fiximg"], experimental: { image_generate: { model: "fiximg/image" }, ...(process.argv.includes("--part-rows") ? { part_rows: true } : {}) }, providers: {
     fixture: { package: "@opencode/ai/providers/openai-compatible", settings, models: { vision: { name: "Fixture vision", capabilities: { tools: true, input: ["text", "image/png"], output: ["text"] } } } },
     fiximg: { package: "@opencode/ai/providers/openai-compatible/images", settings, models: { image: { name: "Fixture image", type: "image", capabilities: { tools: false, input: ["text", "image/png"], output: ["image"] } } } },
   } }),

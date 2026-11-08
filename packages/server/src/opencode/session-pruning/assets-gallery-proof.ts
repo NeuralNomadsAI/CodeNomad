@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import path from "node:path"
 import type { DatabaseSync, SQLInputValue } from "node:sqlite"
+import { messageStorage } from "./message-storage"
 import { MESSAGE_LIMIT } from "./assets-store"
 
 // Generation annotations of the image gallery, proven from the transcript alone
@@ -88,9 +89,10 @@ export function promptFields(part: Part) {
  */
 export function coverage(db: DatabaseSync, sessionID: string, boundary: string | undefined, top: number, through: number,
   preloaded: Map<string, any>, windowRows: number): Coverage {
-  const rows = db.prepare(`SELECT id,seq,length(CAST(data AS BLOB)) AS bytes FROM session_message WHERE session_id=? AND type='assistant'
+  const storage = messageStorage(db)
+  const rows = db.prepare(`SELECT id,seq,${storage.bytes()} AS bytes FROM ${storage.table} WHERE session_id=? AND type='assistant'
     AND seq<=?${visible(boundary)} ORDER BY seq DESC LIMIT ?`).all(sessionID, top, ...after(boundary), windowRows + LOOKBACK_MESSAGES)
-  const read = db.prepare("SELECT data FROM session_message WHERE session_id=? AND id=?")
+  const read = db.prepare(`SELECT data FROM ${storage.table} WHERE session_id=? AND id=?`)
   const calls: Call[] = [], scanned: Array<{ seq: number; bytes: number }> = []
   let budget = 0, stopped = false
   for (const row of rows) {
@@ -99,7 +101,9 @@ export function coverage(db: DatabaseSync, sessionID: string, boundary: string |
     if (data === undefined) {
       if (bytes > MESSAGE_LIMIT || budget + bytes > LOOKBACK_BYTES) { stopped = true; break }
       budget += bytes
-      data = JSON.parse(String(read.get(sessionID, row.id)?.data))
+      const stored = read.get(sessionID, row.id)?.data
+      if (typeof stored !== "string") { stopped = true; break }
+      data = JSON.parse(stored)
     }
     scanned.push({ seq, bytes })
     for (const part of Array.isArray(data?.content) ? data.content : []) {

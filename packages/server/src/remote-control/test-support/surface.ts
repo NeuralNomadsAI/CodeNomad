@@ -25,6 +25,8 @@ export async function startRemoteSurface(t: TestContext, options: {
   openTunnel?: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
   /** Real panel extension routes over this store, with `workspaceManager` in place of the stub. */
   panelExtensions?: { store: PanelExtensionStore; workspaceManager: unknown }
+  /** Declares extra test routes on the application before it starts. */
+  routes?: (app: ReturnType<typeof createHttpServer>["instance"]) => void
 } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-surface-"))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
@@ -106,6 +108,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     const timer = setInterval(() => reply.raw.write("data: tick\n\n"), 20)
     reply.raw.on("close", () => clearInterval(timer))
   })
+  options.routes?.(app)
   const started = await server.start()
   t.after(async () => {
     await manager.shutdown()

@@ -20,7 +20,7 @@ L’exécutable installé et le service actif peuvent avoir des versions différ
 | Classification | Exigence actuelle | Signification |
 | --- | --- | --- |
 | Minimum | OpenCode **2.2.3** | L’outil de génération d’images qu’utilisent les réglages **Images** et l’extension Design, ainsi que l’ordre correct d’exécution des tâches JavaScript dans Code Mode et le format natif de rejeu et de compaction ; les conversations enregistrées par les versions antérieures restent lisibles après la mise à jour. |
-| Recommandée | OpenCode **2.2.5** | Cible qualifiée, distincte du minimum technique. |
+| Recommandée | OpenCode **2.2.6** | Cible qualifiée, distincte du minimum technique. |
 | Non vérifiée | Version plus récente ou personnalisée non entièrement validée | Non rejetée simplement parce que non testée ; les contrats API réels du service connecté sont vérifiés. |
 
 Le service connecté doit exposer les contrats requis de session, permission, Form, boîte de réception et environnement de session. La programmation native des Missions vérifie aussi les API de programmation, l’ensemble plugin/fournisseur et le réglage effectif `experimental.schedules`. La disponibilité suit les capacités consommées, y compris sur les versions futures compatibles. Si la configuration signale un service actif non pris en charge, sélectionnez/installez une CLI prise en charge et utilisez le redémarrage explicite du service partagé lorsque vous êtes prêt.

@@ -11,7 +11,7 @@ import type { FastifyInstance } from "fastify"
 import type { AuthManager } from "../../auth/manager"
 import type { Logger } from "../../logger"
 import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
-import { RemoteProxySessionManager } from "../remote-proxy"
+import { createRemoteProxyApp, RemoteProxySessionManager } from "../remote-proxy"
 import { resolveHttpsOptions } from "../tls"
 
 const sharedTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-proxy-test-"))
@@ -52,6 +52,77 @@ describe("RemoteProxySessionManager", () => {
       res.writeHead(200, { "content-type": "text/plain" })
       res.end(req.url ?? "")
     })
+  })
+
+  it("forwards WebDAV, CalDAV and SEARCH methods with their bodies", async () => {
+    await withUpstreamServer(async (upstreamBaseUrl) => {
+      const manager = createSessionManager()
+      const session = await createSession(manager, `${upstreamBaseUrl}/base`)
+      await activateSession(session)
+      for (const [method, hasBody] of [["PROPFIND", true], ["MKCOL", true], ["REPORT", true], ["UNLOCK", false]] as const) {
+        const body = hasBody ? `<${method.toLowerCase()}/>` : undefined
+        const response = await proxyFetch(`${session.proxyOrigin}/dav`, {
+          method, ...(body ? { headers: { "content-type": "application/xml" }, body } : {}),
+        })
+        assert.equal(response.status, 200, method)
+        assert.equal(await response.text(), `${method} /base/dav ${body ?? ""}`)
+      }
+    }, (req, res) => {
+      let body = ""
+      req.setEncoding("utf8")
+      req.on("data", (chunk) => { body += chunk })
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "text/plain" })
+        res.end(`${req.method} ${req.url} ${body}`)
+      })
+    })
+  })
+
+  it("parses no body for a bodiless DELETE or OPTIONS declaring JSON, and framed bodies as bytes", async () => {
+    const app = createRemoteProxyApp(sharedHttpsOptions)
+    app.all("/*", async (request) => ({
+      body: request.body === undefined ? "none" : Buffer.isBuffer(request.body) ? request.body.toString() : typeof request.body,
+    }))
+    try {
+      for (const [request, body] of [
+        [{ method: "DELETE" as const }, "none"],
+        [{ method: "OPTIONS" as const }, "none"],
+        [{ method: "DELETE" as const, headers: { "content-length": "0" } }, ""],
+        [{ method: "DELETE" as const, payload: "{\"id\":1}" }, "{\"id\":1}"],
+        [{ method: "POST" as const }, ""],
+      ] as const) {
+        const response = await app.inject({ url: "/item", ...request, headers: { "content-type": "application/json", ...("headers" in request ? request.headers : {}) } })
+        assert.deepEqual(response.json(), { body }, JSON.stringify(request))
+      }
+    } finally { await app.close() }
+  })
+
+  it("forwards no body for a bodiless DELETE declaring JSON, and framed bodies unchanged", async () => {
+    const seen: Array<{ method?: string; length?: string; body: string }> = []
+    await withUpstreamServer(async (upstreamBaseUrl) => {
+      const manager = createSessionManager()
+      const session = await createSession(manager, `${upstreamBaseUrl}/base`)
+      await activateSession(session)
+      for (const body of [undefined, "{\"id\":1}"]) {
+        const response = await proxyFetch(`${session.proxyOrigin}/item`, {
+          method: "DELETE", headers: { "content-type": "application/json" }, ...(body ? { body } : {}),
+        })
+        assert.equal(response.status, 200, body ?? "bodiless")
+      }
+    }, (req, res) => {
+      let body = ""
+      req.setEncoding("utf8")
+      req.on("data", (chunk) => { body += chunk })
+      req.on("end", () => {
+        seen.push({ method: req.method, length: req.headers["content-length"], body })
+        res.writeHead(200, { "content-type": "text/plain" })
+        res.end("ok")
+      })
+    })
+    assert.deepEqual(seen, [
+      { method: "DELETE", length: undefined, body: "" },
+      { method: "DELETE", length: "8", body: "{\"id\":1}" },
+    ])
   })
 
   it("preserves remote base paths and rewrites same-origin redirects to the local proxy origin", async () => {
