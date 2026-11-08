@@ -18,5 +18,5 @@ source.onpointerdown=()=>drag=true;document.onpointerup=e=>{if(drag&&e.clientX>t
 scroller.onscroll=()=>scrolled.textContent='Scrolled';
 oauth.onclick=()=>window.open('/oauth','p7-oauth','width=360,height=240');
 onmessage=e=>{if(e.origin===location.origin&&e.data==='oauth-complete')oauthState.textContent='OAuth complete'};
-dialog.onclick=()=>{alert('Native app qualification');dialogState.textContent='Dialog accepted'};
+dialog.onclick=()=>setTimeout(()=>{alert('Native app qualification');dialogState.textContent='Dialog accepted'},500);
 </script>

@@ -108,7 +108,7 @@ try {
   await call({ action: "open", url })
   let snapshot = strings(await call({ action: "snapshot" }))
   const ref = label => {
-    const line = snapshot.split("\n").find(line => line.includes(`"${label}"`))
+    const line = snapshot.split("\n").find(line => line.includes(`"${label}"`) && !line.trimStart().startsWith("- text "))
     assert.ok(line, `Missing ${label}: ${snapshot}`)
     return /\[([^\]]+)\]/.exec(line)[1]
   }
@@ -124,9 +124,12 @@ try {
   await call({ action: "wait", text: "OAuth complete" })
   await call({ action: "click", ref: ref("Download fixture") })
   const downloads = path.join(os.homedir(), "Downloads")
-  const download = await until(async () => (await readdir(downloads)).find(name => name.includes(`p7-${run}.txt`)))
+  const download = await until(async () => {
+    const name = (await readdir(downloads)).find(name => name.includes(`p7-${run}.txt`))
+    return name && await readFile(path.join(downloads, name), "utf8").catch(() => "") === `native-download-${run}` ? name : undefined
+  })
   assert.equal(await readFile(path.join(downloads, download), "utf8"), `native-download-${run}`)
-  const dialog = call({ action: "click", ref: ref("Native dialog") })
+  await call({ action: "click", ref: ref("Native dialog") })
   await delay(1500)
   if (process.platform === "darwin") execFileSync("osascript", ["-e", `tell application "System Events" to tell (first process whose unix id is ${app.pid}) to set frontmost to true`, "-e", 'tell application "System Events" to key code 36'])
   else if (process.platform === "linux") {
@@ -134,9 +137,8 @@ try {
     execFileSync("xdotool", ["windowactivate", "--sync", windows.at(-1)])
     execFileSync("xdotool", ["key", "Return"])
   } else {
-    execFileSync("pwsh", ["-NoProfile", "-Command", `$w=New-Object -ComObject WScript.Shell; $w.AppActivate(${app.pid}) | Out-Null; Start-Sleep -Milliseconds 150; $w.SendKeys('{ENTER}')`], { windowsHide: true })
+    execFileSync("pwsh", ["-NoProfile", "-File", new URL("fixtures/accept-owned-browser-dialog.ps1", import.meta.url).pathname.replace(/^\/(\w:)/, "$1"), "-AppProcessId", String(app.pid)], { windowsHide: true, timeout: 20000 })
   }
-  await dialog
   await call({ action: "wait", text: "Dialog accepted" })
   snapshot = strings(await call({ action: "snapshot" }))
   assert.match(snapshot, /Native parity/)
