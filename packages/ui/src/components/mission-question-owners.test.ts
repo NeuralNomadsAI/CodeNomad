@@ -41,3 +41,14 @@ test("with the map known, a task's question no loaded live row carries goes to t
   assert.deepEqual(missionQuestionOwners(mission, questions, [{ ...live, status: "completed" as const }]),
     { flag: [coordinator, worker, far], tasks: [] })
 })
+
+test("splitting many questions over many tasks resolves each task's conversation once", () => {
+  const tasks = Array.from({ length: 2_000 }, (_, index) => ({ status: "dispatching" as const, actorSessionId: index % 2 ? `ses_actor_${index}` : undefined }))
+  const questions = Array.from({ length: 32 }, (_, index) => ask(`ses_native_${index}`, `ses_actor_${index * 2 + 1}`))
+  let calls = 0
+  const owners = missionQuestionOwners(mission, questions, tasks, () => { calls++; return undefined })
+  assert.equal(calls, tasks.length, "linear in tasks, independent of the questions")
+  assert.equal(owners.tasks.length, 32)
+  assert.equal(missionQuestionOwners(mission, [], tasks, () => { calls++; return undefined }).flag.length, 0)
+  assert.equal(calls, tasks.length, "no question, no conversation lookup")
+})

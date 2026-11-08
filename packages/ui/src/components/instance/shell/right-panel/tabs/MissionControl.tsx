@@ -87,11 +87,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const missions = () => state().missions
   const rows = () => state().summaries
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
-  // A full map, or a list row before its map is read (its declared actors only).
-  const includesSession = (value: Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId"> & { actors: readonly { sessionId: string }[] }, id: string) =>
+  // A full map, or a list row before its map is read (its declared actors only); a
+  // passage reads its own store and family.
+  const includesSession = (value: Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId"> & { actors: readonly { sessionId: string }[] }, id: string,
+    store: Pick<typeof missionStore, "observations" | "observedActors"> = missionStore, observedFamily = family(value.id)) =>
     value.coordinatorSessionId === id
-    || missionIncludesSession([...value.actors, ...missionStore.observedActors(props.instanceId, value.id)], id, family(value.id))
-    || missionStore.observations(props.instanceId, value.id).some(page => page.requests.state !== "unknown" && page.requests.items.some(item => item.request.sessionID === id))
+    || missionIncludesSession([...value.actors, ...store.observedActors(props.instanceId, value.id)], id, observedFamily)
+    // A listed request proves its session's membership, whether or not it is still open.
+    || store.observations(props.instanceId, value.id).some(page => page.requests.items.some(item => item.request.sessionID === id))
     || missionDerivedSessionIncludes(props.instanceId, value as MissionPanelMap, id)
   const directory = () => instances().get(props.instanceId)?.folder
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? state().projectID ?? missions()[0]?.projectID
@@ -221,9 +224,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const scheduleID = passageSchedule(), passageID = currentPassage.snapshot()?.passageID
     const client = instances().get(origin.instanceId)?.client, generation = getOpenCodeInstanceGeneration(origin.instanceId)
     const authorized = () => passageSchedule() === scheduleID && (!scheduleID || currentPassage.snapshot()?.passageID === passageID)
-      && (scheduleID ? Boolean(mission()?.id === missionId && (mission()!.coordinatorSessionId === sessionId
-        || missionIncludesSession(mission()!.actors, sessionId, selectedFamily())
-        || missionDerivedSessionIncludes(props.instanceId, mission()!, sessionId)))
+      && (scheduleID ? Boolean(mission()?.id === missionId && includesSession(mission()!, sessionId, passageStore(), selectedFamily()))
         : missions().some(value => value.id === missionId && includesSession(value, sessionId))
           || rows().some(row => row.id === missionId && includesSession({ ...row, projectID: projectID() ?? "", actors: row.actorSessionIds.map(id => ({ sessionId: id })) }, sessionId)))
     const admitted = () => origin.current() && authorized()
@@ -315,6 +316,28 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       : conversation ? conversationActivity(props.instanceId, value, conversation) : undefined
     return { task, conversation, activity: state }
   }
+  // A red schedule row's question: the read passage's flag question, else its first one.
+  const passageQuestion = () => {
+    const value = passageSchedule() ? mission() : undefined
+    if (!value) return undefined
+    const store = passageStore(), family = observedActivity()?.missions.find(item => item.missionId === value.id)?.family
+    const questions = missionQuestions({ instanceId: props.instanceId, mission: value, actors: value.actors, family, store })
+    const actors = [...value.actors, ...store.observedActors(props.instanceId, value.id)]
+    const owners = missionQuestionOwners(missionQuestionContext(props.instanceId, value), questions, value.tasks,
+      task => missionTaskConversation(value, task, family, missionDerivedTaskSession(props.instanceId, value, task.key), actors))
+    return owners.flag[0] ?? questions[0]
+  }
+  // Selecting a red schedule row answers once its passage is read, unless the selection moves on.
+  const [pendingAnswer, setPendingAnswer] = createSignal<string>()
+  createEffect(() => {
+    const key = pendingAnswer()
+    if (!key) return
+    if (selectedKey() !== key) { setPendingAnswer(undefined); return }
+    if (!mission()) return
+    const question = untrack(passageQuestion)
+    setPendingAnswer(undefined)
+    if (question) untrack(() => void onOpenActor(question.sessionId, question.request))
+  })
   // A schedule's current passage: its open task reader takes the toolbar from the schedule's.
   const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
   const tracking = () => <>
@@ -344,7 +367,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         onOpenConversation: () => void openActor(passage.coordinatorSessionId) }
     } })
   // Each row's questions: the flag's (the coordinator's, or none of its loaded tasks'),
-  // answered by selecting the row, and its tasks', carried by the chevron.
+  // answered by selecting the row, and its tasks', carried by the chevron, which also
+  // shows a native task's work (it has no declared actor of its own) once the map is read.
   const rowQuestions = createMemo(() => new Map(rows().map(value => {
     const family = state().activity?.missions.find(item => item.missionId === value.id)?.family
     const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
@@ -352,9 +376,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // A read map's declared actors, else the row's.
     const questions = missionQuestions({ instanceId: props.instanceId, mission: key, actors: map?.actors ?? value.actorSessionIds.map(sessionId => ({ sessionId })),
       family, store: missionStore })
-    return [value.id, missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, map?.tasks,
-      map ? task => missionTaskConversation(map, task, family, missionDerivedTaskSession(props.instanceId, map, task.key),
-        [...map.actors, ...missionStore.observedActors(props.instanceId, map.id)]) : undefined)]
+    const actors = map ? [...map.actors, ...missionStore.observedActors(props.instanceId, map.id)] : []
+    const conversation = map ? (task: MissionPanelMap["tasks"][number]) => missionTaskConversation(map, task, family,
+      missionDerivedTaskSession(props.instanceId, map, task.key), actors) : undefined
+    const nativeWorking = Boolean(map && conversation && map.tasks.some(task => !task.actorSessionId && !["completed", "failed", "withdrawn"].includes(task.status)
+      && (() => { const linked = conversation(task); return linked !== undefined && conversationActivity(props.instanceId, map, linked) === "running" })()))
+    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, map?.tasks, conversation), nativeWorking }]
   })))
   const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {
     const observed = state().activity?.missions.find(item => item.missionId === value.id)
@@ -364,7 +391,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
       seen: missionFinishedSeen(completionScope(), value) })
     const childActivity = questions?.tasks.length || others.some(state => state === "permission" || state === "form") ? "permission" as const
-      : others.some(state => state === "running" || state === "queued" || state === "background") ? "working" as const : undefined
+      : others.some(state => state === "running" || state === "queued" || state === "background") || questions?.nativeWorking ? "working" as const : undefined
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
       ? `missions.control.run.${value.runState}` : value.status === "active" && mark === "interrupted" ? "missionsPanel.state.interrupted"
         : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
@@ -523,8 +550,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         paging={<>{recurrence.listView()}{scheduled.listView()}<MissionPanelPaging instanceId={props.instanceId} lane="summaries" search /></>}
         onSelect={entry => {
           const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
-          if (kind === "schedule") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: id, selectedScheduled: undefined }) }
-          else if (kind === "scheduled") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: undefined, selectedScheduled: id }) }
+          if (kind === "schedule" || kind === "scheduled") {
+            intent++
+            updateMissionProjectView(scope(), kind === "schedule" ? { selectedRecurrence: id, selectedScheduled: undefined } : { selectedRecurrence: undefined, selectedScheduled: id })
+            // A red row asks for an answer: open its passage's question, as for a Mission row.
+            setPendingAnswer(entry.mark === "permission" ? entry.key : undefined)
+          }
           else {
             batch(() => { followReader(id); selectMission(id) })
             // A red flag asks for an answer: like a session row, open the asking

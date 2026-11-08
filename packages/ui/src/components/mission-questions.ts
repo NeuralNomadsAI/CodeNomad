@@ -20,7 +20,9 @@ export function missionQuestions(input: {
     forms: getFormQueue(instanceId), permissions: getPermissionQueue(instanceId), tasks: [], family: input.family })
     .flatMap(item => item.open && item.sessionId && item.kind !== "blocked"
       ? [{ sessionId: item.sessionId, actorSessionId: item.actorSessionId, request: { kind: item.kind, id: item.id.slice(item.kind.length + 1) } }] : [])
-  const observed = store.observations(instanceId, mission.id).flatMap(page => page.requests.state === "unknown" ? [] : page.requests.items.map(item => ({
+  // Off-page windows count every listed request, as the row's red does, even while its
+  // open state is unconfirmed: opening it focuses the request only if still queued.
+  const observed = store.observations(instanceId, mission.id).flatMap(page => page.requests.items.map(item => ({
     sessionId: item.request.sessionID, actorSessionId: item.actorSessionId, request: { kind: item.kind, id: item.request.id } })))
   return [...new Map([...observed, ...native].map(question => [JSON.stringify([question.request.kind, question.request.id, question.sessionId]), question])).values()]
 }

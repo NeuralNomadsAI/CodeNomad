@@ -229,6 +229,15 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.waitForFunction(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture") === "ses_task")
     await page.waitForFunction(() => !document.querySelector(".mission-control-stale"))
     assert.deepEqual(nativeReads, [], "current passage task navigation reuses only the exact loaded task actor and native parent")
+    // The red schedule row opens its passage's question: the asking descendant's conversation.
+    const active = () => page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture"))
+    assert.equal(await active(), "ses_task")
+    assert.equal(await page.locator(".mission-row-select[aria-current=true] .mission-row-flag").getAttribute("data-mark"), "permission")
+    await page.locator(".mission-row-select[aria-current=true]").click()
+    // (An async waitForFunction predicate resolves at once: poll from the test instead.)
+    for (let attempt = 0; await active() !== "ses_child" && attempt < 100; attempt++) await page.waitForTimeout(50)
+    assert.equal(await active(), "ses_child")
+    assert.deepEqual(nativeReads, [], "the loaded asking conversation is reused")
     fail = true
     await page.evaluate(() => (window as any).passageFixture.invalidate())
     await page.getByText(/last confirmed snapshot/).waitFor()

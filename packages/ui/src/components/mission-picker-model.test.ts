@@ -7,9 +7,9 @@ const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = k
 test("a mission's mark: an answer first, then resumable stops, observed work, and unseen completion", () => {
   const unseen = { openRequests: 0, seen: false }, seen = { openRequests: 0, seen: true }
   assert.equal(missionMark({ status: "active" }, { ...seen, openRequests: 1 }), "permission")
-  assert.equal(missionMark({ status: "failed" }, { ...seen, actorStates: ["form"], coordinatorState: "form" }), "permission")
-  // A task actor's question is its chevron's, never the Mission's flag.
-  assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["permission"], coordinatorState: "idle" }), "idle")
+  assert.equal(missionMark({ status: "failed" }, { ...seen, openRequests: 1, actorStates: ["form"] }), "permission")
+  // Activity states cover whole families: without a question its flag carries, never red.
+  assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["permission"], coordinatorState: "form" }), "idle")
   assert.equal(missionMark({ status: "failed" }, seen), "interrupted", "a failed mission can be resumed")
   assert.equal(missionMark({ status: "failed", runState: "stopped" }, seen), "idle", "unless the user stopped it since")
   assert.equal(missionMark({ status: "completed" }, unseen), "done")

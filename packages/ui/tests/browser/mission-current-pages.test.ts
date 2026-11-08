@@ -177,6 +177,11 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     assert.deepEqual(await f.page({ source, selector: headerSelector }), beforeFields, "field reads never enlarge the selected header")
     assert.ok(selections.every(input => ["mission", "tasks", "activity"].includes(input.selector.source)
       && (input.selector.source !== "mission" || input.selector.header || input.selector.field)), "no full-map or project fallback")
+    // Selecting the red row opens the off-page question's conversation, for either schedule
+    // type: the guarded navigation reads exactly that native session (this fixture serves none).
+    const opened = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/session/ses_current_179"))
+    await page.locator(".mission-row-select[aria-current=true]").click()
+    await opened
     assert.ok(sizes.every(size => size <= 65536)); assert.deepEqual(writes, []); assert.deepEqual(errors, [])
     t.diagnostic(JSON.stringify({ owner, tasks: map.tasks.length, initialBodies: 0, transfers: selections.length, largestBody: Math.max(...sizes), ...f.metrics() }))
   } finally { releaseActivity?.(); await page.context().close(); await app.close(); await f.dispose() }

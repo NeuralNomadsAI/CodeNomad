@@ -43,9 +43,18 @@ export function taskQuestion(context: MissionQuestionContext, questions: readonl
 export function missionQuestionOwners<Task extends QuestionTask>(context: MissionQuestionContext, questions: readonly MissionQuestion[],
   tasks?: readonly Task[], conversation?: (task: Task) => string | undefined): { flag: MissionQuestion[]; tasks: MissionQuestion[] } {
   const flag: MissionQuestion[] = [], carried: MissionQuestion[] = []
+  if (!questions.length) return { flag, tasks: carried }
+  // What the loaded live rows carry, indexed once (taskQuestion's rule): linear in tasks and questions.
+  const actors = new Set<string>(), conversations = new Set<string>()
+  for (const task of tasks ?? []) {
+    if (!live(task)) continue
+    if (task.actorSessionId && task.actorSessionId !== context.coordinatorSessionId) actors.add(task.actorSessionId)
+    const linked = conversation?.(task)
+    if (linked) conversations.add(linked)
+  }
   for (const question of questions) {
     const owned = !coordinatorAsks(context, question)
-      && (!tasks || tasks.some(task => taskQuestion(context, [question], task, conversation?.(task))))
+      && (!tasks || (question.actorSessionId !== undefined && actors.has(question.actorSessionId)) || conversations.has(question.sessionId))
     ;(owned ? carried : flag).push(question)
   }
   return { flag, tasks: carried }
