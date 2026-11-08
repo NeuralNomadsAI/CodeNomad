@@ -80,7 +80,7 @@ test("a long mission's tasks scroll with the panel, the only scroller, under its
       // One continuation follows the continuous rows and loads on scrolling.
       await flow.locator(".mission-tree-more").waitFor({ state: "attached" })
       assert.equal(await flow.locator(".mission-tree-node").count(), MISSION_TASK_PAGE)
-      assert.equal(await detail.locator(".mission-tree .mission-disclosure-trigger small").innerText(), String(TASKS), "the group shows its task count")
+      assert.equal(await detail.locator(".mission-tree").getAttribute("aria-label"), `Tasks (${TASKS})`, "the group names its task count")
       assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), false, `no task scroller at ${viewport.height}px`)
       assert.equal(await scrolls(f.page, "#tab-body"), false, `no host scrollbar at ${viewport.height}px`)
       assert.equal(await scrolls(f.page, ".mission-control"), true, `the panel scrolls at ${viewport.height}px`)
@@ -91,35 +91,15 @@ test("a long mission's tasks scroll with the panel, the only scroller, under its
       assert(await f.page.locator(".mission-control").evaluate(element => element.scrollTop) > 0)
       const [header, panel] = await Promise.all([f.page.locator(".mission-control-header").boundingBox(), f.page.locator(".mission-control").boundingBox()])
       assert(header && panel && Math.abs(header.y - panel.y) <= 1, `the header stays at the panel top at ${viewport.height}px: ${header?.y} vs ${panel?.y}`)
-      // Collapsing keeps the header and count.
-      const trigger = detail.locator(".mission-tree .mission-disclosure-trigger")
-      await trigger.click()
-      assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+      // The mission row's chevron folds the tasks with the rest of its detail.
+      const chevron = f.page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
+      await chevron.click()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "false")
       assert.equal(await flow.isVisible(), false)
       assert.equal(await scrolls(f.page, "#tab-body"), false)
-      await trigger.click()
-      assert.equal(await trigger.getAttribute("aria-expanded"), "true")
+      await chevron.click()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "true")
       assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
-    } finally { await f.close() }
-  }
-})
-
-test("the task conversation arrow appears on desktop hover and stays visible on touch", async () => {
-  for (const touch of [false, true]) {
-    const f = await open(touch ? { hasTouch: true, isMobile: true, viewport: { width: 1000, height: 700 } } : {})
-    try {
-      const detail = await selectMission(f.page, "Long migration")
-      const node = detail.locator('.mission-tree-node[data-task-key="t20"]'), arrow = node.locator(".mission-tree-open")
-      await arrow.waitFor({ state: "attached" })
-      const opacity = () => arrow.evaluate(element => Number(getComputedStyle(element).opacity))
-      if (touch) assert(await opacity() > 0, "touch shows the arrow without hover")
-      else {
-        await f.page.locator("#chat").hover()
-        assert.equal(await opacity(), 0, "desktop hides the arrow until rollover")
-        await node.hover()
-        await f.page.waitForFunction(() => Number(getComputedStyle(document.querySelector('.mission-tree-node[data-task-key="t20"] .mission-tree-open')!).opacity) > 0)
-      }
-      assert.deepEqual(f.errors, [])
     } finally { await f.close() }
   }
 })
@@ -148,10 +128,18 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     assert.equal(await actions.isVisible(), true, "the toolbar still acts on the folded selection")
     await chevron("Short audit").click()
     await missionDetail(f.page).waitFor()
-    // Another row's chevron selects it.
+    // Another mission's chevron expands its tasks, read on demand, without selecting it.
     await chevron("Long migration").click()
+    assert.equal(await chevron("Long migration").getAttribute("aria-expanded"), "true")
+    assert.equal(await selectedMissionTitle(f.page).innerText(), "Short audit")
+    const preview = row("Long migration").locator("xpath=following-sibling::div[contains(@class, 'mission-row-children')]")
+    await preview.locator('.mission-tree-node[data-task-key="t20"]').waitFor()
+    assert.equal(await missionDetail(f.page).getAttribute("aria-label"), "Short audit", "the selection's detail stays where it is")
+    // A task there selects its mission (and asks for the task's reader).
+    await preview.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task').click()
     assert.equal(await selectedMissionTitle(f.page).innerText(), "Long migration")
     await missionDetail(f.page).and(f.page.locator('[aria-label="Long migration"]')).waitFor()
+    assert.equal(await chevron("Long migration").getAttribute("aria-expanded"), "true", "selected, it shows its detail")
     // The filter narrows the other rows only.
     await f.page.locator(".mission-picker-search").fill("audit")
     assert.equal(await row("Short audit").count(), 1)

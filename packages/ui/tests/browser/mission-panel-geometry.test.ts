@@ -182,7 +182,7 @@ test("a map of 500 tasks and 40 actors shows a page of rows, reads further on re
     const rows = () => page.locator(".mission-tree-node").evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.taskKey))
     // The map's page: its window of the display order and its pinned rows, the rest gaps.
     assert.deepEqual(await rows(), compactMissionMap(large[0]).tasks.map(task => task.key))
-    assert.equal(await page.locator(".mission-tree > h3 .mission-disclosure-trigger small").innerText(), "500")
+    assert.equal(await page.locator(".mission-tree").getAttribute("aria-label"), "Tasks (500)")
     // Each fallback reads the earliest missing window, with a single control.
     for (let read = 0; await page.locator(".mission-tree-more").count(); read++) {
       assert.ok(read < 10, "at most one read a page")
@@ -226,10 +226,17 @@ test("rows are buttons: Enter and Space select; the filter keeps composition key
     assert.equal(await focusedTitle(), "Objective other0", "Space keeps focus on the selected row")
     const chevron = page.locator(".mission-row").filter({ has: page.locator(".session-item-title", { hasText: /^Objective other2$/ }) }).locator(".session-item-expander")
     await chevron.focus()
+    // Another mission's chevron expands its tasks without selecting it.
     await page.keyboard.press("Enter")
-    assert.equal(await selected(), "Objective other2")
+    assert.equal(await selected(), "Objective other0")
+    assert.equal(await chevron.getAttribute("aria-expanded"), "true")
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("session-item-expander")), true, "the chevron keeps focus")
     assert.equal(await focusedTitle(), "Objective other2")
+    await page.keyboard.press("Enter")
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    await row("Objective other2").focus()
+    await page.keyboard.press("Enter")
+    assert.equal(await selected(), "Objective other2")
     // Focusing a header control never scrolls the tree beneath it.
     await row("Objective long").click()
     await page.locator(".mission-control").evaluate(panel => { panel.scrollTop = 500 })

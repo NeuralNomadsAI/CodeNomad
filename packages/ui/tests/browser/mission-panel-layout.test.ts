@@ -164,7 +164,7 @@ test("one-time selected: Needs you, icon toolbar, Summary eye and the dependency
     assert.equal(await detail(page).locator('li[data-task-key="schema"] .sr-only').textContent(), "Awaiting your input", "status words remain available to assistive technology")
     assert.equal(await page.locator(".mission-control").locator("textarea, form").count(), 0, "no coordinator field")
     assert.deepEqual(await page.locator(".mission-control .mission-disclosure").evaluateAll(items => items.map(item => item.className)),
-      ["mission-tree mission-disclosure"], "the task tree is the only disclosure: no More")
+      [], "the tasks are the mission's children: no disclosure, no More")
     assert.equal((await missionMenuItemState(page, "edit")).enabled, true, "Edit lives in the overflow menu")
     assert.deepEqual(await toolbar(page), [["Pause mission", false], ["Stop mission permanently", false], ["Summary", false],
       ["Open conversation", false], ["Delete selected mission…", false], ["More actions", false]])
@@ -203,7 +203,7 @@ test("finished one-time Mission: titled entry, disabled inapplicable actions, pr
     await tree.locator(".mission-tree-task").first().click()
     assert.equal(await page.locator(".mission-reader .window-title").innerText(), "Collect merged changes")
     assert.equal(await tree.locator(".mission-tree-task").first().getAttribute("aria-pressed"), "true")
-    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "false")
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true", "the eye shows the task's open reader")
     const taskReader = page.locator(".mission-task-reader")
     await taskReader.getByText("Done", { exact: true }).waitFor()
     assert.doesNotMatch(await taskReader.innerText(), /No result recorded|Unblocks|Blocks /)

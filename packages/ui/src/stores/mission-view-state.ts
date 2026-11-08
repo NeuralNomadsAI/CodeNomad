@@ -15,8 +15,7 @@ export interface MissionReaderTarget {
   instanceId?: string
   projectID?: string
 }
-/** `tasksCollapsed`: the selected Mission's task tree, expanded unless collapsed. */
-interface ProjectView { selected?: string; selectedRecurrence?: string; selectedScheduled?: string; reader?: MissionReaderTarget; tasksCollapsed?: boolean }
+interface ProjectView { selected?: string; selectedRecurrence?: string; selectedScheduled?: string; reader?: MissionReaderTarget }
 const [version, setVersion] = createSignal(0)
 const projects = new Map<string, ProjectView>()
 const disclosures = new Map<string, Map<string, boolean>>()
@@ -45,7 +44,6 @@ export function missionProjectView(scope: string): ProjectView {
       if (typeof stored.selected === "string") value.selected = stored.selected
       if (typeof stored.selectedRecurrence === "string") value.selectedRecurrence = stored.selectedRecurrence
       if (typeof stored.selectedScheduled === "string") value.selectedScheduled = stored.selectedScheduled
-      if (stored.tasksCollapsed === true) value.tasksCollapsed = true
       const r = stored.reader
       if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change", "recurrence", "playbook"].includes(r.kind)
         && (r.itemId === undefined || typeof r.itemId === "string")
@@ -62,7 +60,7 @@ export function updateMissionProjectView(scope: string, patch: Partial<ProjectVi
   const previous = missionProjectView(scope)
   const value = { ...previous, ...patch }
   if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
-    && previous.selectedScheduled === value.selectedScheduled && previous.tasksCollapsed === value.tasksCollapsed) return
+    && previous.selectedScheduled === value.selectedScheduled) return
   projects.set(projectKey(scope), value)
   writeClientLayoutValue(projectKey(scope), JSON.stringify(value))
   setVersion(v => v + 1)

@@ -22,6 +22,8 @@ function primaryIcon(key?: string): JSX.Element {
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader?: () => void
   primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; onOpenConversation?: () => void
+  /** Names Open conversation's target when it is not the coordinator's. */
+  openLabel?: string
   /** Interrupts a graceful Pause's still-running steps at once. */
   interrupt?: MissionPrimaryAction
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
@@ -64,8 +66,8 @@ export function MissionActionBar(props: {
       aria-label={t("missionsPanel.overview")} title={t("missionsPanel.overview")} disabled={!props.onToggleReader} onClick={() => props.onToggleReader?.()}>
       <Eye class="h-3.5 w-3.5" aria-hidden="true" />
     </button>
-    <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.action.openConversation")}
-      title={t("missionsPanel.action.openConversation")} disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.()}>
+    <button type="button" class="mission-control-icon-button" aria-label={props.openLabel ?? t("missionsPanel.action.openConversation")}
+      title={props.openLabel ?? t("missionsPanel.action.openConversation")} disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.()}>
       <ArrowUpRight class="h-4 w-4" aria-hidden="true" />
     </button>
     <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}

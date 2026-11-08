@@ -38,8 +38,8 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 ## Follow the tree and read results {#tracking}
 
-1. Select a mission's row: its tasks appear beneath it and its actions on the header's second line. The row's chevron folds or unfolds its tasks; **Filter missions** narrows the other rows.
-2. Choose **Summary** (eye) for the central overview; while it is open, selecting another mission shows that mission's overview. Select a task node for its exact result, brief and evidence.
+1. Select a mission's row: its tasks appear beneath it and its actions on the header's second line. The row's chevron folds or unfolds its tasks; another mission's chevron shows its tasks without selecting it. **Filter missions** narrows the other rows.
+2. Choose **Summary** (eye) for the central overview; while it is open, selecting another mission shows that mission's overview. Select a task for its exact result, brief and evidence: while its reader is open, the header's actions apply to that task, with **Open the task's conversation** and, when its report is missing, **Verify and recover missing report**. **Summary** then closes the task's reader.
 3. **More actions** (⋯) holds **Interrupt now**, **Request an update** and **Edit selected mission**; actions that do not apply stay disabled.
 4. Follow dependency links and **Reports**; use **Open conversation** for the coordinator when you need its transcript.
 5. Under **Needs you**, choose **Answer** to open the requesting actor's conversation and interruption dock.
@@ -56,7 +56,7 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 The graph includes completed and retired work. Retiring a task does not itself stop its conversation. In a one-time mission, the coordinator can separately stop the conversations of a retired task it launched as a native subagent, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
 
-A large plan is a continuous tree: more tasks load as you scroll, with one **Show more** fallback at the end. Existing attention pins remain visible, and the info icon beside **Tasks** gives whole-mission attention counts by kind. Loaded counts and coverage explanations live behind info icons. Background reads animate the existing top-right **Refresh** indicator while keeping the panel in place. A dashed stub marks an unread dependency or dependent; reader links load their target directly. A task's reader offers **Show all** for its earlier results and **Try again** for a failed read.
+A large plan is a continuous tree: more tasks load as you scroll, with one **Show more** fallback at the end. Existing attention pins remain visible, and while some of them lie further down, the info icon on the **Tasks** line above the tasks gives whole-mission attention counts by kind. Loaded counts and coverage explanations live behind info icons. Background reads animate the existing top-right **Refresh** indicator while keeping the panel in place. A dashed stub marks an unread dependency or dependent; reader links load their target directly. A task's reader offers **Show all** for its earlier results and **Try again** for a failed read.
 
 Task pages appear only after the requested page has arrived completely. A failed or changed read keeps the last shown tasks. If the task list changes during a read, use **Refresh**, then **Try again**; retrying starts that page again. A missing part never means a task or request is absent, and retrying a read never starts work. If the Missions plugin cannot provide the page, retry after reconnecting or reloading the plugin.
 
