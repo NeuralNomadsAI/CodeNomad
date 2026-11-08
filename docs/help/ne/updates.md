@@ -36,6 +36,8 @@ check busy भए अर्को window को कार्य पर्खन�
 
 ## standalone server update {#standalone-update}
 
+1.1 इन्टरफेसका Missions API का लागि CodeNomad server **1.1.0 वा पछिल्लो** चाहिन्छ। 1.0.x server ले नमिल्ने इन्टरफेस डाउनलोड गर्नुको सट्टा cache मा भएको वा साथमा आएको इन्टरफेस राख्छन्।
+
 1. CodeNomad कसरी launch भयो पहिचान गरी backend मा निर्भर काम बचत गर्नुहोस्।
 2. सामान्य process/service नियन्त्रणबाट त्यो CodeNomad server process रोक्नुहोस्।
 3. उही package installation update गरी अभिप्रेत configuration र flag सहित restart गर्नुहोस्।

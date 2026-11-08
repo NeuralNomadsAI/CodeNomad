@@ -14,6 +14,13 @@ for (const workspace of ["", ...workspaces]) {
   assert.equal(readJson(path.join(root, workspace, "package.json")).version, manifest.version, `${workspace || "root"} version`)
   assert.equal(committedLock.packages[workspace].version, manifest.version, `${workspace || "root"} lock version`)
 }
+assert.equal(readJson(path.join(root, "packages/tauri-app/src-tauri/tauri.conf.json")).version, manifest.version, "Tauri version")
+assert.equal(readFileSync(path.join(root, "packages/tauri-app/src-tauri/Cargo.toml"), "utf8")
+  .match(/\[package\][\s\S]*?^version\s*=\s*"([^"]+)"/m)?.[1], manifest.version, "Cargo package version")
+assert.equal(readFileSync(path.join(root, "packages/tauri-app/Cargo.lock"), "utf8")
+  .match(/name = "codenomad-tauri"\r?\nversion = "([^"]+)"/)?.[1], manifest.version, "Cargo lock version")
+// The UI consumes Missions panel-page reads, introduced after the 1.0.x servers.
+assert.equal(readJson(path.join(root, "packages/cloudflare/release-config.json")).minServerVersion, "1.1.0", "Remote UI server floor")
 const directory = mkdtempSync(path.join(tmpdir(), "codenomad-release-version-"))
 
 function npm(args) {
@@ -41,7 +48,7 @@ try {
     writeFileSync(path.join(directory, workspace, "package.json"), JSON.stringify(target))
   }
 
-  for (const version of ["1.0.1", "1.0.1-dev-20261029-ca514ed2"]) {
+  for (const version of ["1.1.0", "1.1.0-dev-20261108-689f73b6"]) {
     npm(["version", version, "--workspaces", "--include-workspace-root", "--no-git-tag-version", "--allow-same-version", "--offline"])
     const lock = readJson(path.join(directory, "package-lock.json"))
     for (const workspace of ["", ...workspaces]) {

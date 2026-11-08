@@ -36,6 +36,8 @@ If a check is busy, wait for the other window's operation. For download, validat
 
 ## Update a standalone server {#standalone-update}
 
+The 1.1 interface requires CodeNomad server **1.1.0 or later** for its Missions APIs. Servers on 1.0.x retain their cached or bundled interface instead of downloading the incompatible interface.
+
 1. Identify how you launched CodeNomad and save any work that depends on that backend.
 2. Stop that CodeNomad server process using its normal process/service control.
 3. Update the same package installation, then restart with the intended configuration and flags.

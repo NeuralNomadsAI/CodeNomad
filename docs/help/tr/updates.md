@@ -36,6 +36,8 @@ Bir kontrol meşgulse diğer pencerenin çalışmasını bekleyin. İndirme, do�
 
 ## Bağımsız bir sunucuyu güncelleme {#standalone-update}
 
+1.1 arayüzü, Görevler API'leri için CodeNomad sunucusunun **1.1.0 veya daha yeni** olmasını gerektirir. 1.0.x sunucuları uyumsuz arayüzü indirmek yerine önbellekteki veya birlikte gelen arayüzü korur.
+
 1. CodeNomad'i nasıl başlattığınızı belirleyin ve bu arka uca bağlı tüm çalışmaları kaydedin.
 2. Bu CodeNomad sunucu işlemini normal işlem/hizmet kontrolünü kullanarak durdurun.
 3. Aynı paket kurulumunu güncelleyin, ardından amaçlanan yapılandırma ve bayraklarla yeniden başlatın.
