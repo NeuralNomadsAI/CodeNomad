@@ -17,7 +17,7 @@ import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
 import { MissionPanelHeader, MissionRows } from "../../../../mission-picker"
-import { MissionActionBar, MissionActionSlot } from "../../../../mission-action-bar"
+import { MissionActionBar, MissionActionSlot, MissionTaskToolbarActive } from "../../../../mission-action-bar"
 import { missionMark, type MissionPickerEntry } from "../../../../mission-picker-model"
 import { createDocumentAttention } from "../../../../session/session-idle-attention"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
@@ -31,7 +31,7 @@ import { openSettings } from "../../../../../stores/settings-screen"
 import { createMissionRecurrenceList } from "../../../../mission-recurrence-list"
 import { missionTaskConversation } from "../../../../mission-task-navigation"
 import { conversationActivity } from "../../../../mission-task-tree"
-import type { MissionTaskSelection } from "../../../../mission-task-actions"
+import { MissionTaskActions, type MissionTaskSelection } from "../../../../mission-task-actions"
 import { MissionTaskPreview } from "../../../../mission-task-preview"
 import { missionDerivedSessionIncludes, missionDerivedTaskSession } from "../../../../../stores/mission-task-sessions"
 import { useMissionCurrentPassage } from "../../../../../stores/mission-recurrence"
@@ -295,15 +295,34 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // history belongs to the overview reader.
   const cleanupPending = () => (state().cleanups ?? []).some(missionCleanupPending)
   const detailId = createUniqueId()
+  /** The task of `value` whose exact reader is open, with its conversation and activity. */
+  const taskSelection = (value: MissionPanelMap | undefined, activity: MissionActivityProjection | undefined, store: ReturnType<typeof passageStore> = missionStore): MissionTaskSelection | undefined => {
+    const reader = missionProjectView(scope()).reader
+    if (!value || reader?.kind !== "task" || reader.missionId !== value.id || !isReading(reader)) return
+    const task = value.tasks.find(item => item.id === reader.itemId)
+    if (!task) return
+    const observed = activity?.missions.find(item => item.missionId === value.id)
+    const conversation = missionTaskConversation(value, task, observed?.family, missionDerivedTaskSession(props.instanceId, value, task.key),
+      [...value.actors, ...store.observedActors(props.instanceId, value.id)])
+    const state = task.actorSessionId ? observed?.actors.find(actor => actor.sessionId === task.actorSessionId)?.state
+      : conversation ? conversationActivity(props.instanceId, value, conversation) : undefined
+    return { task, conversation, activity: state }
+  }
+  // A schedule's current passage: its open task reader takes the toolbar from the schedule's.
+  const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
   const tracking = () => <>
     <Show when={passageSchedule()}>
       <Show when={currentPassage.loading() && !currentPassage.snapshot()?.mission}><p role="status">{props.t("missions.control.loading")}</p></Show>
       <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot()?.mission ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
     </Show>
-    <MissionPanelScope value={passageStore}><Show when={mission()}>{selected => <MissionTracking
-      instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
-      active={props.isActive?.() ?? true} reading={isReading} read={target => void read(target)}
-      onOpenActor={onOpenActor} />}</Show></MissionPanelScope>
+    <MissionPanelScope value={passageStore}><Show when={mission()}>{selected => <>
+      <Show when={passageTask()?.task.key} keyed>{_key => <MissionTaskActions readOnly instanceId={props.instanceId} mission={selected()}
+        selection={passageTask()!} disabled onAdmitted={refreshVisible}
+        onCloseReader={() => { const task = passageTask(); if (task) void read({ missionId: selected().id, kind: "task", itemId: task.task.id }) }}
+        onOpenConversation={id => void openActor(id)} />}</Show>
+      <MissionTracking instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
+        active={props.isActive?.() ?? true} reading={isReading} read={target => void read(target)}
+        onOpenActor={onOpenActor} /></>}</Show></MissionPanelScope>
   </>
   const recurrence = createMissionRecurrenceList({ get instanceId() { return props.instanceId }, get scope() { return scope() },
     get projectID() { return projectID() }, active: () => props.isActive?.() ?? true, get refresh() { return recurrenceRefresh() },
@@ -408,7 +427,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   return (
     // While creating, the form replaces the list and the selected detail, which stay mounted
     // (hidden by mission-control.css) so their pending controls and retries survive.
-    <MissionActionSlot.Provider value={actionSlot}>
+    <MissionActionSlot.Provider value={actionSlot}><MissionTaskToolbarActive.Provider value={() => Boolean(passageTask())}>
     <section class="mission-control" data-creating={creating() ? "" : undefined} aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header" ref={measureHeader}>
         <MissionPanelHeader actionSlot={setActionSlot}
@@ -502,18 +521,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         // Keep the last known snapshot while the keyed detail is being disposed.
         const selected = createMemo<MissionPanelMap>(previous => missions().find(value => value.id === id) ?? previous!)
         // A task whose reader is open takes the header toolbar.
-        const readTask = createMemo((): MissionTaskSelection | undefined => {
-          const reader = missionProjectView(scope()).reader, value = selected()
-          if (reader?.kind !== "task" || reader.missionId !== id || reader.recurrence) return
-          const task = value.tasks.find(item => item.id === reader.itemId)
-          if (!task) return
-          const observed = state().activity?.missions.find(item => item.missionId === id)
-          const conversation = missionTaskConversation(value, task, observed?.family, missionDerivedTaskSession(props.instanceId, value, task.key),
-            [...value.actors, ...missionStore.observedActors(props.instanceId, id)])
-          const activity = task.actorSessionId ? observed?.actors.find(actor => actor.sessionId === task.actorSessionId)?.state
-            : conversation ? conversationActivity(props.instanceId, value, conversation) : undefined
-          return { task, conversation, activity }
-        })
+        const readTask = createMemo(() => taskSelection(selected(), state().activity))
         return <section id={detailId} class="mission-detail" aria-label={missionDisplayTitle(selected())}>
           <MissionSelectedActions instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
             disabled={Boolean(editor())} messagingDisabled={messagingDisabled()}
@@ -571,7 +579,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         disabled={Boolean(editor()) || !["ready", "loading"].includes(state().status) || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} /></Show>
     </section>
-    </MissionActionSlot.Provider>
+    </MissionTaskToolbarActive.Provider></MissionActionSlot.Provider>
   )
 }
 

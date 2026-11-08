@@ -2,7 +2,7 @@ import { Show, createEffect, createUniqueId, onCleanup, untrack } from "solid-js
 import type { MissionActivityProjection, MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { missionStore } from "../stores/missions"
-import { missionDerivedTaskSession } from "../stores/mission-task-sessions"
+import { demandMissionTaskSessions, missionDerivedTaskSession } from "../stores/mission-task-sessions"
 import { MissionTaskTree } from "./mission-task-tree"
 import { missionTaskConversation } from "./mission-task-navigation"
 
@@ -22,6 +22,12 @@ export function MissionTaskPreview(props: {
   })
   const map = () => missionStore.state(props.instanceId).missions.find(value => value.id === props.missionId)
   const observed = () => props.activity?.missions.find(value => value.missionId === props.missionId)
+  // Like the selected Mission's tree: native task conversations and their activity,
+  // paced by the activity projection's generation, while the panel is shown.
+  createEffect(() => {
+    const value = map()
+    if (props.active && value) demandMissionTaskSessions(props.instanceId, value, props.activity?.generatedAt)
+  })
   return <Show when={map()} fallback={<p class="mission-control-empty-line" role="status">{t("missions.control.loading")}</p>}>
     {value => <MissionTaskTree mission={value()} instanceId={props.instanceId} activity={observed()?.actors} active={props.active}
       reading={task => props.reading(value(), task)} onRead={task => props.onRead(value(), task)}

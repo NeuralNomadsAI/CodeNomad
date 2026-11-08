@@ -45,7 +45,8 @@ const SHORT = mission("short", "Short audit", [task(0)])
 
 async function open(options: BrowserContextOptions = {}, holdDepth = false) {
   const context = await browser.newContext({ locale: "en-US", viewport: { width: 1000, height: 600 }, ...options })
-  const page = await context.newPage(), errors: string[] = [], mutations: string[] = []
+  const page = await context.newPage(), errors: string[] = [], mutations: string[] = [], sessionReads: string[] = []
+  page.on("request", request => { const path = new URL(request.url()).pathname; if (path.includes("/session/")) sessionReads.push(path) })
   await page.addInitScript("globalThis.__name ??= target => target")
   page.setDefaultTimeout(15_000)
   page.on("pageerror", error => errors.push(error.message))
@@ -61,7 +62,7 @@ async function open(options: BrowserContextOptions = {}, holdDepth = false) {
   })
   await page.goto(url, { timeout: 60_000 })
   await page.locator(".mission-rows button.mission-row-select").first().waitFor()
-  return { page, errors, mutations, close: () => context.close(), releaseDepth: async () => {
+  return { page, errors, mutations, sessionReads, close: () => context.close(), releaseDepth: async () => {
     assert(depthRoute, "the actual depth HTTP request is held")
     // Exactly the default HTTP fixture reply, including its depth-read validation error.
     const route = depthRoute; depthRoute = undefined
@@ -134,6 +135,9 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     assert.equal(await selectedMissionTitle(f.page).innerText(), "Short audit")
     const preview = row("Long migration").locator("xpath=following-sibling::div[contains(@class, 'mission-row-children')]")
     await preview.locator('.mission-tree-node[data-task-key="t20"]').waitFor()
+    // Like a selected mission, an expanded one reads its native task conversations.
+    for (let attempt = 0; !f.sessionReads.some(path => path.includes("ses_long")) && attempt < 100; attempt++) await f.page.waitForTimeout(50)
+    assert.ok(f.sessionReads.some(path => path.includes("ses_long")), `the expanded mission's coordinator delegations are read: ${f.sessionReads.join(", ")}`)
     assert.equal(await missionDetail(f.page).getAttribute("aria-label"), "Short audit", "the selection's detail stays where it is")
     // A task there selects its mission (and asks for the task's reader).
     await preview.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task').click()

@@ -7,6 +7,8 @@ import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
 
 /** The Missions header's selection line: a selected item's toolbar mounts there. */
 export const MissionActionSlot = createContext<Accessor<HTMLElement | undefined>>()
+/** True while an open task reader's toolbar owns the selection line (a schedule's passage task). */
+export const MissionTaskToolbarActive = createContext<Accessor<boolean>>()
 
 function primaryIcon(key?: string): JSX.Element {
   if (key === "pause") return <Pause class="h-3.5 w-3.5" aria-hidden="true" />
@@ -30,9 +32,12 @@ export function MissionActionBar(props: {
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
   /** Renders in place instead of in the header's selection line. */
   inline?: boolean
+  /** An open task reader's toolbar, which takes the line from its schedule's. */
+  task?: boolean
 }) {
   const { t } = useI18n()
   const slot = useContext(MissionActionSlot)
+  const taskOwned = useContext(MissionTaskToolbarActive)
   // A refreshed action object must keep the SVG beneath an already-held pointer.
   const primaryKey = createMemo(() => props.primary?.key)
   const primaryLabel = () => props.primary ? props.primary.ariaLabel ?? props.primary.label : t("missionsPanel.action.start")
@@ -75,8 +80,12 @@ export function MissionActionBar(props: {
     <ActionOverflowMenu label={t("messageItem.actions.more")} items={menu} triggerClass="mission-control-icon-button" />
   </div>
   const mount = () => props.inline ? undefined : slot?.()
+  // A schedule's toolbar yields the line while one of its passage tasks' reader is open.
+  const yielded = () => !props.inline && !props.task && Boolean(taskOwned?.())
   return <>
-    <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
+    <Show when={!yielded()}>
+      <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
+    </Show>
     <Show when={props.secondary}><div class="mission-action-texts">{props.secondary}</div></Show>
     <div class="mission-action-feedback">{props.feedback}</div>
   </>

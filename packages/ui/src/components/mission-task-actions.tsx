@@ -14,11 +14,14 @@ export interface MissionTaskSelection {
 }
 
 /** The header toolbar while a task's reader is open: the primary action asks the
- * task's actor for its report again when that recovery applies, Summary closes the
- * task's reader, and Open conversation reaches the task's own conversation. The
- * Mission's own lifecycle, delete and overflow actions stay in place, disabled. */
+ * task's actor for its report again when that recovery applies (never in a
+ * read-only passage), Summary closes the task's reader, and Open conversation
+ * reaches the task's own conversation. The Mission's own lifecycle, delete and
+ * overflow actions stay in place, disabled. */
 export function MissionTaskActions(props: {
   instanceId: string; mission: MissionPanelMap; selection: MissionTaskSelection; disabled: boolean
+  /** A schedule's passage: its tasks are read here, never recovered. */
+  readOnly?: boolean
   onAdmitted: () => Promise<void>; onCloseReader: () => void; onOpenConversation: (sessionId: string) => void
   feedback?: JSX.Element
 }) {
@@ -27,13 +30,13 @@ export function MissionTaskActions(props: {
     target: "report", taskKey: props.selection.task.key, get activity() { return props.selection.activity },
     get disabled() { return props.disabled }, onAdmitted: () => props.onAdmitted() })
   const primary = (): MissionPrimaryAction | undefined => {
-    const action = recovery.action()
+    const action = props.readOnly ? undefined : recovery.action()
     return action ? { key: "check", label: action.label, ariaLabel: action.description ? `${action.label} — ${action.description}` : action.label,
       disabled: action.disabled, onSelect: action.onSelect } : undefined
   }
   const conversation = () => props.selection.conversation
-  return <MissionActionBar label={t("missionsPanel.picker.actions")} reading onToggleReader={() => props.onCloseReader()}
+  return <MissionActionBar task label={t("missionsPanel.picker.actions")} reading onToggleReader={() => props.onCloseReader()}
     primary={primary()} openLabel={t("missionsPanel.task.openConversation")}
     onOpenConversation={conversation() ? () => props.onOpenConversation(conversation()!) : undefined}
-    feedback={<>{props.feedback}{recovery.feedback}</>} />
+    feedback={<>{props.feedback}{props.readOnly ? undefined : recovery.feedback}</>} />
 }
