@@ -6,6 +6,7 @@ import { protectBrowserGuest, configureBrowserGuests } from "../../electron/main
 import { configureBrowserPromptSession } from "../../electron/main/browser-prompt"
 import { qualifyPrompt } from "./prompt-acceptance"
 import { qualifyBeforeUnload } from "./beforeunload-acceptance"
+import { qualifyLifetime } from "./lifetime-acceptance"
 
 if (!process.env.CODENOMAD_PROFILE) throw new Error("Set an isolated CODENOMAD_PROFILE directory")
 app.setPath("userData", process.env.CODENOMAD_PROFILE)
@@ -25,6 +26,7 @@ owner.webContents.on("did-attach-webview", (_event, guest) => {
   protectBrowserGuest(owner, guest)
   if (process.env.CODENOMAD_FIXTURE_PROMPT_TEST) guest.once("did-finish-load", () => { void qualifyPrompt(owner, guest) })
   else if (process.env.CODENOMAD_FIXTURE_BEFOREUNLOAD_TEST) guest.once("did-finish-load", () => { void qualifyBeforeUnload(owner, guest) })
+  else if (process.env.CODENOMAD_FIXTURE_LIFETIME) guest.once("did-finish-load", () => { void qualifyLifetime(owner, guest) })
   guest.on("console-message", details => console.log("guest", details.message))
   if (process.env.CODENOMAD_FIXTURE_NETWORK) guest.once("did-finish-load", () => {
     void guest.loadURL("https://example.com").then(() => guest.executeJavaScript(`
@@ -36,6 +38,7 @@ owner.webContents.on("did-attach-webview", (_event, guest) => {
   if (process.env.CODENOMAD_FIXTURE_CLOSE_AFTER) setTimeout(() => guest.close({ waitForBeforeUnload: false }),
     Number(process.env.CODENOMAD_FIXTURE_CLOSE_AFTER) * 1000)
 })
-await owner.loadURL(`data:text/html,${encodeURIComponent(`<style>html,body{margin:0;width:100%;height:100%}webview{display:flex;width:100%;height:100%}</style><webview src="http://127.0.0.1:18741/" partition="${partition}" allowpopups></webview>`)}`)
+const path = process.env.CODENOMAD_FIXTURE_CONTROLS ? "controls" : ""
+await owner.loadURL(`data:text/html,${encodeURIComponent(`<style>html,body{margin:0;width:100%;height:100%}webview{display:flex;width:100%;height:100%}</style><webview src="http://127.0.0.1:18741/${path}" partition="${partition}" allowpopups></webview>`)}`)
 })
 app.on("window-all-closed", () => app.quit())

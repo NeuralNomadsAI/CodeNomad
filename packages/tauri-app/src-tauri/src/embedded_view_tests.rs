@@ -179,6 +179,7 @@ fn document_policy_allows_blank_and_only_owned_blob_origins() {
     let views = EmbeddedViews::for_test(OWNER, "browser-origin");
     views.observe_origin(
         "browser-origin",
+        views.owned(OWNER, "browser-origin").unwrap().token,
         &"https://example.com/page".parse().unwrap(),
     );
     for url in [
@@ -206,6 +207,74 @@ fn document_policy_allows_blank_and_only_owned_blob_origins() {
     assert!(!is_allowed_url(
         &"blob:https://example.com/id".parse().unwrap()
     ));
+}
+
+#[test]
+fn tree_invalidation_includes_pending_descendants_and_fences_stale_callbacks() {
+    let views = EmbeddedViews::default();
+    let root = views.reserve(OWNER, "browser-tree").unwrap();
+    let child = views.reserve(OWNER, "browser-popup-child").unwrap();
+    let grandchild = views.reserve(OWNER, "browser-popup-grandchild").unwrap();
+    let peer = views.reserve(OWNER, "browser-peer").unwrap();
+    {
+        let mut inner = views.0.lock().unwrap();
+        inner.records.get_mut("browser-popup-child").unwrap().opener = Some("browser-tree".into());
+        inner
+            .records
+            .get_mut("browser-popup-grandchild")
+            .unwrap()
+            .opener = Some("browser-popup-child".into());
+        let removed = EmbeddedViews::take_tree(&mut inner, "browser-tree", root.token, true);
+        assert_eq!(removed.len(), 3);
+        assert_eq!(inner.records.len(), 1);
+    }
+    assert!(views
+        .finish_creation("browser-popup-child", &child)
+        .is_err());
+    assert!(views
+        .finish_creation("browser-popup-grandchild", &grandchild)
+        .is_err());
+    let replacement = views.reserve(OWNER, "browser-tree").unwrap();
+    assert!(!views.current("browser-tree", root.token));
+    views.observe_origin(
+        "browser-tree",
+        root.token,
+        &"https://stale.invalid".parse().unwrap(),
+    );
+    assert_eq!(views.owned(OWNER, "browser-tree").unwrap().origin, None);
+    assert!(EmbeddedViews::take_tree(
+        &mut views.0.lock().unwrap(),
+        "browser-tree",
+        root.token,
+        true
+    )
+    .is_empty());
+    assert!(views.current("browser-tree", replacement.token));
+    assert!(views.current("browser-peer", peer.token));
+}
+
+#[test]
+fn reload_tree_invalidation_retains_root_and_isolates_other_owners() {
+    let views = EmbeddedViews::default();
+    let root = views.reserve(OWNER, "browser-reload-tree").unwrap();
+    let child = views.reserve(OWNER, "browser-popup-reload").unwrap();
+    let other = "local-22222222-2222-4222-8222-222222222222";
+    let peer = views.reserve(other, "browser-popup-peer").unwrap();
+    let mut inner = views.0.lock().unwrap();
+    for label in ["browser-popup-reload", "browser-popup-peer"] {
+        inner.records.get_mut(label).unwrap().opener = Some("browser-reload-tree".into());
+    }
+    let removed = EmbeddedViews::take_tree(&mut inner, "browser-reload-tree", root.token, false);
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].1.token, child.token);
+    assert_eq!(
+        inner.records.get("browser-reload-tree").unwrap().token,
+        root.token
+    );
+    assert_eq!(
+        inner.records.get("browser-popup-peer").unwrap().token,
+        peer.token
+    );
 }
 
 #[test]

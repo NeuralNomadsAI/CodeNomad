@@ -10,7 +10,7 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
-tauri = { version = "2.12.5", features = ["unstable", "test"] }
+tauri = { version = "2.12.5", features = ["devtools", "unstable", "test"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }

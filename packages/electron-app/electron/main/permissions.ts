@@ -1,9 +1,10 @@
-import { BrowserWindow, dialog, session, systemPreferences, type Session } from "electron"
+import { dialog, session, systemPreferences, type Session } from "electron"
 import { isAllowedRendererOrigin } from "./renderer-origin"
 import { browserPermissionDecision, permissionOrigin, permissionResource } from "./browser-permission-policy"
 import { nativeMenuLabels } from "./view-menu"
 import { configureBrowserDeviceChoosers } from "./browser-device-chooser"
 import { configureBrowserDisplayChooser } from "./browser-display-chooser"
+import { browserGuestLifetime } from "./browser-guest-lifetime"
 
 export { isAllowedRendererOrigin } from "./renderer-origin"
 
@@ -44,6 +45,7 @@ export function configureBrowserPermissionHandlers(targetSession: Session) {
   const unknown = new Set<string>()
   const key = (origin: string, permission: string, resource = "") => JSON.stringify([origin, permission, resource])
   targetSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+    if (!_webContents || !browserGuestLifetime.live(_webContents)) return false
     const origin = permissionOrigin(details.securityOrigin ?? requestingOrigin)
     if (!origin) return false
     const decision = browserPermissionDecision(permission)
@@ -54,15 +56,17 @@ export function configureBrowserPermissionHandlers(targetSession: Session) {
     return resource !== undefined && grants.has(key(origin, permission, resource))
   })
   targetSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const revision = browserGuestLifetime.revision(contents)
+    const owner = browserGuestLifetime.owner(contents)
+    const live = () => Boolean(owner && browserGuestLifetime.owner(contents) === owner && browserGuestLifetime.revision(contents) === revision)
     const decision = browserPermissionDecision(permission)
-    if (decision === "deny" || contents.isDestroyed()) { callback(false); return }
+    if (decision === "deny" || !live()) { callback(false); return }
     const frameOrigins = new Set(contents.mainFrame.framesInSubtree
       .filter(frame => frame.url === details.requestingUrl && (!details.isMainFrame || frame === contents.mainFrame))
       .map(frame => permissionOrigin(frame.origin)).filter((origin): origin is string => Boolean(origin)))
     const origin = permissionOrigin(details.requestingUrl) ?? (frameOrigins.size === 1 ? [...frameOrigins][0] : undefined)
     const resource = permissionResource(permission, details, contents.mainFrame.origin)
-    const owner = BrowserWindow.fromWebContents(contents) ?? BrowserWindow.fromWebContents(contents.hostWebContents ?? contents)
-    const labels = nativeMenuLabels(owner)
+    const labels = nativeMenuLabels(owner ?? null)
     const requestKey = key(origin ?? "null", permission, resource)
     if (decision === "unknown" || !origin || resource === undefined) {
       callback(false)
@@ -84,7 +88,7 @@ export function configureBrowserPermissionHandlers(targetSession: Session) {
         buttons: [labels.browserDeny, labels.browserAllow], defaultId: 0, cancelId: 0, noLink: true }
       request = (owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options))
         .then(result => {
-          if (result.response !== 1) return false
+          if (result.response !== 1 || !live()) return false
           grants.add(requestKey)
           return true
         }, () => false).finally(() => pending.delete(requestKey))
@@ -92,7 +96,7 @@ export function configureBrowserPermissionHandlers(targetSession: Session) {
     }
     void request.then(allowed => {
       let current = false
-      try { current = allowed && !contents.isDestroyed()
+      try { current = allowed && live()
         && contents.mainFrame.framesInSubtree.some(frame => permissionOrigin(frame.origin) === origin) } catch {}
       callback(current)
     }).catch(error => console.warn("[browser-permission] expired request", error))

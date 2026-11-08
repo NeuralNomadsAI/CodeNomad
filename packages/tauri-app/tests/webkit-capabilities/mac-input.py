@@ -28,11 +28,13 @@ if sys.argv[1] == 'click':
         post(cg.CGEventCreateMouseEvent(None, kind, point, 0))
 elif sys.argv[1] == 'key':
     for down in (True, False):
-        post(cg.CGEventCreateKeyboardEvent(None, int(sys.argv[2]), down))
+        event = cg.CGEventCreateKeyboardEvent(None, int(sys.argv[2]), down)
+        cg.CGEventSetFlags(event, 0)
+        post(event)
 elif sys.argv[1] == 'chord':
     for down in (True, False):
         event = cg.CGEventCreateKeyboardEvent(None, int(sys.argv[3]), down)
-        cg.CGEventSetFlags(event, int(sys.argv[2], 0))
+        cg.CGEventSetFlags(event, int(sys.argv[2], 0) if down else 0)
         post(event)
 elif sys.argv[1] == 'drag':
     x, y, end_x, end_y = map(float, sys.argv[2:6])
@@ -43,11 +45,13 @@ elif sys.argv[1] == 'drag':
         post(cg.CGEventCreateMouseEvent(None, 6, point, 0))
     post(cg.CGEventCreateMouseEvent(None, 2, Point(end_x, end_y), 0))
 elif sys.argv[1] == 'text':
-    text = sys.argv[2].encode('utf-16-le')
-    buf = c.create_string_buffer(text)
-    for down in (True, False):
-        event = cg.CGEventCreateKeyboardEvent(None, 0, down)
-        cg.CGEventKeyboardSetUnicodeString(event, len(text) // 2, buf)
-        post(event)
+    for character in sys.argv[2]:
+        text = character.encode('utf-16-le')
+        buf = c.create_string_buffer(text)
+        for down in (True, False):
+            event = cg.CGEventCreateKeyboardEvent(None, 0, down)
+            cg.CGEventSetFlags(event, 0)
+            cg.CGEventKeyboardSetUnicodeString(event, len(text) // 2, buf)
+            post(event)
 else:
     raise ValueError('click, key, chord, drag or text required')

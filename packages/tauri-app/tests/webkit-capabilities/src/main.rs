@@ -58,6 +58,13 @@ fn main() {
             )
             .title("WebKit capabilities fixture")
             .data_directory(root.join("renderer"))
+            .on_page_load(|view, payload| {
+                if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                    view.app_handle()
+                        .state::<embedded_view::EmbeddedViews>()
+                        .remove_owner(view.app_handle(), OWNER);
+                }
+            })
             .inner_size(900.0, 740.0)
             .build()?;
             std::fs::write(&log, "primary ready\n").unwrap();
@@ -137,8 +144,114 @@ fn main() {
                     .unwrap();
                 })?;
             }
-            guest.navigate("http://127.0.0.1:18741/".parse().unwrap())?;
+            guest.navigate(
+                if std::env::var_os("CODENOMAD_FIXTURE_CONTROLS").is_some() {
+                    "http://127.0.0.1:18741/controls"
+                } else {
+                    "http://127.0.0.1:18741/"
+                }
+                .parse()
+                .unwrap(),
+            )?;
             guest.show()?;
+            if let Ok(mode) = std::env::var("CODENOMAD_FIXTURE_LIFETIME") {
+                assert!([
+                    "opener-close",
+                    "opener-reload",
+                    "owner-destroy",
+                    "renderer-reload"
+                ]
+                .contains(&mode.as_str()));
+                // A hidden harness window keeps the event loop alive after owner destruction.
+                let _sentinel = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "fixture-sentinel",
+                    tauri::WebviewUrl::External("about:blank".parse().unwrap()),
+                )
+                .visible(false)
+                .build()?;
+                let policy = views.inner().clone();
+                let handle = app.handle().clone();
+                let primary = window.clone();
+                let target = guest.clone();
+                let evidence = root.join(format!("lifetime-{mode}.txt"));
+                std::thread::spawn(move || {
+                    let trial = || -> Result<(), String> {
+                        // The page and its child are activated with native fixture input.
+                        let mut labels = Vec::new();
+                        for _ in 0..1200 {
+                            labels = handle
+                                .windows()
+                                .keys()
+                                .filter(|label| label.starts_with("browser-popup-"))
+                                .cloned()
+                                .collect();
+                            if labels.len() >= 2 {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                        if labels.len() != 2 {
+                            return Err(format!(
+                                "expected two nested native popups, got {}",
+                                labels.len()
+                            ));
+                        }
+                        match mode.as_str() {
+                            "opener-close" => policy.close(&handle, OWNER, "browser-fixture")?,
+                            "opener-reload" => target.reload().map_err(|e| e.to_string())?,
+                            "owner-destroy" => primary.destroy().map_err(|e| e.to_string())?,
+                            "renderer-reload" => primary
+                                .navigate(
+                                    "http://127.0.0.1:18741/primary-replacement"
+                                        .parse()
+                                        .unwrap(),
+                                )
+                                .map_err(|e| e.to_string())?,
+                            _ => unreachable!(),
+                        }
+                        let retained = mode == "opener-reload";
+                        for _ in 0..200 {
+                            if labels.iter().all(|label| {
+                                handle.get_webview_window(label).is_none()
+                                    && policy.navigation_allowed(
+                                        label,
+                                        &"https://example.com".parse().unwrap(),
+                                    ) == Some(false)
+                            }) && policy.navigation_allowed(
+                                "browser-fixture",
+                                &"https://example.com".parse().unwrap(),
+                            ) == Some(retained)
+                            {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                        for label in &labels {
+                            if handle.get_webview_window(label).is_some() {
+                                return Err(format!("orphan native window {label}"));
+                            }
+                            if policy
+                                .navigation_allowed(label, &"https://example.com".parse().unwrap())
+                                != Some(false)
+                            {
+                                return Err(format!("orphan registry {label}"));
+                            }
+                        }
+                        if policy.navigation_allowed(
+                            "browser-fixture",
+                            &"https://example.com".parse().unwrap(),
+                        ) != Some(retained)
+                        {
+                            return Err("root registry mismatch".into());
+                        }
+                        Ok(())
+                    };
+                    let result = trial();
+                    std::fs::write(evidence, format!("{mode}: {result:?}\n")).unwrap();
+                    handle.exit(if result.is_ok() { 0 } else { 1 });
+                });
+            }
             if let Ok(seconds) = std::env::var("CODENOMAD_FIXTURE_CLOSE_AFTER")
                 .unwrap_or_default()
                 .parse::<u64>()

@@ -1,5 +1,5 @@
 # Native accessibility driver for the isolated Windows release fixture only.
-param([Parameter(Mandatory=$true)][int]$FixtureProcessId, [string]$Invoke, [string]$Value, [switch]$NativePointer, [switch]$Activate, [switch]$Escape, [switch]$Popup)
+param([Parameter(Mandatory=$true)][int]$FixtureProcessId, [string]$Invoke, [string]$Value, [switch]$NativePointer, [switch]$Activate, [switch]$Escape, [switch]$Popup, [switch]$RightClick)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -76,7 +76,7 @@ if ($Invoke) {
     if ($element) { break }
   }
   if (!$element) { throw "Fixture control unavailable: $Invoke" }
-  $element.SetFocus()
+  if (!$NativePointer -or $element.Current.IsKeyboardFocusable) { $element.SetFocus() }
   if ($NativePointer) {
     if (!('FixturePointer' -as [type])) { Add-Type @'
 using System;
@@ -129,8 +129,9 @@ public static class FixturePointer {
         }
         if ($hit -ne $top) { throw 'Fixture control is covered' }
         $null = [FixturePointer]::SetCursorPos($point.X,$point.Y)
-        [FixturePointer]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
-        [FixturePointer]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
+        $down=if($RightClick){8}else{2};$up=if($RightClick){16}else{4}
+        [FixturePointer]::mouse_event($down,0,0,0,[UIntPtr]::Zero)
+        [FixturePointer]::mouse_event($up,0,0,0,[UIntPtr]::Zero)
         return
       }
       if ($Escape) {
@@ -149,8 +150,10 @@ public static class FixturePointer {
     $pattern = $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
     $pattern.SetValue($Value)
   } else {
-    $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-    $pattern.Invoke()
+    $pattern = $null
+    if ($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $pattern.Invoke() }
+    elseif ($element.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) { $pattern.Expand() }
+    else { throw 'Fixture control has no native action' }
   }
 } else {
  foreach ($root in $roots) {

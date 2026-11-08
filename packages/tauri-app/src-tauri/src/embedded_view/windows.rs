@@ -9,19 +9,34 @@ pub(super) fn request_close<R: tauri::Runtime>(view: &tauri::Webview<R>) -> Resu
 }
 
 pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<(), String> {
+    use tauri::Manager;
     use webview2_com::{Microsoft::Web::WebView2::Win32::*, PermissionRequestedEventHandler};
     crate::windows_browser_accelerators::bind(webview);
     let (sender, receiver) = mpsc::sync_channel(1);
     let view = webview.clone();
+    let policy = webview
+        .app_handle()
+        .try_state::<super::EmbeddedViews>()
+        .ok_or("Missing browser registry")?
+        .inner()
+        .clone();
+    let token = policy
+        .token(webview.label())
+        .ok_or("Expired browser view")?;
     webview
         .with_webview(move |platform| {
             let result = (|| {
                 let core = unsafe { platform.controller().CoreWebView2() }?;
                 let fullscreen_view = view.clone();
+                let fullscreen_policy = policy.clone();
                 let permission =
                     PermissionRequestedEventHandler::create(Box::new(move |_, args| {
                         if let Some(args) = args {
                             unsafe {
+                                if !policy.current(view.label(), token) {
+                                    args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+                                    return Ok(());
+                                }
                                 let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
                                 args.PermissionKind(&mut kind)?;
                                 let state = permission_state(kind);
@@ -38,8 +53,8 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
                         }
                         Ok(())
                     }));
-                let mut token = 0;
-                unsafe { core.add_PermissionRequested(&permission, &mut token)? };
+                let mut event_token = 0;
+                unsafe { core.add_PermissionRequested(&permission, &mut event_token)? };
                 unsafe {
                     core.Settings()?.SetIsStatusBarEnabled(true)?;
                 }
@@ -47,6 +62,9 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
                     core.add_ContainsFullScreenElementChanged(
                         &webview2_com::ContainsFullScreenElementChangedEventHandler::create(
                             Box::new(move |sender, _| {
+                                if !fullscreen_policy.current(fullscreen_view.label(), token) {
+                                    return Ok(());
+                                }
                                 if let Some(core) = sender {
                                     use tauri::Manager;
                                     let mut active = Default::default();

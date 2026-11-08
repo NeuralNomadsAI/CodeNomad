@@ -14,6 +14,7 @@ PAGE = b'''<!doctype html><meta charset="utf-8"><title>WebKit capabilities</titl
 <button onclick="permissions()">Permissions</button>
 <button onclick="window.open('file:///etc/passwd')">Blocked file popup</button>
 <button onclick="popup=window.open('/hold','hold')">Hold popup for opener cleanup</button>
+<button onclick="window.open('/lifetime-child')">Lifetime tree</button>
 <a href="data:text/plain,generated-download" download="capabilities-data.txt">Data download</a>
 <button onclick="blobDownload()">Blob download</button>
 <details open><summary>Browser APIs</summary>
@@ -34,6 +35,7 @@ PAGE = b'''<!doctype html><meta charset="utf-8"><title>WebKit capabilities</titl
 <button onclick="report('hardware',JSON.stringify(Object.fromEntries(['usb','hid','serial','bluetooth'].map(k=>[k,typeof navigator[k]]))))">Hardware APIs</button>
 <a href="/pdf" target="_blank">PDF display</a><a href="/pdf-download" download>PDF download</a>
 </details>
+<a href="/controls">Additional controls</a>
 <pre id="results"></pre><script>
 function report(k,v){results.textContent+=k+': '+v+'\\n';fetch('/result?'+encodeURIComponent(k+'='+v))}
 addEventListener('error',e=>report('error',e.message));
@@ -62,6 +64,21 @@ report('isolation',typeof window.__TAURI_INTERNALS__+'/'+typeof window.require+'
 addEventListener('message',e=>{if(e.origin===location.origin){report('oauth',e.data);setTimeout(()=>report('closed',popup?.closed),300)}});
 </script>'''
 POPUP = b'''<!doctype html><title>OAuth fixture</title><button onclick="if(opener)opener.postMessage('roundtrip:'+localStorage.fixture+':'+document.cookie,location.origin);window.close()">Finish OAuth</button>'''
+LIFETIME = b'''<!doctype html><title>Lifetime child</title><button onclick="onbeforeunload=()=>true;window.open('/hold');fetch('/result?lifetime-child=armed')">Create descendant</button>'''
+CONTROLS = b'''<!doctype html><meta charset="utf-8"><title>Additional controls</title>
+<style>body{font:18px sans-serif}button,input,a{margin:6px;padding:6px}img{width:120px;height:80px}pre{white-space:pre-wrap}</style>
+<button onclick="navigator.clipboard.writeText('fixture-clipboard').then(()=>report('write','ok'),e=>report('write',e.name))">Write clipboard</button>
+<button onclick="navigator.clipboard.readText().then(v=>report('read',v),e=>report('read',e.name))">Read clipboard</button><br>
+<input aria-label="Copy source" value="fixture-native-copy"><input aria-label="Paste target" oninput="report('paste',this.value)"><br>
+<input aria-label="Select fixture file" type="file" onchange="report('file',this.files[0]?.name)"><br>
+<a href="/hold" target="_blank">Context link</a><br>
+<a href="/hold" target="_blank"><img alt="Context image" src="/image.png"></a><br>
+<a href="/pdf" target="_blank">PDF display</a>
+<button onclick="report('apis',JSON.stringify(Object.fromEntries(['usb','hid','serial','bluetooth'].map(k=>[k,typeof navigator[k]]))))">Hardware APIs</button>
+<pre id="results"></pre><script>
+function report(k,v){results.textContent+=k+': '+v+'\\n';fetch('/result?'+encodeURIComponent(k+'='+v))}
+addEventListener('resize',()=>report('viewport',innerWidth+'x'+innerHeight+':'+devicePixelRatio));
+</script>'''
 
 class Handler(BaseHTTPRequestHandler):
     def end_headers(self):
@@ -77,6 +94,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         route = urlsplit(self.path).path
+        if route == '/image.png':
+            body = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==')
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/png')
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if route in ('/pdf', '/pdf-download'):
             body = base64.b64decode(PDF_BASE64)
             self.send_response(200)
@@ -96,7 +120,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        body = POPUP if route == '/popup' else b'<title>Held popup</title>held' if route == '/hold' else PAGE
+        body = CONTROLS if route == '/controls' else LIFETIME if route == '/lifetime-child' else POPUP if route == '/popup' else b'<title>Held popup</title>held' if route == '/hold' else PAGE
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))

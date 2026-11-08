@@ -66,6 +66,21 @@ availability; **WebAuthn availability** reports platform-authenticator availabil
 
 ## Isolated native inputs
 
+`CODENOMAD_FIXTURE_LIFETIME` selects `opener-close`, `opener-reload`,
+`owner-destroy` or `renderer-reload`. Activate **Lifetime tree**, then **Create
+descendant** in its child using native input. The child arms beforeunload and
+opens a grandchild. The harness asserts forced descendant disposal, empty
+descendant registries and the expected retained/root state, writing the result
+inside the isolated profile. A hidden harness window keeps the event loop alive
+for assertions after owner destruction. The renderer case replaces the neutral
+primary document with the loopback page and uses the production cleanup contract.
+Electron's same flag runs the equivalent production-guest assertions directly.
+
+`CODENOMAD_FIXTURE_CONTROLS=1` opens the focused clipboard, file-picker,
+context-menu and viewport probe. The fixture enables Tauri's `devtools` feature,
+matching the production application. Native chooser input must target its owned
+window; the selected filename is reported by the page's actual FileList.
+
 Linux fixtures and native file sources share the same session bus. Set `DISPLAY`
 before `dbus-run-session` and update its activation environment before launching
 portal clients; a portal with a different display can open its print dialog

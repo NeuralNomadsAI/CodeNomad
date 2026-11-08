@@ -7,10 +7,20 @@ pub(super) fn request_close<R: tauri::Runtime>(view: &tauri::Webview<R>) -> Resu
 pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<(), String> {
     use std::sync::mpsc;
     use std::time::Duration;
+    use tauri::Manager;
     use webkit2gtk::{PermissionRequestExt, WebViewExt};
 
     let (sender, receiver) = mpsc::sync_channel(1);
     let view = webview.clone();
+    let policy = webview
+        .app_handle()
+        .try_state::<super::EmbeddedViews>()
+        .ok_or("Missing browser registry")?
+        .inner()
+        .clone();
+    let token = policy
+        .token(webview.label())
+        .ok_or("Expired browser view")?;
     webview
         .with_webview(move |platform| {
             use std::{cell::Cell, rc::Rc};
@@ -23,14 +33,22 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
                 }
             });
             let enter = view.clone();
+            let enter_policy = policy.clone();
             platform.inner().connect_enter_fullscreen(move |_| {
+                if !enter_policy.current(enter.label(), token) {
+                    return true;
+                }
                 if let Some(views) = enter.app_handle().try_state::<super::EmbeddedViews>() {
                     let _ = views.set_fullscreen(enter.app_handle(), enter.label(), true);
                 }
                 false
             });
             let leave = view.clone();
+            let leave_policy = policy.clone();
             platform.inner().connect_leave_fullscreen(move |_| {
+                if !leave_policy.current(leave.label(), token) {
+                    return false;
+                }
                 if let Some(views) = leave.app_handle().try_state::<super::EmbeddedViews>() {
                     let _ = views.set_fullscreen(leave.app_handle(), leave.label(), false);
                 }
@@ -39,6 +57,10 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
             platform
                 .inner()
                 .connect_permission_request(move |page, request| {
+                    if !policy.current(view.label(), token) {
+                        request.deny();
+                        return true;
+                    }
                     use gtk::glib::{Cast, ObjectExt};
                     use webkit2gtk::{
                         DeviceInfoPermissionRequest, GeolocationPermissionRequest,
@@ -94,10 +116,16 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
                         let epoch = generation.clone();
                         let captured = epoch.get();
                         let weak_page = page.downgrade();
+                        let answer_policy = policy.clone();
+                        let answer_label = view.label().to_string();
                         let (reply, answer) =
                             gtk::glib::MainContext::channel::<bool>(gtk::glib::Priority::DEFAULT);
                         answer.attach(None, move |allowed| {
-                            if allowed && epoch.get() == captured && weak_page.upgrade().is_some() {
+                            if allowed
+                                && epoch.get() == captured
+                                && weak_page.upgrade().is_some()
+                                && answer_policy.current(&answer_label, token)
+                            {
                                 request.allow();
                             } else {
                                 request.deny();

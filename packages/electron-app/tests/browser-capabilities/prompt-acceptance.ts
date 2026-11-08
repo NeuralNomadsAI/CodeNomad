@@ -4,7 +4,7 @@ import { isBrowserDialog, showBrowserDialog } from "../../electron/main/browser-
 
 /** Run inside the real-engine fixture with CODENOMAD_FIXTURE_PROMPT_TEST=1. */
 export async function qualifyPrompt(owner: BrowserWindow, guest: WebContents): Promise<void> {
-  const answer = async (expression: string, value: string | null, target = guest) => {
+  const answer = async (expression: string, value: string | null, target: Pick<WebContents, "executeJavaScript"> = guest) => {
     let handled = false
     const timer = setInterval(() => {
       const dialog = BrowserWindow.getAllWindows().find(isBrowserDialog)
@@ -30,8 +30,15 @@ export async function qualifyPrompt(owner: BrowserWindow, guest: WebContents): P
     assert.equal(await answer("prompt('cancel')", null), null)
     assert.equal(await answer("prompt('empty')", ""), "")
     await guest.executeJavaScript("new Promise(resolve => { const f = document.createElement('iframe'); f.srcdoc = '<title>frame</title>'; f.onload = () => resolve(); document.body.append(f) })")
-    // Sandbox policy keeps Node/preload integration disabled in subframes.
-    assert.equal(await guest.executeJavaScript("document.querySelector('iframe').contentWindow.prompt('subframe')"), null)
+    assert.equal(await answer("document.querySelector('iframe').contentWindow.prompt('subframe')", "frame-answer"), "frame-answer")
+    assert.deepEqual(await guest.executeJavaScript("['require','process','ipcRenderer','electronAPI','contextBridge'].map(k=>typeof document.querySelector('iframe').contentWindow[k])"), Array(5).fill("undefined"))
+    assert.equal(guest.getLastWebPreferences().sandbox, true)
+    assert.equal(guest.getLastWebPreferences().nodeIntegration, false)
+    await guest.executeJavaScript("new Promise(resolve => { const f=document.createElement('iframe'); f.src='http://localhost:18741/hold'; f.onload=()=>resolve(); document.body.append(f) })")
+    const crossOrigin = guest.mainFrame.framesInSubtree.find(frame => frame.url === "http://localhost:18741/hold")!
+    assert.ok(crossOrigin)
+    assert.equal(await answer("prompt('cross-origin frame')", "cross-frame-answer", crossOrigin), "cross-frame-answer")
+    assert.deepEqual(await crossOrigin.executeJavaScript("[typeof require,typeof process,typeof ipcRenderer,typeof electronAPI]"), Array(4).fill("undefined"))
     await guest.executeJavaScript("window.open('about:blank', 'prompt-test'); void 0", true)
     const popup = BrowserWindow.getAllWindows().find(window => window !== owner && !isBrowserDialog(window))!
     assert.ok(popup)
@@ -46,7 +53,7 @@ export async function qualifyPrompt(owner: BrowserWindow, guest: WebContents): P
     }, 30)
     try { assert.equal(await showBrowserDialog(owner, "https://fixture.invalid", "choose", { choices: Array.from({ length: 25 }, (_, i) => `Device ${i + 1}`) }), "24") }
     finally { clearInterval(choose) }
-    console.log("PASS real-engine prompt: string/cancel/empty/blank-popup; subframe suppressed; isolated globals; chooser entry 25")
+    console.log("PASS real-engine prompt: string/cancel/empty/blank-popup/srcdoc/cross-origin subframe; sandbox retained; isolated globals; chooser entry 25")
     app.exit(0)
   } catch (error) { console.error(error); app.exit(1) }
   finally { clearTimeout(timeout) }

@@ -38,7 +38,9 @@ export function secureBrowserWebview(webPreferences: WebPreferences, params: Rec
   delete webPreferences.preload
   webPreferences.nodeIntegration = false
   webPreferences.nodeIntegrationInWorker = false
-  webPreferences.nodeIntegrationInSubFrames = false
+  // Electron gates frame preloads behind this flag, even with sandbox enabled.
+  // The separate preview session has only the prompt preload; page Node stays off.
+  webPreferences.nodeIntegrationInSubFrames = true
   webPreferences.webviewTag = false
   webPreferences.contextIsolation = true
   webPreferences.sandbox = true

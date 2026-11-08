@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron"
+import { BrowserWindow, type WebContents } from "electron"
 import { randomUUID } from "node:crypto"
 import { nativeMenuLabels } from "./view-menu"
 
@@ -8,12 +8,13 @@ export const isBrowserDialog = (window: BrowserWindow) => dialogs.has(window)
 
 /** Trusted, preload-free app form. Only its own cancelled navigation returns data. */
 export async function showBrowserDialog(owner: BrowserWindow, origin: string, message: string,
-  input: { text: string } | { choices: readonly string[] }): Promise<string | null> {
+  input: { text: string } | { choices: readonly string[] }, source?: WebContents,
+  current: () => boolean = () => !owner.isDestroyed() && !source?.isDestroyed()): Promise<string | null> {
   const [{ default: windowCss }, { default: dialogCss }] = await Promise.all([
     import("../../../ui/src/styles/components/window.css?raw"),
     import("../../../ui/src/styles/components/browser-native-dialog.css?raw"),
   ])
-  if (owner.isDestroyed()) return null
+  if (!current()) return null
   const l = nativeMenuLabels(owner)
   const target = `https://codenomad.invalid/${randomUUID()}`
   const field = "text" in input
@@ -35,11 +36,19 @@ export async function showBrowserDialog(owner: BrowserWindow, origin: string, me
       if (settled) return
       settled = true
       owner.removeListener("closed", cancel)
-      resolve(value)
+      source?.removeListener("destroyed", cancel)
+      source?.removeListener("did-navigate", cancel)
+      source?.removeListener("did-frame-navigate", cancel)
+      source?.removeListener("render-process-gone", cancel)
+      resolve(current() ? value : null)
       if (!dialog.isDestroyed()) dialog.destroy()
     }
     const cancel = () => finish(null)
     owner.once("closed", cancel)
+    source?.once("destroyed", cancel)
+    source?.once("did-navigate", cancel)
+    source?.once("did-frame-navigate", cancel)
+    source?.once("render-process-gone", cancel)
     dialog.once("closed", cancel)
     dialog.webContents.on("will-navigate", (event, url) => {
       event.preventDefault()

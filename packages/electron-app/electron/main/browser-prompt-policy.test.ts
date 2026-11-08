@@ -43,3 +43,28 @@ test("main rejects non-preview and foreign frames, accepts only bounded prompt v
   assert.equal(shown, 3)
   for (const args of [null, [], { message: "m", value: "s", channel: "other" }, { message: "m", value: "x".repeat(65_537) }]) assert.equal(validPromptRequest(args), false)
 })
+
+test("late prompt replies are cancelled after document replacement or owner retirement", async () => {
+  for (const cause of ["document", "owner", "frame"] as const) {
+    const frame = { origin: "https://frame.example", detached: false }
+    const sender = { isDestroyed: () => false, mainFrame: { framesInSubtree: [frame] } } as unknown as WebContents
+    const owner = { isDestroyed: () => false } as BrowserWindow
+    let live = true, revision = Symbol()
+    let resolve!: (value: string) => void
+    let current!: () => boolean
+    const handler = createBrowserPromptHandler(() => live ? owner : undefined,
+      (_owner, _origin, _message, _value, source, guard) => {
+        assert.equal(source, sender); current = guard
+        return new Promise<string>(answer => { resolve = answer })
+      }, () => revision)
+    const event = { sender, senderFrame: frame } as unknown as IpcMainEvent
+    handler(event, { message: "m", value: "s" })
+    if (cause === "document") revision = Symbol()
+    if (cause === "owner") live = false
+    if (cause === "frame") frame.detached = true
+    assert.equal(current(), false)
+    resolve("stale-answer")
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(event.returnValue, null)
+  }
+})

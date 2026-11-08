@@ -143,8 +143,14 @@ impl EmbeddedViews {
             return NewWindowResponse::Deny;
         };
         record.opener = Some(opener.into());
-        record.origin = opener_record.origin;
+        record.origin = opener_record.origin.clone();
         if let Ok(mut inner) = self.0.lock() {
+            if !inner.records.get(opener).is_some_and(|current| {
+                current.token == opener_record.token && current.document == opener_record.document
+            }) {
+                inner.records.remove(&label);
+                return NewWindowResponse::Deny;
+            }
             let Some(current) = inner
                 .records
                 .get_mut(&label)
@@ -160,7 +166,9 @@ impl EmbeddedViews {
         let policy = self.clone();
         let navigation_label = label.clone();
         let page_policy = self.clone();
-        let page_label = label.clone();
+        let token = record.token;
+        let downloads = self.clone();
+        let download_label = label.clone();
         let popups = self.clone();
         let popup_app = app.clone();
         let popup_owner = owner.to_string();
@@ -191,15 +199,31 @@ impl EmbeddedViews {
         let builder = builder.map(|builder| {
             builder
                 .data_directory(storage.directory.clone())
-                .on_page_load(move |_, payload| {
-                    page_policy.observe_origin(&page_label, payload.url())
+                .on_page_load(move |view, payload| {
+                    page_policy.page_load(view.as_ref(), token, &payload);
                 })
                 .on_navigation(move |url| {
-                    policy.navigation_allowed(&navigation_label, url) == Some(true)
+                    policy.current(&navigation_label, token)
+                        && policy.navigation_allowed(&navigation_label, url) == Some(true)
                 })
-                .on_permission_request(permission)
-                .on_download(download)
+                .on_permission_request({
+                    let permissions = self.clone();
+                    let permission_label = label.clone();
+                    move |view, kind| {
+                        if permissions.current(&permission_label, token) {
+                            permission(view, kind)
+                        } else {
+                            tauri::webview::PermissionResponse::Deny
+                        }
+                    }
+                })
+                .on_download(move |view, event| {
+                    downloads.current(&download_label, token) && download(view, event)
+                })
                 .on_new_window(move |url, features| {
+                    if !popups.current(&popup_opener, token) {
+                        return NewWindowResponse::Deny;
+                    }
                     popups.open_popup(
                         &popup_app,
                         &popup_owner,
@@ -227,6 +251,9 @@ impl EmbeddedViews {
         window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                if !cleanup.current(&cleanup_label, cleanup_record.token) {
+                    return;
+                }
                 #[cfg(target_os = "linux")]
                 let result = super::linux::request_close(&close_view);
                 #[cfg(target_os = "macos")]
@@ -239,8 +266,7 @@ impl EmbeddedViews {
                 return;
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                cleanup.remove_exact(&cleanup_label, &cleanup_record);
-                cleanup.close_popups(&cleanup_app, &cleanup_label);
+                let _ = cleanup.dispose_tree(&cleanup_app, &cleanup_label, cleanup_record.token);
             }
         });
         #[cfg(target_os = "linux")]
@@ -252,7 +278,9 @@ impl EmbeddedViews {
         if configured
             .and_then(|()| self.finish_creation(&label, &record))
             .is_err()
-            || self.owned(owner, opener).is_err()
+            || !self.owned(owner, opener).is_ok_and(|current| {
+                current.token == opener_record.token && current.document == opener_record.document
+            })
         {
             self.remove_exact(&label, &record);
             let _ = window.destroy();
@@ -266,30 +294,6 @@ impl EmbeddedViews {
         // WebKit performs the requested navigation after this return, using the
         // supplied related-view/configuration so opener/postMessage stay native.
         NewWindowResponse::Create { window }
-    }
-
-    pub(super) fn close_popups<R: Runtime>(&self, app: &AppHandle<R>, opener: &str) {
-        let labels = self
-            .0
-            .lock()
-            .map(|inner| {
-                inner
-                    .records
-                    .iter()
-                    .filter(|(_, record)| record.opener.as_deref() == Some(opener))
-                    .map(|(label, _)| label.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        for label in labels {
-            self.close_popups(app, &label);
-            if let Ok(mut inner) = self.0.lock() {
-                inner.records.remove(&label);
-            }
-            if let Some(window) = app.get_webview_window(&label) {
-                let _ = window.destroy();
-            }
-        }
     }
 }
 

@@ -1,7 +1,8 @@
-import { BrowserWindow, webContents, type Session, type WebContents } from "electron"
+import { webContents, type Session, type WebContents } from "electron"
 import { nativeMenuLabels } from "./view-menu"
 import { permissionOrigin } from "./browser-permission-policy"
 import { showBrowserDialog } from "./browser-dialog"
+import { browserGuestLifetime } from "./browser-guest-lifetime"
 
 export function configureBrowserDeviceChoosers(target: Session): void {
   const grants = new Set<string>()
@@ -16,14 +17,16 @@ export function configureBrowserDeviceChoosers(target: Session): void {
   async function choose(kind: string, devices: { id: string; label: string }[], contents: WebContents | undefined,
     origin: string | undefined, stillOwned: () => boolean, callback: (id: string) => void) {
     if (!contents || !origin || !devices.length) { callback(""); return }
-    const owner = BrowserWindow.fromWebContents(contents) ?? BrowserWindow.fromWebContents(contents.hostWebContents ?? contents)
-    const l = nativeMenuLabels(owner)
+    const owner = browserGuestLifetime.owner(contents)
+    const revision = browserGuestLifetime.revision(contents)
+    const current = () => browserGuestLifetime.owner(contents) === owner && browserGuestLifetime.revision(contents) === revision && stillOwned()
+    const l = nativeMenuLabels(owner ?? null)
     let chosen = ""
     try {
       const result = owner ? await showBrowserDialog(owner, origin,
-        l.browserPermission.replace("{permission}", kind).replace("{origin}", origin), { choices: devices.map(device => device.label) }) : null
+        l.browserPermission.replace("{permission}", kind).replace("{origin}", origin), { choices: devices.map(device => device.label) }, contents, current) : null
       const selected = result !== null && /^(0|[1-9]\d*)$/.test(result) ? devices[Number(result)] : undefined
-      if (selected && !contents.isDestroyed() && stillOwned()) {
+      if (selected && current()) {
         grants.add(key(kind, origin, selected.id))
         chosen = selected.id
       }

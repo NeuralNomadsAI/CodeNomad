@@ -74,7 +74,8 @@ test("GTK pointer consent preserves the requesting surface and cancels on naviga
   assert.match(source, /gtk::InfoBar::new\(\)/)
   assert.match(source, /button\.set_focus_on_click\(false\)/)
   assert.match(source, /LoadEvent::Started[\s\S]*?bar\.response\(gtk::ResponseType::Cancel\)/)
-  assert.match(source, /allowed && epoch\.get\(\) == captured/)
+  assert.match(source, /allowed\s*&& epoch\.get\(\) == captured/)
+  assert.match(source, /&& answer_policy\.current\(&answer_label, token\)/)
 })
 
 test("native popup closure runs each engine's beforeunload path", () => {

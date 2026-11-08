@@ -110,6 +110,7 @@ struct Inner {
 struct Record {
     owner: String,
     token: u64,
+    document: u64,
     preparing: bool,
     opener: Option<String>,
     origin: Option<String>,
@@ -142,6 +143,7 @@ impl EmbeddedViews {
         let record = Record {
             owner: owner.into(),
             token: inner.sequence,
+            document: 0,
             preparing: true,
             opener: None,
             origin: None,
@@ -206,14 +208,145 @@ impl EmbeddedViews {
         reserved_label(label).then_some(false)
     }
 
-    fn observe_origin(&self, label: &str, url: &tauri::Url) {
+    fn current(&self, label: &str, token: u64) -> bool {
+        self.0.lock().is_ok_and(|inner| {
+            inner
+                .records
+                .get(label)
+                .is_some_and(|record| record.token == token)
+        })
+    }
+
+    fn token(&self, label: &str) -> Option<u64> {
+        self.0
+            .lock()
+            .ok()?
+            .records
+            .get(label)
+            .map(|record| record.token)
+    }
+
+    fn observe_origin(&self, label: &str, token: u64, url: &tauri::Url) {
         if is_allowed_url(url) {
             if let Ok(mut inner) = self.0.lock() {
-                if let Some(record) = inner.records.get_mut(label) {
+                if let Some(record) = inner
+                    .records
+                    .get_mut(label)
+                    .filter(|record| record.token == token)
+                {
                     record.origin = Some(url.origin().ascii_serialization());
                 }
             }
         }
+    }
+
+    /// Invalidate the whole tree before native destruction dispatches callbacks.
+    fn take_tree(
+        inner: &mut Inner,
+        label: &str,
+        token: u64,
+        include_root: bool,
+    ) -> Vec<(String, Record)> {
+        let Some(root) = inner
+            .records
+            .get(label)
+            .filter(|record| record.token == token)
+        else {
+            return Vec::new();
+        };
+        let owner = root.owner.clone();
+        let mut labels = HashSet::from([label.to_string()]);
+        // ponytail: scan per tree depth; index parents if preview trees become large.
+        loop {
+            let count = labels.len();
+            for (child, record) in &inner.records {
+                if record.owner == owner
+                    && record
+                        .opener
+                        .as_ref()
+                        .is_some_and(|parent| labels.contains(parent))
+                {
+                    labels.insert(child.clone());
+                }
+            }
+            if labels.len() == count {
+                break;
+            }
+        }
+        if !include_root {
+            labels.remove(label);
+        }
+        labels
+            .into_iter()
+            .filter_map(|label| inner.records.remove(&label).map(|record| (label, record)))
+            .collect()
+    }
+
+    fn dispose_records<R: Runtime>(
+        app: &AppHandle<R>,
+        records: Vec<(String, Record)>,
+    ) -> Result<(), String> {
+        let mut failure = None;
+        for (label, record) in records {
+            if let Some(before) = record.fullscreen {
+                if let Some(view) = app.get_webview(&label) {
+                    let _ = view.window().set_fullscreen(before);
+                }
+            }
+            let result = if record.opener.is_some() {
+                app.get_webview_window(&label)
+                    .map(|window| window.destroy())
+            } else {
+                app.get_webview(&label).map(|view| view.close())
+            };
+            if let Some(Err(error)) = result {
+                eprintln!("[browser-cleanup] {label}: {error}");
+                failure.get_or_insert_with(|| error.to_string());
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
+    fn dispose_tree<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        label: &str,
+        token: u64,
+    ) -> Result<(), String> {
+        let records = self
+            .0
+            .lock()
+            .map(|mut inner| Self::take_tree(&mut inner, label, token, true))
+            .unwrap_or_default();
+        Self::dispose_records(app, records)
+    }
+
+    fn page_load<R: Runtime>(
+        &self,
+        view: &tauri::Webview<R>,
+        token: u64,
+        payload: &tauri::webview::PageLoadPayload<'_>,
+    ) -> bool {
+        let Ok(mut inner) = self.0.lock() else {
+            return false;
+        };
+        let Some(record) = inner
+            .records
+            .get_mut(view.label())
+            .filter(|record| record.token == token)
+        else {
+            return false;
+        };
+        let records = if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+            record.document = record.document.wrapping_add(1);
+            Self::take_tree(&mut inner, view.label(), token, false)
+        } else {
+            Vec::new()
+        };
+        drop(inner);
+        let _ = Self::dispose_records(view.app_handle(), records);
+        self.observe_origin(view.label(), token, payload.url());
+        self.current(view.label(), token)
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -293,7 +426,7 @@ impl EmbeddedViews {
         let policy = self.clone();
         let navigation_label = label.to_string();
         let page_policy = self.clone();
-        let page_label = label.to_string();
+        let token = record.token;
         let builder = WebviewBuilder::new(
             label,
             tauri::WebviewUrl::External("about:blank".parse().expect("static neutral URL")),
@@ -303,14 +436,26 @@ impl EmbeddedViews {
         .disable_drag_drop_handler()
         .zoom_hotkeys_enabled(true)
         .on_page_load(move |view, payload| {
-            page_policy.observe_origin(&page_label, payload.url());
-            on_page_load(view, payload);
+            if page_policy.page_load(&view, token, &payload) {
+                on_page_load(view, payload);
+            }
         })
         .on_navigation(move |url| {
-            let allowed = policy.navigation_allowed(&navigation_label, url) == Some(true);
+            let allowed = policy.current(&navigation_label, token)
+                && policy.navigation_allowed(&navigation_label, url) == Some(true);
             allowed && on_navigation(url)
         })
-        .on_permission_request(browser::permission);
+        .on_permission_request({
+            let permissions = self.clone();
+            let permission_label = label.to_string();
+            move |view, kind| {
+                if permissions.current(&permission_label, token) {
+                    browser::permission(view, kind)
+                } else {
+                    tauri::webview::PermissionResponse::Deny
+                }
+            }
+        });
         #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         let builder = builder
             .on_new_window(|_, _| NewWindowResponse::Deny)
@@ -322,9 +467,18 @@ impl EmbeddedViews {
             let owner = window.label().to_string();
             let opener = label.to_string();
             let browser = label.starts_with("browser-");
+            let downloads = self.clone();
+            let download_label = label.to_string();
             builder
-                .on_download(move |webview, event| browser && browser::download(webview, event))
+                .on_download(move |webview, event| {
+                    browser
+                        && downloads.current(&download_label, token)
+                        && browser::download(webview, event)
+                })
                 .on_new_window(move |url, features| {
+                    if !views.current(&opener, token) {
+                        return tauri::webview::NewWindowResponse::Deny;
+                    }
                     views.open_popup(&app, &owner, &opener, &storage, url, features)
                 })
         };
@@ -443,19 +597,7 @@ impl EmbeddedViews {
         {
             return Err("Embedded view belongs to another window".into());
         }
-        if self.remove_exact(label, &record) {
-            if record.fullscreen.is_some() {
-                if let Some(view) = &webview {
-                    let _ = view.window().set_fullscreen(record.fullscreen.unwrap());
-                }
-            }
-            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-            self.close_popups(app, label);
-            if let Some(webview) = webview {
-                webview.close().map_err(|error| error.to_string())?;
-            }
-        }
-        Ok(())
+        self.dispose_tree(app, label, record.token)
     }
 
     pub(crate) fn remove_owner<R: Runtime>(&self, app: &AppHandle<R>, owner: &str) {
@@ -464,7 +606,7 @@ impl EmbeddedViews {
                 .records
                 .iter()
                 .filter(|(_, record)| record.owner == owner)
-                .map(|(label, record)| (label.clone(), record.fullscreen))
+                .map(|(label, record)| (label.clone(), record.clone()))
                 .collect::<Vec<_>>();
             for (label, _) in &labels {
                 inner.records.remove(label);
@@ -473,25 +615,7 @@ impl EmbeddedViews {
         } else {
             Vec::new()
         };
-        for (label, fullscreen) in labels {
-            if let Some(before) = fullscreen {
-                if let Some(view) = app.get_webview(&label) {
-                    let _ = view.window().set_fullscreen(before);
-                }
-            }
-            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-            if label.starts_with("browser-popup-") {
-                if let Some(window) = app.get_webview_window(&label) {
-                    let _ = window.destroy();
-                }
-                continue;
-            }
-            if let Some(webview) = app.get_webview(&label) {
-                if webview.window().label() == owner {
-                    let _ = webview.close();
-                }
-            }
-        }
+        let _ = Self::dispose_records(app, labels);
     }
 }
 
