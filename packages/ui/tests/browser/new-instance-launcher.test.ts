@@ -65,6 +65,16 @@ test('blank creation stays above the columns, keeps its actions, and shares comp
     const controls = (await actions.boundingBox())!
     const columns = (await root.locator('.folder-home-main').boundingBox())!
     assert.ok(brand.y + brand.height <= controls.y && controls.y + controls.height < columns.y)
+    assert.ok(controls.y - (brand.y + brand.height) < columns.y - (controls.y + controls.height), 'creation actions stay closer to the brand than the columns')
+    for (const button of await actions.getByRole('button').all()) {
+      const padding = await button.evaluate(node => ({ left: parseFloat(getComputedStyle(node).paddingLeft), right: parseFloat(getComputedStyle(node).paddingRight) }))
+      assert.ok(padding.left > 0 && padding.right > 0, 'shared small-button padding surrounds the icons')
+    }
+    const source = root.locator('.folder-home-list-column .panel-header .folder-home-recent-source')
+    assert.equal(await source.innerText(), '')
+    assert.equal(await source.getByRole('img', { name: 'This computer', exact: true }).count(), 1)
+    assert.equal(await source.locator('svg.lucide-laptop').count(), 1)
+    assert.equal(await source.getByRole('img').getAttribute('title'), 'This computer')
     const styles = await page.evaluate(() => ['.folder-home-root--blank', '.session-center-column'].map(selector => {
         const logo = getComputedStyle(document.querySelector(`${selector} .empty-state-logo`)!)
         const title = getComputedStyle(document.querySelector(`${selector} .empty-state-brand-title`)!)
@@ -84,6 +94,8 @@ test('blank creation stays above the columns, keeps its actions, and shares comp
     await page.evaluate(async () => { (window as any).launcherFixture.setLoading(false); await (window as any).launcherFixture.setLocale('fr') })
     await actions.getByRole('button', { name: 'Temporaire', exact: true }).waitFor()
     assert.deepEqual(await actions.getByRole('button').allTextContents(), ['Temporaire', 'Cloner'])
+    assert.equal(await source.getByRole('img', { name: 'Cet ordinateur', exact: true }).count(), 1)
+    assert.equal(await source.getByRole('img').getAttribute('title'), 'Cet ordinateur')
     if (process.env.CODENOMAD_BLANK_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_BLANK_CAPTURE })
     assert.deepEqual(errors, [])
   } finally { await page.close() }

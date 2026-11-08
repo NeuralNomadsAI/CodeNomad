@@ -24,7 +24,7 @@ before(async () => {
 after(async () => { await browser?.close() })
 
 test('blank: server recents replace only the left source; folders navigate on the right and Back restores host recents', async () => {
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: 'en-US' })
+  const page = await browser.newPage({ viewport: { width: 1529, height: 1000 }, locale: 'en-US' })
   try {
     await page.clock.setFixedTime(SEPARATION_NOW)
     const fixture = await open(page, '', { context: 'local', host: 'electron', remoteNeedsPassword: true,
@@ -37,17 +37,30 @@ test('blank: server recents replace only the left source; folders navigate on th
     const left = blank.locator('.folder-home-list-column')
     const right = blank.locator('.folder-dashboard-servers')
     await left.getByRole('button', { name: 'Host recent · This computer · /local', exact: true }).waitFor()
+    const source = left.locator('.panel-header .folder-home-recent-source')
+    assert.equal(await source.innerText(), '')
+    assert.equal(await source.getByRole('img', { name: 'This computer', exact: true }).count(), 1)
+    assert.equal(await source.locator('svg.lucide-laptop').count(), 1)
     await capture(page, 'separated-newtab-initial')
     await right.getByRole('button', { name: 'Open a project on Box' }).click()
     await right.locator('input[type=password]').waitFor()
     assert.equal(await left.locator('.folder-home-recent-item').count(), 0)
     assert.equal(await left.locator('.panel-subtitle').count(), 0)
     assert.equal(await left.getByText('No recent projects yet.', { exact: true }).count(), 0)
-    await left.getByText('Box', { exact: true }).waitFor()
+    await source.getByText('Box', { exact: true }).waitFor()
+    assert.equal(await source.locator('svg.lucide-server').count(), 1)
+    assert.equal(await source.getByRole('img', { name: 'This computer', exact: true }).count(), 0)
+    assert.equal(await left.locator('[role=region] > bdi').count(), 0, 'the server-name row is absent from the recent content')
+    const titleBounds = (await left.getByRole('heading', { name: 'Recent tabs' }).boundingBox())!
+    const sourceBounds = (await source.boundingBox())!
+    const headerBounds = (await left.locator('.panel-header').boundingBox())!
+    assert.ok(sourceBounds.x > titleBounds.x + titleBounds.width)
+    assert.ok(Math.abs(sourceBounds.y + sourceBounds.height / 2 - (headerBounds.y + headerBounds.height / 2)) < 1)
     await capture(page, 'separated-newtab-server-auth')
     await right.locator('input[type=password]').fill('fixture-password')
     await right.getByRole('button', { name: 'Sign in', exact: true }).click()
     await left.getByRole('button', { name: 'Remote recent · Box · /srv/recent', exact: true }).waitFor()
+    await capture(page, 'ux-newtab-server')
     assert.equal(await right.getByText('Remote recent', { exact: true }).count(), 0)
     assert.equal(await left.locator('[data-remote-folder], .action-overflow-menu').count(), 0)
     assert.equal(await left.getByRole('button', { name: /Project actions|Remove from recent|Rename workspace/ }).count(), 0)
@@ -60,6 +73,9 @@ test('blank: server recents replace only the left source; folders navigate on th
     await right.getByRole('button', { name: 'Back to Browse', exact: true }).click()
     await left.getByRole('button', { name: 'Host recent · This computer · /local', exact: true }).waitFor()
     assert.equal(await left.getByRole('button', { name: /Remote recent/ }).count(), 0)
+    assert.equal(await source.innerText(), '')
+    assert.equal(await source.getByRole('img', { name: 'This computer', exact: true }).count(), 1)
+    await capture(page, 'ux-newtab-local')
     await capture(page, 'separated-newtab-back')
   } finally { await page.close() }
 })
@@ -82,6 +98,9 @@ test('Home retains the selected server and folder across tabs; a hidden browse r
     const recentTab = page.getByRole('tab', { name: 'Recent tabs', exact: true })
     await recentTab.click()
     await recentTab.focus()
+    assert.equal(await recentTab.locator('.folder-home-recent-source').innerText(), 'Box')
+    assert.equal(await recentTab.locator('svg.lucide-server').count(), 1)
+    assert.equal(await page.locator('[role=tabpanel] > bdi').count(), 0)
     assert.equal(await page.getByRole('button', { name: /Host recent/ }).count(), 0)
     assert.equal(await recentTab.locator('.panel-subtitle').count(), 0)
     assert.equal(await recentTab.getAttribute('aria-description'), null)
@@ -126,7 +145,7 @@ for (const response of ['empty', 'auth', 'error', 'pending'] as const) test(`rem
     const recentTab = page.getByRole('tab', { name: 'Recent tabs', exact: true })
     await recentTab.click()
     assert.equal(await page.locator('.folder-home-recent-item').count(), 0)
-    await page.locator('[role=tabpanel]:visible').getByText('Box', { exact: true }).waitFor()
+    await recentTab.locator('.folder-home-recent-source').getByText('Box', { exact: true }).waitFor()
     if (response === 'empty') {
       await page.getByText('No recent projects yet.', { exact: true }).waitFor()
       assert.equal(await recentTab.locator('.panel-subtitle').innerText(), '0 items')
@@ -141,6 +160,25 @@ for (const response of ['empty', 'auth', 'error', 'pending'] as const) test(`rem
 })
 
 const BOX = "https://box.example"
+
+for (const host of ['electron', 'tauri'] as const) test(`${host}: a long browsed server name truncates inside the recent header`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 }, locale: 'en-US' })
+  const name = 'Long server name '.repeat(12)
+  try {
+    await open(page, '', { context: 'local', host, uiState: { remoteServers: [server('box', { name })] } })
+    await browse(page)
+    await page.getByRole('button', { name: `Open a project on ${name.trim()}`, exact: true }).click()
+    const recentTab = page.getByRole('tab', { name: 'Recent tabs', exact: true })
+    await recentTab.click()
+    const source = recentTab.locator('.folder-home-recent-source')
+    assert.equal(await source.locator('svg.lucide-server').count(), 1)
+    const label = source.locator('bdi')
+    assert.equal(await label.getAttribute('title'), name.trim())
+    assert.equal(await label.evaluate(node => getComputedStyle(node).textOverflow), 'ellipsis')
+    assert.equal(await label.evaluate(node => node.scrollWidth > node.clientWidth), true)
+    assert.equal(await recentTab.evaluate(node => node.scrollWidth <= node.clientWidth), true)
+  } finally { await page.close() }
+})
 
 for (const host of ['electron', 'tauri'] as const) {
   for (const source of ['saved title', 'recent', 'folder'] as const) test(`${host}: restored projects use ${source} labels before either view opens`, async () => {

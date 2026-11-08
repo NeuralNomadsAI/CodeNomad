@@ -1,5 +1,5 @@
 import { Component, createMemo, createSignal, createUniqueId, Show, For, onMount, onCleanup, createEffect, on } from "solid-js"
-import { Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Pencil } from "lucide-solid"
+import { Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Pencil, Laptop, Server } from "lucide-solid"
 import { removeRemoteProjectRecent, removeSideCarRecent, useConfig } from "../stores/preferences"
 import { launchableRecents, openRemoteProject, opensRemoteProjectTab } from "../stores/remote-project-open"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
@@ -281,6 +281,17 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
   const openCloneDialog = () => dialogs.clone()
 
+  const RecentSource = () => <span class="folder-home-recent-source flex items-center justify-end gap-2 min-w-0 text-sm text-secondary">
+    <Show when={remoteSource()} fallback={
+      <span role="img" aria-label={t("folderSelection.browseMenu.thisComputer")} title={t("folderSelection.browseMenu.thisComputer")}>
+        <Laptop class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+      </span>
+    }>{(source) => <>
+      <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+      <bdi class="truncate" dir="auto" title={serverDisplayName(source().profile, remoteServers())}>{serverDisplayName(source().profile, remoteServers())}</bdi>
+    </>}</Show>
+  </span>
+
   async function handleBrowse() {
     if (isLoading()) return
     setFocusMode("new")
@@ -441,7 +452,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
           <div class="folder-home-content flex-1 min-h-0 flex flex-col gap-4">
             <Show when={props.blank}>
-              <div class="folder-home-blank-actions">
+              <div class="folder-home-blank-actions window-shell">
                 <NewTabActions blank isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} hideSidecar />
               </div>
             </Show>
@@ -464,7 +475,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <div class="folder-home-list-column flex flex-col gap-4 flex-1 min-h-0">
                 <div class="folder-home-list-panel panel flex flex-col" classList={{ "window-shell": props.blank }}>
                   <div class="panel-header !gap-0 !p-0">
-                    <Show when={props.blank}><div class="px-4 py-3"><h2 class="panel-title text-base">{t("newInstanceLauncher.recentTitle")}</h2><Show when={recentsAvailable()}><EntryCount count={allRecents().length} /></Show></div></Show>
+                    <Show when={props.blank}><div class="flex items-center justify-between gap-2 min-w-0 w-full px-4 py-3"><div class="shrink-0"><h2 class="panel-title text-base">{t("newInstanceLauncher.recentTitle")}</h2><Show when={recentsAvailable()}><EntryCount count={allRecents().length} /></Show></div><RecentSource /></div></Show>
                     <Show when={!props.blank}>
                     <div class="grid grid-cols-2 gap-0 overflow-hidden border border-base" role="tablist" onKeyDown={handleTabKeyDown}>
                       <For each={["recent", "browse"] as const}>
@@ -484,10 +495,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                             style={{ "background-color": homeTab() === tab ? "var(--surface-secondary)" : "var(--surface-control)" }}
                             onClick={() => setHomeTab(tab)}
                           >
-                            <span class="panel-title text-base" style={{ color: homeTab() === tab ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                            <div class="flex items-center justify-between gap-2 min-w-0"><div class="shrink-0"><span class="panel-title text-base" style={{ color: homeTab() === tab ? "var(--text-primary)" : "var(--text-secondary)" }}>
                               {t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
                             </span>
                             <Show when={tab !== "recent" || recentsAvailable()}><EntryCount count={tab === "recent" ? allRecents().length : browseEntryCount()} /></Show>
+                            </div><Show when={tab === "recent"}><RecentSource /></Show></div>
                           </button>
                         )}
                       </For>
@@ -503,7 +515,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
                   <Show when={props.blank || homeTab() === "recent"}>
                   <div id={panelId("recent")} role={props.blank ? "region" : "tabpanel"} aria-label={props.blank ? t("newInstanceLauncher.recentTitle") : undefined} aria-labelledby={props.blank ? undefined : tabId("recent")} class="flex flex-col flex-1 min-h-0">
-                  <Show when={remoteSource()}>{(source) => <bdi class="px-4 py-2 text-sm text-secondary truncate" dir="auto">{serverDisplayName(source().profile, remoteServers())}</bdi>}</Show>
                   <Show
                       when={folders().length > 0}
                       fallback={

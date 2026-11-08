@@ -9,6 +9,7 @@
 .folder-home-shell { max-width: 60rem; padding-top: 0; }
 .folder-home-root--blank .folder-home-shell { padding-top: 1rem; }
 .folder-home-hero { margin-bottom: 1.5rem; }
+.folder-home-root--blank .folder-home-hero { margin-bottom: var(--space-xs); }
 .folder-home-logo { height: 4rem; }
 .folder-home-main, .folder-home-list-column { min-width: 0; }
 .folder-home-main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
@@ -16,7 +17,7 @@
 .folder-home-root--blank .folder-home-main { align-items: stretch; }
 .folder-dashboard-servers > .browse-menu { flex: 1; }
 .folder-home-root--blank .panel-header { background-color: var(--surface-secondary); }
-.folder-home-blank-actions { display: flex; justify-content: center; gap: var(--space-sm); flex-shrink: 0; }
+.folder-home-blank-actions { display: flex; justify-content: center; gap: var(--space-sm); flex-shrink: 0; margin-bottom: var(--space-xl); }
 .folder-home-blank-actions .window-action:not(:hover) { background-color: var(--surface-control); }
 
 .folder-home-list-panel {
@@ -27,6 +28,8 @@
 }
 
 .folder-home-list-panel .panel-header { flex-shrink: 0; }
+.folder-home-header-tab { min-width: 0; }
+.folder-home-recent-source { overflow: hidden; }
 .folder-home-header-tab:hover { background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay)); }
 .folder-home-list-panel .panel-list--fill { max-height: min(28rem, 52dvh); min-height: 0; }
 
