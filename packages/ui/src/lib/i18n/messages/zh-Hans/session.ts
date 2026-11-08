@@ -1,6 +1,7 @@
 export const sessionMessages = {
+  "browser.viewport.webkitEmulationHint": "WebKit 移动标识和 CSS 视口。像素密度和输入受原生环境限制。",
   "browser.viewport.emulationHint": "使用移动设备标识、触控和像素密度重新加载。不模拟浏览器引擎、键盘或系统栏。",
-  "browser.viewport.emulationUnavailable": "设备模拟需要桌面应用中的原生网页预览。",
+  "browser.viewport.dimensionsOnly": "仅调整尺寸。",
   "sessionList.filter.includeMainSessions": "主会话",
   "sessionList.filter.includeSubsessions": "子会话",
   "session.pruning.maintenance_required": "会话或其存储正忙。请等待当前操作完成后重试清理。",

@@ -5,7 +5,7 @@ use tauri::{menu::MenuItemKind, Wry};
 /// English labels until a renderer reports its locale. Keys and texts mirror
 /// `NATIVE_MENU_LABEL_KEYS` and the English messages in the UI package
 /// (`packages/ui/src/lib/native/menu-labels.ts`); a UI test keeps them in sync.
-pub(crate) const DEFAULTS: [(&str, &str); 39] = [
+pub(crate) const DEFAULTS: [(&str, &str); 49] = [
     ("file", "File"),
     ("edit", "Edit"),
     ("view", "View"),
@@ -45,6 +45,19 @@ pub(crate) const DEFAULTS: [(&str, &str); 39] = [
     ("maximize", "Maximize"),
     ("zoom", "Zoom"),
     ("bringAllToFront", "Bring All to Front"),
+    ("browserPermission", "Allow {permission} for {origin}?"),
+    (
+        "browserPermissionUnknown",
+        "Unknown permission blocked: {permission}.",
+    ),
+    ("browserAllow", "Allow"),
+    ("browserDeny", "Deny"),
+    ("browserCopyLink", "Copy Link"),
+    ("browserSaveImage", "Save Image"),
+    ("browserOpenLink", "Open Link in New Window"),
+    ("browserInspect", "Inspect"),
+    ("browserPromptAccept", "OK"),
+    ("browserPromptCancel", "Cancel"),
 ];
 
 const MAX_LABEL_CHARS: usize = 200;
@@ -94,6 +107,13 @@ pub(crate) struct MenuLabels {
 }
 
 impl MenuLabels {
+    pub(crate) fn text(&self, key: &str) -> String {
+        self.latest
+            .lock()
+            .ok()
+            .and_then(|labels| labels.as_ref().and_then(|labels| labels.get(key)).cloned())
+            .unwrap_or_else(|| label(key).to_string())
+    }
     pub(crate) fn replace_targets(&self, targets: Vec<(&'static str, MenuItemKind<Wry>)>) {
         if let Ok(mut current) = self.targets.lock() {
             *current = targets;
@@ -106,7 +126,9 @@ impl MenuLabels {
     /// Runs on the main thread. Native menu calls happen outside our mutexes.
     pub(crate) fn apply(&self, reported: Option<&BTreeMap<String, String>>) {
         let labels = {
-            let Ok(mut latest) = self.latest.lock() else { return };
+            let Ok(mut latest) = self.latest.lock() else {
+                return;
+            };
             if let Some(reported) = reported {
                 *latest = Some(reported.clone());
             }
@@ -114,7 +136,9 @@ impl MenuLabels {
         };
         let Some(labels) = labels else { return };
         {
-            let Ok(mut applied) = self.applied.lock() else { return };
+            let Ok(mut applied) = self.applied.lock() else {
+                return;
+            };
             if applied.as_ref() == Some(&labels) {
                 return;
             }
@@ -143,7 +167,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn labels(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
-        entries.iter().map(|(key, text)| (key.to_string(), text.to_string())).collect()
+        entries
+            .iter()
+            .map(|(key, text)| (key.to_string(), text.to_string()))
+            .collect()
     }
 
     #[test]
@@ -165,6 +192,9 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn a_literal_ampersand_is_not_a_mnemonic() {
-        assert_eq!(resolve("copy", Some(&labels(&[("copy", "Copy & paste")]))), "Copy && paste");
+        assert_eq!(
+            resolve("copy", Some(&labels(&[("copy", "Copy & paste")]))),
+            "Copy && paste"
+        );
     }
 }

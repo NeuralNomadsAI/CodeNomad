@@ -10,11 +10,11 @@ Choose a local desktop host or run the [standalone server](server.md). In both c
 
 | Platform | Electron release | Tauri release | Platform notes |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel or Apple Silicon | ZIP, Intel or Apple Silicon | macOS 13.5 or later (required by Tauri's bundled Node; Electron declares the same minimum). |
+| macOS | ZIP, Intel or Apple Silicon | ZIP, Intel or Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Installer, x64 | Windows 10 or later; Tauri uses WebView2. |
 | Linux | Debian package, x64 | AppImage, x64 | Built and tested on Ubuntu 24.04; compatibility with older distributions is not guaranteed. |
 
-Desktop releases include the runtime resources needed by the backend and OpenCode installer, so you do not need a separate Node.js/npm installation to use them. Git is not bundled. Native browser automation is supported in Electron and Windows Tauri; other Tauri platforms use iframe previews.
+Desktop releases include the runtime resources needed by the backend and OpenCode installer, so you do not need a separate Node.js/npm installation to use them. Git is not bundled. Native agent browser automation is supported in Electron and Tauri on Windows, macOS and Linux. Tauri macOS/Linux use WebKit previews and native mobile profiles with engine-specific density and input limits; see [browser previews](browser-sidecars.md#signins-automation).
 
 For a verified download blocked at launch, see [platform troubleshooting](troubleshooting.md#desktop-launch). Never run an untrusted archive merely to bypass a warning.
 

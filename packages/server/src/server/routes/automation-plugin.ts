@@ -153,6 +153,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
     }
 
+    if (["browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode)) && !(body.mode === "browser-claim" && body.purpose === "mission")
+      && deps.nativeParent.browserAutomationUnavailable) {
+      return reply.code(409).send({ code: "unsupported", error: "Browser automation is unavailable in this host" })
+    }
+
     if (body.mode === "browser-claim") {
       // Without a desktop host this backend owns sessions only for Mission
       // dispatch; claiming browsers too would hand the browser tools an owner

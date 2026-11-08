@@ -39,7 +39,7 @@ pub(crate) fn install(controller: &ICoreWebView2Controller) -> webview2_com::Res
     Ok(())
 }
 
-pub(crate) fn bind(webview: &tauri::Webview) {
+pub(crate) fn bind<R: tauri::Runtime>(webview: &tauri::Webview<R>) {
     if let Err(error) = webview.with_webview(|platform| {
         if let Err(error) = install(&platform.controller()) {
             eprintln!("[browser-accelerators] failed to protect F6: {error}");

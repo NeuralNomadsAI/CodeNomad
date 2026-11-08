@@ -25,7 +25,7 @@
     "active": true,
     "copyright": "Copyright © 2025-2026 CodeNomad contributors",
     "macOS": {
-      "minimumSystemVersion": "13.5"
+      "minimumSystemVersion": "14.0"
     },
     "linux": {
       "deb": {
