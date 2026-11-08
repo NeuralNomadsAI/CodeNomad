@@ -72,3 +72,13 @@ test("a proven native task conversation keeps its queued question when family co
   assert.deepEqual(questions.map(question => question.request.id), ["task-form"], "only exact task evidence, never unknown descendants or global requests")
   assert.equal(taskQuestion(mission, questions, { status: "dispatching" }, "ses_native"), questions[0], "its task row carries it")
 })
+
+test("a proven native task never changes the family's roots: its grandchild's question stays the coordinator family's", () => {
+  const family = { state: "observed" as const, members: [
+    { sessionId: "ses_coordinator", actorSessionId: "ses_coordinator", kind: "declared" as const },
+    { sessionId: "ses_native", parentSessionId: "ses_coordinator", actorSessionId: "ses_coordinator", kind: "ordinary" as const },
+    { sessionId: "ses_grandchild", parentSessionId: "ses_native", actorSessionId: "ses_coordinator", kind: "ordinary" as const }] }
+  const forms = [{ id: "task-form", sessionID: "ses_native", title: "Task", fields: [] }, { id: "grand-form", sessionID: "ses_grandchild", title: "Grandchild", fields: [] }]
+  const questions = nativeMissionQuestions({ actors: [{ sessionId: "ses_coordinator" }], family, forms, permissions: [], isTaskSession: id => id === "ses_native" })
+  assert.deepEqual(questions.map(question => question.request.id).sort(), ["grand-form", "task-form"])
+})

@@ -10,11 +10,19 @@ export function nativeMissionQuestions(input: {
   forms: readonly MissionAttentionForm[]; permissions: readonly MissionAttentionPermission[]
   isTaskSession: (sessionId: string) => boolean
 }): MissionQuestion[] {
-  const tasks = [...new Set([...input.forms, ...input.permissions].map(item => item.sessionID).filter(id => id && input.isTaskSession(id)))]
-  return selectMissionAttention({ actors: [...input.actors, ...tasks.map(sessionId => ({ sessionId }))], forms: input.forms, permissions: input.permissions,
-    tasks: [], family: input.family })
+  // The actors' and family's requests, with the actors as the family's only roots.
+  const correlated: MissionQuestion[] = selectMissionAttention({ actors: input.actors, forms: input.forms, permissions: input.permissions, tasks: [], family: input.family })
     .flatMap(item => item.open && item.sessionId && item.kind !== "blocked"
       ? [{ sessionId: item.sessionId, actorSessionId: item.actorSessionId, request: { kind: item.kind, id: item.id.slice(item.kind.length + 1) } }] : [])
+  // Then the exact requests of proven native task conversations not already correlated.
+  const known = new Set(correlated.map(question => `${question.request.kind}:${question.request.id}:${question.sessionId}`))
+  const exact: MissionQuestion[] = [
+    ...input.forms.map(form => ({ sessionId: form.sessionID, request: { kind: "form" as const, id: form.id } })),
+    ...input.permissions.map(permission => ({ sessionId: permission.sessionID, request: { kind: "permission" as const, id: permission.id } })),
+  ].filter(question => question.sessionId && question.sessionId !== "global" && input.isTaskSession(question.sessionId)
+    && !known.has(`${question.request.kind}:${question.request.id}:${question.sessionId}`))
+    .map(question => ({ ...question, actorSessionId: question.sessionId }))
+  return [...correlated, ...exact]
 }
 
 /** An observation page's parts that question attribution reads. */
