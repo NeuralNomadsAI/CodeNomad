@@ -58,8 +58,8 @@ export function useDeviceAttachments(options: Options) {
     if (textarea?.isConnected && textarea.offsetParent !== null) textarea.focus()
   }
 
-  function enqueue(files: readonly File[], clipboard = false, owner = capture()): Promise<void> {
-    if (!owner.current() || !files.length) return Promise.resolve()
+  function enqueue(fileSelection: readonly File[] | Promise<readonly File[]>, clipboard = false, owner = capture()): Promise<void> {
+    if (!owner.current()) return Promise.resolve()
     const input = options.getTextarea()
     const anchor = { text: options.prompt(), start: input?.selectionStart ?? options.prompt().length,
       end: input?.selectionEnd ?? options.prompt().length }
@@ -67,6 +67,8 @@ export function useDeviceAttachments(options: Options) {
     const run = async () => {
       if (!owner.current()) return
       try {
+        const files = await fileSelection
+        if (!owner.current()) return
         const result = await readDeviceFileSelection(files, getAttachments(owner.instanceId, owner.sessionId), owner.current)
         if (result.stale || !owner.current()) return
         const textarea = options.getTextarea()

@@ -12,6 +12,7 @@ import {
   pastedDisplayCounterRegex,
 } from "./attachmentPlaceholders"
 import { useDeviceAttachments } from "./useDeviceAttachments"
+import { readClipboardAttachments } from "../../lib/native/clipboard-attachments"
 
 type PromptAttachmentsOptions = {
   instanceId: Accessor<string>
@@ -225,9 +226,8 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
 
   async function handlePaste(e: ClipboardEvent) {
     if (options.disabled?.() || options.active?.() === false) return
-    const items = e.clipboardData?.items
-    if (!items) return
-    const files = Array.from(items).filter(item => item.kind === "file").flatMap(item => {
+    const items = e.clipboardData?.items ?? []
+    const files = e.clipboardData?.files.length ? Array.from(e.clipboardData.files) : Array.from(items).filter(item => item.kind === "file").flatMap(item => {
       const file = item.getAsFile()
       return file ? [file] : []
     })
@@ -238,6 +238,13 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     }
 
     const pastedText = e.clipboardData?.getData("text/plain")
+    const hasFileUris = e.clipboardData?.getData("text/uri-list").split(/\r?\n/).some(uri => /^file:\/\//i.test(uri.trim()))
+    const nativeFiles = !pastedText || hasFileUris ? readClipboardAttachments(e) : null
+    if (nativeFiles) {
+      e.preventDefault()
+      await device.enqueue(nativeFiles, true)
+      return
+    }
     if (!pastedText) return
 
     const lineCount = pastedText.split("\n").length
