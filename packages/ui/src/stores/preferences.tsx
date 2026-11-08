@@ -114,6 +114,8 @@ export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "provider" | "ha
 }
 
 export interface UiSettings {
+  /** Host-owned admission flag, enabled only by explicit configuration. */
+  multiBackend: boolean
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
@@ -232,6 +234,7 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 }
 
 const defaultUiSettings: UiSettings = {
+  multiBackend: false,
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
@@ -344,6 +347,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       ? "collapsed"
       : "expanded"
   return {
+    multiBackend: sanitized.multiBackend === true,
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
