@@ -40,7 +40,7 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 
 1. Selecciona la fila de una misión: sus tareas aparecen debajo y sus acciones en la segunda línea del encabezado. El chevrón de la fila pliega o despliega sus tareas; el chevrón de otra misión muestra sus tareas sin seleccionarla. **Filtrar misiones** acota las demás filas.
 2. Elige **Resumen** (ojo) para la vista central general; mientras está abierta, seleccionar otra misión muestra la vista general de esa misión. Selecciona una tarea para ver su resultado, encargo y evidencias exactos: mientras su lector está abierto, las acciones del encabezado se aplican a esa tarea, con **Abrir la conversación de la tarea** y, si falta su informe, **Verificar y recuperar el informe faltante**. **Resumen** cierra entonces el lector de la tarea.
-3. **Más acciones** (⋯) agrupa **Interrumpir ahora**, **Pedir una actualización** y **Editar la misión seleccionada**; las acciones que no corresponden quedan desactivadas.
+3. **Más acciones** (⋯) agrupa **Pedir una actualización**, **Interrumpir ahora**, **Guardar como descripción** y **Editar la misión seleccionada**; las acciones que no corresponden quedan desactivadas.
 4. Sigue los enlaces de dependencias y los **Informes**; usa **Abrir conversación** para el coordinador cuando necesites su transcripción.
 5. Cuando una misión o una de sus tareas se pone en rojo, selecciónala: se abre la conversación que pregunta, con su pregunta en el panel de interrupciones.
 
@@ -144,7 +144,7 @@ Una elección rechazada o sin confirmar nunca se reenvía: se vuelven a mostrar 
 
 1. Durante la creación, expande **Opciones → Empezar desde una descripción** y selecciona la descripción guardada.
 2. Revisa el objetivo, las notas, el guion, los perfiles y la delegación copiados antes de **Crear**.
-3. Usa **Guardar como descripción** para dar nombre a un borrador reutilizable. Una misión puntual seleccionada, incluso terminada, también ofrece **Guardar como descripción**.
+3. Usa **Guardar como descripción** para dar nombre a un borrador reutilizable. Una misión puntual seleccionada, incluso terminada, también ofrece **Guardar como descripción** en **Más acciones** (⋯).
 
 Las descripciones guardan instrucciones y elecciones solicitadas, no planes de tareas, resultados, conversaciones, relojes de programación ni autoridad de ejecución. Cargar una rellena un borrador de creación normal; no inicia ni programa nada. Eliminar una descripción conserva las misiones/conversaciones existentes. **Configuración → Misiones → Descripciones guardadas** gestiona la biblioteca; si la biblioteca deja de poder leerse, **Restablecer la biblioteca guardada** (tras confirmar) elimina las descripciones guardadas, no las ejecuciones. Las programaciones no tienen acción para guardarlas como descripción.
 

@@ -194,8 +194,10 @@ test("finished one-time Mission: titled entry, disabled inapplicable actions, pr
     assert.equal(await selectedMissionTitle(page).innerText(), "Prepare the 2.4 release notes for the desktop and web apps")
     // Inapplicable actions stay in place, disabled: no primary, Stop or Edit for a finished Mission.
     assert.deepEqual(await toolbar(page), [["Start", true], ["Stop mission permanently", true], ["Summary", false],
-      ["Open conversation", false], ["Delete selected mission…", false], ["More actions", true]])
-    // Every menu action (Interrupt now, the update request, Edit) is inapplicable: the menu itself is disabled.
+      ["Open conversation", false], ["Delete selected mission…", false], ["More actions", false]])
+    // The menu still applies: a finished Mission can be saved as a brief; its other actions stay disabled.
+    for (const [key, enabled] of [["request", false], ["interrupt", false], ["save-brief", true], ["edit", false]] as const)
+      assert.equal((await missionMenuItemState(page, key)).enabled, enabled, key)
     const tree = detail(page).locator(".mission-tree")
     assert.equal(await tree.locator("li[data-state='done']").count(), 8)
     assert.equal(await detail(page).locator("p, .mission-result").count(), 0, "no result prose in the panel")

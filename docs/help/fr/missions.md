@@ -40,7 +40,7 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 
 1. Sélectionnez la ligne d’une mission : ses tâches apparaissent en dessous et ses actions sur la deuxième ligne de l’en-tête. Le chevron de la ligne replie ou déplie ses tâches ; le chevron d’une autre mission affiche ses tâches sans la sélectionner. **Filtrer les missions** restreint les autres lignes.
 2. Choisissez **Résumé** (œil) pour la vue centrale ; tant qu’elle est ouverte, sélectionner une autre mission affiche la vue de cette mission. Sélectionnez une tâche pour son résultat, sa consigne et ses preuves exacts : tant que son lecteur est ouvert, les actions de l’en-tête s’appliquent à cette tâche, avec **Ouvrir la conversation de la tâche** et, si son rapport manque, **Vérifier et récupérer le rapport manquant**. **Résumé** ferme alors le lecteur de la tâche.
-3. **Plus d'actions** (⋯) regroupe **Interrompre maintenant**, **Demander un point** et **Modifier la mission sélectionnée** ; les actions qui ne s’appliquent pas restent désactivées.
+3. **Plus d'actions** (⋯) regroupe **Demander un point**, **Interrompre maintenant**, **Enregistrer comme consigne** et **Modifier la mission sélectionnée** ; les actions qui ne s’appliquent pas restent désactivées.
 4. Suivez les liens de dépendance et **Rapports** ; utilisez **Ouvrir la conversation** pour le coordinateur si vous avez besoin de sa transcription.
 5. Quand une mission ou l’une de ses tâches passe au rouge, sélectionnez-la : la conversation qui pose la question s’ouvre, avec cette question dans le dock d’interruption.
 
@@ -144,7 +144,7 @@ Un choix refusé ou non confirmé n’est jamais renvoyé : les valeurs enregist
 
 1. À la création, développez **Options → Partir d’une consigne** et sélectionnez la consigne enregistrée.
 2. Vérifiez l’objectif, les notes, le scénario, les profils et la délégation copiés avant **Créer**.
-3. Utilisez **Enregistrer comme consigne** pour nommer un brouillon réutilisable. Une mission ponctuelle sélectionnée, même terminée, propose aussi **Enregistrer comme consigne**.
+3. Utilisez **Enregistrer comme consigne** pour nommer un brouillon réutilisable. Une mission ponctuelle sélectionnée, même terminée, propose aussi **Enregistrer comme consigne** sous **Plus d'actions** (⋯).
 
 Les consignes stockent les instructions et choix demandés, pas les plans de tâches, résultats, conversations, horaires de programme ou autorité d’exécution. En charger une remplit un brouillon de création ordinaire ; cela ne démarre ni ne planifie rien. Retirer une consigne conserve les missions/conversations existantes. **Paramètres → Missions → Consignes enregistrées** gère la bibliothèque ; si celle-ci devient illisible, **Réinitialiser la bibliothèque enregistrée** (après confirmation) retire les consignes enregistrées, pas les exécutions. Les programmes eux-mêmes n’ont pas d’action d’enregistrement comme consigne.
 

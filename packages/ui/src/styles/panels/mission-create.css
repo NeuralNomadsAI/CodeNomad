@@ -27,7 +27,8 @@
    panel with the footer after it. */
 .mission-control[data-creating] > .mission-create { order: 1; display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; margin-block-end: 0; }
 /* The task group's minimum too: room for the objective's label and field. */
-.mission-control[data-creating] > .mission-create > .window-body { min-height: 8rem; }
+/* The body, when it scrolls, contains its positioned descendants like the panel does. */
+.mission-control[data-creating] > .mission-create > .window-body { position: relative; min-height: 8rem; }
 .mission-control[data-creating] > .mission-create[data-scroller="panel"] { flex: none; }
 .mission-control[data-creating] > .mission-create[data-scroller="panel"] > .window-body { flex: none; overflow: visible; }
 

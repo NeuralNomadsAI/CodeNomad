@@ -50,9 +50,13 @@ export function MissionRows(props: {
   /** An unselected row this returns content for expands from its chevron without
    * being selected (a one-time Mission's tasks, read on demand); others select. */
   preview?: (key: string) => JSX.Element | undefined; expandable?: (key: string) => boolean
+  /** Receives the command unfolding the selection's detail (for a toolbar action that
+   * opens content inside it, such as the brief name field). */
+  revealDetail?: (reveal: () => void) => void
 }) {
   const { t } = useI18n()
   const [folded, setFolded] = createSignal<string>()
+  props.revealDetail?.(() => setFolded(undefined))
   const [opened, setOpened] = createSignal<ReadonlySet<string>>(new Set())
   const toggleOpened = (key: string) => setOpened(previous => {
     const next = new Set(previous)

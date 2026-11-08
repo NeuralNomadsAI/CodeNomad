@@ -145,34 +145,65 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
   </Show>
 }
 
-/** A "Save as brief" button that asks for a name inline: the creation footer's
- * draft, or a selected Mission's recorded brief inputs (`initialName` prefills).
- * `onOpen` follows the name field, which shows `reading` while the draft is still read.
- * A window footer passes its own button template; elsewhere these are bordered actions. */
+/** The command that opens a brief's inline name field from elsewhere (a menu item). */
+export interface MissionBriefSaveTrigger {
+  /** Opens the name field; closing it gives focus back to `returnFocus()` (the menu's trigger, or a fallback). */
+  open: (returnFocus?: () => HTMLElement | undefined) => void; disabled: () => boolean
+}
+
+/** "Save as brief" asking for a name inline: the creation footer's draft, or a
+ * selected Mission's recorded brief inputs (`initialName` prefills). `onOpen` follows
+ * the name field, which shows `reading` while the draft is still read. With `trigger`
+ * the command lives elsewhere (the selected toolbar's overflow menu) and only the name
+ * field shows here; otherwise a button opens it, a window footer passing its own
+ * button template. */
 export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string
-  onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined }) {
+  onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined
+  trigger?: (trigger: MissionBriefSaveTrigger) => void }) {
   const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
   const buttonClass = () => props.buttonClass ?? "window-action"
   const [open, setOpen] = createSignal(false), [name, setName] = createSignal("")
   createEffect(() => props.onOpen?.(open()))
-  let input: HTMLInputElement | undefined
+  let input: HTMLInputElement | undefined, root!: HTMLDivElement
+  // Opened from a menu, the field gives focus back to that menu's trigger when it closes.
+  let returnTo: (() => HTMLElement | undefined) | undefined
+  const close = (hadFocus = root.contains(document.activeElement)) => {
+    // Unless the user has moved focus elsewhere meanwhile (a save is asynchronous and
+    // disables the focused control, dropping focus to the body).
+    const active = document.activeElement
+    const free = !active || active === document.body || root.contains(active)
+    setOpen(false)
+    const target = returnTo; returnTo = undefined
+    // Once the closing (and a save's preference update) has re-rendered the toolbar.
+    if (hadFocus && free && target) queueMicrotask(() => { const element = target(); if (element?.isConnected) element.focus({ preventScroll: true }) })
+  }
   const full = () => config.preferences().missionModels.length >= MAX_MISSION_MODELS
   const save = async () => {
     if (actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()) return
-    if (await actions.save(name(), props.draft())) { setName(""); setOpen(false) }
+    const hadFocus = root.contains(document.activeElement)
+    if (await actions.save(name(), props.draft())) { setName(""); close(hadFocus) }
   }
-  return <div class="mission-brief-save">
-    <Show when={open()} fallback={<button type="button" class={buttonClass()} disabled={actions.disabled() || full()}
-      onClick={() => { setName(props.initialName?.().slice(0, 80) ?? ""); setOpen(true); queueMicrotask(() => input?.select()) }}>{t("missions.create.brief.saveAs")}</button>}>
+  const begin = (fromMenu: boolean, returnFocus?: () => HTMLElement | undefined) => {
+    if (actions.disabled() || full()) return
+    returnTo = returnFocus
+    setName(props.initialName?.().slice(0, 80) ?? ""); setOpen(true)
+    // A closing menu returns focus to its trigger first: take it back on the next frames.
+    if (fromMenu) requestAnimationFrame(() => requestAnimationFrame(() => input?.select()))
+    else queueMicrotask(() => input?.select())
+  }
+  props.trigger?.({ open: returnFocus => begin(true, returnFocus), disabled: () => actions.disabled() || full() })
+  return <div ref={root} class="mission-brief-save">
+    <Show when={open()} fallback={props.trigger ? undefined : <button type="button" class={buttonClass()} disabled={actions.disabled() || full()}
+      onClick={() => begin(false)}>{t("missions.create.brief.saveAs")}</button>}>
       <input ref={input} aria-label={t("missions.models.name")} placeholder={t("missions.models.name")} value={name()} maxLength={80}
         disabled={actions.disabled()} onInput={event => setName(event.currentTarget.value)} onKeyDown={event => {
           // Enter names the brief; it never submits the creation form.
           if (event.key === "Enter") { event.preventDefault(); void save() }
-          else if (event.key === "Escape") { event.preventDefault(); setOpen(false) }
+          else if (event.key === "Escape") { event.preventDefault(); close() }
         }} />
       <button type="button" class={buttonClass()} disabled={actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()}
         onClick={() => void save()}>{t("missions.models.save")}</button>
-      <button type="button" class={buttonClass()} aria-label={t("missions.create.brief.cancel")} onClick={() => setOpen(false)}>{t("missions.control.cancel")}</button>
+      <button type="button" class={buttonClass()} aria-label={t("missions.create.brief.cancel")} onClick={() => close()}>{t("missions.control.cancel")}</button>
       <Show when={props.reading?.()}>{reading => <MissionBodyPending failed={reading().failed} changed={reading().changed} onRetry={() => reading().onRetry()} />}</Show>
     </Show>
     {actions.status()}

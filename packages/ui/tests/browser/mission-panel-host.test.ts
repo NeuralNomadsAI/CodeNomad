@@ -95,6 +95,14 @@ test("a long mission's tasks scroll with the panel, the only scroller, under its
       assert(await f.page.locator(".mission-control").evaluate(element => element.scrollTop) > 0)
       const [header, panel] = await Promise.all([f.page.locator(".mission-control-header").boundingBox(), f.page.locator(".mission-control").boundingBox()])
       assert(header && panel && Math.abs(header.y - panel.y) <= 1, `the header stays at the panel top at ${viewport.height}px: ${header?.y} vs ${panel?.y}`)
+      // Nothing escapes the panel's clipping: every absolutely positioned descendant
+      // (screen-reader labels, the dependency overlay) is contained by the scroller, so
+      // no outer container or the window itself gains an overflow to scroll.
+      assert.deepEqual(await f.page.locator(".mission-control").evaluate(panel => [...panel.querySelectorAll("*")]
+        .filter(element => ["absolute", "fixed"].includes(getComputedStyle(element).position) && element.offsetParent
+          && element.offsetParent !== panel && !panel.contains(element.offsetParent)).map(element => element.className)), [], `no descendant escapes at ${viewport.height}px`)
+      assert.equal(await f.page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1 && document.body.scrollHeight <= innerHeight + 1), true,
+        `the window never overflows at ${viewport.height}px`)
       // The mission row's chevron folds the tasks with the rest of its detail.
       const chevron = f.page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
       await chevron.click()

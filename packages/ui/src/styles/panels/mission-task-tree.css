@@ -8,7 +8,11 @@
    flow position: relative). The stable gutter keeps the panel width when the
    scrollbar appears. */
 .mission-tree .mission-flow { overflow: clip visible; }
-.mission-control { display: flex; flex-direction: column; height: 100%; overflow-y: auto; scrollbar-gutter: stable; }
+/* As the only scroller, the panel is also the containing block of its absolutely
+   positioned descendants (screen-reader labels, the dependency overlay): otherwise
+   they escape its clipping and grow the shell's overflow, which then scrolls the
+   whole window once the panel reaches its end. */
+.mission-control { position: relative; display: flex; flex-direction: column; height: 100%; overflow-y: auto; scrollbar-gutter: stable; }
 .mission-control > * { flex-shrink: 0; }
 .mission-control .mission-flow .mission-graph { inset-inline-start: var(--space-sm); }
 .mission-tree-list { display: grid; margin: 0; padding: 0; list-style: none; }

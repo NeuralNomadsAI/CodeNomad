@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
+import { missionMenuItem, missionToolbar } from "./mission-actions"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
@@ -30,9 +31,9 @@ const finished: MissionMap = { version: 1, id: "msn_done", projectID: "project",
   status: "completed", runState: "stopped", summary: "All done", coordinatorSessionId: "ses_coordinator", revision: 9, createdAt: 1, updatedAt: 2,
   history: [], historyTruncated: false, frontier: [], claims: [], actors: [], tasks: [], reports: [] } as MissionMap
 
-async function setup(page: Page, preferences: "accept" | "reject") {
+async function setup(page: Page, preferences: "accept" | "reject", initial: Record<string, unknown> = {}) {
   const errors: string[] = [], writes: Array<Record<string, any>> = [], missionWrites: string[] = []
-  let settings: Record<string, unknown> = {}
+  let settings: Record<string, unknown> = initial
   page.setDefaultTimeout(15_000); page.setDefaultNavigationTimeout(60_000)
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript(`window.__preferencesCalls=[];Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
@@ -104,12 +105,30 @@ test("Save as brief copies only a finished Mission's recorded inputs and launche
   const fixture = await setup(page, "accept")
   try {
     const detail = page.locator("section.mission-detail")
-    await detail.getByRole("button", { name: "Save as brief", exact: true }).click()
+    // Save as brief is an overflow-menu item, never a control under the Mission's row.
+    assert.equal(await page.locator(".mission-control").getByRole("button", { name: "Save as brief", exact: true }).count(), 0)
+    assert.equal(await detail.locator(".mission-action-texts").isVisible(), false, "no empty row under the Mission")
+    // From a folded Mission, the menu unfolds its detail to show the name field; Escape
+    // closes it and gives focus back to the menu's trigger.
+    const chevron = page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
+    await chevron.click()
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    await (await missionMenuItem(page, "save-brief")).click()
+    await detail.getByLabel("Brief name", { exact: true }).waitFor()
+    assert.equal(await chevron.getAttribute("aria-expanded"), "true", "the menu unfolds the Mission")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
+    await page.keyboard.press("Escape")
+    await detail.getByLabel("Brief name", { exact: true }).waitFor({ state: "detached" })
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("action-overflow-trigger")), true, "focus returns to the menu's trigger")
+    await (await missionMenuItem(page, "save-brief")).click()
     const name = detail.getByLabel("Brief name", { exact: true })
     assert.equal(await name.inputValue(), "Dependency audit", "the Mission title prefills the name")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
     await name.fill("Weekly dependency audit")
-    await detail.getByRole("button", { name: "Save brief", exact: true }).click()
-    await detail.getByRole("button", { name: "Save as brief", exact: true }).waitFor()
+    // Enter saves; focus returns to the menu's trigger even though the write disabled the field.
+    await name.press("Enter")
+    await name.waitFor({ state: "detached" })
+    await page.waitForFunction(() => document.activeElement?.classList.contains("action-overflow-trigger"), undefined, { timeout: 5_000 })
     assert.equal(fixture.writes.length, 1)
     const [saved] = fixture.writes[0]!.settings.missionModels as Array<Record<string, unknown>>
     assert.match(saved!.id as string, /^[0-9a-f-]{36}$/)
@@ -118,6 +137,31 @@ test("Save as brief copies only a finished Mission's recorded inputs and launche
     assert.deepEqual(inputs, { version: 1, name: "Weekly dependency audit", objective: finished.objective, notes: finished.notes,
       template: "custom", profiles, taskMode: "independent" })
     assert.deepEqual(fixture.missionWrites, [], "saving a brief never creates, starts or edits a Mission")
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("saving the brief that fills the library returns focus to an enabled toolbar control", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  const briefs = Array.from({ length: 19 }, (_, index) => ({ id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, version: 1,
+    name: `Brief ${index}`, objective: "Objective", notes: "", template: "custom", profiles, taskMode: "independent" }))
+  const fixture = await setup(page, "accept", { missionModels: briefs })
+  try {
+    const detail = page.locator("section.mission-detail")
+    await (await missionMenuItem(page, "save-brief")).click()
+    const name = detail.getByLabel("Brief name", { exact: true })
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
+    await name.fill("Twentieth brief")
+    await name.press("Enter")
+    await name.waitFor({ state: "detached" })
+    // Full, the library leaves the menu nothing to offer: its trigger is disabled, so
+    // focus lands on the toolbar's first enabled button instead of the body.
+    assert.equal(await missionToolbar(page).locator(".action-overflow-trigger").isDisabled(), true)
+    await page.waitForFunction(() => {
+      const active = document.activeElement as HTMLButtonElement | null
+      return Boolean(active?.closest(".mission-action-bar") && !active.disabled)
+    }, undefined, { timeout: 5_000 })
+    assert.equal(fixture.writes.length, 1)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
