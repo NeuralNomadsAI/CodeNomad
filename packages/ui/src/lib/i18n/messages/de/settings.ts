@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.preferenceSaveFailed": "Die Einstellung konnte nicht gespeichert werden.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Geschätzte Rücksetzung {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Untersitzungen automatisch aufklappen",

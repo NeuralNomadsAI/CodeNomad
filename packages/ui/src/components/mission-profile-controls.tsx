@@ -91,7 +91,7 @@ export function MissionProfileControls(props: {
   const agents = () => catalog()?.key === identity() ? catalog()!.agents : []
   const models = () => catalog()?.key === identity() ? catalog()!.models : []
   // The same list the conversation's model selector shows (hidden models, favorites-only mode).
-  const shownModels = createMemo(() => preferredModelList(models()).shown)
+  const shownModels = createMemo(() => preferredModelList(models(), props.instanceId).shown)
   const choice = (profiles: MissionProfiles | undefined, role: string) => role === "coordinator" ? profiles?.coordinator : profiles?.roles?.[role]
   /** Without an inherited layer an empty choice is simply omitted (native default). */
   const update = (role: string, execution: MissionExecution | undefined) => {

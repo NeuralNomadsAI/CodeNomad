@@ -1,11 +1,12 @@
 import type { LocationRef } from "@opencode/client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { activeSessionId, agents, providers, sessions } from "./session-state"
-import { uiState, getAgentModelPreference } from "./preferences"
+import { preferencesOf, getAgentModelPreference } from "./preferences"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { resolveAgentId } from "../types/session"
 import { requestLocationOptions, toRequestLocation } from "./request-locations"
+import { parseInstanceKey, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
 
@@ -32,7 +33,7 @@ function isModelValid(
 function getRecentModelPreferenceForInstance(
   instanceId: string,
 ): { providerId: string; modelId: string } | undefined {
-  const recents = uiState().models.recents ?? []
+  const recents = preferencesOf(instanceId).uiState().models.recents ?? []
   for (const item of recents) {
     if (isModelValid(instanceId, item)) {
       return item
@@ -66,6 +67,10 @@ async function getDefaultModel(
     }
   }
 
+  if (parseInstanceKey(instanceId).backendId !== LOCAL_BACKEND_ID) {
+    await preferencesOf(instanceId).ensureLoaded()
+    signal.throwIfAborted()
+  }
   const recent = getRecentModelPreferenceForInstance(instanceId)
   if (recent) {
     return recent

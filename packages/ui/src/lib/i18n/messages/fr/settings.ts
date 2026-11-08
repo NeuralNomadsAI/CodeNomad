@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.preferenceSaveFailed": "Impossible d'enregistrer la préférence.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Réinitialisation estimée {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Déplier automatiquement les sous-sessions",

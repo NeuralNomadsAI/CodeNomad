@@ -4,6 +4,8 @@ import { createRoot } from "solid-js"
 import { backendScoped, parseInstanceKey } from "../../lib/backend-identity"
 import { serverApi } from "../../lib/api-client"
 import { usePromptState } from "./usePromptState"
+import { backends, createBackendClient, type BackendClient } from "../../lib/backend-client"
+import { backendEvents } from "../../lib/backend-events"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 
@@ -14,6 +16,12 @@ it("the real prompt hook preserves the exact local history key and isolates anot
     return { messageHistory: key === folder ? ["persisted local entry"] : [], agentModelSelections: {} }
   })
   t.mock.method(serverApi, "writeInstanceData", async (key: string) => { writes.push(key) })
+  const backend = createBackendClient({ id: "lab", baseUrl: "https://lab.invalid" })
+  ;(backends as Map<string, BackendClient>).set("lab", backend)
+  const detach = backendEvents.attach("lab", backend.events)
+  t.mock.method(backend.api, "readInstanceData", (key: string) => serverApi.readInstanceData(backendScoped("lab", key)))
+  t.mock.method(backend.api, "writeInstanceData", (key: string, data: Parameters<typeof serverApi.writeInstanceData>[1]) => serverApi.writeInstanceData(backendScoped("lab", key), data))
+  t.after(() => { detach(); backend.events.dispose(); (backends as Map<string, BackendClient>).delete("lab") })
   const mount = (instanceId: string) => createRoot(dispose => ({ dispose, state: usePromptState({
     instanceId: () => instanceId, sessionId: () => "same-session", instanceFolder: () => folder,
     historyKey: () => backendScoped(parseInstanceKey(instanceId).backendId, folder),

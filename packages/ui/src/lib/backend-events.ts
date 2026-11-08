@@ -61,9 +61,13 @@ export class BackendEvents {
     const detach = () => {
       if (!active()) return
       this.sources.delete(backendId)
-      this.attachments[1](backendId, undefined)
-      off.forEach(unsubscribe => unsubscribe())
       controller.abort()
+      // Revocation is irreversible even when a mounted consumer or unsubscribe fails.
+      try { if (!this.sources.has(backendId)) this.attachments[1](backendId, undefined) }
+      catch (error) { log.error("Backend attachment subscriber failed", { error }) }
+      for (const unsubscribe of off) {
+        try { unsubscribe() } catch (error) { log.error("Backend unsubscribe failed", { error }) }
+      }
       const removed = () => !this.sources.has(backendId)
       this.notify(this.statuses, handler => handler("disconnected", backendId), removed)
       this.notify(this.removals, handler => handler(backendId, controller.signal), () => true)
