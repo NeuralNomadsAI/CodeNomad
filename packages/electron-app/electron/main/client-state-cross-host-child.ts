@@ -3,6 +3,7 @@ import { CrossHostRegistration, createCrossHostOwner } from "./client-state-cros
 import { getProcessStartIdentity } from "./client-state-process-identity"
 import { isPidAlive } from "./client-state-process"
 import { ClientStateManager } from "./client-state"
+import { spawnSync } from "node:child_process"
 
 const [directory, startPath, readyPath, mode, userDataPath, participantReadyPath, participantContinuePath, legacyTauriDataPath, operation, payload] = process.argv.slice(2)
 if (!directory || !startPath) throw new Error("Expected election directory and start path")
@@ -36,8 +37,14 @@ if (manager?.isPrimary && operation === "save") {
   await manager.setRestoreEnabled(true)
   await manager.saveClientState(JSON.parse(payload))
 }
+const acquired = manager?.isPrimary ?? Boolean(registration?.isPrimary)
+const identityProbe = !acquired && !owner?.processStartIdentity && process.platform === "win32"
+  ? spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${process.pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`],
+    { encoding: "utf8", windowsHide: true, timeout: 10000 }) : undefined
 process.stdout.write(`${JSON.stringify({
-  acquired: manager?.isPrimary ?? Boolean(registration?.isPrimary),
+  acquired,
+  diagnostics: identityProbe && { status: identityProbe.status, error: identityProbe.error?.message,
+    stdout: identityProbe.stdout?.slice(0, 1000), stderr: identityProbe.stderr?.slice(0, 1000) },
   state: operation === "load" ? manager?.loadClientState() : undefined,
 })}\n`)
 process.stdin.resume()

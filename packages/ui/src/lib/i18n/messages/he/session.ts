@@ -1,6 +1,7 @@
 export const sessionMessages = {
+  "browser.viewport.webkitEmulationHint": "זיהוי נייד של WebKit ואזור תצוגה ב־CSS. חלות מגבלות מקוריות על צפיפות פיקסלים וקלט.",
   "browser.viewport.emulationHint": "טוען מחדש עם זיהוי נייד, מגע וצפיפות פיקסלים. מנוע הדפדפן, המקלדת וסרגלי המערכת אינם מדומים.",
-  "browser.viewport.emulationUnavailable": "הדמיית מכשיר דורשת תצוגה מקדימה מקורית של האינטרנט ביישום למחשב.",
+  "browser.viewport.dimensionsOnly": "מידות בלבד.",
   "sessionList.filter.includeMainSessions": "סשנים ראשיים",
   "sessionList.filter.includeSubsessions": "תת־סשנים",
   "session.pruning.maintenance_required": "הסשן או האחסון שלו עסוקים. יש להמתין לסיום הפעולה הנוכחית ולנסות לנקות שוב.",

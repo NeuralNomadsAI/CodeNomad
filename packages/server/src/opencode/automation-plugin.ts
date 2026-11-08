@@ -558,8 +558,8 @@ async function probeBrowserBridges(
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
-        return (await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)).status === 200
-          ? registration : undefined
+        const response = await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)
+        return response.status === 200 ? registration : undefined
       } catch {
         return undefined
       }

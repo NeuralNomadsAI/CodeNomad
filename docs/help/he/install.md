@@ -10,11 +10,11 @@
 
 | פלטפורמה | גרסת Electron | גרסת Tauri | הערות לפלטפורמה |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel או Apple Silicon | ZIP, Intel או Apple Silicon | macOS 13.5 ואילך (נדרש עבור ה־Node ש־Tauri כולל; Electron מצהיר על אותו מינימום). |
+| macOS | ZIP, Intel או Apple Silicon | ZIP, Intel או Apple Silicon | Tauri: ‏macOS 14 ואילך; Electron: ‏macOS 13.5 ואילך. |
 | Windows | ZIP, x64 | מתקין, x64 | Windows 10 ואילך; Tauri משתמש ב־WebView2. |
 | Linux | חבילת Debian, x64 | AppImage, x64 | נבנה ונבדק ב־Ubuntu 24.04; תאימות להפצות ישנות יותר אינה מובטחת. |
 
-גרסאות שולחן העבודה כוללות את משאבי הריצה הנחוצים לשרת הקצה ולמתקין OpenCode, כך שאין צורך בהתקנת Node.js/npm נפרדת לשימוש בהן. Git אינו כלול. אוטומציית דפדפן מקורית נתמכת ב־Electron וב־Tauri ב־Windows; פלטפורמות Tauri אחרות משתמשות בתצוגות iframe.
+גרסאות שולחן העבודה כוללות את משאבי הריצה הנחוצים לשרת הקצה ולמתקין OpenCode, כך שאין צורך בהתקנת Node.js/npm נפרדת לשימוש בהן. Git אינו כלול. אוטומציית דפדפן מקורית באמצעות סוכנים נתמכת ב־Electron וב־Tauri ב־Windows, ב־macOS וב־Linux. ב־macOS וב־Linux, ‏Tauri משתמש בתצוגות WebKit ובפרופילי מובייל מקוריים עם מגבלות צפיפות וקלט התלויות במנוע; ראו [תצוגות דפדפן](browser-sidecars.md#signins-automation).
 
 אם הורדה מאומתת נחסמת בהפעלה, ראו [פתרון בעיות לפי פלטפורמה](troubleshooting.md#desktop-launch). לעולם אל תריצו ארכיון שאינו מהימן רק כדי לעקוף אזהרה.
 

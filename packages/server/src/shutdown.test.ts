@@ -104,6 +104,23 @@ describe("CLI shutdown signal registration", () => {
     }
   })
 
+  it("preserves UTF-8 native response text split across stdin buffers", async () => {
+    const source = new PassThrough()
+    const lines: string[] = []
+    const parent = new NativeParent({ write: line => { lines.push(String(line)); return true } }, true)
+    installShutdownStdinHandler(source, async () => {}, line => parent.handleLine(line))
+    try {
+      const pending = parent.request("browser.probe", {})
+      const { id } = JSON.parse(lines[0].slice(NATIVE_REQUEST_PREFIX.length))
+      const response = Buffer.from(`${NATIVE_RESPONSE_PREFIX}${JSON.stringify({ v: 1, id, ok: true, result: "é漢🙂" })}\n`)
+      for (const byte of response) source.write(Buffer.from([byte]))
+      assert.equal(await pending, "é漢🙂")
+    } finally {
+      parent.close()
+      source.destroy()
+    }
+  })
+
   it("allows a real piped process to exit naturally after the shutdown command", { timeout: 5_000 }, async () => {
     const moduleUrl = new URL("./shutdown.ts", import.meta.url).href
     const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `

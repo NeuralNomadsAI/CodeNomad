@@ -1,3 +1,5 @@
+import { StringDecoder } from "node:string_decoder"
+
 type ShutdownLogger = Pick<import("./logger").Logger, "info" | "warn" | "error">
 type ShutdownOperation = () => void | Promise<void>
 
@@ -30,9 +32,10 @@ export function installShutdownStdinHandler(
   handleLine?: (line: string) => boolean,
 ): void {
   let buffer = ""
+  const decoder = new StringDecoder("utf8")
   let requested = false
   const onData = (chunk: Buffer | string) => {
-    buffer += chunk.toString()
+    buffer += decoder.write(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
     const lines = buffer.split(/\r?\n/)
     buffer = lines.pop() ?? ""
     let shutdownRequested = false

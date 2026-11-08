@@ -10,6 +10,10 @@ export interface BrowserTargetBounds {
   width: number
   height: number
 }
+export interface BrowserPresentation {
+  css: boolean
+  viewport?: { width: number; height: number }
+}
 
 export function selectBrowserOpenOwner<T extends { id: string }>(
   owners: readonly T[],
@@ -20,13 +24,31 @@ export function selectBrowserOpenOwner<T extends { id: string }>(
   return owners.length === 1 ? owners[0] : undefined
 }
 
+export interface BrowserHostCapabilities {
+  embedding: boolean
+  history: boolean
+  emulation: boolean
+  automation: boolean
+  reason?: "webkit" | "unsupported-platform"
+}
+
+export function browserHostCapabilities(environment: Pick<RuntimeEnvironment, "host" | "windowContext">): BrowserHostCapabilities {
+  if (environment.windowContext !== "local") return { embedding: false, history: false, emulation: false, automation: false }
+  if (environment.host === "electron") return { embedding: true, history: true, emulation: true, automation: true }
+  return (environment.host === "tauri" && typeof window !== "undefined" && window.__CODENOMAD_BROWSER_CAPABILITIES__)
+    || { embedding: false, history: false, emulation: false, automation: false, reason: "unsupported-platform" }
+}
+
+export function localOverlayOpen(): boolean {
+  return Boolean(document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'))
+}
+
 export function nativeBrowserHost(
   environment: Pick<RuntimeEnvironment, "host" | "windowContext">,
-  userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent,
 ): "electron" | "tauri" | undefined {
   if (environment.windowContext !== "local") return undefined
   if (environment.host === "electron") return "electron"
-  if (environment.host === "tauri" && userAgent.includes("Windows")) return "tauri"
+  if (environment.host === "tauri" && browserHostCapabilities(environment).embedding) return "tauri"
   return undefined
 }
 
@@ -44,16 +66,18 @@ export async function registerTauriBrowserTarget(payload: {
   registrationId: string
   url: string
   bounds: BrowserTargetBounds
+  presentation?: BrowserPresentation
 }): Promise<void> {
-  await invoke("browser_target_register", { payload })
+  await invoke("browser_target_register", { payload: { ...payload, visible: false } })
 }
 
 export async function updateTauriBrowserTarget(
   registrationId: string,
   bounds: BrowserTargetBounds | undefined,
   visible = true,
+  presentation?: BrowserPresentation,
 ): Promise<void> {
-  await invoke("browser_target_update", { payload: { registrationId, bounds, visible } })
+  await invoke("browser_target_update", { payload: { registrationId, bounds, visible, ...(presentation ? { presentation } : {}) } })
 }
 
 export async function controlTauriBrowserTarget(registrationId: string, action: "back" | "reload" | "navigate", url?: string): Promise<void> {
@@ -79,9 +103,9 @@ export async function unregisterTauriBrowserTarget(registrationId: string): Prom
   await invoke("browser_target_unregister", { registrationId })
 }
 
-export async function emulateBrowserTarget(registrationId: string, preset: BrowserEmulationPreset): Promise<void> {
+export async function emulateBrowserTarget(registrationId: string, preset: BrowserEmulationPreset, viewport?: { width: number; height: number }): Promise<void> {
   if (window.electronAPI?.emulateBrowserTarget) return window.electronAPI.emulateBrowserTarget(registrationId, preset)
-  await invoke("browser_target_action", { payload: { registrationId, action: "emulate", preset } })
+  await invoke("browser_target_action", { payload: { registrationId, action: "emulate", preset, ...(viewport ? { viewport } : {}) } })
 }
 
 export async function onNativeBrowserOpen(
@@ -89,7 +113,8 @@ export async function onNativeBrowserOpen(
 ): Promise<() => void> {
   const electronUnsubscribe = window.electronAPI?.onBrowserOpenRequest?.(callback)
   if (electronUnsubscribe) return electronUnsubscribe
-  if (nativeBrowserHost({ host: window.__CODENOMAD_RUNTIME_HOST__ ?? "web", windowContext: window.__CODENOMAD_WINDOW_CONTEXT__ ?? "remote" }) !== "tauri") {
+  const environment = { host: window.__CODENOMAD_RUNTIME_HOST__ ?? "web", windowContext: window.__CODENOMAD_WINDOW_CONTEXT__ ?? "remote" }
+  if (nativeBrowserHost(environment) !== "tauri") {
     return () => {}
   }
   return listen<{ sessionID: string; url: string; requestID: string }>("browser-target:open", (event) => callback(event.payload))
