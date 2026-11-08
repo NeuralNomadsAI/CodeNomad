@@ -310,7 +310,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           customization={rightPanelCustomization} onCustomizationChange={updateRightPanelCustomization} />
       </Show>
 
-      <div class="flex-1 overflow-y-auto">
+      {/* The tab's scroller contains its absolutely positioned descendants, so no tab
+          content can grow the shell's overflow and scroll the whole window. */}
+      <div class="relative flex-1 overflow-y-auto">
         <Show keyed when={activeRightPanelTab()}>
           {(tab) => (
             <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">

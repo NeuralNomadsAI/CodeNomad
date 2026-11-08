@@ -135,7 +135,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
       </div>
     </details>
     <Show when={failed()}><p role="alert">{t("missions.defaults.error")}</p></Show>
-    {/* Location depth writes OpenCode configuration; it is a separate group, not part of these defaults. */}
+    {/* Location depth writes OpenCode configuration; it is a separate row, not part of these defaults. */}
     <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory} active={props.active} />
     <MissionModelLibrary active={props.active} />
   </div>

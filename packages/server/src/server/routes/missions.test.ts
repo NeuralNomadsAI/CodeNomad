@@ -3,6 +3,7 @@ import test from "node:test"
 import Fastify from "fastify"
 
 import { registerMissionRoutes } from "./missions"
+import { ROUTER_OPTIONS } from "../routed-path"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { MissionJournal, stableToken } from "../../missions/journal"
 import { fixture } from "../../missions/journal-history-fixture"
@@ -366,7 +367,7 @@ test("damage written outside the index generation refuses admission while the di
 
 test("the single-mission read brokers the mission RPC, falling back to the snapshot of an older plugin", async () => {
   const fake = manager()
-  const app = Fastify({ logger: false })
+  const app = Fastify({ logger: false, routerOptions: ROUTER_OPTIONS })
   registerMissionRoutes(app, { workspaceManager: fake.value })
   const response = await app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions/msn_a" })
   assert.deepEqual(response.json(), { available: true, version: 1, projectID: "project-1", generatedAt: 2, cleanups: [] })

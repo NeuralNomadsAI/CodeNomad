@@ -10,10 +10,10 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 ## Crear y después iniciar explícitamente {#create}
 
-1. Abre **Misiones** en el panel derecho y elige **Crear misión**. El formulario sustituye la lista de misiones y las tareas de la misión seleccionada hasta que crees o canceles.
+1. Abre **Misiones** en el panel derecho y elige **Crear misión**. El formulario sustituye el árbol de misiones hasta que crees o canceles.
 2. Completa **¿Qué debe hacer la misión?** y comprueba el **Título**, rellenado a partir de la primera frase (hasta 60 caracteres).
 3. Deja **Programación** plegada para **Una vez, inmediatamente**, o despliégala y usa **Añadir un criterio** en **Lanzar cuando** para añadir horarios o eventos. Su orden fija cómo se combinan.
-4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, la **Profundidad de anidamiento de subsesiones** del proyecto, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
+4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, la **Profundidad de subagentes** del proyecto, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
 5. Elige **Crear**. Selecciona la entrada en pausa, revísala y usa ▶ **Iniciar** cuando estés listo. Sin criterios de lanzamiento, Iniciar ejecuta una misión; con criterios, activa la programación nativa.
 
 **Crear guarda una Misión en pausa.** Solo ▶ **Iniciar** activa el trabajo y los calendarios nativos. La creación pertenece al proyecto/Location seleccionado y registra los perfiles solicitados y la política de sesiones de tareas. La validación aparece junto al campo afectado; un rechazo que indique que no se envió nada conserva el borrador para corregirlo. Un coordinador puntual también puede preparar un seguimiento independiente: aparece como **Preparada** y se inicia desde su propia acción ▶.
@@ -38,10 +38,11 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 
 ## Seguir el árbol y leer resultados {#tracking}
 
-1. Selecciona el título de la misión. El chevrón inicial mantiene abierta su lista; el campo del título abre un selector temporal.
-2. Elige **Resumen** (ojo) para la vista central general o selecciona un nodo de tarea para ver su resultado, encargo y evidencias exactos.
-3. Sigue los enlaces de dependencias y los **Informes**; usa **Abrir conversación** para el coordinador cuando necesites su transcripción.
-4. En **Te necesita**, elige **Responder** para abrir la conversación y el panel de interrupciones del actor solicitante.
+1. Selecciona la fila de una misión: sus tareas aparecen debajo y sus acciones en la segunda línea del encabezado. El chevrón de la fila pliega o despliega sus tareas; el chevrón de otra misión muestra sus tareas sin seleccionarla. **Filtrar misiones** acota las demás filas.
+2. Elige **Resumen** (ojo) para la vista central general; mientras está abierta, seleccionar otra misión muestra la vista general de esa misión. Selecciona una tarea para ver su resultado, encargo y evidencias exactos: mientras su lector está abierto, las acciones del encabezado se aplican a esa tarea, con **Abrir la conversación de la tarea** y, si falta su informe, **Verificar y recuperar el informe faltante**. **Resumen** cierra entonces el lector de la tarea.
+3. **Más acciones** (⋯) agrupa **Pedir una actualización**, **Interrumpir ahora**, **Guardar como descripción** y **Editar la misión seleccionada**; las acciones que no corresponden quedan desactivadas.
+4. Sigue los enlaces de dependencias y los **Informes**; usa **Abrir conversación** para el coordinador cuando necesites su transcripción.
+5. Cuando una misión o una de sus tareas se pone en rojo, selecciónala: se abre la conversación que pregunta, con su pregunta en el panel de interrupciones.
 
 | Indicador | Qué demuestra |
 | --- | --- |
@@ -49,35 +50,35 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 | Activa | Se observó actividad nativa. |
 | En espera | Las dependencias declaradas aún no se cumplen. |
 | Bloqueada | Se informó de un bloqueo, no necesariamente una pregunta para ti. |
-| Espera tu respuesta | Un formulario/pregunta nativo abierto o un permiso necesita respuesta; aparece en **Te necesita**. |
+| Espera tu respuesta | Un formulario/pregunta nativo abierto o un permiso necesita respuesta; selecciona la tarea para abrirlo. |
 | Completada | Se registró un resultado de tarea; inspecciona sus evidencias y cualquier trabajo nativo restante. |
 | Fallida / Retirada | La tarea falló, o el coordinador la sustituyó o la abandonó. |
 
 El gráfico incluye trabajo completado y retirado. Retirar una tarea no detiene por sí solo su conversación. En una misión puntual, el coordinador puede detener por separado las conversaciones de una tarea retirada que lanzó como subagente nativo, sin tocar las demás tareas. **En curso** es el estado del ciclo de vida de la misión, no demuestra que su coordinador esté ejecutándose. El texto completo pertenece al lector central, no a la lista de tareas del panel; **Detalles técnicos** pliega los identificadores y la información de ejecución solicitada.
 
-Un plan grande forma un árbol continuo: las tareas siguientes se cargan al desplazarse, con un único **Mostrar más** al final. Las tareas ya fijadas permanecen visibles; el icono de información junto a **Tareas** da los recuentos por tipo de toda la misión que requieren atención. Los recuentos de carga y las explicaciones de cobertura están tras los iconos de información. Las lecturas de fondo animan el indicador **Actualizar** existente arriba a la derecha y mantienen el panel en su sitio. Un trazo discontinuo marca una dependencia o tarea dependiente sin cargar; los enlaces del lector cargan su destino directamente. El lector ofrece **Mostrar todo** para los resultados anteriores e **Intentar de nuevo** tras un fallo de lectura.
+Un plan grande forma un árbol continuo: las tareas siguientes se cargan al desplazarse, con un único **Mostrar más** al final. Las tareas ya fijadas permanecen visibles; mientras algunas quedan más abajo, el icono de información de la línea **Tareas**, sobre las tareas, da los recuentos por tipo de toda la misión que requieren atención. Los recuentos de carga y las explicaciones de cobertura están tras los iconos de información. Las lecturas de fondo animan el indicador **Actualizar** existente arriba a la derecha y mantienen el panel en su sitio. Un trazo discontinuo marca una dependencia o tarea dependiente sin cargar; los enlaces del lector cargan su destino directamente. El lector ofrece **Mostrar todo** para los resultados anteriores e **Intentar de nuevo** tras un fallo de lectura.
 
 Las páginas de tareas aparecen solo cuando se han recibido por completo. Si falla o cambia una lectura, se conservan las últimas tareas mostradas. Si la lista cambia durante la lectura, usa **Actualizar** y después **Intentar de nuevo**; la página se lee de nuevo desde el principio. Una parte que falta nunca demuestra que una tarea o solicitud esté ausente, y reintentar una lectura no inicia trabajo. Si el plugin de Misiones no puede proporcionar la página, vuelve a intentarlo tras reconectar o recargar el plugin.
 
 ### Colores y misiones interrumpidas {#status-colours}
 
-Las marcas de las misiones, los iconos de las tareas y el chevrón de la lista usan los colores de la lista de sesiones: el color solo muestra lo que te necesita ahora.
+Las banderas de las misiones y los iconos de las tareas usan los colores de la lista de sesiones: el color solo muestra lo que te necesita ahora. Una misión recurrente muestra un icono de repetición en lugar de la bandera.
 
 | Color | Significado |
 | --- | --- |
-| Rojo | Se espera una respuesta tuya; aparece en **Te necesita**. |
+| Rojo | Se espera una respuesta tuya. La bandera de una misión se pone en rojo por una pregunta de su coordinador, una tarea por la suya propia, y el chevrón de la misión indica que una de sus tareas pregunta. Selecciona la misión o la tarea en rojo para abrir la pregunta. |
 | Amarillo, pulsante | Hay trabajo en curso. |
 | Naranja | La misión está en pausa o interrumpida, con una acción para continuarla. |
 | Verde | Una misión terminada que aún no has abierto en esta ventana; vuelve a ser neutral en cuanto la seleccionas. |
 | Azul | Una misión preparada, lista para iniciarse como un prompt redactado. |
 
-Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos. Con la lista contraída, su chevrón toma el más urgente de rojo, amarillo y verde entre las demás misiones; como en las sesiones contraídas, el naranja y el azul solo se muestran en sus propias filas.
+Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos.
 
-Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando nada puede avanzar sin ti, te hace una pregunta en **Te necesita**. Solo tú detienes una misión.
+Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando nada puede avanzar sin ti, te hace una pregunta y su fila se pone en rojo. Solo tú detienes una misión.
 
 ### Preguntas y decisiones {#questions}
 
-Solo el coordinador te hace preguntas. Las tareas y los subagentes que lanzan le devuelven sus preguntas abiertas, con las opciones, las evidencias y una recomendación. Antes de preguntar, el coordinador intenta resolver la cuestión por sí mismo: lee el proyecto, investiga, encarga una investigación a una tarea o adopta un valor por defecto fácil de deshacer y lo registra como supuesto. Solo pregunta lo que no puede resolver: tu consentimiento, credenciales, elecciones costosas de deshacer o decisiones de producto que el objetivo deja abiertas. Agrupa las preguntas pendientes en un solo formulario en **Te necesita** y antes pone en marcha el trabajo no relacionado.
+Solo el coordinador te hace preguntas. Las tareas y los subagentes que lanzan le devuelven sus preguntas abiertas, con las opciones, las evidencias y una recomendación. Antes de preguntar, el coordinador intenta resolver la cuestión por sí mismo: lee el proyecto, investiga, encarga una investigación a una tarea o adopta un valor por defecto fácil de deshacer y lo registra como supuesto. Solo pregunta lo que no puede resolver: tu consentimiento, credenciales, elecciones costosas de deshacer o decisiones de producto que el objetivo deja abiertas. Agrupa las preguntas pendientes en un solo formulario, que se abre desde la fila roja de la misión, y antes pone en marcha el trabajo no relacionado.
 
 En **Exploración**, las tareas de decisión preparan un resumen y el coordinador resuelve cada decisión: decide por sí mismo cuando las evidencias bastan y la elección es fácil de deshacer, deja la pregunta en las **Notas** para más adelante o te la hace. Con **Subagentes nativos**, el resultado de la tarea de decisión indica quién decidió:
 
@@ -92,7 +93,7 @@ Solo una respuesta que des en el panel de interrupciones cuenta como **Tu respue
 
 El coordinador recibe instrucciones de publicar un informe de situación del proyecto tras su plan inicial, tras resolver tareas, al esperar a una persona y antes del informe final. Es una evaluación redactada, no un contador de actividad en vivo ni una señal periódica garantizada. Un aviso identifica cuándo el mapa ha cambiado desde ese informe.
 
-Usa **Pedir una actualización** debajo de la barra de herramientas para solicitar una evaluación nueva del coordinador y lee después **Resumen**. **Actualización pedida…** significa que la solicitud está pendiente, no respondida. **Envío sin confirmar** no autoriza el reenvío automático: abre la conversación del coordinador antes de hacer una solicitud nueva independiente. Es una entrada nativa normal, no un entorno aislado de solo lectura; el coordinador conserva sus permisos habituales.
+Usa **Pedir una actualización** en **Más acciones** (⋯) para solicitar una evaluación nueva del coordinador y lee después **Resumen**. **Actualización pedida…** significa que la solicitud está pendiente, no respondida. **Envío sin confirmar** no autoriza el reenvío automático: abre la conversación del coordinador antes de hacer una solicitud nueva independiente. Es una entrada nativa normal, no un entorno aislado de solo lectura; el coordinador conserva sus permisos habituales.
 
 ## Cómo circula el contexto en una misión {#context-flow}
 
@@ -123,7 +124,7 @@ Guardar una profundidad conserva las programaciones nativas activadas en la conf
 2. En **Aplicar a**, elige **Todas las misiones** o un guion; después establece **Sesiones de tareas** y, en **Agentes y modelos**, una fila por rol (el coordinador y luego los roles del guion). Cada elección se guarda de inmediato; no hay botón Guardar.
 3. En el ámbito de un guion, las filas muestran los valores globales marcados como **Global**. Cambiar un campo personaliza ese rol a partir de ellos; su icono de revertir vuelve a usar los valores globales. **Restablecer** (tras confirmar) borra solo los agentes y modelos del ámbito mostrado.
 4. Durante la creación, usa **Opciones → Agentes y modelos** para solicitar perfiles específicos; **Usar valores predeterminados guardados** restaura los guardados.
-5. Para límites de recursión nativa, edita **Profundidad de anidamiento de subsesiones → Profundidad impuesta para el proyecto**, aquí o en **Opciones** al crear. Pulsar Enter o salir del campo guarda un valor válido modificado; **Heredar** guarda de inmediato; Escape descarta un valor sin guardar.
+5. Para límites de recursión nativa, elige una **Profundidad de subagentes**, aquí o en **Opciones → Delegación** al crear: **Heredar** (seguido de la profundidad heredada cuando se conoce) o de 1 a 10. Tu elección se guarda de inmediato. El icono de información junto a la etiqueta indica la profundidad efectiva, si los subagentes pueden anidarse y los archivos de configuración.
 
 | Ajuste | Ámbito y efecto |
 | --- | --- |
@@ -131,7 +132,7 @@ Guardar una profundidad conserva las programaciones nativas activadas en la conf
 | Agente / Modelo / Razonamiento | Selecciones solicitadas para coordinador/roles registradas al crear; un actor ocupado no se cambia silenciosamente para atender trabajo posterior. Las pasadas programadas usan sus perfiles solicitados guardados; los cambios se aplican a futuras pasadas. |
 | Subagentes nativos | Las sesiones de tareas usan agentes nativos subagent/all bajo el coordinador. |
 | Sesiones independientes | Las sesiones de tareas declaradas usan agentes primary/all y conversaciones independientes; esto no desactiva los ayudantes nativos internos. |
-| Profundidad de anidamiento de subsesiones | Configuración del proyecto para **todas** las conversaciones de OpenCode de allí, no solo Misiones. Vacío hereda: **Heredar** elimina la anulación del proyecto y el bloque `experimental` que deje vacío o solo con el valor Global de **Guardar las imágenes una sola vez**. OpenCode lee el bloque `experimental` del proyecto como un todo, así que otros ajustes experimentales que se conserven allí siguen ocultando la profundidad global. Por defecto, el subagente integrado **General** de OpenCode no puede lanzar subagentes, así que sus conversaciones nunca se anidan: guardar cualquier profundidad de proyecto también añade al mismo archivo una regla que permite a los subagentes lanzar sus propios subagentes hasta esa profundidad y prevalece sobre las restricciones de General de otros archivos de configuración (con una profundidad de 1, el límite de profundidad de OpenCode sigue impidiendo el anidamiento), y **Heredar** la quita. Bajo **Profundidad efectiva de OpenCode**, el editor indica si los subagentes General pueden anidarse. Si el proyecto define General en el formato heredado con un único valor `permission`, o con `task` y `subagent` ya definidos, solo se guarda la profundidad y el editor lo indica: permite tú mismo los subagentes para General en ese archivo. Guardar no recarga OpenCode ni cambia las conversaciones en ejecución. |
+| Profundidad de subagentes | Configuración del proyecto para **todas** las conversaciones de OpenCode de allí, no solo Misiones. **Heredar** elimina la anulación del proyecto y el bloque `experimental` que deje vacío o solo con el valor Global de **Guardar las imágenes una sola vez**. Mientras un bloque `experimental` vacío del proyecto oculte la profundidad heredada, el menú muestra **Predeterminado de OpenCode** hasta que elijas **Heredar**. OpenCode lee el bloque `experimental` del proyecto como un todo, así que otros ajustes experimentales que se conserven allí siguen ocultando la profundidad global. Por defecto, el subagente integrado **General** de OpenCode no puede lanzar subagentes, así que sus conversaciones nunca se anidan: guardar cualquier profundidad de proyecto también añade al mismo archivo una regla que permite a los subagentes lanzar sus propios subagentes hasta esa profundidad y prevalece sobre las restricciones de General de otros archivos de configuración (con una profundidad de 1, el límite de profundidad de OpenCode sigue impidiendo el anidamiento), y **Heredar** la quita. El icono de información indica si los subagentes General pueden anidarse. Si el proyecto define General en el formato heredado con un único valor `permission`, o con `task` y `subagent` ya definidos, solo se guarda la profundidad y una advertencia bajo el menú lo indica: permite tú mismo los subagentes para General en ese archivo. Guardar no recarga OpenCode ni cambia las conversaciones en ejecución. |
 
 **Valor nativo predeterminado** y **Global** son distintos: el primero solicita los valores predeterminados propios de OpenCode; el segundo hereda la elección global; elegir los valores nativos en el ámbito de un guion sigue siendo una excepción explícita. Se comprueba la disponibilidad del catálogo; un perfil solicitado no demuestra qué perfil usa actualmente una conversación. Los permisos nativos y la profundidad configurada siguen rigiendo las llamadas a ayudantes internos en ambos modos de tareas.
 
@@ -143,7 +144,7 @@ Una elección rechazada o sin confirmar nunca se reenvía: se vuelven a mostrar 
 
 1. Durante la creación, expande **Opciones → Empezar desde una descripción** y selecciona la descripción guardada.
 2. Revisa el objetivo, las notas, el guion, los perfiles y la delegación copiados antes de **Crear**.
-3. Usa **Guardar como descripción** para dar nombre a un borrador reutilizable. Una misión puntual seleccionada, incluso terminada, también ofrece **Guardar como descripción**.
+3. Usa el icono de marcador del pie del formulario de creación (**Guardar como descripción**) para dar nombre a un borrador reutilizable. Una misión puntual seleccionada, incluso terminada, también ofrece **Guardar como descripción** en **Más acciones** (⋯).
 
 Las descripciones guardan instrucciones y elecciones solicitadas, no planes de tareas, resultados, conversaciones, relojes de programación ni autoridad de ejecución. Cargar una rellena un borrador de creación normal; no inicia ni programa nada. Eliminar una descripción conserva las misiones/conversaciones existentes. **Configuración → Misiones → Descripciones guardadas** gestiona la biblioteca; si la biblioteca deja de poder leerse, **Restablecer la biblioteca guardada** (tras confirmar) elimina las descripciones guardadas, no las ejecuciones. Las programaciones no tienen acción para guardarlas como descripción.
 
@@ -214,7 +215,7 @@ La fecha de creación también acota el trabajo diario admisible. **Ejecutar aho
 
 El **i** junto a **Detalles técnicos** explica la actividad técnica y los costes.
 
-En una programación nativa, despliega **Detalles técnicos** para identificar su **Portador principal** y su **Portador de reconciliación**, sus calendarios nativos y cualquier **Limpieza pendiente de reconciliación**. Estas conversaciones técnicas no ofrecen una acción de composición y quedan fuera de los selectores habituales de conversaciones y fuentes. Las activaciones técnicas, los títulos y la compactación usan el modelo local sin solicitudes HTTP a los proveedores; los eventos y estadísticas nativos aún pueden incluirlos, mientras que las pasadas reales mantienen sus costes de modelo habituales. La compactación limita el contexto procesado y conserva la identidad de la conversación y del calendario. Los mensajes y eventos nativos almacenados pueden acumularse hasta la limpieza explícita de una programación terminada; los 30 resultados de Mission conservados son independientes. El control de profundidad muestra la ruta bajo **Archivo de configuración de OpenCode:** cuando está disponible e indica por separado su **Destino de escritura del proyecto**.
+En una programación nativa, despliega **Detalles técnicos** para identificar su **Portador principal** y su **Portador de reconciliación**, sus calendarios nativos y cualquier **Limpieza pendiente de reconciliación**. Estas conversaciones técnicas no ofrecen una acción de composición y quedan fuera de los selectores habituales de conversaciones y fuentes. Las activaciones técnicas, los títulos y la compactación usan el modelo local sin solicitudes HTTP a los proveedores; los eventos y estadísticas nativos aún pueden incluirlos, mientras que las pasadas reales mantienen sus costes de modelo habituales. La compactación limita el contexto procesado y conserva la identidad de la conversación y del calendario. Los mensajes y eventos nativos almacenados pueden acumularse hasta la limpieza explícita de una programación terminada; los 30 resultados de Mission conservados son independientes. El icono de información de **Profundidad de subagentes** muestra la ruta bajo **Archivo de configuración de OpenCode:** cuando está disponible y nombra por separado el **Destino de escritura del proyecto**.
 
 | Componente | Qué significa cerrarlo |
 | --- | --- |
@@ -273,7 +274,7 @@ Cuando la lectura del recibo confirma una preparación parcial, aparece **Intent
 
 Antes del primer inicio de una nueva misión preparada, puede editar título, instrucciones, notas, playbook, agentes/modelos/razonamiento solicitados, modo de sesiones de tareas y **Programación**. Puede añadir o quitar criterios de lanzamiento conservando la misma Misión. Guardar la mantiene en pausa y prepara un coordinador nuevo y vacío; se conserva la conversación inicial. Solo Play inicia el trabajo o activa una programación. Tras el inicio, instrucciones y notas siguen las reglas de edición de la misión activa. Si guardar queda sin confirmar, **Actualizar la solicitud guardada** lee el resultado original; conserve esa solicitud mientras una preparación parcial bloquea el inicio, la edición de textos y la eliminación.
 
-Usa **Editar la misión seleccionada** en una misión puntual o programación nativa editable. Lee las explicaciones junto a los campos bloqueados. Ante un conflicto de revisión, elige **Recargar la configuración actual** y abre **Borrador anterior para comparar** para revisar el borrador conservado antes de volver a guardar. Las programaciones diarias existentes mantienen los controles de su propia barra de herramientas.
+Usa **Editar la misión seleccionada** desde **Más acciones** (⋯) en una misión puntual o programación nativa editable. Lee las explicaciones junto a los campos bloqueados. Ante un conflicto de revisión, elige **Recargar la configuración actual** y abre **Borrador anterior para comparar** para revisar el borrador conservado antes de volver a guardar. Las programaciones diarias existentes mantienen los controles de su propia barra de herramientas.
 
 En una programación nativa, **Eliminar la misión seleccionada…** desactiva futuras pasadas antes de retirar la entrada. Se conservan las conversaciones y resultados; la limpieza pendiente de reconciliación sigue visible en **Detalles técnicos**. Conserva una eliminación sin confirmar y actualiza su solicitud original.
 

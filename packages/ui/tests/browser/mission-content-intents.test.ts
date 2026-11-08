@@ -6,6 +6,7 @@ import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { panelMissions, missionContentFixture } from "./mission-content-fixture"
+import { missionMenuAction, missionMenuItem, missionToolbar } from "./mission-actions"
 
 let browser: Browser, url: string
 let events: Awaited<ReturnType<typeof fixtureEventStream>>
@@ -64,13 +65,14 @@ async function panel(options: { list: () => MissionMap; content: () => MissionMa
     ;(await import(instances)).setActiveInstanceId("fixture")
     ;(await import(view)).updateMissionProjectView("/fixture", { selected: "msn_intent" })
   })
-  await page.getByRole("button", { name: "Edit selected mission", exact: true }).waitFor()
+  await missionToolbar(page).getByRole("button", { name: "More actions", exact: true }).waitFor()
   return { page, errors, writes, preferenceWrites, reads }
 }
 const refresh = (page: Page) => page.evaluate(async () => { const path = "/src/stores/missions.ts"; await (await import(path)).missionStore.refresh("fixture") })
 const fields = (page: Page) => page.locator("form.mission-editor textarea")
 const status = (page: Page) => page.locator("form.mission-editor").getByRole("status")
-const briefButton = (page: Page) => page.locator("section.mission-detail").getByRole("button", { name: "Save as brief", exact: true })
+// Save as brief is the selected toolbar's overflow-menu item; it opens the name field in the detail.
+const openBrief = async (page: Page) => (await missionMenuItem(page, "save-brief")).click()
 const saveBrief = (page: Page) => page.locator(".mission-brief-save").getByRole("button", { name: "Save brief", exact: true })
 const briefStatus = (page: Page) => page.locator(".mission-brief-save").getByRole("status")
 
@@ -79,7 +81,7 @@ test("an edit prefills only the fields of the map it opened: a warm older body n
   const f = await panel({ list: () => listed, content: () => served, onContent: async () => { await hold?.promise } })
   try {
     // Warm the cache at revision 1: Save as brief reads both fields whole, then its field closes.
-    await briefButton(f.page).click()
+    await openBrief(f.page)
     await f.page.getByLabel("Brief name", { exact: true }).fill("Warm")
     await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
     await f.page.locator(".mission-brief-save").getByRole("button", { name: "Cancel saving the brief", exact: true }).click()
@@ -87,7 +89,7 @@ test("an edit prefills only the fields of the map it opened: a warm older body n
     listed = served = mission(3, "new-objective", "new-notes")
     await refresh(f.page)
     hold = gate()
-    await f.page.getByRole("button", { name: "Edit selected mission", exact: true }).click()
+    await (await missionMenuAction(f.page, "Edit selected mission")).click()
     await status(f.page).filter({ hasText: "Reading the mission map…" }).waitFor()
     assert.deepEqual(await fields(f.page).evaluateAll(nodes => nodes.map(node => [(node as HTMLTextAreaElement).value, (node as HTMLTextAreaElement).disabled])),
       [["", true], ["", true]], "the retained revision-1 bodies never prefill a revision-3 edit")
@@ -104,7 +106,7 @@ test("an edit prefills only the fields of the map it opened: a warm older body n
     listed = served = mission(5, "fifth-objective", "fifth-notes")
     await refresh(f.page)
     served = mission(6, "sixth-objective", "sixth-notes")
-    await f.page.getByRole("button", { name: "Edit selected mission", exact: true }).click()
+    await (await missionMenuAction(f.page, "Edit selected mission")).click()
     await status(f.page).filter({ hasText: "This mission changed since you opened it." }).waitFor()
     assert.deepEqual(await fields(f.page).evaluateAll(nodes => nodes.map(node => [(node as HTMLTextAreaElement).value, (node as HTMLTextAreaElement).disabled])),
       [["", true], ["", true]])
@@ -132,7 +134,7 @@ test("a Reopen in progress keeps the old form read-only, so no draft is lost to 
   const reopen = () => f.page.locator("form.mission-editor").getByRole("button", { name: "Reopen", exact: true })
   const invalidateBodies = () => f.page.evaluate(async () => { const path = "/src/stores/mission-content.ts"; (await import(path)).missionContent.invalidate("fixture") })
   try {
-    await f.page.getByRole("button", { name: "Edit selected mission", exact: true }).click()
+    await (await missionMenuAction(f.page, "Edit selected mission")).click()
     await reopen().waitFor()
     // Reopen waits on its list read while the fields return to A, which the opened revision 3 named.
     hold = gate(); entered = gate()
@@ -161,7 +163,7 @@ test("a Reopen in progress keeps the old form read-only, so no draft is lost to 
     listed = mission(6, "objective C", "notes C")
     await refresh(f.page)
     served = mission(7, "objective D", "notes D")
-    await f.page.getByRole("button", { name: "Edit selected mission", exact: true }).click()
+    await (await missionMenuAction(f.page, "Edit selected mission")).click()
     await reopen().waitFor()
     failList = true
     await reopen().click()
@@ -175,7 +177,7 @@ test("a Reopen in progress keeps the old form read-only, so no draft is lost to 
     listed = mission(8, "objective E", "notes E")
     await refresh(f.page)
     served = mission(9, "objective F", "notes F")
-    await f.page.getByRole("button", { name: "Edit selected mission", exact: true }).click()
+    await (await missionMenuAction(f.page, "Edit selected mission")).click()
     await reopen().waitFor()
     hold = gate(); entered = gate()
     await reopen().click()
@@ -193,7 +195,7 @@ test("Save as brief stays ready through unrelated revisions and reads each input
   let listed = mission(1, "Objective stays", "Notes stay")
   const f = await panel({ list: () => listed, content: () => listed, onContent: () => { listed = { ...listed, revision: listed.revision + 1, updatedAt: listed.revision + 1 } } })
   try {
-    await briefButton(f.page).click()
+    await openBrief(f.page)
     await f.page.getByLabel("Brief name", { exact: true }).fill("Busy brief")
     await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
     for (let cycle = 0; cycle < 12; cycle++) {
@@ -214,14 +216,16 @@ test("a map without notes names no notes body: Save as brief and the edit form r
   const listed = mission(2, "only-objective")
   const f = await panel({ list: () => listed, content: () => listed })
   try {
-    await briefButton(f.page).click()
+    await openBrief(f.page)
     await f.page.getByLabel("Brief name", { exact: true }).fill("No notes")
     await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
     const saved = f.page.waitForResponse(response => response.url().includes("/storage/config/ui") && response.request().method() !== "GET")
     await saveBrief(f.page).click(); await saved
     const record = f.preferenceWrites.find(patch => patch.settings?.missionModels)?.settings.missionModels[0]
     assert.deepEqual([record.objective, record.notes], ["only-objective", ""])
-    await f.page.getByRole("button", { name: "Edit selected mission", exact: true }).click()
+    // A clicked save returns focus to the menu's trigger once the field closes.
+    await f.page.waitForFunction(() => document.activeElement?.classList.contains("action-overflow-trigger"), undefined, { timeout: 5_000 })
+    await (await missionMenuAction(f.page, "Edit selected mission")).click()
     await f.page.waitForFunction(() => !(document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled)
     assert.deepEqual([await fields(f.page).nth(0).inputValue(), await fields(f.page).nth(1).inputValue()], ["only-objective", ""])
     assert.deepEqual([...new Set(f.reads.map(address => address.searchParams.get("field")))], ["objective"], "the absent notes are never read")
@@ -234,7 +238,7 @@ test("Save as brief saves both inputs of one snapshot, an absent field included,
   let listed = mission(1, "old-objective"), served = mission(3, "new-objective", "new-notes")
   const f = await panel({ list: () => listed, content: () => served, onContent: () => { listed = served } })
   try {
-    await briefButton(f.page).click()
+    await openBrief(f.page)
     await f.page.getByLabel("Brief name", { exact: true }).fill("Coherent brief")
     await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
     const saved = f.page.waitForResponse(response => response.url().includes("/storage/config/ui") && response.request().method() !== "GET")
@@ -248,7 +252,7 @@ test("Save as brief saves both inputs of one snapshot, an absent field included,
   const edit = () => { if (moving) { revision++; changing = mission(revision, `objective ${revision}`, "notes") } return changing }
   const g = await panel({ list: edit, content: () => changing, onContent: address => { if (address.searchParams.get("field") === "objective") edit() } })
   try {
-    await briefButton(g.page).click()
+    await openBrief(g.page)
     await g.page.getByLabel("Brief name", { exact: true }).fill("Moving brief")
     await briefStatus(g.page).filter({ hasText: "This mission changed since you opened it." }).waitFor()
     assert.equal(await saveBrief(g.page).isDisabled(), true)

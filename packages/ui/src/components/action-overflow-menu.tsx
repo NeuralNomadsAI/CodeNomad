@@ -65,6 +65,7 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
               {(item) => (
                 <DropdownMenu.Item
                   class="action-overflow-item"
+                  data-action-key={item.key}
                   role={typeof item.checked === "boolean" ? "menuitemcheckbox" : undefined}
                   aria-checked={typeof item.checked === "boolean" ? item.checked : undefined}
                   disabled={item.disabled}

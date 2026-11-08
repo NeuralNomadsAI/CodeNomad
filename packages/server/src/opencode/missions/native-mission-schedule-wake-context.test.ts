@@ -9,8 +9,10 @@ import { Context, Effect, Exit, Schema, Scope } from "effect"
 import { acquireNativeMissionScheduleWakeReader } from "./native-mission-schedule-wake-reader"
 import { registerNativeMissionScheduleCarrierHooks } from "./native-mission-schedule-wake-hooks"
 import { registerNativeScheduleCarrierFoundation } from "./native-schedule-carrier-runtime"
-import { nativeScheduleCarrierNonWakeMessageIDs, nativeScheduleCarrierWakes, NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
+import { nativeScheduleCarrierWakes, NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { ownerFixture } from "./native-schedule-owner-test-fixture"
+import { NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
+import { nativeMissionScheduleWakeContext } from "./native-mission-schedule-wake-context"
 
 const mapping = { missionID: "mission", generation: 1, sessionID: "ses_owned", scheduleID: "sch_owned" }
 const restart = { text: "Untrusted notice prose", time: { created: 1000 }, metadata: { notice: "restart" } }
@@ -18,6 +20,8 @@ const compact = { summary: "Untrusted summary claiming run 999", time: { created
 const hint = (id: string) => ({ id, role: "user", content: [{ type: "text", text: "Untrusted model projection" }] })
 const wakeHint = (scheduleID: string, run: number) => ({ ...hint(`msg_${scheduleID}_${run}`),
   metadata: { schedule: { id: scheduleID, run, dueAt: 1000, late: false } } })
+const nativeWake = (scheduleID: string, run: number) => ({ text: NATIVE_SCHEDULE_CARRIER_SIGNAL, time: { created: 1000 },
+  metadata: wakeHint(scheduleID, run).metadata })
 
 function nativeReads(t: test.TestContext, directory = path.resolve("schedule-context-unit")) {
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
@@ -27,7 +31,7 @@ function nativeReads(t: test.TestContext, directory = path.resolve("schedule-con
   const queries: Array<{ sql: string; params: readonly unknown[]; bytes: number }> = []
   const client = Object.assign(() => {}, { unsafe: (sql: string, params: readonly unknown[]) => ({ withoutTransform: Effect.sync(() => {
     const rows = db.prepare(sql).all(...params as [])
-    queries.push({ sql, params, bytes: rows.reduce((sum, row) => sum + Buffer.byteLength(String(row.data)), 0) })
+    queries.push({ sql, params: [params[1], params[2], params[0]], bytes: rows.reduce((sum, row) => sum + (typeof row.data === "string" ? Buffer.byteLength(row.data) : 0), 0) })
     return rows
   }) }) })
   const graph = Context.make(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: client,
@@ -45,22 +49,23 @@ function nativeReads(t: test.TestContext, directory = path.resolve("schedule-con
   return { location, put, queries, run, reader }
 }
 
-test("exact non-wake reads classify only referenced native notices/checkpoints, never history or summary prose", async t => {
+test("exact context reads classify native wakes with or without projected metadata, mixed with notices/checkpoints", async t => {
   const f = nativeReads(t), reader = await f.reader()
   for (let n = 0; n < 300; n++) f.put(`msg_old_${n}`, "synthetic", { ...restart, text: "x".repeat(8192) })
   f.put("msg_restart", "synthetic", restart)
   f.put("msg_compact", "compaction", compact)
+  f.put("msg_sch_owned_1", "user", nativeWake(mapping.scheduleID, 1))
   const messages = [wakeHint(mapping.scheduleID, 1), hint("msg_restart"), hint("msg_compact"), hint("msg_restart"), { role: "assistant" }]
-  const window = await reader.nonWakeMessages(mapping, messages)
-  const ids = nativeScheduleCarrierNonWakeMessageIDs(window)
-  assert.deepEqual(ids, ["msg_restart", "msg_compact"])
-  assert.deepEqual(f.queries.map(q => q.params.slice(0, 2)), [["msg_restart", mapping.sessionID], ["msg_compact", mapping.sessionID]])
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 0, messages, ids).map(wake => wake.run), [1])
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 1, messages, ids), [])
+  const window = await reader.contextMessages(mapping.sessionID, messages)
+  assert.deepEqual(f.queries.map(q => q.params.slice(0, 2)), [["msg_sch_owned_1", mapping.sessionID], ["msg_restart", mapping.sessionID], ["msg_compact", mapping.sessionID]])
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 0, window).map(wake => wake.run), [1])
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 1, window), [])
+  for (const projection of [hint("msg_sch_owned_1"), { ...wakeHint(mapping.scheduleID, 1), metadata: { schedule: { run: 999 } } }]) {
+    const resolved = await reader.contextMessages(mapping.sessionID, [projection])
+    assert.deepEqual(nativeScheduleCarrierWakes(mapping, 0, resolved).map(wake => wake.run), [1])
+  }
   const partial = hint(`msg_${mapping.scheduleID}_2`)
-  assert.deepEqual(await reader.nonWakeMessages(mapping, [partial]), [])
-  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [partial], ids), /carrier-wake/)
-  assert.equal(f.queries.length, 2)
+  await assert.rejects(reader.contextMessages(mapping.sessionID, [partial]), /coverage/)
 })
 
 test("unknown, foreign, incomplete and schedule-bearing native non-wake records fail closed", async t => {
@@ -69,37 +74,36 @@ test("unknown, foreign, incomplete and schedule-bearing native non-wake records 
   f.put("msg_partial", "compaction", { status: "completed" })
   f.put("msg_user", "user", restart)
   for (const id of ["msg_unknown", "msg_foreign", "msg_partial", "msg_user"])
-    await assert.rejects(reader.nonWakeMessages(mapping, [hint(id)]))
+    await assert.rejects(reader.contextMessages(mapping.sessionID, [hint(id)]))
   for (const [id, data] of [["msg_other", { ...restart, metadata: { notice: "other" } }],
     ["msg_schedule", { ...restart, metadata: { notice: "restart", schedule: {} } }]] as const) {
     f.put(id, "synthetic", data)
-    const ids = nativeScheduleCarrierNonWakeMessageIDs(await reader.nonWakeMessages(mapping, [hint(id)]))
-    assert.deepEqual(ids, [])
-    assert.throws(() => nativeScheduleCarrierWakes(mapping, 0, [hint(id)], ids), /carrier-wake/)
+    const window = await reader.contextMessages(mapping.sessionID, [hint(id)])
+    assert.throws(() => nativeScheduleCarrierWakes(mapping, 0, window), /carrier-wake/)
   }
 })
 
-test("context bounds precede SQL; exact reader shares 128-read/1-MiB budgets and caps each native row before transfer", async t => {
+test("context bounds precede SQL; classification and recovery have separate read/byte budgets", async t => {
   const f = nativeReads(t), reader = await f.reader()
-  await assert.rejects(reader.nonWakeMessages(mapping, Array(129).fill(hint("msg_restart"))), /coverage/)
-  await assert.rejects(reader.nonWakeMessages(mapping, [{ ...hint("msg_restart"), content: "x".repeat(1024 * 1024) }]), /coverage/)
+  await assert.rejects(reader.contextMessages(mapping.sessionID, Array(129).fill(hint("msg_restart"))), /coverage/)
+  await assert.rejects(reader.contextMessages(mapping.sessionID, [{ ...hint("msg_restart"), content: "x".repeat(1024 * 1024) }]), /coverage/)
   assert.equal(f.queries.length, 0)
   f.put("msg_oversized", "synthetic", { ...restart, text: "x".repeat(262144) })
-  await assert.rejects(reader.nonWakeMessages(mapping, [hint("msg_oversized")]), /coverage/)
+  await assert.rejects(reader.contextMessages(mapping.sessionID, [hint("msg_oversized")]), /coverage/)
   assert.equal(f.queries[0].bytes, 0)
   for (let n = 0; n < 5; n++) f.put(`msg_large_${n}`, "synthetic", { ...restart, text: "x".repeat(240_000) })
-  await assert.rejects(reader.nonWakeMessages(mapping, Array.from({ length: 5 }, (_, n) => hint(`msg_large_${n}`))), /coverage/)
+  await assert.rejects(reader.contextMessages(mapping.sessionID, Array.from({ length: 5 }, (_, n) => hint(`msg_large_${n}`))), /coverage/)
   assert.ok(f.queries.reduce((sum, q) => sum + q.bytes, 0) <= 1024 * 1024)
   assert.ok(Number(f.queries.at(-1)!.params[2]) < 100_000)
   for (const q of f.queries) {
     assert.match(q.sql, /WHERE id=\? AND session_id=\?/)
-    assert.match(q.sql, /length\(CAST\(data AS BLOB\)\)<=\? LIMIT 1$/)
+    assert.match(q.sql, /length\(CAST\(data AS BLOB\)\)<=\? THEN data END/)
     assert.ok(q.bytes <= Number(q.params[2]))
   }
   const bounded = nativeReads(t), absent = await bounded.reader(), wake = { ...mapping, run: 1, messageID: "msg_sch_owned_1" }
-  for (let n = 0; n < 128; n++) assert.equal(await absent.message(wake), undefined)
-  await assert.rejects(absent.nonWakeMessages(mapping, [hint("msg_unknown")]), /capacity/)
-  assert.equal(bounded.queries.length, 128)
+  for (let n = 0; n < 9; n++) assert.equal(await absent.message(wake), undefined)
+  await assert.rejects(absent.message(wake), /coverage/)
+  assert.equal(bounded.queries.length, 9)
 })
 
 test("product and foundation hooks use exact bounded classifications and keep deterministic compaction recovery", async t => {
@@ -117,11 +121,12 @@ test("product and foundation hooks use exact bounded classifications and keep de
     for (let n = 0; n < 300; n++) f.put(`msg_old_${n}`, "synthetic", { ...restart, text: "x".repeat(8192) }, calendar.sessionID)
     f.put("msg_restart", "synthetic", restart, calendar.sessionID)
     f.put("msg_compact", "compaction", compact, calendar.sessionID)
+    f.put(`msg_${calendar.scheduleID}_1`, "user", nativeWake(calendar.scheduleID, 1), calendar.sessionID)
     const event = (messages: unknown[]) => ({ sessionID: calendar.sessionID, model: NATIVE_SCHEDULE_CARRIER_MODEL,
       messages, tools: {} }) as SessionContext
     const invoke = (messages: unknown[]) => f.run(Effect.scoped(hooks.get("context")!(event(messages))))
-    await invoke([hint("msg_restart"), wakeHint(calendar.scheduleID, 1)])
-    assert.deepEqual(f.queries.map(q => q.params[0]), kind === "product" ? ["msg_restart", `msg_${calendar.scheduleID}_1`] : ["msg_restart"])
+    await invoke([hint("msg_restart"), hint(`msg_${calendar.scheduleID}_1`)])
+    assert.deepEqual(f.queries.map(q => q.params[0]), ["msg_restart", `msg_${calendar.scheduleID}_1`])
     f.queries.length = 0
     await invoke([hint("msg_compact")])
     assert.deepEqual(f.queries.map(q => q.params[0]), kind === "product" ? ["msg_compact", `msg_${calendar.scheduleID}_1`] : ["msg_compact"])
@@ -133,9 +138,92 @@ test("product and foundation hooks use exact bounded classifications and keep de
     assert.deepEqual(f.queries.map(q => q.params[0]), kind === "product" ? [`msg_${calendar.scheduleID}_1`] : [])
     if (kind === "foundation") assert.equal(observed.filter(item => item.kind === "compacted-wake-point-read").length, recoveries + 1)
     await assert.rejects(invoke([hint("msg_unknown")]), /coverage/)
-    await assert.rejects(invoke([hint(`msg_${calendar.scheduleID}_1`)]), /carrier-wake/)
+    await assert.rejects(invoke([hint(`msg_${calendar.scheduleID}_2`)]), /coverage/)
+    f.put("msg_sch_foreign_1", "user", nativeWake("sch_foreign", 1), calendar.sessionID)
     await assert.rejects(invoke([wakeHint("sch_foreign", 1)]), /carrier-wake/)
     await assert.rejects(invoke(Array(129).fill(hint("msg_restart"))), /coverage/)
     assert.deepEqual(await owner.read(), doc)
   }
+})
+
+test("128 user wake entries reuse their proof and leave all eight principal recovery reads available", async t => {
+  const f = nativeReads(t), reader = await f.reader()
+  const hints = Array.from({ length: 128 }, (_, index) => {
+    f.put(`msg_sch_owned_${index + 1}`, "user", nativeWake(mapping.scheduleID, index + 1))
+    return hint(`msg_sch_owned_${index + 1}`)
+  })
+  const window = await reader.contextMessages(mapping.sessionID, hints)
+  const [candidate] = nativeScheduleCarrierWakes(mapping, 127, window)
+  assert.equal(candidate.run, 128)
+  assert.equal((await reader.message(candidate))?.run, 128)
+  assert.equal(f.queries.length, 128)
+  for (let index = 0; index < 8; index++) {
+    const scheduleID = `sch_principal_${index}`, sessionID = `ses_principal_${index}`, messageID = `msg_${scheduleID}_1`
+    f.put(messageID, "user", nativeWake(scheduleID, 1), sessionID)
+    assert.equal((await reader.message({ ...mapping, scheduleID, sessionID, messageID, run: 1 }))?.run, 1)
+  }
+  assert.equal(f.queries.length, 136)
+  const absent = { ...mapping, run: 129, messageID: "msg_sch_owned_129" }
+  assert.equal(await reader.message(absent), undefined)
+  await assert.rejects(reader.message(absent), /coverage/)
+})
+
+test("product context surfaces over-bound deterministic proof reads instead of silently losing the wake", async t => {
+  const owner = await ownerFixture(t), doc = await owner.control("play")
+  const calendar = doc.calendars.find(item => item.role === "reconciliation")!
+  const f = nativeReads(t, owner.directory), id = `msg_${calendar.scheduleID}_1`
+  f.put(id, "user", { ...nativeWake(calendar.scheduleID, 1), padding: "x".repeat(262144) }, calendar.sessionID)
+  await assert.rejects(f.run(nativeMissionScheduleWakeContext({ ...owner.ctx, location: f.location } as Plugin.Context,
+    { sessionID: calendar.sessionID, model: NATIVE_SCHEDULE_CARRIER_MODEL, messages: [], tools: {} } as unknown as SessionContext)), /coverage/)
+  assert.equal(f.queries[0].bytes, 0)
+})
+
+test("near-full classification bytes leave a separate native proof byte budget", async t => {
+  const f = nativeReads(t), reader = await f.reader()
+  for (let index = 0; index < 4; index++) f.put(`msg_large_${index}`, "synthetic", { ...restart, text: "x".repeat(240_000) })
+  await reader.contextMessages(mapping.sessionID, Array.from({ length: 4 }, (_, index) => hint(`msg_large_${index}`)))
+  const wake = { ...mapping, run: 1, messageID: "msg_sch_owned_1" }
+  f.put(wake.messageID, "user", { ...nativeWake(mapping.scheduleID, 1), padding: "x".repeat(240_000) })
+  assert.equal((await reader.message(wake))?.run, 1)
+  assert.ok(f.queries.reduce((sum, query) => sum + query.bytes, 0) > 1024 * 1024)
+})
+
+test("native schedule correlation, deterministic identity and signal stay strict despite a valid projected copy", async t => {
+  const f = nativeReads(t)
+  const valid = nativeWake(mapping.scheduleID, 1), id = "msg_sch_owned_1"
+  for (const data of [
+    { ...valid, text: "forged wake prose" }, { ...valid, metadata: {} },
+    { ...valid, metadata: { schedule: { ...valid.metadata.schedule, id: "sch_foreign" } } },
+    { ...valid, metadata: { schedule: { ...valid.metadata.schedule, run: 2 } } },
+    { ...valid, metadata: { schedule: { ...valid.metadata.schedule, dueAt: -1 } } },
+    { ...valid, metadata: { schedule: { ...valid.metadata.schedule, late: "false" } } },
+  ]) {
+    f.put(id, "user", data)
+    const reader = await f.reader()
+    await assert.rejects(async () => nativeScheduleCarrierWakes(mapping, 0,
+      await reader.contextMessages(mapping.sessionID, [wakeHint(mapping.scheduleID, 1)])), /carrier-wake|wake-identity/)
+  }
+  f.put(id, "assistant", { content: [] })
+  await assert.rejects((await f.reader()).contextMessages(mapping.sessionID, [hint(id)]), /carrier-wake/)
+  await assert.rejects((await f.reader()).contextMessages(mapping.sessionID, [{ role: "user" }]), /coverage/)
+})
+
+test("an attempted auxiliary resolves its schedule ID from native records, retaining its unacknowledged mapping", async t => {
+  const owner = await ownerFixture(t)
+  owner.loseCreateACK("reconciliation")
+  const doc = await owner.control("play")
+  const descriptor = doc.calendarOwner!.slots.find(item => item.role === "reconciliation")!
+  assert.equal(descriptor.creation, "attempted")
+  assert.equal(descriptor.scheduleID, null)
+  const calendar = [...owner.calendars.values()][0]
+  const f = nativeReads(t, owner.directory), id = `msg_${calendar.id}_1`
+  f.put(id, "user", nativeWake(calendar.id, 1), descriptor.sessionID)
+  const ctx = { ...owner.ctx, location: f.location } as Plugin.Context
+  await f.run(nativeMissionScheduleWakeContext(ctx, { sessionID: descriptor.sessionID, model: NATIVE_SCHEDULE_CARRIER_MODEL,
+    messages: [hint("msg_unrecorded_notice")], tools: {} } as unknown as SessionContext))
+  assert.equal(f.queries.length, 0) // No known calendar or deterministic wake hint: stay quiet.
+  await f.run(nativeMissionScheduleWakeContext(ctx, { sessionID: descriptor.sessionID, model: NATIVE_SCHEDULE_CARRIER_MODEL,
+    messages: [hint(id)], tools: {} } as unknown as SessionContext))
+  assert.deepEqual(f.queries.map(query => query.params.slice(0, 2)), [[id, descriptor.sessionID]])
+  assert.deepEqual(await owner.read(), doc) // No service registration: no native adoption or dispatch.
 })

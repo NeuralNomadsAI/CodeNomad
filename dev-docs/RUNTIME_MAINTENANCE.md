@@ -35,12 +35,13 @@
   the installed Electron executable's `process.versions.node` for Electron
   (fetched by `npx --no install-electron`).
   `scripts/verify-bundled-node.cjs` checks the packaged npm version against the pin.
-- npm lifecycle scripts call `node` by name. Tauri's bundled `node` answers to it
-  from PATH, even though Tauri also sets `ELECTRON_RUN_AS_NODE=1`. A runtime
-  executable not named `node` (Electron's) receives a temporary `node` command
-  pointing to it instead. Installation and native upgrade scope it to their
-  child environment and clean it after completion; interrupted installers retain
-  their adapter and prefix lock for safe manual recovery. The command lives in an
+- npm scripts and their children receive temporary `npm` and `npx` commands tied
+  to the selected npm package and Node runtime. Tauri's bundled `node` answers
+  from PATH, even with `ELECTRON_RUN_AS_NODE=1`; an executable not named `node`
+  (Electron's) also receives a temporary `node` command. Installation and native
+  upgrade share these adapters, scope them to their child environment and clean
+  them after completion; interrupted installers retain their adapters and prefix
+  lock for safe manual recovery. The commands live in an
   installer directory inside the npm prefix (`.codenomad-npm-*` for direct npm,
   `.codenomad-upgrade-*` beside the native upgrade's npm shim), never the system
   temporary directory, which may be mounted noexec.
@@ -65,13 +66,12 @@
   the development Electron executable on Windows, Linux and macOS.
 - Dependabot covers every dependency of the Cargo workspace `packages/tauri-app`
   and of the npm workspaces (root lockfile), plus the Cloudflare deployment worker
-  (`packages/cloudflare`, separate lockfile), with weekly version checks against
-  the default branch (`dev`). Keep `target-branch` omitted for npm and Cargo so
-  security updates share the configuration. Each entry's `allow` rule uses
-  `dependency-type: all` and permits routine minor/patch updates; Cargo includes
-  transitive crates. npm additionally allows
-  `electron` major proposals to keep supported runtime majors visible. Other
-  routine major migrations require an explicit maintainer decision.
+  (`packages/cloudflare`, separate lockfile), against the default branch
+  (`dev`). Keep `target-branch` omitted for npm and Cargo so security updates
+  share the configuration. Each entry's `allow` rule uses `dependency-type: all`;
+  Cargo includes transitive crates. Its minor/patch update types and npm's
+  `electron` major rule select version updates only while a job's limit permits
+  them. Routine major migrations require an explicit maintainer decision.
   [`allow.update-types`](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#update-types-allow)
   filters version updates only: security fixes remain eligible for every package,
   including fixes requiring a major. Matching allow rules combine their permitted
@@ -81,9 +81,10 @@
   unmatched dependencies receive individual PRs. These
   [security group rules](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-security-updates#grouping-dependabot-security-updates-into-a-single-pull-request)
   take priority over repository/organization blanket grouping for the configured
-  Cargo workspace and npm directories (`/`, `/packages/cloudflare`). Site-level
-  grouping can still apply to other directories. Review related dependency
-  versions together before merging.
+   Cargo workspace and root npm directory (`/`). Cloudflare's separate job groups
+   only its related `wrangler`, `miniflare`, `workerd` and `@cloudflare/*` security
+   updates; other worker fixes stay individual. Review related dependency versions
+   together before merging.
 - The npm roots follow actual installations: root workspaces and the separately
   installed Cloudflare release worker. The source plugin packaging manifest at
   `packages/server/src/opencode/session-pruning/package.json` is qualified with
@@ -91,22 +92,34 @@
   from the root installation and externalizes the daemon's native SDK/Effect.
   Cargo's workspace covers its application and regression members; local vendor
   manifests and lockfiles remain under the vendored-patch qualification policy.
-- Routine minor/patch updates are grouped by toolchain: the Tauri family
+ - Routine version updates are off: each of the four Dependabot jobs sets
+   `open-pull-requests-limit: 0`, so Dependabot opens security updates only,
+   under GitHub's separate fixed security-update limit. Toolchain and other
+   routine upgrades are maintainer-initiated. `allow` also filters security
+   updates, so its all-dependency rules stay in place. Root workspaces and the
+   Cloudflare worker have separate npm jobs. The version-update groups below
+   apply again only if a job's limit is raised: routine minor/patch updates are
+   grouped only by related toolchain: the Tauri family
   (`tauri`, `tauri-*`, `wry`, including the runtime regression fixture's
   `tests/windows-runner-refcount` requirements), the Electron toolchain, the
-  `@tauri-apps/*` packages, then every other crate or npm dependency; minor and
-  patch updates of a group arrive together. The first matching group wins, so the
-  remaining-dependency catchalls follow the toolchain groups. Routine groups
-  explicitly apply to version updates; `allow.update-types` controls which
-  versions are proposed. Electron majors arrive individually. Every merge is manual.
+   `@tauri-apps/*` packages and the OpenCode client/schema/plugin SDK family in
+   the root lockfile. Other crate and npm proposals are individual. A parent
+   update can also change its transitive dependencies, so every PR needs review.
+   Routine groups explicitly apply to version updates; `allow.update-types`
+   controls which versions are proposed. Electron majors arrive individually.
+   Every merge is manual.
+ - An OpenCode SDK proposal also qualifies the independently installed source
+   plugin manifest at `packages/server/src/opencode/session-pruning/package.json`
+   and the native plugin's shared Effect contract. Keep the required pins aligned
+   across those consumed contracts before merging.
 - For a Tauri crate update, the maintainer reviews the Tauri, runtime, Wry, Tao
   and plugin release notes of every version crossed, re-qualifies the
   vendored crates (`packages/tauri-app/vendor/README.md`) and keeps
   `@tauri-apps/api` and the plugin JavaScript packages (`packages/ui/package.json`)
   on the crates' major/minor: the CLI's version check runs from
-  `packages/tauri-app` and does not see them. Dependabot's npm entry proposes the
-  `@tauri-apps/*` packages in their own grouped PR (`tauri-js`); merge it with
-  the matching cargo `tauri` PR so the packages never trail the crates' minor. The vendored Tao and updater are
+  `packages/tauri-app` and does not see them. Update the `@tauri-apps/*` packages
+  together with the matching `tauri` crates so the packages never trail the
+  crates' minor. The vendored Tao and updater are
   path patches, which Dependabot does not update;
   `packages/tauri-app/scripts/vendored-patches.test.mjs` fails a PR whose
   lockfile stops resolving them. Platform crates shared with Wry (`webview2-com`,
@@ -115,14 +128,13 @@
   that moves them needs a manual manifest change.
 - WebView2 (Evergreen runtime on Windows), WKWebView (macOS) and WebKitGTK
   (Linux) are system components updated by the operating system.
-- Dependabot checks GitHub Actions weekly and proposes updates against `dev`;
-  merges are manual. Composite actions that follow their upstream
+- GitHub Actions updates are maintainer-initiated; Dependabot proposes only
+  security updates for them. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.
 - Electron's integrated Node is the Electron backend runtime, so the exact
-  `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot
-  proposes Electron toolchain updates (`electron`, `electron-builder`,
-  `electron-vite`) weekly against `dev`: minor and patch updates in the
-  `electron-toolchain` group, and `electron` majors individually.
+  `electron` pin (`packages/electron-app/package.json`) selects it. Electron
+  toolchain updates (`electron`, `electron-builder`, `electron-vite`) are
+  maintainer-initiated; Dependabot proposes only their security updates.
   Keep the pin within Electron's supported majors (the latest three). Before
   merging, the maintainer qualifies the upstream breaking changes of every major
   crossed (<https://www.electronjs.org/docs/latest/breaking-changes>) and its
@@ -133,6 +145,27 @@
   package Electron fetch it right after `npm ci` with `npx --no install-electron`,
   before parallel tests or command substitutions read its path; the Electron
   app's `dev` and `preview` scripts and `scripts/dev.sh` run it first.
+- **CI download caches.** PR Build Validation and SignPath Test Signing declare
+  `cache-mode: read`: they restore caches and never write them. **Download
+  Caches** (`.github/workflows/download-cache.yml`) runs from `dev` on pushes that
+  change `package-lock.json` or `packages/tauri-app/Cargo.lock`, every Monday and
+  Thursday and on manual dispatch. On each runner OS and architecture it seeds
+  setup-node's npm cache, `@electron/get`'s Electron zips with electron-builder's
+  fpm and winCodeSign, Cargo's registry index and `.crate` files, and the
+  AppImage type2 runtime, and restores the Tauri bundler tools, which only the
+  nightly Develop Pre-Release build saves. Each run restores within GitHub's
+  7-day eviction of unused caches. Jobs restore through
+  `.github/actions/download-cache` before the tool that downloads; on a miss the
+  tool downloads as usual.
+- Restored files are checked as fresh downloads are: `install-electron` checks
+  its zip against the package's `checksums.json`, and the binary builds give
+  electron-builder only zips matching it; `.crate` files that do not match
+  `Cargo.lock` are deleted, so Cargo downloads and verifies them. The AppImage
+  runtime (`LDAI_RUNTIME_FILE`) and the Tauri bundler's AppImage plugin come from
+  releases updated in place: their caches are keyed by, and used only with, the
+  SHA-256 GitHub publishes for the current asset. Tauri re-checks `NSIS.exe` and
+  its plugin DLL by SHA-1; its AppRun and linuxdeploy carry no checksum, so the
+  dev-only writers are their trust boundary.
 - **Bundled Runtime Maintenance** runs daily (07:23 UTC, subject to GitHub's
   scheduling delays) and on manual dispatch, on the default branch only.
   It selects newer LTS releases within the pinned Node major only, and npm's
@@ -187,4 +220,5 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 - Keep the `electron` devDependency an exact version. Preserve all-package security coverage with `dependency-type: all`; restrict routine majors through `allow.update-types`, with the explicit `electron` major exception. Never add package/version ignores that hide security fixes, blanket security groups or automatic merges. General-library majors and new ecosystems require a maintainer decision. Run `node --test .github/scripts/dependabot-policy.test.cjs` when editing the policy.
 - Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact. It proposes only same-major Node LTS upgrades and newer npm releases whose `engines.node` includes `.node-version` and the pinned Electron's Node, each as a regular, non-draft PR changing that one pin, without automatic merge; a major npm proposal says "maintainer qualification needed" in its title and body. Never present `engines.node` as behavioural validation, adopt an npm major without qualification, bundle npm from another source than the verified `.npm-version` registry package, extract it with anything but the system `tar` plus the extracted-tree check, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from the check, overwrite or delete a proposal branch, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and `.npm-version` and never restate the pinned Node or bundled npm version: maintenance updates only those files.
+- Only trusted `dev` runs write CI caches: a workflow triggered by pull requests or building a selectable ref declares `cache-mode: read` and restores through `.github/actions/download-cache`. Key each cache by what determines its content (locked package versions, the `Cargo.lock` hash, the published runtime digest). Never cache Cargo's `target/` or `registry/src`, give version-exact caches restore keys, or use a restored file that its tool does not verify without checking it first. Run `node --test .github/scripts/download-cache.test.cjs` when editing them.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.

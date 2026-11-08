@@ -15,7 +15,7 @@ import { outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, out
   navigationWindowInputSchema, navigationWindowResultSchema } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { missionPicker, missionPopupOption } from "./mission-actions"
+import { answerMissionRow, inlineMissionEntry, missionRow, selectedMissionTitle } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
 import { panelMissions } from "./mission-content-fixture"
 import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
@@ -42,12 +42,15 @@ before(async () => {
   } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 }, { timeout: 60000 })
 after(async () => { try { await browser?.close() } finally { await server?.close() }; console.info(`Family fixture logs: ${output}`) })
-function mission(id: string, independent = false): MissionMap {
+function mission(id: string, independent = false, task = false): MissionMap {
   const actor = (name: string, kind: "coordinator" | "specialist") => ({ sessionId: `ses_${name}`, kind, managed: false,
     title: `Declared ${name}`, roles: [kind], location: { directory: "/fixture" }, joinedAt: 1 })
+  // Optionally, Mission A's live task held by its declared specialist (whose descendants ask).
+  const tasks: MissionMap["tasks"] = task && id === "A" ? [{ id: "task-work", key: "work", title: "Delegated work", brief: "Work", role: "specialist",
+    status: "dispatching", blockedBy: [], actorSessionId: "ses_actor", outstandingExecution: false, createdAt: 1, updatedAt: 1 }] : []
   return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: `Objective ${id}`, template: "custom", notes: "",
     coordinatorSessionId: `ses_${id}`, status: "active", actors: id === "A" ? [actor("A", "coordinator"), actor("actor", "specialist"), ...(independent ? [actor("independent", "specialist")] : [])] : [actor("B", "coordinator")],
-    tasks: [], reports: [], frontier: [], claims: [], revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
+    tasks, reports: [], frontier: [], claims: [], revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 const observedFamily: NonNullable<MissionActivityProjection["missions"][number]["family"]> = { state: "observed", members: [
   { sessionId: "ses_A", actorSessionId: "ses_A", kind: "declared" },
@@ -65,7 +68,7 @@ function nativeHistory(sessionId: string): SessionMessageUser[] {
   assert.match(sessionId, /^ses_[A-Za-z_]+$/)
   return [1, 2].map(n => ({ id: `msg_${sessionId}_${n}`, type: "user", time: { created: n }, text: `Bounded native history ${sessionId} ${n}` }))
 }
-async function setup(label: string, narrow = false, independent = false) {
+async function setup(label: string, narrow = false, independent = false, task = false) {
   const page = await browser.newPage({ locale: narrow ? "he-IL" : "en-US", viewport: narrow ? { width: 390, height: 600 } : { width: 1600, height: 950 },
     hasTouch: narrow, deviceScaleFactor: 1 })
   page.setDefaultTimeout(12000)
@@ -149,7 +152,7 @@ async function setup(label: string, narrow = false, independent = false) {
       return route.fulfill({ json: navigationWindowResultSchema.parse({ status: "window", messages: nativeHistory(input.sessionID),
         older: null, newer: null, resume: { kind: "latest" }, latest: true }) })
     }
-    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A", independent), mission("B")]), generatedAt: 1, discardedEvents: 0,
+    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A", independent, task), mission("B")]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: "A", actors: independent ? [
         { sessionId: "ses_A", state: "running" }, { sessionId: "ses_actor", state: "running" },
       ] : [], family }, { missionId: "B", actors: [], family: { state: "unknown", members: [] } }] } } })
@@ -197,7 +200,7 @@ async function setup(label: string, narrow = false, independent = false) {
   }
   try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }); await page.waitForFunction(() => window.missionNativeFamily?.snapshot().session === "ses_B", undefined, { timeout: 30000 })
     // Only the picker selects a Mission: restoring a coordinator conversation leaves none selected.
-    if (!narrow) await pickerField(page).waitFor()
+    if (!narrow) await page.locator(".mission-rows button.mission-row-select").first().waitFor()
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, undefined) }
   catch (error) { await save(); release(); await page.close(); throw error }
   return { page, errors, failures, requests, rawRequestFailures, panelListCancellations, save, drainRequestFailures, arrival, completion, release, defer: () => { deferred = true },
@@ -206,15 +209,10 @@ async function setup(label: string, narrow = false, independent = false) {
 }
 const composer = (page: Page) => page.locator("textarea.prompt-input:visible")
 const selectedMission = async (page: Page) => (await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission
-// Locale-neutral picker field: the RTL cases render the Hebrew accessible name.
-const pickerField = (page: Page) => missionPicker(page).locator("button.mission-picker-field")
-/** The user's explicit picker choice, the only route that changes the selected Mission. */
+/** The user's explicit row choice, the only route that changes the selected Mission (locale-neutral). */
 async function pickMission(page: Page, id: "A" | "B") {
   const session = (await page.evaluate(() => window.missionNativeFamily.snapshot())).session
-  if (await selectedMission(page) !== id) {
-    if (await pickerField(page).getAttribute("aria-expanded") !== "true") await pickerField(page).click()
-    await missionPopupOption(page, `Objective ${id}`).click()
-  }
+  if (await selectedMission(page) !== id) await (await inlineMissionEntry(page, `Objective ${id}`)).click()
   await page.waitForFunction(id => window.missionNativeFamily.snapshot().selectedMission === id, id)
   assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, session, "picking a Mission does not navigate")
 }
@@ -227,18 +225,19 @@ async function expand(page: Page, id: string) {
   const button = page.locator(`.session-sidebar [data-session-id="ses_${id}"] .session-item-expander`)
   if (await button.getAttribute("aria-expanded") !== "true") await button.click()
 }
-/** Raise a native Form on the ordinary child conversation and answer it from "Needs you",
- * the panel's remaining route into an ordinary descendant conversation. */
 async function refreshMap(page: Page) {
   const response = waitForMissionPanelRefresh(page)
   await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
   await response
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 }
+/** Raise a native Form on the ordinary child conversation and answer it from the
+ * Mission's red row: no loaded task carries the child's question, so the flag does,
+ * and selecting the row opens that conversation with the question focused. */
 async function answerChild(page: Page) {
   await page.evaluate(() => window.missionNativeFamily.emit({ type: "form.created", id: "event-child-form", created: 1, location: { directory: "/fixture" },
     data: { form: { id: "child-form", sessionID: "ses_child", title: "Child form", fields: [{ type: "string", key: "answer", title: "Child answer" }] } } }))
-  await answer(page.locator(".mission-attention-list"), "Child form").click()
+  await answerMissionRow(page, "Objective A")
 }
 
 test("production SessionList/SessionView select recursive children, steer/queue only that child and preserve coordinator/sibling drafts", { timeout: 60000 }, async () => {
@@ -279,7 +278,7 @@ test("production SessionList/SessionView select recursive children, steer/queue 
 
 test("only the explicit picker choice selects a Mission; coordinator, worker and descendant navigation keep it", { timeout: 60000 }, async () => {
   const ctx = await setup("manual-mission-selection"), { page } = ctx
-  const title = () => pickerField(page).locator(".mission-picker-title").innerText()
+  const title = () => selectedMissionTitle(page).innerText()
   try {
     await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
     // Arriving in Mission A's coordinator selects nothing by itself.
@@ -300,8 +299,6 @@ test("only the explicit picker choice selects a Mission; coordinator, worker and
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
 
-/** The "Needs you" item's Answer action, whose description names the target conversation. */
-const answer = (attention: Locator, text: string) => attention.locator("li.mission-needs-item", { hasText: text }).locator("button.mission-needs-answer")
 // Observation, not a substitute composer implementation: read production DOM
 // after fonts and viewport measurements remain stable for eight animation frames.
 async function captureComposer(page: Page, name: string, sessionId: string) {
@@ -457,15 +454,10 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
   const ctx = await setup("attention-unknown"), { page, requests } = ctx
   try {
     await select(page, "A"); await pickMission(page, "A"); await page.evaluate(() => window.missionNativeFamily.ask())
-    const attention = page.locator(".mission-attention-list")
-    await attention.getByText("Child choice", { exact: true }).waitFor()
-    assert.equal(await attention.getByText("Global choice", { exact: true }).count(), 0)
-    const childAnswer = answer(attention, "Child choice")
-    // An ordinary descendant is not a declared actor: its Answer names the native conversation title (or a generic role),
-    // never a session identifier; the exact target is the routed session.
-    assert.match(await childAnswer.getAttribute("aria-description") ?? "", /^Open (?!ses_)\S/)
-    await childAnswer.click()
-    assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_grandchild")
+    // No loaded task carries the descendant's question: the Mission's red row opens it.
+    await answerMissionRow(page, "Objective A")
+    await page.waitForFunction(() => window.missionNativeFamily.snapshot().session === "ses_grandchild")
+    assert.equal(await page.locator(".interruption-dock").getByRole("form", { name: "Global choice", exact: true }).count(), 0)
     const form = page.locator(".interruption-dock").getByRole("form", { name: "Child choice", exact: true })
     await form.locator('input[type="text"]').fill("Answer through native dock")
     const receipt = page.waitForResponse(response => response.url().endsWith("/form/child-question/reply") && response.request().method() === "POST")
@@ -474,19 +466,15 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
     const replies = requests.filter(item => item.path.includes("/form/") && item.method !== "GET")
     assert.equal(replies.length, 1); assert(replies[0].path.includes("/session/ses_grandchild/"))
     await page.evaluate(() => window.missionNativeFamily.askPermission())
-    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
-    assert.equal(await attention.locator("li.mission-needs-item", { hasText: "global-fixture.txt" }).count(), 0)
     // Upstream's dock retains its selected request instead of automatically
-    // selecting a newly enqueued permission. Target the exact attention action.
-    const permissionAnswer = answer(attention, "safe-fixture.txt")
-    assert.match(await permissionAnswer.getAttribute("aria-description") ?? "", /^Open (?!ses_)\S/)
-    await permissionAnswer.click()
+    // selecting a newly enqueued permission; the red row focuses the exact one.
+    await answerMissionRow(page, "Objective A")
     await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).waitFor()
     assert((await page.locator(".interruption-dock").innerText()).includes("safe-fixture.txt"))
     const permissionReceipt = page.waitForResponse(response => response.url().includes("child-permission") && response.request().method() !== "GET")
     await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).click()
     assert.equal((await permissionReceipt).status(), 204)
-    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor({ state: "detached" })
+    await missionRow(page, "Objective A").locator('.mission-row-flag[data-mark="permission"]').waitFor({ state: "detached" })
     const permissionReplies = requests.filter(item => item.path.includes("child-permission") && item.method !== "GET")
     assert.equal(permissionReplies.length, 1); assert(permissionReplies[0].path.includes("/session/ses_grandchild/"))
     ctx.unknown(); await refreshMap(page)
@@ -498,7 +486,24 @@ test("descendant attention opens its exact dock; global stays uncorrelated and u
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })
 
-test("390px RTL Attention selects the exact same-active-child permission before closing its owned drawer", { timeout: 60000 }, async () => {
+test("a red task opens its asking descendant with the question focused; the Mission's flag stays its own", { timeout: 60000 }, async () => {
+  const ctx = await setup("red-task", false, false, true), { page } = ctx
+  try {
+    await select(page, "A"); await pickMission(page, "A"); await page.evaluate(() => window.missionNativeFamily.ask())
+    const task = page.locator('.mission-tree li[data-task-key="work"][data-state="input"]')
+    await task.waitFor()
+    const row = missionRow(page, "Objective A")
+    assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), "permission", "the chevron carries the task's question")
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0, "the task's question is not the Mission's")
+    await task.locator(".mission-tree-task").click()
+    await page.waitForFunction(() => window.missionNativeFamily.snapshot().session === "ses_grandchild")
+    await page.locator(".interruption-dock").getByRole("form", { name: "Child choice", exact: true }).waitFor()
+    assert.equal(await page.locator(".mission-reader").count(), 0, "a red task opens its question, not its reader")
+    await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
+  } finally { await ctx.save(); ctx.release(); await page.close() }
+})
+
+test("390px RTL red Mission row selects the exact same-active-child permission before closing its owned drawer", { timeout: 60000 }, async () => {
   const ctx = await setup("attention-same-child-rtl", true), { page, requests } = ctx
   try {
     await page.waitForFunction(() => document.documentElement.dir === "rtl")
@@ -517,11 +522,10 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     const selectedSchedule = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions/A/schedule"))
     await pickMission(page, "A")
     await (await selectedSchedule).json()
-    const attention = page.locator(".mission-attention-list")
-    await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
-    const permissionAnswer = answer(attention, "safe-fixture.txt")
-    assert.equal(await page.locator(".mission-attention-list li.mission-needs-item").count(), 1, "the uncorrelated global permission stays out of Needs you")
-    await permissionAnswer.tap()
+    // The red row opens the exact correlated permission; the global one is never a Mission's.
+    const row = missionRow(page, "Objective A")
+    await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+    await row.locator(".mission-row-select").tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("safe-fixture.txt"))
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, "ses_grandchild")
     await page.locator(".session-floating-drawer:visible").waitFor({ state: "detached" })

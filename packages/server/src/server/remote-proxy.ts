@@ -6,6 +6,9 @@ import { Agent, fetch } from "undici"
 import type { AuthManager } from "../auth/manager"
 import type { Logger } from "../logger"
 import { PROMPT_INLINE_FILE_LIMITS } from "../api-types"
+import { framesNoBody } from "./bodiless-request"
+import { addProxiedHttpMethods } from "./proxied-http-methods"
+import { ROUTER_OPTIONS } from "./routed-path"
 
 const LOOPBACK_HOST = "127.0.0.1"
 const BOOTSTRAP_PAGE_PATH = "/__codenomad/auth/token"
@@ -31,6 +34,16 @@ export interface RemoteProxySessionManagerOptions {
   logger: Logger
   httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
   disposalTimeoutMs?: number
+}
+
+/** The Fastify application of one remote proxy session, with its router options, methods and body parser, before its routes. */
+export function createRemoteProxyApp(httpsOptions: NonNullable<RemoteProxySessionManagerOptions["httpsOptions"]>) {
+  const app = Fastify({ logger: false, https: httpsOptions, forceCloseConnections: true, routerOptions: ROUTER_OPTIONS })
+  addProxiedHttpMethods(app)
+  app.removeAllContentTypeParsers()
+  // Preserve raw request bodies for proxying while still letting token JSON parse from Buffer.
+  app.addContentTypeParser("*", { parseAs: "buffer" }, (req, body, done) => done(null, framesNoBody(req) ? undefined : body))
+  return app
 }
 
 export interface RemoteProxySessionCreateResult {
@@ -69,12 +82,8 @@ export class RemoteProxySessionManager {
     const bootstrapToken = randomBytes(32).toString("base64url")
     const dispatcher = new Agent(skipTlsVerify ? { connect: { rejectUnauthorized: false } } : {})
     const abortController = new AbortController()
-    const app = Fastify({ logger: false, https: this.options.httpsOptions, forceCloseConnections: true })
+    const app = createRemoteProxyApp(this.options.httpsOptions)
     let session: RemoteProxySession | null = null
-
-    app.removeAllContentTypeParsers()
-    // Preserve raw request bodies for proxying while still letting token JSON parse from Buffer.
-    app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body))
 
     app.get(BOOTSTRAP_PAGE_PATH, async (request, reply) => {
       if (!this.options.authManager.isLoopbackRequest(request)) {

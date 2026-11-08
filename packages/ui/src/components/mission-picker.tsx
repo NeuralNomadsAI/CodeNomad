@@ -1,179 +1,138 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js"
-import { ChevronRight, Plus } from "lucide-solid"
+import { For, Show, createComputed, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
+import { Dynamic } from "solid-js/web"
+import { ChevronRight, Flag, Plus, Repeat } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { filterMissionPickerEntries, missionPickerAttention, missionPickerAttentionLabel, type MissionPickerEntry } from "./mission-picker-model"
-
-interface ListApi { key: (event: KeyboardEvent) => boolean; focusSearch: () => boolean; activeId: () => string | undefined }
+import { filterMissionPickerEntries, type MissionPickerEntry } from "./mission-picker-model"
 
 const describe = (entry: MissionPickerEntry) => `${entry.title} — ${entry.status}`
-/** Keys confirming or navigating an IME composition belong to the text field. */
-const composing = (event: KeyboardEvent) => event.isComposing || event.keyCode === 229
 
-function Mark(props: { entry: MissionPickerEntry }) {
-  return <span class="mission-picker-mark" data-mark={props.entry.mark} aria-hidden="true" />
-}
-
-/** Titles with a status mark; the search appears only while the rendered list
- * overflows its bounded height, or still holds a query. */
-function MissionPickerList(props: {
-  id: string; label: string; entries: MissionPickerEntry[]; selectedKey?: string; popup?: boolean
-  onSelect: (entry: MissionPickerEntry) => void; bind?: (api: ListApi) => void
-}) {
-  const { t } = useI18n()
-  const [query, setQuery] = createSignal("")
-  const [overflowing, setOverflowing] = createSignal(false)
-  const filtered = createMemo(() => filterMissionPickerEntries(props.entries, query()))
-  const [activeKey, setActiveKey] = createSignal(props.selectedKey ?? filtered()[0]?.key)
-  const active = () => Math.max(0, filtered().findIndex(entry => entry.key === activeKey()))
-  const byKey = createMemo(() => new Map(filtered().map(entry => [entry.key, entry])))
-  const optionId = (index: number) => `${props.id}-option-${index}`
-  const activeId = () => props.popup && filtered()[active()] ? optionId(active()) : undefined
-  let scroller!: HTMLUListElement, search: HTMLInputElement | undefined
-  createEffect(() => { if (!byKey().has(activeKey() ?? "")) setActiveKey(filtered()[0]?.key) })
-  createEffect(() => {
-    let frame = 0
-    const measure = () => { frame = 0; if (scroller.isConnected) setOverflowing(scroller.scrollHeight > scroller.clientHeight + 1) }
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure) }
-    const resize = new ResizeObserver(schedule)
-    resize.observe(scroller)
-    const mutation = new MutationObserver(schedule)
-    mutation.observe(scroller, { childList: true, characterData: true, subtree: true })
-    schedule()
-    onCleanup(() => { cancelAnimationFrame(frame); resize.disconnect(); mutation.disconnect() })
-  })
-  createEffect(() => { const id = activeId(); if (id) document.getElementById(id)?.scrollIntoView({ block: "nearest" }) })
-  const key = (event: KeyboardEvent) => {
-    if (composing(event)) return false
-    const count = filtered().length
-    const move = (index: number) => { event.preventDefault(); setActiveKey(filtered()[Math.min(Math.max(index, 0), Math.max(count - 1, 0))]?.key) }
-    if (event.key === "ArrowDown") move(active() + 1)
-    else if (event.key === "ArrowUp") move(active() - 1)
-    else if (event.key === "Home") move(0)
-    else if (event.key === "End") move(count - 1)
-    else if (event.key === "Enter" || (event.key === " " && event.target !== search)) {
-      event.preventDefault()
-      const entry = filtered()[active()]
-      if (entry) props.onSelect(entry)
-    } else return false
-    return true
-  }
-  props.bind?.({ key, activeId, focusSearch: () => { if (!search) return false; search.focus(); return true } })
-  const searchVisible = () => overflowing() || query().length > 0
-  return <div class="mission-picker-list">
-    <Show when={searchVisible()}>
-      <input ref={search} type="search" class="selector-search-input mission-picker-search" value={query()}
-        placeholder={t("missionsPanel.picker.search")} aria-label={t("missionsPanel.picker.search")} aria-controls={props.id}
-        aria-activedescendant={activeId()} onInput={event => setQuery(event.currentTarget.value)}
-        onKeyDown={event => { if (props.popup) key(event) }} />
-    </Show>
-    <ul ref={scroller} id={props.id} class="mission-picker-options" role={props.popup ? "listbox" : undefined} aria-label={props.label}>
-      <For each={filtered().map(entry => entry.key)} fallback={<li class="mission-picker-empty" role={props.popup ? "presentation" : undefined}>{t("missionsPanel.picker.noMatch")}</li>}>
-        {(key, index) => <Show when={byKey().get(key)}>{entry => <Show when={props.popup} fallback={<li>
-          <button type="button" class="mission-picker-option" classList={{ "mission-picker-option-selected": key === props.selectedKey }}
-            aria-current={key === props.selectedKey ? "true" : undefined} title={describe(entry())} onClick={() => props.onSelect(entry())}>
-            <Mark entry={entry()} /><bdi class="mission-picker-title">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
-          </button></li>}>
-          <li id={optionId(index())} role="option" class="mission-picker-option" aria-selected={key === props.selectedKey}
-            classList={{ "mission-picker-option-selected": key === props.selectedKey, "mission-picker-option-active": key === activeKey() }}
-            title={describe(entry())} onPointerDown={event => { if (event.target !== search) event.preventDefault() }}
-            onPointerMove={() => setActiveKey(key)} onClick={() => props.onSelect(entry())}>
-            <Mark entry={entry()} /><bdi class="mission-picker-title">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
-          </li>
-        </Show>}</Show>}
-      </For>
-    </ul>
-  </div>
-}
-
-/** A right-aligned toolbar of general actions (create, then the trailing
- * settings/refresh) above the
- * "current mission" line: chevron (persistent inline list) and the selected
- * title (transient popup listbox). */
-export function MissionPicker(props: {
-  entries: MissionPickerEntry[]; selectedKey?: string; onSelect: (entry: MissionPickerEntry) => void
-  expanded: boolean; onExpandedChange: (expanded: boolean) => void
+/** The Missions panel header: panel-wide actions (create, then the trailing
+ * preferences/refresh), then the selection's toolbar, mounted into `actionSlot`
+ * by `MissionActionBar` (the same buttons disabled while nothing mounts there),
+ * followed by the mission filter. */
+export function MissionPanelHeader(props: {
   onCreate: () => void; createDisabled: boolean
-  /** The creation form replaces the current-mission line and list. */
+  /** The creation form replaces the selection line and the tree. */
   creating?: boolean
   trailing?: JSX.Element
-  paging?: () => JSX.Element
+  actionSlot: (element: HTMLElement) => void
+  idleActions: JSX.Element
+  query: string; onQuery: (query: string) => void; filterable: boolean
 }) {
   const { t } = useI18n()
-  const inlineId = createUniqueId(), popupId = createUniqueId()
-  const [open, setOpen] = createSignal(false)
-  const [api, setApi] = createSignal<ListApi>()
-  let root!: HTMLDivElement, field!: HTMLButtonElement
-  const selected = () => props.entries.find(entry => entry.key === props.selectedKey)
-  // Like a collapsed session parent: the open list shows each mark itself.
-  const attention = createMemo(() => props.expanded ? undefined : missionPickerAttention(props.entries, props.selectedKey))
-  const expanderLabel = () => {
-    const action = t(props.expanded ? "missionsPanel.picker.collapse" : "missionsPanel.picker.expand")
-    const counts = attention()?.counts
-    const activity = counts ? missionPickerAttentionLabel(t, counts) : ""
-    return activity ? t("missionsPanel.picker.withAttention", { action, attention: activity }) : action
-  }
-  const close = (focus: boolean) => { setOpen(false); setApi(undefined); if (focus) field.focus({ preventScroll: true }) }
-  const choose = (entry: MissionPickerEntry, popup: boolean) => { props.onSelect(entry); if (popup) close(true) }
-  createEffect(() => {
-    if (!open()) return
-    const outside = (event: PointerEvent) => { if (!root.contains(event.target as Node)) close(false) }
-    document.addEventListener("pointerdown", outside, true)
-    onCleanup(() => document.removeEventListener("pointerdown", outside, true))
-  })
-  createEffect(() => { if ((props.entries.length === 0 || props.creating) && open()) close(false) })
-  const onFieldKey = (event: KeyboardEvent) => {
-    if (composing(event)) return
-    if (!open()) {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true) }
-      // Like a select, Space opens; its native keyup click stays suppressed (below)
-      // so it cannot toggle the popup again. Enter keeps the native button click.
-      else if (event.key === " ") { event.preventDefault(); if (!event.repeat) setOpen(true) }
-      return
-    }
-    if (event.key === "Escape") { event.preventDefault(); close(true); return }
-    if (api()?.key(event)) return
-    // Printable keys go to the filter when the list shows one.
-    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) api()?.focusSearch()
-  }
-  return <div ref={root} class="mission-picker" onFocusOut={event => {
-    if (open() && !root.contains(event.relatedTarget as Node | null)) close(false)
-  }} onKeyDown={event => { if (open() && event.key === "Escape" && !composing(event)) { event.preventDefault(); close(true) } }}>
+  return <div class="mission-picker">
     <div class="mission-picker-actions" role="toolbar" aria-label={t("missionsPanel.picker.actions")}>
       <button type="button" class="mission-control-icon-button" aria-label={t("missions.control.create")} title={t("missions.control.create")}
         disabled={props.createDisabled} onClick={() => props.onCreate()}><Plus class="h-4 w-4" aria-hidden="true" /></button>
       {props.trailing}
     </div>
-    <div class="mission-picker-control" hidden={props.creating}>
-      <button type="button" class="mission-picker-expander" aria-expanded={props.expanded}
-        aria-controls={props.expanded ? inlineId : undefined} aria-label={expanderLabel()} title={expanderLabel()}
-        data-attention={attention()?.kind} disabled={props.entries.length === 0 && !props.expanded}
-        onClick={() => props.onExpandedChange(!props.expanded)}>
-        <ChevronRight class="disclosure-chevron h-3.5 w-3.5" aria-hidden="true" />
-      </button>
-      <button ref={field} type="button" role="combobox" class="mission-picker-field" aria-haspopup="listbox"
-        aria-expanded={open()} aria-controls={open() ? popupId : undefined} aria-activedescendant={open() ? api()?.activeId() : undefined}
-        aria-label={t("missionsPanel.picker.label")} title={selected() ? describe(selected()!) : t("missionsPanel.picker.none")}
-        disabled={props.entries.length === 0} onClick={() => open() ? close(false) : setOpen(true)} onKeyDown={onFieldKey}
-        onKeyUp={event => { if (event.key === " ") event.preventDefault() }}>
-        <Show when={selected()} fallback={<span class="mission-picker-placeholder">{t("missionsPanel.picker.none")}</span>}>
-          {entry => <><Mark entry={entry()} /><bdi class="mission-picker-title">{entry().title}</bdi>
-            <span class="sr-only">{entry().status}</span></>}
-        </Show>
-      </button>
-      <Show when={open()}>
-        <div class="mission-picker-popup">
-          <MissionPickerList id={popupId} popup label={t("missions.control.mapLabel")} entries={props.entries}
-            selectedKey={props.selectedKey} onSelect={entry => choose(entry, true)} bind={setApi} />
-          {props.paging?.()}
-        </div>
+    <div class="mission-picker-selection" hidden={props.creating}>
+      <div class="mission-picker-selection-actions" ref={props.actionSlot} />
+      <div class="mission-picker-idle-actions">{props.idleActions}</div>
+      <Show when={props.filterable}>
+        <input type="search" class="selector-search-input mission-picker-search" value={props.query}
+          placeholder={t("missionsPanel.picker.search")} aria-label={t("missionsPanel.picker.search")}
+          onInput={event => props.onQuery(event.currentTarget.value)} />
       </Show>
     </div>
-    <Show when={props.expanded && props.entries.length > 0 && !props.creating}>
-      <div class="mission-picker-inline">
-        <MissionPickerList id={inlineId} label={t("missions.control.mapLabel")} entries={props.entries}
-          selectedKey={props.selectedKey} onSelect={entry => choose(entry, false)} />
-        {props.paging?.()}
+  </div>
+}
+
+/** One row per Mission or schedule, like the session list: chevron, a flag (a
+ * repeat icon for a schedule) coloured by its mark, then the title. Rows are keyed,
+ * so selection changes and reordering refreshes never recreate them (focus stays).
+ * The selection's detail is the selected row's children: it is rendered once and
+ * moved, whole, into the selected row's item, so its controls survive a selection
+ * change; folding it only hides it. */
+export function MissionRows(props: {
+  entries: MissionPickerEntry[]; query: string; selectedKey?: string; onSelect: (entry: MissionPickerEntry) => void
+  detail: JSX.Element; paging?: JSX.Element; hidden?: boolean
+  /** An unselected row this returns content for expands from its chevron without
+   * being selected (a one-time Mission's tasks, read on demand); others select. */
+  preview?: (key: string) => JSX.Element | undefined; expandable?: (key: string) => boolean
+  /** Receives the command unfolding the selection's detail (for a toolbar action that
+   * opens content inside it, such as the brief name field). */
+  revealDetail?: (reveal: () => void) => void
+}) {
+  const { t } = useI18n()
+  const [folded, setFolded] = createSignal<string>()
+  props.revealDetail?.(() => setFolded(undefined))
+  const [opened, setOpened] = createSignal<ReadonlySet<string>>(new Set())
+  const toggleOpened = (key: string) => setOpened(previous => {
+    const next = new Set(previous)
+    if (!next.delete(key)) next.add(key)
+    return next
+  })
+  // The selected row stays listed whatever the filter, so its detail never vanishes.
+  const shown = createMemo(() => {
+    const matching = new Set(filterMissionPickerEntries(props.entries, props.query).map(entry => entry.key))
+    return props.entries.filter(entry => matching.has(entry.key) || entry.key === props.selectedKey)
+  })
+  const keys = createMemo(() => shown().map(entry => entry.key))
+  const byKey = createMemo(() => new Map(shown().map(entry => [entry.key, entry])))
+  const selected = () => props.selectedKey !== undefined ? byKey().get(props.selectedKey) : undefined
+  const expanded = () => Boolean(selected()) && folded() !== props.selectedKey
+  const items = new Map<string, HTMLLIElement>()
+  let list: HTMLUListElement | undefined, rest!: HTMLDivElement
+  // Moving a row's item to reorder it blurs a focused control inside: captured
+  // before the rows update, it gets focus back once they have moved.
+  let moving: HTMLElement | undefined
+  createComputed(() => {
+    keys()
+    const active = document.activeElement
+    moving = list && active instanceof HTMLElement && list.contains(active) ? active : undefined
+  })
+  createEffect(() => {
+    keys()
+    const control = moving
+    moving = undefined
+    if (control?.isConnected && document.activeElement !== control && (!document.activeElement || document.activeElement === document.body)) control.focus({ preventScroll: true })
+  })
+  // Created once; without a selection it holds only the detail's list-level notices, after the rows.
+  const detail = <div class="mission-row-children">{props.detail}</div> as HTMLDivElement
+  createEffect(() => {
+    const item = selected() ? items.get(selected()!.key) : undefined
+    keys()
+    const host = item ?? rest
+    if (detail.parentElement !== host) host.append(detail)
+    detail.hidden = Boolean(item) && !expanded()
+  })
+  const select = (entry: MissionPickerEntry) => { setFolded(undefined); props.onSelect(entry) }
+  const row = (key: string) => <Show when={byKey().get(key)}>{entry => {
+    const isSelected = () => key === props.selectedKey
+    const previewing = () => !isSelected() && opened().has(key)
+    const open = () => isSelected() ? expanded() : previewing()
+    const label = () => t(open() ? "missionsPanel.row.collapse" : "missionsPanel.row.expand")
+    // The session list's own row classes (session-layout.css, session-tree.css).
+    return <><div class="session-list-item mission-row" data-mission-key={key}>
+      <div class={`session-item-base ${isSelected() ? "session-item-active" : "session-item-inactive"}`}>
+        <button type="button" class="session-item-expander opacity-80 hover:opacity-100 hover:bg-surface-hover" aria-expanded={open()}
+          data-child-activity={entry().childActivity}
+          aria-label={label()} title={label()}
+          onClick={() => {
+            if (isSelected()) setFolded(open() ? key : undefined)
+            else if (props.expandable?.(key)) toggleOpened(key)
+            else select(entry())
+          }}>
+          <ChevronRight class="disclosure-chevron w-3.5 h-3.5" aria-hidden="true" />
+        </button>
+        <button type="button" class="session-item-select mission-row-select" aria-current={isSelected() ? "true" : undefined} title={describe(entry())}
+          onClick={() => { if (!isSelected()) select(entry()); else props.onSelect(entry()) }}>
+          <Dynamic component={key.startsWith("mission:") ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} aria-hidden="true" />
+          <bdi class="session-item-title session-item-title--clamp">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
+        </button>
       </div>
+    </div>
+    <Show when={previewing()}><div class="mission-row-children">{props.preview?.(key)}</div></Show></>
+  }}</Show>
+  return <div class="mission-rows" hidden={props.hidden}>
+    <ul ref={list} aria-label={t("missions.control.mapLabel")}>
+      <For each={keys()}>{key => <li ref={item => { items.set(key, item); onCleanup(() => { if (items.get(key) === item) items.delete(key) }) }}>{row(key)}</li>}</For>
+    </ul>
+    <div ref={rest} />
+    <Show when={props.entries.length > 0 && shown().length === 0}>
+      <p class="mission-picker-empty">{t("missionsPanel.picker.noMatch")}</p>
     </Show>
+    {props.paging}
   </div>
 }
