@@ -157,6 +157,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
 
   // A late recovery acknowledgement refreshes only a still-visible view: hidden
   // views keep their cached snapshot for activation revalidation.
+  // Task trees are shown, and read, while the panel is active and the creation form is closed.
+  const treeShown = () => (props.isActive?.() ?? true) && editor()?.kind !== "create"
   const refreshVisible = () => (props.isActive?.() ?? true) && missionStore.demandedInstanceIds().includes(props.instanceId)
     ? missionStore.refresh(props.instanceId) : Promise.resolve()
 
@@ -321,7 +323,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         onCloseReader={() => { const task = passageTask(); if (task) void read({ missionId: selected().id, kind: "task", itemId: task.task.id }) }}
         onOpenConversation={id => void openActor(id)} />}</Show>
       <MissionTracking instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
-        active={props.isActive?.() ?? true} reading={isReading} read={target => void read(target)}
+        active={treeShown()} reading={isReading} read={target => void read(target)}
         onOpenActor={onOpenActor} /></>}</Show></MissionPanelScope>
   </>
   const recurrence = createMissionRecurrenceList({ get instanceId() { return props.instanceId }, get scope() { return scope() },
@@ -506,7 +508,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         }}
         expandable={key => key.startsWith("mission:")}
         preview={key => <MissionTaskPreview instanceId={props.instanceId} missionId={key.slice("mission:".length)} activity={state().activity}
-          active={props.isActive?.() ?? true}
+          active={treeShown()}
           reading={(value, task) => isReading({ missionId: value.id, kind: "task", itemId: task.id })}
           onRead={(value, task) => { batch(() => selectMission(value.id)); void read({ missionId: value.id, kind: "task", itemId: task.id }) }} />}
         detail={<>

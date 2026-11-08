@@ -7,7 +7,8 @@ import { MissionTaskTree } from "./mission-task-tree"
 import { missionTaskConversation } from "./mission-task-navigation"
 
 /** An unselected, expanded one-time Mission's tasks: its full map is wanted only
- * while the row is expanded, and its task pages load as the panel scrolls. */
+ * while the row is expanded and `active` (shown), and its task pages load as the
+ * panel scrolls. */
 export function MissionTaskPreview(props: {
   instanceId: string; missionId: string; activity?: MissionActivityProjection; active: boolean
   reading: (mission: MissionPanelMap, task: MissionPanelTask) => boolean
@@ -15,8 +16,10 @@ export function MissionTaskPreview(props: {
 }) {
   const { t } = useI18n()
   const owner = `preview:${createUniqueId()}`
+  // Hidden (inactive panel, creation form), the preview keeps its expansion and wants nothing.
   createEffect(() => {
     const instanceId = props.instanceId, id = props.missionId
+    if (!props.active) return
     untrack(() => missionStore.want(instanceId, owner, id))
     onCleanup(() => missionStore.want(instanceId, owner, undefined))
   })

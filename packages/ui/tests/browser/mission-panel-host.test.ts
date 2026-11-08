@@ -161,7 +161,7 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
   } finally { await f.close() }
 })
 
-for (const fold of [false, true]) test(`an expanded mission's native task reads ${fold ? "stop once it folds" : "go on while it stays expanded"}`, async () => {
+for (const hide of ["none", "fold", "create"] as const) test(`an expanded mission's native task reads ${hide === "fold" ? "stop once it folds" : hide === "create" ? "stop while the creation form hides it" : "go on while it stays expanded"}`, async () => {
   const f = await open()
   try {
     // Hold the coordinator's message read: the children read only follows it.
@@ -174,16 +174,27 @@ for (const fold of [false, true]) test(`an expanded mission's native task reads 
     await chevron.click()
     for (let attempt = 0; !held && attempt < 200; attempt++) await f.page.waitForTimeout(50)
     assert(held, "the expanded mission's coordinator read starts")
-    if (fold) {
+    const fold = hide !== "none"
+    if (hide === "fold") {
       await chevron.click()
       assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    }
+    if (hide === "create") {
+      await missionGeneralAction(f.page, "Create mission").click()
+      await f.page.locator("form.mission-editor").waitFor()
     }
     const before = f.coordinatorReads.length
     await held.fulfill({ json: { data: [] } })
     const children = () => f.coordinatorReads.slice(before).filter(url => url.includes("parentID=ses_long"))
     for (let attempt = 0; !fold && !children().length && attempt < 100; attempt++) await f.page.waitForTimeout(50)
     if (fold) await f.page.waitForTimeout(1_000)
-    assert.equal(children().length > 0, !fold, fold ? `a folded mission reads nothing further: ${children().join(", ")}` : "an expanded mission lists its coordinator's children")
+    assert.equal(children().length > 0, !fold, fold ? `a hidden mission reads nothing further: ${children().join(", ")}` : "an expanded mission lists its coordinator's children")
+    if (hide === "create") {
+      // Back from the form, the preview is still expanded and reads again.
+      await f.page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
+      await f.page.locator(".mission-row-children .mission-tree-node").first().waitFor()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "true")
+    }
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
