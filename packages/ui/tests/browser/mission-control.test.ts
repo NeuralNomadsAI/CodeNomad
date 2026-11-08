@@ -330,6 +330,10 @@ test("Delegation depth is one labelled menu, read only on demand: Inherit then 1
       await page.setViewportSize({ width, height: 850 })
       await controls.scrollIntoViewIfNeeded()
       assert.equal(await settingsFits(page), true)
+      // Label and menu share one line at every width.
+      const [label, box] = [await controls.locator("label > span").boundingBox(), await menu.boundingBox()]
+      assert.ok(label && box && label.y < box.y + box.height && box.y < label.y + label.height && label.x + label.width <= box.x + 1,
+        `one line at ${width}px: ${JSON.stringify([label, box])}`)
       await page.screenshot({ path: screenshotPath(`mission-delegation-depth-${width}`) })
     }
     await page.setViewportSize({ width: 1100, height: 850 })
@@ -515,6 +519,7 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
   const page = await browser.newPage({ locale: "en-US" })
   const read = Promise.withResolvers<void>(), write = Promise.withResolvers<void>(), reading = Promise.withResolvers<void>(), writing = Promise.withResolvers<void>()
   let depth = 2
+  const writes: number[] = []
   try {
     await setup(page, "remote")
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
@@ -525,7 +530,7 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
           project: { path: "fixture/opencode.jsonc", depth, expectation: `e${depth}` } } })
       }
       writing.resolve(); await write.promise
-      depth = route.request().postDataJSON().depth
+      depth = route.request().postDataJSON().depth; writes.push(depth)
       return route.fulfill({ status: 204, body: "" })
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
@@ -544,12 +549,21 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
     await controls.getByRole("status").filter({ hasText: "Saving…" }).waitFor({ state: "attached" })
     assert.equal(await locked(), true, "a write locks the menu too")
     assert.equal(await menu.evaluate(element => (element as HTMLSelectElement).disabled), false, "and keeps it focusable")
-    // A choice made while locked is refused, keeping the shown value.
-    await menu.evaluate(element => { (element as HTMLSelectElement).value = "5"; element.dispatchEvent(new Event("change", { bubbles: true })) })
-    assert.equal(await menu.inputValue(), "3")
+    // Choices made during the write (a native closed select's arrow keys fire one change
+    // per step) are kept, shown, and the latest is written once the first write's read has
+    // settled; the intermediate one is never written.
+    await menu.focus()
+    for (const value of ["4", "5"]) await menu.evaluate((element, value) => {
+      (element as HTMLSelectElement).value = value; element.dispatchEvent(new Event("change", { bubbles: true }))
+    }, value)
+    assert.equal(await menu.inputValue(), "5")
+    assert.deepEqual(writes, [], "the first write is still held, and nothing else is sent")
     write.resolve()
-    await waitForDepthInfo(form, "OpenCode effective depth: 3")
-    assert.equal(await controls.getByText("Saving…", { exact: true }).count(), 0)
+    await waitForDepthInfo(form, "OpenCode effective depth: 5")
+    assert.deepEqual(writes, [3, 5])
+    assert.equal(await menu.inputValue(), "5")
+    assert.equal(await menu.evaluate(element => element === document.activeElement), true, "focus stays on the menu")
+    await page.waitForFunction(() => !document.querySelector(".mission-depth [role=status]")?.textContent?.includes("Saving…"))
   } finally { read.resolve(); write.resolve(); await page.close() }
 })
 

@@ -80,7 +80,9 @@
 .mission-preferences .window-action.mission-icon-action { display: inline-flex; align-items: center; justify-content: center; padding-inline: var(--space-sm); }
 .mission-preferences .mission-icon-action > svg { width: 1rem; height: 1rem; }
 @media (max-width: 640px) {
-  .mission-preferences :is(.mission-preferences-scope, .mission-delegation > label, .mission-depth > label) { grid-template-columns: 1fr; gap: var(--space-xs); }
+  .mission-preferences :is(.mission-preferences-scope, .mission-delegation > label) { grid-template-columns: 1fr; gap: var(--space-xs); }
+  /* The depth row stays one line: its menu holds only short values. */
+  .mission-preferences .mission-depth > label { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-sm); }
   .mission-preferences .mission-profile-row { grid-template-columns: 1fr; }
   .mission-preferences .window-action { min-height: 2.25rem; padding-inline: var(--space-sm); }
 }

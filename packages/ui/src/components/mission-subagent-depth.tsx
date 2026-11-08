@@ -18,6 +18,8 @@ interface DepthDraft {
   phase: "idle" | "confirming" | "reading" | "ready" | "saving" | "uncertain"
   error: boolean
   saved: boolean
+  /** A choice made while a read or write locked the menu, applied once it settles. */
+  queued?: string
 }
 // Location-scoped window memory; navigation never rebases a dirty expectation.
 const drafts = new Map<string, { state: ReturnType<typeof createSignal<DepthDraft>>; request: number }>()
@@ -64,10 +66,13 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
       const snapshot = await serverApi.getSubagentDepth(instanceId, directory, controller.signal)
       if (!admitted()) return
       if (!snapshot.location || typeof snapshot.location.directory !== "string" || snapshot.capability === undefined || snapshot.project === undefined) throw new Error("Unconfirmed depth contract")
-      target.state[1]({ snapshot, draft: snapshot.project?.depth == null ? "" : String(snapshot.project.depth), dirty: false, phase: "ready", error: false, saved: previous.saved })
+      const queued = target.state[0]().queued
+      target.state[1]({ snapshot, draft: snapshot.project?.depth == null ? "" : String(snapshot.project.depth), dirty: false, phase: "ready", error: false, saved: previous.saved, queued })
+      // The latest choice made meanwhile is written against this fresh expectation.
+      if (queued !== undefined && entry() === target) apply(queued)
       // The recovery button leaves with the problem it fixed; keep keyboard focus in the group.
       if (explicit) queueMicrotask(() => { if (!document.activeElement || document.activeElement === document.body) menu?.focus() })
-    } catch { if (admitted()) target.state[1]({ ...previous, phase: "ready", error: true }) }
+    } catch { if (admitted()) target.state[1]({ ...previous, phase: "ready", error: true, queued: undefined }) }
     finally { if (target.request === request && target.state[0]().phase === "reading") target.state[1]({ ...target.state[0](), phase: previous.phase }) }
   }
   createEffect(() => {
@@ -98,7 +103,8 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   }
   /** An empty project `experimental` block hides the inherited depth: shown as OpenCode's default until Inherit repairs it. */
   const masked = () => state().draft === "" && !state().dirty && Boolean(state().snapshot?.project?.emptyExperimental)
-  const selected = () => masked() ? "masked" : state().draft
+  const saved = () => masked() ? "masked" : state().draft
+  const selected = () => state().queued ?? saved()
   const effective = () => state().snapshot?.effectiveDepth
   const inheritLabel = () => state().snapshot?.project?.depth == null && !masked() && effective() != null
     ? t("missions.depth.inheritValue", { depth: effective()! }) : t("missions.depth.inherit")
@@ -115,11 +121,17 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   // Reads and writes only lock the menu (it stays focusable, aria-disabled); it is disabled when unusable.
   const locked = () => busy() || refreshPending()
   const disabled = () => !props.active() || state().phase === "uncertain" || state().error || !state().snapshot?.capability || !state().snapshot?.project
-  /** Choosing a value saves it at once; a locked menu keeps the shown value. */
-  const choose = (menu: HTMLSelectElement) => {
-    if (disabled() || locked() || menu.value === "masked") { menu.value = selected(); return }
-    entry().state[1]({ ...state(), draft: menu.value, dirty: true, saved: false })
+  /** Choosing a value saves it at once. While a read or write locks the menu, the latest
+   * choice waits, shown, for the next settled read; an error or an unconfirmed write drops it. */
+  const apply = (value: string) => {
+    if (disabled() || !locked() && value === saved()) { entry().state[1]({ ...state(), queued: undefined }); return }
+    if (locked()) { entry().state[1]({ ...state(), queued: value }); return }
+    entry().state[1]({ ...state(), draft: value, queued: undefined, dirty: true, saved: false })
     void save()
+  }
+  const choose = (menu: HTMLSelectElement) => {
+    if (disabled() || menu.value === "masked") { menu.value = selected(); return }
+    apply(menu.value)
   }
   const save = async () => {
     if (disabled() || locked() || !state().dirty || !valid()) return
@@ -132,7 +144,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     try {
       await serverApi.setSubagentDepth(instanceId, { location: { directory: location.directory }, depth: value, expectation: project.expectation })
       if (!admitted()) { target.state[1]({ ...previous, phase: "uncertain" }); return }
-      target.state[1]({ ...previous, dirty: false, phase: "ready", saved: true })
+      target.state[1]({ ...previous, queued: target.state[0]().queued, dirty: false, phase: "ready", saved: true })
       // An acknowledged write is followed only by a bounded read, never replay. A hidden
       // view reads on its next activation, which keeps the menu locked until then.
       if (current()) await read(false)
