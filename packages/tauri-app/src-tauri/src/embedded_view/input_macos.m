@@ -234,7 +234,9 @@ int cn_wheel(void *opaque, double x, double y, double dx, double dy, unsigned fl
     CGEventRef cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, (int32_t)(-dy*view.pageZoom), (int32_t)(-dx*view.pageZoom));
     if (!cg) return 0;
     CGEventSetFlags(cg, (CGEventFlags)modifiers(flags));
-    CGEventSetLocation(cg, point);
+    // Direct view dispatch consumes window-local Cocoa coordinates. The CGEvent
+    // constructor flips Y when producing locationInWindow, even with no window.
+    CGEventSetLocation(cg, CGPointMake(point.x, NSMaxY(NSScreen.screens.firstObject.frame) - point.y));
     [view scrollWheel:[NSEvent eventWithCGEvent:cg]];
     CFRelease(cg);
     return 1;

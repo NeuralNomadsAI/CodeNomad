@@ -46,6 +46,7 @@ await Promise.all([fixture, provider].map(server => new Promise(done => server.l
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|CODENOMAD_)/.test(key)))
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 Object.assign(env, { HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
+  XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || path.join(os.homedir(), ".config"),
   OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"), OPENCODE_SERVER_PASSWORD: password,
   OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1" })
 await mkdir(env.OPENCODE_CONFIG_DIR, { recursive: true })
@@ -131,7 +132,7 @@ try {
   assert.equal(await readFile(path.join(downloads, download), "utf8"), `native-download-${run}`)
   await call({ action: "click", ref: ref("Native dialog") })
   await delay(1500)
-  if (process.platform === "darwin") execFileSync("osascript", ["-e", `tell application "System Events" to tell (first process whose unix id is ${app.pid}) to set frontmost to true`, "-e", 'tell application "System Events" to key code 36'])
+  if (process.platform === "darwin") execFileSync("python3", [new URL("fixtures/accept-owned-browser-dialog.py", import.meta.url).pathname, String(app.pid)])
   else if (process.platform === "linux") {
     const windows = execFileSync("xdotool", ["search", "--onlyvisible", "--pid", String(app.pid)], { encoding: "utf8" }).trim().split("\n")
     execFileSync("xdotool", ["windowactivate", "--sync", windows.at(-1)])
