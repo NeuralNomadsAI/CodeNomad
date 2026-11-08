@@ -139,7 +139,9 @@ test("one-time selected: red task questions, icon toolbar, Summary eye and the d
     await selectMission(page, /^Migrate the storage layer/)
     assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")
     const schema = detail(page).locator('li[data-task-key="schema"] .mission-tree-task')
-    assert.equal(await schema.getAttribute("aria-description"), "Opens its question", "a task awaiting input opens its conversation")
+    // Its actor's "form" activity state alone (possibly an uncorrelated global request)
+    // keeps the task's reader: only a correlated request makes it open a question.
+    assert.equal(await schema.getAttribute("aria-description"), null)
     await page.evaluate(async () => {
       const path = "/src/stores/forms.ts", { replaceFormQueue } = await import(path)
       replaceFormQueue("fixture", [{ id: "form-1", sessionID: "ses_worker", title: "Which index strategy should the migration keep?", fields: [{}], location: { directory: "fixture" } }])
@@ -148,6 +150,7 @@ test("one-time selected: red task questions, icon toolbar, Summary eye and the d
     const row = missionRow(page, /^Migrate the storage layer/)
     await row.locator('.session-item-expander[data-child-activity="permission"]').waitFor()
     assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0)
+    assert.equal(await schema.getAttribute("aria-description"), "Opens its question", "the correlated request makes the task open it")
     assert.equal(await page.locator(".mission-control").getByText("Which index strategy should the migration keep?").count(), 0, "questions open in the dock, never in the panel")
     assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-label"), "Summary")
     // The tree merges status into the dependency graph.

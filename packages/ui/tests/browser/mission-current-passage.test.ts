@@ -176,6 +176,34 @@ test("actual MissionControl reuses the current task tree and attention, with bri
       } finally { release(); hold = undefined; await probe.close() }
       reads = 0; nativeReads.length = 0; sourceReads.length = 0
     }
+    {
+      // A click whose first passage read fails retires too: the read after a refresh
+      // never opens a later, unrelated question.
+      const probe = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } })
+      await probe.addInitScript(init); await probe.route("**/api/**", api)
+      let release!: () => void
+      hold = new Promise(resolve => { release = resolve })
+      const active = () => probe.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture"))
+      try {
+        await probe.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+        const row = await inlineMissionEntry(probe, "Daily commit review")
+        await row.locator('.mission-row-flag[data-mark="permission"]').waitFor({ timeout: 30_000 })
+        await row.click()
+        await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
+        fail = true
+        release(); hold = undefined
+        await probe.getByText(/Schedules could not be loaded|last confirmed snapshot/).first().waitFor()
+        fail = false
+        await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_later", sessionID: "ses_child",
+          location: { directory: "/fixture" }, title: "Later question", tool: { name: "question" }, fields: [], time: { created: 2 } } as never))
+        await probe.evaluate(() => (window as any).passageFixture.invalidate())
+        await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
+        await probe.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor()
+        await probe.waitForTimeout(500)
+        assert.notEqual(await active(), "ses_child", "the failed click opens nothing later")
+      } finally { release(); hold = undefined; fail = false; await probe.close() }
+      reads = 0; nativeReads.length = 0; sourceReads.length = 0
+    }
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
     // A first click on the red row opens the passage's question once it is discovered.
     const card = await selectMission(page, "Daily commit review")

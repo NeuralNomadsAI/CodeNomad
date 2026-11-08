@@ -139,11 +139,12 @@ export function MissionTaskTree(props: {
             ? taskQuestion(questionContext(), props.questions, task(), props.conversation(task())) : undefined
           const state = () => question() ? "input" : missionTaskState(task(), activity())
           const word = () => t(`missionsPanel.task.${state()}`)
-          // A red task opens its question, like a session row waiting for an answer.
+          // A task carrying a correlated question opens it, like a session row waiting for
+          // an answer; an aggregate "input" activity state alone (possibly an uncorrelated
+          // global request) keeps the reader.
           const answer = () => {
-            const asked = question(), conversation = props.conversation(task()) ?? task().actorSessionId
-            return asked ? () => props.onAnswer?.(asked.sessionId, asked.request)
-              : state() === "input" && conversation && props.onAnswer ? () => props.onAnswer?.(conversation) : undefined
+            const asked = question()
+            return asked && props.onAnswer ? () => props.onAnswer?.(asked.sessionId, asked.request) : undefined
           }
           return <li class="mission-tree-node" data-task-key={task().key} data-status={task().status} data-state={state()}>
             <button type="button" class="mission-tree-task" aria-pressed={props.reading(task())}

@@ -345,8 +345,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const pending = pendingAnswer()
     if (!pending) return
     if (selectedKey() !== pending.key || !untrack(pending.current)) { setPendingAnswer(undefined); return }
+    // A failed read before any passage is shown, or a schedule with no current passage,
+    // retires the intent: it never waits for a later read.
+    const snapshot = currentPassage.snapshot()
+    if ((currentPassage.error() && !mission()) || (!currentPassage.loading() && snapshot?.scheduleID === passageSchedule() && !snapshot?.passageID)) {
+      setPendingAnswer(undefined); return
+    }
     // Only the passage first read after the click: a replacement retires the intent.
-    const passageID = currentPassage.snapshot()?.passageID ?? undefined
+    const passageID = snapshot?.passageID ?? undefined
     if (passageID && pending.passageID === undefined) pending.passageID = passageID
     else if (pending.passageID !== undefined && passageID !== pending.passageID) { setPendingAnswer(undefined); return }
     // Tracked: reruns as the passage, its activity and its request windows arrive.
