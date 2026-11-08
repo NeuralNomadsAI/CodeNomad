@@ -242,10 +242,10 @@ test("pre-tombstone 403 and 409 errors do not claim deleted or remaining cleanup
       assert.equal(requests[0].status, status)
       assert.ok(!(await page.getByRole("alert").innerText()).includes("remaining cleanup"))
       assert.deepEqual((await f.control.snapshot()).cleanups, []); assert.deepEqual(f.removed, [])
-      // Nothing was deleted, so the request is not fenced: the form offers a new deletion, not a retry.
+      // A certified refusal releases retry preflight, while the consumed trash click stays explicit.
       const form = page.locator("form.mission-editor")
-      assert.equal(await form.getByRole("button", { name: "Delete mission", exact: true }).isEnabled(), true)
-      assert.equal(await form.getByRole("button", { name: "Try again", exact: true }).count(), 0)
+      assert.equal(await form.getByRole("button", { name: "Try again", exact: true }).isEnabled(), true)
+      assert.equal(await form.getByRole("button", { name: "Delete mission", exact: true }).count(), 0)
     } finally { await page.close(); await f.app.close() }
   }
 })

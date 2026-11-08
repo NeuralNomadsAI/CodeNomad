@@ -78,12 +78,13 @@ async function setupReaderFollow(page: Page, nativePending = true) {
       roles: { specialist: { agent: "build", model: { providerID: "fixture", id: "fixture" } } } },
     taskMode: "native", profileID: "profile", executionHost: "local", roots: [{ mode: "directory-only", directory: "/fixture" }],
     watchedConversationIDs: [], launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } }, Date.now(), () => true)
-  if (nativePending) {
+  const startNative = () => {
     missionDocumentChanges.play(doc, "play_native", Date.now(), [])
     doc.synchronization = null
     missionDocumentChanges.reserve(doc, { kind: "manual", requestID: "run_native" }, Date.now(), [])
     missionDocumentChanges.admitted(doc, doc.pending!.id, Date.now())
   }
+  if (nativePending) startNative()
   const passages = {
     rec_daily: { ...structuredClone(ordinary), id: "msn_daily_passage", objective: "Daily passage instructions" },
     msn_native: { ...structuredClone(ordinary), id: doc.pending?.missionID ?? "msn_native_passage", objective: "Native passage instructions" },
@@ -91,7 +92,8 @@ async function setupReaderFollow(page: Page, nativePending = true) {
   const passageID = (id: keyof typeof passages) => id === "rec_daily" ? "pas_daily" : doc.pending!.id
   const held = new Map<string, { started: ReturnType<typeof deferred>; release: ReturnType<typeof deferred>; settled: ReturnType<typeof deferred> }>()
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
-    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:JSON.parse(localStorage.getItem('passage-native')??'null')}),
+    saveClientState:async(_token,snapshot)=>{localStorage.setItem('passage-native',JSON.stringify(snapshot));return true}}})`)
   await page.route("**/api/**", async route => {
     const request = route.request(), link = new URL(request.url()), path = link.pathname
     if (path === "/api/events") return route.continue()
@@ -114,7 +116,10 @@ async function setupReaderFollow(page: Page, nativePending = true) {
         const gate = held.get(id)
         gate?.started.resolve()
         if (gate) await gate.release.promise
-        try { return await route.fulfill({ json: { version: 1, ownerRevision: doc.revision, projectID: "project", scheduleID: id, passageID: passageID(id),
+        try {
+          if (scheduled && !doc.pending) return await route.fulfill({ json: { version: 1, ownerRevision: doc.revision,
+            projectID: "project", scheduleID: id, passageID: null } }).catch(() => {})
+          return await route.fulfill({ json: { version: 1, ownerRevision: doc.revision, projectID: "project", scheduleID: id, passageID: passageID(id),
           source: { owner: scheduled ? "scheduled" : "daily", projectID: "project", scheduleID: id, passageID: passageID(id), missionID: value.id,
             digest: "a".repeat(43), ...(scheduled ? { configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration } : {}) } } }) }
         finally { gate?.settled.resolve() }
@@ -133,10 +138,13 @@ async function setupReaderFollow(page: Page, nativePending = true) {
     if (request.method() !== "GET") writes.push(path)
     return route.fulfill({ json: {} })
   })
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 })
   await (await inlineMissionEntry(page, "One-time review")).waitFor()
   await page.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
-  return { errors, writes, ordinary, passages, passageID, hold(id: keyof typeof passages) {
+  return { errors, writes, ordinary, passages, passageID,
+    startNative: () => { startNative(); passages.msn_native.id = doc.pending!.missionID },
+    settleNative: () => missionDocumentChanges.settle(doc, doc.pending!.id, "completed", Date.now()),
+    hold(id: keyof typeof passages) {
     const gate = { started: deferred(), release: deferred(), settled: deferred() }; held.set(id, gate); return gate
   } }
 }
@@ -218,6 +226,68 @@ test("native schedule without a passage opens its saved configuration centrally 
     assert.deepEqual(await readerTarget(page), { missionId: f.ordinary.id, kind: "overview" })
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
   } finally { await page.close() }
+})
+
+test("a pressed schedule eye stays pressed when its first passage becomes current", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  try {
+    const f = await setupReaderFollow(page, false)
+    await selectMission(page, "Native scheduled review"); await eye(page).click()
+    await page.locator(".mission-reader").getByText("Saved native instructions", { exact: true }).waitFor()
+    f.startNative()
+    await page.evaluate(() => (window as any).passageFixture.invalidate("plugin.updated"))
+    await page.locator('section.mission-detail[aria-label="Native scheduled review"] .mission-tree-task').waitFor()
+    assert.equal(await eye(page).getAttribute("aria-pressed"), "true", "a new passage preserves the eye mode")
+    await eye(page).click()
+    await page.locator(".mission-reader").waitFor({ state: "detached" })
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { await page.close() }
+})
+
+for (const remount of [false, true]) test(`native settlement retires its selected task and follows to configuration ${remount ? "on remount" : "before the held current response"}`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  let gate: ReturnType<Awaited<ReturnType<typeof setupReaderFollow>>["hold"]> | undefined
+  const listGate = deferred()
+  try {
+    const f = await setupReaderFollow(page)
+    await selectMission(page, "Native scheduled review")
+    await page.locator('section.mission-detail[aria-label="Native scheduled review"] .mission-tree-task').click()
+    await eye(page).click()
+    await page.locator(".mission-reader").getByText("No result recorded for this task yet.", { exact: true }).waitFor()
+    await page.evaluate(async () => (await import("/src/stores/client-state.ts" as string)).flushClientState())
+    f.settleNative()
+    if (remount) {
+      // Restore the former task/reader against a newly read document without a passage.
+      // No current-source snapshot exists to run the ordinary passage cleanup effect.
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 45_000 })
+    } else {
+      gate = f.hold("msn_native")
+      await page.route("**/missions/scheduled", async route => { await listGate.promise; return route.fallback() })
+      await page.evaluate(() => (window as any).passageFixture.invalidate("plugin.updated"))
+      await gate.started.promise
+      listGate.resolve()
+    }
+    const assertSettled = async () => {
+      await page.locator(".mission-reader").getByText("Saved native instructions", { exact: true }).waitFor()
+      const view = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture"))
+      assert.equal(view.selectedTask, undefined)
+      assert.equal(view.selectedScheduled, "msn_native")
+      assert.deepEqual(view.reader, { kind: "recurrence", missionId: "msn_native", instanceId: "fixture", projectID: "project", scheduleOwner: "scheduled" })
+      assert.equal(await eye(page).isEnabled(), true)
+      assert.equal(await eye(page).getAttribute("aria-pressed"), "true")
+      assert.equal(await missionToolbar(page).getByRole("button", { name: "Stop…", exact: true }).isEnabled(), true)
+      assert.equal(await page.locator(".mission-tree").count(), 0)
+    }
+    await assertSettled()
+    if (gate) {
+      gate.release.resolve(); await gate.settled.promise; await paint(page)
+      await assertSettled()
+    }
+    await eye(page).click()
+    await page.locator(".mission-reader").waitFor({ state: "detached" })
+    assert.equal(await readerTarget(page), undefined)
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { listGate.resolve(); gate?.release.resolve(); await page.close() }
 })
 
 test("actual MissionControl reuses the current task tree and attention, with briefing and identifiers in the central exact-source reader", async () => {

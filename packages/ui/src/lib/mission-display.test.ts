@@ -21,7 +21,7 @@ test("a summary row's objective label, or a compact map's excerpt, gives the ful
     `${"a".repeat(501)}.b more`, `${"a".repeat(500)}.b more`, `${"a".repeat(500)}. More`, `${"a".repeat(499)}.\tMore`, `${"é ".repeat(260)}, then, a clause`,
     `${"  ".repeat(400)}Leading whitespace runs. Then`, `${"x  ".repeat(300)}`, "Line one\r\nLine two"]
   for (const objective of objectives) {
-    const summary = missionSummary({ objective, id: "msn", status: "active", coordinatorSessionId: "ses", actors: [], updatedAt: 1, revision: 1 } as never)
+    const summary = missionSummary({ objective, id: "msn", status: "active", coordinatorSessionId: "ses", actors: [], tasks: [], updatedAt: 1, revision: 1 } as never)
     assert.equal(missionDisplayTitle(summary, MISSION_ROW_TITLE_MAX), missionDisplayTitle({ objective }, MISSION_ROW_TITLE_MAX), JSON.stringify(objective.slice(0, 40)))
     assert.equal(missionDisplayTitle({ excerpt: missionObjectiveLabel(objective) }, MISSION_ROW_TITLE_MAX), missionDisplayTitle({ objective }, MISSION_ROW_TITLE_MAX))
   }

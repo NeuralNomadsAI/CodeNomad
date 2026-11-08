@@ -53,7 +53,7 @@ const detail = (page: Page) => page.locator("section.mission-detail")
 const toolbar = (page: Page) => page.locator(".mission-picker-selection-actions .mission-action-bar")
 // Command feedback is announced, not shown: it stays in the DOM, visually hidden (so waits
 // need `state: "attached"`), and its text joins the primary toolbar button's tooltip.
-const alerts = (page: Page) => detail(page).locator(".mission-action-feedback [role=alert]")
+const alerts = (page: Page) => page.locator(".mission-picker-selection-actions .mission-action-feedback [role=alert]")
 const primaryTitle = (page: Page) => toolbar(page).locator("button").first().getAttribute("title")
 const toasts = (page: Page) => page.evaluate(async () => {
   const path = "/src/lib/notifications.tsx"
@@ -218,7 +218,7 @@ for (const exact of [true, false]) {
   test(`${exact ? "an exact" : "a foreign"} briefing response superseded by an automatic milestone while hidden ${exact ? "resolves" : "keeps"} the request after activation`, async () => {
     const values = [mission("A", "project")]
     const { page, errors, prompts, counter } = await navigable(values)
-    const feedback = detail(page).locator(".mission-briefing-feedback")
+    const feedback = page.locator(".mission-picker-selection-actions .mission-briefing-feedback")
     const requestEnabled = async () => (await missionMenuItemState(page, "request")).enabled
     try {
       await (await missionMenuItem(page, "request")).click()

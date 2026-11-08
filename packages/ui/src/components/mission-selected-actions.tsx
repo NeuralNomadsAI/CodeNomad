@@ -79,7 +79,7 @@ export function MissionSelectedActions(props: {
       primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
       onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
       saveBrief={briefTrigger() && { disabled: briefTrigger()!.disabled, open: returnFocus => { props.onRevealDetail?.(); briefTrigger()!.open(returnFocus) } }}
-      secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active} trigger={trigger => setBriefTrigger(() => trigger)}
+       secondaryInDetail secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active} trigger={trigger => setBriefTrigger(() => trigger)}
         draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
         reading={() => brief.state() === "ready" ? undefined
           : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}

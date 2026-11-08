@@ -149,8 +149,8 @@ const detail = (page: Page) => page.locator(".mission-unified-schedule")
 const technicalCalendars = () => (["principal", "reconciliation"] as const).map((role, slot) => ({ role, slot: role === "principal" ? slot : 0,
   timeGeneration: 1, scheduleID: `sch_${role}_${"a".repeat(90)}`, sessionID: `ses_cn_schedule_${role}_${"b".repeat(90)}`,
   highWater: 2, pendingWake: null, wakePreparing: null }))
-/** A selected schedule's control: its toolbar sits in the header's selection line, text actions in its detail. */
-const button = (page: Page, name: string) => page.locator(".mission-picker-selection-actions, .mission-unified-schedule").getByRole("button", { name, exact: true })
+/** A selected schedule's toolbar and text actions sit in the persistent header's selection line. */
+const button = (page: Page, name: string) => page.locator(".mission-picker-selection-actions").getByRole("button", { name, exact: true })
 const deferred = () => {
   let resolve!: () => void
   const promise = new Promise<void>(yes => { resolve = yes })
@@ -221,7 +221,7 @@ for (const lost of ["play", "pause", "run-now", "stop", "delete"]) test(`lost ${
     f.lost = lost; f.proof = false
     const name = { play: "Play", pause: "Pause", "run-now": "Run now", stop: "Stop", delete: "Delete" }[lost]!
     await click(page, name, ["run-now", "stop", "delete"].includes(lost))
-    await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor().catch(async error => { throw new Error(`${error}\n${JSON.stringify(f.posts)}\n${await detail(page).innerText()}\n${f.errors.join("\n")}`) })
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor().catch(async error => { throw new Error(`${error}\n${JSON.stringify(f.posts)}\n${await detail(page).innerText()}\n${f.errors.join("\n")}`) })
     const count = f.posts.length, original = f.posts.at(-1)!
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
@@ -247,7 +247,7 @@ test("revision conflict is refused before dispatch and preserves the refreshed c
       await route.fulfill({ json: f.result() })
     })
     await click(page, "Play")
-    await detail(page).getByRole("status").filter({ hasText: "The Mission changed" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "The Mission changed" }).waitFor()
     assert.equal(f.posts.length, 0); assert.equal(f.doc.configuration.notes, "Concurrent change")
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -299,17 +299,17 @@ test(`confirmed publication barrier retains ${scenario} across stale inventory a
     await click(page, "Play")
     if (activation) await page.getByRole("dialog").getByRole("button", { name: "Start", exact: true }).click()
     if (scenario.startsWith("recovered")) {
-      await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
+      await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
       await button(page, "Refresh saved request").click()
-      await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor({ state: "detached" })
+      await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor({ state: "detached" })
       assert.equal(await button(page, "Start").isDisabled(), true, "a recovered effect cannot admit a new Start before its revision is published")
     }
-    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
     const count = f.posts.length, confirmedRevision = f.doc.revision
     assert.ok(confirmedRevision > stale!.revision!, JSON.stringify({ confirmedRevision, staleRevision: stale!.revision, posts: f.posts }))
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal((await missionMenuItemState(page, "edit")).enabled, false)
-    assert.doesNotMatch(await detail(page).innerText(), /This request is unconfirmed/)
+    assert.doesNotMatch(await page.locator(".mission-picker-selection-actions").innerText(), /This request is unconfirmed/)
     old.resolve(); await following.promise
     assert.equal(await button(page, "Start").isDisabled(), true, "an older in-flight publication cannot clear the confirmed minimum")
     await button(page, "Start").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
@@ -318,7 +318,7 @@ test(`confirmed publication barrier retains ${scenario} across stale inventory a
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
     await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
-    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, count, "remount retains the obligation and never resubmits")
     fresh.resolve()
@@ -340,7 +340,7 @@ test("missing calendar capability keeps Play grey and explains the limit", async
   const page = await browser.newPage(), f = await setup(page, { seed: true, available: false })
   try {
     await select(page)
-    await detail(page).getByRole("status").filter({ hasText: "Scheduling is unavailable" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Scheduling is unavailable" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -354,14 +354,14 @@ test("a confirmed activation stays known through read failure and stale recovery
     f.lost = "activation"
     await click(page, "Play")
     await page.getByRole("dialog").getByRole("button", { name: "Start", exact: true }).click()
-    await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
     let mode: "failed" | "stale" | "current" = "failed"
     await page.route("**/missions/scheduled?*", route => route.fulfill(mode === "failed" ? { status: 503, json: {} }
       : { json: { version: 1, projectID: "project", schedules: [mode === "stale" ? stale : f.result().document] } }))
     await button(page, "Refresh saved request").click()
     await page.getByRole("status").filter({ hasText: "Mission schedules could not be refreshed" }).waitFor()
-    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
-    assert.doesNotMatch(await detail(page).innerText(), /This request is unconfirmed/)
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    assert.doesNotMatch(await page.locator(".mission-picker-selection-actions").innerText(), /This request is unconfirmed/)
     assert.equal(await button(page, "Start").isDisabled(), true)
     const receiptReads = f.reads.filter(url => url.includes("/schedule-settings")).length
     mode = "stale"
@@ -370,7 +370,7 @@ test("a confirmed activation stays known through read failure and stale recovery
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
     await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
-    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, 1)
     mode = "current"
@@ -389,7 +389,7 @@ test("inactive but activatable scheduling disables Run now with a reason and ref
   try {
     await f.change(doc => { doc.firstPlayedAt = Date.now(); doc.state = "paused" })
     await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
-    await detail(page).getByRole("status").filter({ hasText: /Run now requires native scheduling/ }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: /Run now requires native scheduling/ }).waitFor()
     assert.equal(await button(page, "Run now").isDisabled(), true)
     await button(page, "Run now").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
     assert.equal(await page.getByRole("dialog").count(), 0)
@@ -406,7 +406,7 @@ test("Run now rechecks a capability lost after display and sends neither activat
     const before = f.posts.length
     f.enabled = false
     await click(page, "Run now", true)
-    await detail(page).getByRole("status").filter({ hasText: /Run now requires native scheduling/ }).first().waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: /Run now requires native scheduling/ }).first().waitFor()
     assert.equal(f.posts.length, before); assert.equal(f.doc.pending, null); assert.equal(f.doc.launchedCount, 0)
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }

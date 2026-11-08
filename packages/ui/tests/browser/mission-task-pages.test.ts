@@ -114,6 +114,40 @@ async function assertMissionActionsDisabled(page: Page) {
   assert.equal(await toolbar.locator(".action-overflow-trigger").isDisabled(), true, "Mission edit/interrupt actions stay unavailable")
 }
 
+for (const reused of [false, true]) test(`a partial task page keeps its off-page actor's activity ${reused ? "when reusing a completed task's conversation" : "and excludes loaded completed actors wrapping up"}`, async () => {
+  const task = (index: number, status: MissionTask["status"]): MissionTask => ({ id: `task-t${index}`, key: `t${index}`, title: `Task ${index}`,
+    brief: "Brief", role: "worker", status, blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 })
+  const tasks: MissionTask[] = [...Array.from({ length: 50 }, (_, index) => task(index, "completed")),
+    ...Array.from({ length: 20 }, (_, index) => task(index + 50, "needs-input")),
+    { ...task(70, "dispatching"), actorSessionId: "ses_far", admissionId: "adm_far", outstandingExecution: true,
+      executionMode: { kind: "independent", reason: "existing-root", explanation: "Continue in the owned root" } }]
+  tasks[0] = { ...tasks[0], actorSessionId: reused ? "ses_far" : "ses_wrap" }
+  const value: MissionMap = { ...paged(), taskMode: "independent", tasks, reports: [], actors: [...paged().actors.map(actor => ({ ...actor, managed: false })),
+    ...reused ? [] : [{ ...paged().actors[0], sessionId: "ses_wrap", title: "Completed worker wrapping up" }]] }
+  const activity = [{ sessionId: "ses_far", state: "running" }, ...reused ? [] : [{ sessionId: "ses_wrap", state: "running" }]]
+  const f = await open(value, activity)
+  try {
+    const chevron = f.page.locator('.mission-row[data-mission-key="mission:paged"] .session-item-expander')
+    const expect = async (state: string | null) => {
+      await f.page.waitForFunction(expected => document.querySelector('.mission-row[data-mission-key="mission:paged"] .session-item-expander')
+        ?.getAttribute("data-child-activity") === expected, state)
+      assert.equal(await chevron.getAttribute("data-child-activity"), state)
+      assert.equal(await f.page.locator('.mission-tree-node[data-task-key="t70"]').count(), 0, "activity needs no task-page scan")
+    }
+    assert.equal(compactMissionMap(value).tasks.length, 70, "blockages fill the pins ahead of the admitted task")
+    assert.equal((await rows(f.page)).length, 70)
+    await expect("working")
+    for (const [state, expected] of [["form", "permission"], ["permission", "permission"], ["idle-without-report", null]] as const) {
+      activity[0].state = state
+      await f.refresh()
+      await expect(expected)
+    }
+    assert.equal(await f.page.locator('.mission-tree-node[data-task-key="t0"]').getAttribute("data-state"), "done")
+    assert.deepEqual(f.reads, [], "positive observed activity and loaded completion evidence suffice")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.context().close() }
+})
+
 for (const outcome of ["present", "absent", "failed"] as const) test(`a persisted off-page task with the eye off resolves by bounded ID (${outcome}) before yielding Mission actions`, async () => {
   const f = await open(paged()), taskId = outcome === "present" ? "task-t108" : "task-gone"
   let release!: () => void

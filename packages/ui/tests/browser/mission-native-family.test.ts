@@ -19,6 +19,7 @@ import { answerMissionRow, expandRow, inlineMissionEntry, missionRow, selectedMi
 import type {} from "./fixtures/mission-native-family"
 import { panelMissions } from "./mission-content-fixture"
 import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
+import { collectMissionReadFailures, MISSION_READ_HEADER } from "./mission-read-observation-fixture"
 
 let server: ViteDevServer, browser: Browser, url: string, output: string
 before(async () => {
@@ -75,10 +76,11 @@ async function setup(label: string, narrow = false, independent = false, task = 
   const errors: string[] = [], failures: string[] = [], consoleErrors: string[] = [], requests: Array<{ method: string; path: string; body?: unknown; source?: string | null }> = []
   const voidResponses = new Set<Request>(), voidBodyCancellations: string[] = []
   const panelReads = collectPanelReadFailures(page, url)
+  const missionReads = collectMissionReadFailures(page, url)
   const { rawRequestFailures, panelListCancellations } = panelReads
   const navigationReadCancellations: Array<{ failure: string; requestedSession: string; activeSession: string }> = []
   const failureChecks: Promise<unknown>[] = [], outlineResponses: Array<{ session: string; at: number }> = []
-  const drainRequestFailures = async () => { await panelReads.drain(); await Promise.all(failureChecks) }
+  const drainRequestFailures = async () => { await panelReads.drain(); await missionReads.drain(); await Promise.all(failureChecks) }
   const receipts: Array<{ method: string; path: string; status: number }> = [], fallbackResponses: string[] = []
   let family = structuredClone(independent ? deepFamily : observedFamily), deferred = false, release!: () => void, reached!: () => void, completed!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), arrival = new Promise<void>(resolve => { reached = resolve })
@@ -91,6 +93,7 @@ async function setup(label: string, narrow = false, independent = false, task = 
   })
   page.on("requestfailed", request => {
     const message = `${request.url()} ${request.failure()?.errorText}`
+    if (request.headers()[MISSION_READ_HEADER]) { missionReads.record(request, failures); return }
     if (panelReads.record(request, failures)) return
     // The actual Promise client cancels empty-response bodies. Retain these
     // confirmed 204 receipts separately, never excuse an unconfirmed failure.
@@ -174,6 +177,7 @@ async function setup(label: string, narrow = false, independent = false, task = 
       : { data: nativeHistory(messageSession).slice(-1), cursor: { next: "fixture_older" } } })
     if (pathname.includes("/inbox")) return route.fulfill({ json: [] })
     if (pathname.includes("/form")) return route.fulfill({ json: { data: [] } })
+    if (pathname.endsWith("/permission-receipts")) return route.fulfill({ json: { receipts: [] } })
     const nativeID = pathname.match(/\/session\/(ses_[A-Za-z_]+)$/)?.[1]
     if (nativeID) {
       const waitForChild = deferred && nativeID === "ses_child"
@@ -192,13 +196,18 @@ async function setup(label: string, narrow = false, independent = false, task = 
   })
   const save = async () => {
     await drainRequestFailures()
-    await writeFile(path.join(output, `${label}.json`), JSON.stringify({ transport: "isolated-http-fakes", errors, failures, consoleErrors, rawRequestFailures, navigationReadCancellations, panelListCancellations, voidBodyCancellations, requests, receipts, fallbackResponses,
+    await writeFile(path.join(output, `${label}.json`), JSON.stringify({ transport: "isolated-http-fakes", errors, failures, consoleErrors, rawRequestFailures, missionReadFailures: missionReads.raw, missionReadCancellations: missionReads.cancelled, navigationReadCancellations, panelListCancellations, voidBodyCancellations, requests, receipts, fallbackResponses,
       apiCounts: Object.fromEntries([...new Set(requests.map(item => `${item.method} ${item.path}`))].map(key => [key, requests.filter(item => `${item.method} ${item.path}` === key).length])),
       snapshot: await page.evaluate(() => window.missionNativeFamily?.snapshot()).catch(() => null),
       openGates: ["live authenticated HTTP/SSE desktop host", "invocation profile provenance"] }, null, 2))
     await page.screenshot({ path: path.join(output, `${label}.png`), fullPage: true }).catch(() => {})
   }
   try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }); await page.waitForFunction(() => window.missionNativeFamily?.snapshot().session === "ses_B", undefined, { timeout: 30000 })
+    await page.evaluate(async () => {
+      const { serverApi } = await import("/src/lib/api-client.ts")
+      const { observeMissionReads } = await import("/tests/browser/mission-read-observation-fixture.ts")
+      observeMissionReads(serverApi)
+    })
     // Only the picker selects a Mission: restoring a coordinator conversation leaves none selected.
     if (!narrow) await page.locator(".mission-rows button.mission-row-select").first().waitFor()
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, undefined) }

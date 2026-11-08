@@ -14,13 +14,20 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   onEdit: (id: string) => void; onDeleted: (id: string) => void; onOpenConversation: (id: string) => void;
   tracking?: JSX.Element; passage?: { reading: boolean; onToggle(): void }; onPassage?: (id: string | undefined) => void;
   overview?: { reading: boolean; onToggle(): void };
+  onNoPassage?: (id: string) => void;
   selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const list = useMissionSchedules({ instanceId: () => props.instanceId, projectID: () => props.projectID,
     directory: () => props.directory, active: props.active, refresh: () => props.refresh + revision(), selected: () => props.selected })
   const schedules = () => list.rows().filter(row => row.kind === "schedule")
-  createEffect(() => props.onPassage?.(schedules().find(row => row.id === props.selected)?.pendingPassage ? props.selected : undefined))
+  createEffect(() => {
+    const doc = schedules().find(row => row.id === props.selected)
+    // Retire the former passage selection before releasing its current-source demand.
+    if (doc && !doc.pendingPassage && list.fresh(doc.id) && !list.loading() && !list.error() && !list.selectionError())
+      props.onNoPassage?.(doc.id)
+    props.onPassage?.(doc?.pendingPassage ? props.selected : undefined)
+  })
   const date = (value: number | null, zone?: string) => value === null ? t("missions.scheduleList.none")
     : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", ...(zone ? { timeZone: zone } : {}) }).format(value)
   const criteria = (doc: UnifiedMissionSchedule) => describeMissionCriteria(doc.configuration.launch, t, locale(), doc.oneShotAt).join("; ")

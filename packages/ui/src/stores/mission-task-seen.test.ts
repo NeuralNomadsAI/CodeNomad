@@ -127,6 +127,13 @@ if (restored) {
     assert.equal(missionTaskUnseen("partial-map", "mission", { ...offPage, updatedAt: 201 }), true)
   })
 
+  test("hierarchy Mark as read covers off-page completions through the shown mission snapshot", () => {
+    seedMissionTasksSeen("hierarchy", 100)
+    markMissionTasksSeen("hierarchy", "mission", [task(105)], true, 200)
+    assert.equal(missionTaskUnseen("hierarchy", "mission", task(199, "completed", "off-page")), false)
+    assert.equal(missionTaskUnseen("hierarchy", "mission", task(201, "completed", "off-page")), true)
+  })
+
   test("persists seen versions and the first project boundary across a fresh window", () => {
     seedMissionTasksSeen("persisted", 100)
     markMissionTasksSeen("persisted", "mission", [task(102)])

@@ -65,11 +65,11 @@ export function missionTaskUnseen(scope: string, missionId: string, task: Missio
 
 /** Marks finished tasks as seen: one at a time (selection, its icon), or every task
  * the Mission holds (Mark as read), which raises its watermark instead. */
-export function markMissionTasksSeen(scope: string, missionId: string, tasks: readonly MissionSeenTask[], all = false): void {
+export function markMissionTasksSeen(scope: string, missionId: string, tasks: readonly MissionSeenTask[], all = false, through = 0): void {
   const value = record(scope, missionId)
   tasks = tasks.filter(task => task.status === "completed")
   if (all) {
-    const watermark = Math.max(value.watermark, ...tasks.map(task => task.updatedAt))
+    const watermark = Math.max(value.watermark, Number.isSafeInteger(through) ? through : 0, ...tasks.map(task => task.updatedAt))
     if (watermark !== value.watermark) save(scope, missionId, { watermark, seen: value.seen })
     return
   }

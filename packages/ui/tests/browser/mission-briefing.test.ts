@@ -92,9 +92,9 @@ async function choose(page: Page, title: string) {
   await card(page).waitFor()
 }
 // The selected Mission's detail is a separate section below the picker; request
-// feedback stays under its row and all prose opens in the central reader.
+// feedback stays in the persistent header and all prose opens in the central reader.
 const card = (page: Page) => page.locator("section.mission-detail")
-const feedback = (page: Page) => card(page).locator(".mission-briefing-feedback")
+const feedback = (page: Page) => page.locator(".mission-picker-selection-actions .mission-briefing-feedback")
 const readAll = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const reader = (page: Page) => page.locator(".mission-reader")
 const prompts = (writes: Array<{ path: string; body: any }>) => writes.filter(write => write.path.endsWith("/prompt"))

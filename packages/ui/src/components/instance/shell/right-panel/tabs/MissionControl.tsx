@@ -3,6 +3,7 @@ import { AlertTriangle, Flag, Loader2, RefreshCw, Settings } from "lucide-solid"
 
 import type { MissionActivityProjection, MissionPanelMap } from "../../../../../../../server/src/api-types"
 import type { MissionUnavailableReason } from "../../../../../../../server/src/missions/model"
+import { missionTaskExecutionEvidence } from "../../../../../../../server/src/missions/execution-evidence"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
 import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-data"
@@ -226,7 +227,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   }
   const readerTarget = (target: MissionReaderTarget): MissionReaderTarget => {
     const current = currentPassage.snapshot()
-    return passageSchedule() && current?.mission && current.passageID ? { ...target, recurrence: {
+    return target.kind !== "recurrence" && target.kind !== "playbook" && passageSchedule() && current?.mission && current.passageID ? { ...target, recurrence: {
       instanceId: props.instanceId, projectID: current.projectID, scheduleID: current.scheduleID, passageID: current.passageID,
       ...(current.source?.owner === "scheduled" ? { owner: "scheduled" as const } : {}),
     } } : target
@@ -442,8 +443,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   })
   createEffect(() => {
     const snapshot = currentPassage.snapshot(), reader = missionProjectView(scope()).reader
-    if (!passageSchedule() || !snapshot || snapshot.scheduleID !== passageSchedule() || currentPassage.loading() || currentPassage.error()
-      || reader?.recurrence?.scheduleID !== snapshot.scheduleID || reader.recurrence.passageID === snapshot.passageID) return
+    if (!passageSchedule() || !snapshot || snapshot.scheduleID !== passageSchedule() || currentPassage.loading() || currentPassage.error() || !reader) return
+    const scheduleReader = reader.kind === "recurrence" && !reader.itemId && reader.missionId === snapshot.scheduleID
+      && reader.instanceId === props.instanceId && reader.projectID === projectID()
+      && Boolean(reader.scheduleOwner === "scheduled") === Boolean(selectedScheduled())
+    const passageReader = reader.recurrence?.scheduleID === snapshot.scheduleID && reader.recurrence.passageID !== snapshot.passageID
+    if (!(scheduleReader && snapshot.mission && snapshot.passageID) && !passageReader) return
     untrack(() => updateMissionProjectView(scope(), { reader: snapshot.mission && snapshot.passageID
       ? readerTarget({ missionId: snapshot.mission.id, kind: "overview" }) : scheduleTarget(snapshot.scheduleID, Boolean(selectedScheduled())) }))
   })
@@ -492,14 +497,23 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // Each loaded task's row state, computed exactly as its row computes it.
     const activities = new Map(state().activity?.missions.find(item => item.missionId === value.id)?.actors.map(actor => [actor.sessionId, actor.state]))
     const taskStates = map && conversation ? map.tasks.map(task => missionTaskRowState(props.instanceId, map, task, activities, conversation(task), false)) : []
+    // Loaded rows decide their own state, including completed actors wrapping up.
+    // A partial plan still admits positive activity from its other observed actors.
+    const coveredActors = new Set(map?.tasks.flatMap(task => [task.actorSessionId, conversation?.(task)].filter((id): id is string => Boolean(id))))
+    const loadedOwed = new Set(map?.tasks.filter(task => missionTaskExecutionEvidence(task).missingReport).map(task => task.actorSessionId))
+    const wholeOwed = [...map?.actorEvidence?.reportOwed ?? [], ...currentMissionObservations(missionStore, props.instanceId, value.id)
+      .flatMap(page => page.context.actors.filter(actor => actor.reportOwed).map(actor => actor.sessionId))]
+    const offPageOwed = new Set(wholeOwed.filter(id => !loadedOwed.has(id)))
+    const partialTasks = !map || (map.taskPage?.total ?? map.tasks.length) > map.tasks.length
     // Finished tasks this window has not shown yet (green, like an idle subsession).
     const unseen = map ? map.tasks.filter((task, index) => taskStates[index] === "done" && missionTaskUnseen(completionScope(), value.id, task)) : []
-    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, map?.tasks, conversation), taskStates, unseen }]
+    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, map?.tasks, conversation), taskStates, coveredActors, offPageOwed, partialTasks, unseen }]
   })))
   const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {
     const observed = state().activity?.missions.find(item => item.missionId === value.id)
     const questions = rowQuestions().get(value.id)
-    const others = observed?.actors.filter(actor => actor.sessionId !== value.coordinatorSessionId).map(actor => actor.state) ?? []
+    const others = questions?.partialTasks ? observed?.actors.filter(actor => actor.sessionId !== value.coordinatorSessionId
+      && (!questions.coveredActors.has(actor.sessionId) || questions.offPageOwed.has(actor.sessionId))).map(actor => actor.state) ?? [] : []
     const mark = missionMark(value, { openRequests: questions?.flag.length ?? 0, actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
       seen: missionFinishedSeen(completionScope(), value) })
@@ -507,8 +521,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // task rows' own states, else (tasks not read yet) its observed task actors'.
     const tasks = questions?.taskStates ?? []
     const childActivity = questions?.tasks.length || tasks.includes("input")
-      || !tasks.length && others.some(state => state === "permission" || state === "form") ? "permission" as const
-      : tasks.includes("active") || !tasks.length && others.some(state => state === "running" || state === "queued" || state === "background")
+      || others.some(state => state === "permission" || state === "form") ? "permission" as const
+      : tasks.includes("active") || others.some(state => state === "running" || state === "queued" || state === "background")
         ? "working" as const : questions?.unseen.length ? "idle" as const : undefined
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
       ? `missions.control.run.${value.runState}` : value.status === "active" && mark === "interrupted" ? "missionsPanel.state.interrupted"
@@ -527,6 +541,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return scope() },
     get selectedRequests() { return selectedScheduled() ? currentRequests() : undefined },
     onPassage: setScheduledCurrent,
+    onNoPassage: id => {
+      if (selectedScheduled() !== id) return
+      const reader = missionProjectView(scope()).reader
+      batch(() => {
+        if (selectedTaskKey()) updateMissionProjectView(scope(), { selectedTask: undefined })
+        if (reader?.recurrence?.scheduleID === id && reader.recurrence.owner === "scheduled")
+          updateMissionProjectView(scope(), { reader: scheduleTarget(id, true) })
+      })
+    },
     get tracking() { return selectedScheduled() ? tracking() : undefined },
     get passage() { const value = selectedScheduled() ? mission() : undefined; if (!value) return undefined
       const target: MissionReaderTarget = { missionId: value.id, kind: "overview" }
@@ -690,7 +713,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           // Like a session hierarchy: clears the finished-unseen tasks and the Mission's own completion.
           return unseen.length || finished ? () => batch(() => {
             const map = missionStore.state(props.instanceId).missions.find(item => item.id === id)
-             if (map) markMissionTasksSeen(completionScope(), id, map.tasks, true)
+             if (map) markMissionTasksSeen(completionScope(), id, map.tasks, true, map.updatedAt)
             if (finished) markMissionsFinishedSeen(completionScope(), [id], rows().filter(value => value.status === "completed"), true)
           }) : undefined
         }}

@@ -193,7 +193,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const scheduledState = useMissionSchedules({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
     directory: () => props.scope, refresh: () => 0, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"
       && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID(), selected: () => target()?.missionId })
-  const scheduled = () => target()?.scheduleOwner === "scheduled" ? scheduledState.rows().find(row => row.id === target()?.missionId) : undefined
+  const scheduled = () => target()?.scheduleOwner === "scheduled" && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
+    ? scheduledState.rows().find(row => row.id === target()?.missionId) : undefined
   const task = () => mission()?.tasks.find(task => task.id === target()?.itemId)
   const reports = createMemo(() => { const value = mission(); return value ? missionReports(value) : [] })
   const report = () => reports().find(report => report.id === target()?.itemId)

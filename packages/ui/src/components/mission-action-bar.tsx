@@ -32,6 +32,8 @@ export function MissionActionBar(props: {
   interrupt?: MissionPrimaryAction
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
+  /** The brief name form belongs to the deliberately revealed task detail. */
+  secondaryInDetail?: boolean
   /** Opens the selected Mission's inline brief name field (in `secondary`). */
   saveBrief?: MissionBriefSaveTrigger
   /** Renders in place instead of in the header's selection line. */
@@ -114,6 +116,8 @@ export function MissionActionBar(props: {
     <Show when={!yielded()}>
       <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
     </Show>
-    <Show when={mount()} keyed fallback={<>{secondary}{feedback}</>}>{element => <Portal mount={element}>{secondary}{feedback}</Portal>}</Show>
+    <Show when={props.secondaryInDetail}>{secondary}</Show>
+    <Show when={mount()} keyed fallback={<><Show when={!props.secondaryInDetail}>{secondary}</Show>{feedback}</>}>{element =>
+      <Portal mount={element}><Show when={!props.secondaryInDetail}>{secondary}</Show>{feedback}</Portal>}</Show>
   </>
 }
