@@ -145,6 +145,27 @@
   package Electron fetch it right after `npm ci` with `npx --no install-electron`,
   before parallel tests or command substitutions read its path; the Electron
   app's `dev` and `preview` scripts and `scripts/dev.sh` run it first.
+- **CI download caches.** PR Build Validation and SignPath Test Signing declare
+  `cache-mode: read`: they restore caches and never write them. **Download
+  Caches** (`.github/workflows/download-cache.yml`) runs from `dev` on pushes that
+  change `package-lock.json` or `packages/tauri-app/Cargo.lock`, every Monday and
+  Thursday and on manual dispatch. On each runner OS and architecture it seeds
+  setup-node's npm cache, `@electron/get`'s Electron zips with electron-builder's
+  fpm and winCodeSign, Cargo's registry index and `.crate` files, and the
+  AppImage type2 runtime, and restores the Tauri bundler tools, which only the
+  nightly Develop Pre-Release build saves. Each run restores within GitHub's
+  7-day eviction of unused caches. Jobs restore through
+  `.github/actions/download-cache` before the tool that downloads; on a miss the
+  tool downloads as usual.
+- Restored files are checked as fresh downloads are: `install-electron` checks
+  its zip against the package's `checksums.json`, and the binary builds give
+  electron-builder only zips matching it; `.crate` files that do not match
+  `Cargo.lock` are deleted, so Cargo downloads and verifies them. The AppImage
+  runtime (`LDAI_RUNTIME_FILE`) and the Tauri bundler's AppImage plugin come from
+  releases updated in place: their caches are keyed by, and used only with, the
+  SHA-256 GitHub publishes for the current asset. Tauri re-checks `NSIS.exe` and
+  its plugin DLL by SHA-1; its AppRun and linuxdeploy carry no checksum, so the
+  dev-only writers are their trust boundary.
 - **Bundled Runtime Maintenance** runs daily (07:23 UTC, subject to GitHub's
   scheduling delays) and on manual dispatch, on the default branch only.
   It selects newer LTS releases within the pinned Node major only, and npm's
@@ -199,4 +220,5 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 - Keep the `electron` devDependency an exact version. Preserve all-package security coverage with `dependency-type: all`; restrict routine majors through `allow.update-types`, with the explicit `electron` major exception. Never add package/version ignores that hide security fixes, blanket security groups or automatic merges. General-library majors and new ecosystems require a maintainer decision. Run `node --test .github/scripts/dependabot-policy.test.cjs` when editing the policy.
 - Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact. It proposes only same-major Node LTS upgrades and newer npm releases whose `engines.node` includes `.node-version` and the pinned Electron's Node, each as a regular, non-draft PR changing that one pin, without automatic merge; a major npm proposal says "maintainer qualification needed" in its title and body. Never present `engines.node` as behavioural validation, adopt an npm major without qualification, bundle npm from another source than the verified `.npm-version` registry package, extract it with anything but the system `tar` plus the extracted-tree check, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from the check, overwrite or delete a proposal branch, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and `.npm-version` and never restate the pinned Node or bundled npm version: maintenance updates only those files.
+- Only trusted `dev` runs write CI caches: a workflow triggered by pull requests or building a selectable ref declares `cache-mode: read` and restores through `.github/actions/download-cache`. Key each cache by what determines its content (locked package versions, the `Cargo.lock` hash, the published runtime digest). Never cache Cargo's `target/` or `registry/src`, give version-exact caches restore keys, or use a restored file that its tool does not verify without checking it first. Run `node --test .github/scripts/download-cache.test.cjs` when editing them.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.

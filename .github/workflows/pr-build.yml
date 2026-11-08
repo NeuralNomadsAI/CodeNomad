@@ -13,6 +13,10 @@ permissions:
   contents: read
   actions: write
 
+# Restore only: the Download Caches workflow and setup-node in trusted dev runs
+# write the caches; a pull request's own entries would never be shared.
+cache-mode: read
+
 concurrency:
   group: pr-build-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -328,6 +332,12 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+
       - name: Install Linux test dependencies (Tauri)
         run: |
           sudo apt-get update
@@ -345,6 +355,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Restore the Electron download
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
 
       # The electron package fetches its binary on first use; fetch it once
       # before parallel tests and command substitutions use it.
@@ -367,7 +383,7 @@ jobs:
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs .github/scripts/download-cache.test.cjs
 
       - name: Test Electron client state
         env:
@@ -656,6 +672,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Restore the Electron download
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
+
       - name: Install the Electron binary
         run: npx --no install-electron
 
@@ -694,6 +716,12 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
 
       - name: Install dependencies
         run: npm ci
@@ -746,6 +774,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Restore the Electron download
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
 
       - name: Install the Electron binary
         run: npx --no install-electron
@@ -852,6 +886,12 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
 
       - name: Install dependencies
         run: npm ci
