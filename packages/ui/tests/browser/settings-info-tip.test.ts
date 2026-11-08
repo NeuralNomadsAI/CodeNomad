@@ -99,9 +99,9 @@ test("live locales including zh-Hans select real help sections; failed open show
   const errors = await setup(page, "tauri", "local")
   try {
     for (const locale of ["fr", "zh-Hans", "he"]) {
+      const { openCodeLoginStartMessages: messages } = await import(`../../src/lib/i18n/messages/${locale}/opencode-login-start.ts`)
       await page.evaluate(locale => (window as any).fixture.locale(locale), locale)
-      await page.waitForFunction(locale => document.documentElement.lang === locale, locale)
-      await page.locator("#opencode-login-start [role=link]").click()
+      await page.locator("#opencode-login-start").getByRole("link", { name: messages["settings.loginStart.info"], exact: true }).click()
       await page.waitForFunction(count => (window as any).opened.length === count, ["fr", "zh-Hans", "he"].indexOf(locale) + 1)
       assert.equal((await opened(page)).at(-1), `${base}${locale}/opencode.html#login-start`)
     }
