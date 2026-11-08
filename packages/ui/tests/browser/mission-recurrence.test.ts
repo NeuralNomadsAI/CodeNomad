@@ -11,7 +11,7 @@ import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-r
 import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
 import { captureMissionView } from "./mission-view-capture"
 import { clickMissionAction, inlineMissionEntry, missionDetail, missionEntryStatus, missionPicker, missionRefresh, missionToolbarAction,
-  selectMission, selectedMissionTitle } from "./mission-actions"
+  missionRow, selectMission, selectedMissionTitle } from "./mission-actions"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -211,7 +211,9 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     assert.equal(await missionDetail(page).count(), 0, "the open coordinator conversation does not select its Mission")
     await once.click()
     const detail = missionDetail(page)
-    await detail.waitFor()
+    // Prepared, it has no tasks yet: a leaf row without chevron, its detail folded.
+    await detail.waitFor({ state: "attached" })
+    assert.equal(await missionRow(page, "One-time review").locator("button.session-item-expander").count(), 0)
     assert.equal(await once.getAttribute("aria-current"), "true")
     assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
     const scoped = await page.locator(".mission-control").evaluate(panel => {

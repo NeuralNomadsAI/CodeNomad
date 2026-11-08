@@ -15,7 +15,12 @@ export interface MissionReaderTarget {
   instanceId?: string
   projectID?: string
 }
-interface ProjectView { selected?: string; selectedRecurrence?: string; selectedScheduled?: string; reader?: MissionReaderTarget }
+/** One selection at a time: a row (`selected`, a schedule) or, instead, one task of a
+ * Mission or passage (`selectedTask`, its Mission id beside it). */
+export interface MissionTaskSelectionKey { missionId: string; taskId: string }
+/** `expanded`: the rows whose chevron shows their children, newest last (at most `MAX_EXPANDED`). */
+interface ProjectView { selected?: string; selectedRecurrence?: string; selectedScheduled?: string; selectedTask?: MissionTaskSelectionKey; reader?: MissionReaderTarget; expanded?: readonly string[] }
+export const MAX_EXPANDED = 30
 const [version, setVersion] = createSignal(0)
 const projects = new Map<string, ProjectView>()
 const disclosures = new Map<string, Map<string, boolean>>()
@@ -44,6 +49,9 @@ export function missionProjectView(scope: string): ProjectView {
       if (typeof stored.selected === "string") value.selected = stored.selected
       if (typeof stored.selectedRecurrence === "string") value.selectedRecurrence = stored.selectedRecurrence
       if (typeof stored.selectedScheduled === "string") value.selectedScheduled = stored.selectedScheduled
+      const task = stored.selectedTask
+      if (task && typeof task.missionId === "string" && typeof task.taskId === "string") value.selectedTask = { missionId: task.missionId, taskId: task.taskId }
+      if (Array.isArray(stored.expanded)) value.expanded = stored.expanded.filter((key: unknown): key is string => typeof key === "string" && key.length <= 100).slice(-MAX_EXPANDED)
       const r = stored.reader
       if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change", "recurrence", "playbook"].includes(r.kind)
         && (r.itemId === undefined || typeof r.itemId === "string")
@@ -60,7 +68,7 @@ export function updateMissionProjectView(scope: string, patch: Partial<ProjectVi
   const previous = missionProjectView(scope)
   const value = { ...previous, ...patch }
   if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
-    && previous.selectedScheduled === value.selectedScheduled) return
+    && previous.selectedScheduled === value.selectedScheduled && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded) return
   projects.set(projectKey(scope), value)
   writeClientLayoutValue(projectKey(scope), JSON.stringify(value))
   setVersion(v => v + 1)
@@ -203,6 +211,7 @@ export function forgetMissionView(scope: string, missionId: string): void {
   const view = missionProjectView(scope)
   updateMissionProjectView(scope, {
     selected: view.selected === missionId ? undefined : view.selected,
+    selectedTask: view.selectedTask?.missionId === missionId ? undefined : view.selectedTask,
     reader: view.reader?.missionId === missionId ? undefined : view.reader,
   })
   setVersion(v => v + 1)

@@ -10,6 +10,7 @@ import { compactMissionMap } from "../../../server/src/missions/mission-compact-
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { missionContentFixture, missionTaskFixture, missionTaskQuery, olderPluginMap, panelMissions } from "./mission-content-fixture"
+import { expandRow, missionToolbar } from "./mission-actions"
 
 // Real MissionControl and reader over a compact map that holds a page of its tasks:
 // scroll continuation, graph's omitted edges, reads further and questions beyond the page.
@@ -81,6 +82,10 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
     ;(await import("/src/stores/instances.ts")).updateInstance("fixture", { metadata: { project: { id: "project" } } })
     ;(await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: id })
   }, value.id)
+  // A selection is not expanded: its chevron shows its tasks, as in the session list. The
+  // chevron then gives up focus, which would otherwise pin the panel's scroll (focus policy).
+  await expandRow(page.locator(".mission-rows .mission-row-select[aria-current=true]"))
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
   await page.locator(".mission-tree-node").first().waitFor()
   reads.length = 0 // selectors below measure reads further, after initial header/task/pin adoption
   return { page, errors, reads, contents, current: () => current, replace: (next: MissionMap) => { current = next },
@@ -92,6 +97,12 @@ const rows = (page: Page) => page.locator(".mission-tree-node").evaluateAll(node
 // Exercise the keyboard fallback without scrolling the sentinel into view as a
 // side effect. Scroll-driven loading has its own real-scroller regression below.
 const more = (page: Page) => page.locator(".mission-tree-more button").evaluate((button: HTMLButtonElement) => button.click())
+/** Selects t119 (without scrolling its row into view), then opens its reader with the eye. */
+async function readTask119(page: Page) {
+  await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
+  await page.waitForFunction(() => document.querySelector('.mission-tree-node[data-task-key="t119"] .mission-tree-task')?.getAttribute("aria-current") === "true")
+  await missionToolbar(page).locator(".mission-overview-toggle").click()
+}
 const attentionInfo = (page: Page) => page.locator(".mission-tree > .mission-tree-summary .settings-info-tip")
 const stubs = (page: Page) => page.locator(".mission-graph path.mission-graph-omitted").evaluateAll(paths => paths.map(path =>
   `${(path as SVGPathElement).dataset.task}:${(path as SVGPathElement).dataset.omitted}`).sort())
@@ -150,7 +161,7 @@ test("the continuous tree has one continuation, retains pins and omitted edges, 
 test("the reader opens a dependency the page does not hold by reading it, and shows all earlier results on request", async () => {
   const { page, errors, reads } = await open(paged())
   try {
-    await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
+    await readTask119(page)
     const reader = page.locator(".mission-reader")
     await reader.getByRole("heading", { name: "Task t119", exact: true }).waitFor()
     // Its row holds three of its five reports: the rest are counted, and read whole on request.
@@ -193,7 +204,7 @@ test("a reader target the page does not hold, a task or an earlier report, is re
 test("Show all reads the whole history again once a new report arrives, keeping the earlier ones", async () => {
   const value = paged(), f = await open(value)
   try {
-    await f.page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
+    await readTask119(f.page)
     const reader = f.page.locator(".mission-reader")
     const earlier = reader.locator("section", { has: f.page.getByRole("heading", { name: "Previous and late results", exact: true }) })
     const excerpts = () => earlier.locator("details > summary .mission-advance-summary").allTextContents()
@@ -219,7 +230,7 @@ function withLateResult(value: MissionMap): MissionMap {
 const WHOLE_HISTORY = ["Summary of rep_late_new", ...[4, 3, 2, 1].map(index => `Summary of rep_attempt_${index}`)]
 /** Opens t119's reader and its whole history; the history's section and its excerpts. */
 async function showAllOf119(page: Page) {
-  await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
+  await readTask119(page)
   const earlier = page.locator(".mission-reader section", { has: page.getByRole("heading", { name: "Previous and late results", exact: true }) })
   await earlier.getByRole("button", { name: "Show all", exact: true }).click()
   return { earlier, excerpts: () => earlier.locator("details > summary .mission-advance-summary").allTextContents() }

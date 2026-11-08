@@ -15,7 +15,7 @@ import { outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, out
   navigationWindowInputSchema, navigationWindowResultSchema } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { answerMissionRow, inlineMissionEntry, missionRow, selectedMissionTitle } from "./mission-actions"
+import { answerMissionRow, expandRow, inlineMissionEntry, missionRow, selectedMissionTitle } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
 import { panelMissions } from "./mission-content-fixture"
 import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
@@ -212,8 +212,11 @@ const selectedMission = async (page: Page) => (await page.evaluate(() => window.
 /** The user's explicit row choice, the only route that changes the selected Mission (locale-neutral). */
 async function pickMission(page: Page, id: "A" | "B") {
   const session = (await page.evaluate(() => window.missionNativeFamily.snapshot())).session
-  if (await selectedMission(page) !== id) await (await inlineMissionEntry(page, `Objective ${id}`)).click()
+  const entry = await inlineMissionEntry(page, `Objective ${id}`)
+  if (await selectedMission(page) !== id) await entry.click()
   await page.waitForFunction(id => window.missionNativeFamily.snapshot().selectedMission === id, id)
+  // A click only selects the row; its chevron shows its tasks.
+  await expandRow(entry)
   assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, session, "picking a Mission does not navigate")
 }
 async function select(page: Page, id: string) {

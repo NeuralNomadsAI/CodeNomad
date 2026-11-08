@@ -69,7 +69,7 @@ async function setup(value = mission()) {
  * delegation calls; anything else under /session is navigation hydration. */
 const DERIVATION = "GET /workspaces/task-reader/instance/api/session/coordinator/message"
 const sessionReads = (requests: string[]) => requests.filter(request => request.includes("/session") && request !== DERIVATION)
-const treeTask = (page: Page, key = "work") => page.locator(`.mission-tree li[data-task-key="${key}"] > button.mission-tree-task`)
+const treeTask = (page: Page, key = "work") => page.locator(`.mission-tree li[data-task-key="${key}"] button.mission-tree-task`)
 const show = (page: Page, id = "task") => page.evaluate(id => (window as any).taskReader.show(id), id)
 const article = (page: Page, label: string) => page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: label, exact: true }) })
 const disclosure = (page: Page, label: string) => page.locator(".mission-task-reader > details").filter({ has: page.locator("summary").filter({ hasText: new RegExp(`^${label}$`) }) })
@@ -104,10 +104,14 @@ test("the task tree is the single task view: one-line icon+title nodes, measured
       "no visible status word or eye beside the title")
     assert.equal(await row.locator(".sr-only").textContent(), "Done", "the status word stays available to assistive technology")
     assert.equal(await task.evaluate(element => element.getBoundingClientRect().height <= 40), true, "one line")
-    assert.equal(await task.getAttribute("aria-pressed"), "false")
+    // A row selects its task like a session row; the reader (the panel's eye) shows its detail.
+    assert.equal(await task.getAttribute("aria-current"), null)
     await task.click()
+    await f.page.waitForFunction(() => document.querySelector('.mission-tree li[data-task-key="work"] .mission-tree-task')?.getAttribute("aria-current") === "true")
+    assert.equal(await f.page.locator(".mission-reader").count(), 0, "selecting a task opens no reader")
+    await show(f.page)
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Work title", exact: true }).waitFor()
-    assert.equal(await task.getAttribute("aria-pressed"), "true")
+    assert.equal(await task.getAttribute("aria-current"), "true")
     // Edges leave and enter the measured status icons.
     const [mark, edge] = await Promise.all([row.locator(".mission-tree-mark").boundingBox(), f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').boundingBox()])
     assert(mark && edge && Math.abs(edge.y + edge.height - (mark.y + mark.height / 2)) <= 2, "the edge ends at the dependent's icon")
@@ -203,8 +207,10 @@ test("current task result does not promote a late return, but retains its native
 test("reader task navigation fences delayed copy feedback across ABA identities and restores tree focus on close", async () => {
   const f = await setup()
   try {
-    const eye = treeTask(f.page)
-    await eye.click()
+    // The task row selects (and keeps focus); the reader opens on that selection.
+    const task = treeTask(f.page)
+    await task.click()
+    await show(f.page)
     await expand(f.page, "Task brief")
     await f.page.evaluate(() => { (navigator.clipboard as any).writeText = () => new Promise(resolve => { (window as any).releaseCopy = resolve }) })
     await article(f.page, "Task brief").getByRole("button", { name: "Copy", exact: true }).click()
@@ -214,7 +220,7 @@ test("reader task navigation fences delayed copy feedback across ABA identities 
     assert(!(await article(f.page, "Task brief").innerText()).includes("Copied"))
     await f.page.getByRole("button", { name: "Back to chat", exact: true }).press("Escape")
     await f.page.locator(".mission-reader").waitFor({ state: "detached" })
-    assert.equal(await eye.evaluate(e => e === document.activeElement), true)
+    assert.equal(await task.evaluate(e => e === document.activeElement), true)
     assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
 })

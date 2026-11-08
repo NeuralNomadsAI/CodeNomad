@@ -6,7 +6,7 @@ import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
-import { missionMenuItemState } from "./mission-actions"
+import { expandRow, missionMenuItemState } from "./mission-actions"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../../server/src/missions/mission-document-state"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
@@ -157,7 +157,10 @@ const deferred = () => {
   return { promise, resolve }
 }
 async function select(page: Page) {
-  await page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inspect local changes" }).click()
+  const entry = page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inspect local changes" })
+  await entry.click()
+  // A click only selects the row; its chevron shows the detail.
+  await expandRow(entry)
   await detail(page).waitFor()
 }
 async function click(page: Page, name: string, confirm = false) {
@@ -222,6 +225,7 @@ for (const lost of ["play", "pause", "run-now", "stop", "delete"]) test(`lost ${
     const count = f.posts.length, original = f.posts.at(-1)!
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
     await button(page, "Refresh saved request").click()
     assert.equal(f.posts.length, count)
     f.proof = true
@@ -313,6 +317,7 @@ test(`confirmed publication barrier retains ${scenario} across stale inventory a
     assert.equal(f.posts.length, count)
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
     await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, count, "remount retains the obligation and never resubmits")
@@ -364,6 +369,7 @@ test("a confirmed activation stays known through read failure and stale recovery
     await button(page, "Refresh saved request").click(); await oldResponse
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
     await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, 1)
@@ -575,6 +581,8 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
     await page.evaluate(() => (window as any).missionFixture.mount(true))
     await pointRead
     await page.getByRole("button", { name: "Load more Missions", exact: true }).and(page.locator(":enabled")).waitFor()
+    // The remounted panel restores the selection; its chevron shows the detail again.
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
     await button(page, "Refresh saved request").waitFor()
     assert.equal(await page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inventory Mission" }).count(), 8)
     // Inventory paging belongs to the list, not to the selection: folding keeps it.
@@ -661,6 +669,7 @@ test("the schedule list summarizes each launch criterion and its role; a stored 
     assert.match(await option("Follow package changes").innerText(), /Explicit files change · package\.json/)
     await capture(page, "schedule-list-criteria-en.png")
     await option("Review new commits").click()
+    await expandRow(option("Review new commits"))
     await detail(page).waitFor()
     assert.match(await detail(page).innerText(), /Until\s+Dec 31, 2026, 6:00 PM/)
     await capture(page, "schedule-detail-criteria-en.png")

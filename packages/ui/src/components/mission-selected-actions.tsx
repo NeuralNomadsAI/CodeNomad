@@ -27,8 +27,8 @@ export function MissionSelectedActions(props: {
   interrupted: boolean
   onEdit: () => void; onDelete: () => void; editDisabled: boolean; deleteDisabled: boolean
   registerRetry?: (retry: MissionControlRetry) => () => void
-  /** A task whose reader is open takes the toolbar; Summary then closes its reader. */
-  task?: MissionTaskSelection; onToggleTask?: () => void; onOpenTask?: (sessionId: string) => void
+  /** The selected task takes the toolbar; Summary then toggles its reader. */
+  task?: MissionTaskSelection; taskReading?: boolean; onToggleTask?: () => void; onOpenTask?: (sessionId: string) => void
   /** Unfolds the selection's detail, where Save as brief opens its name field. */
   onRevealDetail?: () => void
 }) {
@@ -85,7 +85,7 @@ export function MissionSelectedActions(props: {
           : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}
       feedback={feedback} />}>
     {_key => <MissionTaskActions instanceId={props.instanceId} mission={props.mission} selection={props.task!}
-      disabled={props.disabled || !props.active} onAdmitted={props.onAdmitted} onCloseReader={() => props.onToggleTask?.()}
+      disabled={props.disabled || !props.active} onAdmitted={props.onAdmitted} reading={Boolean(props.taskReading)} onToggleReader={() => props.onToggleTask?.()}
       onOpenConversation={id => props.onOpenTask?.(id)} feedback={feedback} />}
   </Show>
 }

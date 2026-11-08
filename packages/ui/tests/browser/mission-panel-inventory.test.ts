@@ -10,6 +10,7 @@ import { registerMissionRoutes } from "../../../server/src/server/routes/mission
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import path from "node:path"
+import { showSelection } from "./mission-actions"
 
 let browser: Browser, url: string
 before(async () => {
@@ -115,7 +116,7 @@ test("actual picker discovers a bounded first inventory without maps, traverses/
     await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.more("fixture", "cleanups"))
     assert.equal(await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.progress("fixture", "summaries").failure), "failed")
     await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: "msn_inventory_0" }))
-    await f.page.locator(".mission-detail").waitFor()
+    await showSelection(f.page)
     assert.deepEqual(await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.state("fixture").missions.map(map => map.id)), ["msn_inventory_0"])
     assert.ok(f.requests.filter(item => item.source === "mission").every(item => item.missionID === "msn_inventory_0"))
     f.fail(false)
@@ -144,7 +145,7 @@ test("601-actor selection keeps its header small and reaches a real off-page que
   const f = await open()
   try {
     await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: "msn_inventory_119" }))
-    await f.page.locator(".mission-detail").waitFor()
+    await showSelection(f.page)
     assert.equal(await f.page.getByText("Off-page native question", { exact: true }).count(), 0)
     await f.page.waitForFunction(async () => {
       const state = (await import("/src/stores/missions.ts")).missionStore.progress("fixture", "activity:msn_inventory_119")
@@ -168,7 +169,7 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
   const gate = new Promise<void>(resolve => { release = resolve })
   try {
     await f.page.evaluate(async index => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: `msn_inventory_${index}` }), index)
-    await f.page.locator(".mission-detail").waitFor()
+    await showSelection(f.page)
     await f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.reading("fixture"))
     if (index === 0) {
       await f.page.evaluate(async () => {

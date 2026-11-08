@@ -73,7 +73,8 @@ async function transition(page: Page, change: Transition) {
       const { updateMissionProjectView } = await import("/src/stores/mission-view-state.ts")
       updateMissionProjectView("/fixture", { selected: "two" })
     })
-    if (change === "project") await page.locator('section.mission-detail[aria-label="Objective two"]').waitFor()
+    // (Its plan holds no task: the restored row is a leaf, its detail mounted and folded.)
+    if (change === "project") await page.locator('section.mission-detail[aria-label="Objective two"]').waitFor({ state: "attached" })
     return
   }
   await selectMission(page, "Objective two")

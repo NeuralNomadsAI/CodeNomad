@@ -1,4 +1,4 @@
-import { For, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionPanelTask } from "../../../server/src/api-types"
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
 
@@ -10,17 +10,21 @@ export function orderMissionTasks(tasks: MissionPanelTask[]): MissionPanelTask[]
 
 /** Edges of a row whose other end is a task not shown: drawn as dashed stubs. */
 export type MissionGraphOmitted = Map<string, { dependencies: number; dependents: number }>
-/** A stub's length, and its lane: inside the first edge lane (`4`). */
-const STUB = 8, STUB_LANE = 1.5
+/** A stub's length, and its lane: inside the first edge lane (`FIRST_LANE`). */
+const STUB = 8, STUB_LANE = 10
 
-/** Lane area width, matched by `.mission-flow-linked` row padding in mission-graph.css. */
-const MISSION_GRAPH_WIDTH = 30
+/** Lane area width the rows' nesting indent and expander column hold (mission-graph.css); more
+ * lanes widen it by `LANE_STEP` each, the rows moving over by the excess (`onExtra`). */
+// The first lane runs under the Mission row's chevron, clear of the panel edge.
+const MISSION_GRAPH_WIDTH = 30, FIRST_LANE = 14, LANE_STEP = 6, LANE_MARGIN = 10
 
 /** Measured dependency rail: each edge leaves its source row's status icon and
  * enters its dependent's, so the icons are the graph's nodes. Both coordinates are
  * measured: the row/button padding between the lane area and the icon belongs to
  * the edge, in the SVG's own (possibly scaled or RTL-mirrored) user space. */
-export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUListElement; omitted?: MissionGraphOmitted }) {
+export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUListElement; omitted?: MissionGraphOmitted
+  /** The width beyond `MISSION_GRAPH_WIDTH` the lanes need, which the rows' indent adds. */
+  onExtra?: (pixels: number) => void }) {
   let svg!: SVGSVGElement
   const [points, setPoints] = createSignal<Array<{ key: string; x: number; y: number }>>([])
   const [height, setHeight] = createSignal(0)
@@ -48,9 +52,11 @@ export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUList
     observer.observe(list)
     for (const row of list.children) observer.observe(row)
     const frame = requestAnimationFrame(measure)
+    remeasure = () => requestAnimationFrame(measure)
     onCleanup(() => { observer.disconnect(); cancelAnimationFrame(frame) })
   })
-  const edges = () => {
+  let remeasure: (() => void) | undefined
+  const edges = createMemo(() => {
     // Keyed lookups keep hundreds of rows and their edges linear.
     const byKey = new Map(points().map(point => [point.key, point]))
     const links = props.tasks.flatMap(task => task.blockedBy.flatMap(key => {
@@ -73,8 +79,12 @@ export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUList
     }
     // Buses stay to the side of the rows: an edge must not visually connect
     // an unrelated intermediate task just because it occupies the same depth.
-    return links.map(link => ({ ...link, lane: 4 + lanes.get(link.from.key)! * Math.min(6, 20 / Math.max(1, ends.length - 1)) }))
-  }
+    // Each lane keeps its own step, so many lanes widen the rail rather than merge.
+    return { lanes: ends.length, links: links.map(link => ({ ...link, lane: FIRST_LANE + lanes.get(link.from.key)! * LANE_STEP })) }
+  })
+  // Lanes beyond the indent's room push the rows over; their icons move, so measure again.
+  const extra = createMemo(() => Math.max(0, FIRST_LANE + Math.max(0, edges().lanes - 1) * LANE_STEP + LANE_MARGIN - MISSION_GRAPH_WIDTH))
+  createEffect(() => { props.onExtra?.(extra()); remeasure?.() })
   // A dependency precedes its dependent in the display order: stubs to tasks not shown
   // rise from the row for its dependencies and fall for its dependents.
   const stubs = () => points().flatMap(point => {
@@ -84,7 +94,7 @@ export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUList
   })
   const width = () => Math.ceil(Math.max(MISSION_GRAPH_WIDTH, ...points().map(point => point.x)))
   return <svg ref={svg} class="mission-graph" width={width()} height={height()} aria-hidden="true">
-    <For each={edges()}>{edge => <path data-from={edge.from.key} data-to={edge.to.key}
+    <For each={edges().links}>{edge => <path data-from={edge.from.key} data-to={edge.to.key}
       d={`M ${edge.from.x} ${edge.from.y} H ${edge.lane} V ${edge.to.y} H ${edge.to.x}`} />}</For>
     <For each={stubs()}>{stub => <path class="mission-graph-omitted" data-task={stub.key} data-omitted={stub.side} d={stub.d} />}</For>
   </svg>

@@ -83,6 +83,7 @@ async function panel(maps: MissionMap[], answer: (include: string[], read: numbe
 }
 const choose = (page: Page, id: string) => page.evaluate(async id =>
   (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { selected: id }), id)
+// Selected through the view state, a row stays folded: its loaded detail is mounted, not shown.
 const shownDetail = (page: Page, title: string) => page.locator(`section.mission-detail[aria-label="${title}"]`)
 
 test("a failed selected-map read stays parked until an explicit retry; a successful one costs one follow-up", async () => {
@@ -106,7 +107,7 @@ test("a failed selected-map read stays parked until an explicit retry; a success
   const loading = await panel(closed)
   try {
     await choose(loading.page, "closed")
-    await shownDetail(loading.page, "Objective closed").waitFor()
+    await shownDetail(loading.page, "Objective closed").waitFor({ state: "attached" })
     await loading.page.waitForTimeout(500)
     assert.deepEqual(loading.includes, [[], ["closed"]], "a loaded map needs no further read")
   } finally { await loading.page.close() }
@@ -122,7 +123,7 @@ test("an obsolete include response never unmounts the current selection's loaded
   })
   try {
     await choose(page, "A")
-    await shownDetail(page, "Objective A").waitFor()
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     race = true
     await choose(page, "B")
     while (!heldB) await page.waitForTimeout(10)
@@ -156,7 +157,7 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
   const fixtureCall = (method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
   try {
     await choose(page, "A")
-    await shownDetail(page, "Objective A").waitFor()
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     race = true
     await choose(page, "B")
     while (!heldB) await page.waitForTimeout(10)
@@ -172,7 +173,7 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
     await fixtureCall("active", true)
     while (includes.length <= admitted) await page.waitForTimeout(10)
     assert.deepEqual(includes[admitted], ["A"])
-    await shownDetail(page, "Objective A").waitFor()
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     // A central reader is demand of its own, with the panel hidden.
     await fixtureCall("active", false)
     race = false
@@ -201,7 +202,8 @@ test("closed missions list as rows with their marks and open their full map only
     // The included closed map serves the readers: its overview, then its task.
     await page.locator(".mission-picker-selection-actions .mission-overview-toggle").click()
     await page.locator(".mission-reader").getByText("Stopped short of the release").waitFor()
-    await missionDetail(page).locator('.mission-tree li[data-task-key="work"] > button.mission-tree-task').click()
+    // With the eye pressed, the reader follows the selected task.
+    await missionDetail(page).locator('.mission-tree li[data-task-key="work"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByText("Result of failed").waitFor()
 
     // Refreshes keep the held rows (omitted, same version) and re-read the selection.

@@ -38,8 +38,8 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 
 ## Baum verfolgen und Ergebnisse lesen {#tracking}
 
-1. Wählen Sie die Zeile einer Mission: Ihre Aufgaben erscheinen darunter und ihre Aktionen in der zweiten Zeile der Kopfzeile. Der Pfeil der Zeile klappt ihre Aufgaben ein oder aus; der Pfeil einer anderen Mission zeigt deren Aufgaben, ohne sie auszuwählen. **Missionen filtern** grenzt die übrigen Zeilen ein.
-2. Wählen Sie **Zusammenfassung** (Auge) für die zentrale Übersicht; solange sie geöffnet ist, zeigt die Auswahl einer anderen Mission deren Übersicht. Wählen Sie eine Aufgabe für ihr exaktes Ergebnis, ihren Auftrag und ihre Belege: Solange ihr Leser geöffnet ist, gelten die Aktionen der Kopfzeile für diese Aufgabe, mit **Unterhaltung der Aufgabe öffnen** und, wenn ihr Bericht fehlt, **Fehlenden Bericht prüfen und wiederherstellen**. **Zusammenfassung** schließt dann den Leser der Aufgabe.
+1. Wie in der Sitzungsliste zeigt oder verbirgt der Pfeil einer Zeile ihre Aufgaben, und ein Klick wählt eine Zeile aus: eine Mission oder eine ihrer Aufgaben. Die Aktionen der Auswahl stehen in der zweiten Zeile der Kopfzeile. Eine Mission ohne Aufgaben hat keinen Pfeil. **Missionen filtern** grenzt die übrigen Zeilen ein.
+2. Drücken Sie **Zusammenfassung** (Auge), um die Auswahl im zentralen Leser zu lesen: die Übersicht einer Mission oder das exakte Ergebnis, den Auftrag und die Belege einer Aufgabe. Solange die Schaltfläche gedrückt ist, folgt der Leser Ihrer Auswahl; drücken Sie sie erneut, um zur Unterhaltung zurückzukehren. Ist eine Aufgabe ausgewählt, gelten die Aktionen der Kopfzeile für diese Aufgabe, mit **Unterhaltung der Aufgabe öffnen** und, wenn ihr Bericht fehlt, **Fehlenden Bericht prüfen und wiederherstellen**.
 3. **Weitere Aktionen** (⋯) enthält **Update anfordern**, **Jetzt unterbrechen**, **Als Auftrag speichern** und **Ausgewählte Mission bearbeiten**; nicht zutreffende Aktionen bleiben deaktiviert.
 4. Folgen Sie Abhängigkeitslinks und **Berichte**; verwenden Sie **Unterhaltung öffnen** für den Koordinator, wenn Sie dessen Verlauf benötigen.
 5. Wird eine Mission oder eine ihrer Aufgaben rot, wählen Sie sie aus: Die fragende Unterhaltung öffnet sich mit ihrer Frage im Unterbrechungsdock.
@@ -69,8 +69,8 @@ Missionsflaggen und Aufgabensymbole verwenden die Farben der Sitzungsliste: Farb
 | Rot | Eine Antwort von Ihnen wird erwartet. Die Flagge einer Mission wird bei einer Frage ihres Koordinators rot, eine Aufgabe bei ihrer eigenen, und der Pfeil der Mission zeigt, dass eine ihrer Aufgaben fragt. Wählen Sie die rote Mission oder Aufgabe aus, um die Frage zu öffnen. |
 | Gelb, pulsierend | Es wird gearbeitet. |
 | Orange | Die Mission ist pausiert oder unterbrochen, mit einer Aktion zum Fortsetzen. |
-| Grün | Eine abgeschlossene Mission, die Sie in diesem Fenster noch nicht geöffnet haben; sie wird neutral, sobald Sie sie auswählen. |
-| Blau | Eine vorbereitete Mission, bereit zum Start wie ein verfasster Prompt. |
+| Grün | Eine abgeschlossene Mission oder eine beendete Aufgabe, die Sie in diesem Fenster noch nicht gesehen haben, sowie der Pfeil einer Mission mit einer solchen Aufgabe. Sie wird neutral, sobald Sie sie auswählen; klicken Sie auf ein grünes Aufgabensymbol oder ziehen Sie über mehrere, um sie zurückzusetzen. Klicken Sie mit der rechten Maustaste auf den Pfeil einer Mission und wählen Sie **Als gelesen markieren**, um die Mission und alle ihre Aufgaben auf einmal zurückzusetzen. |
+| Blau | Eine vorbereitete Mission, bereit zum Start wie ein verfasster Prompt, oder eine Aufgabe, die noch nicht begonnen hat. |
 
 Alles andere ist neutral, auch erledigte und fehlgeschlagene Aufgaben: Ergebnisse stehen im Statustext und in den Symbolen.
 
@@ -278,8 +278,8 @@ Verwenden Sie **Ausgewählte Mission bearbeiten** unter **Weitere Aktionen** (�
 
 Bei einem nativen Zeitplan deaktiviert **Ausgewählte Mission löschen…** künftige Durchläufe vor dem Entfernen des Eintrags. Unterhaltungen und Ergebnisse bleiben erhalten; auf Abgleich wartende Bereinigung bleibt unter **Technische Details** sichtbar. Behalten Sie eine unbestätigte Löschung und aktualisieren Sie ihre ursprüngliche Anfrage.
 
-1. Wählen Sie für eine nicht mehr benötigte einmalige Mission **Ausgewählte Mission löschen…** und prüfen Sie die Bestätigung.
-2. Wählen Sie optional vor dem Bestätigen **Auch die für diese Mission erstellten Fachunterhaltungen löschen**.
+1. Um mit gelöschten Missionen auch die für sie erstellten Aufgabenunterhaltungen zu löschen, aktivieren Sie **Beim Löschen einer Mission werden auch die Unterhaltungen ihrer Aufgaben gelöscht** unter **Einstellungen → Missionen**.
+2. Wählen Sie für eine nicht mehr benötigte einmalige Mission **Ausgewählte Mission löschen…**: Sie wird sofort gelöscht. Nur wenn die Löschung fehlschlägt oder unbestätigt bleibt, erscheint ein Formular mit **Erneut versuchen**.
 3. Prüfen Sie **Gespräche bereinigen** auf entfernt/behalten/offen-Zahlen. Wiederholen Sie gegebenenfalls nur die verbleibende erfasste Bereinigung.
 
 Eine Mission zu löschen ist nicht dasselbe wie sie zu stoppen; verwenden Sie zuerst Stop und prüfen Sie verbleibende Arbeit. Koordinatoren und wiederverwendete Unterhaltungen bleiben erhalten. Auch geteilte, verschobene oder nicht nachweislich zugehörige Spezialisten-Unterhaltungen sowie solche mit Untersitzungen können erhalten bleiben. Teilbereinigung wird nicht zurückgerollt und nicht stillschweigend im Hintergrund abgeschlossen. Die Missionskarte kann verschwinden, während die Bestätigung der Löschung noch aussteht, auch wenn die Gesprächsbereinigung 0 ausstehende Ziele anzeigt. Verwenden Sie weiterhin die ursprüngliche Aktion **Erneut versuchen**, bis die Löschung bestätigt ist; dabei bleiben derselbe Löschauftrag und dieselben Optionen erhalten. Die Übersicht behält die 20 zuletzt abgeschlossenen Bereinigungen. Gelöschte Missionen geben ihren Speicher im Projekt frei: Ältere gelöschte Missionen werden automatisch entfernt.

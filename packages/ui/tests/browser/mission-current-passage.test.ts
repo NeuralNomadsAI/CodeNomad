@@ -17,7 +17,8 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
-import { inlineMissionEntry, missionMenuTrigger, missionToolbar, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
+import { inlineMissionEntry, missionMenuTrigger, missionRow, missionToolbar, missionToolbarAction, openTaskReader, selectMission, selectTaskMission,
+  selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
 import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
@@ -145,7 +146,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await row.click()
         await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("/fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
         release(); hold = undefined
-        await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
+        await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)
         assert.notEqual(await probe.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), "ses_child")
       } finally { release(); hold = undefined; await probe.close() }
@@ -166,7 +167,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await row.click()
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
         release(); hold = undefined
-        await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
+        await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_later", sessionID: "ses_child",
           location: { directory: "/fixture" }, title: "Later question", tool: { name: "question" }, fields: [], time: { created: 2 } } as never))
@@ -192,12 +193,13 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
         fail = true
         release(); hold = undefined
-        await probe.getByText(/Schedules could not be loaded|last confirmed snapshot/).first().waitFor()
+        // (The selected row is folded: its detail's read status is mounted, not shown.)
+        await probe.getByText(/Schedules could not be loaded|last confirmed snapshot/).first().waitFor({ state: "attached" })
         fail = false
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_later", sessionID: "ses_child",
           location: { directory: "/fixture" }, title: "Later question", tool: { name: "question" }, fields: [], time: { created: 2 } } as never))
         await probe.evaluate(() => (window as any).passageFixture.invalidate())
-        await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
+        await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor()
         await probe.waitForTimeout(500)
         assert.notEqual(await active(), "ses_child", "the failed click opens nothing later")
@@ -276,10 +278,13 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     }
     // A finished task no longer points at work it unblocked; open the unbound follow-up from the tree.
     assert.equal(await page.locator(".mission-task-dependencies").getByRole("button", { name: /^Unblocks/ }).count(), 0)
+    // The open reader follows the selection: selecting the task shows its own reader.
     await page.locator('.mission-tree li[data-task-key="second"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.").waitFor()
     assert.equal(await page.locator(".mission-reader .mission-reader-open").count(), 0, "unbound task never navigates to coordinator")
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
+    // Selecting the schedule's row gives the toolbar (and its Summary eye) back to the schedule.
+    await selectTaskMission(page)
     const savedBriefing = mission.briefing
     mission.briefing = undefined
     const withoutBriefing = page.waitForResponse(response => response.url().endsWith("/rec_current/current"))
@@ -296,9 +301,10 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
     mission.briefing = savedBriefing
     await page.evaluate(() => (window as any).passageFixture.invalidate())
-    await page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task').click()
-    // The passage task's open reader takes the header toolbar from its schedule: read-only,
-    // with the task's own conversation, and Summary closing the task's reader.
+    const firstTask = page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task')
+    await openTaskReader(firstTask)
+    // The selected passage task takes the header toolbar from its schedule: read-only,
+    // with the task's own conversation, and Summary toggling the task's reader.
     const toolbar = page.locator(".mission-picker-selection-actions .mission-action-bar")
     await toolbar.getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
     // Every button keeps its schedule position: Run now stays as a disabled slot.
@@ -310,10 +316,14 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.equal(await toolbar.getByRole("button", { name: /^Stop schedule/ }).count(), 0)
     assert.equal(await toolbar.locator("button").first().isDisabled(), true, "a passage task is never recovered from the panel")
     assert.equal(await toolbar.locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
+    // Its eye closes the task's reader; the task keeps the toolbar until the schedule row is selected.
     await toolbar.locator(".mission-overview-toggle").click()
+    await page.locator(".mission-reader").waitFor({ state: "detached" })
+    assert.equal(await toolbar.getByRole("button", { name: "Open the task's conversation", exact: true }).count(), 1)
+    await selectTaskMission(page)
     await toolbar.getByRole("button", { name: /^Stop schedule/ }).waitFor()
     assert.deepEqual(await positions(), taskPositions, "the hand-off moves no button")
-    await page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task').click()
+    await openTaskReader(firstTask)
     await toolbar.getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
     await page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click()
     await page.waitForFunction(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture") === "ses_task")
@@ -322,8 +332,11 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     // The red schedule row opens its passage's question: the asking descendant's conversation.
     const active = () => page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture"))
     assert.equal(await active(), "ses_task")
-    assert.equal(await page.locator(".mission-row-select[aria-current=true] .mission-row-flag").getAttribute("data-mark"), "permission")
-    await page.locator(".mission-row-select[aria-current=true]").click()
+    // The passage task is still the selection; the schedule row keeps its red flag.
+    const scheduleRow = await inlineMissionEntry(page, "Daily commit review")
+    assert.equal(await scheduleRow.getAttribute("aria-current"), null)
+    assert.equal(await scheduleRow.locator(".mission-row-flag").getAttribute("data-mark"), "permission")
+    await scheduleRow.click()
     // (An async waitForFunction predicate resolves at once: poll from the test instead.)
     for (let attempt = 0; await active() !== "ses_child" && attempt < 100; attempt++) await page.waitForTimeout(50)
     assert.equal(await active(), "ses_child")
@@ -358,14 +371,19 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.getByRole("button", { name: "Create", exact: true }).click()
     // The created one-time Mission becomes the picker's current selection.
     await selectedMissionTitle(page).getByText("One-shot from recurring", { exact: true }).waitFor()
-    await page.locator('section.mission-detail[aria-label="One-shot from recurring"]').waitFor()
+    // Its plan holds no task yet: the row has no chevron, so its detail stays folded.
+    await page.locator('section.mission-detail[aria-label="One-shot from recurring"]').waitFor({ state: "attached" })
+    assert.equal(await missionRow(page, "One-shot from recurring").locator("button.session-item-expander").count(), 0)
     const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").selectedRecurrence)
     assert.equal(selected, undefined, "successful one-shot creation clears overriding recurrence selection")
     assert.deepEqual(writes, ["/api/workspaces/fixture/missions"], "only the explicit creation uses a mock mutation")
     assert.deepEqual(errors, [])
-  } catch (error) { console.error(errors, sourceReads, await page.locator("body").innerText(), await page.evaluate(async () => {
-    const s = await import("/src/stores/sessions.ts" as string)
-    return { sessions: [...(s.sessions().get("fixture") ?? [])], active: s.activeSessionId().get("fixture") }
-  })); throw error }
+  } catch (error) {
+    // Diagnostics never replace the failure they describe.
+    console.error(errors, sourceReads, await page.locator("body").innerText().catch(String), await page.evaluate(async () => {
+      const s = await import("/src/stores/sessions.ts" as string)
+      return { sessions: [...(s.sessions().get("fixture") ?? [])], active: s.activeSessionId().get("fixture") }
+    }).catch(String)); throw error
+  }
   finally { await page.close() }
 })
