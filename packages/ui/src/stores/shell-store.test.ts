@@ -122,6 +122,28 @@ describe("shell store", () => {
     assert.equal(store.getState("instance", host).nativeDirectory, native)
   })
 
+  it("a native event recovers a failed first WSL inventory before its alias is known", async () => {
+    const host = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo", native = "/home/user/repo"
+    let calls = 0
+    const store = createShellStore(() => ({
+      list: async () => {
+        if (++calls === 1) throw new Error("native inventory temporarily unavailable")
+        return { data: [shell("recovered")], location: { directory: native } }
+      },
+      remove: async () => {}, output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
+    }))
+    const hide = store.watch("instance", host)
+    await store.load("instance", host)
+    assert.equal(store.getState("instance", host).failed, true)
+    await store.refreshForEvent("instance", { type: "session.tool.success", location: { directory: native } })
+    assert.equal(calls, 2)
+    assert.equal(store.getState("instance", host).items[0].id, "recovered")
+    assert.equal(store.getState("instance", host).failed, false)
+    hide()
+    await store.refreshForEvent("instance", { type: "shell.created", location: { directory: native } })
+    assert.equal(calls, 2, "hidden sections keep their demand fence")
+  })
+
   it("keeps same-directory native Shell states and refresh identities separate", async () => {
     const lists: Array<string | undefined> = []
     const removals: Array<string | undefined> = []

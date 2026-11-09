@@ -14,21 +14,26 @@ before(async () => {
 })
 after(async () => { await fixture?.close() })
 
-test("a WSL project without a selected conversation refreshes on its native and host directory events", async () => {
+for (const initiallyUnavailable of [false, true]) test(`a WSL project without a selected conversation refreshes on native/host events (initial failure: ${initiallyUnavailable})`, async () => {
   const page = await fixture.browser.newPage({ locale: "en-US" })
   const host = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo", native = "/home/user/repo"
   let present = false
+  let failInitialRead = initiallyUnavailable
   try {
     await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
     await page.route("**/api/**", route => {
       const url = new URL(route.request().url())
       if (!url.pathname.endsWith("/background-shells")) return route.fulfill({ json: {} })
       assert.equal(url.searchParams.get("directory"), host, "the demand keeps its host-side identity")
+      if (failInitialRead) {
+        failInitialRead = false
+        return route.fulfill({ status: 502, json: { error: "native inventory unavailable" } })
+      }
       return route.fulfill({ json: { location: { directory: native }, data: present ? [{ id: "sh_wsl", command: "build in WSL",
         cwd: native, shell: "bash", file: "/tmp/log", status: "running", metadata: {}, time: { started: 1 } }] : [] } })
     })
     await page.goto(fixture.url + "?wsl=1")
-    await page.getByText("No background shells.", { exact: true }).waitFor()
+    await page.getByText(initiallyUnavailable ? "Failed to load background shells." : "No background shells.", { exact: true }).waitFor()
     for (const directory of [native, host]) {
       present = true
       await Promise.all([

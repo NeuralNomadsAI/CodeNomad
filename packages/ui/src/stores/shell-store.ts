@@ -138,11 +138,12 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
     const matching = eventDirectory ? tracked.filter(([, directory, workspaceID]) => {
       if (event.location?.workspaceID !== undefined && event.location.workspaceID !== workspaceID) return false
       const stateKey = key(instanceId, directory, workspaceID ?? undefined)
-      const nativeDirectory = readState(stateKey).nativeDirectory
-      // Before the first inventory answers, its native alias is unknown. An
-      // event during that read needs one trailing read rather than being lost.
+      const state = readState(stateKey)
+      const nativeDirectory = state.nativeDirectory
+      // Until the first successful inventory, its native alias is unknown.
+      // Events coalesce during the read and recover an initial read failure.
       return sameDirectory(directory, eventDirectory) || (nativeDirectory !== undefined
-        ? sameDirectory(nativeDirectory, eventDirectory) : requests.has(stateKey))
+        ? sameDirectory(nativeDirectory, eventDirectory) : requests.has(stateKey) || state.failed)
     }) : tracked
     await Promise.all(matching.map(([, directory, workspaceID]) => load(instanceId, directory, workspaceID ?? undefined, true)))
   }
