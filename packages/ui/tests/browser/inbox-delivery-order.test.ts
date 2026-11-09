@@ -36,25 +36,24 @@ async function open(run: (page: Page) => Promise<void>) {
   page.on("pageerror", error => errors.push(error.message))
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
   page.on("response", response => { if (response.status() >= 400) errors.push(`http ${response.status()}: ${response.url()}`) })
-  // The receipts cache aborts an in-flight read exactly when a newer read for
-  // the same message supersedes it; an abort with no successor is a failure.
-  let requestSequence = 0
-  const receiptsReads = new Map<string, number[]>()
-  const abortedReceipts: Array<{ marker: string; seq: number; message: string }> = []
+  // Keep every raw failure; classify only an abort the receipts cache's own
+  // AbortSignal owns (the fixture tags each read and records its outcome).
+  const receiptsIdentities = new Map<string, import("playwright").Request>()
+  const receiptsChecks: Array<Promise<void>> = []
   page.on("request", request => {
-    const url = new URL(request.url())
-    if (!url.pathname.endsWith("/permission-receipts")) return
-    const marker = url.searchParams.get("messageId") ?? ""
-    const seq = ++requestSequence
-    receiptsReads.set(marker, [...receiptsReads.get(marker) ?? [], seq])
+    const id = request.headers()["x-codenomad-fixture-receipts-read"]
+    if (id && !receiptsIdentities.has(id)) receiptsIdentities.set(id, request)
   })
   page.on("requestfailed", request => {
-    const url = new URL(request.url())
-    if (url.pathname.endsWith("/permission-receipts") && request.failure()?.errorText === "net::ERR_ABORTED") {
-      abortedReceipts.push({ marker: url.searchParams.get("messageId") ?? "", seq: ++requestSequence, message: `request failed: ${request.url()} net::ERR_ABORTED` })
+    const failure = `request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`
+    const id = request.headers()["x-codenomad-fixture-receipts-read"]
+    if (request.failure()?.errorText !== "net::ERR_ABORTED" || !id || receiptsIdentities.get(id) !== request) {
+      errors.push(failure)
       return
     }
-    errors.push(`request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`)
+    receiptsChecks.push(page.evaluate(id => (window as any).fixtureReceiptsReadCancelled(id), id).then(cancelled => {
+      if (!cancelled) errors.push(failure)
+    }))
   })
   await page.route("**/api/**", route => {
     if (new URL(route.request().url()).pathname.endsWith("/permission-receipts")) {
@@ -70,10 +69,7 @@ async function open(run: (page: Page) => Promise<void>) {
       await page.goto(url)
       await page.waitForFunction(() => Boolean((window as any).fixture))
       await run(page)
-      for (const abort of abortedReceipts) {
-        const superseded = (receiptsReads.get(abort.marker) ?? []).some(seq => seq > abort.seq)
-        if (!superseded) errors.push(abort.message)
-      }
+      await Promise.all(receiptsChecks)
       assert.deepEqual(errors, [])
     },
     diagnose: async () => {

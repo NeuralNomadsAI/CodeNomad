@@ -9,6 +9,7 @@ import { addInstance } from "../../../src/stores/instances"
 import { sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
+import { serverApi } from "../../../src/lib/api-client"
 import { loadMessages } from "../../../src/stores/session-api"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
@@ -78,6 +79,34 @@ setActiveSession(instanceId, sessionId)
 const [visible, setVisible] = createSignal(true)
 const [active, setActive] = createSignal(true)
 const store = messageStoreBus.getOrCreate(instanceId)
+
+// The receipts cache cancels its own in-flight reads (a joining read aborts
+// the one it replaces; the last subscriber releasing aborts its read). Tag
+// each read's fetch and record whether its own AbortSignal fired, so tests
+// can tell an owned cancellation from a foreign failure.
+const receiptsOutcomes = new Map<string, Promise<boolean>>()
+{
+  const original = serverApi.fetchPermissionReceipts.bind(serverApi)
+  let readSequence = 0
+  serverApi.fetchPermissionReceipts = ((instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal) => {
+    const id = String(++readSequence)
+    const originalFetch = window.fetch
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      headers.set("x-codenomad-fixture-receipts-read", id)
+      return originalFetch.call(window, input, { ...init, headers })
+    }) as typeof window.fetch
+    try {
+      const result = original(instanceId, sessionId, scope, cursor, signal)
+      receiptsOutcomes.set(id, result.then(() => false, error =>
+        signal?.aborted === true && error instanceof DOMException && error.name === "AbortError"))
+      return result
+    } finally {
+      window.fetch = originalFetch
+    }
+  }) as typeof serverApi.fetchPermissionReceipts
+}
+;(window as any).fixtureReceiptsReadCancelled = async (id: string) => await receiptsOutcomes.get(id) ?? false
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={visible()}><SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={active()} /></Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
