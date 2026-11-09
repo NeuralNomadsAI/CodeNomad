@@ -2,8 +2,6 @@
 
 Un guion es el método de trabajo que sigue el coordinador de una misión: los pasos, los roles que puede asignar a las tareas y las instrucciones que recibe cada agente. Esta página describe cada guion, lo que CodeNomad impone por sí mismo y lo que sigue siendo una instrucción que se pide al modelo que siga.
 
-El **ⓘ** junto a **Guion** en el formulario abre esta guía en tu idioma en la sección del guion seleccionado. Elige un guion abajo para sus pasos, roles, preguntas y comprobaciones. En las instrucciones de los agentes, Exploración se llama *Wayfinder Map*.
-
 ## Elegir un guion {#choose}
 
 | Guion | Elígelo cuando |
@@ -258,7 +256,7 @@ El coordinador compara exactamente dos modelos distintos. Registra ambos intento
 
 ### Lo que CodeNomad comprueba {#compare-checks}
 
-- Al crear la misión, **Modelo A** y **Modelo B** son obligatorios y deben ser modelos distintos; un nivel de **Razonamiento** diferente por sí solo no es un modelo distinto. Salvo que elijas uno, el juez usa el modelo del coordinador, fijado al crear la misión; el formulario avisa cuando coincide con A o B.
+- Al crear la misión, **Modelo A** y **Modelo B** son obligatorios y deben ser modelos distintos; un nivel de **Razonamiento** diferente por sí solo no es un modelo distinto. Salvo que elijas uno, el juez usa el modelo del coordinador, fijado al crear la misión.
 - Solo se aceptan los tres roles de Comparar dos modelos. Cada ejecución y el juez deben empezar en una conversación nueva, una ejecución no puede cambiar el modelo de su rol, hay una sola ejecución activa por modelo y ambos encargos deben ser idénticos byte a byte.
 - Solo el juez puede adjuntar un informe estructurado, que debe referirse a las ejecuciones A y B completadas en ese orden, puntuar cada criterio una vez de 0 a 10 con al menos una evidencia y dar uno de los cuatro veredictos.
 - La misión solo termina con las tareas A, B y del juez completadas y una comparación válida.

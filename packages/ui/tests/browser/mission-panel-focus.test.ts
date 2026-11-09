@@ -49,7 +49,7 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
     else {
       const requested = holdDepth ? page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/subagent-depth")) : undefined
       await missionGeneralAction(page, "Create mission").click()
-      await page.locator("form.mission-editor").getByLabel("What should the mission do?", { exact: true }).fill("Inspect focus ownership")
+      await page.locator("form.mission-editor").getByLabel("Objective", { exact: true }).fill("Inspect focus ownership")
       await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('form.mission-editor button[type="submit"]')?.disabled)
       if (requested) await requested
       else await page.waitForFunction(() => Boolean(document.querySelector(".mission-depth [role=alert]")))
@@ -60,7 +60,7 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
 }
 
 const region = (consumer: string) => consumer === "tree" ? ".mission-tree" : "form.mission-editor > .window-body"
-const target = (page: Page, consumer: string) => page.locator(consumer === "tree" ? '.mission-tree-node[data-task-key="t20"] .mission-tree-task' : '.mission-scheduling input[type="checkbox"]')
+const target = (page: Page, consumer: string) => page.locator(consumer === "tree" ? '.mission-tree-node[data-task-key="t20"] .mission-tree-task' : '.mission-create-autostart input[type="checkbox"]')
 const frames = (page: Page) => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))))
 const visible = (page: Page) => page.evaluate(() => {
   const focused = document.activeElement!, box = focused.getBoundingClientRect(), hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)

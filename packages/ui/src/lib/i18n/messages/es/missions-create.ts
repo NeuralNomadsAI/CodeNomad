@@ -1,11 +1,11 @@
 export const missionCreateMessages = {
-  "missions.create.objective": "¿Qué debe hacer la misión?",
+  "missions.create.objective": "Objetivo",
   "missions.create.objectivePlaceholder": "Describe el resultado que quieres. En una misión diaria, estas instrucciones se aplican a cada ejecución.",
   "missions.create.title": "Título",
   "missions.create.options": "Opciones",
   "missions.create.agents": "Agentes y modelos",
   "missions.create.submit": "Crear",
-  "missions.create.brief.start": "Empezar desde una configuración",
+  "missions.create.brief.start": "Configuración",
   "missions.create.brief.none": "Misión en blanco",
   "missions.create.brief.more": "Acciones de configuraciones guardadas",
   "missions.create.brief.saveAs": "Guardar configuración",

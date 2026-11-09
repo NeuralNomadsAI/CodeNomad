@@ -603,7 +603,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
     assert.equal(await page.locator(".mission-tree").count(), 0, "settlement after the final session event removes the former passage tree through native invalidation")
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    await page.getByLabel("What should the mission do?", { exact: true }).fill("One-shot from recurring")
+    await page.getByLabel("Objective", { exact: true }).fill("One-shot from recurring")
     await page.getByRole("button", { name: "Create", exact: true }).click()
     // The created one-time Mission becomes the picker's current selection.
     await selectedMissionTitle(page).getByText("One-shot from recurring", { exact: true }).waitFor()

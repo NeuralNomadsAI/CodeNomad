@@ -791,6 +791,9 @@ test("changing executable fences an old read and its queued follow-up", async ()
   const page = await browser.newPage()
   let hold = false, changed = false, release!: () => void, reads = 0
   await page.route("**/api/**", async route => {
+    if (route.request().method() !== "GET" || new URL(route.request().url()).pathname !== "/api/opencode/update") {
+      return route.fulfill({ json: healthyStatus })
+    }
     const status = { ...healthyStatus, binaryPath: changed ? "new-opencode" : "old-opencode", serviceState: changed ? "stopped" : "ready" }
     if (hold) { reads++; await new Promise<void>(resolve => { release = resolve }) }
     else if (reads) reads++
@@ -811,6 +814,8 @@ test("changing executable fences an old read and its queued follow-up", async ()
     release()
     await oldRead
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 30)))
+    // Authentication reads must not count as status checks or overwrite the held read.
+    await page.evaluate(() => fetch("/api/auth/status"))
     assert.equal(await page.getByText("old-opencode", { exact: true }).count(), 0)
     assert.equal(await page.getByText("OpenCode is connected.", { exact: true }).count(), 0)
     assert.equal(reads, 2)

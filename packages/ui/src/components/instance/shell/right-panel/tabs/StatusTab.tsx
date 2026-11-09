@@ -238,7 +238,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       ),
       renderTokensSummary: () => (
         <Show when={props.activeSession()?.id}>
-          <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} summary />
+          <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} summary expanded={isSectionExpanded("tokens")} />
         </Show>
       ),
       renderYoloModeSection,

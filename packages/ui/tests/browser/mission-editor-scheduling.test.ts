@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { openMissionProfiles } from "./mission-actions"
 import { after, before, test } from "node:test"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
@@ -26,7 +27,7 @@ before(async () => {
 after(async () => { try { await browser?.close() } finally { await events?.close() } })
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m", variant: "precise" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m", variant: "fast" } } } }
-const objective = "What should the mission do?"
+const objective = "Objective"
 async function createDocument() {
   const values = new Map<string, MissionJsonValue>()
   const store = new NativeMissionDocumentStore({ get: async key => values.get(key), compareAndSet: async (key, value) => { values.set(key, value) } }, "project", "/fixture")
@@ -132,9 +133,10 @@ test("shared Create stores a paused two-time policy with exact profiles and send
     await ready(page)
     assert.equal(await scheduling(page).locator("summary").count(), 0)
     assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "now")
-    const autostart = scheduling(page).getByRole("checkbox", { name: "Start on creation", exact: true })
+    const autostart = form(page).getByRole("checkbox", { name: "Start automatically", exact: true })
     assert.equal(await autostart.isChecked(), false)
-    assert.equal(await scheduling(page).locator("input, select, button").first().getAttribute("type"), "checkbox", "autostart is the first scheduling control")
+    assert.equal(await scheduling(page).getByRole("checkbox").count(), 0, "autostart is outside Scheduling")
+    await openMissionProfiles(page)
     await form(page).getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Project model" }).waitFor({ state: "attached" })
     await form(page).getByLabel("Subagent depth", { exact: true }).locator('option[value="10"]').waitFor({ state: "attached" })
     await capture(page, "editor-compact-default.png")
@@ -345,7 +347,7 @@ test("missing capability keeps criterion-free creation available and disables ad
     await ready(page)
     assert.equal(await form(page).getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
     assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), false)
-    assert.match(await form(page).locator(".mission-scheduling").innerText(), /Mission without launch criteria remains available/)
+    assert.match(await form(page).locator(".mission-scheduling").innerText(), /Scheduling is unavailable on this connection/)
     assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
