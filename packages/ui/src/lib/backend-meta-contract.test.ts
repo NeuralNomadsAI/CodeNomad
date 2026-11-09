@@ -5,16 +5,16 @@ import { backendCompatibility } from "./backend-compatibility"
 import { createBackendClient } from "./backend-client"
 import { CODENOMAD_API_CONTRACT } from "../../../server/src/meta-contract"
 
-test("native policy requires the exact CodeNomad contract, including legacy fallback", () => {
+test("admission requires the exact CodeNomad contract and identity", () => {
   const serverId = "715941e7-8f5e-422a-b64d-25e56c672553"
-  assert.equal(backendCompatibility({ apiContract: CODENOMAD_API_CONTRACT, serverId }), "native")
-  for (const serverId of [undefined, "", null, 123]) {
-    assert.equal(backendCompatibility({ apiContract: CODENOMAD_API_CONTRACT, serverId } as never), "fallback")
+  assert.equal(backendCompatibility({ apiContract: CODENOMAD_API_CONTRACT, serverId }), "compatible")
+  for (const serverId of [undefined, "", " ", null, 123]) {
+    assert.equal(backendCompatibility({ apiContract: CODENOMAD_API_CONTRACT, serverId } as never), "refused")
   }
   for (const apiContract of [undefined, 0, -1, 0.5, CODENOMAD_API_CONTRACT + 1, NaN, "1", null]) {
-    assert.equal(backendCompatibility({ apiContract, serverId } as never), "fallback", String(apiContract))
+    assert.equal(backendCompatibility({ apiContract, serverId } as never), "refused", String(apiContract))
   }
-  assert.equal(backendCompatibility({}), "fallback")
+  assert.equal(backendCompatibility({}), "refused")
 })
 
 test("BackendClient.meta caches contract fields per HTTP backend and tolerates a legacy server", async () => {
@@ -49,7 +49,7 @@ test("BackendClient.meta caches contract fields per HTTP backend and tolerates a
     assert.equal(first, concurrent)
     assert.equal(second.serverId, "server-b")
     assert.deepEqual(second.capabilities, [])
-    assert.equal(backendCompatibility(legacy), "fallback")
+    assert.equal(backendCompatibility(legacy), "refused")
     assert.equal(await a.client.meta.getServerMeta(), first)
     assert.equal(await old.client.meta.getServerMeta(), legacy)
     assert.deepEqual([a.reads(), b.reads(), old.reads()], [1, 1, 1])

@@ -68,7 +68,15 @@ export const localBackend: BackendClient = Object.freeze({
   storage, meta: localServerMeta, sdk: sdkManager,
 })
 
-export const backends: ReadonlyMap<BackendId, BackendClient> = new Map([[localBackend.id, localBackend]])
+const clients = new Map<BackendId, BackendClient>([[localBackend.id, localBackend]])
+export const backends: ReadonlyMap<BackendId, BackendClient> = clients
+
+/** Registry-owned publication; stale cleanup cannot remove a replacement client. */
+export function registerBackendClient(client: BackendClient): () => void {
+  if (client.id === localBackend.id || clients.has(client.id)) throw new Error(`Backend already registered: ${client.id}`)
+  clients.set(client.id, client)
+  return () => { if (clients.get(client.id) === client) clients.delete(client.id) }
+}
 
 /** Native machine access and backend administration belong to the page's host. */
 export function isLocalBackend(backend: BackendClient): boolean {

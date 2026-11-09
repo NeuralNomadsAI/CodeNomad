@@ -47,6 +47,8 @@ export class ServerEvents {
   private connectGeneration = 0
   private retryDelay = RETRY_BASE_DELAY
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private connectionValidator?: (signal: AbortSignal) => Promise<boolean>
+  private validation?: AbortController
   private watchdog = createStreamStalenessWatchdog({
     onStale: () => this.restart("stream stale"),
   })
@@ -56,7 +58,13 @@ export class ServerEvents {
     this.auth = options.auth
   }
 
-  start(): void {
+  /** Remote admission installs this before start; every connection precedes domain resyncs. */
+  setConnectionValidator(validate: (signal: AbortSignal) => Promise<boolean>): void {
+    if (this.started || this.disposed) throw new Error("Connection validation must precede start")
+    this.connectionValidator = validate
+  }
+
+  start(): Promise<void> | undefined {
     if (this.started || this.disposed) return
     this.started = true
     this.cleanup.push(this.auth.onRestored(() => this.restart("authentication restored")))
@@ -77,7 +85,7 @@ export class ServerEvents {
         document.addEventListener?.("visibilitychange", visible)
         this.cleanup.push(() => rendererDocument.removeEventListener?.("visibilitychange", visible))
       }
-      void this.connect()
+      return this.connect()
     }
   }
 
@@ -99,6 +107,12 @@ export class ServerEvents {
     let opening: (() => void)[] = []
 
     try {
+      if (this.connectionValidator) {
+        this.validation?.abort()
+        const validation = this.validation = new AbortController()
+        if (!await this.connectionValidator(AbortSignal.any([this.lifetime.signal, validation.signal]))) return
+      }
+      if (this.disposed || generation !== this.connectGeneration) return
       const connection = await connectWorkspaceEvents({
         onBatch: (events) => {
           if (generation !== this.connectGeneration) return
@@ -183,6 +197,8 @@ export class ServerEvents {
     }
 
     const generation = ++this.connectGeneration
+
+    this.validation?.abort()
 
     if (this.connection) {
       const connection = this.connection
@@ -287,6 +303,7 @@ export class ServerEvents {
   restart(reason = "manual restart"): void {
     if (this.disposed) return
     const generation = ++this.connectGeneration
+    this.validation?.abort()
     this.retryDelay = RETRY_BASE_DELAY
     this.clearReconnectTimer()
     this.watchdog.setConnected(false)
@@ -307,6 +324,7 @@ export class ServerEvents {
     if (this.disposed) return
     this.disposed = true
     this.connectGeneration++
+    this.validation?.abort()
     this.clearReconnectTimer()
     this.connection?.disconnect()
     this.connection = null

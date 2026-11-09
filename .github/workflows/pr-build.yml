@@ -482,6 +482,8 @@ jobs:
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/stores/backend-preferences.test.ts
+          packages/ui/src/stores/backend-registry.test.ts
+          packages/ui/src/stores/preferences-multi-backend.test.ts
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/components/instance/shell/useSessionCache.test.ts
