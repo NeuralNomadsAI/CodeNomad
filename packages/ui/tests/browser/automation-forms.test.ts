@@ -207,7 +207,7 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     await act({ action: "click", ref: await refFor(/button "Create mission"/, "Create mission") })
     await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").status === "ready")
     assert.equal(creates.length, 0, "ordinary panel reads never create a mission")
-    await act({ action: "type", ref: await refFor(/textbox "What should the mission do\?"/, "What should the mission do?"), text: "Chart the module seams" })
+    await act({ action: "type", ref: await refFor(/textbox "Objective"/, "Objective"), text: "Chart the module seams" })
     const title = await refFor(/textbox "Title"/, "Title")
     await act({ action: "type", ref: title, text: "First draft" })
     assert.deepEqual(await act({ action: "type", ref: title, text: "Seam survey" }), { value: "Seam survey" }, "a second type replaces the first")
@@ -281,7 +281,7 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
   try {
     const { page, act, refFor } = run
     await act({ action: "click", ref: await refFor(/button "Create mission"/, "Create mission") })
-    await act({ action: "type", ref: await refFor(/textbox "What should the mission do\?"/, "What should the mission do?"), text: "Hold a read" })
+    await act({ action: "type", ref: await refFor(/textbox "Objective"/, "Objective"), text: "Hold a read" })
     if (outcome.held !== "depth") { holdMap = true; await page.evaluate(() => window.missionEditorLifetime.invalidate()) }
     await requested.promise
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
@@ -294,7 +294,7 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
         // The rendered text, a closed menu's options included (as an agent's text wait reads it).
         await page.waitForFunction(text => document.querySelector<HTMLElement>(".mission-control")?.innerText.includes(text) ?? false, outcome.shown)
         await page.waitForFunction(() => !document.querySelector(".mission-depth select")?.hasAttribute("aria-disabled"))
-        assert.equal(await page.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Hold a read", "the read preserves the draft")
+        assert.equal(await page.getByLabel("Objective", { exact: true }).inputValue(), "Hold a read", "the read preserves the draft")
         after = await create.boundingBox()
       }
       return command(state, method, params)

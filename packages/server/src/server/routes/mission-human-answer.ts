@@ -15,7 +15,7 @@ type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ow
 type Deps = { auth: AuthManager; manager: Manager; settings: Pick<SettingsService, "getProfileScope">; bridgeToken: string
   /** Live Remote Control device authorization; absent means no remote principal qualifies. */
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }
-const answerSchema = z.object({ answer: z.record(z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])) }).strict()
+const answerSchema = z.object({ answer: z.record(z.string(), z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])) }).strict()
 
 /** Called INSIDE the normal proxy's owned native-session/request/deletion and
  * connection admission. It handles only the dock's real human answer path.

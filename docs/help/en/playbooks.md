@@ -2,8 +2,6 @@
 
 A playbook is the working method a mission's coordinator follows: the steps, the roles it can give tasks, and the instructions each agent receives. This page describes each playbook, what CodeNomad itself enforces and what remains an instruction the model is asked to follow.
 
-The **ⓘ** beside **Playbook** in the mission form opens this guide in your language at the selected playbook's section. Choose a playbook below to read its steps, roles, questions and checks. In the agents' instructions, Exploration is called *Wayfinder Map*.
-
 ## Choose a playbook {#choose}
 
 | Playbook | Choose it when |
@@ -258,7 +256,7 @@ The coordinator compares exactly two different models. It records both attempts,
 
 ### What CodeNomad checks {#compare-checks}
 
-- At creation, **Model A** and **Model B** are required and must be different models; a different **Thinking** level alone is not a different model. Unless you choose one, the judge uses the coordinator's model, fixed at creation; the form warns when it matches A or B.
+- At creation, **Model A** and **Model B** are required and must be different models; a different **Thinking** level alone is not a different model. Unless you choose one, the judge uses the coordinator's model, fixed at creation.
 - Only the three Compare roles are accepted. Each run and the judge must start in a new conversation, a run cannot change its role's model, there is one live run per model, and both briefs must be byte-identical.
 - Only the judge may attach a structured report, and it must reference the completed A and B runs in that order, score each criterion once from 0 to 10 with at least one piece of evidence, and give one of the four verdicts.
 - The mission finishes only with completed A, B and judge tasks and a valid comparison.

@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.scheduling.startOnCreation": "创建时启动",
+  "missions.scheduling.startOnCreation": "自动启动",
   "missions.scheduling.source.now": "一次，现在",
   "missions.settings.effectiveOrigin": "OpenCode 配置文件：",
   "missions.settings.noOrigin": "无文档路径",
@@ -113,7 +113,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.condition.mission-completed": "一次性任务成功完成",
   "missions.scheduling.condition.conversation-message": "关注的对话有新消息",
   "missions.scheduling.condition.files-changed": "指定文件发生变化",
-  "missions.scheduling.capability.missing": "此连接不支持计划。没有启动条件的任务仍可使用。",
+  "missions.scheduling.capability.missing": "此连接不支持计划。",
   "missions.scheduling.capability.loading": "正在检查计划功能…",
   "missions.scheduling.capability.activatable": "开始和继续会在启用原生计划设置前请求确认。",
   "missions.scheduleList.runNowRequiresEnabled": "立即运行要求原生计划已启用。请先在 OpenCode 设置中启用，然后刷新。",

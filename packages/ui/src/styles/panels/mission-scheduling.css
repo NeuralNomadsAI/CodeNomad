@@ -5,8 +5,6 @@
 .mission-scheduling label > span { min-inline-size: 0; }
 .mission-scheduling label > :is(input, textarea, select) { flex: 1; }
 .mission-scheduling label > :is(input:not([type="checkbox"]), textarea, select) { min-inline-size: 8rem; }
-.mission-scheduling .mission-scheduling-autostart { display: flex; }
-.mission-scheduling .mission-scheduling-autostart input { inline-size: auto; flex: none; }
 .mission-scheduling :is(input, textarea, select) { inline-size: 100%; min-inline-size: 0; }
 .mission-scheduling :is(input, textarea) { background: var(--surface-field); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-xs); border-radius: 0; }
 .mission-scheduling :is(p, li) { font-size: var(--font-size-xs); overflow-wrap: anywhere; }
@@ -16,7 +14,6 @@
 .mission-scheduling-row > label { flex: 1 1 12rem; }
 .mission-scheduling-row > button { flex: none; margin-block-end: var(--space-sm); }
 .mission-scheduling-when { display: flex; flex-direction: column; gap: var(--space-xs); margin-block: var(--space-sm); min-inline-size: 0; }
-.mission-scheduling-when-head { display: flex; align-items: center; margin-block-start: var(--space-sm); }
 .mission-scheduling-label { display: inline-flex; align-items: center; gap: var(--space-xs); }
 .mission-criterion { display: flex; flex-direction: column; padding: var(--space-sm); border: 1px solid var(--border-base); background: var(--surface-canvas); min-inline-size: 0; }
 .mission-criterion > label { margin-block: var(--space-xs) 0; }

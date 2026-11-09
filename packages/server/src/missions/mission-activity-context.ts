@@ -2,6 +2,7 @@ import type { MissionActor, MissionMap } from "./model"
 import { missionActorEvidence } from "./mission-actor-evidence"
 import { missionFamilyTaskContexts, type MissionFamilyTaskContext } from "./mission-family-projection"
 import { contentDigest } from "./content-digest"
+import { missionTaskMarks, type MissionTaskMark } from "./mission-task-marks"
 
 export { MISSION_ACTIVITY_ACTORS } from "./mission-panel-map"
 export const MISSION_MARK_MISSIONS = 16
@@ -11,6 +12,8 @@ export const MISSION_MARK_ACTORS = 10
 export interface MissionActivityContext {
   id: string; projectID: string; revision: number; status: MissionMap["status"]; runState?: MissionMap["runState"]
   coordinatorSessionId: string
+  taskMarks?: MissionTaskMark[]
+  taskMarksThrough?: number
   actors: Array<Pick<MissionActor, "sessionId" | "title" | "location"> & {
     reportOwed: boolean; callOpen: boolean; taskContext?: MissionFamilyTaskContext
   }>
@@ -28,6 +31,7 @@ export function missionActivityContext(mission: MissionMap, damage: Pick<Mission
   const owed = missionActorEvidence(mission, mission.tasks), reports = new Set(owed.reportOwed), calls = new Set(owed.callOpen)
   const contexts = missionFamilyTaskContexts(mission.tasks)
   return { id: mission.id, projectID: mission.projectID, revision: mission.revision, status: mission.status,
+    taskMarks: missionTaskMarks(mission.tasks), taskMarksThrough: mission.updatedAt,
     ...(mission.runState === undefined ? {} : { runState: mission.runState }), coordinatorSessionId: mission.coordinatorSessionId,
     actors: mission.actors.map(actor => ({ sessionId: actor.sessionId, title: actor.title, location: { ...actor.location },
       reportOwed: reports.has(actor.sessionId), callOpen: calls.has(actor.sessionId), ...(contexts[actor.sessionId] ? { taskContext: contexts[actor.sessionId] } : {}) })),
@@ -45,7 +49,8 @@ export function missionActivityContext(mission: MissionMap, damage: Pick<Mission
 /** A bounded actor window, copied so no hint-index object escapes to native IO. */
 export function activityActorWindow(context: MissionActivityContext, offset: number, limit: number): MissionActivityContext {
   const start = Math.min(offset, context.actors.length)
-  return { ...context, ...(context.control ? { control: { ...context.control } } : {}),
+  const { taskMarks: _taskMarks, taskMarksThrough: _through, ...observed } = context
+  return { ...observed, ...(context.control ? { control: { ...context.control } } : {}),
     actors: context.actors.slice(start, start + limit).map(actor => ({ ...actor, location: { ...actor.location },
       ...(actor.taskContext ? { taskContext: { ...actor.taskContext } } : {}) })),
     actorPage: { order: context.actorPage.order, offset: start, end: Math.min(start + limit, context.actors.length), total: context.actors.length } }

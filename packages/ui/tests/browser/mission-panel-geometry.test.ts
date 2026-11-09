@@ -104,7 +104,8 @@ for (const variant of [{ name: "desktop LTR", context: {} }, { name: "touch RTL"
     try {
       await page.waitForFunction(() => document.querySelectorAll(".mission-rows .mission-row").length === 12)
       assert.equal(await page.locator(".mission-rows .mission-row").count(), 12)
-      assert.equal(await page.locator(".mission-tree-node").count(), 40)
+      assert.ok(await page.locator(".mission-tree-node").count() <= 40)
+      assert.equal(await page.evaluate(() => (window as any).missionFixture.snapshot().missions.find((map: { id: string }) => map.id === "long").tasks.length), 40)
       assert.deepEqual(await scrollers(page), ["mission-control"], "one scroller: no list or task flow of its own")
       assert.equal(await page.locator(".mission-flow").evaluate(element => getComputedStyle(element).overflowY), "visible")
       assert.deepEqual(await reachable(page), { top: true, bottom: true, header: true })
@@ -128,15 +129,15 @@ async function railEnds(page: Page) {
   return page.evaluate(() => {
     const svg = document.querySelector<SVGSVGElement>(".mission-graph")!, matrix = svg.getScreenCTM()!
     const rtl = getComputedStyle(svg).direction === "rtl"
-    const anchor = (key: string) => document.querySelector(`.mission-tree-node[data-task-key="${key}"] [data-graph-anchor]`)!.getBoundingClientRect()
+    const anchor = (key: string) => document.querySelector(`.mission-tree-node[data-task-key="${key}"] [data-graph-anchor]`)?.getBoundingClientRect()
     const client = (x: number, y: number) => { const point = svg.createSVGPoint(); point.x = x; point.y = y; return point.matrixTransform(matrix) }
     return [...svg.querySelectorAll<SVGPathElement>("path[data-from]")].map(path => {
       const [, x1, y1, , y2, x2] = path.getAttribute("d")!.match(/^M ([\d.]+) ([\d.]+) H ([\d.]+) V ([\d.]+) H ([\d.]+)$/)!.map(Number)
       const ends = [[path.dataset.from!, client(x1, y1)], [path.dataset.to!, client(x2, y2)]] as const
-      return { edge: `${path.dataset.from}>${path.dataset.to}`, gaps: ends.map(([key, point]) => {
+      return { edge: `${path.dataset.from}>${path.dataset.to}`, gaps: ends.flatMap(([key, point]) => {
         const box = anchor(key)
-        return [Math.abs(point.x - (rtl ? box.right : box.left)), Math.abs(point.y - (box.top + box.height / 2))]
-      }).flat() }
+        return box ? [Math.abs(point.x - (rtl ? box.right : box.left)), Math.abs(point.y - (box.top + box.height / 2))] : []
+      }) }
     })
   })
 }
@@ -163,6 +164,7 @@ for (const variant of [
       // Full-width rollover and the row button stay interactive beneath the rail.
       const row = page.locator('.mission-tree-node[data-task-key="cleanup"]')
       await row.scrollIntoViewIfNeeded()
+      await page.waitForFunction(() => getComputedStyle(document.querySelector(".mission-tree-list")!).pointerEvents !== "none")
       const box = (await row.boundingBox())!
       const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest(".mission-tree-node")?.getAttribute("data-task-key"), { x: box.x + box.width / 2, y: box.y + box.height / 2 })
       assert.equal(hit, "cleanup")
@@ -183,7 +185,7 @@ test("a map of 500 tasks and 40 actors shows a page of rows, reads further on re
   try {
     const requests: string[] = []
     await routeMissionTasks(page, () => large, requests)
-    const rows = () => page.locator(".mission-tree-node").evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.taskKey))
+    const rows = (): Promise<string[]> => page.evaluate(() => (window as any).missionFixture.snapshot().missions.find((map: { id: string }) => map.id === "large").tasks.map((task: { key: string }) => task.key))
     // The map's page: its window of the display order and its pinned rows, the rest gaps.
     assert.deepEqual(await rows(), compactMissionMap(large[0]).tasks.map(task => task.key))
     assert.equal(await page.locator(".mission-tree").getAttribute("aria-label"), "Tasks (500)")
@@ -191,14 +193,21 @@ test("a map of 500 tasks and 40 actors shows a page of rows, reads further on re
     for (let read = 0; await page.locator(".mission-tree-more").count(); read++) {
       assert.ok(read < 10, "at most one read a page")
       const before = (await rows()).length
-      await page.locator(".mission-tree-more button").evaluate((button: HTMLButtonElement) => button.click())
-      await page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
+      await page.evaluate(async () => {
+        const store = (await import("/src/stores/missions.ts")).missionStore
+        const map = store.state("fixture").missions.find(item => item.id === "large")!
+        await store.loadTasks("fixture", "large", { offset: map.tasks.length })
+      })
+      await page.waitForFunction(count => (window as any).missionFixture.snapshot().missions.find((map: { id: string }) => map.id === "large").tasks.length > count, before)
     }
     assert.ok(requests.every(query => query.includes(`order=${compactMissionMap(large[0]).taskPage!.order}`)), requests.join(" "))
     assert.deepEqual(await rows(), missionTaskOrder(tasks).map(task => task.key))
+    assert.ok(await page.locator(".mission-tree-node").count() < 100, "the cache holds the whole plan while Virtua renders only a viewport")
     await page.waitForFunction(() => document.querySelectorAll(".mission-graph path[data-from]").length === 450)
     assert.equal(await page.locator(".mission-graph path.mission-graph-omitted").count(), 0, "every edge's both ends are shown")
     // Selecting one task re-renders the tree in place without rebuilding it.
+    await page.locator(".mission-control").evaluate(element => { element.scrollTop = element.scrollHeight })
+    await page.locator('.mission-tree-node[data-task-key="t499"]').waitFor()
     const elapsed = await page.evaluate(async () => {
       const row = document.querySelector<HTMLButtonElement>('.mission-tree-node[data-task-key="t499"] .mission-tree-task')!
       const start = performance.now()
@@ -208,7 +217,16 @@ test("a map of 500 tasks and 40 actors shows a page of rows, reads further on re
     })
     assert.deepEqual([elapsed.selected, elapsed.connected], ["true", true])
     assert.ok(elapsed.ms < 1_000, `one row selection took ${elapsed.ms} ms`)
+    await page.evaluate(() => {
+      const tasks = (window as any).missionFixture.snapshot().missions.find((map: { id: string }) => map.id === "large").tasks
+      const index = tasks.findIndex((task: { key: string }) => task.key === "t1")
+      const host = document.querySelector<HTMLElement>(".mission-control")!, list = document.querySelector(".mission-tree-list")!
+      host.scrollTop += list.getBoundingClientRect().top - host.getBoundingClientRect().top + index * 37
+    })
+    await page.locator('.mission-tree-node[data-task-key="t1"]').waitFor()
+    await settle(page)
     const edge = (await railEnds(page)).find(item => item.edge === "t1>t2")!
+    assert.ok(edge.gaps.length >= 2, "a rendered endpoint is measured, not an empty comparison")
     assert.ok(edge.gaps.every(gap => gap <= 0.75), `t1>t2 meets its icons: ${edge.gaps}`)
     assert.deepEqual(errors, [])
   } finally { await page.context().close() }

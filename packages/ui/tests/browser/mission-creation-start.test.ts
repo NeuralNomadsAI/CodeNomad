@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { openMissionProfiles } from "./mission-actions"
 import { after, before, test } from "node:test"
 import { createServer, type Server } from "node:http"
 import { chromium, type Browser, type Page, type Request } from "playwright"
@@ -116,7 +117,7 @@ async function setup(page: Page, options: { enabled?: boolean; lose?: "create" |
   }
   await page.goto(options.realEditor ? `${url}?realEditor=1` : url)
   await page.waitForFunction(realEditor => realEditor ? (window as any).realCreationStartFixture : (window as any).creationStartFixture, !!options.realEditor)
-  if (options.realEditor) await waitForCatalog()
+  if (options.realEditor) { await openMissionProfiles(page); await waitForCatalog() }
   else page.off("requestfinished", remember)
   return { posts, reads, failedRequests, errors, waitForCatalog, get revision() { return doc.revision }, set activationGate(value: Promise<void>) { activationGate = value } }
 }
@@ -208,7 +209,8 @@ test("real editor adopts discovered project before creation; lost Play remains r
     const form = page.locator("form.mission-editor"), originalForm = await form.elementHandle()
     assert.ok(originalForm)
     assert.equal(await page.locator("[data-project]").textContent(), "undiscovered")
-    await form.getByLabel("What should the mission do?", { exact: true }).fill("Inspect changes after project discovery")
+    await form.getByLabel("Objective", { exact: true }).fill("Inspect changes after project discovery")
+    await openMissionProfiles(page)
     await Promise.all([
       f.waitForCatalog(),
       page.evaluate(() => (window as any).realCreationStartFixture.discoverProject()),
@@ -216,9 +218,9 @@ test("real editor adopts discovered project before creation; lost Play remains r
     await page.getByText("project", { exact: true }).waitFor()
     assert.equal(await originalForm.evaluate(element => element.isConnected && element === document.querySelector("form.mission-editor")), true,
       "project discovery must update the already-mounted MissionEditor")
-    assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Inspect changes after project discovery")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Inspect changes after project discovery")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
-    await form.getByRole("checkbox", { name: "Start on creation", exact: true }).check()
+    await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
     await form.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Fixture model" }).waitFor({ state: "attached" })
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await form.waitFor({ state: "detached" }); await saved(page)

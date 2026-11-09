@@ -101,7 +101,7 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
   let rejectCancel!: (error: Error) => void, starts = 0, cancels = 0, released = false
   const cancellation = new Promise<void>((_, reject) => { rejectCancel = reject })
   const keepAlive = setTimeout(() => {}, 3000) // native AbortSignal timers are unref'ed in Node
-  const deadline = performance.now() + 200
+  const lifetime = AbortSignal.timeout(200)
   const dispatched: Array<{ at: number; aborted: boolean }> = []
   globalThis.fetch = async (_input, init) => {
     starts++
@@ -111,22 +111,23 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
       cancel() { cancels++; return cancellation },
     }), { status: mode === "http-error" ? 503 : 200 })
   }
-  const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionTasks("fixture", map.id, { offset: 0 }, { ...scope, deadline }))
-  let markerStarted = false, startedAfterDeadline = false, startedWhileDeferred = false
+  const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionTasks("fixture", map.id, { offset: 0 }, { ...scope, signal: lifetime }))
+  let markerStarted = false, startedAfterTimeout = false, startedWhileDeferred = false
   const marker = backgroundReads.run(AbortSignal.timeout(1000), async () => {
-    markerStarted = true; startedAfterDeadline = performance.now() >= deadline; startedWhileDeferred = !released
+    markerStarted = true; startedAfterTimeout = lifetime.aborted; startedWhileDeferred = !released
   }).then(() => true, () => false)
   try {
     const outcomes = await Promise.allSettled(calls)
     assert.equal(await marker, true, "unrelated queued work starts without resolving the deferred cancels")
-    t.diagnostic(JSON.stringify({ deadline, dispatched, starts, cancels }))
-    assert.ok(starts >= 2 && starts <= 3)
+    t.diagnostic(JSON.stringify({ dispatched, starts, cancels }))
+    assert.equal(starts, 2)
     assert.equal(cancels, starts)
     // The synchronous admission guard precedes fetch; this later sample can cross the deadline.
     assert.ok(dispatched.every(read => !read.aborted), "an already-aborted transfer is never dispatched")
-    assert.deepEqual({ markerStarted, startedAfterDeadline, startedWhileDeferred },
-      { markerStarted: true, startedAfterDeadline: true, startedWhileDeferred: true })
+    assert.deepEqual({ markerStarted, startedAfterTimeout, startedWhileDeferred },
+      { markerStarted: true, startedAfterTimeout: true, startedWhileDeferred: true })
     assert.ok(outcomes.every(value => value.status === "rejected"), "no stale row is published")
+    assert.equal(outcomes[2].status === "rejected" && outcomes[2].reason.name, "TimeoutError")
     for (const outcome of outcomes.slice(0, 2)) {
       assert.equal(outcome.status === "rejected" && outcome.reason.reason, mode === "oversize" ? "invalid" : "unavailable", "cleanup preserves the original failure")
     }

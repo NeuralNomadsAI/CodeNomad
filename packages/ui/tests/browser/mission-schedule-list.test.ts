@@ -128,11 +128,14 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
     const value = result(body.requestID)
     return route.fulfill({ status: value.pending ? 503 : 200, json: { ...value, ...(value.pending ? { code: "schedule-pending" } : {}) } })
   })
-  const stream = page.waitForResponse(response => response.headers()["content-type"] === "text/event-stream")
-  await page.goto(url)
-  await stream.catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
-  await page.waitForFunction(() => (window as any).missionFixture).catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
-  await page.evaluate(() => (window as any).missionFixture.connectCatalog())
+   let streamObserved = false
+   const observeStream = (response: import("playwright").Response) => { if (response.headers()["content-type"] === "text/event-stream") streamObserved = true }
+   page.on("response", observeStream)
+   await page.goto(url)
+   await page.waitForFunction(() => (window as any).missionFixture, undefined, { timeout: 60_000 }).catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
+   await page.evaluate(() => (window as any).missionFixture.connectCatalog())
+   if (!streamObserved) await page.waitForResponse(response => response.headers()["content-type"] === "text/event-stream")
+   page.off("response", observeStream)
   return { posts, reads, errors, store, get doc() { return doc! }, result,
     addSchedule: async (id: string, change: Partial<MissionConfiguration>) => {
       extras.push(await store.create(id, { ...config, ...change } as MissionConfiguration, Date.now(), () => true))
@@ -178,7 +181,7 @@ test("real panel Create → Play → Pause/Resume → Run now → Stop → Delet
   try {
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
-    await form.getByLabel("What should the mission do?", { exact: true }).fill("Inspect local changes")
+    await form.getByLabel("Objective", { exact: true }).fill("Inspect local changes")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("hours")
     await form.getByLabel("Criterion 1 hours", { exact: true }).selectOption("1")
@@ -517,7 +520,7 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
 })
 
 test("document inventory pages only on demand and revalidates the loaded frontier without changing selection or focus", async () => {
-  const page = await browser.newPage(), f = await setup(page, { seed: true }), calls: URL[] = []
+  const page = await browser.newPage({ viewport: { width: 900, height: 240 } }), f = await setup(page, { seed: true }), calls: URL[] = []
   try {
     await select(page)
     const documents: MissionDocument[] = [f.doc]
@@ -530,10 +533,10 @@ test("document inventory pages only on demand and revalidates the loaded frontie
       return route.fulfill({ json: { version: 1, projectID: "project", schedules: slice.map(doc => missionScheduleView(doc).document), ...(next ? { next } : {}) } })
     })
     await page.evaluate(() => (window as any).missionFixture.refresh())
-    await page.getByRole("button", { name: "Load more Missions", exact: true }).waitFor()
+    await page.locator(".mission-list-paging").waitFor()
     assert.ok(calls.length > 0); assert.ok(calls.every(call => call.searchParams.get("after") === null), "display hints may revalidate the first page, never speculate another page")
-    await page.getByRole("button", { name: "Load more Missions", exact: true }).click()
-    await page.getByRole("button", { name: "Load more Missions", exact: true }).waitFor({ state: "detached" })
+    await page.locator(".mission-control").hover(); await page.mouse.wheel(0, 10000)
+    await page.locator(".mission-list-paging").waitFor({ state: "detached" })
     assert.equal(calls.filter(call => call.searchParams.get("after") === documents[7].id).length, 1)
     await button(page, "Start").focus()
     const refreshed = page.waitForResponse(response => new URL(response.url()).searchParams.has("after"))
@@ -567,19 +570,27 @@ test("Check reconciles a positively recorded partial request and retains both id
 })
 
 for (const negativeFirst of [true, false]) test(`cold reopen keeps the first page, cursor and original held request when selected detail is partial 503 (${negativeFirst ? "negative then positive" : "FIRST positive receipt"})`, async () => {
-  const page = await browser.newPage(), f = await setup(page, { seed: true, outsidePage: true })
+  const page = await browser.newPage({ viewport: { width: 900, height: 240 } }), f = await setup(page, { seed: true, outsidePage: true })
   const originalRevision = f.doc.revision
+  let release!: () => void
+  const continuation = new Promise<void>(resolve => { release = resolve })
   try {
     await select(page); f.partial = "play"; await click(page, "Play")
     await button(page, "Refresh saved request").waitFor()
     const original = f.posts[0]
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     f.outside = true
+    // Keep the selected object outside the freshly read inventory while asserting
+    // the partial point-read state. End-of-list continuation is now automatic.
+    await page.route("**/missions/scheduled?*", async route => {
+      if (new URL(route.request().url()).searchParams.has("after")) await continuation
+      return route.fallback()
+    })
     const pointRead = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/msn_schedule/schedule")
       && !new URL(response.url()).searchParams.has("requestID") && response.status() === 503)
     await page.evaluate(() => (window as any).missionFixture.mount(true))
     await pointRead
-    await page.getByRole("button", { name: "Load more Missions", exact: true }).and(page.locator(":enabled")).waitFor()
+    await page.locator(".mission-list-paging").waitFor()
     // The remounted panel restores the selection; its chevron shows the detail again.
     await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
     await button(page, "Refresh saved request").waitFor()
@@ -587,7 +598,7 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
     // Inventory paging belongs to the list, not to the selection: folding keeps it.
     const selectedChevron = page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
     await selectedChevron.click()
-    assert.equal(await page.getByRole("button", { name: "Load more Missions", exact: true }).isVisible(), true, "folding the selection keeps Load more")
+    assert.equal(await page.locator(".mission-list-paging").isVisible(), true, "folding the selection keeps directory continuation")
     await selectedChevron.click()
     assert.equal(await button(page, "Check passage").isDisabled(), true, "retained partial metadata grants no new control")
     assert.equal(await button(page, "Stop…").isDisabled(), true)
@@ -599,16 +610,18 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
     const before = f.reads.length
     f.resolve()
     await button(page, "Refresh saved request").click()
+    release()
     await button(page, "Refresh saved request").waitFor({ state: "detached" })
     await button(page, "Pause").and(page.locator(":enabled")).waitFor()
     const confirmedReads = f.reads.slice(before).map(value => new URL(value))
     assert.equal(confirmedReads.filter(value => value.searchParams.get("requestID") === original.requestID).length, 1)
-    assert.ok(confirmedReads.some(value => value.pathname.endsWith("/msn_schedule/schedule") && !value.searchParams.has("requestID")),
-      "controls are restored by a fresh document read, never by retained partial display or receipt metadata")
+    assert.ok(confirmedReads.some(value => value.pathname.endsWith("/msn_schedule/schedule") && !value.searchParams.has("requestID")
+      || value.pathname.endsWith("/scheduled") && value.searchParams.get("after") === "aaa_7"),
+      "controls are restored by a fresh point or inventory document read, never by retained partial display or receipt metadata")
     assert.equal(original.expectedRevision, originalRevision); assert.equal(typeof original.requestID, "string")
-    assert.equal(await page.getByRole("button", { name: "Load more Missions", exact: true }).count(), 1)
+    assert.equal(await page.locator(".mission-list-paging").count(), 0, "the automatic continuation disappears once the remaining page is read")
     assert.deepEqual(f.posts, [original]); assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
+  } finally { release(); await page.close() }
 })
 
 for (const [minutes, duration] of [[1, "1 minute"], [2, "2 minutes"]] as const) {

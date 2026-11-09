@@ -2,8 +2,6 @@
 
 Un scénario est la méthode de travail que suit le coordinateur d’une mission : les étapes, les rôles qu’il peut attribuer aux tâches et les instructions que reçoit chaque agent. Cette page décrit chaque scénario, ce que CodeNomad impose lui-même et ce qui reste une instruction que le modèle doit suivre.
 
-L’**ⓘ** à côté de **Scénario** dans le formulaire ouvre ce guide dans votre langue à la section du scénario sélectionné. Choisissez un scénario ci-dessous pour ses étapes, rôles, questions et vérifications. Dans les instructions des agents, Exploration s’appelle *Wayfinder Map*.
-
 ## Choisir un scénario {#choose}
 
 | Scénario | Choisissez-le quand |
@@ -258,7 +256,7 @@ Le coordinateur compare exactement deux modèles différents. Il enregistre les 
 
 ### Ce que CodeNomad vérifie {#compare-checks}
 
-- À la création, **Modèle A** et **Modèle B** sont obligatoires et doivent être des modèles différents ; un niveau de **Réflexion** différent ne suffit pas à en faire un autre modèle. Sauf si vous en choisissez un, le juge utilise le modèle du coordinateur, fixé à la création ; le formulaire avertit lorsqu’il correspond à A ou B.
+- À la création, **Modèle A** et **Modèle B** sont obligatoires et doivent être des modèles différents ; un niveau de **Réflexion** différent ne suffit pas à en faire un autre modèle. Sauf si vous en choisissez un, le juge utilise le modèle du coordinateur, fixé à la création.
 - Seuls les trois rôles de Comparer deux modèles sont acceptés. Chaque exécution et le juge doivent démarrer dans une nouvelle conversation, une exécution ne peut pas changer le modèle de son rôle, il y a une seule exécution active par modèle, et les deux consignes doivent être identiques octet pour octet.
 - Seul le juge peut joindre un rapport structuré, qui doit désigner les exécutions A et B terminées dans cet ordre, noter chaque critère une fois de 0 à 10 avec au moins une preuve et donner l’un des quatre verdicts.
 - La mission ne se termine qu’avec des tâches A, B et juge terminées et une comparaison valide.

@@ -23,7 +23,7 @@ const startAcknowledgement = z.object({ ...identity, action: z.literal("start"),
   admission: z.object({ id, sessionID: id, type: z.literal("synthetic"), delivery: z.literal("queue"),
     time: z.object({ created: z.number().finite().nonnegative() }).strict(),
     payload: z.object({ text: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), description: z.string().max(1_024).optional(),
-      metadata: z.record(z.unknown()).refine(boundedJson).optional() }).strict(),
+      metadata: z.record(z.string(), z.unknown()).refine(boundedJson).optional() }).strict(),
   }).strict() }).strict()
 const acknowledgement = z.union([startAcknowledgement, interruptAcknowledgement,
   z.object({ ...identity, action: z.enum(["pause", "stop"]), disposition: z.literal("target-missing") }).strict(),

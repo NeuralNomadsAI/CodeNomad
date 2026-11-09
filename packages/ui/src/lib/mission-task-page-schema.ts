@@ -44,7 +44,7 @@ const task = z.object({ id: short, key: short, title: z.string().max(240), role:
   nativeExecution: z.custom<NonNullable<MissionPanelTask["nativeExecution"]>>(value => Exit.isSuccess(execution(value))).optional(),
 }).passthrough()
 export const taskRowSchema = z.object({ taskPage: z.object({ order: taskDigest, offset: taskCount, end: taskCount, total: taskCount,
-  counts: z.record(status, taskCount), reports: taskCount, pinsOmitted: taskCount.optional(),
+  counts: z.partialRecord(status, taskCount), reports: taskCount, pinsOmitted: taskCount.optional(),
   attention: z.object({ counts: z.object({ notifications: taskCount, blocked: taskCount, failed: taskCount, recovery: taskCount }).strict(),
     omitted: taskCount, sequence: taskDigest, keys: z.array(short).max(MISSION_TASK_PAGE).optional(), offset: taskCount.optional(), end: taskCount.optional() }).passthrough().optional(),
 }).passthrough(), tasks: z.array(task).max(MISSION_TASK_PAGE), reports: z.array(report).max(MISSION_TASK_PAGE * (MISSION_TASK_REPORT_ROWS + 1)) }).passthrough()

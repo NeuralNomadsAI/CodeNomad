@@ -17,7 +17,7 @@ export const panelControlSchema = z.object({ id, requestID: id, expectedRevision
 export const panelHeaderSchema = z.object({ root: z.object({ version: z.literal(1), id, projectID: id, projectCanonical: z.string().min(1).max(20_000),
   title: z.string().max(60).optional(), excerpt: z.string().max(1004), template: z.enum(["custom", "debug", "wayfinder", "delivery", "compare"]), status: state,
   runState: z.enum(["prepared", "running", "paused", "stopped"]).optional(), coordinatorSessionId: id, revision: count, createdAt: z.number().finite(), updatedAt: z.number().finite(),
-  finishSequence: count.positive().optional(), historyTruncated: z.boolean(), bodies: z.record(body), taskMode: z.enum(["native", "independent"]).optional(),
+  finishSequence: count.positive().optional(), historyTruncated: z.boolean(), bodies: z.record(z.string(), body), taskMode: z.enum(["native", "independent"]).optional(),
   profiles: z.unknown().refine(value => { try { parseMissionProfiles(value); return true } catch { return false } }).optional(),
   briefing: z.object({ id, requestID: z.string().min(1).max(128), basedOnRevision: count, basedOnUpdatedAt: count, createdAt: count }).strict().optional(),
   briefingResponses: z.array(z.object({ requestID: z.string().min(1).max(128), briefingID: id }).strict()).max(16).optional(),
@@ -41,7 +41,7 @@ export const panelActorSchema = z.object({ sessionId: id, title: z.string().max(
 export const panelPersistedActorSchema = panelActorSchema.pick({ sessionId: true, title: true, location: true }).extend({ kind: z.enum(["coordinator", "specialist"]), managed: z.boolean(),
   roles: z.array(z.string().max(240)).max(2000), joinedAt: z.number().finite() }).passthrough()
 export const panelHistorySchema = z.object({ revision: count, createdAt: z.number().finite(), source: z.enum(["user", "coordinator"]).optional(), actorSessionId: id.optional(),
-  excerpt: z.string().max(482).optional(), bodies: z.record(body).optional(), reason: z.never().optional(), objective: z.never().optional(), notes: z.never().optional(),
+  excerpt: z.string().max(482).optional(), bodies: z.record(z.string(), body).optional(), reason: z.never().optional(), objective: z.never().optional(), notes: z.never().optional(),
   addedTaskKeys: z.never().optional(), retiredTasks: z.never().optional(), dependencyUpdates: z.never().optional() }).passthrough()
 export const panelReportSchema = taskRowSchema.shape.reports.element
 const evidenceState = z.enum(["observed", "partial", "unknown"])

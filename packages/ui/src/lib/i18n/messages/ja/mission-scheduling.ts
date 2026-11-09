@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.scheduling.startOnCreation": "作成時に開始",
+  "missions.scheduling.startOnCreation": "自動的に開始",
   "missions.scheduling.source.now": "1 回、今すぐ",
   "missions.settings.effectiveOrigin": "OpenCode 設定ファイル：",
   "missions.settings.noOrigin": "ドキュメントのパスなし",
@@ -113,7 +113,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.condition.mission-completed": "単発ミッションの正常完了",
   "missions.scheduling.condition.conversation-message": "フォロー中の会話の新しいメッセージ",
   "missions.scheduling.condition.files-changed": "明示したファイルの変更",
-  "missions.scheduling.capability.missing": "この接続ではスケジュールを利用できません。起動条件のないミッションは引き続き利用できます。",
+  "missions.scheduling.capability.missing": "この接続ではスケジュールを利用できません。",
   "missions.scheduling.capability.loading": "スケジュールの利用可否を確認中…",
   "missions.scheduling.capability.activatable": "開始と再開では、ネイティブスケジュール設定を有効にする前に確認が必要です。",
   "missions.scheduleList.runNowRequiresEnabled": "今すぐ実行にはネイティブスケジュールの有効化が必要です。OpenCodeの設定で有効にしてから更新してください。",

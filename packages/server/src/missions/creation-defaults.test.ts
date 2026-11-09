@@ -286,7 +286,7 @@ test("a retained document preserves uncertainty after the standalone choices exp
 test("creation origin schemas share the resolver's exact origin set", () => {
   const schema = missionCreationDefaultsSchema.shape.origins.shape
   const wire = missionCreationDefaultsWire.properties.origins.properties
-  for (const origins of [schema.coordinator.options, schema.taskMode.options, schema.roles.valueSchema.options,
+  for (const origins of [schema.coordinator.options, schema.taskMode.options, schema.roles.valueType.options,
     wire.coordinator.enum, wire.taskMode.enum, wire.roles.additionalProperties.enum]) {
     assert.deepEqual(origins, MISSION_DEFAULT_ORIGINS)
   }

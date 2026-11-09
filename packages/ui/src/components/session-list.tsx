@@ -1,6 +1,8 @@
 import { Component, For, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { focusInterruption } from "../stores/interruption-navigation"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
+import { observeListEnd } from "../lib/list-end-observer"
+import { preserveListFocus } from "../lib/preserve-list-focus"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
@@ -98,6 +100,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
   const [now, setNow] = createSignal(Date.now())
   const [listEl, setListEl] = createSignal<HTMLDivElement>()
+  preserveListFocus(listEl)
   const [listViewportAttached, setListViewportAttached] = createSignal(false)
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
@@ -172,21 +175,14 @@ const SessionList: Component<SessionListProps> = (props) => {
     const el = sentinelEl()
     if (!el || !hasMore() || isFetchingSessions()) return
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0]
-        if (entry?.isIntersecting && hasMore() && !isFetchingSessions()) {
+    onCleanup(observeListEnd(el, listEl() ?? null, () => {
+        if (hasMore() && !isFetchingSessions()) {
           failedSortExhaustion = undefined
           void loadMoreSessions(props.instanceId).catch((error) => {
             log.error("Failed to load more sessions:", error)
           })
         }
-      },
-      { root: listEl() ?? null, rootMargin: "0px 0px 200px 0px" }
-    )
-
-    observer.observe(el)
-    onCleanup(() => observer.disconnect())
+    }, 200))
   })
 
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null

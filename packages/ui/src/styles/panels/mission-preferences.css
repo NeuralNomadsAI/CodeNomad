@@ -42,7 +42,7 @@
 .mission-preferences .mission-profile-summary { color: var(--text-muted); font-size: var(--font-size-xs); }
 /* One fold for every agent/model choice; its summary keeps the current request visible. */
 .mission-preferences .mission-profiles-disclosure { margin-block-start: var(--space-sm); padding-top: var(--space-sm); border-top-color: var(--border-row); }
-.mission-preferences .mission-profiles-disclosure > summary .mission-profile-summary { margin-inline-start: var(--space-sm); font-weight: var(--font-weight-regular); }
+.mission-profiles-disclosure > summary .mission-profile-summary { margin-inline-start: var(--space-sm); font-weight: var(--font-weight-regular); }
 .mission-preferences .mission-profiles-disclosure .mission-profiles { margin: 0; padding-block-start: 0; border-block-start: 0; }
 .mission-preferences p[role="alert"] { color: var(--status-warning); font-size: var(--font-size-xs); }
 .mission-preferences p[role="status"] { color: var(--text-muted); font-size: var(--font-size-xs); }

@@ -10,7 +10,7 @@ export const recurrenceCurrentInput = z.object({ scheduleID: recurrenceIDSchema,
 export const recurrenceCurrentPageInput = z.object({ source: missionCurrentSourceSchema, selector: missionPanelPageRequestSchema,
   body: missionContentRequestSchema.optional() }).strict().superRefine((input, context) => {
   const selector = input.selector
-  if (selector.source === "summaries" || selector.source === "cleanups" || selector.source === "marks"
+  if (selector.source === "summaries" || selector.source === "cleanups" || selector.source === "marks" || selector.source === "task-marks"
     || (selector.source === "tasks" ? selector.task.missionID : selector.missionID) !== input.source.missionID
     || selector.source === "mission" && (!selector.header && !selector.field || selector.field && !selector.window)
     || input.body && (input.body.missionID !== input.source.missionID || selector.source !== "mission" || selector.field !== "body"

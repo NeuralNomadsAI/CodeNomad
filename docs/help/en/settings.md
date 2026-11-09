@@ -58,6 +58,10 @@ Memory is agent-maintained. An agent already keeping memory elsewhere, such as `
 
 ## Panels and Status sections {#panels-status}
 
+**Status** comes first by default; a saved tab order takes precedence. It stays available. In **Customize right panel**, its chevron folds or unfolds the list of section checkboxes without hiding the sections themselves.
+
+**Tokens** uses the same metric chips as messages. Collapsed, input, output and cost stay on the header line; expanded, reasoning joins them there and the chips wrap as needed. Totals including subsessions appear below.
+
 Drag a docked panel's inner edge to resize it. The handle stays highlighted and retains the pointer throughout the drag, including when the pointer moves beyond its edge. Release to finish.
 
 1. Use **Left panel** and **Right panel** at the outer header corners, or their **View** menu items, to show or hide each panel.

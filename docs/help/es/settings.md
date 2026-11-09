@@ -58,6 +58,10 @@ La memoria la mantiene el agente. Si ya mantiene otra, como `.claude/…/MEMORY.
 
 ## Paneles y secciones de Estado {#panels-status}
 
+**Estado** aparece primero por defecto; el orden de pestañas guardado tiene prioridad. Sigue disponible. En **Personalizar panel derecho**, su flecha contrae o expande la lista de casillas de sus secciones sin ocultar las propias secciones.
+
+**Tokens** usa los mismos indicadores que los mensajes. Al contraer, entrada, salida y coste permanecen en la cabecera; al expandir, se añade allí el razonamiento y los indicadores saltan de línea si hace falta. Debajo aparecen los totales que incluyen las subsesiones.
+
 Arrastra el borde interior de un panel acoplado para cambiar su tamaño. El tirador permanece resaltado y mantiene la captura del puntero durante todo el arrastre, incluso si el puntero sobrepasa el borde. Suelta para terminar.
 
 1. Usa **Panel izquierdo** y **Panel derecho** en las esquinas de la cabecera exterior, o sus opciones del menú **Ver**, para mostrar u ocultar cada panel.

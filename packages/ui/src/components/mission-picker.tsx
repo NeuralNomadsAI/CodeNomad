@@ -1,8 +1,9 @@
-import { For, Show, createComputed, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { ChevronRight, Flag, Plus, Repeat } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import SessionExpander from "./session-expander"
+import { preserveListFocus } from "../lib/preserve-list-focus"
 import { filterMissionPickerEntries, type MissionPickerEntry } from "./mission-picker-model"
 
 const describe = (entry: MissionPickerEntry) => `${entry.title} — ${entry.status}`
@@ -84,20 +85,7 @@ export function MissionRows(props: {
   const expanded = () => Boolean(selected()) && opened().has(props.selectedKey!)
   const items = new Map<string, HTMLLIElement>()
   let list: HTMLUListElement | undefined, rest!: HTMLDivElement
-  // Moving a row's item to reorder it blurs a focused control inside: captured
-  // before the rows update, it gets focus back once they have moved.
-  let moving: HTMLElement | undefined
-  createComputed(() => {
-    keys()
-    const active = document.activeElement
-    moving = list && active instanceof HTMLElement && list.contains(active) ? active : undefined
-  })
-  createEffect(() => {
-    keys()
-    const control = moving
-    moving = undefined
-    if (control?.isConnected && document.activeElement !== control && (!document.activeElement || document.activeElement === document.body)) control.focus({ preventScroll: true })
-  })
+  preserveListFocus(() => list)
   // Created once; without a selection it holds only the detail's list-level notices, after the rows.
   const detail = <div class="mission-row-children">{props.detail}</div> as HTMLDivElement
   createEffect(() => {

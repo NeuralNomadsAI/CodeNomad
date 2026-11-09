@@ -2,14 +2,16 @@
 .mission-editor .mission-create-field { display: grid; grid-template-columns: minmax(6em, 30%) minmax(0, 1fr); align-items: start; gap: var(--space-sm); }
 .mission-editor .mission-create-field > span { padding-block: var(--space-xs); overflow-wrap: anywhere; }
 .mission-editor .mission-create-field textarea { min-height: 0; field-sizing: content; resize: vertical; padding: var(--space-xs); }
-.mission-editor .mission-profile-row { display: block; }
-.mission-editor .mission-profile-row > label { grid-template-columns: minmax(6em, 30%) minmax(0, 1fr); align-items: center; }
+.mission-editor .mission-create-group { border-block-start: 1px solid var(--border-base); margin-block: var(--space-md); padding-block-start: var(--space-sm); min-width: 0; }
+.mission-editor .mission-create-group > h4 { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
 .mission-editor .mission-profile-row > legend { font-weight: var(--font-weight-medium); }
 .mission-create-field-error { display: block; color: var(--status-error-fg); font-size: var(--font-size-xs); margin-block: var(--space-xs); }
 
-.mission-create-option { margin-block: var(--space-sm); }
+.mission-create-option { margin-block: var(--space-md); }
+.mission-editor .mission-scheduling { border-block-start: 1px solid var(--border-base); padding-block-start: var(--space-sm); margin-block-start: var(--space-md); }
 .mission-editor .mission-create-template > label { margin-block-end: var(--space-xs); }
-.mission-create-option-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+.mission-editor .mission-create-autostart { display: flex; align-items: center; gap: var(--space-sm); margin-block: var(--space-md); }
+.mission-create-autostart > input { flex: none; }
 /* The project's native nesting depth (mission-subagent-depth.tsx) is a Delegation row. */
 .mission-editor .mission-depth .window-actions { display: flex; gap: var(--space-xs); }
 
@@ -29,8 +31,9 @@
 .mission-control[data-creating] > .mission-create[data-scroller="panel"] > .window-body { flex: none; overflow: visible; }
 
 /* Saved configurations precede the fields they populate. */
-.mission-brief-picker { display: grid; grid-template-columns: minmax(6em, 30%) minmax(0, 1fr); align-items: center; gap: var(--space-sm); margin-block: var(--space-sm); }
-.mission-editor .mission-brief-picker > label { display: flex; align-items: center; gap: var(--space-xs); margin: 0; overflow-wrap: anywhere; }
+.mission-brief-picker { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: var(--space-sm); margin-block: var(--space-sm); }
+.mission-editor .mission-brief-picker > label { display: flex; align-items: center; gap: var(--space-xs); margin: 0; white-space: nowrap; }
+.mission-brief-picker > label > svg { width: 1rem; height: 1rem; flex: none; }
 .mission-brief-picker > :is(p, button) { grid-column: 1 / -1; }
 .mission-brief-picker-row { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
 .mission-editor .mission-brief-picker-row select { flex: 1 1 auto; min-width: 0; }
@@ -39,8 +42,6 @@
   min-width: var(--touch-target-size-compact); min-height: var(--touch-target-size-compact);
   padding-inline: var(--space-xs); color: var(--text-secondary); background: transparent; border-radius: 0;
 }
-/* The footer's Save as brief is a bookmark icon named by its tooltip. */
-.mission-brief-save > .window-icon-button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
 .mission-brief-save { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin-inline-end: auto; min-width: 0; }
 .mission-editor .mission-brief-save input { width: 12em; min-width: 0; flex: 1 1 8em; }
 .mission-brief-save > p { flex-basis: 100%; margin: 0; font-size: var(--font-size-xs); }
