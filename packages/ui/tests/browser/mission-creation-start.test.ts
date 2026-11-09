@@ -201,6 +201,7 @@ test("real editor adopts discovered project before creation; lost Play remains r
     assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Inspect changes after project discovery")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByRole("checkbox", { name: "Start on creation", exact: true }).check()
+    await form.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Fixture model" }).waitFor({ state: "attached" })
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await form.waitFor({ state: "detached" }); await saved(page)
 
