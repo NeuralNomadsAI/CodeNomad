@@ -1012,9 +1012,12 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
     || transcript.retryTimer || transcript.queue.length) return
   // Work that outlives the settlement still needs this reducer: prompts parked in
   // its inbox (e.g. after an interruption) are listed from it, unsettled rows
-  // settle only in it, and an outstanding delivery repair publishes through it.
+  // settle only in it, and an outstanding delivery repair or shared
+  // reconciliation read publishes through it (a trailing read that superseded
+  // a repair's read owns its publication, and its own completion retries this).
   const data = transcript.entry.data
   if (transcript.deliveryRepairPending > 0 || transcript.deliveryRepairOwed
+    || (transcript.settlementReadPending && transcript.settlementReadEntry === transcript.entry)
     || data.session.pending.list(sessionId).length || data.session.message.list(sessionId).some(isUnsettledAtSettlement)) return
   // The reducer's final coalesced page — e.g. a tool that settled after the
   // execution did — publishes here, before normal retirement destroys the

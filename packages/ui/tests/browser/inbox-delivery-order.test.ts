@@ -51,9 +51,12 @@ async function open(run: (page: Page) => Promise<void>) {
       errors.push(failure)
       return
     }
-    receiptsChecks.push(page.evaluate(id => (window as any).fixtureReceiptsReadCancelled(id), id).then(cancelled => {
-      if (!cancelled) errors.push(failure)
-    }))
+    // A verification that cannot complete (page closed or navigated) keeps the
+    // original failure instead of rejecting unhandled.
+    receiptsChecks.push(page.evaluate(id => (window as any).fixtureReceiptsReadCancelled(id), id).then(
+      cancelled => { if (!cancelled) errors.push(failure) },
+      () => { errors.push(failure) },
+    ))
   })
   await page.route("**/api/**", route => {
     if (new URL(route.request().url()).pathname.endsWith("/permission-receipts")) {

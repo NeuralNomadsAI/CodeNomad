@@ -299,6 +299,47 @@ test("a delivery crossing an HTTP-ahead settlement read reconciles through its o
   } finally { f.cleanup() }
 })
 
+test("a settlement read superseding a delivery repair keeps the reducer until it publishes", async () => {
+  const instanceId = "native-delivery-superseded-repair"
+  const f = fixture(instanceId)
+  const sessionId = "s"
+  const zero = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+  const tool = () => Object.values(messageStoreBus.getOrCreate(instanceId).getMessage("prior")?.parts ?? {})
+    .map((part: any) => part.data).find((part: any) => part.type === "tool") as any
+  try {
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "initial", agent: "build", model, started: 1 })
+    f.emit("session.inbox.enqueued", { sessionID: sessionId, inboxID: "q", item: { type: "user", payload: { text: "queued follow-up" }, delivery: "queue" } })
+    f.emit("session.step.ended", { sessionID: sessionId, assistantMessageID: "initial", finish: "stop", cost: 0, tokens: zero })
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "prior", agent: "build", model, started: 2 })
+    f.emit("session.tool.input.started", { sessionID: sessionId, assistantMessageID: "prior", id: "lost", name: "read" })
+    f.emit("session.tool.called", { sessionID: sessionId, assistantMessageID: "prior", id: "lost", input: {} })
+    // The tool finished natively, but its terminal event never arrived.
+    f.emit("session.step.ended", { sessionID: sessionId, assistantMessageID: "prior", finish: "stop", cost: 0, tokens: zero })
+    f.emit("session.inbox.delivered", { sessionID: sessionId, inboxID: "q" })
+    assert.equal(f.reads.length, 1, "the relocating delivery started repair read A")
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "reply", agent: "build", model, started: 3 })
+    f.emit("session.step.ended", { sessionID: sessionId, assistantMessageID: "reply", finish: "stop", cost: 0, tokens: zero })
+    // The settlement invalidates beneath A: its trailing read B owns publication.
+    f.emit("session.execution.succeeded", { sessionID: sessionId })
+    assert.equal(tool()?.state?.status, "running")
+    const page = [
+      { id: "initial", type: "assistant", agent: "build", model, time: { created: 1, completed: 2 }, content: [] },
+      { id: "prior", type: "assistant", agent: "build", model, time: { created: 2, completed: 3 }, content: [{
+        type: "tool", id: "lost", name: "read", time: { created: 2, ran: 3, completed: 4 },
+        state: { status: "completed", input: {}, content: [{ type: "text", text: "native result" }], metadata: {} },
+      }] },
+      { id: "q", type: "user", text: "queued follow-up", time: { created: 3 } },
+      { id: "reply", type: "assistant", agent: "build", model, time: { created: 4, completed: 5 }, content: [] },
+    ]
+    f.reads[0].resolve({ data: [...page].reverse(), cursor: {} })
+    await flush(); await flush()
+    assert.equal(f.reads.length, 2, "the superseding read B started")
+    f.reads[1].resolve({ data: [...page].reverse(), cursor: {} })
+    await flush(); await flush()
+    assert.equal(tool()?.state?.status, "completed", "B publishes before the settled reducer retires")
+  } finally { f.cleanup() }
+})
+
 test("a delivery repair completing over a history window leaves that window's membership alone", async () => {
   const instanceId = "native-delivery-history-window"
   const f = fixture(instanceId)
