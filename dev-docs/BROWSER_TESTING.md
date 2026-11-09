@@ -92,6 +92,9 @@ synthetic provider.
   explicitly. Mutation collectors match the exact HTTP method and path. Hold the
   intended panel source independently of schedule reads, and await lifecycle
   feedback settlement before asserting its final status.
+  Project ABA cases with held inventory discovery restore an exact target through
+  view state and await its point-read detail, keeping the mutation's view fence
+  independent of later row-click intent.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
