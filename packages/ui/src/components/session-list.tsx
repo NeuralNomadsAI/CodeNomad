@@ -4,7 +4,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
-import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
+import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -40,7 +40,8 @@ import {
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
-import { collectDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, projectSessionSearchResults, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
+import { collectDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, isSessionArchived, projectSessionFamilies, projectSessionSearchResults, projectUnarchivedSessionThreads, sortSessionIdsDeepestFirst, type SessionFamilySort, type SessionArchiveFilter } from "../stores/session-tree"
+import { setSessionArchived } from "../stores/session-archive"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -79,6 +80,8 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [worktreeDirectory, setWorktreeDirectory] = createSignal("")
   const [includeMainSessions, setIncludeMainSessions] = createSignal(true)
   const [includeSubsessions, setIncludeSubsessions] = createSignal(false)
+  const [archiveFilter, setArchiveFilter] = createSignal<SessionArchiveFilter>("active")
+  const [archivingSessionIds, setArchivingSessionIds] = createSignal<Set<string>>(new Set())
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
   let failedSortExhaustion: string | undefined
 
@@ -242,7 +245,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory) === normalized)
       return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.label ?? worktree?.slug ?? directory
     }
-    if (!props.enableFilterBar) return projectSessionFamilies(props.threads, { sort: sortBy(), getWorktreeLabel })
+    if (!props.enableFilterBar) return projectSessionFamilies(projectUnarchivedSessionThreads(props.threads, props.activeSessionId), { sort: sortBy(), getWorktreeLabel })
     const instanceSessions = sessionStateSessions().get(props.instanceId)
     const candidates = hasSearchResults ? getSessionSearchSessions(props.instanceId)
       : collectSessionThreadIds(props.threads).flatMap(id => {
@@ -254,6 +257,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       worktreeDirectory: worktreeDirectory(),
       includeSubsessions: includeSubsessions(),
       includeMainSessions: includeMainSessions(),
+      archive: archiveFilter(),
       getWorktreeLabel,
       ...(query && !hasSearchResults
         ? { matchesSession: (session) => sessionMatchesQuery(session.id, query) }
@@ -416,6 +420,23 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (!session) return
     const label = session.title && session.title.trim() ? session.title : sessionId
     setRenameTarget({ id: sessionId, title: session.title ?? "", label })
+  }
+
+  const handleArchiveSession = async (sessionId: string) => {
+    const instanceId = props.instanceId
+    const session = sessionStateSessions().get(instanceId)?.get(sessionId)
+    if (!session || archivingSessionIds().has(sessionId)) return
+    const archived = !isSessionArchived(session)
+    setArchivingSessionIds(previous => new Set(previous).add(sessionId))
+    try {
+      await setSessionArchived(instanceId, sessionId, archived)
+    } catch (error) {
+      log.error("Failed to change native session archive", { instanceId, sessionId, error })
+      if (props.instanceId === instanceId) showToastNotification({ category: "sessions", variant: "error",
+        message: t(archived ? "sessionList.archive.error" : "sessionList.restore.error") })
+    } finally {
+      setArchivingSessionIds(previous => { const next = new Set(previous); next.delete(sessionId); return next })
+    }
   }
 
   const isSessionReloading = (sessionId: string) => reloadingSessionIds().has(sessionId)
@@ -761,6 +782,13 @@ const SessionList: Component<SessionListProps> = (props) => {
         get disabled() { return isSessionDeleting(sessionId()) },
         onSelect: () => handleDeleteSession(sessionId()),
       },
+      {
+        key: "archive",
+        get label() { return t(isSessionArchived(rowProps.session) ? "sessionList.actions.restore.title" : "sessionList.actions.archive.title") },
+        get icon() { return isSessionArchived(rowProps.session) ? <ArchiveRestore class="w-3.5 h-3.5" /> : <Archive class="w-3.5 h-3.5" /> },
+        get disabled() { return archivingSessionIds().has(sessionId()) || isSessionDeleting(sessionId()) },
+        onSelect: () => handleArchiveSession(sessionId()),
+      },
     ]
 
     return (
@@ -819,6 +847,12 @@ const SessionList: Component<SessionListProps> = (props) => {
             class="session-item-badges"
             onClick={(event) => { if (!(event.target as Element).closest("button")) selectRow() }}
           >
+            <Show when={isSessionArchived(rowProps.session)}>
+              <span class="status-indicator session-status-list" title={t("sessionList.status.archived")}>
+                <Archive class="w-3.5 h-3.5" aria-hidden="true" />
+                <span>{t("sessionList.status.archived")}</span>
+              </span>
+            </Show>
             <Show when={showStatus()}>
               <Show
                 when={statusClearable()}
@@ -971,6 +1005,14 @@ const SessionList: Component<SessionListProps> = (props) => {
               ))}
             </select>
           </div>
+
+          <select class="selector-input mt-2 w-full min-w-0" value={archiveFilter()}
+            onChange={event => setArchiveFilter(event.currentTarget.value as SessionArchiveFilter)}
+            aria-label={t("sessionList.archiveFilter.ariaLabel")}>
+            <option value="active">{t("sessionList.archiveFilter.active")}</option>
+            <option value="archived">{t("sessionList.archiveFilter.archived")}</option>
+            <option value="all">{t("sessionList.archiveFilter.all")}</option>
+          </select>
 
           <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-secondary">
             <label class="flex items-center gap-2">
