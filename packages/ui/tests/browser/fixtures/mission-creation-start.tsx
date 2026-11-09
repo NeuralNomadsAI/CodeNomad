@@ -80,9 +80,11 @@ function RealEditorFixture() {
     <Show when={editing()}><MissionEditor instanceId="fixture" directory="/fixture" viewDirectory="/fixture" projectID={projectID()}
       action={action} active={() => true} onCancel={() => setEditing(false)} onSaved={async (_mission, id) => {
         if (!id) throw new Error("Expected calendar-owned creation")
+        // Match MissionControl: retire the editor synchronously before reading its created document.
+        setEditing(false)
         const read = await serverApi.fetchMissionSchedule("fixture", id, { directory: "/fixture" })
         if (!read.document) throw new Error("Created Mission unavailable")
-        setDoc(read.document); setEditing(false); setSaved(value => value + 1)
+        setDoc(read.document); setSaved(value => value + 1)
       }} /></Show>
     <Show when={!editing() && doc() && controlsMounted()}><Controls /></Show>
     <AlertDialog />

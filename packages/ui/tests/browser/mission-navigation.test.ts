@@ -124,6 +124,8 @@ async function setup(missing = false, holdSchedule = false) {
     const pathname = new URL(route.request().url()).pathname
     requests.push(`${route.request().method()} ${pathname}`)
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
+    if (pathname.endsWith("/subagent-depth")) return route.fulfill({ json: { location: { directory: "/fixture" },
+      capability: { minimum: 0 }, effectiveDepth: 1, project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } })
     if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname.endsWith("/missions/A/schedule") && holdSchedule) {
       scheduleReached.release(); await scheduleHeld.promise
