@@ -17,6 +17,7 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 5. Duraklatılmış görev kaydedip sonra ▶ **Başlat** kullanmak için **Oluştururken başlat** kapalı kalsın. Oluşturma doğrulandıktan sonra aynı korumalı başlatmayı istemek için açın ve **Oluştur** seçin.
 
 **Oluştururken başlat varsayılan olarak kapalıdır.** Önce seçili proje/Location içinde istenen profiller ve oturum ilkesiyle duraklatılmış bir Görev kaydedilir. Sonraki başlatma normal Play denetimlerini ve gerekirse yerel ayar onayını kullanır. Oluşturma yanıtı kaybolursa makbuz okunduktan sonra da başlatma elle yapılır. Doğrulama alanın yanında görünür; gönderimsiz ret taslağı korur. Koordinatörün hazırladığı devam görevi **Hazır** görünür ve kendi ▶ eylemiyle başlar.
+Proje hâlâ tanımlanıyorsa oluşturulan zamanlama duraklatılmış kalır; proje hazır olduğunda araç çubuğundaki ▶ **Başlat** eylemini kullanın.
 
 Kayıtlı tek seferlik görevler yürütme kontrollerini, görev ağacını, konuşmalarını ve nihai raporlarını korur. Mevcut günlük zamanlamalar günlük kontrolleri ve [günlük zamanlama kurallarıyla](#existing-daily-schedules) listede kalır. Kaydı seçip o nesne için sunulan kontrolleri kullanın.
 
@@ -152,9 +153,9 @@ Yapılandırmalar talimatları, rehberi ve istenen profil/görevlendirme seçiml
 
 ### Yerel zamanlama {#native-scheduling}
 
-Etiketlerin yanındaki **i** simgeleri seçenekleri açıklar: üzerine gelin, klavyeyle odaklayın veya dokunun.
+**Şu durumda başlat** yanındaki **ⓘ**, üzerine gelindiğinde veya klavyeyle odaklandığında araç ipucu gösterir. [Yerel zamanlama](missions.md#native-scheduling) yardımını tarayıcıda arayüz dilinizde açmak için tıklayın, dokunun veya Enter'a basın.
 
-**Zamanlama** oluşturma ve düzenlemede görünür. **Şu durumda başlat** ilk zamanlama seçeneği **Bir kez, şimdi** ile başlar. Sıradan bir zamanlama kaynağıdır: başka zamanlamalarla **veya**, ardından gelen olayla koşul (**eğer**) ya da olaylardan sonra alternatif (**aksi halde**) oluşturur. **Ölçüt ekle** ekler, × kaldırır. **i** tıklama, Enter veya Boşluk ile açılır ve [OpenCode'un başlatma ayarına](opencode.md#login-start) götürür. Görevler OpenCode çalışırken çalışır. Takvimler sistem saat dilimini kullanır; farklıysa **Kayıtlı saat dilimi (IANA)** görünür.
+**Zamanlama** oluşturma ve düzenlemede görünür. **Şu durumda başlat** ilk zamanlama seçeneği **Bir kez, şimdi** ile başlar. Sıradan bir zamanlama kaynağıdır: başka zamanlamalarla **veya**, ardından gelen olayla koşul (**eğer**) ya da olaylardan sonra alternatif (**aksi halde**) oluşturur. **Ölçüt ekle** ekler, × kaldırır. Görevler OpenCode çalışırken çalışır. Takvimler sistem saat dilimini kullanır; farklıysa **Kayıtlı saat dilimi (IANA)** görünür.
 
 **Bir kez, şimdi** tek bir fırsat sunar; başlangıç noktası formu açmak veya kaydetmek değil, Play ile zamanlamayı etkinleştirmektir. Olaydan sonra şimdi alternatiftir; şimdiden sonra olay koşuldur. Engelleyen bir koşul, başlatmadan tek fırsatı tüketebilir. Daha sonraki fırsatlar için yineleme veya tetikleyici olay seçin.
 

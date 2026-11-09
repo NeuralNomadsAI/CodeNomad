@@ -248,6 +248,80 @@ test("H9 locks explain why; missing capability keeps a criterion-free Mission av
   } finally { await page.close() }
 })
 
+test("monthly and time pairs wrap before their controls collapse at 220px and stay horizontal when wide", async () => {
+  for (const locale of ["en", "fr", "he"]) {
+    const { page, errors } = await setup(`?locale=${locale}`)
+    try {
+      await page.waitForFunction(locale => document.documentElement.lang.startsWith(locale), locale)
+      await rows(page, [["monthly"], ["daily"], ["weekly"], ["files-changed", { files: "src/a.ts" }],
+        ["cron", { expression: "*/15 * * * *" }], ["hours", { hours: "6" }]])
+      await page.locator("main").evaluate(element => element.style.width = "100%")
+      for (const width of [220, 640]) {
+        await page.setViewportSize({ width, height: 1200 })
+        const boxes = await page.locator('.mission-scheduling label:has(> :is(input:not([type="checkbox"]), textarea, select))').evaluateAll(labels => labels.map(label => {
+          const text = label.querySelector(":scope > span"), input = label.querySelector(":scope > :is(input, textarea, select)")!
+          const range = document.createRange()
+          range.setStart(label, 0); range.setEndBefore(input)
+          return { label: label.getBoundingClientRect().toJSON(), text: (text?.getBoundingClientRect() ?? range.getBoundingClientRect()).toJSON(),
+            input: input.getBoundingClientRect().toJSON(), row: label.parentElement!.getBoundingClientRect().toJSON(),
+            textFits: text ? text.scrollWidth <= text.clientWidth : label.scrollWidth <= label.clientWidth,
+            rtl: getComputedStyle(label).direction === "rtl", name: input.getAttribute("aria-label") ?? "zone" }
+        }))
+        assert.equal(boxes.length, 8, "month day, monthly/daily/weekly time, files, cron, hours and saved zone are all measured")
+        for (const box of boxes) {
+          const context = `${locale} ${width}px ${JSON.stringify(box)}`
+          assert.ok(box.input.width >= 100, context)
+          assert.ok(box.input.height >= 24, context)
+          assert.ok(box.label.left >= box.row.left && box.label.right <= box.row.right, context)
+          assert.ok(box.input.left >= box.label.left && box.input.right <= box.label.right, context)
+          assert.ok(box.input.left >= 0 && box.input.right <= width, context)
+          assert.ok(box.text.top < box.input.bottom && box.input.top < box.text.bottom, "each label and field stays horizontal: " + context)
+          assert.ok(box.rtl ? box.input.right < box.text.left : box.text.right < box.input.left, context)
+          assert.equal(box.textFits, true, context)
+        }
+        assert.ok(width === 220 ? boxes[0].label.bottom < boxes[1].label.top : boxes[0].input.top === boxes[1].input.top,
+          `${locale}: monthly pairs wrap only at the narrow width`)
+        const overflow = await page.locator("main .window-body").evaluate(element => {
+          const bounds = element.getBoundingClientRect()
+          return { width: element.clientWidth, scrollWidth: element.scrollWidth, outside: [...element.querySelectorAll("label, input, textarea, select")]
+            .filter(child => child.getBoundingClientRect().left < bounds.left || child.getBoundingClientRect().right > bounds.right)
+            .map(child => ({ tag: child.tagName, name: child.getAttribute("aria-label"), box: child.getBoundingClientRect().toJSON() })) }
+        })
+        assert.ok(overflow.scrollWidth <= overflow.width, JSON.stringify(overflow))
+        assert.equal(await page.locator('.mission-scheduling input[type="checkbox"]').count(), 7)
+        assert.equal(await page.locator('.mission-scheduling input[type="checkbox"]').evaluateAll(inputs => inputs.every(input =>
+          getComputedStyle(input).minInlineSize === "0px" && input.getBoundingClientRect().width < 32)), true, "weekday checkboxes keep their native size")
+        const month = page.locator('input[type="number"]')
+        await month.click(); await month.press("ControlOrMeta+A"); await month.pressSequentially("23")
+        assert.equal(await month.inputValue(), "23")
+        await month.press("Tab")
+        const time = page.locator('input[type="time"]').first()
+        assert.equal(await time.evaluate(element => element === document.activeElement), true)
+        await time.press("Home"); await time.press("ArrowUp")
+        assert.equal(await time.inputValue(), width === 220 ? "10:00" : "11:00", "keyboard changes the native time field")
+        const saved = await policy(page)
+        assert.equal(saved.when[0].expression, width === 220 ? "0 10 23 * *" : "0 11 23 * *")
+        const files = page.locator(".mission-criterion textarea"), cron = page.locator('.mission-criterion input[maxlength="512"]')
+        await files.click(); await files.press("ControlOrMeta+A"); await files.pressSequentially("src/edited.ts")
+        await cron.click(); await cron.press("ControlOrMeta+A"); await cron.pressSequentially("*/20 * * * *")
+        const hours = page.locator(".mission-criterion > label > select")
+        await hours.focus(); await page.keyboard.press("Space"); await page.keyboard.press("Home")
+        await page.keyboard.press("ArrowDown"); await page.keyboard.press("Enter")
+        assert.equal(await files.inputValue(), "src/edited.ts")
+        assert.equal(await cron.inputValue(), "*/20 * * * *")
+        assert.equal(await hours.inputValue(), "2")
+        const zone = page.locator(".mission-scheduling input[list]")
+        await zone.click(); await zone.press("ControlOrMeta+A"); await zone.pressSequentially("Europe/Paris")
+        assert.equal(await zone.inputValue(), "Europe/Paris")
+        assert.equal(await zone.evaluate(element => element === document.activeElement), true)
+        assert.ok(await policy(page), "all edited sibling controls still produce a valid policy")
+        console.log(`scheduling boxes ${locale} ${width}px: ${JSON.stringify(boxes.map(({ name, input }) => ({ name, ...input })))}`)
+      }
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  }
+})
+
 test("French light and Hebrew RTL remain readable at narrow widths without overflow", async () => {
   for (const locale of ["fr", "he"]) {
     const { page, errors } = await setup(`?locale=${locale}&light`)

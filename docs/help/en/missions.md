@@ -17,6 +17,7 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 5. Leave **Start on creation** off to save a paused mission and use ▶ **Start** later. Turn it on to request the same guarded Start after creation is confirmed, then choose **Create**.
 
 **Start on creation is off by default.** Creation saves a paused Mission first; when selected, the follow-up uses the ordinary Play guards and any native-settings confirmation. If creation's acknowledgement is lost, checking its receipt leaves Start manual. Creation belongs to the selected project/Location and records the requested profiles and task-session policy. Validation appears beside the affected field; a refusal that says nothing was sent keeps the draft for correction. A one-time coordinator can also prepare a separate follow-up: it appears as **Prepared** and starts from its own ▶ action.
+If the project is still being identified, the created schedule stays paused; use ▶ **Start** in the toolbar once the project is ready.
 
 Saved one-time missions retain their execution controls, task tree, conversations and final reports. Existing daily schedules remain listed with their daily controls and [daily timing rules](#existing-daily-schedules). Select the entry and use the controls available for that object.
 
@@ -152,9 +153,9 @@ Configurations store instructions, playbook and requested profile/delegation cho
 
 ### Native scheduling {#native-scheduling}
 
-The **i** icons beside scheduling labels explain the choices: hover, focus with the keyboard or tap.
+The **ⓘ** beside **Launch when** shows a tooltip on hover or keyboard focus. Click, tap or press Enter to open [Native scheduling](missions.md#native-scheduling) in the browser, in your UI language.
 
-**Scheduling** is visible in Create and Edit. **Launch when** begins with **Once, now**, the first schedule choice. It is an ordinary schedule source: combine it with other schedules (**or**), place an event after it as its condition (**if**), or place it after events as their fallback (**else**). Choose **Add a criterion**, then its type; remove a criterion with ×. The **i** beside **Launch when** opens on click, Enter or Space, explains **if** and **else**, and links to [OpenCode's start setting](opencode.md#login-start). Missions run while OpenCode runs. New civil schedules use the system time zone; **Saved time zone (IANA)** appears when the saved zone differs.
+**Scheduling** is visible in Create and Edit. **Launch when** begins with **Once, now**, the first schedule choice. It is an ordinary schedule source: combine it with other schedules (**or**), place an event after it as its condition (**if**), or place it after events as their fallback (**else**). Choose **Add a criterion**, then its type; remove a criterion with ×. Missions run while OpenCode runs. New civil schedules use the system time zone; **Saved time zone (IANA)** appears when the saved zone differs.
 
 | Schedule | Timing |
 | --- | --- |

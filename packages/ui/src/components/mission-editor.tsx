@@ -174,7 +174,7 @@ export function MissionEditor(props: {
   onCleanup(() => props.onReading?.(false))
   const policy = createMemo(() => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } })
   const mode = () => policy() && !requiresMissionCalendar(policy()!) ? "once" : "recurring"
-  const captureStart = createMissionCreationStart({ instanceId: props.instanceId, projectID: props.projectID,
+  const captureStart = createMissionCreationStart({ instanceId: props.instanceId, get projectID() { return props.projectID },
     get directory() { return props.viewDirectory ?? props.directory ?? props.instanceId }, active: isActive,
     captureView: () => {
       const view = captureView(), operation = props.captureOperation?.() ?? (() => true)
@@ -420,7 +420,8 @@ export function MissionEditor(props: {
     <Show when={kind === "create"}><MissionBriefPicker disabled={locked() || !isActive()} active={isActive} value={selectedModel()?.id}
       onUse={model => {
         requestId = crypto.randomUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
-        setObjective(model.objective); setTitleOverride(deriveMissionTitle(model.name)); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
+        const configurationTitle = model.name.replace(/\s+/g, " ").trim().slice(0, MISSION_TITLE_MAX).replace(/[\uD800-\uDBFF]$/, "").trimEnd()
+        setObjective(model.objective); setTitleOverride(configurationTitle); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
         setCustomProfiles(model.profiles !== undefined)
         setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
         setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))

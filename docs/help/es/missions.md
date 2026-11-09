@@ -17,6 +17,7 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 5. Deja **Iniciar al crear** desactivado para guardar una misión en pausa e iniciarla después con ▶ **Iniciar**. Actívalo para solicitar el mismo inicio protegido tras confirmar la creación y elige **Crear**.
 
 **Iniciar al crear está desactivado por defecto.** Primero se guarda una Misión en pausa en el proyecto/Location seleccionado, con los perfiles y la política de sesiones solicitados. El inicio posterior usa las comprobaciones normales de Play y la confirmación de ajustes nativos cuando corresponda. Si se pierde la confirmación de creación, leer su recibo deja el inicio manual. La validación aparece junto al campo; un rechazo sin envío conserva el borrador. Un seguimiento del coordinador aparece como **Preparada** y se inicia desde su propia acción ▶.
+Si aún se está identificando el proyecto, la programación creada queda en pausa; usa ▶ **Iniciar** en la barra de herramientas cuando el proyecto esté listo.
 
 Las misiones puntuales guardadas conservan sus controles de ejecución, árbol de tareas, conversaciones e informes finales. Las programaciones diarias existentes siguen en la lista con sus controles diarios y sus [reglas horarias diarias](#existing-daily-schedules). Selecciona la entrada y usa los controles disponibles para ese objeto.
 
@@ -152,9 +153,9 @@ Las configuraciones guardan instrucciones, guion y elecciones de perfiles y dele
 
 ### Programación nativa {#native-scheduling}
 
-Los iconos **i** junto a las etiquetas explican las opciones: pasa el puntero, enfócalos con el teclado o tócalos.
+El **ⓘ** junto a **Lanzar cuando** muestra una ayuda al pasar el puntero o enfocarlo con el teclado. Haz clic, tócalo o pulsa Intro para abrir [Programación nativa](missions.md#native-scheduling) en el navegador, en el idioma de tu interfaz.
 
-**Programación** está visible al crear y editar. **Lanzar cuando** empieza con **Una vez, ahora**, la primera opción de horario. Es una fuente de horario normal: combínala con otros horarios (**o**), con un evento posterior como condición (**si**) o después de eventos como alternativa (**si no**). **Añadir un criterio** añade y × elimina. El **i** se abre con clic, Intro o Espacio y enlaza al [ajuste de inicio de OpenCode](opencode.md#login-start). Las misiones se ejecutan mientras OpenCode funciona. Los horarios civiles usan la zona del sistema; **Zona horaria guardada (IANA)** aparece si difiere.
+**Programación** está visible al crear y editar. **Lanzar cuando** empieza con **Una vez, ahora**, la primera opción de horario. Es una fuente de horario normal: combínala con otros horarios (**o**), con un evento posterior como condición (**si**) o después de eventos como alternativa (**si no**). **Añadir un criterio** añade y × elimina. Las misiones se ejecutan mientras OpenCode funciona. Los horarios civiles usan la zona del sistema; **Zona horaria guardada (IANA)** aparece si difiere.
 
 **Una vez, ahora** ofrece una sola oportunidad, anclada cuando Play activa el horario, en vez de al abrir el formulario o guardarlo. Evento antes de ahora es una alternativa; ahora antes de evento es condicional. Una condición bloqueante puede consumir esa única oportunidad sin iniciar nada. Usa recurrencia o un evento desencadenante para tener oportunidades posteriores.
 

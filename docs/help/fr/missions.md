@@ -17,6 +17,7 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 5. Laissez **Démarrer à la création** décoché pour enregistrer une mission en pause et utiliser ▶ **Démarrer** plus tard. Cochez-le pour demander le même démarrage contrôlé après confirmation de la création, puis choisissez **Créer**.
 
 **Démarrer à la création est décoché par défaut.** La création enregistre d’abord une Mission en pause ; si l’option est cochée, la suite utilise les contrôles ordinaires de Play et l’éventuelle confirmation des réglages natifs. Si l’accusé de création est perdu, la lecture de sa preuve laisse le démarrage manuel. La création appartient au projet/à la Location sélectionné et enregistre les profils et la politique des sessions de tâches. La validation apparaît près du champ concerné ; un refus indiquant que rien n’a été envoyé conserve le brouillon. Un coordinateur ponctuel peut préparer une suite **Préparée**, qui démarre depuis sa propre action ▶.
+Si l’identification du projet est encore en cours, le programme créé reste en pause ; utilisez ▶ **Démarrer** dans la barre d’outils une fois le projet prêt.
 
 Les missions ponctuelles enregistrées conservent leurs commandes d’exécution, leur arbre de tâches, leurs conversations et leurs rapports finaux. Les programmations quotidiennes existantes restent dans la liste avec leurs commandes quotidiennes et leurs [règles horaires quotidiennes](#existing-daily-schedules). Sélectionnez l’entrée et utilisez les commandes disponibles pour cet objet.
 
@@ -152,9 +153,9 @@ Les configurations stockent les instructions, le scénario et les choix de profi
 
 ### Programmation native {#native-scheduling}
 
-Les icônes **i** près des libellés expliquent les choix : survolez-les, placez-y le focus au clavier ou touchez-les.
+L’**ⓘ** à côté de **Lancer quand** affiche une infobulle au survol ou au focus clavier. Cliquez, touchez-le ou appuyez sur Entrée pour ouvrir [Programmation native](missions.md#native-scheduling) dans le navigateur, dans la langue de votre interface.
 
-**Programmation** est visible à la création et à la modification. **Lancer quand** commence par **Une fois, maintenant**, le premier choix de programme. Cette source ordinaire se combine avec d’autres programmes (**ou**), avec un événement placé après comme condition (**si**), ou après des événements comme repli (**sinon**). Choisissez **Ajouter un critère**, puis son type ; retirez-le avec ×. L’**i** s’ouvre au clic, avec Entrée ou Espace et mène au [réglage de démarrage d’OpenCode](opencode.md#login-start). Les missions tournent quand OpenCode tourne. Les nouveaux programmes civils utilisent le fuseau système ; **Fuseau enregistré (IANA)** apparaît si le fuseau enregistré diffère.
+**Programmation** est visible à la création et à la modification. **Lancer quand** commence par **Une fois, maintenant**, le premier choix de programme. Cette source ordinaire se combine avec d’autres programmes (**ou**), avec un événement placé après comme condition (**si**), ou après des événements comme repli (**sinon**). Choisissez **Ajouter un critère**, puis son type ; retirez-le avec ×. Les missions tournent quand OpenCode tourne. Les nouveaux programmes civils utilisent le fuseau système ; **Fuseau enregistré (IANA)** apparaît si le fuseau enregistré diffère.
 
 **Une fois, maintenant** offre une seule occasion, ancrée lorsque Play arme le programme, plutôt qu’à l’ouverture du formulaire ou à l’enregistrement. Événement puis maintenant forme un repli ; maintenant puis événement est conditionnel. Une condition bloquante peut consommer cette unique occasion sans lancement. Choisissez une récurrence ou un événement déclencheur pour disposer d’occasions ultérieures.
 

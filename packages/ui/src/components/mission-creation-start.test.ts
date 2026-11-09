@@ -6,6 +6,7 @@ import { serverApi } from "../lib/api-client"
 import { MissionLifecycleRequestError, type MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 import { missionLifecycleIntents, missionLifecycleSource } from "../stores/mission-lifecycle-intents"
 import { createMissionCreationStart } from "./mission-creation-start"
+import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
 const mission = (id: string) => ({ id, projectID: "project", projectCanonical: "/fixture", revision: 1,
   status: "active", runState: "prepared", coordinatorSessionId: "ses_coordinator",
@@ -13,12 +14,14 @@ const mission = (id: string) => ({ id, projectID: "project", projectCanonical: "
 const source = (value: MissionPanelMap) => missionLifecycleSource("fixture", value, {})
 function setup() {
   let dispose!: () => void, active = true, epoch = 0, refreshes = 0
+  let projectID: string | undefined = "project", directory = "/fixture"
   const capture = createRoot(cleanup => {
     dispose = cleanup
-    return createMissionCreationStart({ instanceId: "fixture", projectID: "project", directory: "/fixture",
+    return createMissionCreationStart({ instanceId: "fixture", get projectID() { return projectID }, get directory() { return directory },
       active: () => active, captureView: () => { const before = epoch; return () => epoch === before }, refresh: () => { refreshes++ } })
   })
-  return { capture, dispose, hide: () => { active = false }, navigate: () => { epoch++ }, get refreshes() { return refreshes } }
+  return { capture, dispose, hide: () => { active = false }, navigate: () => { epoch++ },
+    project: (value?: string) => { projectID = value }, directory: (value: string) => { directory = value }, get refreshes() { return refreshes } }
 }
 const ack = (value: MissionPanelMap, input: MissionLifecycleInput) => ({ mission: { ...value, runState: "running",
   control: { requestID: input.requestId, action: input.action, expectedRevision: input.expectedRevision, pending: [] } } as unknown as MissionMap })
@@ -51,6 +54,30 @@ test("unchecked, departed and disposed creation intentions send nothing", async 
     assert.equal(f.refreshes, 0)
   }
   assert.equal(calls, 0)
+})
+
+test("creation continuation retains its captured project and physical directory owner", async t => {
+  let calls = 0
+  t.mock.method(serverApi, "controlMission", async () => { calls++; throw new Error("unexpected") })
+  for (const change of ["project", "directory"] as const) {
+    const f = setup(), start = f.capture(true)
+    try { f[change]("another"); await start(mission(`changed-${change}`)); assert.equal(f.refreshes, 0) }
+    finally { f.dispose() }
+  }
+  assert.equal(calls, 0, "a late creation ACK cannot start or publish under another owner")
+})
+
+test("a schedule without a discovered control owner stays paused instead of creating an orphaned holder", async t => {
+  const f = setup()
+  let reads = 0
+  t.mock.method(serverApi, "fetchMissionSchedule", async () => { reads++; throw new Error("unexpected") })
+  try {
+    f.project(undefined)
+    const start = f.capture(true), created = { kind: "schedule", state: "paused", firstPlayedAt: null, configuration: {} } as UnifiedMissionSchedule
+    await start(created)
+    f.project("project"); await start(created)
+    assert.equal(reads, 0, "project publication cannot replay a consumed creation continuation")
+  } finally { f.dispose() }
 })
 
 test("lost Start ACK retains its exact lifecycle identity across remount without another launch", async t => {

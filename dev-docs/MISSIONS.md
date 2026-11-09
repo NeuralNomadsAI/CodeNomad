@@ -350,7 +350,12 @@ Save rereads the document before dispatch.
 Create stores a paused immediate Mission or a paused calendar-owned document.
 **Start on creation** defaults off. When selected, only the direct positive creation
 acknowledgement may continue the captured user intention through guarded Play;
-receipt recovery leaves Play explicit. The saved-configuration picker is the form's
+receipt recovery leaves Play explicit. The editor supplies discovered project identity
+reactively; the continuation freezes project, physical directory, client and native
+generation at submission and retains schedule requests under that same control owner.
+Scheduled autostart requires a discovered project; an unidentified owner leaves the
+created schedule paused for explicit Play.
+The saved-configuration picker is the form's
 first row. Notes, profiles, delegation and scheduling are directly visible compact
 rows; Notes begins at one line and grows with its content.
 

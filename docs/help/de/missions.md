@@ -17,6 +17,7 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 5. Lassen Sie **Beim Erstellen starten** ausgeschaltet, um eine pausierte Mission zu speichern und später ▶ **Starten** zu wählen. Eingeschaltet fordert es nach bestätigter Erstellung denselben abgesicherten Start an. Wählen Sie **Erstellen**.
 
 **Beim Erstellen starten ist standardmäßig aus.** Erstellung speichert zuerst eine pausierte Mission im gewählten Projekt/Location mit den angeforderten Profilen und der Sitzungsrichtlinie. Der anschließende Start nutzt die gewöhnlichen Play-Prüfungen und gegebenenfalls die Bestätigung nativer Einstellungen. Geht die Erstellungsbestätigung verloren, bleibt Starten auch nach dem Lesen des Belegs manuell. Validierung erscheint am Feld; eine Ablehnung ohne Versand erhält den Entwurf. Eine vom Koordinator vorbereitete Folge erscheint als **Vorbereitet** und startet über ihre eigene ▶-Aktion.
+Wird das Projekt noch identifiziert, bleibt der erstellte Zeitplan pausiert; wählen Sie ▶ **Starten** in der Werkzeugleiste, sobald das Projekt bereit ist.
 
 Gespeicherte einmalige Missionen behalten ihre Ausführungssteuerung, ihren Aufgabenbaum, ihre Unterhaltungen und ihre Abschlussberichte. Bestehende tägliche Zeitpläne bleiben mit ihren täglichen Steuerelementen und [täglichen Zeitregeln](#existing-daily-schedules) aufgelistet. Wählen Sie den Eintrag und verwenden Sie die für dieses Objekt verfügbaren Steuerelemente.
 
@@ -152,9 +153,9 @@ Konfigurationen speichern Anweisungen, Playbook und angeforderte Profil-/Delegat
 
 ### Native Zeitplanung {#native-scheduling}
 
-Die **i**-Symbole neben den Beschriftungen erklären die Auswahl: per Mauszeiger, Tastaturfokus oder Antippen.
+Das **ⓘ** neben **Starten, wenn** zeigt beim Darüberfahren oder Tastaturfokus einen Tooltip. Klicken, tippen oder drücken Sie Enter, um [Native Zeitplanung](missions.md#native-scheduling) im Browser in Ihrer Oberflächensprache zu öffnen.
 
-**Zeitplanung** ist beim Erstellen und Bearbeiten sichtbar. **Starten, wenn** beginnt mit **Einmal, jetzt**, der ersten Zeitplanoption. Diese gewöhnliche Zeitplanquelle verbindet sich mit weiteren Zeitplänen (**oder**), mit einem nachfolgenden Ereignis als Bedingung (**wenn**) oder nach Ereignissen als Rückfall (**sonst**). **Kriterium hinzufügen** fügt hinzu, × entfernt. Das **i** öffnet sich per Klick, Enter oder Leertaste und verweist auf die [Starteinstellung von OpenCode](opencode.md#login-start). Missionen laufen, solange OpenCode läuft. Neue Kalender verwenden die Systemzeitzone; **Gespeicherte Zeitzone (IANA)** erscheint bei Abweichung.
+**Zeitplanung** ist beim Erstellen und Bearbeiten sichtbar. **Starten, wenn** beginnt mit **Einmal, jetzt**, der ersten Zeitplanoption. Diese gewöhnliche Zeitplanquelle verbindet sich mit weiteren Zeitplänen (**oder**), mit einem nachfolgenden Ereignis als Bedingung (**wenn**) oder nach Ereignissen als Rückfall (**sonst**). **Kriterium hinzufügen** fügt hinzu, × entfernt. Missionen laufen, solange OpenCode läuft. Neue Kalender verwenden die Systemzeitzone; **Gespeicherte Zeitzone (IANA)** erscheint bei Abweichung.
 
 **Einmal, jetzt** bietet eine einzige Gelegenheit, verankert beim Aktivieren durch Play, statt beim Öffnen oder Speichern. Ereignis vor jetzt bedeutet Rückfall; jetzt vor Ereignis bedeutet Bedingung. Eine blockierende Bedingung kann diese einzige Gelegenheit ohne Start verbrauchen. Für spätere Chancen wählen Sie eine Wiederholung oder ein auslösendes Ereignis.
 

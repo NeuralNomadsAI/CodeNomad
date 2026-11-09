@@ -17,10 +17,13 @@ export function createMissionCreationStart(props: { instanceId: string; projectI
   let alive = true
   onCleanup(() => { alive = false })
   return (requested: boolean) => {
-    const view = props.captureView(), client = instances().get(props.instanceId)?.client
-    const generation = getOpenCodeInstanceGeneration(props.instanceId)
+    // Use the selected controls' exact project/directory key for every retained receipt.
+    const instanceId = props.instanceId, projectID = props.projectID, directory = props.directory
+    const view = props.captureView(), client = instances().get(instanceId)?.client
+    const generation = getOpenCodeInstanceGeneration(instanceId)
     const current = () => alive && requested && view() && props.active()
-      && instances().get(props.instanceId)?.client === client && getOpenCodeInstanceGeneration(props.instanceId) === generation
+      && props.instanceId === instanceId && props.projectID === projectID && props.directory === directory
+      && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
     let consumed = false
     return async (created: MissionPanelMap | UnifiedMissionSchedule) => {
       if (consumed) return
@@ -28,21 +31,21 @@ export function createMissionCreationStart(props: { instanceId: string; projectI
       if (!current()) return
       try {
         if ("configuration" in created) {
-          if (created.kind !== "schedule" || created.state !== "paused" || created.firstPlayedAt !== null) return
+          if (!projectID || created.kind !== "schedule" || created.state !== "paused" || created.firstPlayedAt !== null) return
           let dispose = () => {}
           try {
             const controls = runWithOwner(owner, () => createRoot(cleanup => {
               dispose = cleanup
-              return createMissionScheduleControls({ ...props, document: () => created, active: current,
-                enabled: () => true, refreshVersion: () => 0, onDeleted: () => {}, captureOperation: () => current })
+              return createMissionScheduleControls({ instanceId, projectID, directory, document: () => created, active: current,
+                enabled: () => true, refreshVersion: () => 0, refresh: props.refresh, onDeleted: () => {}, captureOperation: () => current })
             }))!
             await controls.startCreated()
           } finally { dispose() }
         } else {
-          const instance = instances().get(props.instanceId)
+          const instance = instances().get(instanceId)
           const location = { directory: instance?.folder, proxyPath: instance?.proxyPath,
-            projectID: instance?.metadata?.project?.id, snapshotProjectID: missionStore.state(props.instanceId).projectID }
-          const source = missionLifecycleSource(props.instanceId, created, location)
+            projectID: instance?.metadata?.project?.id, snapshotProjectID: missionStore.state(instanceId).projectID }
+          const source = missionLifecycleSource(instanceId, created, location)
           if (created.status !== "active" || created.runState !== "prepared" || created.control?.pending.length
             || created.panelControl?.pending || missionLifecycleIntents.retry(source) || missionLifecycleIntents.busy(source)) return
           const intent = missionLifecycleIntents.reserve(source, created.id,
@@ -50,9 +53,9 @@ export function createMissionCreationStart(props: { instanceId: string; projectI
           if (!intent || !missionLifecycleIntents.start(intent)) return
           let outcome: "acknowledged" | "rejected" | "unknown" = "unknown"
           try {
-            const result = await serverApi.controlMission(props.instanceId, created.id, intent.input)
+            const result = await serverApi.controlMission(instanceId, created.id, intent.input)
             const mission = result?.mission, control = mission?.control
-            if (mission && missionLifecycleSource(props.instanceId, mission, location) === source
+            if (mission && missionLifecycleSource(instanceId, mission, location) === source
               && control?.requestID === intent.input.requestId && control.action === "start"
               && control.expectedRevision === intent.input.expectedRevision && control.pending.length === 0) outcome = "acknowledged"
           } catch (error) {

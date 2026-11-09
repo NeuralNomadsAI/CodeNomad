@@ -203,6 +203,37 @@ test("saved models store briefs only and manual use creates fresh authority requ
   } finally { await page.close() }
 })
 
+test("configuration names preserve punctuation and suffixes, shorten only at the title bound and leave manual titles intact", async () => {
+  const punctuation = "Release: Windows and Linux", suffix = "Audit. Follow-up; release notes!"
+  const long = "Release: Windows and Linux release validation for desktop and remote clients"
+  const emoji = "🚀".repeat(29)
+  const cases = [
+    { name: punctuation, expected: punctuation }, { name: suffix, expected: suffix },
+    { name: "Release:\n Windows\tand Linux", expected: punctuation },
+    { name: long, expected: long.slice(0, 60).trimEnd() },
+    { name: `${emoji}X🚀Remaining`, expected: `${emoji}X` },
+  ]
+  const models = cases.map((item, index) => ({ version: 1, id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    name: item.name, objective: "A different objective. Keep its instructions separate.", notes: "Verbatim notes", template: "custom" }))
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, { missionModels: models })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
+    const title = page.getByLabel("Title", { exact: true })
+    for (const [index, item] of cases.entries()) {
+      await pickBrief(page, models[index].id)
+      assert.equal(await title.inputValue(), item.expected)
+      assert.ok((await title.inputValue()).length <= 60)
+      assert.equal(await page.getByLabel("Notes", { exact: true }).inputValue(), "Verbatim notes")
+    }
+    await title.fill("Custom: Final title — Windows.")
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Changed objective: another sentence.")
+    await dispatchOwner(page, fixture.bucket())
+    assert.equal(await title.inputValue(), "Custom: Final title — Windows.")
+    assert.deepEqual(fixture.writes, []); assert.deepEqual(fixture.creates, []); assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
 test("each preference choice saves at once; edits made during a write keep focus, queue behind it and survive remount", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   let release!: () => void
