@@ -59,6 +59,8 @@ listener exposure, certificate, VPN/SSH र reverse proxy का लागि [�
 
 ## सार्वजनिक CLI सन्दर्भ {#cli-reference}
 
+Tauri वा Electron सुरु गर्न [डेस्कटप सुरुवाती आर्गुमेन्टहरू](desktop.md#desktop-cli) हेर्नुहोस्: `--connect-server`, `--folder`, `--new-window` र executable/सर्टकट उदाहरणहरू। तलको तालिका standalone सर्भर executable का लागि हो।
+
 flag ले environment counterpart override गर्छन्। value-taking flag ले देखाइएको argument लिन्छन्; switch ले लिँदैनन्। HTTPS/HTTP मानले case-insensitive `1`, `true`, `yes`, `y` र `on` लाई enabled मान्छन्; स्पष्टताका लागि `true`/`false` प्रयोग गर्नुहोस्। UI auto-update ले `1`, `true` र `yes` चिन्छ।
 
 **कडा boolean environment variable** (`CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` र `CODENOMAD_SKIP_AUTH`) ले `1`, `true`, `yes` वा `on` हुँदा switch सक्षम गर्छन्; ठूला/साना अक्षर र सुरु तथा अन्त्यका whitespace बेवास्ता गरिन्छन्। `0`, `false`, `no`, `off`, खाली वा whitespace मात्र भएका मान र unset variable ले switch बन्द नै राख्छन्। अन्य कुनै मानले सम्बन्धित CLI flag भए पनि server सुरु हुन दिँदैन। CLI flag ले मान्य बन्द मानलाई उछिनेर switch सक्षम गर्छ; अन्यथा तलका `false` default लागू हुन्छन्।

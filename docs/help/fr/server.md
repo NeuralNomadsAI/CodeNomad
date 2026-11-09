@@ -59,6 +59,8 @@ Pour l’exposition de l’écoute, les certificats, VPN/SSH et les proxys inver
 
 ## Référence CLI publique {#cli-reference}
 
+Pour lancer Tauri ou Electron, voir [Arguments de lancement de l’application](desktop.md#desktop-cli) : `--connect-server`, `--folder`, `--new-window` et exemples de commande/raccourci. Le tableau ci-dessous concerne l’exécutable du serveur autonome.
+
 Les options remplacent leurs équivalents d’environnement. Les options à valeur utilisent l’argument indiqué ; les commutateurs n’en prennent pas. Les valeurs HTTPS/HTTP reconnaissent `1`, `true`, `yes`, `y` et `on` comme activées, sans distinction de casse ; utilisez explicitement `true`/`false` pour plus de clarté. La mise à jour automatique de l’interface reconnaît `1`, `true` et `yes`.
 
 **Les variables d’environnement booléennes strictes** (`CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` et `CODENOMAD_SKIP_AUTH`) activent leur commutateur avec `1`, `true`, `yes` ou `on`, sans tenir compte de la casse ni des espaces autour. `0`, `false`, `no`, `off`, une valeur vide ou composée uniquement d’espaces, ou une variable non définie laissent le commutateur désactivé. Toute autre valeur empêche le serveur de démarrer, même avec l’option CLI correspondante. L’option CLI active le commutateur malgré une valeur valide de désactivation ; sinon, les valeurs par défaut `false` ci-dessous s’appliquent.

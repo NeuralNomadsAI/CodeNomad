@@ -10,6 +10,30 @@ Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenC
 
 Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose. **Hilfe → CodeNomad unterstützen** öffnet die Seite [CodeNomad unterstützen](sponsor.md) im Browser.
 
+## Desktop-Startargumente {#desktop-cli}
+
+Geben Sie diese Argumente nach der **Desktop-Programmdatei** (Tauri oder Electron) an, im Terminal oder im Feld **Ziel** einer Windows-Verknüpfung. Ersetzen Sie die Beispielpfade durch Ihren Programmpfad.
+
+| Argument | Wirkung |
+| --- | --- |
+| `--connect-server <server>` | Öffnet einen entfernten CodeNomad-Server über seine HTTP(S)-URL, seinen gespeicherten Namen oder seine gespeicherte ID. Siehe [Verbindung und Anmeldung](remote-access.md#saved-servers). |
+| `--folder <path>` | Öffnet ein vorhandenes Projektverzeichnis. Für mehrere Verzeichnisse wiederholen; relative Pfade beziehen sich auf das Startverzeichnis. |
+| `<path> ...` | Öffnet Projektverzeichnisse ohne ausdrückliches `--folder`. **Bereits laufendes Windows Tauri:** Verwenden Sie für jedes Verzeichnis `--folder`. Werden Positionspfade mit `--folder` gemischt, entfällt ebenfalls die gesamte Ordneranforderung. |
+| `--new-window` | Fordert ein neues Anwendungsfenster an, auch wenn ein weiterer Start sonst das vorhandene Fenster fokussieren würde. |
+
+Auch `--connect-server=<server>` und `--folder=<path>` funktionieren. Pfade und Namen mit Leerzeichen müssen in Anführungszeichen stehen. Für ausschließlich das entfernte Fenster verwenden Sie nur `--connect-server`, ohne Ordner oder `--new-window`; lokale Fenster werden erst bei einem Verbindungsfehler wiederhergestellt. Das lokale Hilfsbackend bleibt zur Desktop-Koordination aktiv.
+
+In **PowerShell**:
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+Im **Ziel** der Windows-Verknüpfung steht `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (`&` gehört zu PowerShell). Unter Linux verwenden Sie die AppImage-Datei, etwa `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+Desktop-Profil und Konfiguration wählen Sie vor dem Start mit `CODENOMAD_PROFILE` und `CLI_CONFIG`; siehe [Datenprofile](#data-profiles). Backend-Listener, TLS und Anmeldung sind in der [Server-CLI-Referenz](server.md#cli-reference) beschrieben. Windows Tauri verweigert Startargumente mit `|`; verwenden Sie eine URL oder benennen Sie den gespeicherten Server um.
+
 ## Einstellungen und Startwiederherstellung {#preferences-startup}
 
 1. Öffnen Sie Einstellungen aus dem zu konfigurierenden Fenster. Lokale Desktop-Einstiege fokussieren das eine native Einstellungsfenster mit Projekt/Location dieses öffnenden Fensters.
