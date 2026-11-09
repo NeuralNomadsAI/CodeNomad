@@ -1,4 +1,4 @@
-import type { ElementHandle, Locator, Page } from "playwright"
+import type { Locator, Page } from "playwright"
 
 /** Exercise a `MissionListItem` action through its inline or measured-overflow presentation
  * (cleanup receipts and other shared list rows; the Mission picker has no row menus). */
@@ -60,12 +60,12 @@ export async function selectMission(page: Page, title: string | RegExp): Promise
   const entry = await inlineMissionEntry(page, title)
   // Often the first wait after navigation: allow for a cold page boot late in a long serial run.
   await entry.waitFor({ timeout: 60_000 })
-  // Held as an element: rows are keyed, but a refresh may retitle the row once it is selected.
-  const row = (await entry.locator("xpath=..").elementHandle())!
-  if (await entry.getAttribute("aria-current") !== "true") await entry.click()
+  const row = await currentMissionRow(entry)
+  const select = row.locator(".mission-row-select")
+  if (await select.getAttribute("aria-current") !== "true") await select.click()
   // Like the session list, a click only selects: its chevron expands the row, showing its detail.
   // A Mission whose plan holds no task has no chevron: its (empty) detail stays folded.
-  const leaf = await expandRowElement(row) === "leaf"
+  const leaf = await expandMissionRow(row) === "leaf"
   const detail = missionDetail(page)
   await detail.waitFor({ state: leaf ? "attached" : "visible" })
   return detail
@@ -75,13 +75,20 @@ export async function selectMission(page: Page, title: string | RegExp): Promise
  * "leaf" when the row has no chevron (a Mission without tasks). */
 export async function expandRow(select: Locator): Promise<"expanded" | "leaf"> {
   await select.waitFor({ state: "attached" })
-  return expandRowElement((await select.locator("xpath=..").elementHandle())!)
+  return expandMissionRow(await currentMissionRow(select))
 }
 
-/** `expandRow` on a row's `.session-item-base` element. */
-async function expandRowElement(row: ElementHandle): Promise<"expanded" | "leaf"> {
-  const chevron = await row.$(".session-item-expander:not(.session-item-expander--spacer)")
-  if (!chevron) return "leaf"
+/** Keep business identity across a title change or panel remount, resolving DOM at each action. */
+async function currentMissionRow(select: Locator): Promise<Locator> {
+  const key = await select.locator("xpath=ancestor::*[@data-mission-key]").getAttribute("data-mission-key")
+  if (!key) throw new Error("Mission row has no business key")
+  return missionRows(select.page()).locator(`.mission-row[data-mission-key=${JSON.stringify(key)}]`)
+}
+
+async function expandMissionRow(row: Locator): Promise<"expanded" | "leaf"> {
+  await row.waitFor({ state: "visible" })
+  const chevron = row.locator(".session-item-expander:not(.session-item-expander--spacer)")
+  if (!await chevron.count()) return "leaf"
   if (await chevron.getAttribute("aria-expanded") !== "true") await chevron.click()
   return "expanded"
 }

@@ -85,6 +85,38 @@ async function refresh(page: Page) {
 }
 const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-row-flag").getAttribute("data-mark")
 
+for (const variant of ["remount", "retitle", "leaf"] as const) test(`selection resolves the current business row after ${variant}`, async () => {
+  let value = mission("selection", variant === "leaf" ? { tasks: [] } : {})
+  const { page, errors } = await open(() => [value], () => [])
+  try {
+    const entry = await inlineMissionEntry(page, value.objective)
+    await entry.waitFor()
+    const original = await entry.elementHandle()
+    if (variant === "retitle") value = { ...value, objective: "Renamed selection", revision: 2 }
+    // Replace the real Solid panel at the selection/expansion boundary. The HTTP
+    // refresh can also rename the business row while the helper still has its old title.
+    await page.evaluate(`(async () => {
+      const { missionStore } = await import("/src/stores/missions.ts")
+      document.addEventListener("click", async function remount(event) {
+        if (!event.target.closest(".mission-row-select")) return
+        document.removeEventListener("click", remount)
+        window.selectionClickTrusted = event.isTrusted
+        const fixture = window.missionFixture
+        fixture.mount(false)
+        await missionStore.refresh("fixture")
+        fixture.mount(true)
+      })
+    })()`)
+    const detail = await selectMission(page, "Objective selection")
+    assert.equal(await original!.evaluate(element => element.isConnected), false, "the original row really detached")
+    assert.equal(await page.evaluate(() => (window as any).selectionClickTrusted), true)
+    assert.equal(await selectedMissionTitle(page).innerText(), value.objective)
+    assert.equal(await detail.isVisible(), variant !== "leaf")
+    assert.equal(await page.locator('.mission-row[data-mission-key="mission:selection"] .session-item-expander:not(.session-item-expander--spacer)').count(), variant === "leaf" ? 0 : 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("marks follow the session palette and a completion stays green until this window shows it", async () => {
   let list = [
     mission("stuck", { updatedAt: 6 }),

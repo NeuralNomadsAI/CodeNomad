@@ -95,6 +95,9 @@ synthetic provider.
   explicitly. Mutation collectors match the exact HTTP method and path. Hold the
   intended panel source independently of schedule reads, and await lifecycle
   feedback settlement before asserting its final status.
+- Mission selection helpers retain `data-mission-key` and resolve row/chevron
+  Locators at each action across retitling and panel remounts. Wait for the row's
+  visibility before distinguishing a leaf from an expandable row; use native clicks.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
