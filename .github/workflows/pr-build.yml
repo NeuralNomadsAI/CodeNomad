@@ -785,6 +785,13 @@ jobs:
       - name: Install the Electron binary
         run: npx --no install-electron
 
+      - name: Test hidden Electron emulation reset on Windows
+        if: runner.os == 'Windows'
+        working-directory: packages/ui
+        env:
+          CODENOMAD_TEST_TEMP: ${{ runner.temp }}
+        run: node --import tsx --test tests/browser/browser-emulation-native.test.ts
+
       - name: Test binary compatibility and shared lifecycle
         run: >-
           node --import tsx --test
