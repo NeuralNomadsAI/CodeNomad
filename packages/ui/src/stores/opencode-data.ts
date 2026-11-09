@@ -16,6 +16,7 @@ import {
 } from "./opencode-data-events"
 import { mergePageWithSnapshot, snapshotRows, type OpenCodeRowSnapshot } from "./opencode-data-read-merge"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
+import { hasTranscriptProjectionGates, scheduleTranscriptProjection } from "./opencode-projection-frame"
 import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
 
 const log = getLogger("session")
@@ -86,6 +87,12 @@ type TranscriptEntry = {
    * drops the newest publication demand. */
   settlementReadEpoch: number
   queue: QueuedTranscriptEvent[]
+  /** Inbox-delivery repairs (authoritative reads a relocating delivery owes)
+   * that started and not settled: a retirement barrier. */
+  deliveryRepairPending: number
+  /** A repair demand reconnect carried across its reset; seeding owes it a new
+   * read instead of trailing behind the quiet reconciliation. */
+  deliveryRepairOwed: boolean
   onResynced?: (data: Data) => void
 }
 
@@ -327,6 +334,8 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     settlementReadPending: false,
     settlementReadEpoch: 0,
     queue: [],
+    deliveryRepairPending: 0,
+    deliveryRepairOwed: false,
   }
   transcriptEntries.set(key, transcript)
   return transcript
@@ -362,14 +371,17 @@ function deliveryRelocatesRow(entry: DataEntry, event: OpenCodeEvent): boolean {
 
 /** The native message page owns a delivered prompt's position; the reducer's
  * list position does not. Invalidate the SDK's message key and finish the
- * authoritative read — sharing any in-flight one — then publish the reconciled
- * order exactly like a settlement read: a newer admitted execution supersedes
- * the publication, same-round activity does not. No ordering state survives
- * here: the reducer itself is healed, so reconnect seeding and authoritative
- * replacement carry the corrected order. */
+ * authoritative read — sharing any in-flight one — then publish through the
+ * gated frame path live events use (a missing gate registration keeps the
+ * direct projection), fenced like a settlement read: a newer admitted
+ * execution supersedes the publication, same-round activity does not. The
+ * outstanding read is a retirement barrier, and reconnect carries the demand. */
 function reconcileDeliveredPromptPage(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  transcript.deliveryRepairPending += 1
+  transcript.deliveryRepairOwed = false
   transcript.entry.data.session.message.invalidate(sessionId)
-  completeSettlementRead(instanceId, sessionId, transcript)
+  void completeSettlementRead(instanceId, sessionId, transcript, { publishGated: true })
+    ?.finally(() => { transcript.deliveryRepairPending = Math.max(0, transcript.deliveryRepairPending - 1) })
 }
 
 function getOpenCodeFullDataRevision(instanceId: string, sessionId: string): number {
@@ -450,6 +462,7 @@ const reconnect = createReconnect({
           // A settlement still waiting on running work (e.g. a user shell) must
           // keep waiting after the reconnect, not strand its reducer forever.
           retireWhenDrained: transcript.retireWhenDrained,
+          deliveryRepairOwed: transcript.deliveryRepairPending > 0 || transcript.deliveryRepairOwed,
           onResynced: transcript.onResynced,
         })
       }
@@ -461,6 +474,7 @@ const reconnect = createReconnect({
     const transcript = ensureTranscript(instanceId, capture.sessionId, capture.directory)
     transcript.reconnectResync = true
     transcript.retireWhenDrained = capture.retireWhenDrained
+    transcript.deliveryRepairOwed = capture.deliveryRepairOwed
     // Without a later admitted event, nothing re-registers the publication
     // callback; carry it so a quiet snapshot still reaches the display.
     transcript.onResynced = capture.onResynced
@@ -469,6 +483,11 @@ const reconnect = createReconnect({
   seedPage: (instanceId, capture) =>
     ensureTranscript(instanceId, capture.sessionId, capture.directory)
       .entry.syncMessages(capture.sessionId, boundedTranscript(capture.messages), () => true),
+  resumeDeliveryRepair: (instanceId, sessionId, transcript) => {
+    transcript.deliveryRepairOwed = false
+    if (!isTranscriptCurrent(instanceId, sessionId, transcript)) return
+    reconcileDeliveredPromptPage(instanceId, sessionId, transcript)
+  },
   scheduleDroppingResync: scheduleAuthoritativeResync,
   isCurrent: isTranscriptCurrent,
   fullDataRevision: getOpenCodeFullDataRevision,
@@ -981,10 +1000,11 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
     || transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync
     || transcript.retryTimer || transcript.queue.length) return
   // Work that outlives the settlement still needs this reducer: prompts parked in
-  // its inbox (e.g. after an interruption) are listed from it, and unsettled rows
-  // settle only in it.
+  // its inbox (e.g. after an interruption) are listed from it, unsettled rows
+  // settle only in it, and an outstanding delivery repair publishes through it.
   const data = transcript.entry.data
-  if (data.session.pending.list(sessionId).length || data.session.message.list(sessionId).some(isUnsettledAtSettlement)) return
+  if (transcript.deliveryRepairPending > 0 || transcript.deliveryRepairOwed
+    || data.session.pending.list(sessionId).length || data.session.message.list(sessionId).some(isUnsettledAtSettlement)) return
   // The reducer's final coalesced page — e.g. a tool that settled after the
   // execution did — publishes here, before normal retirement destroys the
   // entry; resets, eviction and destructive teardown cancel instead.
@@ -1028,8 +1048,15 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
  * in-flight read when connected, start it when not, then project the
  * reconciled page without touching the display window's membership. A newer
  * admitted execution supersedes the publication; same-round activity does
- * not. */
-function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+ * not. `publishGated` routes the publication through the instance layer's
+ * frame gates instead of projecting directly. Returns the SDK read promise it
+ * followed, so a caller holding obligations on the read settles with it. */
+function completeSettlementRead(
+  instanceId: string,
+  sessionId: string,
+  transcript: TranscriptEntry,
+  options?: { publishGated?: boolean },
+): Promise<unknown> {
   const entry = transcript.entry
   // A reconciliation read in flight against this reducer reconciles the same
   // rows: share its fetch instead of chaining a duplicate beneath it. The
@@ -1041,7 +1068,7 @@ function completeSettlementRead(instanceId: string, sessionId: string, transcrip
   transcript.settlementReadEntry = entry
   transcript.settlementReadEpoch = transcript.executionEpoch
   const promise = entry.data.session.message.sync(sessionId)
-  if (transcript.settlementReadPromise === promise) return
+  if (transcript.settlementReadPromise === promise) return promise
   transcript.settlementReadPromise = promise
   const followed = promise
   void followed
@@ -1058,9 +1085,18 @@ function completeSettlementRead(instanceId: string, sessionId: string, transcrip
       // event) must not suppress the repair.
       if (!isTranscriptCurrent(instanceId, sessionId, transcript)
         || transcript.executionEpoch !== transcript.settlementReadEpoch) return
-      projectOpenCodeMessages(instanceId, sessionId, entry.data, true)
+      if (options?.publishGated) {
+        // The instance layer's gates own active-session and latest-window
+        // admission exactly as live events' projections do; a registration-free
+        // context (unit tests) keeps the direct projection.
+        if (hasTranscriptProjectionGates()) scheduleTranscriptProjection(instanceId, sessionId, entry.data)
+        else projectOpenCodeMessages(instanceId, sessionId, entry.data, true)
+      } else {
+        projectOpenCodeMessages(instanceId, sessionId, entry.data, true)
+      }
       retireDrainedTranscript(instanceId, sessionId, transcript)
     })
+  return promise
 }
 
 /** Non-event settlement evidence: the liveness activity read observed a run

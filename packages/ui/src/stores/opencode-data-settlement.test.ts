@@ -230,3 +230,59 @@ test("a disposed native projection does not retry a delayed terminal history rea
     assert.equal(f.text(), "hello", "disposal must preserve the separately owned visible snapshot")
   } finally { f.cleanup() }
 })
+
+test("a delivery crossing an HTTP-ahead settlement read reconciles through its own read and outlives the round's settlement", async () => {
+  const f = fixture("native-delivery-http-ahead")
+  const sessionId = "s"
+  const order = () => messageStoreBus.getOrCreate("native-delivery-http-ahead")
+    .getSessionMessageIds(sessionId)
+  try {
+    // Round one is interrupted with a tool still running: its settlement read
+    // is owed and holds.
+    const base = { sessionID: sessionId, assistantMessageID: "m1" }
+    f.emit("session.step.started", { ...base, agent: "build", model, started: 1 })
+    f.emit("session.tool.input.started", { ...base, id: "tool", name: "read" })
+    f.emit("session.tool.called", { ...base, id: "tool", input: {} })
+    f.emit("session.execution.interrupted", { sessionID: sessionId })
+    assert.equal(f.reads.length, 1)
+
+    // The prompt is parked over SSE before that read resolves.
+    f.emit("session.inbox.enqueued", { sessionID: sessionId, inboxID: "msg_user", item: { type: "user", payload: { text: "crossing prompt" }, delivery: "steer" } })
+
+    // The held read returns the daemon's page, which already carries the
+    // delivered prompt above its reply: the delivery's own SSE still trails.
+    // Round one's rows appear in their terminal native shapes, as the daemon
+    // stored them (its idle record's id derives from the terminal event).
+    const page = [
+      { id: "m1", type: "assistant", agent: "build", model, time: { created: 1, completed: 2 }, content: [{
+        type: "tool", id: "tool", name: "read", time: { created: 2, ran: 3, completed: 4 },
+        state: { status: "completed", input: {}, content: [{ type: "text", text: "settled" }], metadata: {} },
+      }] },
+      { id: "msg_4", type: "idle", outcome: "interrupted", time: { created: 4 } },
+      { id: "msg_user", type: "user", text: "crossing prompt", time: { created: 5 } },
+      { id: "reply", type: "assistant", agent: "build", model, time: { created: 6 }, content: [{ type: "text", text: "answer" }] },
+    ]
+    f.reads[0].resolve({ data: [...page].reverse(), cursor: {} })
+    await flush()
+    assert.deepEqual(order(), ["m1", "msg_4", "msg_user", "reply"])
+
+    // The delivery event finally arrives over SSE: the SDK relocates the
+    // prompt below the reply, and the delivery owes its own authoritative
+    // read, which holds.
+    f.emit("session.inbox.delivered", { sessionID: sessionId, inboxID: "msg_user" })
+    assert.equal(f.reads.length, 2, "the relocating delivery owed a repair read")
+
+    // The reply's round settles while the repair is outstanding: the reducer
+    // must survive as the repair's publication owner.
+    f.emit("session.step.ended", { sessionID: sessionId, assistantMessageID: "reply", finish: "stop", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
+    f.emit("session.execution.succeeded", { sessionID: sessionId })
+    assert.equal(f.reads.length, 2, "the settlement must not start a second read beneath the repair")
+
+    // Resolving the repair publishes the page's order through the surviving
+    // reducer instead of leaving the sunk prompt behind. (msg_8 is the round's
+    // own idle record, inserted by its terminal event.)
+    f.reads[1].resolve({ data: [...page].reverse(), cursor: {} })
+    await flush()
+    assert.deepEqual(order(), ["m1", "msg_4", "msg_user", "reply", "msg_8"], "the crossing prompt reconciles above its reply")
+  } finally { f.cleanup() }
+})

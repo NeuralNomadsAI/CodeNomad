@@ -57,6 +57,13 @@ export function setTranscriptProjectionGates(next: TranscriptProjectionGates): v
   gates = next
 }
 
+/** Whether the instance layer registered its projection gates: a publisher
+ * outside the dispatcher routes through the scheduler when it did and falls
+ * back to a direct projection otherwise (unit contexts). */
+export function hasTranscriptProjectionGates(): boolean {
+  return gates !== undefined
+}
+
 function projectionKey(instanceId: string, sessionId: string): string {
   return `${instanceId}\u0000${sessionId}`
 }

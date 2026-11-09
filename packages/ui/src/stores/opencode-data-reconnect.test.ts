@@ -287,6 +287,44 @@ test("a mid-stream reconnect keeps live deltas displaying and reconciles once qu
   } finally { f.cleanup() }
 })
 
+test("a verified reconnect resumes an outstanding delivery repair after seeding", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("reconnect-delivery-resume", true)
+  try {
+    // The daemon's page: the delivered prompt above its reply.
+    const stored = [
+      { id: "msg_q", type: "user", text: "steer", time: { created: 501 } },
+      { id: "msg_live", type: "assistant", agent: "build", model, content: [{ type: "reasoning", text: "" }], time: { created: 500 } },
+    ]
+    const control = f.controlledList(() => [...stored].reverse())
+    const promptAboveReply = () => {
+      const ids = f.store.getSessionMessageIds(sessionId)
+      return ids.includes("msg_q") && ids.includes("msg_live") && ids.indexOf("msg_q") < ids.indexOf("msg_live")
+    }
+    f.dispatch("session.inbox.enqueued", { inboxID: "msg_q", item: { type: "user", payload: { text: "steer" }, delivery: "steer" } })
+    f.start()
+    f.dispatch("session.reasoning.started", live)
+    // The delivery relocates the prompt below the reply; its repair read holds.
+    f.dispatch("session.inbox.delivered", { inboxID: "msg_q" })
+    await converge(ctx, () => control.calls >= 1 && control.pending())
+
+    // A verified reconnect lands mid-repair while the stream keeps arriving,
+    // so the quiet reconciliation keeps trailing behind live activity.
+    f.dispatch("server.connected", { daemon: "daemon-a" })
+    await microtasks()
+    f.dispatch("session.reasoning.delta", { ...live, delta: "streaming " })
+    ctx.mock.timers.tick(0)
+    await microtasks()
+
+    // Seeding landed; the carried demand resumes a fresh repair read at once
+    // instead of waiting for the quiet resync.
+    await converge(ctx, () => control.calls >= 2)
+    control.settle()
+    await converge(ctx, promptAboveReply)
+    assert.ok(promptAboveReply(), "the resumed repair reconciles the prompt above its reply while streaming continues")
+  } finally { f.cleanup() }
+})
+
 test("a verified reconnect keeps a delivered prompt's reconciled position", async ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("reconnect-delivery-order", true)
