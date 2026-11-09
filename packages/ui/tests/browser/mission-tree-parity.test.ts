@@ -406,20 +406,25 @@ for (const direction of ["ltr", "rtl"]) {
       const { errors } = await open(page, data)
       await page.locator("html").evaluate((element, dir) => element.setAttribute("dir", dir), direction)
       await selectMission(page, title)
-      const geometry = () => page.locator(".mission-flow").evaluate(flow => {
+      const geometry = (cached: Record<string, { x: number; y: number }> = {}) => page.locator(".mission-flow").evaluate((flow, cached) => {
         const svg = flow.querySelector<SVGSVGElement>(".mission-graph")!, matrix = svg.getScreenCTM()!
         const rtl = getComputedStyle(svg).direction === "rtl", box = flow.getBoundingClientRect()
         const paths = [...svg.querySelectorAll<SVGPathElement>("path[data-from]")]
+        const anchors: Record<string, { x: number; y: number }> = {}
         const gaps = paths.flatMap(path => [[path.dataset.from!, 0], [path.dataset.to!, path.getTotalLength()]] as const).map(([key, length], index) => {
           const point = paths[Math.floor(index / 2)].getPointAtLength(length).matrixTransform(matrix)
-          const mark = flow.querySelector(`[data-task-key="${key}"] [data-graph-anchor]`)!.getBoundingClientRect()
-          return Math.max(Math.abs(point.x - (rtl ? mark.right : mark.left)), Math.abs(point.y - mark.top - mark.height / 2))
+          const mark = flow.querySelector(`[data-task-key="${key}"] [data-graph-anchor]`)?.getBoundingClientRect()
+          const expected = mark ? new DOMPoint(rtl ? mark.right : mark.left, mark.top + mark.height / 2)
+            : new DOMPoint(cached[key].x, cached[key].y).matrixTransform(matrix)
+          const local = expected.matrixTransform(matrix.inverse())
+          anchors[key] = { x: local.x, y: local.y }
+          return { key, missing: !mark, gap: Math.max(Math.abs(point.x - expected.x), Math.abs(point.y - expected.y)) }
         })
-        const mark = flow.querySelector('[data-task-key="source0"] [data-graph-anchor]')!.getBoundingClientRect()
+        const mark = flow.querySelector('[data-graph-anchor]')!.getBoundingClientRect()
         return { extra: parseFloat(getComputedStyle(flow).getPropertyValue("--mission-graph-extra")),
           indent: rtl ? box.right - mark.right : mark.left - box.left,
-          lanes: paths.map(path => Number(/ H ([\d.]+)/.exec(path.getAttribute("d")!)![1])), gaps }
-      })
+          lanes: paths.map(path => Number(/ H ([\d.]+)/.exec(path.getAttribute("d")!)![1])), anchors, endpoints: gaps, gaps: gaps.map(value => value.gap) }
+      }, cached)
       await page.locator('.mission-graph path[data-from="source0"]').waitFor()
       await until(async () => (await geometry()).gaps.every(gap => gap <= 0.75), "the initial rail's measured endpoints")
       const before = await geometry()
@@ -432,14 +437,19 @@ for (const direction of ["ltr", "rtl"]) {
         "six crowded lanes and remeasured endpoints")
       const crowded = await geometry()
       assert.equal(new Set(crowded.lanes).size, 6, "overlapping edges retain distinct lanes")
+      assert.equal(Object.keys(crowded.anchors).length, 12, "every endpoint has a measured anchor before virtualization")
       assert.ok(Math.abs(crowded.indent - before.indent - crowded.extra) <= 0.75, "extra rail width moves the task icons by the same amount")
       assert.ok(Math.max(...crowded.lanes) < crowded.indent, "every lane stays beside the task icons")
       await page.evaluate(() => (window as any).missionFixture.panelWidth("300px"))
       await page.setViewportSize({ width: 1100, height: 300 })
       await revealMissionTask(taskNode(page, "target5").locator(".mission-tree-task"))
       assert.ok(await page.locator(".mission-control").evaluate(element => element.scrollTop > 0), "the geometry check includes an actual panel scroll")
-      await until(async () => (await geometry()).gaps.every(gap => gap <= 0.75), "aligned endpoints after resize and scrolling")
-      assert.equal(new Set((await geometry()).lanes).size, 6)
+      await until(async () => (await geometry(crowded.anchors)).gaps.every(gap => gap <= 0.75), "aligned endpoints after resize and scrolling")
+      const scrolled = await geometry(crowded.anchors)
+      assert.equal(new Set(scrolled.lanes).size, 6)
+      assert.equal(scrolled.gaps.length, 12, "fresh and cached endpoints are all checked at the same tolerance")
+      assert.ok(scrolled.endpoints.some(value => value.key.startsWith("source") && value.missing), "offscreen cached source endpoints remain covered")
+      assert.ok(scrolled.endpoints.some(value => value.key === "target5" && !value.missing), "the revealed target uses its fresh DOM anchor")
       assert.deepEqual(errors, [])
     } finally { await page.close() }
   })
