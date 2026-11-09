@@ -18,7 +18,8 @@
 .mission-editor { border: 1px solid var(--border-base); margin: var(--space-md) 0; }
 .mission-editor[hidden] { display: none; }
 .mission-editor label { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); }
-.mission-editor textarea, .mission-editor select { width: 100%; background: var(--surface-field); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-sm); }
+.mission-editor textarea { width: 100%; background: var(--surface-field); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-sm); }
+.mission-editor select { width: 100%; }
 .mission-editor textarea { min-height: 6em; resize: vertical; }
 .mission-editor p { color: var(--text-secondary); font-size: var(--font-size-sm); }
 .mission-editor .window-body { padding: var(--space-sm); }

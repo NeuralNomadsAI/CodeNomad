@@ -1,14 +1,19 @@
 .mission-scheduling { margin-block: var(--space-sm); min-inline-size: 0; }
-.mission-scheduling > summary { overflow-wrap: anywhere; }
+.mission-scheduling > h4 { font-size: var(--font-size-sm); margin-block: var(--space-sm); }
 .mission-scheduling fieldset { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
-.mission-scheduling label { display: flex; flex-direction: column; gap: var(--space-xs); margin-block: var(--space-sm); min-inline-size: 0; }
+.mission-scheduling label { display: flex; flex-direction: row; align-items: center; gap: var(--space-xs); margin-block: var(--space-sm); min-inline-size: 0; overflow-wrap: anywhere; }
+.mission-scheduling label > span { min-inline-size: 0; }
+.mission-scheduling label > :is(input, textarea, select) { flex: 1; }
+.mission-scheduling label > :is(input:not([type="checkbox"]), textarea, select) { min-inline-size: 8rem; }
+.mission-scheduling .mission-scheduling-autostart { display: flex; }
+.mission-scheduling .mission-scheduling-autostart input { inline-size: auto; flex: none; }
 .mission-scheduling :is(input, textarea, select) { inline-size: 100%; min-inline-size: 0; }
 .mission-scheduling :is(input, textarea) { background: var(--surface-field); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-xs); border-radius: 0; }
 .mission-scheduling :is(p, li) { font-size: var(--font-size-xs); overflow-wrap: anywhere; }
 .mission-scheduling p { color: var(--text-secondary); }
 .mission-scheduling .mission-create-field-error { color: var(--status-error-fg); }
-.mission-scheduling-row { display: flex; align-items: end; gap: var(--space-sm); }
-.mission-scheduling-row > label { flex: 1; }
+.mission-scheduling-row { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-sm); }
+.mission-scheduling-row > label { flex: 1 1 12rem; }
 .mission-scheduling-row > button { flex: none; margin-block-end: var(--space-sm); }
 .mission-scheduling-when { display: flex; flex-direction: column; gap: var(--space-xs); margin-block: var(--space-sm); min-inline-size: 0; }
 .mission-scheduling-when-head { display: flex; align-items: center; margin-block-start: var(--space-sm); }

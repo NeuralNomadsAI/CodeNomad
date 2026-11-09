@@ -17,9 +17,23 @@ test("no criteria is a one-time Mission; every shortcut writes its cron", () => 
     const policy = missionSchedulingPolicy(draft([row(kind)]))
     assert.deepEqual(missionLaunchPolicySchema.parse(policy), policy)
     assert.ok("when" in policy)
-    assert.deepEqual(policy.when, [{ kind: "cron", expression: expected[kind], zone: "UTC" }], kind)
+    assert.deepEqual(policy.when, kind === "now" ? [{ kind: "now" }] : [{ kind: "cron", expression: expected[kind], zone: "UTC" }], kind)
   }
   assert.equal((missionSchedulingPolicy(draft([row("hours", { hours: "1" })])) as { when: { expression: string }[] }).when[0].expression, "0 * * * *")
+})
+
+test("the first criterion is once-now and remains composable in either event order", () => {
+  const initial = newMissionSchedulingDraft("UTC")
+  assert.deepEqual(initial.criteria.map(row => row.kind), ["now"])
+  const second = newMissionCriterion("daily", initial.criteria)
+  const added = { ...initial, criteria: [...initial.criteria, second] }
+  assert.deepEqual(missionSchedulingPolicy(added), { when: [{ kind: "now" }, { kind: "cron", expression: "0 9 * * *", zone: "UTC" }] })
+  const event = row("files-changed", { files: "a.ts" })
+  for (const [rows, connector] of [[ [initial.criteria[0], event], "if" ], [ [event, initial.criteria[0]], "else" ]] as const) {
+    assert.deepEqual(missionCardConnectors(rows), [connector])
+    assert.deepEqual(missionLaunchPolicySchema.parse(missionSchedulingPolicy(draft([...rows]))), missionSchedulingPolicy(draft([...rows])))
+  }
+  assert.throws(() => missionSchedulingPolicy(draft([row("now"), row("now")])), field("duplicate"))
 })
 
 test("the stored list keeps the card order; the connectors between cards come from the shared parser", () => {

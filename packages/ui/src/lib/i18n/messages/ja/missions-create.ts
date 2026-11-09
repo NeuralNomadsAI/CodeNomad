@@ -5,9 +5,9 @@ export const missionCreateMessages = {
   "missions.create.options": "オプション",
   "missions.create.agents": "エージェントとモデル",
   "missions.create.submit": "作成",
-  "missions.create.brief.start": "保存済みの概要から始める",
+  "missions.create.brief.start": "構成から始める",
   "missions.create.brief.none": "空のミッション",
-  "missions.create.brief.more": "保存済みの概要の操作",
-  "missions.create.brief.saveAs": "概要として保存",
-  "missions.create.brief.cancel": "概要の保存をキャンセル",
+  "missions.create.brief.more": "保存済み構成の操作",
+  "missions.create.brief.saveAs": "構成を保存",
+  "missions.create.brief.cancel": "構成の保存をキャンセル",
 } as const

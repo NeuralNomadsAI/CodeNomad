@@ -83,16 +83,13 @@ async function edit(page: Page) {
   const form = page.locator("form.mission-editor")
   assert.equal(await form.getByLabel("Title", { exact: true }).isDisabled(), false)
   await form.getByLabel("Title", { exact: true }).fill("Browser edited preparation")
-  await form.locator("summary").filter({ hasText: /^Options$/ }).click()
   assert.equal(await form.getByLabel("Playbook", { exact: true }).isDisabled(), false)
   await form.getByLabel("Playbook", { exact: true }).selectOption("delivery")
   await form.locator(".mission-delegation select").selectOption("independent")
-  await form.locator("summary").filter({ hasText: /^Agents and models$/ }).click()
   const agent = form.getByLabel("Coordinator · Agent", { exact: true })
   await agent.locator('option[value="coordinator"]').waitFor({ state: "attached" }); await agent.selectOption("coordinator")
   await form.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))
   await form.getByLabel("Coordinator · Thinking", { exact: true }).selectOption("precise")
-  await form.locator(".mission-scheduling > summary").click()
   assert.equal(await form.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true,
     await form.locator(".mission-scheduling").innerText())
   assert.doesNotMatch(await form.locator(".mission-scheduling").innerText(), /journal-owned launch/)
@@ -158,13 +155,11 @@ test("real owner: positive partial preparation enables only an explicit original
 
 async function convert(page: Page, target: "hourly" | "once") {
   const form = page.locator("form.mission-editor")
-  await form.locator(".mission-scheduling > summary").click()
   if (target === "once") {
     // A stored interval stays retained until an explicit replacement; criteria rows are removable.
     const replace = form.getByRole("button", { name: "Replace with a new scheduling policy", exact: true })
     await (await replace.count() ? replace : form.getByRole("button", { name: "Remove criterion 1", exact: true })).click()
   } else {
-    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("hours")
     await form.getByLabel("Criterion 1 hours", { exact: true }).selectOption("1")
   }

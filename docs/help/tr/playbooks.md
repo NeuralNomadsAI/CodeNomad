@@ -2,7 +2,7 @@
 
 Rehber, bir görevin koordinatörünün izlediği çalışma yöntemidir: adımlar, işlere verebileceği roller ve her ajanın aldığı talimatlar. Bu sayfa her rehberi, CodeNomad'in kendisinin neyi zorunlu kıldığını ve neyin modelden uyması istenen bir talimat olarak kaldığını açıklar.
 
-Bir rehberin tam tanımını okumak için görev oluşturma formunda **Seçenekler** bölümünü açın, bir **Rehber** seçin ve açıklamasının altındaki **Ayrıntıları gör** seçeneğini seçin. Merkezi okuyucu adımlarını ve rollerini gösterir; **Ajanların aldığı talimatlar (İngilizce istem metni)** bölümü, seçili **Görev oturumları** politikası için koordinatörün her turda aldığı metnin tamamını ve her rolün atama mesajının tamamını (**Bağımsız oturumlar** ile, işin oturumunun her turunun eklediği bağlamı da) katlanmış olarak içerir. [objective] gibi köşeli parantez içindeki alanlar her görevin kendi verilerini temsil eder; ayrı mesajlar görevi başlatır veya sürdürür ve iş sonuçlarını iletir. Bu talimatlarda Keşif *Wayfinder Map* olarak adlandırılır.
+Görev formunda **Rehber** yanındaki **ⓘ**, bu kılavuzu dilinizde seçili rehberin bölümünde açar. Adımları, rolleri, soruları ve denetimleri okumak için aşağıdan rehber seçin. Ajan talimatlarında Keşif *Wayfinder Map* olarak adlandırılır.
 
 ## Rehber seçin {#choose}
 
@@ -125,7 +125,7 @@ Başarısız bir yeniden üretim kurulamadığında tanı uzmanı tahmin etmek y
 - Yalnızca Hata ayıklama'nın altı rolü kabul edilir.
 - Sıra: uygulayıcı bir tanıya, her inceleyici bir uygulamaya, devam iki incelemeye ve doğrulayıcı devama bağlı olmalıdır. Bir adım ancak bağlı olduğu adım tamamlandığında başlar.
 - İnceleyiciler ve doğrulayıcı yeni konuşmalarda çalışmalıdır; devam, tamamlanmış uygulayıcının konuşmasını sürdürmelidir.
-- Tamamlanan her rol raporu, rolünün yapılandırılmış raporunu tam biçiminde (**Ayrıntıları gör** gösterir) içermelidir; aksi halde reddedilir. Örneğin düzeltme, regresyon testinin başarısız ve başarılı görüldüğünü belirtmeli; doğrulama dört denetim türünün hepsini hiçbiri başarısız olmadan listelemelidir.
+- Tamamlanan her rol raporu, rolünün yapılandırılmış raporunu gereken biçimde içermelidir; aksi halde reddedilir. Örneğin düzeltme, regresyon testinin başarısız ve başarılı görüldüğünü belirtmeli; doğrulama dört denetim türünün hepsini hiçbiri başarısız olmadan listelemelidir.
 - Görev ancak en son uygulamanın öncesinde tamamlanmış bir tanı, sonrasında iki inceleme, bir devam ve bir doğrulama varsa, hepsi bağımlılıklarla bağlıysa ve geçerli yapılandırılmış raporlara sahipse yeşil biter.
 
 Yalnızca talimat olanlar: tanının kalitesi, inceleyicilerin ve doğrulayıcının dosya düzenlememesi ve bir raporun iddialarının doğruluğu. CodeNomad, düzeltmenin testin kırmızıdan yeşile geçtiğini beyan ettiğini denetler; testi gerçekten çalıştırdığını değil.

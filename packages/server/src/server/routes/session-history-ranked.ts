@@ -44,7 +44,7 @@ export function registerRankedHistoryRoute(app: FastifyInstance, deps: HistoryRo
       }
       current()
       await manager.desktopPluginsReady(); current()
-      if (!await manager.ownsLocation(id, base, client, signal)) return reply.code(403).send({ error: "History location does not belong to workspace" })
+      if (!await manager.ownsLocation(id, base, client, { signal })) return reply.code(403).send({ error: "History location does not belong to workspace" })
       current()
       if (unsupported.has(connection)) return { status: "unsupported" }
       const directories = await historyDirectories(manager, id, base.directory); current()
@@ -69,7 +69,7 @@ export function registerRankedHistoryRoute(app: FastifyInstance, deps: HistoryRo
         if (continuation && !cursor) continue
         const location = directory === base.directory ? base : readLocationRef(await client.location.get({ location: { directory } }, { ...locationRequestOptions({ directory }), signal }))
         current()
-        if (location.directory !== directory || !await manager.ownsLocation(id, location, client, signal)) return reply.code(403).send({ error: "History location does not belong to workspace" })
+        if (location.directory !== directory || !await manager.ownsLocation(id, location, client, { signal })) return reply.code(403).send({ error: "History location does not belong to workspace" })
         current()
         let response
         try {
@@ -120,7 +120,7 @@ export function registerRankedHistoryRoute(app: FastifyInstance, deps: HistoryRo
       const sessions = await ownedHistorySessions(manager, id, client, [...owners.values()], undefined, current, signal)
       if (sessions.length !== owners.size) exclusions.add("foreign_directory")
       const finalIDs = new Set(sessions.map(owner => owner.sessionID))
-      if (!await manager.ownsLocation(id, base, client, signal)) throw new Error("History ownership changed")
+      if (!await manager.ownsLocation(id, base, client, { signal })) throw new Error("History ownership changed")
       current()
       const scanned = sessions.reduce((sum, owner) => sum + owner.scanned, 0)
       const examinedBefore = continuation?.examined ?? 0

@@ -2,7 +2,7 @@
 
 Un guion es el método de trabajo que sigue el coordinador de una misión: los pasos, los roles que puede asignar a las tareas y las instrucciones que recibe cada agente. Esta página describe cada guion, lo que CodeNomad impone por sí mismo y lo que sigue siendo una instrucción que se pide al modelo que siga.
 
-Para leer la definición exacta de un guion, abre **Opciones** en el formulario de creación de misiones, elige un **Guion** y selecciona **Ver detalles** bajo su descripción. El lector central muestra sus pasos y roles; **Instrucciones que reciben los agentes (texto del prompt en inglés)** pliega, para la política de **Sesiones de tareas** elegida, el texto completo que recibe el coordinador en cada turno y el mensaje de asignación completo de cada rol (con **Sesiones independientes**, también el contexto que añade cada turno de la sesión de la tarea). Los campos entre corchetes, como [objective], representan los datos propios de cada misión; mensajes aparte inician o reanudan la misión y entregan los resultados de las tareas. En esas instrucciones, Exploración se llama *Wayfinder Map*.
+El **ⓘ** junto a **Guion** en el formulario abre esta guía en tu idioma en la sección del guion seleccionado. Elige un guion abajo para sus pasos, roles, preguntas y comprobaciones. En las instrucciones de los agentes, Exploración se llama *Wayfinder Map*.
 
 ## Elegir un guion {#choose}
 
@@ -125,7 +125,7 @@ Cuando no se puede construir una reproducción que falle, el diagnosticador info
 - Solo se aceptan los seis roles de Depuración.
 - Orden: un implementador debe depender de un diagnóstico, cada revisor de una implementación, la continuación de ambas revisiones y el validador de la continuación. Un paso solo empieza cuando ha terminado el paso del que depende.
 - Los revisores y el validador deben ejecutarse en conversaciones nuevas; la continuación debe continuar la conversación del implementador completado.
-- Cada informe de rol completado debe contener el informe estructurado de su rol en su formato exacto (mostrado por **Ver detalles**), o se rechaza. Por ejemplo, la corrección debe indicar que la prueba de regresión se vio fallar y pasar, y la validación debe listar los cuatro tipos de comprobación sin ninguno fallido.
+- Cada informe de rol completado debe contener el informe estructurado de su rol en el formato requerido, o se rechaza. Por ejemplo, la corrección debe indicar que la prueba de regresión se vio fallar y pasar, y la validación debe listar los cuatro tipos de comprobación sin ninguno fallido.
 - La misión solo termina en verde si la implementación más reciente tiene un diagnóstico completado antes y dos revisiones, una continuación y una validación después, todos conectados por dependencias y con informes estructurados válidos.
 
 Solo instrucciones: la calidad del diagnóstico, que los revisores y el validador no editen archivos y la veracidad de lo que afirma un informe. CodeNomad comprueba que la corrección declara que la prueba pasó de rojo a verde, no que la ejecutara.
