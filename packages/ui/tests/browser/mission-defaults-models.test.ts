@@ -282,6 +282,7 @@ test("failed UI-owner reads stay fenced despite general readiness and server/sta
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     fail = false
     await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).click()
+    await page.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Model M" }).waitFor({ state: "attached" })
     assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), false)
     assert.equal(fixture.creates.length, 0)

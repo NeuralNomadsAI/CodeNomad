@@ -57,7 +57,10 @@ async function setup(page: Page, windowContext: "local" | "remote" = "local") {
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } }))
   await routeMissionContent(page, listedMissions)
 }
-const fixtureCall = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+const fixtureCall = async (page: Page, method: string, arg?: unknown) => {
+  await page.waitForFunction(method => typeof (window as any).missionFixture?.[method] === "function", method)
+  return page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+}
 /** Polls a condition on test-process state, such as what a route handler recorded. */
 async function until(condition: () => boolean, timeout = 5_000) {
   for (const start = Date.now(); !condition();) {
