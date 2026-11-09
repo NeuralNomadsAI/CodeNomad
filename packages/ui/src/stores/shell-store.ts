@@ -69,12 +69,13 @@ export interface ShellRefreshEvent {
 }
 
 const EMPTY_STATE: ShellState = { items: [], loading: false, failed: false }
-const SHELL_EVENTS = new Set(["shell.created", "shell.exited", "shell.deleted", "server.connected"])
+// Creation precedes background admission; the tool's terminal event confirms it.
+const SHELL_EVENTS = new Set(["shell.created", "shell.exited", "shell.deleted", "session.tool.success", "session.tool.failed", "server.connected"])
 
-export function createShellApi(client: OpenCodeClient): ShellApi {
+export function createShellApi(client: OpenCodeClient, listBackground?: ShellApi["list"]): ShellApi {
   const location = (directory: string) => ({ directory })
   return {
-    list: async (directory, workspaceID) => (await client.shell.list({ location: location(directory) }, requestLocationOptions({ directory, workspaceID }))).data,
+    list: listBackground ?? (async (directory, workspaceID) => (await client.shell.list({ location: location(directory) }, requestLocationOptions({ directory, workspaceID }))).data),
     remove: (directory, shellId, workspaceID) => client.shell.remove({ id: shellId, location: location(directory) }, requestLocationOptions({ directory, workspaceID })),
     output: async (directory, shellId, cursor = 0, workspaceID) => (await client.shell.output({
       id: shellId,
@@ -88,6 +89,7 @@ export function createShellApi(client: OpenCodeClient): ShellApi {
 export function createShellStore(apiForInstance: (instanceId: string) => ShellApi) {
   const [states, setStates] = createSignal<Map<string, ShellState>>(new Map())
   const requests = new Map<string, { promise: Promise<void>; dirty: boolean }>()
+  const demands = new Map<string, number>()
   const key = (instanceId: string, directory: string, workspaceID?: string) => JSON.stringify([instanceId, directory, workspaceID])
   const setState = (stateKey: string, state: ShellState) => setStates((current) => new Map(current).set(stateKey, state))
   const readState = (stateKey: string): ShellState => untrack(() => states().get(stateKey) ?? EMPTY_STATE)
@@ -108,7 +110,14 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
         request.dirty = false
         try {
           const items = await apiForInstance(instanceId).list(directory, workspaceID)
-          if (!request.dirty) setState(stateKey, { items, loading: false, failed: false })
+          if (!request.dirty) {
+            const previous = new Map(readState(stateKey).items.map(item => [item.id, item]))
+            const stable = items.map(item => {
+              const old = previous.get(item.id)
+              return old && JSON.stringify(old) === JSON.stringify(item) ? old : item
+            })
+            setState(stateKey, { items: stable, loading: false, failed: false })
+          }
         } catch {
           if (!request.dirty) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
         }
@@ -122,10 +131,11 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
     const eventDirectory = event.location?.directory ?? event.data?.info?.cwd
     const tracked = Array.from(untrack(states).keys())
       .map((stateKey): [string, string, string | null] => JSON.parse(stateKey))
-      .filter(([trackedInstanceId]) => trackedInstanceId === instanceId)
+      .filter(([trackedInstanceId, directory, workspaceID]) => trackedInstanceId === instanceId
+        && demands.has(key(instanceId, directory, workspaceID ?? undefined)))
     const matching = eventDirectory ? tracked.filter(([, directory, workspaceID]) => sameDirectory(directory, eventDirectory)
       && (event.location?.workspaceID === undefined || event.location.workspaceID === workspaceID)) : tracked
-    await Promise.all((matching.length ? matching : tracked).map(([, directory, workspaceID]) => load(instanceId, directory, workspaceID ?? undefined, true)))
+    await Promise.all(matching.map(([, directory, workspaceID]) => load(instanceId, directory, workspaceID ?? undefined, true)))
   }
 
   const remove = async (instanceId: string, directory: string, shellId: string, workspaceID?: string): Promise<boolean> => {
@@ -139,7 +149,16 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
   const output = (instanceId: string, directory: string, shellId: string, cursor?: number, workspaceID?: string) =>
     apiForInstance(instanceId).output(directory, shellId, cursor, workspaceID)
   const getState = (instanceId: string, directory: string, workspaceID?: string): ShellState => states().get(key(instanceId, directory, workspaceID)) ?? EMPTY_STATE
-  return { getState, load, refreshForEvent, remove, output }
+  const watch = (instanceId: string, directory: string, workspaceID?: string) => {
+    const stateKey = key(instanceId, directory, workspaceID)
+    demands.set(stateKey, (demands.get(stateKey) ?? 0) + 1)
+    return () => {
+      const remaining = (demands.get(stateKey) ?? 1) - 1
+      if (remaining) demands.set(stateKey, remaining)
+      else demands.delete(stateKey)
+    }
+  }
+  return { getState, load, watch, refreshForEvent, remove, output }
 }
 
 function sameDirectory(left: string, right: string): boolean {

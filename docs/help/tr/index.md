@@ -89,8 +89,8 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 Durum paneli etkin oturumun sağlayıcı kullanımını ve OpenCode arka plan Shell süreçlerini gösterir. Konuşma durumu ve alt konuşma etkinliği; çalışan, sıkıştırılan ve girdi bekleyen oturumları belirtir. Arka plan Shell sürecini izlemek, ileti düzenleyicisinden Shell isteği göndermekten veya ayrı barındırılan terminal SideCar kullanmaktan farklıdır.
 
 1. Seçilen görüşmenin Location'si (veya hiçbir konuşma seçilmediğinde açık çalışma alanı) için **Durum → Arka Plan Shell'leri** öğesini açın.
-2. Sağlandığı yerde komut, kabuk, dizin, durum, PID ve çıkış kodunu inceleyin; mevcut yerel çıktı için **Çıktıyı görüntüle** öğesini seçin.
-3. Birini sonlandırmak için çalışırken **Durdur ve kaldır**, çıktıktan sonra **Kaldır** eylemini kullanıp hedefi onaylayın.
+2. Yalnızca açıkça arka plana alınmış çalışan komutlar, her satırda bir tane listelenir. Üzerine gelince kabuk, klasör ve PID görünür; **Çıktıyı görüntüle** simgesi yerel çıktıyı açar. OpenCode arka plan görevleri API’si yoksa yükleme hatası gösterilir.
+3. Satırdaki **Durdur ve kaldır** simgesini kullanıp hedefi onaylayın.
 
 Çalışan bir Shell'nin kaldırılması bu işlemi durdurur; çıkış penceresini kapatmak bunu yapmaz. Yenileme/yeniden bağlanma, kaçırılan çıktı olaylarını yeniden oluşturmak yerine mevcut yerel durumu okur.
 

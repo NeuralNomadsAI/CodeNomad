@@ -45,6 +45,8 @@ describe("shell store", () => {
       output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
     }
     const store = createShellStore(() => api)
+    store.watch("instance", "/repo")
+    const hideWorktree = store.watch("instance", "/repo/worktree")
     await store.load("instance", "/repo")
     await store.load("instance", "/repo/worktree")
     lists.length = 0
@@ -56,6 +58,10 @@ describe("shell store", () => {
     lists.length = 0
     await store.refreshForEvent("instance", { type: "server.connected" })
     assert.deepEqual(lists.sort(), ["/repo", "/repo/worktree"])
+    lists.length = 0
+    hideWorktree()
+    await store.refreshForEvent("instance", { type: "session.tool.success", location: { directory: "/repo/worktree" } })
+    assert.deepEqual(lists, [], "hidden locations do not refresh")
   })
 
   it("keeps loaded shells visible when removal fails", async () => {
@@ -82,6 +88,8 @@ describe("shell store", () => {
     }))
     await store.load("instance", "/repo", "one")
     await store.load("instance", "/repo", "two")
+    store.watch("instance", "/repo", "one")
+    store.watch("instance", "/repo", "two")
     assert.equal(store.getState("instance", "/repo", "one").items[0].id, "one")
     assert.equal(store.getState("instance", "/repo", "two").items[0].id, "two")
     lists.length = 0

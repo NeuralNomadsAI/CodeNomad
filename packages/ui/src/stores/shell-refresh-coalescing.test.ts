@@ -10,6 +10,7 @@ it("shares mounted Shell reads and coalesces an event burst into one authoritati
     output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
   }))
   const reads = Array.from({ length: 30 }, () => store.load("instance", "/repo"))
+  store.watch("instance", "/repo")
   await Promise.resolve()
   assert.equal(pending.length, 1)
   const events = Array.from({ length: 20 }, () => store.refreshForEvent("instance", {
