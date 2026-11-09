@@ -17,6 +17,7 @@ const make = (sessionId: string, parentID?: string) => ({ id: sessionId, parentI
   location: { directory: "/repo" }, model: { providerID: "fixture", id: "fixture" }, cost: 0, tokens: {}, time: { created: 1, updated: 1 } })
 const native = new Map<string, any>(["keep", "done", "old", "child"].map(key => [key, make(key, key === "child" ? "done" : undefined)]))
 native.get("old").time.archived = 10
+native.get("done").title = "Completed conversation ready to archive"
 const writes: unknown[] = [], lists: unknown[] = []
 let sequence = 10, failWrite = false
 const event = (sessionID: string, archived: boolean) => {

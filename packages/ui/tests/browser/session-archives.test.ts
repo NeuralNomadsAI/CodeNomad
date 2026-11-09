@@ -67,7 +67,7 @@ test("archive and restore remain keyboard accessible through the compact action 
   await page.route("**/api/**", route => route.fulfill({ json: {} })); await events.route(page)
   try {
     await page.goto(url); await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.locator(".session-list-container").evaluate(element => { element.parentElement!.style.width = "170px" })
+    await page.locator(".session-list-container").evaluate(element => { element.parentElement!.style.width = "340px" })
     await page.waitForFunction(() => document.querySelector('[data-session-id="done"]')?.getAttribute("data-compact-actions") === "true")
     const menu = row(page, "done").getByRole("button", { name: "More actions", exact: true })
     await menu.focus(); await menu.press("Enter")
@@ -77,7 +77,10 @@ test("archive and restore remain keyboard accessible through the compact action 
     await page.evaluate(() => (window as any).fixture.setFilter(true))
     await page.getByRole("combobox", { name: "Filter sessions by archive state" }).selectOption("archived")
     await row(page, "done").waitFor()
-    await action(page, "done", "Restore session")
+    await page.waitForFunction(() => document.querySelector('[data-session-id="done"]')?.getAttribute("data-compact-actions") === "true")
+    await menu.focus(); await menu.press("Enter")
+    const restore = page.getByRole("menuitem", { name: "Restore session", exact: true })
+    await restore.focus(); await restore.press("Enter")
     await row(page, "done").waitFor({ state: "detached" })
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [
       { sessionID: "done", archived: true }, { sessionID: "done", archived: false },

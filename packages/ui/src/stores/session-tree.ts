@@ -34,12 +34,12 @@ export function projectUnarchivedSessionThreads(threads: SessionThread[], select
       return result ? [result] : []
     })
     const session = thread.session
-    const live = session.id === selected || session.status !== "idle" || Boolean(session.pendingPermission || session.pendingForm)
+    const live = session.id === selected || session.status === "working" || session.status === "compacting" || Boolean(session.pendingPermission || session.pendingForm)
       || children.some(child => child.live)
     if (archived && !live) return null
     const projected = children.map(child => child.thread)
     return { live, thread: { ...thread, children: projected, hasChildren: projected.length > 0,
-      latestUpdated: Math.max(session.time.updated, ...projected.map(child => child.latestUpdated)) } }
+      latestUpdated: projected.reduce((latest, child) => Math.max(latest, child.latestUpdated), session.time.updated) } }
   }
   return threads.flatMap(thread => {
     const result = visit(thread)
