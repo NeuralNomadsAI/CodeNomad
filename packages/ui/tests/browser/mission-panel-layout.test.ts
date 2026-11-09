@@ -205,9 +205,11 @@ test("finished one-time Mission: titled entry, disabled inapplicable actions, pr
     await captureMissionView(page, "finished-one-time")
     await missionToolbar(page).locator(".mission-overview-toggle").click()
     await page.locator(".mission-reader").getByText(/^Release notes are drafted/).waitFor()
+    // While the eye is pressed, the reader follows the selection: a selected task shows its own.
     await tree.locator(".mission-tree-task").first().click()
-    assert.equal(await page.locator(".mission-reader .window-title").innerText(), "Collect merged changes")
-    assert.equal(await tree.locator(".mission-tree-task").first().getAttribute("aria-pressed"), "true")
+    await page.locator(".mission-reader .window-title").getByText("Collect merged changes", { exact: true }).waitFor()
+    assert.equal(await tree.locator(".mission-tree-task").first().getAttribute("aria-current"), "true")
+    assert.equal(await selectedMissionTitle(page).count(), 0, "the task, not its Mission row, is the selection")
     assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true", "the eye shows the task's open reader")
     const taskReader = page.locator(".mission-task-reader")
     await taskReader.getByText("Done", { exact: true }).waitFor()

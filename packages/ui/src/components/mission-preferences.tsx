@@ -135,6 +135,9 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
       </div>
     </details>
     <Show when={failed()}><p role="alert">{t("missions.defaults.error")}</p></Show>
+    <label class="mission-preferences-check"><input type="checkbox" checked={config.preferences().missionDeleteSessions}
+      disabled={!config.isUiConfigLoaded()} onChange={event => void config.updatePreferences({ missionDeleteSessions: event.currentTarget.checked })} />
+      {t("missions.preferences.deleteSessions")}</label>
     {/* Location depth writes OpenCode configuration; it is a separate row, not part of these defaults. */}
     <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory} active={props.active} />
     <MissionModelLibrary active={props.active} />

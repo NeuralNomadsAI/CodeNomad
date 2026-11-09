@@ -11,7 +11,9 @@ const events = [
 ] as const
 /** One ordered criteria list (roles by position); the strict domain codec checks counts and uniqueness. */
 const criteriaLaunchPolicyWire = { type: "object", properties: {
-  when: { type: "array", maxItems: 16, items: { oneOf: [cron, ...events] } },
+  when: { type: "array", maxItems: 16, items: { oneOf: [
+    { type: "object", properties: { kind: { const: "now" } }, required: ["kind"], additionalProperties: false }, cron, ...events,
+  ] } },
 }, required: ["when"], additionalProperties: false } as const
 const legacyLaunchPolicyWire = { type: "object", properties: {
   timing: { oneOf: [

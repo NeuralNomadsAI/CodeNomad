@@ -8,21 +8,22 @@ The picker loads 50 mission summaries at a time; **Load more** continues discove
 
 Missions pair a durable project plan with native OpenCode conversations. The coordinator plans and delegates; the task tree records dependencies and results. A saved plan, an admitted input and observed execution are different facts.
 
-## Create, then explicitly start {#create}
+## Create and start {#create}
 
 1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission tree until you create or cancel.
-2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
-3. Leave **Scheduling** folded for **Once, immediately**, or expand it and use **Add a criterion** under **Launch when** to add schedules or events. Their order sets how they combine.
-4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subagent depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
-5. Choose **Create**. Select the paused entry, review it, then use ▶ **Start** when ready. Without launch criteria, Start runs one mission; with criteria, it arms native scheduling.
+2. Optionally use **Start from a configuration** at the top, then review **What should the mission do?**, **Notes** and **Title**. A blank mission's title follows its first sentence (up to 60 characters). Loading a configuration replaces the objective, notes and title; the title is derived from the configuration's name and you can edit it afterward.
+3. The compact form keeps **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subagent depth**, followed conversations and **Scheduling** visible. With **Compare two models**, check **Model A** and **Model B** too.
+4. **Launch when** starts with **Once, now**. Use **Add a criterion** to combine schedules and events; their order sets **or**, **if** and **else**.
+5. Leave **Start on creation** off to save a paused mission and use ▶ **Start** later. Turn it on to request the same guarded Start after creation is confirmed, then choose **Create**.
 
-**Create saves a paused Mission.** Work and native calendars are armed only by Play. Creation belongs to the selected project/Location and records the requested profiles and task-session policy. Validation appears beside the affected field; a refusal that says nothing was sent keeps the draft for correction. A one-time coordinator can also prepare a separate follow-up: it appears as **Prepared** and starts from its own ▶ action.
+**Start on creation is off by default.** Creation saves a paused Mission first; when selected, the follow-up uses the ordinary Play guards and any native-settings confirmation. If creation's acknowledgement is lost, checking its receipt leaves Start manual. Creation belongs to the selected project/Location and records the requested profiles and task-session policy. Validation appears beside the affected field; a refusal that says nothing was sent keeps the draft for correction. A one-time coordinator can also prepare a separate follow-up: it appears as **Prepared** and starts from its own ▶ action.
+If the project is still being identified, the created schedule stays paused; use ▶ **Start** in the toolbar once the project is ready.
 
 Saved one-time missions retain their execution controls, task tree, conversations and final reports. Existing daily schedules remain listed with their daily controls and [daily timing rules](#existing-daily-schedules). Select the entry and use the controls available for that object.
 
 ### Playbooks {#playbooks}
 
-The **Playbook** selector shows the selected playbook's one-sentence description directly below it. **See details** opens the selected playbook in the central reader: its steps, its roles and, folded at the end, the exact English instructions its agents receive. [Playbooks](playbooks.md) explains each playbook's steps, roles and questions, and what CodeNomad checks.
+The **ⓘ** beside **Playbook** opens the guide in your language at the selected playbook's section. [Playbooks](playbooks.md) explains its steps, roles and questions, and what CodeNomad checks.
 
 | Playbook | Intended work |
 | --- | --- |
@@ -38,9 +39,9 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 ## Follow the tree and read results {#tracking}
 
-1. Select a mission's row: its tasks appear beneath it and its actions on the header's second line. The row's chevron folds or unfolds its tasks; another mission's chevron shows its tasks without selecting it. **Filter missions** narrows the other rows.
-2. Choose **Summary** (eye) for the central overview; while it is open, selecting another mission shows that mission's overview. Select a task for its exact result, brief and evidence: while its reader is open, the header's actions apply to that task, with **Open the task's conversation** and, when its report is missing, **Verify and recover missing report**. **Summary** then closes the task's reader.
-3. **More actions** (⋯) holds **Request an update**, **Interrupt now**, **Save as brief** and **Edit selected mission**; actions that do not apply stay disabled.
+1. As in the session list, a row's chevron shows or hides its tasks, and a click selects one row: a mission, or one of its tasks. The selection's actions are on the header's second line. A mission without tasks has no chevron. **Filter missions** narrows the other rows.
+2. Press **Summary** (eye) to read the selection in the central reader: a mission's overview, or a task's exact result, brief and evidence. While it is pressed, the reader follows what you select; press it again to return to the conversation. With a task selected, the header's actions apply to that task, with **Open the task's conversation** and, when its report is missing, **Verify and recover missing report**.
+3. **More actions** (⋯) holds **Request an update**, **Interrupt now**, **Save configuration** and **Edit selected mission**; actions that do not apply stay disabled.
 4. Follow dependency links and **Reports**; use **Open conversation** for the coordinator when you need its transcript.
 5. When a mission or one of its tasks turns red, select it: the asking conversation opens with its question in the interruption dock.
 
@@ -69,8 +70,8 @@ Mission flags and task icons use the session list's colours: colour shows only w
 | Red | An answer is expected from you. A mission's flag turns red for its coordinator's question, a task for its own, and the mission's chevron shows that one of its tasks asks. Select the red mission or task to open the question. |
 | Yellow, pulsing | Work is running. |
 | Orange | The mission is paused, or interrupted, with an action to continue it. |
-| Green | A completed mission you have not opened yet in this window; it turns neutral once you select it. |
-| Blue | A prepared mission, ready to start like a composed prompt. |
+| Green | A completed mission or a finished task you have not seen yet in this window, and the chevron of a mission with such a task. It turns neutral once you select it; click a green task icon, or drag across several, to clear them. Right-click a mission's chevron and choose **Mark as read** to clear the mission and all its tasks at once. |
+| Blue | A prepared mission, ready to start like a composed prompt, or a task that has not started yet. |
 
 Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons.
 
@@ -123,8 +124,8 @@ Saving a depth preserves enabled native schedules in the project configuration. 
 1. Use the Missions gear or **Settings → Missions** to edit **New mission defaults**.
 2. Under **Apply to**, choose **All missions** or one playbook, then set **Task sessions** and, under **Agents and models**, one row per role (coordinator, then the playbook's roles). Each choice is saved immediately; there is no Save button.
 3. In a playbook scope, rows show the global values marked **Global**. Changing a field customizes that role starting from them; its revert icon uses the global values again. **Reset** (after confirmation) clears only the agents and models of the shown scope.
-4. In creation, use **Options → Agents and models** for specific requested profiles; **Use saved defaults** restores the saved ones.
-5. For native recursion limits, choose a **Subagent depth**, here or under creation **Options → Delegation**: **Inherit** (followed by the inherited depth when it is known) or 1 to 10. Your choice is saved at once. The info icon beside the label gives the effective depth, whether subagents can nest and the configuration files.
+4. In creation, use **Agents and models** for specific requested profiles; **Use saved defaults** restores the saved ones.
+5. For native recursion limits, choose a **Subagent depth**, here or in the creation form's delegation controls: **Inherit** (followed by the inherited depth when it is known) or 1 to 10. Your choice is saved at once. The info icon beside the label gives the effective depth, whether subagents can nest and the configuration files.
 
 | Setting | Scope and effect |
 | --- | --- |
@@ -140,21 +141,21 @@ Each **Model** list shows what the conversation's **Model** selector shows, unde
 
 A refused or unconfirmed choice is never resent: the stored values are shown again, and **Reload** appears only when they cannot be read. If a depth change is unconfirmed, your value is kept; use **Refresh project depth** before another change. Do not interpret **OpenCode effective depth unknown** as zero or disabled.
 
-## Reuse a saved brief {#saved-briefs}
+## Reuse a saved configuration {#saved-briefs}
 
-1. In creation, expand **Options → Start from a brief** and select the saved brief.
+1. In creation, select a saved configuration under **Start from a configuration**, at the top of the form. It replaces the objective, notes and title; the title is derived from the configuration's name. You can edit these fields afterward.
 2. Review the copied objective, notes, playbook, profiles and delegation before **Create**.
-3. Use the bookmark icon in the creation footer (**Save as brief**) to name a reusable draft. A selected one-time mission, including a finished one, also offers **Save as brief** under **More actions** (⋯).
+3. Use **Save configuration** in creation to name a reusable draft. A selected one-time mission, including a finished one, also offers **Save configuration** under **More actions** (⋯).
 
-Briefs store instructions and requested choices, not task plans, results, conversations, schedule clocks or execution authority. Loading one fills an ordinary creation draft; it does not start or schedule anything. Removing a brief keeps existing missions/conversations. **Settings → Missions → Saved briefs** manages the library; if the library becomes unreadable, **Reset the saved library** (after confirmation) removes saved briefs, not executions. Schedules themselves have no save-as-brief action.
+Configurations store instructions, playbook and requested profile/delegation choices. Task plans, results, conversations, schedule clocks and execution authority stay with their missions. Loading a configuration fills an ordinary creation draft; review scheduling and **Start on creation** separately. Removing a configuration keeps existing missions and conversations. **Settings → Missions → Saved configurations** manages the library; **Reset the configuration library** (after confirmation) removes saved configurations while keeping executions. Schedules themselves have no save-configuration action.
 
 ## Scheduling, catch-up and followed conversations {#daily-schedules}
 
 ### Native scheduling {#native-scheduling}
 
-The **i** icons beside scheduling labels explain the choices: hover, focus with the keyboard or tap.
+The **ⓘ** beside **Launch when** shows a tooltip on hover or keyboard focus. Click, tap or press Enter to open [Native scheduling](missions.md#native-scheduling) in the browser, in your UI language.
 
-Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The **i** beside **Launch when** opens on click, Enter or Space: it explains **if** and **else**, notes that the mission only runs while OpenCode is running and links to [OpenCode's start setting](opencode.md#login-start). New schedules use the system time zone; **Saved time zone (IANA)** appears only when the saved zone differs from it.
+**Scheduling** is visible in Create and Edit. **Launch when** begins with **Once, now**, the first schedule choice. It is an ordinary schedule source: combine it with other schedules (**or**), place an event after it as its condition (**if**), or place it after events as their fallback (**else**). Choose **Add a criterion**, then its type; remove a criterion with ×. Missions run while OpenCode runs. New civil schedules use the system time zone; **Saved time zone (IANA)** appears when the saved zone differs.
 
 | Schedule | Timing |
 | --- | --- |
@@ -164,7 +165,9 @@ Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that
 | Day of each month | Day 1–31 at the chosen time; months without that day are skipped. |
 | Advanced (cron) | A native cron expression, at most once per minute. |
 
-Add several schedules for several times, such as 09:15 and 17:45. Each one is a cron; recognized expressions reopen as their shortcut. The [events](#scheduling-conditions) are the other criteria: events that launch the mission are checked every 15 minutes, with no frequency to set; conditions are read at the times that need them.
+Add several schedules for several times, such as 09:15 and 17:45. Civil shortcuts use cron; recognized expressions reopen as their shortcut. The [events](#scheduling-conditions) are the other criteria: events that launch the mission are checked every 15 minutes, with no frequency to set; conditions are read at the times that need them.
+
+**Once, now** offers one chance, anchored when Play arms the schedule, rather than when the form opens or creation saves it. Event then now is a fallback; now then event is conditional. Its single chance can be consumed without a launch when its condition blocks it. Choose a recurring schedule or an event trigger when you want later changes to offer further chances.
 
 Between two cards, a small connector shows how they combine: **or** between two schedules or two events, **if** from a schedule to an event, **else** from an event to a schedule. Events at the top launch the mission each time they occur; schedules at the top launch it at their times. Events after schedules are their conditions: at each of those times, the mission starts only if one of them occurred since the last successful passage; otherwise that time is skipped. Schedules after events are a fallback for everything above them: at each of its times, a fallback schedule launches only if the cards above it launched no passage since its previous time (or since it was set up); a **Run now** counts too, and so does a passage that failed. Events after it condition only that fallback. For example, new commits, then 18:00, then new messages, then 20:00 launches on each commit; else at 18:00 if there were new messages; else at 20:00. Drag a card by its grip to change the order, or focus the grip and press Alt+Up or Alt+Down; the connectors follow.
 
@@ -180,7 +183,7 @@ An event criterion names its source in this project: **Another schedule succeeds
 
 First Play establishes the starting reference. Resume preserves it, including changes observed after a pause. Success sources require a verified successful result and a settled native family. Branch checks use local commits and ancestry without fetching. Conversation checks wait for complete, stable new messages and exclude technical wakes and the passage's own conversations. Files use up to 128 explicit project-relative paths, one per line; recursive patterns and linked paths are refused. A missing, moved, ambiguous or over-capacity source blocks admission with an explanation. Changes between checks require a durable trace in the source to be detected.
 
-Changes observed together are grouped. A passage freezes the observed source evidence; successful settlement consumes that snapshot, leaving later changes for a future check. A failed passage keeps its source checkpoint and requires intervention. **Followed conversations (optional)** under **Options** supplies context separately from choosing a conversation-message event.
+Changes observed together are grouped. A passage freezes the observed source evidence; successful settlement consumes that snapshot, leaving later changes for a future check. A failed passage keeps its source checkpoint and requires intervention. **Followed conversations (optional)** supplies context separately from choosing a conversation-message event.
 
 ### Counts and saved schedules {#scheduling-limits}
 
@@ -268,7 +271,7 @@ The local-branch source includes branches without a worktree, using local refs o
 
 A direct activation confirmation can continue the action you just requested. If activation is confirmed later through **Refresh saved request**, wait for the updated view, then choose **Start** or **Resume** yourself. Recovery preserves the original request and leaves starting work to your next explicit action.
 
-Before first Play, you can remove every launch criterion to launch once at Start while keeping followed conversations under **Options**. Play reads and freezes their complete, stable message prefix (up to 32 messages per source, within the 16,384-character launch envelope). Missing, moved or over-capacity sources block the launch with an explanation. A retry keeps the original frozen context and launch identity.
+Before first Play, you can choose **Once, now** while keeping followed conversations. Play reads and freezes their complete, stable message prefix (up to 32 messages per source, within the 16,384-character launch envelope). Missing, moved or over-capacity sources block the launch with an explanation. A retry keeps the original frozen context and launch identity.
 
 When a receipt read confirms partial preparation, **Try again** appears. Clicking it checks that same receipt again and resumes only the original saved change, keeping the mission paused.
 
@@ -278,8 +281,8 @@ Use **Edit selected mission** under **More actions** (⋯) on an editable one-ti
 
 For a native schedule, **Delete selected mission…** disables future passages before removing the entry. Conversations and results are kept; cleanup awaiting reconciliation remains visible in **Technical details**. Preserve an unconfirmed deletion and refresh its original request.
 
-1. For a one-time mission you no longer need, choose **Delete selected mission…** and review the confirmation.
-2. Optionally select **Also delete specialist conversations created for this mission** before confirming.
+1. To also delete the task conversations created for missions you delete, check **Deleting a mission also deletes its task conversations** under **Settings → Missions**.
+2. For a one-time mission you no longer need, choose **Delete selected mission…**: it is deleted at once. A form appears only if the deletion fails or is unconfirmed, with **Try again**.
 3. Check **Conversation cleanup** for removed/kept/pending counts. Retry only the remaining recorded cleanup if offered.
 
 Deleting a mission is not the same as stopping it; use Stop and inspect remaining work first. Coordinators and reused conversations are kept. Shared, moved, child-bearing or unverifiably owned specialists may also be retained. Partial cleanup is not rolled back and is not silently completed in the background. The mission card can disappear while deletion confirmation is still pending, even when conversation cleanup shows 0 pending. Keep using the original **Try again** action until deletion is confirmed; it retains the same deletion request and options. The overview reader keeps the 20 most recent completed cleanups. Deleting missions frees their project storage: older deleted missions are cleared automatically.

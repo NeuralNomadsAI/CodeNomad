@@ -10,8 +10,10 @@ import { captureMissionView } from "./mission-view-capture"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { panelMissions } from "./mission-content-fixture"
 import { pausedMissionScheduleReceipt } from "./mission-scheduled-fixture"
+import { fixtureEventStream } from "./fixture-event-stream"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "mission-create-submit",
@@ -20,10 +22,11 @@ before(async () => {
       ],
     })
   url = fixture.url
+  events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
 const OBJECTIVE = "What should the mission do?"
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
@@ -38,21 +41,29 @@ function created(body: Record<string, unknown>): MissionMap {
 async function setup(page: Page) {
   const errors: string[] = [], creates: Array<Record<string, unknown>> = [], controls: string[] = []
   let list: MissionMap[] = []
+  let scheduled: Awaited<ReturnType<typeof pausedMissionScheduleReceipt>> | undefined
   page.setDefaultTimeout(15_000); page.setDefaultNavigationTimeout(60_000)
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await events.route(page)
+  await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
+    location: { directory: "/fixture" }, capability: null, effectiveDepth: null, project: null } }))
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }))
   await page.route("**/api/workspaces/fixture/missions**", async route => {
     const request = route.request(), path = new URL(request.url()).pathname
     if (path.endsWith("/control")) { controls.push(path); return route.abort() }
     if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
+    if (request.method() === "GET" && path.endsWith("/msn_created/schedule") && scheduled) return route.fulfill({ json: scheduled })
+    if (request.method() === "GET" && path.endsWith("/missions/scheduled")) return route.fulfill({ json: {
+      version: 1, projectID: "project", schedules: scheduled ? [scheduled.document] : [] } })
     if (request.method() === "GET") return route.fulfill({ json: path.endsWith("/missions/recurrence") ? emptyRecurrence()
       : { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
     if (path.endsWith("/missions/scheduled")) {
       creates.push(request.postDataJSON())
-      return route.fulfill({ json: await pausedMissionScheduleReceipt(request.postDataJSON()) })
+      scheduled = await pausedMissionScheduleReceipt(request.postDataJSON())
+      return route.fulfill({ json: scheduled })
     }
     if (path.endsWith("/missions")) {
       const body = request.postDataJSON(); creates.push(body)
@@ -61,7 +72,7 @@ async function setup(page: Page) {
     }
     return route.fulfill({ json: {} })
   })
-  return { errors, creates, controls }
+  return { errors, creates, controls, get scheduled() { return scheduled } }
 }
 
 const submitReady = (page: Page) => page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
@@ -70,7 +81,7 @@ async function assertSingleCreate(form: ReturnType<Page["locator"]>) {
   const submits = form.locator('button[type="submit"]')
   assert.equal(await submits.count(), 1, "creation offers one submit button")
   assert.equal(await submits.innerText(), "Create")
-  assert.equal(await form.getByRole("checkbox", { name: /start|play|launch now/i }).count(), 0, "no automatic-start option")
+  assert.equal(await form.getByRole("checkbox", { name: "Start on creation", exact: true }).isChecked(), false, "creation stays paused by default")
   await form.getByRole("button", { name: "Create", exact: true }).click()
   await form.waitFor({ state: "detached" })
 }
@@ -86,9 +97,7 @@ test("Create creates one paused one-time mission and never sends a lifecycle con
     assert.equal(await form.getByLabel("Title", { exact: true }).inputValue(), "Audit dependencies")
     await submitReady(page)
     await captureMissionView(page, "create-default")
-    await form.locator("summary").filter({ hasText: /^Options$/ }).click()
-    await captureMissionView(page, "create-options")
-    await form.locator("summary").filter({ hasText: /^Options$/ }).click()
+    assert.equal(await form.locator("summary").filter({ hasText: /^Options$/ }).count(), 0)
     await assertSingleCreate(form)
     await page.waitForTimeout(300)
     assert.equal(fixture.creates.length, 1)
@@ -110,6 +119,35 @@ async function answerCreates(page: Page, answer: (route: import("playwright").Ro
 }
 const UNCONFIRMED = "native creation result is unconfirmed"
 
+test("an opted-in one-time Create retains its draft choice across remount and sends one Start after the direct ACK", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page), controls: Record<string, any>[] = []
+  await page.route("**/api/workspaces/fixture/missions/msn_created/control", route => {
+    assert.equal(route.request().method(), "POST")
+    const input = route.request().postDataJSON(); controls.push(input)
+    return route.fulfill({ json: { mission: { ...created(fixture.creates[0]), runState: "running", revision: 2,
+      control: { requestID: input.requestId, action: "start", expectedRevision: input.expectedRevision, pending: [] } } } })
+  })
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor"), autostart = form.getByRole("checkbox", { name: "Start on creation", exact: true })
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Start this confirmed preparation")
+    assert.equal(await autostart.isChecked(), false)
+    await autostart.check()
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    assert.equal(await autostart.isChecked(), true, "an unsent draft retains the user's choice")
+    await submitReady(page)
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await form.waitFor({ state: "detached" })
+    assert.equal(fixture.creates.length, 1)
+    assert.equal(controls.length, 1)
+    assert.equal(controls[0].action, "start")
+    assert.equal(controls[0].expectedRevision, 1)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
 for (const loss of ["lost fetch", "undecodable acknowledgement"] as const) {
   test(`${loss} holds the exact original creation across edit, close/remount and project changes without a second create`, async () => {
     const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
@@ -122,6 +160,7 @@ for (const loss of ["lost fetch", "undecodable acknowledgement"] as const) {
       const form = page.locator("form.mission-editor"), objective = form.getByLabel(OBJECTIVE, { exact: true })
       await objective.fill("Original lost create")
       await submitReady(page)
+      await form.getByRole("checkbox", { name: "Start on creation", exact: true }).check()
       await form.getByRole("button", { name: "Create", exact: true }).click()
       await page.getByRole("alert").filter({ hasText: UNCONFIRMED }).waitFor()
       assert.equal(await objective.isDisabled(), true, "the unknown contract cannot be edited into a new request")
@@ -135,6 +174,8 @@ for (const loss of ["lost fetch", "undecodable acknowledgement"] as const) {
       await page.evaluate(() => window.missionEditorLifetime.mount(true))
       await page.getByRole("button", { name: "Create mission", exact: true }).click()
       assert.equal(await objective.inputValue(), "Original lost create")
+      assert.equal(await form.getByRole("checkbox", { name: "Start on creation", exact: true }).isChecked(), true)
+      assert.equal(await form.getByRole("checkbox", { name: "Start on creation", exact: true }).isDisabled(), true)
       assert.equal(await objective.isDisabled(), true)
       assert.equal(await form.locator('button[type="submit"]').isDisabled(), true)
       await form.evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
@@ -287,8 +328,7 @@ test("clearing the daily time and removing the criterion creates a one-time miss
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("One-time after clearing the schedule")
-    await form.locator(".mission-scheduling > summary").click()
-    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByLabel("Criterion 1 time", { exact: true }).fill("")
     await form.getByRole("button", { name: "Remove criterion 1", exact: true }).click()
     await submitReady(page)
@@ -311,8 +351,7 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
     await page.getByRole("button", { name: "Create mission", exact: true }).click({ timeout: 60_000 })
     const form = page.locator("form.mission-editor")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Review yesterday's merged changes and summarize risks.")
-    await form.locator(".mission-scheduling > summary").click()
-    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByLabel("Criterion 1 time", { exact: true }).fill("07:30")
     assert.equal(await form.getByLabel("Saved time zone (IANA)", { exact: true }).count(), 0, "the system zone is the hidden default")
     await submitReady(page)
@@ -324,6 +363,47 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
     assert.equal(configuration.title, "Review yesterday's merged changes and summarize risks")
     assert.deepEqual(configuration.launch, { when: [{ kind: "cron", expression: "30 7 * * *", zone: "Europe/Paris" }] })
     assert.deepEqual(fixture.controls, [], "Play stays a separate explicit action")
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+for (const lost of [false, true]) test(`opted-in schedule creation sends one Play; ${lost ? "a lost control ACK retains its exact hold across remount" : "a direct control ACK is accepted"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US", timezoneId: "Europe/Paris" }), fixture = await setup(page)
+  const controls: Record<string, any>[] = []
+  await page.route("**/api/workspaces/fixture/missions/msn_created/schedule", route => {
+    if (route.request().method() !== "POST") return route.fallback()
+    const input = route.request().postDataJSON(); controls.push(input)
+    return lost ? route.abort("connectionreset") : route.fulfill({ json: { ...fixture.scheduled, pending: false,
+      document: { ...fixture.scheduled!.document, revision: 1, control: { requestID: input.requestID,
+        expectedRevision: input.expectedRevision, action: "play", pending: false } } } })
+  })
+  const holds = () => page.evaluate(async () => {
+    const path = "/src/stores/mission-schedules.ts", { unifiedScheduleHolds } = await import(path)
+    return [...unifiedScheduleHolds.values()].map(hold => ({ phase: hold.phase, action: hold.action,
+      requestID: hold.requestID, expectedRevision: hold.expectedRevision }))
+  })
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Arm this confirmed schedule")
+    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
+    await form.getByRole("checkbox", { name: "Start on creation", exact: true }).check()
+    await submitReady(page)
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await form.waitFor({ state: "detached" })
+    assert.equal(fixture.creates.length, 1)
+    assert.equal(controls.length, 1)
+    assert.equal(controls[0].action, "play")
+    assert.equal(controls[0].expectedRevision, 0)
+    if (lost) {
+      const held = await holds()
+      assert.deepEqual(held, [{ phase: "control", action: "play", requestID: controls[0].requestID, expectedRevision: 0 }])
+      await page.evaluate(() => window.missionEditorLifetime.mount(false))
+      await page.evaluate(() => window.missionEditorLifetime.mount(true))
+      assert.deepEqual(await holds(), held)
+      assert.equal(controls.length, 1, "remount never replays the unknown Play")
+    }
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })

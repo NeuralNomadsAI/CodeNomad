@@ -11,7 +11,7 @@ import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-r
 import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
 import { captureMissionView } from "./mission-view-capture"
 import { clickMissionAction, inlineMissionEntry, missionDetail, missionEntryStatus, missionPicker, missionRefresh, missionToolbarAction,
-  selectMission, selectedMissionTitle } from "./mission-actions"
+  missionRow, selectMission, selectedMissionTitle } from "./mission-actions"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -158,7 +158,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     // The held request is the primary; every other control waits for its outcome.
     await check.click({ trial: true }) // enabled once the lost reply settles
     assert.deepEqual(await lifecycleButtons(page), [[CHECK, true], [STOP, false], [RUN_NOW, false]])
-    await detail.locator(".mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.").waitFor()
+    await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.").waitFor()
     assert.equal(posts.length, 1)
     assert.deepEqual(Object.keys(posts[0].body).sort(), ["action", "directory", "expectedRevision", "requestID", "scheduleID"])
     await check.click()
@@ -211,7 +211,9 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     assert.equal(await missionDetail(page).count(), 0, "the open coordinator conversation does not select its Mission")
     await once.click()
     const detail = missionDetail(page)
-    await detail.waitFor()
+    // Prepared, it has no tasks yet: a leaf row without chevron, its detail folded.
+    await detail.waitFor({ state: "attached" })
+    assert.equal(await missionRow(page, "One-time review").locator("button.session-item-expander").count(), 0)
     assert.equal(await once.getAttribute("aria-current"), "true")
     assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
     const scoped = await page.locator(".mission-control").evaluate(panel => {
@@ -326,7 +328,7 @@ test("proven no-effect refusals release the control and refresh the row; uncerta
     return route.fulfill({ json: {} })
   })
   const PAUSE = `Pause schedule ${TITLE}`
-  const feedback = () => missionDetail(page).locator(".mission-action-feedback [role=status]")
+  const feedback = () => page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]")
   // A proven refusal shows its message, refreshes the row and re-enables the controls.
   const released = async (message: string, before: number) => {
     await feedback().getByText(message, { exact: true }).waitFor()
@@ -420,7 +422,7 @@ for (const variant of variants) test(`a ${variant.action} refused before dispatc
     const initial = await lifecycleButtons(page), before = snapshots
     await clickMissionAction(page, variant.label)
     if (variant.action === "stop") await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click()
-    await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText(NOT_SENT, { exact: true }).waitFor()
+    await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText(NOT_SENT, { exact: true }).waitFor()
     for (let attempt = 0; snapshots <= before && attempt < 100; attempt++) await page.waitForTimeout(50)
     assert.ok(snapshots > before, "the row revalidates after the refusal")
     // Released: the same controls as before, nothing held, nothing to check.
@@ -471,7 +473,7 @@ for (const action of ["pause", "stop"] as const) test(`a refused partial ${actio
   })
   const held = async () => {
     await missionToolbarAction(page, CHECK).click({ trial: true }) // enabled once row reads settle
-    await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).waitFor()
+    await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).waitFor()
     // Row reads briefly disable Check; the held layout itself never changes.
     const expected = [[CHECK, true], [STOP, false], [RUN_NOW, false]]
     let buttons = await lifecycleButtons(page)

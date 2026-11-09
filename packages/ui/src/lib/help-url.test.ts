@@ -53,3 +53,14 @@ test("every literal contextual destination exists with its section in all publis
   }
   assert.ok(destinations >= 15, "contextual links are checked, including registry and field helpers")
 })
+
+test("every Missions scheduling explanation links to contextual help instead of the settings popover", async () => {
+  const root = fileURLToPath(new URL("../../../..", import.meta.url))
+  for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
+    const article = await readFile(path.join(root, `docs/help/${locale}/missions.md`), "utf8")
+    const section = article.split("{#native-scheduling}")[1]?.split("\n### ")[0]
+    const explanation = section?.trim().split(/\n\s*\n/)[0] ?? ""
+    assert.ok(explanation.includes("(missions.md#native-scheduling)"), locale)
+    assert.doesNotMatch(explanation, /opencode\.md#login-start|\bSpace\b/, locale)
+  }
+})

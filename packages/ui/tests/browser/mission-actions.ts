@@ -1,4 +1,4 @@
-import type { Locator, Page } from "playwright"
+import type { ElementHandle, Locator, Page } from "playwright"
 
 /** Exercise a `MissionListItem` action through its inline or measured-overflow presentation
  * (cleanup receipts and other shared list rows; the Mission picker has no row menus). */
@@ -60,9 +60,40 @@ export async function selectMission(page: Page, title: string | RegExp): Promise
   const entry = await inlineMissionEntry(page, title)
   // Often the first wait after navigation: allow for a cold page boot late in a long serial run.
   await entry.waitFor({ timeout: 60_000 })
+  // Held as an element: rows are keyed, but a refresh may retitle the row once it is selected.
+  const row = (await entry.locator("xpath=..").elementHandle())!
   if (await entry.getAttribute("aria-current") !== "true") await entry.click()
+  // Like the session list, a click only selects: its chevron expands the row, showing its detail.
+  // A Mission whose plan holds no task has no chevron: its (empty) detail stays folded.
+  const leaf = await expandRowElement(row) === "leaf"
   const detail = missionDetail(page)
-  await detail.waitFor()
+  await detail.waitFor({ state: leaf ? "attached" : "visible" })
+  return detail
+}
+
+/** Expands the row of `select` (a row's select button) through its chevron, unless open;
+ * "leaf" when the row has no chevron (a Mission without tasks). */
+export async function expandRow(select: Locator): Promise<"expanded" | "leaf"> {
+  await select.waitFor({ state: "attached" })
+  return expandRowElement((await select.locator("xpath=..").elementHandle())!)
+}
+
+/** `expandRow` on a row's `.session-item-base` element. */
+async function expandRowElement(row: ElementHandle): Promise<"expanded" | "leaf"> {
+  const chevron = await row.$(".session-item-expander:not(.session-item-expander--spacer)")
+  if (!chevron) return "leaf"
+  if (await chevron.getAttribute("aria-expanded") !== "true") await chevron.click()
+  return "expanded"
+}
+
+/** Shows the detail of a row selected without a click (restored or set through the view
+ * state): expands it through its chevron and waits for the detail, attached for a leaf. */
+export async function showSelection(page: Page): Promise<Locator> {
+  const entry = missionRows(page).locator(".mission-row-select[aria-current=true]")
+  await entry.waitFor({ timeout: 60_000 })
+  const leaf = await expandRow(entry) === "leaf"
+  const detail = missionDetail(page)
+  await detail.waitFor({ state: leaf ? "attached" : "visible" })
   return detail
 }
 
@@ -115,6 +146,62 @@ export async function clickMissionAction(page: Page, label: string, title?: stri
 export async function toggleMissionOverview(page: Page, title: string | RegExp): Promise<void> {
   await selectMission(page, title)
   await missionToolbar(page).locator(".mission-overview-toggle").click()
+}
+
+/** A row's task button (`.mission-tree-task`) for a task title, wherever its tree is shown. */
+export const missionTask = (scope: Page | Locator, title: string | RegExp) => {
+  const page = "keyboard" in scope ? scope : scope.page()
+  return scope.locator("li.mission-tree-node").filter({ has: page.locator(".mission-tree-task .session-item-title", { hasText: exact(title) }) }).locator(".mission-tree-task")
+}
+
+/** Gives the toolbar back to the selected task's Mission (or schedule): selecting the row whose
+ * tree holds it clears the task selection (an open reader follows to the Mission's overview).
+ * No-op without a selected task. */
+export async function selectTaskMission(page: Page): Promise<void> {
+  const selected = ".mission-tree-task[aria-current=true]"
+  if (!await missionRows(page).locator(selected).count()) return
+  // The list item holding the selected task's tree; only a Mission/schedule item has a `.mission-row`.
+  // Held as an element: the locator stops matching once the click clears the task selection.
+  const entry = await missionRows(page).locator("li", { has: page.locator(selected) }).locator(".mission-row .mission-row-select").elementHandle()
+  await entry!.click()
+  await page.waitForFunction(element => element.getAttribute("aria-current") === "true", entry)
+}
+
+/** Select a task like a session row: one click, the only highlighted selection in the panel. */
+export async function selectMissionTask(task: Locator): Promise<void> {
+  if (await task.getAttribute("aria-current") !== "true") await task.click()
+  await task.page().waitForFunction(element => element.getAttribute("aria-current") === "true", await task.elementHandle())
+}
+
+/** Open the selected task's reader: select the task, then press its toolbar's eye. */
+export async function openTaskReader(task: Locator): Promise<void> {
+  await selectMissionTask(task)
+  const eye = missionToolbar(task.page()).locator(".mission-overview-toggle")
+  if (await eye.getAttribute("aria-pressed") !== "true") await eye.click()
+  await task.page().locator(".mission-reader").waitFor()
+}
+
+/** Serves the "ui" settings bucket in memory (GET/PATCH `/api/storage/config/ui`), seeded
+ * with `settings`; register after any catch-all `/api` route so it takes precedence. */
+export async function routeUiSettings(page: Page, settings: Record<string, unknown> = {}) {
+  const state = { settings: { ...settings }, writes: [] as Array<Record<string, unknown>> }
+  await page.route("**/api/storage/config/ui", route => {
+    const request = route.request()
+    if (request.method() !== "GET") {
+      const body = request.postDataJSON() ?? {}, patch = (body.patch ?? body) as { settings?: Record<string, unknown> }
+      state.writes.push(patch); state.settings = { ...state.settings, ...patch.settings }
+    }
+    return route.fulfill({ json: { settings: state.settings } })
+  })
+  return state
+}
+
+/** Waits until the app's loaded preferences hold `missionDeleteSessions === value`. */
+export function waitForMissionDeleteSessions(page: Page, value: boolean): Promise<void> {
+  return poll(() => page.evaluate(async () => {
+    const path = "/src/stores/preferences.tsx"
+    return (await import(path)).preferences().missionDeleteSessions as boolean
+  }).then(current => current === value), `missionDeleteSessions ${value}`)
 }
 
 /** The Delegation depth row (`MissionSubagentDepth`): one labelled menu. */

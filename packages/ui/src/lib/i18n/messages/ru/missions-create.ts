@@ -5,9 +5,9 @@ export const missionCreateMessages = {
   "missions.create.options": "Параметры",
   "missions.create.agents": "Агенты и модели",
   "missions.create.submit": "Создать",
-  "missions.create.brief.start": "Начать с сохранённого описания",
+  "missions.create.brief.start": "Начать с конфигурации",
   "missions.create.brief.none": "Пустая миссия",
-  "missions.create.brief.more": "Действия с сохранёнными описаниями",
-  "missions.create.brief.saveAs": "Сохранить как описание",
-  "missions.create.brief.cancel": "Отменить сохранение описания",
+  "missions.create.brief.more": "Действия с сохранёнными конфигурациями",
+  "missions.create.brief.saveAs": "Сохранить конфигурацию",
+  "missions.create.brief.cancel": "Отменить сохранение конфигурации",
 } as const

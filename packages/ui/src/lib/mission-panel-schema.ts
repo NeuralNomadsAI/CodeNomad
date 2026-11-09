@@ -8,7 +8,7 @@ export const panelWindowSchema = z.object({ order: digest, offset: count, end: c
 const body = z.object({ characters: count, digest }).strict()
 export const panelSummarySchema = z.object({ id, title: z.string().max(60).optional(), objective: z.string().max(1004), status: state,
   runState: z.enum(["prepared", "running", "paused", "stopped"]).optional(), coordinatorSessionId: id, actorCount: count,
-  updatedAt: z.number().finite(), revision: count, finishSequence: count.positive().optional() }).strict()
+  updatedAt: z.number().finite(), revision: count, finishSequence: count.positive().optional(), taskCount: count.optional() }).strict()
 export const panelCleanupSchema = z.object({ missionID: id, deletionID: id, requestID: id, expectedRevision: count.positive(), deleteManagedSessions: z.boolean(),
   objective: z.string().max(240), createdAt: z.number().finite(), removed: count, retained: count, pending: count,
   reasons: z.array(z.enum(["children", "shared", "moved", "identity", "guarded"])).max(5), documentPending: z.boolean().optional() }).passthrough()

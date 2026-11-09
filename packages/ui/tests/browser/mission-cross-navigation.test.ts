@@ -11,13 +11,19 @@ import { clickMissionAction, missionRows, toggleMissionOverview } from "./missio
 import type {} from "./fixtures/mission-cross-navigation"
 import { panelMissions } from "./mission-content-fixture"
 import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
+import { collectMissionReadFailures, MISSION_READ_HEADER } from "./mission-read-observation-fixture"
 
 let browser: Browser, url: string
 before(async () => {
   const fixture = await borrowFixture({
       name: "mission-cross-navigation",
       routes: [
-        { path: "/mission-cross-navigation", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-cross-navigation.tsx\"></script></body></html>" },
+        { path: "/mission-cross-navigation", html: `<html><body><div id="root"></div><script type="module">
+          import { serverApi } from "/src/lib/api-client.ts"
+          import { observeMissionReads } from "/tests/browser/mission-read-observation-fixture.ts"
+          observeMissionReads(serverApi)
+          await import("/tests/browser/fixtures/mission-cross-navigation.tsx")
+        </script></body></html>` },
       ],
     })
   url = fixture.url
@@ -35,11 +41,15 @@ async function setup(missing = false, holdEvents = false) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1600, height: 950 } })
   const errors: string[] = [], networkErrors: string[] = [], requests: string[] = [], hold = gate(), reached = gate(), complete = gate()
   const panelReads = collectPanelReadFailures(page, url)
+  const missionReads = collectMissionReadFailures(page, url)
+  const drainReads = panelReads.drain
+  panelReads.drain = async () => { await drainReads(); await missionReads.drain() }
   const events = gate()
   if (!holdEvents) events.release()
   let defer = false
   page.on("pageerror", error => errors.push(error.message))
   page.on("requestfailed", request => {
+    if (request.headers()[MISSION_READ_HEADER]) { missionReads.record(request, networkErrors); return }
     if (!panelReads.record(request, networkErrors)) networkErrors.push(`${request.url()} ${request.failure()?.errorText}`)
   })
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
@@ -63,6 +73,7 @@ async function setup(missing = false, holdEvents = false) {
     if (pathname.endsWith("/provider") || pathname.endsWith("/model")) return route.fulfill({ json: { location, data: [] } })
     if (pathname.endsWith("/model/default")) return route.fulfill({ json: { location, data: null } })
     if (pathname.includes("/message")) return route.fulfill({ json: { data: [], cursor: {} } })
+    if (pathname.endsWith("/permission-receipts")) return route.fulfill({ json: { receipts: [] } })
     if (pathname.includes("/form")) return route.fulfill({ json: { data: [] } })
     if (pathname.includes("/session")) return route.fulfill({ json: { data: [], cursor: {} } })
     return route.fulfill({ json: {} })
@@ -76,10 +87,10 @@ async function setup(missing = false, holdEvents = false) {
     // Loaded Missions enable the current-mission field (nothing is selected by default).
     await missionRows(page).locator("button.mission-row-select").first().waitFor()
     await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
-    return { page, eventStreamResponse, events, panelReads, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
+    return { page, eventStreamResponse, events, panelReads, missionReads, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
   } catch (error) {
     if (process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE) await writeFile(path.join(process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE, `setup-failure-${Date.now()}.json`), JSON.stringify({ error: String(error), errors, networkErrors, requests,
-      rawRequestFailures: panelReads.rawRequestFailures, panelListCancellations: panelReads.panelListCancellations }, null, 2))
+      rawRequestFailures: panelReads.rawRequestFailures, missionReadFailures: missionReads.raw, missionReadCancellations: missionReads.cancelled, panelListCancellations: panelReads.panelListCancellations }, null, 2))
     events.release(); hold.release(); await page.close(); throw error
   }
 }
@@ -158,10 +169,48 @@ async function navigate(page: Page, origin: "actor" | "reader", id = "A") {
 }
 async function ordinarySession(page: Page, name: string) { await page.locator(".session-sidebar").getByText(`Conversation ${name}`, { exact: true }).click() }
 async function settle(page: Page) { await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))) }
+test("receipt cancellation requires its exact owning signal and rejects same-URL network aborts and reused identities", { timeout: 45_000 }, async () => {
+  const { page, panelReads, missionReads, errors, networkErrors, hold } = await setup()
+  const receipt = new URL("/api/workspaces/cross-navigation/sessions/ses_B/permission-receipts?unanchored=true", url).href
+  const held = gate()
+  try {
+    await page.route(receipt, async route => { await held.promise; await route.fulfill({ json: { receipts: [] } }) })
+    const arrival = page.waitForRequest(request => request.url() === receipt, { timeout: 5000 })
+    await page.evaluate(async () => {
+      const { acquirePermissionReceipts } = await import("/src/stores/permission-receipt-cache.ts")
+      const read = acquirePermissionReceipts("cross-navigation", "ses_B", { unanchored: true }, 1)
+      ;(window as any).releaseReceiptRead = read.release
+      void read.promise.catch(() => {})
+    })
+    const pending = await arrival, id = pending.headers()[MISSION_READ_HEADER]
+    assert.ok(id)
+    const aborted = page.waitForEvent("requestfailed", request => request === pending)
+    await page.evaluate(() => (window as any).releaseReceiptRead())
+    await aborted; held.release(); await panelReads.drain()
+    assert.ok(missionReads.cancelled.some(read => read.id === id))
+    assert.deepEqual(networkErrors, [])
+    await page.route(receipt, route => route.abort("aborted"))
+    const failed = page.waitForEvent("requestfailed", request => request.url() === receipt)
+    await page.evaluate(async () => {
+      const { serverApi } = await import("/src/lib/api-client.ts")
+      await serverApi.fetchPermissionReceipts("cross-navigation", "ses_B", { unanchored: true }, undefined, new AbortController().signal).catch(() => {})
+    })
+    const broken = await failed
+    await panelReads.drain()
+    const expected = [`${receipt} net::ERR_ABORTED [uncorrelated read ${broken.headers()[MISSION_READ_HEADER]}]`]
+    assert.deepEqual(networkErrors, expected, "a genuine network abort has no owning-signal cancellation receipt")
+    const reused = page.waitForEvent("requestfailed", request => request.url() === receipt)
+    await page.evaluate(({ receipt, header, id }) => fetch(receipt, { headers: { [header]: id } }).catch(() => {}), { receipt, header: MISSION_READ_HEADER, id })
+    await reused; await panelReads.drain()
+    expected.push(`${receipt} net::ERR_ABORTED [unidentified read ${id}]`)
+    assert.deepEqual(networkErrors, expected)
+    assert.deepEqual(errors, [])
+  } finally { held.release(); hold.release(); await page.close() }
+})
 for (const origin of ["actor", "reader"] as const) for (const change of ["session", "session-aba", "preview", "preview-aba"] as const) {
   test(`shell deferred ${origin} respects external ${change}`, async () => {
     const forceSupersession = origin === "reader" && change !== "session"
-    const { page, eventStreamResponse, events, panelReads, errors, networkErrors, requests, hold, reached, complete, defer } = await setup(false, forceSupersession)
+    const { page, eventStreamResponse, events, panelReads, missionReads, errors, networkErrors, requests, hold, reached, complete, defer } = await setup(false, forceSupersession)
     const catalogHold = gate()
     try {
       defer()
@@ -205,7 +254,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["sessio
       await panelReads.drain()
       if (process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE) {
         await writeFile(path.join(process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE, `${origin}-${change}.json`), JSON.stringify({ before, after, errors, networkErrors, requests,
-          rawRequestFailures: panelReads.rawRequestFailures, panelListCancellations: panelReads.panelListCancellations }, null, 2))
+          rawRequestFailures: panelReads.rawRequestFailures, missionReadFailures: missionReads.raw, missionReadCancellations: missionReads.cancelled, panelListCancellations: panelReads.panelListCancellations }, null, 2))
         await page.screenshot({ path: path.join(process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE, `${origin}-${change}.png`) })
       }
       assert.deepEqual(after, before, "ordinary session/preview navigation wins without late shared-state writes")
@@ -229,10 +278,7 @@ for (const origin of ["actor", "reader"] as const) test(`shell current ${origin}
     }, origin)
     await panelReads.drain()
     assert.deepEqual(errors, [])
-    // The reader hides the just-opened transcript, which deactivates it and
-    // disposes only its read-only unanchored receipt page; nothing else may fail.
-    assert.deepEqual(networkErrors.filter(error => !(origin === "reader"
-      && /\/api\/workspaces\/cross-navigation\/sessions\/ses_A\/permission-receipts\?unanchored=true net::ERR_ABORTED$/.test(error))), [])
+    assert.deepEqual(networkErrors, [])
   } finally { hold.release(); await page.close() }
 })
 

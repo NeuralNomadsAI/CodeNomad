@@ -301,6 +301,14 @@ slot, and derives the replacement anchor as that slot minus the interval. A timi
 change may anchor Every at the validated edit. Native recorded due times remain
 authoritative for future slots and late-wake eligibility.
 
+A mixed criteria list's `{ kind: "now" }` projects to native `at`, frozen at Play
+plus one millisecond with its creation anchor at Play. The document's `oneShotAt`
+holds that instant through replay and restart. An unchanged `now` keeps its instant
+through timing edits, and `calendarForSlot` carries its processed `lastDueAt` to
+replacement calendars; `missionLaunches` consumes that one-shot decision once.
+A sole `now` criterion uses the same empty execution model as the criteria-free
+immediate policy, retaining its stored shape and ordinary journal first-Play proof.
+
 `nativeScheduleOwnerControlReceipt` reads the exact retained human operation,
 including Check aliases, across automatic reconciliation. Receipts retain the
 latest 16 completed controls. The internal `resumePending(locked, document)` port

@@ -126,7 +126,7 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   const doc = document.parse(JSON.parse(canonicalAuthority(input, MISSION_DOCUMENT_MAX_BYTES)))
   const fail = () => { throw new Error("Invalid Mission document identity or progress") }
   const model = missionLaunchModel(doc.configuration.launch)
-  const once = model.schedules.find(item => item.kind === "at" || item.kind === "in") as Extract<MissionLaunchSchedule, { kind: "at" | "in" }> | undefined
+  const once = model.schedules.find(item => item.kind === "now" || item.kind === "at" || item.kind === "in") as Extract<MissionLaunchSchedule, { kind: "now" | "at" | "in" }> | undefined
   if (doc.id !== identity.id || doc.projectID !== identity.projectID || doc.projectCanonical !== identity.projectCanonical
     || doc.configurationGeneration > doc.revision + 1 || doc.timeGeneration > doc.configurationGeneration
     || doc.history.length !== Math.min(doc.settledCount, MISSION_DOCUMENT_HISTORY_LIMIT)
@@ -141,7 +141,7 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
     || doc.firstPlayedAt !== null && doc.slotEndsAt !== missionSlotEndsAt(doc.configuration.launch, doc.firstPlayedAt)
     || doc.deletion && doc.state !== "stopped"
     || doc.firstPlayedAt !== null && (once?.kind === "at" && doc.oneShotAt !== once.at || !once && doc.oneShotAt !== null
-      || once?.kind === "in" && (doc.oneShotAt === null || doc.oneShotAt <= doc.firstPlayedAt))) fail()
+      || (once?.kind === "in" || once?.kind === "now") && (doc.oneShotAt === null || doc.oneShotAt <= doc.firstPlayedAt))) fail()
   const principals = doc.calendars.filter(item => item.role === "principal")
   if (principals.length > 8 || doc.calendars.filter(item => item.role === "reconciliation").length > 1
     || new Set(doc.calendars.map(item => `${item.role}:${item.slot}`)).size !== doc.calendars.length

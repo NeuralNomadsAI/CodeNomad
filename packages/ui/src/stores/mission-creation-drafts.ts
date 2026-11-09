@@ -13,6 +13,8 @@ export interface UncertainMissionCreation {
   directory?: string
   profiles?: MissionProfiles
   taskMode?: MissionTaskMode
+  /** Display-only draft choice; recovered creation never continues Play. */
+  startOnCreation?: boolean
 }
 
 export type MissionCreationHoldState = "pending" | "uncertain"
