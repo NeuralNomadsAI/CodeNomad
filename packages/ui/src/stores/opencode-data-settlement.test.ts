@@ -5,7 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { destroyOpenCodeData, invalidateOpenCodeSessionContent } from "./opencode-data.ts"
+import { destroyOpenCodeData, applyOpenCodeDataEvent, invalidateOpenCodeSessionContent } from "./opencode-data.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
 import { setActiveSession, setSessions } from "./session-state.ts"
 
@@ -284,6 +284,18 @@ test("a delivery crossing an HTTP-ahead settlement read reconciles through its o
     f.reads[1].resolve({ data: [...page].reverse(), cursor: {} })
     await flush()
     assert.deepEqual(order(), ["m1", "msg_4", "msg_user", "reply", "msg_8"], "the crossing prompt reconciles above its reply")
+
+    // The settled reducer retired once the repair settled: the next event
+    // lands on a fresh one, holding only its own row.
+    const after = applyOpenCodeDataEvent("native-delivery-http-ahead", "/fixture", {
+      id: "evt_probe", type: "session.step.started", created: 99, location: { directory: "/fixture" },
+      data: { sessionID: sessionId, assistantMessageID: "m3", agent: "build", model, started: 9 },
+    } as any)
+    await flush()
+    assert.deepEqual(
+      after.session.message.list(sessionId).map((row: { id: string }) => row.id),
+      ["m3"],
+      "the settled reducer retired once the repair settled")
   } finally { f.cleanup() }
 })
 
