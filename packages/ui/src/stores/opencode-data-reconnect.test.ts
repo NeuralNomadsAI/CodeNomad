@@ -287,6 +287,51 @@ test("a mid-stream reconnect keeps live deltas displaying and reconciles once qu
   } finally { f.cleanup() }
 })
 
+test("a verified reconnect keeps a delivered prompt's reconciled position", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("reconnect-delivery-order", true)
+  try {
+    // Native storage, oldest first: the page owns the delivered prompt's
+    // position, here above the reply its admission started.
+    const stored: any[] = []
+    let pageReads = 0
+    f.client.message.list = async () => { pageReads += 1; return { data: [...stored].reverse(), cursor: {} } }
+
+    f.dispatch("session.inbox.enqueued", { inboxID: "msg_q", item: { type: "user", payload: { text: "steer" }, delivery: "steer" } })
+    f.start()
+    stored.push({ id: "msg_q", type: "user", text: "steer", time: { created: 501 } })
+    stored.push({ id: "msg_live", type: "assistant", agent: "build", model, content: [], time: { created: 500 } })
+    // Admission lands after the reply's row exists: the SDK's tail move sinks
+    // the prompt below it, and the owed authoritative read restores the page's
+    // order into the reducer itself.
+    f.dispatch("session.inbox.delivered", { inboxID: "msg_q" })
+    const promptAboveReply = () => {
+      const ids = f.store.getSessionMessageIds(sessionId)
+      return ids.includes("msg_q") && ids.includes("msg_live") && ids.indexOf("msg_q") < ids.indexOf("msg_live")
+    }
+    await converge(ctx, promptAboveReply)
+
+    // A same-daemon reconnect seeds a fresh reducer from the live rows; the
+    // healed order must ride along instead of the corrupted one.
+    f.dispatch("server.connected", { daemon: "daemon-a" })
+    await microtasks()
+    ctx.mock.timers.tick(0)
+    await microtasks()
+    assert.ok(promptAboveReply(), "reconnect seeding keeps the delivered prompt above its reply")
+
+    // Once quiet, the authoritative snapshot replaces the seed and must keep
+    // the same order (the delivery read is the first page read; the resync's
+    // is the second).
+    for (let index = 0; index < 200 && pageReads < 2; index++) {
+      ctx.mock.timers.tick(1000)
+      await microtasks()
+    }
+    assert.ok(pageReads >= 2, "the quiet reconnect resync read the page")
+    await converge(ctx, promptAboveReply)
+    assert.ok(promptAboveReply(), "the quiet reconnect resync keeps the reconciled order")
+  } finally { f.cleanup() }
+})
+
 test("arrivals during a pending reconnect read are ordered and drained when it settles", async ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("reconnect-pending-read", true)

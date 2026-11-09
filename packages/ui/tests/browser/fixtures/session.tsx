@@ -111,6 +111,19 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     nativeMessages.push({ type: "user", text: item.payload.text, id, time: { created: ++time } })
     emit("session.inbox.delivered", { inboxID: id })
   },
+  /** Streams a reply whose native row is stored from its first step, as the
+   * daemon stores it: an authoritative read mid-stream still serves the row. */
+  startStored: () => {
+    nativeMessages.push({ id: assistantId, type: "assistant", agent: "build", model, time: { created: ++time }, content: [{ type: "text", text: "" }] })
+    emit("session.step.started", { assistantMessageID: assistantId, agent: "build", model })
+    emit("session.text.started", { assistantMessageID: assistantId })
+  },
+  /** Streams text into the stored reply row alongside the live delta. */
+  deltaStored: (delta: string) => {
+    const row = nativeMessages.find(message => message.id === assistantId)
+    if (row) row.content[0].text += delta
+    emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 0, delta })
+  },
   /** The engine starts the parked follow-up: its native row persists and it leaves the inbox. */
   deliverQueued: (id: string) => {
     const [item] = nativeInbox.splice(nativeInbox.findIndex(entry => entry.id === id), 1)
