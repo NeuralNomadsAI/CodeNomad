@@ -25,8 +25,8 @@ const AuthStatus = z.object({ authenticated: z.boolean(), pairingRequired: z.boo
   && (value.authenticated || value.username === undefined))
 type Status = z.infer<typeof AuthStatus>
 type AuthFlight = { controller: AbortController; signal: AbortSignal; timer: ReturnType<typeof setTimeout>; expiresAt: number;
-  users: number; statusUsed: number; loginUsed: boolean; rejected: boolean; observation?: Promise<Status>; restoration?: Promise<void> }
-type LoginFlight = { promise: Promise<void>; legacy: boolean }
+  users: number; statusUsed: number; loginUsed: boolean; rejected: boolean; rejection?: LoginFlight; observation?: Promise<Status>; restoration?: Promise<void> }
+type LoginFlight = { promise: Promise<void>; legacy: boolean; destructive: boolean; rejected: boolean; check: () => void; borrow: (flight: AuthFlight) => void }
 type AuthMode = "observe-status"
 
 /** A follower owns its wait, never the shared exchange's cancellation. */
@@ -146,13 +146,35 @@ export class CodeNomadServerClient {
   /** Password login; cookies and passwords stay in the backend's private store. */
   login(signal?: AbortSignal, destructive = true, flight?: AuthFlight): Promise<void> {
     if (this.secret?.kind !== "password") return Promise.reject(new CodeNomadServerError("needs_credentials"))
-    if (this.#login) { if (!flight) this.#login.legacy = true; return this.#login.promise }
+    try { this.#login?.check() } catch { /* Retire an expired exchange before admitting a new borrower. */ }
+    if (this.#login) {
+      if (flight) this.#login.borrow(flight)
+      else { this.#login.legacy = true; this.#login.destructive ||= destructive }
+      return this.#login.promise
+    }
     const controller = new AbortController()
-    const owner: LoginFlight = { legacy: !flight, promise: undefined! }
+    const borrowers = new Map<AuthFlight, () => void>()
+    const owner: LoginFlight = { legacy: !flight, destructive: !flight && destructive, rejected: false, promise: undefined!, check: () => check(), borrow: next => {
+      this.checkAuth(next)
+      if (borrowers.has(next)) return
+      const abort = () => { borrowers.delete(next); try { check() } catch {} }
+      borrowers.set(next, abort)
+      next.signal.addEventListener("abort", abort, { once: true })
+    } }
     const loginSignal = AbortSignal.any([this.#signal, controller.signal, AbortSignal.timeout(CALL_TIMEOUT_MS), ...(!flight && signal ? [signal] : [])])
-    const check = () => { loginSignal.throwIfAborted(); if (!owner.legacy && flight) this.checkAuth(flight) }
-    const abort = () => { if (!owner.legacy) { controller.abort(); if (this.#login === owner) this.#login = undefined } }
-    flight?.signal.addEventListener("abort", abort, { once: true })
+    const check = () => {
+      for (const [borrower, abort] of borrowers) if (borrower.signal.aborted || performance.now() >= borrower.expiresAt) {
+        borrower.signal.removeEventListener("abort", abort); borrowers.delete(borrower)
+        borrower.controller.abort()
+      }
+      if (!owner.legacy && !borrowers.size) {
+        controller.abort(); if (this.#login === owner) this.#login = undefined
+        throw new CodeNomadServerError("unreachable")
+      }
+      if (loginSignal.aborted && this.#login === owner) this.#login = undefined
+      loginSignal.throwIfAborted()
+    }
+    if (flight) owner.borrow(flight)
     const secret = this.secret
     this.#login = owner
     return owner.promise = (async () => {
@@ -164,9 +186,17 @@ export class CodeNomadServerClient {
       })
       void response.body?.cancel().catch(() => {})
       check()
-      if (response.status === 401 || response.status === 400) { if (destructive) this.options.onRejected?.(); throw new CodeNomadServerError("auth") }
+      if (response.status === 401 || response.status === 400) {
+        for (const borrower of borrowers.keys()) borrower.rejection = owner
+        if (owner.destructive) { owner.rejected = true; this.options.onRejected?.() }
+        throw new CodeNomadServerError("auth")
+      }
       if (!response.ok) throw new CodeNomadServerError("unreachable")
-    })().finally(() => { flight?.signal.removeEventListener("abort", abort); if (this.#login === owner) this.#login = undefined })
+    })().finally(() => {
+      for (const [borrower, abort] of borrowers) borrower.signal.removeEventListener("abort", abort)
+      borrowers.clear()
+      if (this.#login === owner) this.#login = undefined
+    })
   }
 
   private acquireAuth() {
@@ -253,6 +283,8 @@ export class CodeNomadServerClient {
     if (flight.rejected) return
     this.checkAuth(flight)
     flight.rejected = true
+    if (flight.rejection?.rejected) return
+    if (flight.rejection) flight.rejection.rejected = true
     this.options.onRejected?.()
   }
 

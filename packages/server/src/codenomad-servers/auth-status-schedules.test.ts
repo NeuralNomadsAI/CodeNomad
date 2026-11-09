@@ -387,6 +387,63 @@ test("deadline closes retained private login; late cleanup cannot affect fresh r
   assert.deepEqual(f.persisted, ["codenomad_session=fresh"])
 })
 
+for (const code of [400, 401]) test(`R2-B: real browse promotes rejection ${code}; vault, proof and SSE revoke only A`, async t => {
+  const f = await managerFixture(t), stream = await f.live("saved", f.proof)
+  const bStream = await f.live("other", f.bProof, f.other)
+  const entered = gate(), release = gate(), folderEntered = gate()
+  let statuses = 0, logins = 0, folders = 0
+  f.remote.state.handlers.set(STATUS, (_req, res) => { statuses++; json(res, { authenticated: false }) })
+  f.remote.state.handlers.set(LOGIN, (req, res) => { req.resume(); logins++; entered.resolve(); void release.promise.then(() => json(res, {}, code)) })
+  f.remote.state.handlers.set("/api/filesystem", (_req, res) => { folders++; folderEntered.resolve(); json(res, {}, 401) })
+  f.remote.state.handlers.set("/api/test/barrier", (_req, res) => json(res, {}))
+  const barrier = async () => { await (await fetch(f.remote.origin + "/api/test/barrier")).text() }
+  const cancel = new AbortController()
+  const observed = outcome(f.manager.relay("saved", STATUS, { signal: cancel.signal }, f.proof))
+  await bounded(entered.promise)
+  const browse = outcome(f.manager.browse("saved", {}))
+  await bounded(folderEntered.promise); await barrier(); await barrier()
+  cancel.abort(); assert.notEqual(await observed, "ok")
+  f.manager.assertProof("saved", f.proof); await stream.tick()
+  release.resolve()
+  assert.equal(await browse, "auth")
+  assert.deepEqual([statuses, logins, folders], [1, 1, 1])
+  await f.revoked(stream); await f.healthyB(); await bStream.tick()
+  f.remote.state.handlers.set(STATUS, (_req, res) => json(res, { authenticated: true }))
+  f.remote.state.handlers.set(LOGIN, (req, res) => { req.resume(); res.setHeader("set-cookie", "codenomad_session=replacement"); json(res, {}) })
+  await f.manager.connect("saved", { username: password.username, password: "new-principal" })
+  const proof = await f.admit("saved"), replacement = await f.live("saved", proof)
+  assert.notEqual(proof, f.proof)
+  assert.deepEqual(await (await f.manager.relay("saved", STATUS, {}, proof)).json(), { authenticated: true })
+  await replacement.tick(); await f.healthyB()
+})
+
+test("R2-A: expired private login cannot be resurrected by reentrant legacy admission", async t => {
+  const remote = await startFakeCodeNomad({ anonymous: true })
+  let started = 0, logins = 0, rejected = 0
+  const cookies: string[] = []
+  let replacement: Promise<string> | undefined
+  const client = new CodeNomadServerClient(remote.origin, password, {
+    onRejected: () => { rejected++ },
+    onSecretChanged: value => {
+      cookies.push(value.cookie!)
+      if (cookies.length !== 1) return
+      while (performance.now() - started < 8150) { /* Cross the real deadline before timer delivery. */ }
+      replacement = outcome(client.login())
+    },
+  })
+  t.after(async () => { client.close(); await remote.close() })
+  remote.state.handlers.set(STATUS, (_req, res) => json(res, { authenticated: false }))
+  remote.state.handlers.set(LOGIN, (req, res) => {
+    req.resume(); res.setHeader("set-cookie", `codenomad_session=${++logins === 1 ? "old" : "replacement"}`); json(res, {})
+  })
+  started = performance.now()
+  assert.equal(await outcome(client.fetch(STATUS, {}, "observe-status")), "unreachable")
+  assert.ok(replacement)
+  assert.equal(await replacement, "ok")
+  assert.deepEqual([logins, rejected], [2, 0], "replacement owns a new physical exchange")
+  assert.deepEqual(cookies, ["codenomad_session=old", "codenomad_session=replacement"], "callback entered before expiry remains committed; replacement publishes independently")
+})
+
 test("reentrant cookie callback joins published observation without another restoration", async t => {
   const remote = await startFakeCodeNomad({ anonymous: true })
   let statuses = 0, logins = 0, rejected = 0
