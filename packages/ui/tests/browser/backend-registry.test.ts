@@ -139,6 +139,19 @@ test("registry admits two real relayed backends and revalidates before reconnect
     }
   }
   assert.notEqual(proofs[0], proofs[1])
+  const localBeforeRetry = [...local]
+  await page.evaluate(async () => {
+    const fixture = (window as any).registryFixture
+    await Promise.all([fixture.ensure("a"), fixture.ensure("a")])
+  })
+  assert.deepEqual(reads.sort(), ["a", "a", "b", "b"], "ensure retains its admission without polling")
+  await page.evaluate(async () => {
+    const fixture = (window as any).registryFixture
+    await Promise.all([fixture.retry("a"), fixture.retry("a"), fixture.retry("a")])
+  })
+  assert.deepEqual(reads.sort(), ["a", "a", "a", "b", "b"], "explicit reads coalesce on A only")
+  assert.deepEqual(local, localBeforeRetry)
+  assert.equal(streams.size, 2)
   for (const id of ["a", "b"]) streams.get(id)!.write(`data: ${JSON.stringify({ type: "workspace.removed", workspaceId: "same" })}\n\n`)
   await page.waitForFunction(() => (window as any).registryFixture.snapshot().frames.length === 2)
   assert.deepEqual((await page.evaluate(() => (window as any).registryFixture.snapshot())).frames.sort(), ["a~same", "b~same"])
@@ -147,7 +160,7 @@ test("registry admits two real relayed backends and revalidates before reconnect
   const meta = page.waitForRequest(request => new URL(request.url()).pathname === "/api/backends/b/api/meta")
   await page.evaluate(() => (window as any).registryFixture.restart("b"))
   await meta
-  assert.deepEqual(reads.sort(), ["a", "a", "b", "b"], "no domain resync runs before fresh contract validation")
+  assert.deepEqual(reads.sort(), ["a", "a", "a", "b", "b"], "no domain resync runs before fresh contract validation")
   await heldMetadata
   hold!(); hold = undefined
   await page.locator("[data-state-b]").filter({ hasText: "refused" }).waitFor()

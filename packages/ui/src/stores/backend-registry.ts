@@ -17,6 +17,9 @@ type Entry = {
   detach?: () => void
   remove?: () => void
   revoked: boolean
+  validation: number
+  inventory?: Promise<BackendClient>
+  inventoryDirty?: boolean
 }
 
 export interface BackendRegistryOptions {
@@ -70,8 +73,9 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     return dispose
   })
 
-  async function validate(id: string, entry: Entry, attempt?: AbortSignal): Promise<boolean> {
-    const active = () => !attempt?.aborted && current(id, entry)
+  async function validate(id: string, entry: Entry, attempt?: AbortSignal, publish = true): Promise<boolean> {
+    const validation = ++entry.validation
+    const active = () => validation === entry.validation && !attempt?.aborted && current(id, entry)
     if (!active()) return false
     const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(8000), ...attempt ? [attempt] : []])
     try {
@@ -95,7 +99,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         detach(id, "refused")
         return false
       }
-      if (entry.detach) setState(id, "compatible")
+      if (entry.detach && publish) setState(id, "compatible")
       return active()
     } catch (error) {
       if (active()) {
@@ -118,7 +122,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     if (active) return active.revoked ? Promise.resolve(undefined) : active.pending
     const client = options.createClient ? options.createClient(id) : createRemoteBackendClient(id, { bindRelayAuthority: true })
     const entry: Entry = { profile: { ...profile }, client, controller: new AbortController(),
-      pending: Promise.resolve(undefined), revoked: false }
+      pending: Promise.resolve(undefined), revoked: false, validation: 0 }
     entries.set(id, entry)
     setState(id, "admitting")
     entry.pending = (async () => {
@@ -148,8 +152,50 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     return entry.pending
   }
 
+  /** Explicit demand only. Concurrent readers join; invalidations request one trailing read. */
+  function retryWorkspaces(id: string, demand: { invalidate?: boolean } = {}): Promise<BackendClient> {
+    const entry = entries.get(id)
+    const signal = events.signal(id)
+    const unavailable = () => new Error(`Backend inventory unavailable: ${id}`)
+    const active = () => entry && current(id, entry) && !!entry.detach && !!signal && !signal.aborted
+      && events.signal(id) === signal
+    if (!entry || !active()) return Promise.reject(unavailable())
+    if (entry.inventory) {
+      if (demand.invalidate) entry.inventoryDirty = true
+      return entry.inventory
+    }
+    entry.inventoryDirty = false
+    const flight = (async () => {
+      // Admission owns the initial list; an explicit recovery never races that read.
+      await entry.pending
+      for (let pass = 0; pass < 2; pass++) {
+        if (!active()) throw unavailable()
+        if (!await validate(id, entry, signal, false) || !active()) throw unavailable()
+        const validation = entry.validation
+        try {
+          await options.loadWorkspaces(entry.client, signal!)
+        } catch (error) {
+          if (active() && entry.validation === validation && states[id] !== "unauthorized") setState(id, "unreachable")
+          throw error
+        }
+        if (!active() || entry.validation !== validation) throw unavailable()
+        if (!entry.inventoryDirty) {
+          setState(id, "compatible")
+          return entry.client
+        }
+        entry.inventoryDirty = false
+      }
+      // Continuous invalidations park until another explicit demand.
+      throw unavailable()
+    })().finally(() => {
+      if (entry.inventory === flight) entry.inventory = undefined
+    })
+    entry.inventory = flight
+    return flight
+  }
+
   return {
-    ensure, detach,
+    ensure, detach, retryWorkspaces,
     state: (id: string): BackendAdmissionState => states[id] ?? "idle",
     dispose() {
       if (disposed) return

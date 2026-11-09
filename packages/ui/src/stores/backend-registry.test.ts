@@ -22,6 +22,7 @@ function harness(initial: unknown = true, bound = false) {
   const created: BackendClient[] = [], requests: string[] = []
   let read = async () => Response.json(metadata)
   let loads = 0, streams = 0, closes = 0
+  let load = async (_client: BackendClient, _signal: AbortSignal) => {}
   const opens: (() => void)[] = [], failures: (() => void)[] = []
   const events = new BackendEvents()
   const registry = createBackendRegistry({ enabled, profiles, events,
@@ -42,10 +43,11 @@ function harness(initial: unknown = true, bound = false) {
     },
     register: client => { assert.equal(clients.has(client.id), false); clients.set(client.id, client)
       return () => { if (clients.get(client.id) === client) clients.delete(client.id) } },
-    loadWorkspaces: async (_client, signal) => { assert.equal(signal.aborted, false); loads++ },
+    loadWorkspaces: async (client, signal) => { assert.equal(signal.aborted, false); loads++; await load(client, signal) },
   })
   return { registry, enabled, setEnabled, profiles, setProfiles, clients, created, events, requests, opens, failures,
-    read: (next: typeof read) => { read = next }, loads: () => loads, streams: () => streams, closes: () => closes }
+    read: (next: typeof read) => { read = next }, load: (next: typeof load) => { load = next },
+    loads: () => loads, streams: () => streams, closes: () => closes }
 }
 
 test("off is strict and observing or ensuring adds no requests or registrations", async () => {
@@ -54,9 +56,145 @@ test("off is strict and observing or ensuring adds no requests or registrations"
     h.setEnabled(value)
     try {
       assert.equal(await h.registry.ensure("saved"), undefined)
+      await assert.rejects(h.registry.retryWorkspaces("saved"))
       assert.equal(h.registry.state("saved"), "idle")
       assert.deepEqual(h.requests, [])
       assert.equal(h.clients.size, 0)
+    } finally { h.registry.dispose() }
+  }
+})
+
+test("explicit retry repairs failed initial and first-open inventories without ensure polling or a new stream", async () => {
+  const previous = globalThis.window
+  Object.assign(globalThis, { window: { location: { origin: "http://relay.test" } } })
+  const h = harness()
+  let snapshot = "retained"
+  h.load(async () => { throw new Error("offline") })
+  const off = h.events.onOpen(() => { void h.registry.retryWorkspaces("saved").catch(() => {}) })
+  try {
+    const client = await h.registry.ensure("saved")
+    assert.ok(client)
+    h.opens[0]?.()
+    await new Promise(resolve => setImmediate(resolve))
+    const before = h.loads(), requests = h.requests.length
+    assert.equal(before, 2, "initial list and first-open recovery both failed")
+    assert.equal(h.registry.state("saved"), "unreachable")
+    assert.equal(snapshot, "retained")
+    assert.equal(await h.registry.ensure("saved"), client)
+    assert.equal(await h.registry.ensure("saved"), client)
+    assert.equal(h.loads(), before)
+    assert.equal(h.requests.length, requests)
+    h.load(async (owner, signal) => {
+      assert.equal(owner, client); assert.equal(signal, h.events.signal("saved")); snapshot = "fresh"
+    })
+    const first = h.registry.retryWorkspaces("saved")
+    assert.equal(h.registry.retryWorkspaces("saved"), first)
+    assert.equal(await first, client)
+    assert.equal(h.loads(), before + 1)
+    assert.equal(snapshot, "fresh")
+    assert.equal(h.registry.state("saved"), "compatible")
+    assert.equal(h.streams(), 1)
+  } finally { off(); h.registry.dispose(); Object.assign(globalThis, { window: previous }) }
+})
+
+test("retry invalidations coalesce into at most one serialized follow-up", async () => {
+  const h = harness()
+  try {
+    await h.registry.ensure("saved")
+    const held = deferred<void>(), entered = deferred<void>()
+    h.load(async () => { entered.resolve(); await held.promise })
+    const first = h.registry.retryWorkspaces("saved")
+    await entered.promise
+    for (let i = 0; i < 10; i++) assert.equal(h.registry.retryWorkspaces("saved", { invalidate: true }), first)
+    assert.equal(h.loads(), 2)
+    held.resolve()
+    await first
+    assert.equal(h.loads(), 3)
+  } finally { h.registry.dispose() }
+})
+
+test("retry validates fresh identity, contract, authorization and immutable proof before listing", async () => {
+  for (const change of ["identity", "contract", "auth", "proof"]) {
+    const h = harness(true, true), header = "x-codenomad-backend-authority"
+    h.read(async () => Response.json(metadata, { headers: { [header]: "a".repeat(43) } }))
+    try {
+      await h.registry.ensure("saved")
+      h.read(async () => change === "auth" ? new Response("", { status: 401 }) : Response.json({ ...metadata,
+        ...(change === "identity" ? { serverId: "other" } : {}),
+        ...(change === "contract" ? { apiContract: -1 } : {}),
+      }, { headers: { [header]: (change === "proof" ? "b" : "a").repeat(43) } }))
+      await assert.rejects(h.registry.retryWorkspaces("saved"))
+      assert.equal(h.loads(), 1, change)
+      assert.equal(h.registry.state("saved"), change === "auth" ? "unauthorized" : "refused")
+      const requests = h.requests.length
+      if (change !== "auth") await assert.rejects(h.registry.retryWorkspaces("saved"))
+      assert.equal(h.requests.length, requests)
+      assert.equal(h.created.length, 1)
+    } finally { h.registry.dispose() }
+  }
+})
+
+test("stale retry metadata and failure never affect B or the replacement client", async () => {
+  const h = harness()
+  h.setProfiles([profile, { ...profile, id: "b" }])
+  try {
+    const a = await h.registry.ensure("saved"), b = await h.registry.ensure("b")
+    const bSignal = h.events.signal("b"), held = deferred<Response>()
+    h.read(() => held.promise)
+    const stale = h.registry.retryWorkspaces("saved")
+    await new Promise(resolve => setImmediate(resolve))
+    h.registry.detach("saved")
+    h.read(async () => Response.json(metadata))
+    const replacement = await h.registry.ensure("saved")
+    assert.notEqual(replacement, a)
+    const count = h.loads()
+    held.resolve(Response.json({ ...metadata, apiContract: -1 }))
+    await assert.rejects(stale)
+    assert.equal(h.clients.get("saved"), replacement)
+    assert.equal(h.registry.state("saved"), "compatible")
+    assert.equal(h.clients.get("b"), b)
+    assert.equal(h.events.signal("b"), bSignal)
+    assert.equal(h.registry.state("b"), "compatible")
+    assert.equal(h.loads(), count)
+    const requests = h.requests.length
+    await assert.rejects(h.registry.retryWorkspaces("local"))
+    await assert.rejects(h.registry.retryWorkspaces("absent"))
+    assert.equal(h.requests.length, requests)
+  } finally { h.registry.dispose() }
+})
+
+test("invalidation during the trailing read parks instead of starting a third read", async () => {
+  const h = harness()
+  try {
+    await h.registry.ensure("saved")
+    h.load(async () => { h.registry.retryWorkspaces("saved", { invalidate: true }).catch(() => {}) })
+    await assert.rejects(h.registry.retryWorkspaces("saved"))
+    assert.equal(h.loads(), 3)
+    h.load(async () => {})
+    await h.registry.retryWorkspaces("saved")
+    assert.equal(h.loads(), 4)
+  } finally { h.registry.dispose() }
+})
+
+test("obsolete retry completion cannot repair a retarget, TLS change, ABA, off or disposed owner", async () => {
+  for (const change of ["url", "tls", "aba", "off", "dispose", "detach"]) {
+    const h = harness()
+    try {
+      h.load(async () => { throw new Error("offline") })
+      await h.registry.ensure("saved")
+      const held = deferred<void>(), entered = deferred<void>()
+      h.load(async () => { entered.resolve(); await held.promise })
+      const old = h.registry.retryWorkspaces("saved")
+      await entered.promise
+      if (change === "url") h.setProfiles([{ ...profile, baseUrl: "http://b.test" }])
+      if (change === "tls") h.setProfiles([{ ...profile, skipTlsVerify: true }])
+      if (change === "aba") { h.setProfiles([]); h.setProfiles([profile]) }
+      if (change === "off") h.setEnabled(false)
+      if (change === "dispose") h.registry.dispose()
+      if (change === "detach") h.events.signal("saved") && h.created[0].events.dispose()
+      held.resolve()
+      await assert.rejects(old, Error, change)
+      assert.notEqual(h.registry.state("saved"), "compatible", change)
     } finally { h.registry.dispose() }
   }
 })

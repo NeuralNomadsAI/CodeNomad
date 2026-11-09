@@ -32,6 +32,7 @@ render(() => <ConfigProvider><I18nProvider>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).registryFixture = {
   setEnabled, ensure: (id: string) => registry.ensure(id).then(Boolean), dispose: registry.dispose,
+  retry: (id: string) => registry.retryWorkspaces(id).then(Boolean),
   restart: (id: string) => backends.get(id)?.events.restart(),
   snapshot: () => ({ opens: [...opens], ids: [...backends.keys()], frames: frames() }),
   localRead: () => localBackend.api.fetchServerMeta(),
