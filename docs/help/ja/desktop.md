@@ -10,6 +10,30 @@
 
 ネイティブのアプリケーションメニューは、ウィンドウの読み込み後に CodeNomad のインターフェース言語を使い、それまでは英語で表示されます。**ヘルプ → CodeNomad について**（macOS ではアプリケーションメニューにもあります）は、バージョン、アップデート、診断情報を含む **設定 → 情報** を開きます。**ヘルプ → CodeNomad を支援する** は、ブラウザーで [CodeNomad を支援する](sponsor.md) ページを開きます。
 
+## デスクトップの起動引数 {#desktop-cli}
+
+ターミナル、またはWindowsショートカットの**リンク先**で、**デスクトップ実行ファイル**（TauriまたはElectron）の後に引数を指定します。例の実行ファイルパスは自分の環境に置き換えてください。
+
+| 引数 | 動作 |
+| --- | --- |
+| `--connect-server <server>` | HTTP(S) URL、保存済みの名前またはIDでリモートCodeNomadサーバーを開きます。[接続とサインイン](remote-access.md#saved-servers)も参照してください。 |
+| `--folder <path>` | 既存のプロジェクトディレクトリを開きます。複数の場合は繰り返し指定します。相対パスは起動時の作業ディレクトリが基準です。 |
+| `<path> ...` | `--folder`を省略してプロジェクトディレクトリを開きます。 |
+| `--new-window` | 通常は既存ウィンドウにフォーカスする再起動でも、新しいアプリウィンドウを要求します。 |
+
+`--connect-server=<server>`と`--folder=<path>`も使えます。空白を含むパスや名前は引用符で囲みます。リモートウィンドウだけを開く場合は、フォルダーや`--new-window`を付けず`--connect-server`だけを指定します。接続に失敗するまでローカルウィンドウの復元を保留します。デスクトップの調整用ローカル補助バックエンドは動作します。
+
+**PowerShell**では次のように実行します。
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+Windowsショートカットの**リンク先**には`"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"`と記載します（`&`はPowerShell用です）。LinuxではAppImageを使います。例：`./CodeNomad.AppImage --connect-server "https://server.example:9898"`。
+
+プロファイルや設定には、起動前に`CODENOMAD_PROFILE`と`CLI_CONFIG`を指定します。[データプロファイル](#data-profiles)を参照してください。バックエンドの待ち受け、TLS、認証オプションは[サーバーCLIリファレンス](server.md#cli-reference)にあります。WindowsのTauriでは`|`を含む起動引数を拒否します。URLを使うか、保存したサーバー名を変更してください。
+
 ## 設定と起動時の復元 {#preferences-startup}
 
 1. 設定したいウィンドウから設定を開きます。ローカルデスクトップの入口は、開いた元のプロジェクト／Location を伴って、単一のネイティブ設定ウィンドウにフォーカスします。

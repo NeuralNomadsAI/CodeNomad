@@ -10,6 +10,30 @@ Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenec
 
 Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad en cuanto se ha cargado una ventana; hasta entonces se muestran en inglés. **Ayuda → Acerca de CodeNomad** (también en el menú de la aplicación en macOS) abre **Configuración → Info** con la versión, las actualizaciones y los diagnósticos. **Ayuda → Apoyar a CodeNomad** abre la página [Apoyar a CodeNomad](sponsor.md) en el navegador.
 
+## Argumentos de inicio de escritorio {#desktop-cli}
+
+Añade estos argumentos después del **ejecutable de escritorio** (Tauri o Electron), en una terminal o en el campo **Destino** de un acceso directo de Windows. Sustituye las rutas de ejemplo por la de tu ejecutable.
+
+| Argumento | Efecto |
+| --- | --- |
+| `--connect-server <server>` | Abre un servidor CodeNomad remoto mediante su URL HTTP(S), nombre guardado o ID guardado. Consulta [conexión e inicio de sesión](remote-access.md#saved-servers). |
+| `--folder <path>` | Abre una carpeta de proyecto existente. Repite el argumento para varias carpetas; las rutas relativas parten del directorio de inicio. |
+| `<path> ...` | Abre carpetas de proyecto sin escribir `--folder`. |
+| `--new-window` | Solicita una ventana nueva, incluso si otro inicio normalmente enfocaría la existente. |
+
+También funcionan `--connect-server=<server>` y `--folder=<path>`. Entrecomilla rutas o nombres con espacios. Para abrir solo la ventana remota, usa únicamente `--connect-server`, sin carpetas ni `--new-window`; la restauración local se aplaza salvo que falle la conexión. La aplicación conserva su backend auxiliar local para coordinar el escritorio.
+
+En **PowerShell**:
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+En el **Destino** del acceso directo de Windows, escribe `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (`&` corresponde a PowerShell). En Linux usa el ejecutable AppImage, por ejemplo `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+Para perfiles y configuración, define `CODENOMAD_PROFILE` y `CLI_CONFIG` antes de iniciar; consulta [Perfiles de datos](#data-profiles). Las opciones del backend sobre escucha, TLS y autenticación están en la [referencia CLI del servidor](server.md#cli-reference). Tauri en Windows rechaza argumentos con `|`; usa una URL o cambia el nombre guardado del servidor.
+
 ## Preferencias y restauración al iniciar {#preferences-startup}
 
 1. Abre Configuración desde la ventana que quieras configurar. Los puntos de entrada locales de escritorio enfocan la única ventana nativa de Preferencias con el proyecto/Location de esa ventana de origen.

@@ -10,6 +10,30 @@
 
 नेटिभ एप menu ले विन्डो लोड भएपछि CodeNomad को इन्टरफेस भाषा प्रयोग गर्छन्; त्यसअघि अङ्ग्रेजी देखाउँछन्। **मद्दत → CodeNomad बारे** (macOS एप menu मा पनि) ले संस्करण, अपडेट र निदानसहित **सेटिङहरू → जानकारी** खोल्छ। **मद्दत → CodeNomad लाई आर्थिक सहयोग गर्नुहोस्** ले browser मा [CodeNomad लाई आर्थिक सहयोग गर्नुहोस्](sponsor.md) पृष्ठ खोल्छ।
 
+## डेस्कटप सुरुवाती आर्गुमेन्टहरू {#desktop-cli}
+
+टर्मिनलमा वा Windows सर्टकटको **Target** क्षेत्रमा **डेस्कटप executable** (Tauri वा Electron) पछि यी आर्गुमेन्ट राख्नुहोस्। उदाहरणका पथ आफ्नो executable को पथले बदल्नुहोस्।
+
+| आर्गुमेन्ट | प्रभाव |
+| --- | --- |
+| `--connect-server <server>` | HTTP(S) URL, सुरक्षित नाम वा सुरक्षित ID प्रयोग गरी टाढाको CodeNomad सर्भर खोल्छ। [जडान र साइन इन](remote-access.md#saved-servers) हेर्नुहोस्। |
+| `--folder <path>` | विद्यमान परियोजना फोल्डर खोल्छ। धेरै फोल्डरका लागि दोहोर्‍याउनुहोस्; सापेक्ष पथ सुरुवाती working directory बाट लिइन्छ। |
+| `<path> ...` | `--folder` नलेखी परियोजना फोल्डर खोल्छ। |
+| `--new-window` | अर्को सुरुवातले सामान्यतः पुरानो विन्डोमा फोकस गर्ने भए पनि नयाँ application विन्डो माग्छ। |
+
+`--connect-server=<server>` र `--folder=<path>` पनि चल्छन्। खाली ठाउँ भएका पथ वा नाम उद्धरण चिन्हमा राख्नुहोस्। टाढाको विन्डो मात्र खोल्न, फोल्डर वा `--new-window` बिना `--connect-server` मात्र प्रयोग गर्नुहोस्; जडान असफल नभएसम्म स्थानीय विन्डो पुनर्स्थापना स्थगित हुन्छ। डेस्कटप समन्वयका लागि स्थानीय सहायक backend चलिरहन्छ।
+
+**PowerShell** मा:
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+Windows सर्टकटको **Target** मा `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` राख्नुहोस् (`&` PowerShell का लागि हो)। Linux मा AppImage executable प्रयोग गर्नुहोस्, जस्तै `./CodeNomad.AppImage --connect-server "https://server.example:9898"`।
+
+डेस्कटप प्रोफाइल र configuration का लागि सुरु गर्नुअघि `CODENOMAD_PROFILE` र `CLI_CONFIG` सेट गर्नुहोस्; [डेटा प्रोफाइल](#data-profiles) हेर्नुहोस्। Backend को listening, TLS र authentication विकल्पहरू [सर्भर CLI सन्दर्भ](server.md#cli-reference) मा छन्। Windows Tauri ले `|` भएका आर्गुमेन्ट अस्वीकार गर्छ; URL प्रयोग गर्नुहोस् वा सुरक्षित सर्भरको नाम बदल्नुहोस्।
+
 ## प्राथमिकता र सुरुवाती पुनर्स्थापना {#preferences-startup}
 
 1. कन्फिगर गर्न चाहेको विन्डोबाट Settings खोल्नुहोस्। स्थानीय डेस्कटप प्रवेशबिन्दुले त्यस opener को परियोजना/Location सहित एउटै नेटिभ Preferences विन्डोमा फोकस गर्छन्।

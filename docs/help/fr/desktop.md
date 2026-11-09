@@ -10,6 +10,30 @@ Les onglets de projet, conversations sélectionnées et dispositions appartienne
 
 Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics. **Aide → Soutenir CodeNomad** ouvre la page [Soutenir CodeNomad](sponsor.md) dans votre navigateur.
 
+## Arguments de lancement de l’application {#desktop-cli}
+
+Placez ces arguments après **l’exécutable desktop** (Tauri ou Electron), dans un terminal ou dans le champ **Cible** d’un raccourci Windows. Remplacez les chemins d’exemple par celui de votre exécutable.
+
+| Argument | Effet |
+| --- | --- |
+| `--connect-server <server>` | Ouvre un serveur CodeNomad distant à partir de son URL HTTP(S), de son nom enregistré ou de son identifiant enregistré. Voir [la connexion et l’authentification](remote-access.md#saved-servers). |
+| `--folder <path>` | Ouvre un dossier de projet existant. Répétez l’argument pour plusieurs dossiers ; les chemins relatifs partent du répertoire de lancement. |
+| `<path> ...` | Ouvre des dossiers de projet sans écrire `--folder`. |
+| `--new-window` | Demande une nouvelle fenêtre, même lorsqu’un second lancement devrait normalement sélectionner la fenêtre existante. |
+
+Les formes `--connect-server=<server>` et `--folder=<path>` fonctionnent aussi. Entourez de guillemets les chemins ou noms contenant des espaces. Pour ouvrir uniquement la fenêtre distante, utilisez `--connect-server` seul, sans dossier ni `--new-window` ; la restauration des fenêtres locales est différée sauf si la connexion échoue. L’application conserve son backend auxiliaire local pour la coordination.
+
+Dans **PowerShell** :
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+Dans la **Cible** du raccourci Windows, placez `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (le `&` appartient à PowerShell). Sous Linux, utilisez l’AppImage, par exemple `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+Pour les profils desktop et la configuration, définissez `CODENOMAD_PROFILE` et `CLI_CONFIG` avant le lancement ; voir [Profils de données](#data-profiles). Les options d’écoute, TLS et d’authentification du backend sont dans la [référence CLI du serveur](server.md#cli-reference). Sous Tauri Windows, les arguments contenant `|` sont refusés ; utilisez une URL ou renommez le serveur enregistré.
+
 ## Préférences et restauration au démarrage {#preferences-startup}
 
 1. Ouvrez les paramètres depuis la fenêtre à configurer. Les points d’entrée du bureau local focalisent l’unique fenêtre native Preferences avec le projet/la Location de cette fenêtre d’origine.

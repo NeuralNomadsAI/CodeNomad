@@ -59,6 +59,8 @@ Listenerfreigabe, Zertifikate, VPN/SSH und Reverse-Proxys erläutert [Direkter F
 
 ## Öffentliche CLI-Referenz {#cli-reference}
 
+Für Tauri oder Electron siehe [Desktop-Startargumente](desktop.md#desktop-cli): `--connect-server`, `--folder`, `--new-window` und Beispiele für Programmaufrufe und Verknüpfungen. Die folgende Tabelle beschreibt die Programmdatei des eigenständigen Servers.
+
 Flags übersteuern ihre Umgebungsentsprechungen. Flags mit Wert verwenden das gezeigte Argument; Schalter nicht. HTTPS-/HTTP-Werte erkennen `1`, `true`, `yes`, `y` und `on` unabhängig von Groß-/Kleinschreibung als aktiviert; verwenden Sie zur Klarheit explizites `true`/`false`. Automatische UI-Updates erkennen `1`, `true` und `yes`.
 
 **Strikt boolesche Umgebungsvariablen** (`CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` und `CODENOMAD_SKIP_AUTH`) aktivieren ihre Schalter mit `1`, `true`, `yes` oder `on`; Groß-/Kleinschreibung und umgebende Leerzeichen werden ignoriert. `0`, `false`, `no`, `off`, leere oder nur aus Leerzeichen bestehende Werte sowie nicht gesetzte Variablen lassen die Schalter aus. Jeder andere Wert verhindert den Serverstart, auch mit dem entsprechenden CLI-Flag. Ein CLI-Flag aktiviert seinen Schalter trotz eines gültigen Aus-Werts; andernfalls gelten die folgenden `false`-Standards.
