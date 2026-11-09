@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount, untrack } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { listen } from "@tauri-apps/api/event"
 import { getLogger } from "../logger"
 import { acknowledgeNativeClientStateNavigationFlush, acknowledgeNativeClientStateRendererFlush } from "../native/client-state"
@@ -130,6 +130,29 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
 export function useAppSessionCapture() {
   const [started, setStarted] = createSignal(false)
   const enabled = () => started() && clientStateIsPrimary() && restorePreviousStateEnabled()
+  // Snapshot the scalar inputs of catalog/runtime capture and prompt hydration.
+  // Session Maps and nested metadata can mutate in place before publication.
+  // Busy usage is display-cache data: the next real checkpoint/flush reads it fresh.
+  const checkpointSessions = createMemo(() => {
+    const values: Array<string | number | boolean | null | undefined> = []
+    if (enabled()) for (const tab of appTabs()) if (tab.kind === "instance") {
+      const rows = getSessions(tab.instance.id)
+      values.push(tab.instance.id, rows.length)
+      for (const row of rows) {
+        const idle = row.status !== "working" && row.status !== "compacting"
+        values.push(
+          row.id, row.title, row.parentId, row.projectID, row.location.directory, row.location.workspaceID,
+          row.time.created, row.time.updated, row.time.archived, row.time.idle, row.time.busy,
+          row.agent, row.model.providerId, row.model.modelId, row.subpath,
+          row.status, row.idleSince, row.generationRecovery, row.runtimeStatusKnown, row.outcome,
+          row.pendingPermission, row.pendingForm, row.retry?.attempt, row.retry?.message, row.retry?.next,
+          idle ? row.cost : undefined, idle ? row.tokens.input : undefined, idle ? row.tokens.output : undefined,
+          idle ? row.tokens.reasoning : undefined, idle ? row.tokens.cache.read : undefined, idle ? row.tokens.cache.write : undefined,
+        )
+      }
+    }
+    return values
+  }, [], { equals: (before, after) => before.length === after.length && before.every((value, index) => Object.is(value, after[index])) })
   const scrollAuthority = new Map<string, Set<string>>()
   const instanceLifecycleTokens = new Map<string, number>()
   let nextInstanceLifecycleToken = 0
@@ -301,8 +324,8 @@ export function useAppSessionCapture() {
     const tabs = appTabs()
     activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions(); showFolderSelection()
     outlineCacheRevision(); seenInterruptionsRevision()
+    checkpointSessions()
     for (const tab of tabs) if (tab.kind === "instance") {
-      getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)
       getSessionAttachmentsForInstance(tab.instance.id)
     }
@@ -311,8 +334,8 @@ export function useAppSessionCapture() {
   createEffect(() => {
     if (!enabled()) return
     const tabs = appTabs()
+    checkpointSessions()
     for (const tab of tabs) if (tab.kind === "instance") {
-      getSessions(tab.instance.id)
       untrack(() => hydratePreservedPrompts(tab.instance.id))
     }
   })

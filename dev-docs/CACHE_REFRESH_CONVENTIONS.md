@@ -76,6 +76,24 @@ directory-only/partial inventories, failed activity and superseded reads never
 release a newer move's hold. Notification history keeps its entries when
 recovery later succeeds.
 
+### Client-state capture checkpoints
+
+`use-app-session-capture.ts` shares a value-diffed scalar session projection between
+capture scheduling and preserved-prompt hydration. It snapshots catalog fields and
+runtime/attention inputs even when instance Maps or nested metadata mutate in place.
+Only cost/token changes while a session is working or compacting are deferred.
+Session membership, metadata, runtime transitions and idle usage still invalidate;
+drafts, attachments, selection, expansion, scrolls and outlines retain their triggers.
+Capture and explicit flush always read the fresh stores, including deferred counters.
+
+The accepted crash-freshness limit for these display-cache counters is the last
+successful checkpoint: an uninterrupted run with only usage changes can leave them
+at its starting checkpoint for the whole run. The next draft/metadata/view checkpoint,
+runtime transition or explicit navigation/shutdown flush includes the latest counters.
+Native hydration revalidates restored display data. Persistence retains its complete
+partition payloads, atomic publication, write-failure dirty state, ownership fences
+and native shutdown generation/cancellation rules.
+
 ### Stats restoration and native cost
 
 Rules: [SETTINGS.md](SETTINGS.md) (Stats). Storage is the backend
