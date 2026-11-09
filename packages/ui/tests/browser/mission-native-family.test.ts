@@ -33,7 +33,12 @@ before(async () => {
         s.middlewares.use("/api/events", (_req, res) => { res.setHeader("Content-Type", "text/event-stream"); res.write(": isolated fake transport; native frames use the real dispatcher\n\n") })
         s.middlewares.use("/mission-native-family", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/mission-native-family", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-native-family.tsx"></script></body></html>'))
+        res.end(await s.transformIndexHtml("/mission-native-family", `<html><body><div id="root"></div><script type="module">
+          import { serverApi } from "/src/lib/api-client.ts"
+          import { observeMissionReads } from "/tests/browser/mission-read-observation-fixture.ts"
+          observeMissionReads(serverApi)
+          await import("/tests/browser/fixtures/mission-native-family.tsx")
+        </script></body></html>`))
       }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
       server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
     shutdown.own(server); await server.listen()
@@ -203,11 +208,6 @@ async function setup(label: string, narrow = false, independent = false, task = 
     await page.screenshot({ path: path.join(output, `${label}.png`), fullPage: true }).catch(() => {})
   }
   try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }); await page.waitForFunction(() => window.missionNativeFamily?.snapshot().session === "ses_B", undefined, { timeout: 30000 })
-    await page.evaluate(async () => {
-      const { serverApi } = await import("/src/lib/api-client.ts")
-      const { observeMissionReads } = await import("/tests/browser/mission-read-observation-fixture.ts")
-      observeMissionReads(serverApi)
-    })
     // Only the picker selects a Mission: restoring a coordinator conversation leaves none selected.
     if (!narrow) await page.locator(".mission-rows button.mission-row-select").first().waitFor()
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, undefined) }

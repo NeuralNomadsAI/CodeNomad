@@ -18,7 +18,12 @@ before(async () => {
   const fixture = await borrowFixture({
       name: "mission-cross-navigation",
       routes: [
-        { path: "/mission-cross-navigation", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-cross-navigation.tsx\"></script></body></html>" },
+        { path: "/mission-cross-navigation", html: `<html><body><div id="root"></div><script type="module">
+          import { serverApi } from "/src/lib/api-client.ts"
+          import { observeMissionReads } from "/tests/browser/mission-read-observation-fixture.ts"
+          observeMissionReads(serverApi)
+          await import("/tests/browser/fixtures/mission-cross-navigation.tsx")
+        </script></body></html>` },
       ],
     })
   url = fixture.url
@@ -78,11 +83,6 @@ async function setup(missing = false, holdEvents = false) {
     const eventStreamResponse = page.waitForResponse(response => response.request().resourceType() === "eventsource" && new URL(response.url()).pathname === "/api/events", { timeout: 120_000 })
     void eventStreamResponse.catch(() => {}) // Page cleanup may cancel a deliberately held setup stream.
     await page.goto(url)
-    await page.evaluate(async () => {
-      const { serverApi } = await import("/src/lib/api-client.ts")
-      const { observeMissionReads } = await import("/tests/browser/mission-read-observation-fixture.ts")
-      observeMissionReads(serverApi)
-    })
     if (!holdEvents) await eventStreamResponse
     // Loaded Missions enable the current-mission field (nothing is selected by default).
     await missionRows(page).locator("button.mission-row-select").first().waitFor()
