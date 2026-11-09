@@ -15,35 +15,14 @@ interface UseSpeechOptions {
   settingsOverride?: Accessor<Partial<Pick<SpeechSettings, "playbackMode" | "ttsFormat">>>
 }
 
-interface ActivePlaybackEntry {
-  ownerId: string
-  stop: () => void
-}
+// Content IDs may belong to multiple mounted views; the active hook owns playback.
+let activePlayback: (() => void) | null = null
 
-const stateResetters = new Map<string, () => void>()
-
-let activePlayback: ActivePlaybackEntry | null = null
-
-function resetOwnerState(ownerId: string) {
-  stateResetters.get(ownerId)?.()
-}
-
-function stopActivePlayback(ownerId?: string) {
+function stopActivePlayback() {
   if (!activePlayback) return
-  if (ownerId && activePlayback.ownerId !== ownerId) return
   const current = activePlayback
   activePlayback = null
-  current.stop()
-}
-
-function setActivePlayback(ownerId: string, stop: () => void) {
-  if (activePlayback?.ownerId === ownerId) {
-    activePlayback = { ownerId, stop }
-    return
-  }
-
-  stopActivePlayback()
-  activePlayback = { ownerId, stop }
+  current()
 }
 
 export function useSpeech(options: UseSpeechOptions) {
@@ -89,12 +68,14 @@ export function useSpeech(options: UseSpeechOptions) {
     setState("idle")
   }
 
-  stateResetters.set(options.id(), resetState)
-
-  onCleanup(() => {
-    stateResetters.delete(options.id())
-    stopActivePlayback(options.id())
+  const stop = () => {
+    if (activePlayback === resetState) activePlayback = null
     resetState()
+  }
+
+  createEffect(() => {
+    options.id()
+    onCleanup(stop)
   })
 
   const isSupported = () => typeof window !== "undefined" && typeof window.Audio !== "undefined"
@@ -116,15 +97,7 @@ export function useSpeech(options: UseSpeechOptions) {
     }).available
   }
 
-  const stop = () => {
-    if (activePlayback?.ownerId === options.id()) {
-      activePlayback = null
-    }
-    resetState()
-  }
-
   const start = async () => {
-    const ownerId = options.id()
     const text = options.text().trim()
     if (!text || state() === "loading" || state() === "playing") return
 
@@ -136,8 +109,15 @@ export function useSpeech(options: UseSpeechOptions) {
       return
     }
 
+    stopActivePlayback()
+    const currentRequest = ++requestVersion
+    activePlayback = resetState
+    setState("loading")
+
     const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
+    if (currentRequest !== requestVersion) return
     if (!capabilities?.available || !capabilities?.ttsConfigured || !capabilities?.supportsTts) {
+      stop()
       showAlertDialog(t("messageItem.actions.speak.error.unavailable"), {
         title: t("messageItem.actions.speak.error.title"),
         variant: "error",
@@ -151,6 +131,7 @@ export function useSpeech(options: UseSpeechOptions) {
       capabilities,
     })
     if (!support.available) {
+      stop()
       const detailKey =
         support.reason === "provider-streaming-unavailable"
           ? "settings.speech.compatibility.streamingUnavailable"
@@ -166,26 +147,20 @@ export function useSpeech(options: UseSpeechOptions) {
       return
     }
 
-    requestVersion += 1
-    const currentRequest = requestVersion
-    stopActivePlayback()
-    cleanupAudio()
-    setState("loading")
-
     const settings = resolvedSettings()
     const format = settings.ttsFormat
 
     try {
       if (settings.playbackMode === "streaming") {
-        await startStreamingPlayback(ownerId, currentRequest, text, format)
+        await startStreamingPlayback(currentRequest, text, format)
       } else {
-        await startBufferedPlayback(ownerId, currentRequest, text, format)
+        await startBufferedPlayback(currentRequest, text, format)
       }
     } catch (error) {
       if (currentRequest !== requestVersion) {
         return
       }
-      resetState()
+      stop()
       showAlertDialog(t("messageItem.actions.speak.error.generate"), {
         title: t("messageItem.actions.speak.error.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -195,7 +170,6 @@ export function useSpeech(options: UseSpeechOptions) {
   }
 
   async function startBufferedPlayback(
-    ownerId: string,
     currentRequest: number,
     text: string,
     format: "mp3" | "wav" | "opus" | "aac",
@@ -211,17 +185,12 @@ export function useSpeech(options: UseSpeechOptions) {
     objectUrl = nextUrl
     audio = nextAudio
 
-    attachPlaybackLifecycle(ownerId, nextAudio)
-    setActivePlayback(ownerId, () => {
-      cleanupAudio()
-      setState("idle")
-    })
+    attachPlaybackLifecycle(nextAudio)
     setState("playing")
     await nextAudio.play()
   }
 
   async function startStreamingPlayback(
-    ownerId: string,
     currentRequest: number,
     text: string,
     format: "mp3" | "wav" | "opus" | "aac",
@@ -233,6 +202,7 @@ export function useSpeech(options: UseSpeechOptions) {
     const controller = new AbortController()
     abortController = controller
     const response = await serverApi.synthesizeSpeechStream({ text, format }, controller.signal)
+    if (currentRequest !== requestVersion) return
     const mimeType = response.headers.get("content-type") || formatToMimeType(format)
 
     if (!MediaSource.isTypeSupported(mimeType)) {
@@ -251,11 +221,7 @@ export function useSpeech(options: UseSpeechOptions) {
     objectUrl = nextObjectUrl
     audio = nextAudio
 
-    attachPlaybackLifecycle(ownerId, nextAudio)
-    setActivePlayback(ownerId, () => {
-      cleanupAudio()
-      setState("idle")
-    })
+    attachPlaybackLifecycle(nextAudio)
 
     await new Promise<void>((resolve, reject) => {
       const handleSourceOpen = () => {
@@ -290,6 +256,14 @@ export function useSpeech(options: UseSpeechOptions) {
     })
   }
 
+  function attachPlaybackLifecycle(nextAudio: HTMLAudioElement) {
+    const finish = () => {
+      if (audio === nextAudio) stop()
+    }
+    nextAudio.addEventListener("ended", finish, { once: true })
+    nextAudio.addEventListener("error", finish, { once: true })
+  }
+
   const toggle = async () => {
     if (state() === "idle") {
       await start()
@@ -311,16 +285,4 @@ export function useSpeech(options: UseSpeechOptions) {
       return t("messageItem.actions.speak")
     },
   }
-}
-
-function attachPlaybackLifecycle(ownerId: string, audio: HTMLAudioElement) {
-  const finish = () => {
-    if (activePlayback?.ownerId === ownerId) {
-      activePlayback = null
-    }
-    resetOwnerState(ownerId)
-  }
-
-  audio.addEventListener("ended", finish, { once: true })
-  audio.addEventListener("error", finish, { once: true })
 }
