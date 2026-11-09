@@ -41,12 +41,6 @@ for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "
     const schedule = mode === "control" ? page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled") : undefined
     await page.goto(`${fixture.url}?mode=${mode}`)
     const local = page.locator('[data-composer="local"] textarea'), remote = page.locator('[data-composer="remote"] textarea')
-    const pressHistory = async (composer: typeof local) => {
-      await composer.focus()
-      await page.waitForFunction(selector => document.activeElement === document.querySelector(selector),
-        composer === local ? '[data-composer="local"] textarea' : '[data-composer="remote"] textarea')
-      await composer.press("ArrowUp")
-    }
     await Promise.all([
       (async () => {
         await page.waitForFunction(() => {
@@ -56,9 +50,9 @@ for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "
           const [localHistory, remoteHistory] = state.histories()
           return localHistory[0] === "legacy local history" && remoteHistory[0] === "remote history"
         })
-        await pressHistory(local)
+        await local.press("ArrowUp")
         assert.equal(await local.inputValue(), "legacy local history", "the persisted Windows key must retain case, backslashes and trailing slash")
-        await pressHistory(remote)
+        await remote.press("ArrowUp")
         assert.equal(await remote.inputValue(), "remote history", "the real remote composer must receive its history identity")
       })(),
       (async () => {
