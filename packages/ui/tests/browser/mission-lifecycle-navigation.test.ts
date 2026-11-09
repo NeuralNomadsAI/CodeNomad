@@ -10,7 +10,7 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
-import { missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { missionDetail, missionRefresh, missionToolbarAction, selectMission, showSelection } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, server: ViteDevServer, url: string
@@ -72,7 +72,8 @@ async function retry(page: Page, id = "one") {
 }
 async function remount(page: Page) {
   await call(page, "mount", false); await missionDetail(page).waitFor({ state: "detached" })
-  await call(page, "mount", true); await missionDetail(page).waitFor()
+  // The restored selection's detail returns (folded until its chevron shows it).
+  await call(page, "mount", true); await showSelection(page)
   await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready"); await tick(page)
 }
 async function settle(page: Page) {

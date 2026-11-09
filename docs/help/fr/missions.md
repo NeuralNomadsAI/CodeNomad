@@ -38,8 +38,8 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 
 ## Suivre l’arbre et lire les résultats {#tracking}
 
-1. Sélectionnez la ligne d’une mission : ses tâches apparaissent en dessous et ses actions sur la deuxième ligne de l’en-tête. Le chevron de la ligne replie ou déplie ses tâches ; le chevron d’une autre mission affiche ses tâches sans la sélectionner. **Filtrer les missions** restreint les autres lignes.
-2. Choisissez **Résumé** (œil) pour la vue centrale ; tant qu’elle est ouverte, sélectionner une autre mission affiche la vue de cette mission. Sélectionnez une tâche pour son résultat, sa consigne et ses preuves exacts : tant que son lecteur est ouvert, les actions de l’en-tête s’appliquent à cette tâche, avec **Ouvrir la conversation de la tâche** et, si son rapport manque, **Vérifier et récupérer le rapport manquant**. **Résumé** ferme alors le lecteur de la tâche.
+1. Comme dans la liste des sessions, le chevron d’une ligne affiche ou masque ses tâches, et un clic sélectionne une ligne : une mission ou l’une de ses tâches. Les actions de la sélection figurent sur la deuxième ligne de l’en-tête. Une mission sans tâche n’a pas de chevron. **Filtrer les missions** restreint les autres lignes.
+2. Activez **Résumé** (œil) pour lire la sélection dans le lecteur central : la vue d’une mission, ou le résultat, la consigne et les preuves exacts d’une tâche. Tant qu’il est activé, le lecteur suit votre sélection ; désactivez-le pour revenir à la conversation. Lorsqu’une tâche est sélectionnée, les actions de l’en-tête s’appliquent à cette tâche, avec **Ouvrir la conversation de la tâche** et, si son rapport manque, **Vérifier et récupérer le rapport manquant**.
 3. **Plus d'actions** (⋯) regroupe **Demander un point**, **Interrompre maintenant**, **Enregistrer comme consigne** et **Modifier la mission sélectionnée** ; les actions qui ne s’appliquent pas restent désactivées.
 4. Suivez les liens de dépendance et **Rapports** ; utilisez **Ouvrir la conversation** pour le coordinateur si vous avez besoin de sa transcription.
 5. Quand une mission ou l’une de ses tâches passe au rouge, sélectionnez-la : la conversation qui pose la question s’ouvre, avec cette question dans le dock d’interruption.
@@ -69,8 +69,8 @@ Les drapeaux des missions et les icônes des tâches reprennent les couleurs de 
 | Rouge | Une réponse de votre part est attendue. Le drapeau d’une mission passe au rouge pour une question de son coordinateur, une tâche pour la sienne, et le chevron de la mission signale qu’une de ses tâches pose une question. Sélectionnez la mission ou la tâche en rouge pour ouvrir la question. |
 | Jaune, pulsant | Un travail est en cours. |
 | Orange | La mission est en pause ou interrompue, avec une action pour la poursuivre. |
-| Vert | Une mission terminée que vous n'avez pas encore ouverte dans cette fenêtre ; elle redevient neutre dès que vous la sélectionnez. |
-| Bleu | Une mission préparée, prête à démarrer comme un prompt rédigé. |
+| Vert | Une mission terminée ou une tâche finie que vous n’avez pas encore vue dans cette fenêtre, ainsi que le chevron d’une mission qui contient une telle tâche. Elle redevient neutre dès que vous la sélectionnez ; cliquez sur une icône de tâche verte, ou faites glisser sur plusieurs, pour les marquer comme vues. Faites un clic droit sur le chevron d’une mission et choisissez **Marquer comme lu** pour marquer d’un coup la mission et toutes ses tâches. |
+| Bleu | Une mission préparée, prête à démarrer comme un prompt rédigé, ou une tâche qui n’a pas encore commencé. |
 
 Tout le reste est neutre, y compris les tâches terminées ou en échec : les résultats figurent dans le texte d'état et les icônes.
 
@@ -278,8 +278,8 @@ Utilisez **Modifier la mission sélectionnée** sous **Plus d'actions** (⋯) su
 
 Pour une programmation native, **Supprimer la mission sélectionnée…** désactive les futurs passages avant de retirer l’entrée. Conversations et résultats sont conservés ; le nettoyage en attente de réconciliation reste visible dans **Détails techniques**. Conservez une suppression non confirmée et actualisez sa requête d’origine.
 
-1. Pour une mission ponctuelle devenue inutile, choisissez **Supprimer la mission sélectionnée…** et examinez la confirmation.
-2. Sélectionnez éventuellement **Supprimer aussi les conversations spécialistes créées pour cette mission** avant de confirmer.
+1. Pour supprimer aussi les conversations des tâches créées pour les missions que vous supprimez, cochez **Supprimer une mission supprime aussi les conversations de ses tâches** dans **Paramètres → Missions**.
+2. Pour une mission ponctuelle devenue inutile, choisissez **Supprimer la mission sélectionnée…** : elle est supprimée immédiatement. Un formulaire n’apparaît que si la suppression échoue ou n’est pas confirmée, avec **Réessayer**.
 3. Vérifiez dans **Nettoyage des conversations** les nombres supprimés/conservés/en attente. Réessayez seulement le nettoyage restant enregistré si proposé.
 
 Supprimer une mission n’est pas l’arrêter ; utilisez d’abord l’arrêt et inspectez le travail restant. Les coordinateurs et conversations réutilisées sont conservés. Les spécialistes partagés, déplacés, ayant des enfants ou dont la propriété n’est pas vérifiable peuvent aussi être conservés. Un nettoyage partiel n’est ni annulé ni terminé silencieusement en arrière-plan. La carte de la mission peut disparaître alors que la confirmation de la suppression reste en attente, même lorsque le nettoyage des conversations affiche 0 en attente. Continuez à utiliser l’action **Réessayer** d’origine jusqu’à confirmation de la suppression ; elle conserve la même demande de suppression et les mêmes options. Le lecteur d’ensemble conserve les 20 nettoyages terminés les plus récents. Supprimer des missions libère leur stockage dans le projet : les missions supprimées plus anciennes sont effacées automatiquement.

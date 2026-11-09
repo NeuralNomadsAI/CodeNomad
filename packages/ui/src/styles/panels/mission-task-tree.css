@@ -1,7 +1,12 @@
-/* Task rows, a Mission row's children, follow session rows (session-layout.css):
-   their height, separators and the attenuated, rollover and selected states, the
-   dependency rail included. The flow spans the children's width edge to edge. */
-.mission-control .mission-flow { margin-inline: calc(-1 * var(--space-sm)); }
+/* Task rows are session-list rows one level deep (`.session-list-item`,
+   `.session-item-base.session-item-nested`): height, separators, rollover and the
+   panel's single selection highlight come from session-layout.css and
+   session-tree.css. The dependency rail runs in the nesting indent, before the marks. */
+.mission-tree-node > .session-item-base { --session-indent: calc(var(--session-root-indent) + var(--session-tree-step)); }
+/* A rail with more lanes than the indent holds moves the rows over (`--mission-graph-extra`). */
+.mission-flow-linked .mission-tree-node > .session-item-base {
+  --session-indent: calc(var(--session-root-indent) + var(--session-tree-step) + var(--mission-graph-extra, 0px));
+}
 /* The panel is a fixed-height column and the only scroller (its header stays put,
    mission-control.css); the flow keeps its natural height, and the absolute
    dependency overlay moves with the rows it measures (mission-graph.css keeps the
@@ -14,62 +19,27 @@
    whole window once the panel reaches its end. */
 .mission-control { position: relative; display: flex; flex-direction: column; height: 100%; overflow-y: auto; scrollbar-gutter: stable; }
 .mission-control > * { flex-shrink: 0; }
-.mission-control .mission-flow .mission-graph { inset-inline-start: var(--space-sm); }
 .mission-tree-list { display: grid; margin: 0; padding: 0; list-style: none; }
-.mission-tree-node {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: var(--space-xs);
-  min-height: 36px;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  border-block-end: 1px solid var(--border-base);
-  transition: color 150ms, background-color 150ms;
-}
-.mission-tree-node:last-child { border-block-end: 0; }
-.mission-control .mission-tree-node { padding-inline: var(--space-sm); }
-.mission-control .mission-flow-linked .mission-tree-node { padding-inline-start: calc(var(--space-sm) + 30px); }
-.mission-tree-node:hover { background-color: var(--surface-hover-overlay); color: var(--text-primary); }
-.mission-tree-node:has(> .mission-tree-task[aria-pressed="true"]) {
-  color: var(--text-primary);
-  background-color: var(--list-item-highlight-bg);
-  box-shadow: inset 0 0 0 1px var(--list-item-highlight-border);
-}
-.mission-tree-node:has(> .mission-tree-task[aria-pressed="true"]):hover {
-  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
-}
-.mission-tree-task {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  width: 100%;
-  min-width: 0;
-  min-height: var(--touch-target-size-compact);
-  padding-inline: var(--space-xs);
-  color: inherit;
-  text-align: start;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-}
-.mission-tree-task:focus-visible { outline: 1px solid var(--accent-primary); outline-offset: -1px; }
 .mission-tree-mark { display: inline-flex; flex: 0 0 auto; color: var(--text-muted); }
-.mission-tree-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-/* Session status palette: colour marks only what needs attention now; the icon
-   shape alone tells done, failed, blocked, waiting and retired work apart. */
+/* An unseen finished task's mark clears on click or sweep, like a session's Idle badge. */
+.mission-tree-mark-clear { padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; }
+.mission-tree-mark-clear:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: 1px; }
+.mission-tree-node[data-unseen] .mission-tree-mark { color: var(--session-status-idle-fg); }
+/* Not started yet (assigned, ready, waiting on dependencies): blue like a prepared Mission. */
+.mission-tree-node:is([data-state="assigned"], [data-state="ready"], [data-state="waiting"]) .mission-tree-mark { color: var(--accent-primary); }
+/* Session status palette: yellow works, red asks, green finished unseen, blue has not
+   started yet; the icon shape alone tells done, failed, blocked and retired work apart. */
 .mission-tree-node[data-state="active"] .mission-tree-mark { color: var(--session-status-working-fg); animation: pulse 1.5s ease-in-out infinite; }
 .mission-tree-node[data-state="input"] .mission-tree-mark { color: var(--session-status-permission-fg); }
 .mission-tree-node[data-state="retired"] .mission-tree-task { color: var(--text-muted); }
-.mission-tree-node[data-state="retired"] .mission-tree-title { text-decoration: line-through; }
+.mission-tree-node[data-state="retired"] .session-item-title { text-decoration: line-through; }
 
 /* One scroll sentinel and keyboard fallback after the continuous task rows. */
 .mission-tree-more, .mission-panel-paging {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs);
   min-height: var(--control-height-sm); color: var(--text-muted); font-size: var(--font-size-xs);
 }
-.mission-control .mission-tree-more { padding-inline: calc(var(--space-sm) + var(--space-xs)); }
-.mission-control .mission-flow-linked .mission-tree-more { padding-inline-start: calc(var(--space-sm) + 30px + var(--space-xs)); }
+.mission-control .mission-tree-more { padding-inline: calc(var(--space-sm) + var(--space-lg)) var(--space-sm); }
 .mission-tree-read { margin: var(--space-xs) 0 0; color: var(--text-muted); font-size: var(--font-size-xs); }
 /* Whole-mission counts while attention pins lie outside the loaded rows. */
 .mission-tree-summary { display: flex; align-items: center; gap: var(--space-xs); margin: var(--space-xs) 0; color: var(--text-muted); font-size: var(--font-size-xs); }

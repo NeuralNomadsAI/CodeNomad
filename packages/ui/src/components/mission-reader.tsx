@@ -26,6 +26,8 @@ import { MissionPassageSectionContent, type MissionPassageSection } from "./miss
 
 import { useMissionRecurrence } from "../stores/mission-recurrence"
 import { MissionRecurrenceReader } from "./mission-recurrence-reader"
+import { useMissionSchedules } from "../stores/mission-schedules"
+import { describeMissionCriteria } from "./mission-scheduling-summary"
 import type { MissionMarkdownPage } from "../lib/mission-markdown-pages"
 import { MissionReaderNumber } from "./mission-reader-number"
 import { MissionOverviewDetails } from "./mission-overview-details"
@@ -184,10 +186,15 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   }
   const recurrenceProjectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? missionStore.state(props.instanceId).projectID
   const recurrenceState = useMissionRecurrence({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
-    directory: () => props.scope, active: () => target()?.kind === "recurrence"
+    directory: () => props.scope, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner !== "scheduled"
       && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID() })
   const recurrence = () => target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
     ? recurrenceState.snapshot()?.schedules.find(schedule => schedule.id === target()?.missionId) : undefined
+  const scheduledState = useMissionSchedules({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
+    directory: () => props.scope, refresh: () => 0, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"
+      && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID(), selected: () => target()?.missionId })
+  const scheduled = () => target()?.scheduleOwner === "scheduled" && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
+    ? scheduledState.rows().find(row => row.id === target()?.missionId) : undefined
   const task = () => mission()?.tasks.find(task => task.id === target()?.itemId)
   const reports = createMemo(() => { const value = mission(); return value ? missionReports(value) : [] })
   const report = () => reports().find(report => report.id === target()?.itemId)
@@ -274,7 +281,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   }
   const playbook = () => target()?.kind === "playbook" ? target()!.missionId as MissionTemplateId : undefined
   const title = () => playbook() ? t("missions.playbook.title", { name: t(`missions.control.template.${playbook()}`) })
-    : target()?.kind === "recurrence" ? recurrence()?.title ?? t("missions.recurrence.reader", { id: target()?.missionId ?? "" })
+    : target()?.kind === "recurrence" ? scheduled()?.configuration.title ?? recurrence()?.title ?? t("missions.recurrence.reader", { id: target()?.missionId ?? "" })
     : target()?.kind === "task" ? task()?.title : target()?.kind === "report"
     ? mission()?.tasks.find(task => task.key === report()?.taskKey)?.title ?? report()?.taskKey
     : t(target()?.kind === "change" ? "missions.control.history.title"
@@ -469,7 +476,16 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       <Show when={mission() && "panelCollections" in mission()!}><MissionPanelPaging instanceId={props.instanceId} lane={`activity:${mission()!.id}`} /></Show>
       <Show when={navigationError()}><p role="alert">{t("sessionList.reload.error")}</p></Show>
       <Show when={target()?.recurrence && currentPassage.error()}><p role="status">{t(passage() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-      <Show when={target()?.kind === "recurrence"}>
+      <Show when={target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"}>
+        <Show when={scheduledState.loading() && !scheduled()}><p role="status">{t("missions.control.loading")}</p></Show>
+        <Show when={scheduledState.error() || scheduledState.selectionError()}><p role="status">{t("missions.scheduleList.readFailed")}</p></Show>
+        <Show when={scheduled()}>{doc => <>
+          <p><bdi>{describeMissionCriteria(doc().configuration.launch, t, locale(), doc().oneShotAt).join("; ")}</bdi></p>
+          <h3>{t("missions.control.objective")}</h3><p>{doc().configuration.objective}</p>
+          <Show when={doc().configuration.notes}><h3>{t("missions.control.notes")}</h3><p>{doc().configuration.notes}</p></Show>
+        </>}</Show>
+      </Show>
+      <Show when={target()?.kind === "recurrence" && target()?.scheduleOwner !== "scheduled"}>
         <Show when={recurrenceState.loading() && !recurrenceState.snapshot()}><p role="status">{t("missions.control.loading")}</p></Show>
         <Show when={recurrenceState.error()}><p role="status">{t(recurrenceState.stale() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
         <Show when={recurrence()} fallback={<p>{t("missions.control.reader.missing")}</p>}>{schedule =>

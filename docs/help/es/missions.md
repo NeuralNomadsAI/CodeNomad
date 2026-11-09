@@ -38,8 +38,8 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 
 ## Seguir el árbol y leer resultados {#tracking}
 
-1. Selecciona la fila de una misión: sus tareas aparecen debajo y sus acciones en la segunda línea del encabezado. El chevrón de la fila pliega o despliega sus tareas; el chevrón de otra misión muestra sus tareas sin seleccionarla. **Filtrar misiones** acota las demás filas.
-2. Elige **Resumen** (ojo) para la vista central general; mientras está abierta, seleccionar otra misión muestra la vista general de esa misión. Selecciona una tarea para ver su resultado, encargo y evidencias exactos: mientras su lector está abierto, las acciones del encabezado se aplican a esa tarea, con **Abrir la conversación de la tarea** y, si falta su informe, **Verificar y recuperar el informe faltante**. **Resumen** cierra entonces el lector de la tarea.
+1. Como en la lista de sesiones, el chevrón de una fila muestra u oculta sus tareas, y un clic selecciona una fila: una misión o una de sus tareas. Las acciones de la selección están en la segunda línea del encabezado. Una misión sin tareas no tiene chevrón. **Filtrar misiones** acota las demás filas.
+2. Pulsa **Resumen** (ojo) para leer la selección en el lector central: la vista general de una misión, o el resultado, encargo y evidencias exactos de una tarea. Mientras está pulsado, el lector sigue lo que seleccionas; púlsalo de nuevo para volver a la conversación. Con una tarea seleccionada, las acciones del encabezado se aplican a esa tarea, con **Abrir la conversación de la tarea** y, si falta su informe, **Verificar y recuperar el informe faltante**.
 3. **Más acciones** (⋯) agrupa **Pedir una actualización**, **Interrumpir ahora**, **Guardar como descripción** y **Editar la misión seleccionada**; las acciones que no corresponden quedan desactivadas.
 4. Sigue los enlaces de dependencias y los **Informes**; usa **Abrir conversación** para el coordinador cuando necesites su transcripción.
 5. Cuando una misión o una de sus tareas se pone en rojo, selecciónala: se abre la conversación que pregunta, con su pregunta en el panel de interrupciones.
@@ -69,8 +69,8 @@ Las banderas de las misiones y los iconos de las tareas usan los colores de la l
 | Rojo | Se espera una respuesta tuya. La bandera de una misión se pone en rojo por una pregunta de su coordinador, una tarea por la suya propia, y el chevrón de la misión indica que una de sus tareas pregunta. Selecciona la misión o la tarea en rojo para abrir la pregunta. |
 | Amarillo, pulsante | Hay trabajo en curso. |
 | Naranja | La misión está en pausa o interrumpida, con una acción para continuarla. |
-| Verde | Una misión terminada que aún no has abierto en esta ventana; vuelve a ser neutral en cuanto la seleccionas. |
-| Azul | Una misión preparada, lista para iniciarse como un prompt redactado. |
+| Verde | Una misión terminada o una tarea finalizada que aún no has visto en esta ventana, y el chevrón de una misión con una tarea así. Vuelve a ser neutral en cuanto la seleccionas; haz clic en un icono de tarea verde, o arrastra sobre varios, para marcarlos como vistos. Haz clic derecho en el chevrón de una misión y elige **Marcar como leído** para marcar como vistas la misión y todas sus tareas a la vez. |
+| Azul | Una misión preparada, lista para iniciarse como un prompt redactado, o una tarea que aún no ha empezado. |
 
 Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos.
 
@@ -278,8 +278,8 @@ Usa **Editar la misión seleccionada** desde **Más acciones** (⋯) en una misi
 
 En una programación nativa, **Eliminar la misión seleccionada…** desactiva futuras pasadas antes de retirar la entrada. Se conservan las conversaciones y resultados; la limpieza pendiente de reconciliación sigue visible en **Detalles técnicos**. Conserva una eliminación sin confirmar y actualiza su solicitud original.
 
-1. Para una misión puntual que ya no necesites, elige **Eliminar la misión seleccionada…** y revisa la confirmación.
-2. Opcionalmente, selecciona **Eliminar también las conversaciones de especialistas creadas para esta misión** antes de confirmar.
+1. Para eliminar también las conversaciones de tareas creadas para las misiones que elimines, marca **Eliminar una misión también elimina las conversaciones de sus tareas** en **Configuración → Misiones**.
+2. Para una misión puntual que ya no necesites, elige **Eliminar la misión seleccionada…**: se elimina de inmediato. Solo aparece un formulario si la eliminación falla o queda sin confirmar, con **Intentar de nuevo**.
 3. Comprueba **Limpieza de conversaciones** para ver los recuentos de eliminadas/conservadas/pendientes. Reintenta solo la limpieza restante registrada si se ofrece.
 
 Eliminar una misión no equivale a detenerla; usa Detener e inspecciona primero el trabajo restante. Se conservan los coordinadores y las conversaciones reutilizadas. También pueden conservarse especialistas compartidos, movidos, con hijos o cuya propiedad no se pueda verificar. La limpieza parcial no se revierte ni se completa silenciosamente en segundo plano. La tarjeta de la misión puede desaparecer mientras la confirmación de la eliminación sigue pendiente, incluso cuando la limpieza de conversaciones muestra 0 pendientes. Sigue usando la acción original **Intentar de nuevo** hasta que se confirme la eliminación; conserva la misma solicitud de eliminación y las mismas opciones. El lector general conserva las 20 limpiezas completadas más recientes. Eliminar misiones libera su almacenamiento en el proyecto: las misiones eliminadas más antiguas se borran automáticamente.

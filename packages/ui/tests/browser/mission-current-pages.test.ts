@@ -111,10 +111,11 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, initialRows)
     assert.ok(selections.some(input => input.selector.source === "tasks" && input.selector.task.offset > 0
       && input.selector.task.missionID === map.id && input.source.owner === owner && input.source.missionID === map.id), "scroll continuation retains the exact passage owner")
-    await page.evaluate(async ({ root, missionID, scheduleID, passageID, owner, taskID }) => {
+    const openTaskReader = () => page.evaluate(async ({ root, missionID, scheduleID, passageID, owner, taskID }) => {
       (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "task", itemId: taskID,
         recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
     }, { root: f.root, missionID: map.id, scheduleID: f.scheduleID, passageID: f.passage.passageID, owner, taskID: map.tasks.at(-1)!.id })
+    await openTaskReader()
     await page.locator(".mission-task-reader").waitFor()
     await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ }).click()
     await page.locator(".mission-reader").getByText(/Exact brief/).first().waitFor()
@@ -146,6 +147,15 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     const opened = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/session/ses_current_179"))
     await page.locator(".mission-row-select[aria-current=true]").click()
     await opened
+    // Eye mode follows the selected row back to its overview; wait for that
+    // reader's intended body demand before measuring unrelated invalidation.
+    await page.locator(".mission-overview-details").waitFor()
+    await page.locator(".mission-reader").getByText(map.objective, { exact: true }).waitFor()
+    // Root notes are unrelated to the task reader, but are visible overview
+    // content. Restore the exact task demand before checking cache retention.
+    await openTaskReader()
+    await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ }).click()
+    await page.locator(".mission-reader").getByText(/Exact brief/).first().waitFor()
     const taskReads = selections.filter(input => input.selector.source === "tasks").length, bodyReads = selections.filter(input => input.body).length
     await f.control.update({ missionID: map.id, requestID: "notes-only", expectedRevision: map.revision, objective: map.objective, notes: "Unrelated root notes" })
     const refreshed = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.selector?.header === true)

@@ -9,7 +9,7 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
-import { missionDetail, missionMenuItem, missionMenuItemState, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { missionDetail, missionMenuItem, missionMenuItemState, missionRefresh, missionToolbar, missionToolbarAction, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, server: ViteDevServer, url: string
@@ -301,10 +301,14 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
     // The header can publish before the directory reconciliation finishes: this is
     // still the pending operation's Saving state.
     assert.equal((await interrupt()).enabled, false)
-    assert.equal(await page.getByRole("status").filter({ hasText: "Saving…" }).count(), 1)
+    // Command feedback is announced (visually hidden, here in a leaf's folded detail) and joins
+    // the primary button's tooltip.
+    const status = (text: string) => page.getByRole("status", { includeHidden: true }).filter({ hasText: text })
+    assert.equal(await status("Saving…").count(), 1)
     release.resolve()
-    await page.getByRole("status").filter({ hasText: "Pausing: the steps in progress are finishing." }).waitFor()
-    assert.equal(await page.getByRole("status").filter({ hasText: "Pausing: the steps in progress are finishing." }).count(), 1)
+    await status("Pausing: the steps in progress are finishing.").waitFor({ state: "attached" })
+    assert.equal(await status("Pausing: the steps in progress are finishing.").count(), 1)
+    assert.match(await missionToolbar(page).locator("button").first().getAttribute("title") ?? "", / — .*Pausing: the steps in progress are finishing\./)
     assert.deepEqual(calls.map(call => [call.action, call.graceful]), [["pause", true]], "Pause interrupts nothing")
     assert.equal(calls[0].expectedRevision, 1)
     assert.equal(await page.getByRole("button", { name: "Resume mission", exact: true }).isEnabled(), true)

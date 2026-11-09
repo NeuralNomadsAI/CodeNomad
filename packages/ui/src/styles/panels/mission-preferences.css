@@ -51,6 +51,12 @@
   color: var(--text-primary); background: var(--surface-control); border: 1px solid var(--border-base); border-radius: 0;
   font: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-regular); text-overflow: ellipsis;
 }
+/* A lone checkbox row: the box, then its label. */
+.mission-preferences .mission-preferences-check {
+  display: flex; align-items: center; gap: var(--space-sm); margin: 0; padding-block: var(--space-sm);
+  border-block-start: 1px solid var(--border-row); color: var(--text-primary); font-weight: var(--font-weight-medium);
+}
+.mission-preferences .mission-preferences-check > input { width: auto; min-height: 0; padding: 0; }
 /* What users type into takes the field surface; selects keep the control surface. */
 .mission-preferences input { background: var(--surface-field); }
 .mission-preferences :is(select, input):focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }

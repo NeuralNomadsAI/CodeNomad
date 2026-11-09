@@ -8,7 +8,8 @@ import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./missio
 import { chromium, type Browser, type Locator, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { clickMissionAction, inlineMissionEntry, missionEntryStatus, missionGeneralAction, missionRow, missionMenuTrigger, missionPicker, missionRows, missionToolbar,
-  missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle, depthInfo, depthMenu, waitForDepthInfo, waitForDepthReady } from "./mission-actions"
+  missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle, depthInfo, depthMenu, waitForDepthInfo, waitForDepthReady,
+  routeUiSettings, waitForMissionDeleteSessions, openTaskReader, selectMissionTask, selectTaskMission, expandRow } from "./mission-actions"
 
 import { borrowFixture } from "./fixture-borrow"
 import { createMissionFailureDiagnostics } from "./mission-failure-diagnostics"
@@ -79,7 +80,10 @@ const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${n
 const fixtureText = (page: Page, key: string) => fixtureCall(page, "text", key) as Promise<string>
 /** Locale-neutral explicit choice of a row by its title. */
 async function pickLocalized(page: Page, title: string) {
-  await (await inlineMissionEntry(page, title)).click()
+  const entry = await inlineMissionEntry(page, title)
+  await entry.click()
+  // A click only selects the row; its chevron shows the detail.
+  await expandRow(entry)
   await selectedCard(page).waitFor()
 }
 async function localizedPreferences(page: Page, name: string) {
@@ -108,8 +112,9 @@ const settingsFits = (page: Page) => page.locator(".settings-screen-scroll").eva
 /** Plan changes, reports, cleanup history and identifiers are folded at the
  * bottom of the central overview reader; the panel keeps none of them. */
 async function openOverviewFold(page: Page, label: string) {
-  // An open task reader holds the Summary eye: it closes first.
-  if (await page.locator(".mission-task-reader").count()) await readAll(page).click()
+  // A selected task holds the toolbar and its eye: selecting its Mission row gives the eye
+  // back to the overview (an open task reader follows to it).
+  await selectTaskMission(page)
   if (await readAll(page).getAttribute("aria-pressed") !== "true") await readAll(page).click()
   const fold = page.locator(".mission-reader details.mission-report-technical").filter({ has: page.locator(":scope > summary", { hasText: new RegExp(`^${label}$`) }) })
   if (!await fold.evaluate(element => (element as HTMLDetailsElement).open)) await fold.locator(":scope > summary").click()
@@ -806,7 +811,7 @@ for (const close of [false, true]) test(`an open task reader's native task reads
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await selectMission(page, "Objective reader-demand")
     await until(() => Boolean(held), 15_000)
-    await taskButton(page, "task-one").click()
+    await openTaskReader(taskButton(page, "task-one"))
     await page.locator(".mission-reader").getByRole("heading", { name: "Inspect evidence", level: 2 }).waitFor()
     // The hidden panel's tree releases its demand; the open reader is the last owner.
     await fixtureCall(page, "active", false)
@@ -841,15 +846,22 @@ test("reader toggles highlight the exact visible content and toggle it off witho
     await overview.click()
     assert.equal(await page.locator(".mission-reader").count(), 0)
     await fixtureCall(page, "panelWidth", "280px")
-    await task.click()
-    assert.equal(await task.getAttribute("aria-pressed"), "true")
+    // Selecting the task gives the eye to it; pressing the eye opens the task's reader.
+    await selectMissionTask(task)
+    assert.equal(await overview.getAttribute("aria-pressed"), "false", "selecting a task opens no reader")
+    await overview.click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Inspect evidence", level: 2 }).waitFor()
+    assert.equal(await task.getAttribute("aria-current"), "true")
     assert.equal(await overview.getAttribute("aria-pressed"), "true", "the eye shows the task's open reader")
     await fixtureCall(page, "refresh")
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
-    assert.equal(await task.getAttribute("aria-pressed"), "true")
-    await task.click()
-    assert.equal(await task.getAttribute("aria-pressed"), "false")
+    await expandRow(await inlineMissionEntry(page, "Objective toggle"))
+    assert.equal(await task.getAttribute("aria-current"), "true", "the task selection survives a remount")
+    assert.equal(await overview.getAttribute("aria-pressed"), "true")
+    await overview.click()
+    assert.equal(await overview.getAttribute("aria-pressed"), "false")
     assert.equal(await page.locator(".mission-reader").count(), 0)
+    assert.equal(await task.getAttribute("aria-current"), "true", "closing the reader keeps the selection")
     // Reports and plan changes are reached from the overview reader, never from the panel.
     assert.equal(await page.locator(".mission-control").getByRole("button", { name: /^(Reports|Plan changes|More)$/ }).count(), 0)
     await (await openResultHistory(page)).getByRole("button", { name: "Inspect evidence", exact: true }).click()
@@ -922,7 +934,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
       await page.waitForFunction(revision => (window as any).missionFixture.snapshot().missions[0]?.revision === revision
         && (window as any).missionFixture.snapshot().status === "ready", value.revision)
     }
-    const card = selectedCard(page), checklist = card.locator(".mission-tree")
+    const card = selectedCard(page)
     const capture = async (name: string, width: number, panelWidth: string, mobile = false) => {
       const target = mobile ? await browser.newPage({ locale: "en-US", viewport: { width, height: 844 }, isMobile: true, hasTouch: true }) : page
       try {
@@ -949,7 +961,11 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await page.goto(url)
     await selectMission(page, value.objective)
     await selectedStatus(page, "Prepared").waitFor({ state: "attached" })
-    await checklist.getByText("Ready to start. Start the mission to build its plan.", { exact: true }).waitFor()
+    // Without a plan the row is a leaf, like a session without children: no chevron, no line.
+    const journeyRow = missionRow(page, value.objective)
+    assert.equal(await journeyRow.locator("button.session-item-expander").count(), 0)
+    assert.equal(await journeyRow.locator(".session-item-expander--spacer").count(), 1)
+    assert.equal(await page.locator(".mission-control").getByText(/Ready to start|no plan/i).count(), 0, "no prepared or no-plan line")
     assert.equal(await card.locator("form, textarea, .mission-disclosure:not(.mission-tree)").count(), 0, "no coordinator field or secondary disclosure besides the task tree")
     assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
     await capture("before-wide", 1280, "440px")
@@ -963,6 +979,9 @@ test("mission journey exposes honest progress, real human requests and result-fi
     value.actors = [{ sessionId: "ses_background", title: "Navigation investigator", kind: "specialist", managed: false, roles: ["research"], location: { directory: "fixture" }, joinedAt: 1 }]
     await fixtureCall(page, "seedActor")
     await refresh()
+    // Its plan now holds tasks: the row gains its chevron, which shows them.
+    await journeyRow.locator("button.session-item-expander").waitFor()
+    await expandRow(await inlineMissionEntry(page, value.objective))
     await taskState(page, "inspect", "assigned").waitFor()
     assert.equal(await taskRow(page, "inspect").locator(".sr-only").textContent(), "Assigned", "admission is not evidence of running work")
     assert.equal(await taskRow(page, "verify").getAttribute("data-state"), "waiting")
@@ -987,7 +1006,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await capture("technical-blocked-mobile", 390, "390px", true)
     await page.setViewportSize({ width: 1280, height: 900 })
     await fixtureCall(page, "panelWidth", "440px")
-    await taskButton(page, "inspect").click()
+    await openTaskReader(taskButton(page, "inspect"))
     const reader = page.locator(".mission-task-reader")
     await reader.getByText(blocked.summary, { exact: true }).waitFor()
     await reader.locator(".markdown-body p").filter({ hasText: blocked.summary }).waitFor()
@@ -1001,7 +1020,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     assert.ok(await page.locator(".mission-reader .window-body").evaluate(element => element.scrollTop) > 0)
     await page.screenshot({ path: screenshotPath("mission-journey-full-evidence") })
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
-    await taskButton(page, "verify").click()
+    await openTaskReader(taskButton(page, "verify"))
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-reader").getByRole("button", { name: /^Open / }).count(), 0, "an unbound task must not route to a generic coordinator")
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
@@ -1233,7 +1252,8 @@ test("mission selection, focus and reader survive native invalidations, remount 
     await fixtureCall(page, "flush")
     await page.reload()
     await page.locator(".mission-reader").waitFor()
-    await selectedCard(page).waitFor()
+    // The selection is restored; the row's expansion is the panel's own (its chevron).
+    await selectedCard(page).waitFor({ state: "attached" })
     assert.equal(await selectedMissionTitle(page).innerText(), "Objective two")
     assert.equal(await (await inlineMissionEntry(page, "Objective two")).getAttribute("aria-current"), "true")
     assert.equal(await (await inlineMissionEntry(page, "Objective one")).getAttribute("aria-current"), null)
@@ -1247,6 +1267,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
   const page = await browser.newPage({ locale: "en-US" })
   try {
     await setup(page)
+    await routeUiSettings(page, { missionDeleteSessions: true })
     let revision = 1, failCreate = true, failDelete = true
     const creates: any[] = [], updates: any[] = [], deletions: any[] = []
     let list = [mission("one")]
@@ -1292,14 +1313,13 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await selectedMissionTitle(page).filter({ hasText: "New mission objective" }).waitFor()
     assert.equal(creates.length, 2)
     assert.equal(creates[0].requestId, creates[1].requestId)
+    // The trash deletes at once, taking the Preferences' choice for task conversations;
+    // its form appears only for the failed deletion, offering nothing but its retry.
+    await waitForMissionDeleteSessions(page, true)
     await clickMissionAction(page, "Delete selected mission…", "New mission objective")
-    await page.getByText("Delete this mission? The coordinator and reused conversations will be kept.").waitFor()
-    const cleanup = page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" })
-    assert.equal(await cleanup.isChecked(), false)
-    await cleanup.check()
-    await page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
     await page.getByRole("alert").getByText("Deletion could not be completed. Retry to finish the remaining cleanup.").waitFor()
-    assert.equal(await cleanup.isDisabled(), true)
+    assert.equal(deletions.length, 1)
+    assert.equal(await page.locator("form.mission-editor").getByRole("checkbox").count(), 0)
     await fixtureCall(page, "refresh")
     await page.locator("form").getByRole("button", { name: "Try again", exact: true }).click()
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
@@ -1353,7 +1373,7 @@ test("dependency navigation reveals the linked task and revised plans retain rea
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, value.objective)
-    await taskButton(page, "task-next").click()
+    await openTaskReader(taskButton(page, "task-next"))
     await page.getByRole("button", { name: "Depends on Inspect evidence", exact: true }).click()
     await page.locator('.mission-task-reader[data-task-id="task-plan"]').waitFor()
     assert.equal(await taskRow(page, "task-one").locator(".mission-disclosure-trigger").count(), 0)
@@ -1387,7 +1407,7 @@ test("background native questions settle and requested execution remains distinc
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, value.objective)
-    await taskButton(page, "task-one").click()
+    await openTaskReader(taskButton(page, "task-one"))
     await openTaskTechnicalDetails(page)
     await fixtureCall(page, "seedActor")
     await page.locator(".mission-execution-cell", { hasText: "requested/chosen" }).waitFor()
@@ -1400,12 +1420,15 @@ test("background native questions settle and requested execution remains distinc
     assert.match(await missionEntryStatus(page, value.objective), /Awaiting your input/)
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-background", sessionID: "ses_background", answers: {} } })
     await flag.waitFor({ state: "detached" })
-    // The coordinator's conversation is the mission's toolbar once the task's reader closes.
+    // Closing the reader keeps the task selected (its toolbar); selecting the Mission row
+    // gives the toolbar back to the mission, whose conversation is the coordinator's.
     await page.getByRole("button", { name: "Back to chat" }).click()
+    assert.equal(await missionToolbarAction(page, "Open the task's conversation").count(), 1)
+    await selectTaskMission(page)
     await clickMissionAction(page, "Open conversation")
     await page.getByRole("alert").getByText("Unable to reload session").waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
-    await taskButton(page, "task-one").click()
+    await openTaskReader(taskButton(page, "task-one"))
     await openTaskTechnicalDetails(page)
     await page.locator(".mission-execution").scrollIntoViewIfNeeded()
     await page.screenshot({ path: screenshotPath("mission-execution-browser"), fullPage: true })
@@ -1496,21 +1519,27 @@ test("compact mission rows retain a completed branching plan, direct readers and
     await page.getByRole("button", { name: "Back to chat" }).click()
     const edge = page.locator('.mission-graph path[data-from="review"][data-to="publish"]')
     const compactPath = await edge.getAttribute("d")
-    await taskButton(page, "review").click()
+    await openTaskReader(taskButton(page, "review"))
     await page.locator(".mission-reader").getByRole("heading", { name: "Independent review", exact: true }).waitFor()
     assert.equal(await edge.getAttribute("d"), compactPath, "reading no longer expands task rows or changes graph geometry")
-    // The task's open reader takes the header toolbar; Summary hands it back to the mission.
+    // The selected task takes the header toolbar; its Mission row hands it back to the mission.
     assert.equal(await taskRow(page, "review").locator("button").count(), 1, "task rows carry no per-row controls")
     await missionToolbar(page).getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
     assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
     assert.equal(await missionToolbar(page).locator(".action-overflow-trigger").isDisabled(), true, "the mission's menu actions do not apply to a task")
     assert.equal(await missionToolbar(page).getByRole("button", { name: "Delete selected mission…", exact: true }).isDisabled(), true)
+    // The task's eye closes its reader; the task stays selected with its toolbar.
     await missionToolbar(page).locator(".mission-overview-toggle").click()
+    await page.locator(".mission-reader").waitFor({ state: "detached" })
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "false")
+    assert.equal(await taskButton(page, "review").getAttribute("aria-current"), "true")
+    await selectTaskMission(page)
     await missionToolbar(page).getByRole("button", { name: "Open conversation", exact: true }).waitFor()
-    assert.equal(await taskButton(page, "review").getAttribute("aria-pressed"), "false")
-    await taskButton(page, "review").click()
+    assert.equal(await taskButton(page, "review").getAttribute("aria-current"), null)
+    await openTaskReader(taskButton(page, "review"))
     await page.locator(".mission-reader").getByRole("heading", { name: "Independent review", exact: true }).waitFor()
     await page.getByRole("button", { name: "Back to chat" }).click()
+    await selectTaskMission(page)
     await missionToolbar(page).getByRole("button", { name: "Open conversation", exact: true }).waitFor()
     await page.evaluate(() => { document.querySelector<HTMLElement>(".mission-control")!.style.zoom = "1.25" })
     // At fractional zoom an edge still ends on its dependent's status icon.
@@ -1574,6 +1603,7 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     const colors = await missionRows(page).locator(".mission-row-flag").evaluateAll(items => items.map(el => getComputedStyle(el).color))
     assert.equal(new Set(colors).size, 2, "idle rows share the neutral mark")
     await rows[1].click()
+    await expandRow(rows[1])
     await selectedCard(page).waitFor()
     // The detail is the selected row's children: right after it in the tree, before the next row.
     assert.equal(await page.locator(".mission-control").evaluate(panel => {
@@ -1641,7 +1671,7 @@ test("native activity stays separate from the plan and refreshes only while a Mi
     await taskState(page, "task-0", "active").waitFor()
     assert.deepEqual(await states(), ["active", "active", "assigned", "assigned"], "only observed running/background work is active")
     await taskRow(page, "task-2").getByText("Verify current native state", { exact: true }).waitFor()
-    await taskButton(page, "task-2").click()
+    await openTaskReader(taskButton(page, "task-2"))
     await openTaskTechnicalDetails(page)
     assert.equal(await page.getByText("Assignment admitted", { exact: true }).count() > 0, true)
 
@@ -1667,6 +1697,8 @@ test("native activity stays separate from the plan and refreshes only while a Mi
     const visibleRefresh = waitForMissionPanelRefresh(page)
     await fixtureCall(page, "mount", true)
     await visibleRefresh
+    // The remounted panel's row starts folded: its chevron shows the tasks again.
+    await expandRow(await inlineMissionEntry(page, value.objective))
     await taskState(page, "task-0", "active").waitFor()
     await page.screenshot({ path: screenshotPath("mission-native-activity") })
   } finally { await page.close() }
