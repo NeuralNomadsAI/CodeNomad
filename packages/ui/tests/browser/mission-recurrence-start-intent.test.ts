@@ -216,7 +216,7 @@ const lifecycle = (page: Page) => page.locator(".mission-picker-selection-action
   }
   return result
 })
-const statusText = (page: Page) => missionDetail(page).locator(".mission-action-texts").getByRole("button", { name: CHECK, exact: true })
+const statusText = (page: Page) => page.locator(".mission-picker-selection-actions .mission-action-texts").getByRole("button", { name: CHECK, exact: true })
 /** Reload the row from the snapshot (the panel's explicit refresh is read-only here). */
 async function refresh(page: Page) {
   await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
@@ -334,7 +334,7 @@ test("a completed Check on a stopped pending passage releases its UI request wit
     await expectLifecycle(page, [[PASSAGE, true], [STOP, false], [RUN_NOW, false]])
     await missionToolbarAction(page, PASSAGE).click()
     await until(async () => (await f.read()).controls.at(-1)?.action === "check" && (await f.read()).controls.at(-1)?.controlsComplete === true)
-    await until(async () => !await missionDetail(page).getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).count())
+    await until(async () => !await page.locator(".mission-picker-selection-actions").getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).count())
     assert.equal((await f.read()).state, "stopped")
     assert.equal(f.native.writes.length, 1)
     // The observer is lost again: the same page can explicitly Check passage anew.

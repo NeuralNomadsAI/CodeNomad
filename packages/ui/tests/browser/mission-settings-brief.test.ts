@@ -110,12 +110,13 @@ test("Save as brief copies only a finished Mission's recorded inputs and launche
     assert.equal(await detail.locator(".mission-action-texts").isVisible(), false, "no empty row under the Mission")
     // From a folded Mission, the menu unfolds its detail to show the name field; Escape
     // closes it and gives focus back to the menu's trigger.
-    const chevron = page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
-    await chevron.click()
-    assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    // This Mission has no tasks: its row has no chevron and its selected detail starts folded.
+    const row = page.locator(".mission-row:has(.mission-row-select[aria-current=true])")
+    assert.equal(await row.locator("button.session-item-expander").count(), 0)
+    assert.equal(await detail.isVisible(), false)
     await (await missionMenuItem(page, "save-brief")).click()
     await detail.getByLabel("Configuration name", { exact: true }).waitFor()
-    assert.equal(await chevron.getAttribute("aria-expanded"), "true", "the menu unfolds the Mission")
+    assert.equal(await detail.isVisible(), true, "the menu unfolds the Mission")
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Configuration name", undefined, { timeout: 5_000 })
     await page.keyboard.press("Escape")
     await detail.getByLabel("Configuration name", { exact: true }).waitFor({ state: "detached" })

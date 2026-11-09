@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "Sitzung archivieren",
+  "sessionList.actions.restore.title": "Sitzung wiederherstellen",
+  "sessionList.status.archived": "Archiviert",
+  "sessionList.archiveFilter.ariaLabel": "Sitzungen nach Archivstatus filtern",
+  "sessionList.archiveFilter.active": "Nicht archivierte Sitzungen",
+  "sessionList.archiveFilter.archived": "Archivierte Sitzungen",
+  "sessionList.archiveFilter.all": "Alle Sitzungen",
+  "sessionList.archive.error": "Archivierung nicht bestätigt. Sitzungsliste aktualisieren.",
+  "sessionList.restore.error": "Wiederherstellung nicht bestätigt. Sitzungsliste aktualisieren.",
   "browser.viewport.webkitEmulationHint": "Mobile WebKit-Kennung und CSS-Viewport. Pixeldichte und Eingabe unterliegen nativen Grenzen.",
   "browser.viewport.emulationHint": "Lädt mit mobiler Kennung, Touch und Pixeldichte neu. Browser-Engine, Tastatur und Systemleisten werden nicht simuliert.",
   "browser.viewport.dimensionsOnly": "Nur Abmessungen.",

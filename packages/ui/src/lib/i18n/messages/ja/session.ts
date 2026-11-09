@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "セッションをアーカイブ",
+  "sessionList.actions.restore.title": "セッションを復元",
+  "sessionList.status.archived": "アーカイブ済み",
+  "sessionList.archiveFilter.ariaLabel": "アーカイブ状態でセッションを絞り込む",
+  "sessionList.archiveFilter.active": "未アーカイブのセッション",
+  "sessionList.archiveFilter.archived": "アーカイブ済みのセッション",
+  "sessionList.archiveFilter.all": "すべてのセッション",
+  "sessionList.archive.error": "アーカイブを確認できません。セッション一覧を更新してください。",
+  "sessionList.restore.error": "復元を確認できません。セッション一覧を更新してください。",
   "browser.viewport.webkitEmulationHint": "WebKitのモバイル識別とCSSビューポート。画素密度と入力にはネイティブ環境の制限があります。",
   "browser.viewport.emulationHint": "モバイル識別情報、タッチ、ピクセル密度を設定して再読み込みします。ブラウザーエンジン、キーボード、システムバーは再現しません。",
   "browser.viewport.dimensionsOnly": "サイズのみ。",

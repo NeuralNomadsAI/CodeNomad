@@ -13,13 +13,21 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
   onEdit: (id: string) => void; onDeleted: (id: string) => void; onOpenConversation: (id: string) => void;
   tracking?: JSX.Element; passage?: { reading: boolean; onToggle(): void }; onPassage?: (id: string | undefined) => void;
+  overview?: { reading: boolean; onToggle(): void };
+  onNoPassage?: (id: string) => void;
   selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const list = useMissionSchedules({ instanceId: () => props.instanceId, projectID: () => props.projectID,
     directory: () => props.directory, active: props.active, refresh: () => props.refresh + revision(), selected: () => props.selected })
   const schedules = () => list.rows().filter(row => row.kind === "schedule")
-  createEffect(() => props.onPassage?.(schedules().find(row => row.id === props.selected)?.pendingPassage ? props.selected : undefined))
+  createEffect(() => {
+    const doc = schedules().find(row => row.id === props.selected)
+    // Retire the former passage selection before releasing its current-source demand.
+    if (doc && !doc.pendingPassage && list.fresh(doc.id) && !list.loading() && !list.error() && !list.selectionError())
+      props.onNoPassage?.(doc.id)
+    props.onPassage?.(doc?.pendingPassage ? props.selected : undefined)
+  })
   const date = (value: number | null, zone?: string) => value === null ? t("missions.scheduleList.none")
     : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", ...(zone ? { timeZone: zone } : {}) }).format(value)
   const criteria = (doc: UnifiedMissionSchedule) => describeMissionCriteria(doc.configuration.launch, t, locale(), doc.oneShotAt).join("; ")
@@ -62,7 +70,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const editable = () => props.active() && props.enabled() && !list.error() && list.fresh(id)
         && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
-        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : expand(value => !value)}
+        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? props.overview?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : props.overview ? props.overview.onToggle() : expand(value => !value)}
           primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
           onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}

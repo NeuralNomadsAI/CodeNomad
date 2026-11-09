@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "सत्र अभिलेखमा राख्नुहोस्",
+  "sessionList.actions.restore.title": "सत्र पुनर्स्थापना गर्नुहोस्",
+  "sessionList.status.archived": "अभिलेखमा",
+  "sessionList.archiveFilter.ariaLabel": "अभिलेख स्थितिअनुसार सत्र छान्नुहोस्",
+  "sessionList.archiveFilter.active": "अभिलेखमा नराखिएका सत्रहरू",
+  "sessionList.archiveFilter.archived": "अभिलेखमा राखिएका सत्रहरू",
+  "sessionList.archiveFilter.all": "सबै सत्रहरू",
+  "sessionList.archive.error": "अभिलेखमा राखिएको पुष्टि भएन। सत्र सूची ताजा गर्नुहोस्।",
+  "sessionList.restore.error": "पुनर्स्थापना पुष्टि भएन। सत्र सूची ताजा गर्नुहोस्।",
   "browser.viewport.webkitEmulationHint": "WebKit मोबाइल पहिचान र CSS भ्युपोर्ट। पिक्सेल घनत्व र इनपुटमा नेटिभ सीमाहरू लागू हुन्छन्।",
   "browser.viewport.emulationHint": "मोबाइल पहिचान, टच र पिक्सेल घनत्वसहित पुनः लोड गर्छ। ब्राउजर इन्जिन, किबोर्ड र प्रणाली बारहरू अनुकरण गरिँदैनन्।",
   "browser.viewport.dimensionsOnly": "आयाम मात्र।",

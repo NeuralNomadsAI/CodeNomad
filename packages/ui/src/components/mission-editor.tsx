@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { compareModelError, freezeCompareProfiles, sameCompareModel, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
@@ -147,7 +147,9 @@ export function MissionEditor(props: {
     && creationHold()!.operation.requestId !== shownRequestId() || schedule.held()?.state === "uncertain"
       && JSON.parse(schedule.held()!.payload).requestID !== requestId
   const busy = () => pending() || uncertain() || creationPending() || !!schedule.held()
-  const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(Boolean(draft?.deleteManagedSessions))
+  // Deletion asks nothing: it takes the Preferences' choice for task conversations, fixed for its one request.
+  const deleteManagedSessions = () => deleteSessions
+  const deleteSessions = draft?.deleteManagedSessions ?? untrack(() => config.preferences().missionDeleteSessions)
   const [startOnCreation, setStartOnCreation] = createSignal(Boolean(held?.startOnCreation ?? draft?.startOnCreation))
   const [deleteAttempted, setDeleteAttempted] = createSignal(Boolean(draft?.deleteAttempted))
   const [pending, setPending] = createSignal(false)
@@ -233,9 +235,10 @@ export function MissionEditor(props: {
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
     defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: true, profileDetailsOpen: true,
     requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(), startOnCreation: startOnCreation(),
+    deleteAutoSubmitted: kind === "delete" && !autoSubmit(), deleteError: kind === "delete" ? error() : undefined,
     scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(),
     previousDraft: schedule.previousDraft(), journalMission: schedule.journal() })
-  onCleanup(() => props.onDispose?.(busy() ? undefined : prefilling() ? null : captureDraft()))
+  onCleanup(() => props.onDispose?.(kind === "delete" ? captureDraft() : busy() ? undefined : prefilling() ? null : captureDraft()))
 
   async function useSavedDefaults() {
     if (busy() || defaultsRefreshing() || !isActive()) return
@@ -509,16 +512,27 @@ export function MissionEditor(props: {
   let body: HTMLDivElement | undefined
   const panelScrolls = kind === "create" ? missionPanelScroll(() => body, isActive) : () => false
 
-  return <form class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}
+  // The trash button deletes at once: the form shows only when the deletion failed or is
+  // unconfirmed. Only a freshly opened deletion submits by itself; a restored one (any
+  // saved draft, a refused attempt included) waits for its explicit button.
+  let form!: HTMLFormElement
+  const [autoSubmit, setAutoSubmit] = createSignal(kind === "delete" && !(draft?.deleteAutoSubmitted ?? draft?.deleteAttempted))
+  if (kind === "delete" && draft?.deleteError) setError(draft.deleteError)
+  createEffect(() => {
+    if (!autoSubmit() || deleteAttempted() || locked() || !isActive()) return
+    queueMicrotask(() => {
+      if (!autoSubmit() || locked() || !isActive()) return
+      setAutoSubmit(false)
+      form.requestSubmit()
+    })
+  })
+  return <form ref={form} class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}
+    hidden={kind === "delete" && !error() && !uncertain() && (pending() || autoSubmit())}
     data-scroller={panelScrolls() ? "panel" : undefined}>
     {/* Creation is headed by the panel's own Create button; edit/delete keep their title. */}
     <Show when={kind !== "create"}><header class="window-header"><h3 class="window-title">{t(`missions.control.${kind}`)}</h3></header></Show>
     <div class="window-body" ref={body}>
-      <Show when={kind !== "delete"} fallback={<>
-        <p>{t("missions.control.delete.detail")}</p>
-        <label class="mission-delete-sessions"><input type="checkbox" checked={deleteManagedSessions()} disabled={pending() || deleteAttempted()}
-          onChange={event => setDeleteManagedSessions(event.currentTarget.checked)} />{t("missions.control.delete.sessions")}</label>
-      </>}>{createBody()}</Show>
+      <Show when={kind !== "delete"}>{createBody()}</Show>
       {/* A field changed since this edit opened is never prefilled: reopen it on the current map. */}
       <Show when={prefilling()}><MissionBodyPending failed={reopen() === "failed" || reopen() === "idle" && prefillState() === "failed"}
         changed={reopen() === "idle" && prefillState() === "changed"} actionLabel={offersReopen() ? "missions.control.reopen" : undefined}
@@ -554,7 +568,7 @@ export function MissionEditor(props: {
       <Show when={kind === "create"} fallback={
           <button type="submit" class="button-primary" disabled={locked() || !isActive() || (kind !== "delete" && (textLocked() || !objective().trim() || !structuralLocked() && !policyReady()))}>
           {t(pending() ? "missions.control.mutation.pending" : kind === "delete"
-            ? deleteAttempted() ? "missions.control.retry" : "missions.control.delete" : "missions.control.save")}
+             ? !autoSubmit() ? "missions.control.retry" : "missions.control.delete" : "missions.control.save")}
         </button>}>
         <button type="submit" class="button-primary" disabled={createDisabled()}>
           {t(pending() || creationPending() ? "missions.control.mutation.pending" : "missions.create.submit")}

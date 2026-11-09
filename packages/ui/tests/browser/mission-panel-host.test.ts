@@ -125,12 +125,17 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     assert.equal(await missionDetail(f.page).count(), 0, "nothing is selected by default")
     assert.equal(await actions.count(), 0, "no selection mounts no toolbar")
     assert.equal(await f.page.locator(".mission-picker-idle-actions .mission-action-bar button:enabled").count(), 0, "the same buttons show disabled")
-    // Selecting a row expands it: its detail directly follows it, its toolbar is in the header.
+    // Like a session row, a click only selects: its toolbar is in the header, its chevron expands it.
     await (await inlineMissionEntry(f.page, "Short audit")).click()
     assert.equal(await missionDetail(f.page).getAttribute("aria-label"), "Short audit")
+    assert.equal(await chevron("Short audit").getAttribute("aria-expanded"), "false")
+    assert.equal(await missionDetail(f.page).isVisible(), false)
+    await actions.waitFor()
+    await chevron("Short audit").click()
+    await missionDetail(f.page).waitFor()
     assert.equal(await chevron("Short audit").getAttribute("aria-expanded"), "true")
     assert.equal(await chevron("Long migration").getAttribute("aria-expanded"), "false")
-    await actions.waitFor()
+    // Its detail directly follows it.
     assert.equal(await row("Short audit").evaluate(element => Boolean(element.nextElementSibling?.querySelector("section.mission-detail"))), true)
     // The selected row's chevron folds and unfolds its detail without changing the selection.
     await chevron("Short audit").click()
@@ -150,11 +155,15 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     for (let attempt = 0; !f.sessionReads.some(path => path.includes("ses_long")) && attempt < 100; attempt++) await f.page.waitForTimeout(50)
     assert.ok(f.sessionReads.some(path => path.includes("ses_long")), `the expanded mission's coordinator delegations are read: ${f.sessionReads.join(", ")}`)
     assert.equal(await missionDetail(f.page).getAttribute("aria-label"), "Short audit", "the selection's detail stays where it is")
-    // A task there selects its mission (and asks for the task's reader).
+    // A task there becomes the one selection: its Mission's detail, not its row, is current.
+    const task = f.page.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task')
     await preview.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task').click()
-    assert.equal(await selectedMissionTitle(f.page).innerText(), "Long migration")
     await missionDetail(f.page).and(f.page.locator('[aria-label="Long migration"]')).waitFor()
+    await f.page.waitForFunction(() => document.querySelector('.mission-tree-node[data-task-key="t20"] .mission-tree-task')?.getAttribute("aria-current") === "true")
+    assert.equal(await selectedMissionTitle(f.page).count(), 0, "the task, not its Mission row, is highlighted")
+    assert.equal(await (await inlineMissionEntry(f.page, "Short audit")).getAttribute("aria-current"), null)
     assert.equal(await chevron("Long migration").getAttribute("aria-expanded"), "true", "selected, it shows its detail")
+    assert.equal(await f.page.locator(".mission-reader").count(), 0, "selecting a task opens no reader")
     // The filter narrows the other rows only.
     await f.page.locator(".mission-picker-search").fill("audit")
     assert.equal(await row("Short audit").count(), 1)
@@ -163,8 +172,9 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     // The selection survives a remount.
     await f.page.evaluate(() => (window as any).missionHost.mount(false))
     await f.page.evaluate(() => (window as any).missionHost.mount(true))
-    await missionDetail(f.page).waitFor()
-    assert.equal(await selectedMissionTitle(f.page).innerText(), "Long migration")
+    await missionDetail(f.page).and(f.page.locator('[aria-label="Long migration"]')).waitFor({ state: "attached" })
+    await task.waitFor({ state: "attached" })
+    assert.equal(await task.getAttribute("aria-current"), "true")
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

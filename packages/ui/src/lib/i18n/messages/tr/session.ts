@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "Oturumu arşivle",
+  "sessionList.actions.restore.title": "Oturumu geri yükle",
+  "sessionList.status.archived": "Arşivlendi",
+  "sessionList.archiveFilter.ariaLabel": "Oturumları arşiv durumuna göre filtrele",
+  "sessionList.archiveFilter.active": "Arşivlenmemiş oturumlar",
+  "sessionList.archiveFilter.archived": "Arşivlenmiş oturumlar",
+  "sessionList.archiveFilter.all": "Tüm oturumlar",
+  "sessionList.archive.error": "Arşivleme doğrulanamadı. Oturum listesini yenileyin.",
+  "sessionList.restore.error": "Geri yükleme doğrulanamadı. Oturum listesini yenileyin.",
   "browser.viewport.webkitEmulationHint": "WebKit mobil kimliği ve CSS görünümü. Yerel piksel yoğunluğu ve giriş sınırlamaları geçerlidir.",
   "browser.viewport.emulationHint": "Mobil kimlik, dokunma ve piksel yoğunluğuyla yeniden yükler. Tarayıcı motoru, klavye ve sistem çubukları simüle edilmez.",
   "browser.viewport.dimensionsOnly": "Yalnızca boyutlar.",

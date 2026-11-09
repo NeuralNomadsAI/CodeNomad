@@ -11,6 +11,41 @@ import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 
 const EDIT = "Edit selected mission"
 
+for (const status of [400, 403, 409]) test(`a ${status} deletion refusal survives remount without automatic replay`, async () => {
+  const { page, errors } = await setup(), attempts: unknown[] = []
+  const value = mission("one")
+  try {
+    await page.route("**/api/workspaces/fixture/missions**", route => {
+      const request = route.request(), content = missionContentFixture(request.url(), request.method(), [value])
+      if (content) return route.fulfill({ json: content })
+      if (request.method() === "DELETE") {
+        attempts.push(request.postDataJSON())
+        return route.fulfill({ status, json: { code: "revision-conflict" } })
+      }
+      return route.fulfill({ json: { available: true, projectID: "project", mission: value, missions: panelMissions([value]),
+        cleanups: [], generatedAt: 1, discardedEvents: 0 } })
+    })
+    await page.goto(url)
+    await clickMissionAction(page, "Delete selected mission…", "Objective one")
+    const form = page.locator("form.mission-editor"), alert = form.getByRole("alert")
+    await alert.waitFor()
+    const message = await alert.innerText()
+    assert.equal(attempts.length, 1, "the initial trash click sends once")
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    await form.getByRole("button", { name: "Try again", exact: true }).waitFor()
+    assert.equal(await alert.innerText(), message)
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    assert.equal(attempts.length, 1, "remount consumes no new deletion")
+    const retry = page.waitForResponse(response => response.request().method() === "DELETE")
+    await form.getByRole("button", { name: "Try again", exact: true }).click()
+    await retry
+    assert.equal(attempts.length, 2)
+    assert.deepEqual(attempts[1], attempts[0], "explicit Retry keeps the original request")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 let browser: Browser, url: string
 before(async () => {
   const fixture = await borrowFixture({
@@ -73,7 +108,8 @@ async function transition(page: Page, change: Transition) {
       const { updateMissionProjectView } = await import("/src/stores/mission-view-state.ts")
       updateMissionProjectView("/fixture", { selected: "two" })
     })
-    if (change === "project") await page.locator('section.mission-detail[aria-label="Objective two"]').waitFor()
+    // (Its plan holds no task: the restored row is a leaf, its detail mounted and folded.)
+    if (change === "project") await page.locator('section.mission-detail[aria-label="Objective two"]').waitFor({ state: "attached" })
     return
   }
   await selectMission(page, "Objective two")

@@ -6,7 +6,9 @@ import { useI18n } from "../lib/i18n"
 import { missionDerivedSessionActive } from "../stores/mission-task-sessions"
 import { sessions } from "../stores/session-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
-import { useMissionPanelStore } from "./mission-panel-scope"
+import { useMissionPanelStore, useMissionViewScope } from "./mission-panel-scope"
+import { markMissionTasksSeen, missionTaskUnseen } from "../stores/mission-task-seen"
+import { toggleSweepClear, toggleSweepGroup } from "../lib/toggle-sweep"
 import { taskQuestion, type MissionQuestion } from "./mission-question-owners"
 import { missionQuestionContext } from "./mission-questions"
 import { missionPanelScroll } from "./mission-panel-scroll"
@@ -42,17 +44,27 @@ export function conversationActivity(instanceId: string, mission: MissionPanelMa
     || missionDerivedSessionActive(instanceId, mission, sessionId) ? "running" : undefined
 }
 
+/** The state a task row shows: its question first, then its own conversation's
+ * activity (its declared actor's, else its linked native conversation's). The
+ * Mission row's chevron takes the most urgent of these, so both always agree. */
+export function missionTaskRowState(instanceId: string, mission: MissionPanelMap, task: MissionPanelTask,
+  activities: ReadonlyMap<string, MissionActorActivity["state"]>, conversation: string | undefined, asked: boolean): MissionTaskState {
+  if (asked) return "input"
+  const activity = task.actorSessionId ? activities.get(task.actorSessionId)
+    : conversation ? conversationActivity(instanceId, mission, conversation) : undefined
+  return missionTaskState(task, activity)
+}
+
 const ICONS = { done: Check, active: CircleDot, input: MessageCircleQuestion, assigned: Circle, ready: Circle,
   waiting: Clock, blocked: AlertTriangle, failed: XCircle, retired: CircleSlash }
 
-/** The Mission's single task view, its row's children: declared dependencies drawn
- * beside one row per task, each row a status icon and title toggling the exact task
- * reader, or, while the task waits for an answer, opening its question. A task's
- * actions (its conversation, report recovery) are the header toolbar's while its
- * reader is open. */
+/** The Mission's tasks as its row's children: session-list rows (session-tree.css),
+ * one level deep, with declared dependencies drawn beside them. A row selects its
+ * task, the only selection in the panel; while the task waits for an answer it also
+ * opens its question. A selected task's actions are the header toolbar's. */
 export function MissionTaskTree(props: {
   mission: MissionPanelMap; instanceId: string; activity?: MissionActorActivity[]
-  reading: (task: MissionPanelTask) => boolean; onRead: (task: MissionPanelTask) => void
+  selected: (task: MissionPanelTask) => boolean; onSelect: (task: MissionPanelTask) => void
   /** The task's exact owned conversation, once one is known. */
   conversation: (task: MissionPanelTask) => string | undefined
   active?: boolean
@@ -60,7 +72,7 @@ export function MissionTaskTree(props: {
   questions?: readonly MissionQuestion[]
   onAnswer?: (sessionId: string, request?: MissionQuestion["request"]) => void
 }) {
-  const missionStore = useMissionPanelStore()
+  const missionStore = useMissionPanelStore(), viewScope = useMissionViewScope()
   const { t } = useI18n()
   let list!: HTMLUListElement
   // A compact map holds a page of its tasks, each with its place in the whole display order;
@@ -106,6 +118,8 @@ export function MissionTaskTree(props: {
   // Keeps the focused task in view through nested growth; the panel is the only scroller.
   missionPanelScroll(() => root, () => props.active ?? true)
   const [sentinel, setSentinel] = createSignal<HTMLLIElement>()
+  // The dependency rail's lanes beyond the rows' indent (mission-graph.tsx).
+  const [graphExtra, setGraphExtra] = createSignal(0)
   const loadNext = () => {
     const offset = nextOffset()
     if (props.active !== false && offset !== undefined && !read()?.loading) readFurther({ offset })
@@ -124,43 +138,52 @@ export function MissionTaskTree(props: {
   return <section ref={root} class="mission-tree" aria-label={`${t("missionsPanel.tasks")} (${total()})`}>
     <Show when={attention()}>{counts => <p class="mission-tree-summary">{t("missionsPanel.tasks")} · {total()}
       <SettingsInfoTip text={t("missionsPanel.tasks.attention.counts", counts())} /></p>}</Show>
-    <Show when={total()} fallback={<p class="mission-control-empty-line">{t(props.mission.runState === "prepared"
-      ? "missions.progress.prepared" : "missions.progress.noPlan")}</p>}>
-      <div class="mission-flow" classList={{ "mission-flow-linked": linked() }}>
+    <Show when={total()}>
+      <div class="mission-flow" classList={{ "mission-flow-linked": linked() }} style={{ "--mission-graph-extra": `${graphExtra()}px` }}>
         <ul ref={list} class="mission-tree-list"><For each={entries()}>{id => {
           const task = () => byID().get(id)!
-          const activity = () => {
-            const actor = task().actorSessionId
-            if (actor) return activities().get(actor)
-            const linked = props.conversation(task())
-            return linked ? conversationActivity(props.instanceId, props.mission, linked) : undefined
-          }
           const question = () => props.questions?.length
             ? taskQuestion(questionContext(), props.questions, task(), props.conversation(task())) : undefined
-          const state = () => question() ? "input" : missionTaskState(task(), activity())
+          const state = () => missionTaskRowState(props.instanceId, props.mission, task(), activities(), props.conversation(task()), Boolean(question()))
           const word = () => t(`missionsPanel.task.${state()}`)
-          // A task carrying a correlated question opens it, like a session row waiting for
-          // an answer; an aggregate "input" activity state alone (possibly an uncorrelated
-          // global request) keeps the reader.
-          const answer = () => {
+          const selected = () => props.selected(task())
+          // A task carrying a correlated question also opens it, like a session row waiting
+          // for an answer; an aggregate "input" activity state alone (possibly an
+          // uncorrelated global request) only selects.
+          // A finished task stays green until seen, like a session's Idle badge.
+          const unseen = () => state() === "done" && viewScope !== undefined && missionTaskUnseen(viewScope(), props.mission.id, task())
+           const markSeen = () => { if (viewScope && state() === "done") markMissionTasksSeen(viewScope(), props.mission.id, [task()]) }
+          const select = () => {
+            props.onSelect(task())
+            markSeen()
             const asked = question()
-            return asked && props.onAnswer ? () => props.onAnswer?.(asked.sessionId, asked.request) : undefined
+            if (asked) props.onAnswer?.(asked.sessionId, asked.request)
           }
-          return <li class="mission-tree-node" data-task-key={task().key} data-status={task().status} data-state={state()}>
-            <button type="button" class="mission-tree-task" aria-pressed={props.reading(task())}
-              aria-description={answer() ? t("missionsPanel.task.answer") : undefined}
-              title={[task().title, word(), answer() ? t("missionsPanel.task.answer") : "", omittedText(task())].filter(Boolean).join(" · ")}
-              onClick={() => { const open = answer(); if (open) open(); else props.onRead(task()) }}>
-              <span class="mission-tree-mark" data-graph-anchor aria-hidden="true"><Dynamic component={ICONS[state()]} class="h-4 w-4" /></span>
-              <span class="mission-tree-title">{task().title}</span>
-              <span class="sr-only">{[word(), omittedText(task())].filter(Boolean).join(" · ")}</span>
-            </button>
+          const icon = () => <Dynamic component={ICONS[state()]} class="h-4 w-4" aria-hidden="true" />
+          return <li class="mission-tree-node session-list-item" data-task-key={task().key} data-status={task().status} data-state={state()}
+            data-unseen={unseen() || undefined}>
+            <div class={`session-item-base session-item-nested ${selected() ? "session-item-active" : "session-item-inactive"}`}>
+              <span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />
+              {/* Clicking an unseen task's icon, or sweeping across icons, marks it as seen. */}
+              <Show when={unseen()} fallback={<span class="mission-tree-mark" data-graph-anchor aria-hidden="true" onClick={select}>{icon()}</span>}>
+                <button type="button" class="mission-tree-mark mission-tree-mark-clear" data-graph-anchor aria-label={t("sessionList.expand.markRead")}
+                  title={t("sessionList.expand.markRead")} data-toggle-sweep={toggleSweepGroup("mission-task-seen")} ref={element => toggleSweepClear(element)}
+                  onClick={markSeen}>{icon()}</button>
+              </Show>
+              <button type="button" class="session-item-select mission-tree-task" aria-current={selected() ? "true" : undefined}
+                aria-description={question() ? t("missionsPanel.task.answer") : undefined}
+                title={[task().title, word(), question() ? t("missionsPanel.task.answer") : "", omittedText(task())].filter(Boolean).join(" · ")}
+                onClick={select}>
+                <span class="session-item-title session-item-title--clamp" dir="auto">{task().title}</span>
+                <span class="sr-only">{[word(), omittedText(task())].filter(Boolean).join(" · ")}</span>
+              </button>
+            </div>
           </li>
         }}</For><Show when={nextOffset() !== undefined && !read()?.failure}><li ref={setSentinel} class="mission-tree-more">
           <button type="button" class="window-text-button" aria-disabled={read()?.loading || undefined}
             onClick={loadNext}>{t("missionsPanel.tasks.showMore")}</button>
         </li></Show></ul>
-        <Show when={linked()}><MissionGraph tasks={ordered()} list={list} omitted={omitted()} /></Show>
+        <Show when={linked()}><MissionGraph tasks={ordered()} list={list} omitted={omitted()} onExtra={setGraphExtra} /></Show>
       </div>
       <Show when={read()?.failure}>{failed =>
         <p class="mission-tree-read" role="status">{t(failed().reason === "changed" ? "missionsPanel.tasks.readChanged" : "missionsPanel.tasks.readFailed")}{" "}
