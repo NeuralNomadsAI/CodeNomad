@@ -252,6 +252,13 @@ test("conversation continuation and search failures retry their exact read insid
     await page.getByRole("listbox").evaluate(element => { element.scrollTop = element.scrollHeight })
     const popup = page.locator(".mission-source-popover"), retry = popup.getByRole("button", { name: "Try again", exact: true })
     await retry.waitFor()
+    assert.equal(await popup.getByRole("alert").evaluate(element => {
+      const shown = getComputedStyle(element).color
+      element.style.color = "var(--status-error-fg)"
+      const expected = getComputedStyle(element).color
+      element.style.removeProperty("color")
+      return shown === expected
+    }), true, "the portalled read error uses the shared error ink in dark mode")
     assert.equal(await form(page).getByRole("alert").count(), 0, "read failure belongs to the popup")
     assert.ok(await page.getByRole("listbox").getByRole("option").count() > 0, "the loaded page survives a continuation failure")
     await capture(page, "source-continuation-failed.png")

@@ -75,12 +75,12 @@ export function MissionSourceSelect(props: {
             </Virtualizer>}</Show>
             <Show when={props.paging?.next() && !props.paging.failed()}><div ref={setEnd} aria-hidden="true" class="mission-source-end" /></Show>
             <Show when={!entries().length && !props.paging?.loading() && !props.paging?.next() && !props.paging?.failed()}>
-              <div class="selector-option" role="status">{t("unifiedPicker.empty")}</div>
+              <div class="selector-option" role="status"><span class="selector-option-label">{t("unifiedPicker.empty")}</span></div>
             </Show>
           </>
         }}</Combobox.Listbox>
         <Show when={props.paging?.failed() || props.paging?.lookupFailed?.()}><div class="selector-search-container">
-          <p role="alert">{t("missions.scheduling.sourcesUnavailable")}</p>
+          <p role="alert" class="mission-create-field-error">{t("missions.scheduling.sourcesUnavailable")}</p>
           <button ref={retry} type="button" class="window-action" on:keydown={event => {
             if (event.key !== "Tab" || !event.shiftKey) return
             event.preventDefault(); event.stopPropagation(); input?.focus()

@@ -190,7 +190,6 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
       }
       await page.locator(".mission-profiles-disclosure > summary").click()
       await page.locator("form.mission-editor").screenshot({ path: path.join(captureDirectory, "creation-profiles-folded.png") })
-      await openAgents(page)
       await page.locator("aside").evaluate(element => { element.style.width = "370px" })
       await page.setViewportSize({ width: 1280, height: 720 })
     }
