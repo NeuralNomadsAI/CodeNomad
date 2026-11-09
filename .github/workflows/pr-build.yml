@@ -907,6 +907,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+      - name: Restore Tauri bundler downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' && runner.os == 'Linux' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: tauri
+      # Sets LDAI_RUNTIME_FILE when the restored runtime matches the published digest.
+      - name: Restore the AppImage runtime
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' && runner.os == 'Linux' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: appimage-runtime
       - name: Install Linux WebKit dependencies
         if: runner.os == 'Linux'
         run: |

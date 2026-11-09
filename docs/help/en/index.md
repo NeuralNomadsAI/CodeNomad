@@ -89,8 +89,8 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 The Status panel exposes the active session's provider usage and native background Shells. Conversation status and child activity identify working, compacting and input-waiting sessions. Monitoring a background Shell is distinct from sending a composer Shell request or using a separately hosted terminal SideCar.
 
 1. Open **Status → Background Shells** for the selected conversation's Location (or the open workspace when no conversation is selected).
-2. Inspect command, shell, directory, status, PID and exit code where provided; choose **View output** for the available native output.
-3. To dispose of one, use **Stop and remove** while running, or **Remove** after exit, and confirm the target.
+2. Only running commands explicitly moved to the background are listed, one per row. Hover a row for the shell, directory and PID; use its **View output** icon for the native output. An OpenCode runtime without the background-job inventory API reports a loading error.
+3. Use the row’s **Stop and remove** icon and confirm the target.
 
 Removing a running Shell stops that process; closing its output window does not. Refresh/reconnect reads current native state rather than reconstructing missed output events.
 
