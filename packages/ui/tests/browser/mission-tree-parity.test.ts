@@ -9,7 +9,7 @@ import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./missio
 import { borrowFixture } from "./fixture-borrow"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 import { clickMissionAction, inlineMissionEntry, missionDetail, missionGeneralAction, missionRow, missionRows, missionTask, missionToolbar,
-  routeUiSettings, selectMission, selectedMissionTitle, waitForMissionDeleteSessions } from "./mission-actions"
+  revealMissionTask, routeUiSettings, selectMission, selectedMissionTitle, waitForMissionDeleteSessions } from "./mission-actions"
 
 // The Missions panel follows the session list: one selection (a row or one task), the
 // chevron alone expands, tasks are nested session rows, the chevron carries its tasks'
@@ -436,7 +436,7 @@ for (const direction of ["ltr", "rtl"]) {
       assert.ok(Math.max(...crowded.lanes) < crowded.indent, "every lane stays beside the task icons")
       await page.evaluate(() => (window as any).missionFixture.panelWidth("300px"))
       await page.setViewportSize({ width: 1100, height: 300 })
-      await taskNode(page, "target5").scrollIntoViewIfNeeded()
+      await revealMissionTask(taskNode(page, "target5").locator(".mission-tree-task"))
       assert.ok(await page.locator(".mission-control").evaluate(element => element.scrollTop > 0), "the geometry check includes an actual panel scroll")
       await until(async () => (await geometry()).gaps.every(gap => gap <= 0.75), "aligned endpoints after resize and scrolling")
       assert.equal(new Set((await geometry()).lanes).size, 6)
