@@ -5,7 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { destroyOpenCodeData, invalidateOpenCodeSessionContent } from "./opencode-data.ts"
+import { destroyOpenCodeData, applyOpenCodeDataEvent, invalidateOpenCodeSessionContent } from "./opencode-data.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
 import { setActiveSession, setSessions } from "./session-state.ts"
 
@@ -228,5 +228,172 @@ test("a disposed native projection does not retry a delayed terminal history rea
     await flush()
     assert.equal(f.reads.length, 1)
     assert.equal(f.text(), "hello", "disposal must preserve the separately owned visible snapshot")
+  } finally { f.cleanup() }
+})
+
+test("a delivery crossing an HTTP-ahead settlement read reconciles through its own read and outlives the round's settlement", async () => {
+  const f = fixture("native-delivery-http-ahead")
+  const sessionId = "s"
+  const order = () => messageStoreBus.getOrCreate("native-delivery-http-ahead")
+    .getSessionMessageIds(sessionId)
+  try {
+    // Round one is interrupted with a tool still running: its settlement read
+    // is owed and holds.
+    const base = { sessionID: sessionId, assistantMessageID: "m1" }
+    f.emit("session.step.started", { ...base, agent: "build", model, started: 1 })
+    f.emit("session.tool.input.started", { ...base, id: "tool", name: "read" })
+    f.emit("session.tool.called", { ...base, id: "tool", input: {} })
+    f.emit("session.execution.interrupted", { sessionID: sessionId })
+    assert.equal(f.reads.length, 1)
+
+    // The prompt is parked over SSE before that read resolves.
+    f.emit("session.inbox.enqueued", { sessionID: sessionId, inboxID: "msg_user", item: { type: "user", payload: { text: "crossing prompt" }, delivery: "steer" } })
+
+    // The held read returns the daemon's page, which already carries the
+    // delivered prompt above its reply: the delivery's own SSE still trails.
+    // Round one's rows appear in their terminal native shapes, as the daemon
+    // stored them (its idle record's id derives from the terminal event).
+    const page = [
+      { id: "m1", type: "assistant", agent: "build", model, time: { created: 1, completed: 2 }, content: [{
+        type: "tool", id: "tool", name: "read", time: { created: 2, ran: 3, completed: 4 },
+        state: { status: "completed", input: {}, content: [{ type: "text", text: "settled" }], metadata: {} },
+      }] },
+      { id: "msg_4", type: "idle", outcome: "interrupted", time: { created: 4 } },
+      { id: "msg_user", type: "user", text: "crossing prompt", time: { created: 5 } },
+      { id: "reply", type: "assistant", agent: "build", model, time: { created: 6 }, content: [{ type: "text", text: "answer" }] },
+    ]
+    f.reads[0].resolve({ data: [...page].reverse(), cursor: {} })
+    await flush()
+    assert.deepEqual(order(), ["m1", "msg_4", "msg_user", "reply"])
+
+    // The delivery event finally arrives over SSE: the SDK relocates the
+    // prompt below the reply, and the delivery owes its own authoritative
+    // read, which holds.
+    f.emit("session.inbox.delivered", { sessionID: sessionId, inboxID: "msg_user" })
+    assert.equal(f.reads.length, 2, "the relocating delivery owed a repair read")
+
+    // The reply's round settles while the repair is outstanding: the reducer
+    // must survive as the repair's publication owner.
+    f.emit("session.step.ended", { sessionID: sessionId, assistantMessageID: "reply", finish: "stop", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
+    f.emit("session.execution.succeeded", { sessionID: sessionId })
+    assert.equal(f.reads.length, 2, "the settlement must not start a second read beneath the repair")
+
+    // Resolving the repair publishes the page's order through the surviving
+    // reducer instead of leaving the sunk prompt behind. (msg_8 is the round's
+    // own idle record, inserted by its terminal event.)
+    f.reads[1].resolve({ data: [...page].reverse(), cursor: {} })
+    await flush()
+    assert.deepEqual(order(), ["m1", "msg_4", "msg_user", "reply", "msg_8"], "the crossing prompt reconciles above its reply")
+
+    // The settled reducer retired once the repair settled: the next event
+    // lands on a fresh one, holding only its own row.
+    const after = applyOpenCodeDataEvent("native-delivery-http-ahead", "/fixture", {
+      id: "evt_probe", type: "session.step.started", created: 99, location: { directory: "/fixture" },
+      data: { sessionID: sessionId, assistantMessageID: "m3", agent: "build", model, started: 9 },
+    } as any)
+    await flush()
+    assert.deepEqual(
+      after.session.message.list(sessionId).map((row: { id: string }) => row.id),
+      ["m3"],
+      "the settled reducer retired once the repair settled")
+  } finally { f.cleanup() }
+})
+
+test("a settlement read superseding a delivery repair keeps the reducer until it publishes", async () => {
+  const instanceId = "native-delivery-superseded-repair"
+  const f = fixture(instanceId)
+  const sessionId = "s"
+  const zero = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+  const tool = () => Object.values(messageStoreBus.getOrCreate(instanceId).getMessage("prior")?.parts ?? {})
+    .map((part: any) => part.data).find((part: any) => part.type === "tool") as any
+  try {
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "initial", agent: "build", model, started: 1 })
+    f.emit("session.inbox.enqueued", { sessionID: sessionId, inboxID: "q", item: { type: "user", payload: { text: "queued follow-up" }, delivery: "queue" } })
+    f.emit("session.step.ended", { sessionID: sessionId, assistantMessageID: "initial", finish: "stop", cost: 0, tokens: zero })
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "prior", agent: "build", model, started: 2 })
+    f.emit("session.tool.input.started", { sessionID: sessionId, assistantMessageID: "prior", id: "lost", name: "read" })
+    f.emit("session.tool.called", { sessionID: sessionId, assistantMessageID: "prior", id: "lost", input: {} })
+    // The tool finished natively, but its terminal event never arrived.
+    f.emit("session.step.ended", { sessionID: sessionId, assistantMessageID: "prior", finish: "stop", cost: 0, tokens: zero })
+    f.emit("session.inbox.delivered", { sessionID: sessionId, inboxID: "q" })
+    assert.equal(f.reads.length, 1, "the relocating delivery started repair read A")
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "reply", agent: "build", model, started: 3 })
+    f.emit("session.step.ended", { sessionID: sessionId, assistantMessageID: "reply", finish: "stop", cost: 0, tokens: zero })
+    // The settlement invalidates beneath A: its trailing read B owns publication.
+    f.emit("session.execution.succeeded", { sessionID: sessionId })
+    assert.equal(tool()?.state?.status, "running")
+    const page = [
+      { id: "initial", type: "assistant", agent: "build", model, time: { created: 1, completed: 2 }, content: [] },
+      { id: "prior", type: "assistant", agent: "build", model, time: { created: 2, completed: 3 }, content: [{
+        type: "tool", id: "lost", name: "read", time: { created: 2, ran: 3, completed: 4 },
+        state: { status: "completed", input: {}, content: [{ type: "text", text: "native result" }], metadata: {} },
+      }] },
+      { id: "q", type: "user", text: "queued follow-up", time: { created: 3 } },
+      { id: "reply", type: "assistant", agent: "build", model, time: { created: 4, completed: 5 }, content: [] },
+    ]
+    f.reads[0].resolve({ data: [...page].reverse(), cursor: {} })
+    await flush(); await flush()
+    assert.equal(f.reads.length, 2, "the superseding read B started")
+    f.reads[1].resolve({ data: [...page].reverse(), cursor: {} })
+    await flush(); await flush()
+    assert.equal(tool()?.state?.status, "completed", "B publishes before the settled reducer retires")
+  } finally { f.cleanup() }
+})
+
+test("a delivery repair completing over a history window leaves that window's membership alone", async () => {
+  const instanceId = "native-delivery-history-window"
+  const f = fixture(instanceId)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const sessionId = "s"
+  try {
+    f.emit("session.inbox.enqueued", { sessionID: sessionId, inboxID: "msg_h", item: { type: "user", payload: { text: "parked" }, delivery: "steer" } })
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "h_reply", agent: "build", model, started: 2 })
+    f.emit("session.inbox.delivered", { sessionID: sessionId, inboxID: "msg_h" })
+    assert.equal(f.reads.length, 1, "the relocating delivery owed a repair read")
+    await flush()
+    const sunk = store.getSessionMessageIds(sessionId)
+    assert.deepEqual(sunk, ["h_reply", "msg_h"], "the late delivery sinks the prompt until the repair lands")
+
+    // The reader moves to a history window before the repair completes: the
+    // repair must not rewrite that window's membership or cursors.
+    store.setMessageWindow(sessionId, { kind: "history", resumeCursor: "c1", newerCursors: [null] })
+    f.reads[0].resolve({
+      data: [
+        { id: "msg_h", type: "user", text: "parked", time: { created: 3 } },
+        { id: "h_reply", type: "assistant", agent: "build", model, time: { created: 2 }, content: [] },
+      ].reverse(),
+      cursor: {},
+    })
+    await flush()
+    assert.deepEqual(store.getSessionMessageIds(sessionId), sunk, "the history window keeps its membership")
+    assert.equal(store.getMessageWindow(sessionId)?.kind, "history", "the window keeps its cursors")
+  } finally { f.cleanup() }
+})
+
+test("a delivery repair completing for an inactive session does not project into its display", async () => {
+  const instanceId = "native-delivery-inactive"
+  const f = fixture(instanceId)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const sessionId = "s"
+  try {
+    f.emit("session.inbox.enqueued", { sessionID: sessionId, inboxID: "msg_i", item: { type: "user", payload: { text: "parked" }, delivery: "steer" } })
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "i_reply", agent: "build", model, started: 2 })
+    f.emit("session.inbox.delivered", { sessionID: sessionId, inboxID: "msg_i" })
+    assert.equal(f.reads.length, 1, "the relocating delivery owed a repair read")
+    await flush()
+    const before = store.getSessionMessageIds(sessionId)
+
+    // The reader switches sessions before the repair completes: the inactive
+    // session's display is left to its next activation read.
+    setActiveSession(instanceId, "other")
+    f.reads[0].resolve({
+      data: [
+        { id: "msg_i", type: "user", text: "parked", time: { created: 3 } },
+        { id: "i_reply", type: "assistant", agent: "build", model, time: { created: 2 }, content: [] },
+      ].reverse(),
+      cursor: {},
+    })
+    await flush()
+    assert.deepEqual(store.getSessionMessageIds(sessionId), before, "an inactive session's display keeps its projected page")
   } finally { f.cleanup() }
 })

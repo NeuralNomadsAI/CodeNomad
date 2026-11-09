@@ -57,6 +57,13 @@ export function setTranscriptProjectionGates(next: TranscriptProjectionGates): v
   gates = next
 }
 
+/** Whether the instance layer registered its projection gates: a publisher
+ * outside the dispatcher routes through the scheduler when it did and falls
+ * back to a direct projection otherwise (unit contexts). */
+export function hasTranscriptProjectionGates(): boolean {
+  return gates !== undefined
+}
+
 function projectionKey(instanceId: string, sessionId: string): string {
   return `${instanceId}\u0000${sessionId}`
 }
@@ -92,7 +99,10 @@ export function scheduleTranscriptProjection(
  * a normal reducer retirement publishes its session's final page (including
  * usage obligations) before the reducer goes away, while resets, eviction and
  * destructive teardown stay cancel-only. An optional scope publishes only the
- * matching sessions and leaves the rest on their frame. */
+ * matching sessions and leaves the rest on their frame; a scoped flush keeps
+ * the active-session gate, so a retirement landing on an inactive session
+ * invalidates its loaded page for the next activation read instead of
+ * rewriting its display. */
 export function flushTranscriptProjections(instanceId?: string, sessionId?: string): void {
   if (instanceId === undefined) {
     drain(true)
@@ -102,7 +112,7 @@ export function flushTranscriptProjections(instanceId?: string, sessionId?: stri
   const matches = sessionId === undefined
     ? (key: string) => key.startsWith(prefix)
     : (key: string) => key === projectionKey(instanceId, sessionId)
-  drain(true, matches)
+  drain(false, matches)
 }
 
 /** Removes and returns a session's pending projection. A synchronous

@@ -11,6 +11,10 @@ export interface ReconnectCapture {
   directory: string
   messages: SessionMessageInfo[]
   retireWhenDrained: boolean
+  /** An inbox-delivery repair whose read was still outstanding at the reset:
+   * the seeded page may carry the unreconciled order, so seeding owes it a new
+   * read rather than waiting for the quiet reconciliation. */
+  deliveryRepairOwed: boolean
   onResynced?: (data: Data) => void
 }
 
@@ -26,6 +30,8 @@ export interface ReconnectHost {
   recreateTranscript(instanceId: string, capture: ReconnectCapture): TranscriptEntry
   /** Seed the recreated entry with the captured page. */
   seedPage(instanceId: string, capture: ReconnectCapture): Promise<unknown>
+  /** Resume a captured delivery repair after the seeded page landed. */
+  resumeDeliveryRepair(instanceId: string, sessionId: string, transcript: TranscriptEntry): void
   /** Dropping-mode recovery, used when seeding fails. */
   scheduleDroppingResync(instanceId: string, sessionId: string, transcript: TranscriptEntry): void
   isCurrent(instanceId: string, sessionId: string, transcript: TranscriptEntry): boolean
@@ -71,7 +77,12 @@ export function createReconnect(host: ReconnectHost) {
       // Arm the trailing timer before seeding: while it is pending, deferred
       // retirement cannot fire on a transcript whose page has not landed yet.
       scheduleTrailing(instanceId, capture.sessionId, transcript)
-      void host.seedPage(instanceId, capture).catch(() => {
+      void host.seedPage(instanceId, capture).then(() => {
+        // The seeded page carries whatever order the reset caught, including
+        // an unreconciled delivery; a captured repair resumes now instead of
+        // trailing behind the quiet reconciliation.
+        if (capture.deliveryRepairOwed) host.resumeDeliveryRepair(instanceId, capture.sessionId, transcript)
+      }).catch(() => {
         // Seeding failed: fall back to dropping-mode recovery so the transcript
         // still reconciles from one quiet authoritative snapshot.
         transcript.reconnectResync = false
