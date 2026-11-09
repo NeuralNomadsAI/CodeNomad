@@ -178,7 +178,7 @@ test("real panel Create → Play → Pause/Resume → Run now → Stop → Delet
   try {
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
-    await form.getByLabel("What should the mission do?", { exact: true }).fill("Inspect local changes")
+    await form.getByLabel("Objective", { exact: true }).fill("Inspect local changes")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("hours")
     await form.getByLabel("Criterion 1 hours", { exact: true }).selectOption("1")

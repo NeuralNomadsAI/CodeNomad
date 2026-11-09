@@ -46,7 +46,7 @@ for (const locale of ["en", "fr"]) test(`all five playbooks open their selected 
         name: await text(`missions.control.template.${template}.description`), exact: true })
       await help.focus(); await page.keyboard.press("Enter")
       await page.waitForFunction(count => (window as any).playbookOpens.length === count, index + 1)
-      assert.equal(await form.locator(".mission-profiles").first().isVisible(), true)
+      assert.equal(await form.locator(".mission-profiles").first().isVisible(), false, "opening playbook help preserves the folded profile group")
       assert.equal(await form.getByRole("button", { name: "See details", exact: true }).count(), 0)
       assert.equal(await form.locator(".mission-create-template > p").count(), 0)
     }

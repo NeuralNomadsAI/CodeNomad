@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, createUniqueId, For, Show, onCleanup } from "solid-js"
-import { BookmarkPlus } from "lucide-solid"
+import { Bookmark } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { MAX_MISSION_MODELS, parseMissionModel, type UserMissionModel } from "../lib/mission-model-library"
 import { useConfig } from "../stores/preferences"
@@ -130,7 +130,7 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
   ])
   return <>
     <section class="mission-brief-picker" aria-label={t("missions.models.title")}>
-      <label for={selectId}>{t("missions.create.brief.start")}
+      <label for={selectId}><Bookmark aria-hidden="true" />{t("missions.create.brief.start")}
         <SettingsInfoTip text={t("missions.models.hint")} help={{ page: "missions", anchor: "saved-briefs" }} />
       </label>
       <div class="mission-brief-picker-row">
@@ -160,7 +160,7 @@ export interface MissionBriefSaveTrigger {
  * selected Mission's recorded brief inputs (`initialName` prefills). `onOpen` follows
  * the name field, which shows `reading` while the draft is still read. With `trigger`
  * the command lives elsewhere (the selected toolbar's overflow menu) and only the name
- * field shows here; otherwise a bookmark icon, named by its tooltip, opens it (a window
+  * field shows here; otherwise a labelled button opens it (a window
  * footer passes its own template for the field's buttons). */
 export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string
   onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined
@@ -198,8 +198,8 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
   }
   props.trigger?.({ open: returnFocus => begin(true, returnFocus), disabled: () => actions.disabled() || full() })
   return <div ref={root} class="mission-brief-save">
-    <Show when={open()} fallback={props.trigger ? undefined : <button type="button" class="window-icon-button" disabled={actions.disabled() || full()}
-      aria-label={t("missions.create.brief.saveAs")} title={t("missions.create.brief.saveAs")} onClick={() => begin(false)}><BookmarkPlus aria-hidden="true" /></button>}>
+    <Show when={open()} fallback={props.trigger ? undefined : <button type="button" class={buttonClass()} disabled={actions.disabled() || full()}
+      onClick={() => begin(false)}>{t("missions.create.brief.saveAs")}</button>}>
       <input ref={input} aria-label={t("missions.models.name")} placeholder={t("missions.models.name")} value={name()} maxLength={80}
         disabled={actions.disabled()} onInput={event => setName(event.currentTarget.value)} onKeyDown={event => {
           // Enter names the brief; it never submits the creation form.

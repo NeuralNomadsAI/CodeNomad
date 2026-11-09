@@ -2,8 +2,6 @@
 
 Ein Playbook ist die Arbeitsmethode, der der Koordinator einer Mission folgt: die Schritte, die Rollen, die er Aufgaben geben kann, und die Anweisungen, die jeder Agent erhält. Diese Seite beschreibt jedes Playbook, was CodeNomad selbst durchsetzt und was eine Anweisung bleibt, der das Modell folgen soll.
 
-Das **ⓘ** neben **Playbook** im Missionsformular öffnet diesen Leitfaden in Ihrer Sprache beim ausgewählten Playbook. Wählen Sie unten ein Playbook für Schritte, Rollen, Fragen und Prüfungen. In den Agentenanweisungen heißt Erkundung *Wayfinder Map*.
-
 ## Ein Playbook wählen {#choose}
 
 | Playbook | Wählen Sie es, wenn |
@@ -258,7 +256,7 @@ Der Koordinator vergleicht genau zwei verschiedene Modelle. Er erfasst beide Ver
 
 ### Was CodeNomad prüft {#compare-checks}
 
-- Bei der Erstellung sind **Modell A** und **Modell B** erforderlich und müssen verschiedene Modelle sein; eine andere **Denken**-Stufe allein ist kein anderes Modell. Sofern Sie keinen wählen, verwendet der Gutachter das Modell des Koordinators, festgelegt bei der Erstellung; das Formular warnt, wenn es mit A oder B übereinstimmt.
+- Bei der Erstellung sind **Modell A** und **Modell B** erforderlich und müssen verschiedene Modelle sein; eine andere **Denken**-Stufe allein ist kein anderes Modell. Sofern Sie keinen wählen, verwendet der Gutachter das Modell des Koordinators, festgelegt bei der Erstellung.
 - Nur die drei Rollen von Zwei Modelle vergleichen werden akzeptiert. Jeder Lauf und der Gutachter müssen in einer neuen Unterhaltung starten, ein Lauf kann das Modell seiner Rolle nicht ändern, es gibt einen aktiven Lauf je Modell, und beide Aufträge müssen byteidentisch sein.
 - Nur der Gutachter darf einen strukturierten Bericht anhängen; er muss die abgeschlossenen Läufe A und B in dieser Reihenfolge nennen, jedes Kriterium einmal von 0 bis 10 mit mindestens einem Beleg bewerten und eines der vier Urteile geben.
 - Die Mission endet nur mit abgeschlossenen Aufgaben A, B und Gutachter und einem gültigen Vergleich.

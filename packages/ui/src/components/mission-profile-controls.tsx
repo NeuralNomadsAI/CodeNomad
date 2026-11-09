@@ -22,6 +22,7 @@ export function MissionProfileControls(props: {
   profiles?: MissionProfiles; disabled: boolean; active: () => boolean
   taskMode?: MissionTaskMode
   roles?: readonly string[]
+  onReading?: (reading: boolean) => void
   /** Settings, mission type scope: the global choices each role inherits until it is customized. */
   inherited?: MissionProfiles
   /** Creation: the whole edited request. */
@@ -33,6 +34,8 @@ export function MissionProfileControls(props: {
   const [catalog, setCatalog] = createSignal<{ key: string; agents: ProfileAgent[]; models: ProfileModel[] }>()
   const [failed, setFailed] = createSignal(false), [loading, setLoading] = createSignal(false)
   const [refresh, setRefresh] = createSignal(0)
+  createEffect(() => props.onReading?.(loading()))
+  onCleanup(() => props.onReading?.(false))
   // Technical cause for the failure notice's tooltip; the notice itself stays plain.
   const [failure, setFailure] = createSignal("")
   const instanceClient = createMemo(() => instances().get(props.instanceId)?.client)
@@ -172,7 +175,6 @@ export function MissionProfileControls(props: {
   return <section class="mission-profiles" aria-label={t("missions.control.profiles.title")}>
     <Show when={props.template === "debug"}><span class="sr-only">{t("missions.control.profiles.debug")}</span></Show>
     <For each={props.roles ?? ["coordinator", ...missionProfileRoles[props.template]]}>{row}</For>
-    <Show when={loading()}><p role="status">{t("missions.control.profiles.loading")}</p></Show>
     <Show when={failed()}><p role="status" title={failure() || undefined}>{t("missions.control.profiles.error")}</p></Show>
   </section>
 }

@@ -28,7 +28,7 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
-const OBJECTIVE = "What should the mission do?"
+const OBJECTIVE = "Objective"
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
 const emptyRecurrence = () => recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] })
@@ -81,7 +81,7 @@ async function assertSingleCreate(form: ReturnType<Page["locator"]>) {
   const submits = form.locator('button[type="submit"]')
   assert.equal(await submits.count(), 1, "creation offers one submit button")
   assert.equal(await submits.innerText(), "Create")
-  assert.equal(await form.getByRole("checkbox", { name: "Start on creation", exact: true }).isChecked(), false, "creation stays paused by default")
+  assert.equal(await form.getByRole("checkbox", { name: "Start automatically", exact: true }).isChecked(), false, "creation stays paused by default")
   await form.getByRole("button", { name: "Create", exact: true }).click()
   await form.waitFor({ state: "detached" })
 }
@@ -130,7 +130,7 @@ test("an opted-in one-time Create retains its draft choice across remount and se
   try {
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    const form = page.locator("form.mission-editor"), autostart = form.getByRole("checkbox", { name: "Start on creation", exact: true })
+    const form = page.locator("form.mission-editor"), autostart = form.getByRole("checkbox", { name: "Start automatically", exact: true })
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Start this confirmed preparation")
     assert.equal(await autostart.isChecked(), false)
     await autostart.check()
@@ -160,7 +160,7 @@ for (const loss of ["lost fetch", "undecodable acknowledgement"] as const) {
       const form = page.locator("form.mission-editor"), objective = form.getByLabel(OBJECTIVE, { exact: true })
       await objective.fill("Original lost create")
       await submitReady(page)
-      await form.getByRole("checkbox", { name: "Start on creation", exact: true }).check()
+      await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
       await form.getByRole("button", { name: "Create", exact: true }).click()
       await page.getByRole("alert").filter({ hasText: UNCONFIRMED }).waitFor()
       assert.equal(await objective.isDisabled(), true, "the unknown contract cannot be edited into a new request")
@@ -174,8 +174,8 @@ for (const loss of ["lost fetch", "undecodable acknowledgement"] as const) {
       await page.evaluate(() => window.missionEditorLifetime.mount(true))
       await page.getByRole("button", { name: "Create mission", exact: true }).click()
       assert.equal(await objective.inputValue(), "Original lost create")
-      assert.equal(await form.getByRole("checkbox", { name: "Start on creation", exact: true }).isChecked(), true)
-      assert.equal(await form.getByRole("checkbox", { name: "Start on creation", exact: true }).isDisabled(), true)
+      assert.equal(await form.getByRole("checkbox", { name: "Start automatically", exact: true }).isChecked(), true)
+      assert.equal(await form.getByRole("checkbox", { name: "Start automatically", exact: true }).isDisabled(), true)
       assert.equal(await objective.isDisabled(), true)
       assert.equal(await form.locator('button[type="submit"]').isDisabled(), true)
       await form.evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
@@ -388,7 +388,7 @@ for (const lost of [false, true]) test(`opted-in schedule creation sends one Pla
     const form = page.locator("form.mission-editor")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Arm this confirmed schedule")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
-    await form.getByRole("checkbox", { name: "Start on creation", exact: true }).check()
+    await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
     await submitReady(page)
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await form.waitFor({ state: "detached" })

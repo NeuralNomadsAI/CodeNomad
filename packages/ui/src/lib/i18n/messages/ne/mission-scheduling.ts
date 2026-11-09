@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.scheduling.startOnCreation": "सिर्जना गर्दा सुरु गर्नुहोस्",
+  "missions.scheduling.startOnCreation": "स्वतः सुरु गर्नुहोस्",
   "missions.scheduling.source.now": "एकपटक, अहिले",
   "missions.settings.effectiveOrigin": "OpenCode कन्फिगरेसन फाइल:",
   "missions.settings.noOrigin": "कागजातको बाटो छैन",
@@ -113,7 +113,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.condition.mission-completed": "एकपटकको मिसन सफलतापूर्वक सकिँदा",
   "missions.scheduling.condition.conversation-message": "पछ्याइएको कुराकानीमा नयाँ सन्देश",
   "missions.scheduling.condition.files-changed": "तोकिएका फाइलहरू बदलिँदा",
-  "missions.scheduling.capability.missing": "यो जडानमा समयतालिका उपलब्ध छैन। सुरु गर्ने मापदण्डबिनाको मिसन उपलब्ध रहन्छ।",
+  "missions.scheduling.capability.missing": "यो जडानमा समयतालिका उपलब्ध छैन।",
   "missions.scheduling.capability.loading": "समयतालिकाको उपलब्धता जाँचिँदै…",
   "missions.scheduling.capability.activatable": "सुरु गर्नुहोस् र पुनः सुरु गर्नुहोस् ले नेटिभ समयतालिका सक्रिय गर्नुअघि तपाईंको पुष्टि माग्छन्।",
   "missions.scheduleList.runNowRequiresEnabled": "अहिले चलाउनुहोस् का लागि नेटिभ समयतालिका सक्रिय हुनुपर्छ। OpenCode सेटिङमा सक्रिय गरेर ताजा गर्नुहोस्।",
