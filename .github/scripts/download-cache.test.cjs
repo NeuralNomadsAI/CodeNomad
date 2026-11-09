@@ -133,3 +133,24 @@ test("only trusted dev runs write caches, and jobs restore before downloading", 
     }
   }
 })
+
+test("WebKit qualification restores Cargo everywhere and the AppImage tools on Linux before using them", () => {
+  const { steps } = workflow("pr-build.yml").jobs["tests-tauri-webkit"]
+  const guard = "hashFiles('.github/actions/download-cache/action.yml') != ''"
+  const at = (predicate, label) => {
+    const index = steps.findIndex(predicate)
+    assert.ok(index >= 0, label)
+    return index
+  }
+  const restore = (kind) => at((step) => step.uses === "./.github/actions/download-cache" && step.with?.kind === kind, kind)
+  const rust = at((step) => step.uses?.startsWith("dtolnay/rust-toolchain@"), "Rust setup")
+  const cargo = restore("cargo")
+  assert.equal(steps[cargo].if, "${{ " + guard + " }}", "Cargo restores on every matrix OS")
+  assert.ok(rust < cargo && cargo < at((step) => /cargo check --locked/.test(step.run ?? ""), "cargo check"))
+  const bundle = at((step) => /tauri bundle --bundles appimage/.test(step.run ?? ""), "AppImage bundle")
+  for (const kind of ["tauri", "appimage-runtime"]) {
+    const index = restore(kind)
+    assert.equal(steps[index].if, "${{ " + guard + " && runner.os == 'Linux' }}", kind)
+    assert.ok(cargo < index && index < bundle, `${kind} restores before bundling`)
+  }
+})

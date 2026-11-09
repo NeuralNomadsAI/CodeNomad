@@ -85,7 +85,7 @@ Native events include session lifecycle/output events (`session.created`, `sessi
 | Sessions, messages, permission/question APIs | OpenCode V2 |
 | Shell mode | `client.session.shell` |
 | Conversation instructions | `client.session.instructions.entry` |
-| Background Shell management | Location-scoped OpenCode V2 `shell.*` API through the ownership-checking proxy; Status panel UI |
+| Background Shell management | Native `experimental.job.list` running shell IDs joined to the selected Location's `shell.list` through the owned background-shells route; output/removal through the ownership-checking `shell.*` proxy. Tool-shell authority comes from its originating session. Status panel uses one row per command. |
 | Interactive PTY management | Separate OpenCode V2 `pty.*` API |
 | Workspace lifecycle and directory authorization | CodeNomad |
 | Git status/diff/stage/unstage/commit | CodeNomad server |

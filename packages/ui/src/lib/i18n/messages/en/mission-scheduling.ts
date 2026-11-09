@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.startOnCreation": "Start on creation",
+  "missions.scheduling.source.now": "Once, now",
   "missions.settings.effectiveOrigin": "OpenCode configuration file:",
   "missions.settings.noOrigin": "No document path",
   "missions.settings.projectTarget": "Project write target",

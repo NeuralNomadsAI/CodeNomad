@@ -36,7 +36,7 @@ export async function resolveImagesConversationAt(deps: ImagesConversationRouteD
   const manager = deps.workspaceManager
   // Authorize the caller's directory before any OpenCode request: reading a
   // Location boots its services (configuration discovery, plugins).
-  if (!await manager.ownsLocation(workspaceId, { directory }, undefined, options.signal)) return "denied"
+  if (!await manager.ownsLocation(workspaceId, { directory }, undefined, { signal: options.signal })) return "denied"
   const identity = await manager.getWorktreeIdentityForPath(workspaceId, directory)
   if (!identity) return "denied"
   const release = deps.worktreeDeletionFence.enter([identity])
@@ -53,7 +53,7 @@ export async function resolveImagesConversationAt(deps: ImagesConversationRouteD
     const location = await client.location.get({ location: { directory } }, { signal: options.signal ? AbortSignal.any([read, options.signal]) : read })
       .then(readLocationRef, () => undefined)
     options.signal?.throwIfAborted()
-    if (!location || location.directory !== directory || !await manager.ownsLocation(workspaceId, location, client, options.signal)) return "denied"
+    if (!location || location.directory !== directory || !await manager.ownsLocation(workspaceId, location, client, { signal: options.signal })) return "denied"
     let result: ImagesConversationResponse
     try {
       const timeout = AbortSignal.timeout(options.rpcTimeoutMs ?? 15_000)

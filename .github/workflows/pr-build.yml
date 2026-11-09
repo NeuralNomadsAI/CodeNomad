@@ -291,6 +291,7 @@ jobs:
           path: |
             ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/receipt.json
             ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-diagnostic.json
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-sql.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Upload isolated schedule foundation failure diagnostics
@@ -508,6 +509,7 @@ jobs:
           packages/ui/src/stores/mission-task-pages.test.ts
           packages/ui/src/stores/mission-task-seen.test.ts
           packages/ui/tests/contracts/mission-task-page-read.test.ts
+          packages/ui/tests/contracts/mission-defaults.test.ts
           packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
           packages/ui/src/components/mission-briefing-model.test.ts
@@ -789,6 +791,13 @@ jobs:
       - name: Install the Electron binary
         run: npx --no install-electron
 
+      - name: Test hidden Electron emulation reset on Windows
+        if: runner.os == 'Windows'
+        working-directory: packages/ui
+        env:
+          CODENOMAD_TEST_TEMP: ${{ runner.temp }}
+        run: node --import tsx --test tests/browser/browser-emulation-native.test.ts
+
       - name: Test binary compatibility and shared lifecycle
         run: >-
           node --import tsx --test
@@ -905,6 +914,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+      - name: Restore Tauri bundler downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' && runner.os == 'Linux' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: tauri
+      # Sets LDAI_RUNTIME_FILE when the restored runtime matches the published digest.
+      - name: Restore the AppImage runtime
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' && runner.os == 'Linux' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: appimage-runtime
       - name: Install Linux WebKit dependencies
         if: runner.os == 'Linux'
         run: |

@@ -2,8 +2,10 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
+import fs from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import path from "node:path"
-import { afterEach, beforeEach, describe, it } from "node:test"
+import { afterEach, beforeEach, describe, it, test } from "node:test"
 import { readGitCommonDirectory } from "../git-common-directory"
 import { sharesGitCommonDirectory } from "../git-worktrees"
 import { runGitProcess } from "../git-process"
@@ -217,4 +219,31 @@ describe("Git ownership preflight admission", () => {
     assert.ok(foregroundIndex >= 0 && foregroundIndex < lastDisplayIndex,
       `ownership at ${foregroundIndex} waited behind all display reads (last at ${lastDisplayIndex})`)
   })
+})
+
+test("strict common-directory rejection retains both admitted filesystem reads until settlement", async t => {
+  const failure = new Error("unreadable ownership probe")
+  let release!: () => void
+  const held = new Promise<never>((_resolve, reject) => { release = () => reject(new Error("second probe settled")) })
+  const original = fs.realpath
+  const mock = t.mock.method(fs, "realpath", ((directory: string, ...args: unknown[]) => {
+    if (directory === "unreadable-probe") return Promise.reject(failure)
+    if (directory === "held-probe") return held
+    return (original as (...args: unknown[]) => unknown)(directory, ...args)
+  }) as typeof fs.realpath)
+  syncBuiltinESMExports()
+  try {
+    let settled = false
+    const read = sharesGitCommonDirectory("unreadable-probe", "held-probe", { strict: true })
+      .finally(() => { settled = true })
+    const rejected = assert.rejects(read, error => error === failure)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(settled, false, "the first error cannot release custody of the second read")
+    release()
+    await rejected
+  } finally {
+    release()
+    mock.mock.restore()
+    syncBuiltinESMExports()
+  }
 })

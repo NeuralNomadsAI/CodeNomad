@@ -11,18 +11,19 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 ## Erstellen, dann ausdrücklich starten {#create}
 
 1. Öffnen Sie **Missionen** im rechten Panel und wählen Sie **Mission erstellen**. Das Formular ersetzt den Missionsbaum, bis Sie erstellen oder abbrechen.
-2. Füllen Sie **Was soll die Mission tun?** aus und prüfen Sie **Titel**, der aus dem ersten Satz vorbelegt wird (bis 60 Zeichen).
-3. Lassen Sie **Zeitplanung** für **Einmal, sofort** eingeklappt oder klappen Sie sie auf und fügen Sie unter **Starten, wenn** mit **Kriterium hinzufügen** Zeitpläne oder Ereignisse hinzu. Ihre Reihenfolge legt fest, wie sie kombiniert werden.
-4. Klappen Sie **Optionen** für **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, die **Tiefe der Unteragenten** des Projekts, gespeicherte Aufträge und optional verfolgte Unterhaltungen auf. Mit **Zwei Modelle vergleichen** erscheinen die Auswahlfelder **Modell A** und **Modell B** im Hauptformular.
-5. Wählen Sie **Erstellen**. Wählen Sie den pausierten Eintrag, prüfen Sie ihn und verwenden Sie bei Bereitschaft ▶ **Starten**. Ohne Startkriterien startet Starten eine Mission; mit Kriterien aktiviert es die native Zeitplanung.
+2. Wählen Sie bei Bedarf oben **Mit einer Konfiguration beginnen**, dann prüfen Sie **Was soll die Mission tun?**, **Notizen** und **Titel** (bis 60 Zeichen). Laden ersetzt Ziel, Notizen und Titel. Der Titel wird aus dem Konfigurationsnamen abgeleitet und lässt sich danach bearbeiten.
+3. Das kompakte Formular zeigt **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, **Tiefe der Unteragenten**, verfolgte Gespräche und **Zeitplanung** direkt. Bei **Zwei Modelle vergleichen** prüfen Sie auch **Modell A** und **Modell B**.
+4. **Starten, wenn** beginnt mit **Einmal, jetzt**. **Kriterium hinzufügen** kombiniert Zeitpläne und Ereignisse; ihre Reihenfolge bestimmt **oder**, **wenn** und **sonst**.
+5. Lassen Sie **Beim Erstellen starten** ausgeschaltet, um eine pausierte Mission zu speichern und später ▶ **Starten** zu wählen. Eingeschaltet fordert es nach bestätigter Erstellung denselben abgesicherten Start an. Wählen Sie **Erstellen**.
 
-**Erstellen speichert eine pausierte Mission.** Erst ▶ **Starten** aktiviert Arbeit und native Kalender. Die Erstellung gehört zum ausgewählten Projekt/zur ausgewählten Location und erfasst die angeforderten Profile und die Aufgabensitzungsrichtlinie. Validierung steht neben dem betroffenen Feld; eine Ablehnung mit dem Hinweis, dass nichts gesendet wurde, erhält den Entwurf zur Korrektur. Ein einmaliger Koordinator kann auch eine separate Folgemission vorbereiten: Sie erscheint als **Vorbereitet** und startet über ihre eigene ▶-Aktion.
+**Beim Erstellen starten ist standardmäßig aus.** Erstellung speichert zuerst eine pausierte Mission im gewählten Projekt/Location mit den angeforderten Profilen und der Sitzungsrichtlinie. Der anschließende Start nutzt die gewöhnlichen Play-Prüfungen und gegebenenfalls die Bestätigung nativer Einstellungen. Geht die Erstellungsbestätigung verloren, bleibt Starten auch nach dem Lesen des Belegs manuell. Validierung erscheint am Feld; eine Ablehnung ohne Versand erhält den Entwurf. Eine vom Koordinator vorbereitete Folge erscheint als **Vorbereitet** und startet über ihre eigene ▶-Aktion.
+Wird das Projekt noch identifiziert, bleibt der erstellte Zeitplan pausiert; wählen Sie ▶ **Starten** in der Werkzeugleiste, sobald das Projekt bereit ist.
 
 Gespeicherte einmalige Missionen behalten ihre Ausführungssteuerung, ihren Aufgabenbaum, ihre Unterhaltungen und ihre Abschlussberichte. Bestehende tägliche Zeitpläne bleiben mit ihren täglichen Steuerelementen und [täglichen Zeitregeln](#existing-daily-schedules) aufgelistet. Wählen Sie den Eintrag und verwenden Sie die für dieses Objekt verfügbaren Steuerelemente.
 
 ### Playbooks {#playbooks}
 
-Direkt unter dem Auswahlfeld **Playbook** steht eine einsätzige Beschreibung des ausgewählten Playbooks. **Details anzeigen** öffnet das ausgewählte Playbook im zentralen Leser: seine Schritte, seine Rollen und, am Ende eingeklappt, die genauen englischen Anweisungen, die seine Agenten erhalten. [Playbooks](playbooks.md) erklärt Schritte, Rollen und Fragen jedes Playbooks und was CodeNomad prüft.
+Das **ⓘ** neben **Playbook** öffnet den Leitfaden in Ihrer Sprache beim Abschnitt des ausgewählten Playbooks. [Playbooks](playbooks.md) erklärt Schritte, Rollen und Fragen sowie die Prüfungen von CodeNomad.
 
 | Playbook | Vorgesehene Arbeit |
 | --- | --- |
@@ -40,7 +41,7 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 
 1. Wie in der Sitzungsliste zeigt oder verbirgt der Pfeil einer Zeile ihre Aufgaben, und ein Klick wählt eine Zeile aus: eine Mission oder eine ihrer Aufgaben. Die Aktionen der Auswahl stehen in der zweiten Zeile der Kopfzeile. Eine Mission ohne Aufgaben hat keinen Pfeil. **Missionen filtern** grenzt die übrigen Zeilen ein.
 2. Drücken Sie **Zusammenfassung** (Auge), um die Auswahl im zentralen Leser zu lesen: die Übersicht einer Mission oder das exakte Ergebnis, den Auftrag und die Belege einer Aufgabe. Solange die Schaltfläche gedrückt ist, folgt der Leser Ihrer Auswahl; drücken Sie sie erneut, um zur Unterhaltung zurückzukehren. Ist eine Aufgabe ausgewählt, gelten die Aktionen der Kopfzeile für diese Aufgabe, mit **Unterhaltung der Aufgabe öffnen** und, wenn ihr Bericht fehlt, **Fehlenden Bericht prüfen und wiederherstellen**.
-3. **Weitere Aktionen** (⋯) enthält **Update anfordern**, **Jetzt unterbrechen**, **Als Auftrag speichern** und **Ausgewählte Mission bearbeiten**; nicht zutreffende Aktionen bleiben deaktiviert.
+3. **Weitere Aktionen** (⋯) enthält **Update anfordern**, **Jetzt unterbrechen**, **Konfiguration speichern** und **Ausgewählte Mission bearbeiten**; nicht zutreffende Aktionen bleiben deaktiviert.
 4. Folgen Sie Abhängigkeitslinks und **Berichte**; verwenden Sie **Unterhaltung öffnen** für den Koordinator, wenn Sie dessen Verlauf benötigen.
 5. Wird eine Mission oder eine ihrer Aufgaben rot, wählen Sie sie aus: Die fragende Unterhaltung öffnet sich mit ihrer Frage im Unterbrechungsdock.
 
@@ -123,8 +124,8 @@ Das Speichern einer Tiefe erhält aktivierte native Zeitpläne in der Projektkon
 1. Verwenden Sie das Missionszahnrad oder **Einstellungen → Missionen**, um **Vorgaben für neue Missionen** zu bearbeiten.
 2. Wählen Sie unter **Anwenden auf** entweder **Alle Missionen** oder ein Playbook und legen Sie dann **Aufgabensitzungen** sowie unter **Agenten und Modelle** eine Zeile pro Rolle fest (Koordinator, dann die Rollen des Playbooks). Jede Auswahl wird sofort gespeichert; es gibt keine Speichern-Schaltfläche.
 3. In einem Playbook-Bereich zeigen die Zeilen die globalen Werte mit der Kennzeichnung **Global**. Das Ändern eines Felds passt diese Rolle ausgehend von ihnen an; ihr Zurücksetzen-Symbol verwendet wieder die globalen Werte. **Zurücksetzen** (nach Bestätigung) löscht nur die Agenten und Modelle des angezeigten Bereichs.
-4. Verwenden Sie beim Erstellen **Optionen → Agenten und Modelle** für bestimmte angeforderte Profile; **Gespeicherte Standardwerte verwenden** stellt die gespeicherten wieder her.
-5. Wählen Sie für native Rekursionsgrenzen eine **Tiefe der Unteragenten**, hier oder beim Erstellen unter **Optionen → Delegation**: **Erben** (gefolgt von der geerbten Tiefe, wenn sie bekannt ist) oder 1 bis 10. Ihre Auswahl wird sofort gespeichert. Das Info-Symbol neben der Beschriftung zeigt die effektive Tiefe, ob sich Unteragenten verschachteln können, und die Konfigurationsdateien.
+4. Verwenden Sie beim Erstellen **Agenten und Modelle** für bestimmte angeforderte Profile; **Gespeicherte Standardwerte verwenden** stellt die gespeicherten wieder her.
+5. Wählen Sie eine **Tiefe der Unteragenten**, hier oder in den Delegationsfeldern des Formulars: **Erben** (mit geerbter Tiefe, wenn bekannt) oder 1 bis 10. Die Auswahl wird sofort gespeichert. Das Info-Symbol zeigt effektive Tiefe, Verschachtelung und Konfigurationsdateien.
 
 | Einstellung | Geltungsbereich und Wirkung |
 | --- | --- |
@@ -136,25 +137,29 @@ Das Speichern einer Tiefe erhält aktivierte native Zeitpläne in der Projektkon
 
 **Nativer Standard** und **Global** unterscheiden sich: Ersteres fordert die eigenen Standards von OpenCode an, Letzteres erbt die globale Auswahl; native Standards in einem Playbook-Bereich zu wählen bleibt eine ausdrückliche Ausnahme. Katalogverfügbarkeit wird geprüft; ein angefordertes Profil beweist nicht das aktuell verwendete Profil einer Unterhaltung. Native Berechtigungen und konfigurierte Tiefe regeln interne Helferaufrufe weiterhin in beiden Aufgabenmodi.
 
+Von Agenten gestartete Missionen verwenden **Vorgaben für neue Missionen** für ausgelassene Angaben, wenn das Projekt in CodeNomad geöffnet ist. Ist CodeNomad geschlossen oder das Projekt dort nicht geöffnet, verwenden sie dafür die eigenen Standardwerte von OpenCode. Ausdrückliche Angaben des Agenten haben Vorrang, und Wiederholungen behalten die ursprüngliche Auswahl auch nach Änderungen der Vorgaben bei. Kann CodeNomad Ihre Vorgaben lesen, sind sie aber ungültig, wird die Erstellung bis zu ihrer Korrektur verweigert.
+
 Jede **Modell**-Liste zeigt, was die **Modell**-Auswahl der Unterhaltung zeigt, unter denselben Namen und nach Anbieter gruppiert: Ausgeblendete Modelle fehlen und, solange der Nur-Favoriten-Filter aktiv ist, auch die übrigen Modelle (siehe [Modellsichtbarkeit, Favoriten und Denken](providers.md#models)). Modelle ohne Werkzeugunterstützung fehlen ebenfalls. Ein gespeichertes Modell außerhalb der Liste bleibt ausgewählt. **Nicht verfügbar** kennzeichnet ein gespeichertes Modell, das die Auswahl derzeit nicht anbieten kann: Es fehlt im aktuellen Katalog des Projekts, ist veraltet oder unterstützt keine Werkzeuge.
 
 Eine abgelehnte oder unbestätigte Auswahl wird nie erneut gesendet: Die gespeicherten Werte werden wieder angezeigt, und **Neu laden** erscheint nur, wenn sie nicht gelesen werden können. Ist eine Tiefenänderung unbestätigt, bleibt Ihr Wert erhalten; verwenden Sie vor einer weiteren Änderung **Tiefe dieses Projekts aktualisieren**. Interpretieren Sie **Effektive OpenCode-Tiefe unbekannt** nicht als null oder deaktiviert.
 
-## Gespeicherten Auftrag wiederverwenden {#saved-briefs}
+## Gespeicherte Konfiguration wiederverwenden {#saved-briefs}
 
-1. Öffnen Sie beim Erstellen **Optionen → Mit einem gespeicherten Auftrag beginnen** und wählen Sie den Auftrag.
+1. Wählen Sie oben **Mit einer Konfiguration beginnen**. Laden ersetzt Ziel, Notizen und Titel; der Titel wird aus dem Konfigurationsnamen abgeleitet. Danach können Sie die Felder bearbeiten.
 2. Prüfen Sie vor **Erstellen** das kopierte Ziel, Notizen, Playbook, Profile und Delegation.
-3. Verwenden Sie das Lesezeichen-Symbol in der Fußzeile des Erstellungsformulars (**Als Auftrag speichern**), um einen wiederverwendbaren Entwurf zu benennen. Auch eine ausgewählte einmalige Mission, einschließlich abgeschlossener, bietet **Als Auftrag speichern** unter **Weitere Aktionen** (⋯).
+3. Benennen Sie mit **Konfiguration speichern** einen wiederverwendbaren Entwurf. Auch ausgewählte einmalige Missionen, einschließlich abgeschlossener, bieten **Konfiguration speichern** unter **Weitere Aktionen** (⋯).
 
-Aufträge speichern Anweisungen und angeforderte Auswahl, keine Aufgabenpläne, Ergebnisse, Unterhaltungen, Zeitplanuhren oder Ausführungsbefugnis. Laden füllt einen normalen Erstellungsentwurf; es startet oder plant nichts. Entfernen eines Auftrags behält bestehende Missionen/Unterhaltungen. **Einstellungen → Missionen → Gespeicherte Aufträge** verwaltet die Bibliothek; wird die Bibliothek unlesbar, entfernt **Gespeicherte Bibliothek zurücksetzen** (nach Bestätigung) gespeicherte Aufträge, keine Ausführungen. Zeitpläne selbst haben keine Aktion zum Speichern als Auftrag.
+Konfigurationen speichern Anweisungen, Playbook und angeforderte Profil-/Delegationsauswahl. Aufgabenpläne, Ergebnisse, Unterhaltungen, Zeitpläne und Ausführungsbefugnis bleiben bei ihren Missionen. Laden füllt einen Entwurf; prüfen Sie Zeitplanung und **Beim Erstellen starten** gesondert. Entfernen erhält bestehende Missionen und Gespräche. **Einstellungen → Missionen → Gespeicherte Konfigurationen** verwaltet die Bibliothek; **Konfigurationsbibliothek zurücksetzen** entfernt nach Bestätigung Konfigurationen und erhält Ausführungen. Zeitpläne selbst bieten kein Speichern als Konfiguration.
 
 ## Zeitplanung, Nachholen und verfolgte Unterhaltungen {#daily-schedules}
 
 ### Native Zeitplanung {#native-scheduling}
 
-Die **i**-Symbole neben den Beschriftungen erklären die Auswahl: per Mauszeiger, Tastaturfokus oder Antippen.
+Das **ⓘ** neben **Starten, wenn** zeigt beim Darüberfahren oder Tastaturfokus einen Tooltip. Klicken, tippen oder drücken Sie Enter, um [Native Zeitplanung](missions.md#native-scheduling) im Browser in Ihrer Oberflächensprache zu öffnen.
 
-Klappen Sie **Zeitplanung** beim Erstellen oder Bearbeiten auf. **Starten, wenn** listet die Kriterien, die die Mission starten: Wählen Sie **Kriterium hinzufügen** und dann seinen Typ. Ohne Kriterium startet sie einmal beim Starten (**Einmal, sofort**). Entfernen Sie ein Kriterium mit seiner ×-Schaltfläche. Das **i** neben **Starten, wenn** öffnet sich per Klick, Eingabe- oder Leertaste: Es erklärt **wenn** und **sonst**, weist darauf hin, dass die Mission nur läuft, solange OpenCode läuft, und verweist auf die [Starteinstellung von OpenCode](opencode.md#login-start). Neue Zeitpläne verwenden die Zeitzone des Systems; **Gespeicherte Zeitzone (IANA)** erscheint nur, wenn die gespeicherte Zone davon abweicht.
+**Zeitplanung** ist beim Erstellen und Bearbeiten sichtbar. **Starten, wenn** beginnt mit **Einmal, jetzt**, der ersten Zeitplanoption. Diese gewöhnliche Zeitplanquelle verbindet sich mit weiteren Zeitplänen (**oder**), mit einem nachfolgenden Ereignis als Bedingung (**wenn**) oder nach Ereignissen als Rückfall (**sonst**). **Kriterium hinzufügen** fügt hinzu, × entfernt. Missionen laufen, solange OpenCode läuft. Neue Kalender verwenden die Systemzeitzone; **Gespeicherte Zeitzone (IANA)** erscheint bei Abweichung.
+
+**Einmal, jetzt** bietet eine einzige Gelegenheit, verankert beim Aktivieren durch Play, statt beim Öffnen oder Speichern. Ereignis vor jetzt bedeutet Rückfall; jetzt vor Ereignis bedeutet Bedingung. Eine blockierende Bedingung kann diese einzige Gelegenheit ohne Start verbrauchen. Für spätere Chancen wählen Sie eine Wiederholung oder ein auslösendes Ereignis.
 
 | Zeitplan | Zeitpunkt |
 | --- | --- |
@@ -164,7 +169,7 @@ Klappen Sie **Zeitplanung** beim Erstellen oder Bearbeiten auf. **Starten, wenn*
 | Tag jedes Monats | Tag 1–31 zur gewählten Uhrzeit; Monate ohne diesen Tag werden übersprungen. |
 | Erweitert (cron) | Ein nativer Cron-Ausdruck, höchstens einmal pro Minute. |
 
-Fügen Sie für mehrere Uhrzeiten mehrere Zeitpläne hinzu, etwa 09:15 und 17:45. Jeder ist ein Cron; erkannte Ausdrücke öffnen sich wieder als ihre Kurzform. Die [Ereignisse](#scheduling-conditions) sind die übrigen Kriterien: Ereignisse, die die Mission starten, werden alle 15 Minuten geprüft, ohne einstellbare Häufigkeit; Bedingungen werden zu den Zeiten gelesen, die sie benötigen.
+Fügen Sie für mehrere Uhrzeiten mehrere Zeitpläne hinzu, etwa 09:15 und 17:45. Kalender-Kurzformen verwenden Cron; erkannte Ausdrücke öffnen sich wieder als ihre Kurzform. Die [Ereignisse](#scheduling-conditions) sind die übrigen Kriterien: Ereignisse, die die Mission starten, werden alle 15 Minuten geprüft, ohne einstellbare Häufigkeit; Bedingungen werden zu den Zeiten gelesen, die sie benötigen.
 
 Zwischen zwei Karten zeigt ein kleiner Verbinder, wie sie kombiniert werden: **oder** zwischen zwei Zeitplänen oder zwei Ereignissen, **wenn** von einem Zeitplan zu einem Ereignis, **sonst** von einem Ereignis zu einem Zeitplan. Ereignisse am Anfang starten die Mission bei jedem Eintreten; Zeitpläne am Anfang starten sie zu ihren Zeiten. Ereignisse nach Zeitplänen sind deren Bedingungen: Zu jeder dieser Zeiten startet die Mission nur, wenn seit dem letzten erfolgreichen Durchlauf eines davon eingetreten ist; sonst wird diese Zeit übersprungen. Zeitpläne nach Ereignissen sind ein Ersatz für alles darüber: Zu jeder seiner Zeiten startet ein Ersatzzeitplan nur, wenn die Karten darüber seit seiner vorherigen Zeit (oder seit seiner Einrichtung) keinen Durchlauf gestartet haben; **Jetzt ausführen** zählt ebenfalls, ebenso ein fehlgeschlagener Durchlauf. Ereignisse danach bedingen nur diesen Ersatz. Beispiel: Neue Commits, dann 18:00, dann neue Nachrichten, dann 20:00 startet bei jedem Commit; sonst um 18:00, wenn es neue Nachrichten gab; sonst um 20:00. Ziehen Sie eine Karte an ihrem Griff, um die Reihenfolge zu ändern, oder fokussieren Sie den Griff und drücken Sie Alt+Pfeil nach oben oder Alt+Pfeil nach unten; die Verbinder passen sich an.
 
@@ -180,7 +185,7 @@ Ein Ereigniskriterium benennt seine Quelle in diesem Projekt: **Ein anderer Zeit
 
 Der erste Start legt die Ausgangsreferenz fest. Fortsetzen erhält sie, einschließlich nach einer Pause beobachteter Änderungen. Erfolgsquellen erfordern ein bestätigtes erfolgreiches Ergebnis und eine abschließend geklärte native Familie. Branchprüfungen nutzen lokale Commits und deren Abstammung ohne Abruf vom entfernten Repository. Unterhaltungsprüfungen warten auf vollständige, stabile neue Nachrichten und schließen technische Aktivierungen und die eigenen Unterhaltungen des Durchlaufs aus. Dateien verwenden bis zu 128 explizite projektbezogene relative Pfade, einen pro Zeile; rekursive Muster und verknüpfte Pfade werden abgelehnt. Eine fehlende, verschobene, mehrdeutige oder zu große Quelle blockiert die Zulassung mit einer Erklärung. Änderungen zwischen Prüfungen benötigen eine dauerhafte Spur in der Quelle, um erkannt zu werden.
 
-Zusammen beobachtete Änderungen werden gebündelt. Ein Durchlauf hält die beobachteten Quellenbelege fest; ein erfolgreicher Abschluss verbraucht diesen Schnappschuss und lässt spätere Änderungen für eine künftige Prüfung übrig. Ein fehlgeschlagener Durchlauf behält seinen Quellenprüfpunkt und erfordert einen Eingriff. **Verfolgte Gespräche (optional)** unter **Optionen** liefert Kontext unabhängig von der Wahl eines Ereignisses für Unterhaltungsnachrichten.
+Zusammen beobachtete Änderungen werden gebündelt. Ein Durchlauf hält die beobachteten Quellenbelege fest; ein erfolgreicher Abschluss verbraucht diesen Schnappschuss und lässt spätere Änderungen für eine künftige Prüfung übrig. Ein fehlgeschlagener Durchlauf behält seinen Quellenprüfpunkt und erfordert einen Eingriff. **Verfolgte Gespräche (optional)** liefert Kontext unabhängig von der Wahl eines Ereignisses für Unterhaltungsnachrichten.
 
 ### Zählungen und gespeicherte Zeitpläne {#scheduling-limits}
 
@@ -268,7 +273,7 @@ Die Branchquelle enthält auch lokale Branches ohne Worktree und liest ausschlie
 
 Eine direkte Aktivierungsbestätigung kann die gerade angeforderte Aktion fortsetzen. Wird die Aktivierung später über **Gespeicherte Anfrage aktualisieren** bestätigt, warten Sie auf die aktualisierte Ansicht und wählen dann selbst **Starten** oder **Fortsetzen**. Die Wiederherstellung erhält die ursprüngliche Anfrage und überlässt den Arbeitsstart Ihrer nächsten ausdrücklichen Aktion.
 
-Vor dem ersten Play können Sie alle Startkriterien entfernen, um einmal beim Starten zu starten, und die verfolgten Unterhaltungen unter **Optionen** behalten. Play liest und fixiert deren vollständiges, stabiles Nachrichtenpräfix (höchstens 32 Nachrichten je Quelle, innerhalb von 16.384 Zeichen für die Starteingabe). Fehlende, verschobene oder zu große Quellen blockieren den Start mit einer Erklärung. Ein erneuter Versuch behält den fixierten Kontext und die ursprüngliche Startidentität.
+Vor dem ersten Play können Sie **Einmal, jetzt** wählen und die verfolgten Gespräche behalten. Play liest und fixiert deren vollständiges, stabiles Nachrichtenpräfix (höchstens 32 Nachrichten je Quelle, innerhalb von 16.384 Zeichen für die Starteingabe). Fehlende, verschobene oder zu große Quellen blockieren den Start mit einer Erklärung. Ein erneuter Versuch behält den fixierten Kontext und die ursprüngliche Startidentität.
 
 Bestätigt das Lesen des Belegs eine teilweise Vorbereitung, erscheint **Erneut versuchen**. Der Klick prüft denselben Beleg erneut und setzt ausschließlich die ursprünglich gespeicherte Änderung fort; die Mission bleibt pausiert.
 

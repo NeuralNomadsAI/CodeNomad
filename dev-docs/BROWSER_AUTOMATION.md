@@ -18,6 +18,18 @@ Browser previews are an ordinary desktop feature and must work in user projects 
 
 The bridge is loopback-only, token-authenticated, bounded, and session-location gated.
 
+An active backend publishes an ephemeral registration with a per-process 256-bit
+token and removes it on graceful shutdown. All bridge discovery checks the
+filename's publishing PID before reading the file: PIDs outside 1–2³¹−1 and
+`ESRCH` establish absence; other process-probe errors retain liveness
+conservatively. Best-effort pruning removes recognized local registrations whose
+filename or parsed PID establishes absence. A file removed between enumeration
+and open is absent. Windows PIDs belong to their host namespace, so WSL discovery
+uses endpoint evidence for Windows registrations and leaves their files in place.
+Windows path lookup is asynchronous, shares an in-flight lookup for the effective
+distro/PATH, and ordinary discovery retains its cached result. Missions' strict
+ownership and retry rules are in the [creation recovery contract](MISSIONS.md#mission-profile-selection-and-creation-recovery).
+
 ## Desktop instrumentation
 
 At normal startup, native instrumentation prepares the current CodeNomad desktop process for agent feedback. It never launches or owns another CodeNomad process and never starts, stops or replaces the shared OpenCode daemon.
@@ -36,7 +48,7 @@ Windows Tauri (`packages/tauri-app/src-tauri/src/developer_mode.rs`):
 
 Packaged Electron main/preload/renderer, UI and server builds emit source maps. Local hosts sanitize inherited debugging flags; isolated remote-window profiles run without local instrumentation. Windows WebView2 is the supported Tauri CDP host. `packages/server/src/developer-cdp.ts` (`DeveloperCdp`) is the shared CDP controller and `opencode/automation-plugin.ts` the OpenCode adapter. `.opencode/skills/codenomad-automation/SKILL.md` holds the inspect, edit, build, relaunch, reconnect and evidence workflow.
 
-An active backend publishes an ephemeral registration with a per-process 256-bit token and removes it on graceful shutdown. Tool definitions captured earlier still go through execution-time checks, which refuse calls after backend shutdown or when the inspected native window, run or document changed; selecting another project or conversation keeps them valid. A WSL OpenCode plugin also discovers Windows registrations and reaches the Windows-only loopback listener through Windows interop under default WSL2 NAT. Provisioning migrates only recognizable generated entries and never overwrites a user-authored plugin.
+Tool definitions captured earlier still go through execution-time checks, which refuse calls after backend shutdown or when the inspected native window, run or document changed; selecting another project or conversation keeps them valid. A WSL OpenCode plugin also discovers the Windows registration directory and reaches the Windows-only loopback listener through Windows interop under default WSL2 NAT. Its `curl.exe` requests use `--noproxy "*"` to bypass inherited proxies for that authenticated loopback endpoint. Provisioning migrates only recognizable generated entries and never overwrites a user-authored plugin.
 
 Windows registry-path discovery in WSL uses asynchronous interop with bounded commands.
 Memory admission cancellation reaches both discovery commands and registry scans;

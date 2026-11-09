@@ -5,9 +5,9 @@ export const missionCreateMessages = {
   "missions.create.options": "Opciones",
   "missions.create.agents": "Agentes y modelos",
   "missions.create.submit": "Crear",
-  "missions.create.brief.start": "Empezar desde una descripción",
+  "missions.create.brief.start": "Empezar desde una configuración",
   "missions.create.brief.none": "Misión en blanco",
-  "missions.create.brief.more": "Acciones de descripciones guardadas",
-  "missions.create.brief.saveAs": "Guardar como descripción",
-  "missions.create.brief.cancel": "Cancelar el guardado de la descripción",
+  "missions.create.brief.more": "Acciones de configuraciones guardadas",
+  "missions.create.brief.saveAs": "Guardar configuración",
+  "missions.create.brief.cancel": "Cancelar el guardado de la configuración",
 } as const

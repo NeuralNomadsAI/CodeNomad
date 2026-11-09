@@ -31,6 +31,7 @@ async function harness(
   ptyDirectories: Record<string, string | Error> = {},
   shellDirectories: Record<string, string | Error> = {},
   directoryMappings: Record<string, string> = {},
+  shellSessions: Record<string, string> = {},
 ) {
   const upstream = Fastify({ bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes })
   apps.push(upstream)
@@ -122,7 +123,8 @@ async function harness(
       get: async ({ id }: { id: string }) => {
         const cwd = shellDirectories[id] ?? sessionDirectory
         if (cwd instanceof Error) throw cwd
-        return { data: { id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42, metadata: {}, time: { started: 1 } } }
+        return { data: { id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42,
+          metadata: shellSessions[id] ? { sessionID: shellSessions[id] } : {}, time: { started: 1 } } }
       },
     },
   } as unknown as OpenCodeClient
@@ -834,6 +836,18 @@ describe("instance proxy location enforcement", () => {
       })).statusCode, 403)
     }
     assert.equal(requestCount(), 0)
+  })
+
+  it("reads and removes an owned session's shell even when its cwd is outside the project", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, { foreign: "/other" }, "/repo", "/repo", {}, {},
+      { own: "/tmp/build", foreign: "/repo" }, {}, { own: "session-own", foreign: "foreign" })
+    for (const [method, path] of [["GET", "own/output"], ["DELETE", "own"]] as const) {
+      const response = await app.inject({ method, url: `/workspaces/workspace/instance/api/shell/${path}?location%5Bdirectory%5D=%2Frepo%2Fworktree` })
+      assert.equal(response.statusCode, 200, response.body)
+    }
+    assert.equal(requestCount(), 2)
+    assert.equal((await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/shell/foreign" })).statusCode, 403)
+    assert.equal(requestCount(), 2)
   })
 
   it("permits only native global Forms actions without session hydration", async () => {

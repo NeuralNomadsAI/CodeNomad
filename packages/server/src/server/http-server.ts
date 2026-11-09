@@ -30,6 +30,8 @@ import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerImagesConversationRoute } from "./routes/images-conversation"
 import { registerSessionGoalRoute } from "./routes/session-goal"
+import { registerBackgroundShellRoutes } from "./routes/background-shells"
+import { ownedShellDirectory } from "../opencode/background-shells"
 import { registerSessionMediaRoutes } from "./routes/session-media"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerPendingRequestRoutes } from "./routes/pending-requests"
@@ -444,6 +446,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
+  registerBackgroundShellRoutes(app, deps.workspaceManager)
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
@@ -522,7 +525,7 @@ export interface InstanceProxyWorkspaceManager {
   getSharedServiceClient(): Promise<OpenCodeClient>
   getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>>
   desktopPluginsReady?(): Promise<void>
-  ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, signal?: AbortSignal): ReturnType<WorkspaceManager["ownsLocation"]>
+  ownsLocation: WorkspaceManager["ownsLocation"]
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
 }
@@ -929,7 +932,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     const entries = await Promise.all(Object.entries(active).map(async ([sessionId, status]) => {
       try {
         const session = await wait(client.session.get({ sessionID: sessionId }, { signal }))
-        return await wait(workspaceManager.ownsLocation(workspaceId, session.location, client, signal)) ? [sessionId, status] as const : null
+        return await wait(workspaceManager.ownsLocation(workspaceId, session.location, client, { signal })) ? [sessionId, status] as const : null
       } catch {
         return null
       }
@@ -1119,11 +1122,12 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   if (shellId) {
     try {
       const shell = await wait((await clientForRequest()).shell.get({ id: shellId, location: { directory: runtimeLocation.directory } }, runtimeLocationOptions))
-      if (!(await wait(workspaceManager.ownsDirectory(workspaceId, shell.data.cwd)))) {
+      const ownerDirectory = await wait(ownedShellDirectory(shell.data, await clientForRequest(), directory => workspaceManager.ownsDirectory(workspaceId, directory), signal))
+      if (!ownerDirectory) {
         reply.code(403).send({ error: "Shell does not belong to workspace" })
         return
       }
-      mutationDirectories.add(shell.data.cwd)
+      mutationDirectories.add(ownerDirectory)
     } catch (error) {
       if (isShellNotFoundError(error)) {
         reply.code(404).send({ error: "Shell not found" })
@@ -1160,7 +1164,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       }
       if (!isSessionNotFoundError(error)) throw error
     }
-    if (session && !(await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), signal)))) {
+    if (session && !(await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), { signal })))) {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
@@ -1219,7 +1223,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           const fresh = await wait(client.session.get({ sessionID: session.id }, { signal }))
           current()
           if (fresh.id !== session.id || !sameLocation(readLocationRef(fresh.location), readLocationRef(session.location))
-            || !await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, signal))) {
+            || !await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, { signal }))) {
             throw new MissionScheduleInputError(403)
           }
           assertOrdinaryMissionScheduleBody({ metadata: fresh.metadata })
@@ -1313,7 +1317,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
             const current = await connection.client.session.get({ sessionID: sessionId! }, { signal })
             return workspaceManager.get(workspaceId) === workspace
               && directory === authorizedSessionDirectory && current.location.directory === authorizedSessionDirectory
-              && await workspaceManager.ownsLocation(workspaceId, current.location, connection.client, signal)
+              && await workspaceManager.ownsLocation(workspaceId, current.location, connection.client, { signal })
           }))
         } catch (error) {
           releaseMutation?.()
@@ -1478,7 +1482,7 @@ async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, works
 
 async function allLocationsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, locations: LocationRef[], client?: OpenCodeClient, signal?: AbortSignal) {
   const unique = new Map(locations.map((location) => [JSON.stringify([location.directory, location.workspaceID]), location]))
-  return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location, client, signal)))).every(Boolean)
+  return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location, client, { signal })))).every(Boolean)
 }
 
 async function allPathsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, paths: string[]) {
@@ -1562,7 +1566,7 @@ async function authorizeSessionList(
   if (ownership !== "allowed") return ownership
   if (!(await readGitStatus()).available) {
     signal?.throwIfAborted()
-    if (directory && !await manager.ownsLocation(workspaceId, { directory }, client, signal)) return "foreign"
+    if (directory && !await manager.ownsLocation(workspaceId, { directory }, client, { signal })) return "foreign"
     // Narrow the initial query, preserving native directory-scoped pagination.
     // Unlike a project cursor this request has no already-established scope.
     const root = manager.getServiceDirectory?.(workspaceId) ?? manager.get(workspaceId)?.path
@@ -1587,7 +1591,7 @@ async function ownsSessionListScope(
 ): Promise<"allowed" | "foreign"> {
   signal?.throwIfAborted()
   if (scope.directory) {
-    const owned = await manager.ownsLocation(workspaceId, { directory: scope.directory }, client, signal)
+    const owned = await manager.ownsLocation(workspaceId, { directory: scope.directory }, client, { signal })
     return owned ? "allowed" : "foreign"
   }
   if (!scope.project) return "foreign"
@@ -1601,7 +1605,7 @@ async function ownsSessionListScope(
     : /^[A-Za-z]:[\\/]|^\\\\/.test(project.canonical)
       ? path.win32.resolve(project.canonical, scope.subpath)
       : path.posix.resolve(project.canonical, scope.subpath)
-  const owned = await manager.ownsLocation(workspaceId, { directory }, client, signal)
+  const owned = await manager.ownsLocation(workspaceId, { directory }, client, { signal })
   return owned ? "allowed" : "foreign"
 }
 

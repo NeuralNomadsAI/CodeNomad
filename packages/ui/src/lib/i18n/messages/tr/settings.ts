@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "Yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önler; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar.",
   "providerUsage.estimated": "Tahmini",
   "providerUsage.exhausted": "Tükendi",
-  "providerUsage.estimateInfo": "Yerel adım sayıları ücretsiz istekleri tahmin eder. Gerçek sınırlar değişir. Tükenme işareti 00:00 UTC'de kaldırılır.",
+  "providerUsage.estimateInfo": "Yerel adımlar ile Console'da 00:00 UTC'den itibaren mevcut ücretsiz isteklerin büyük olanını kullanır. Console hesabı kapsar; gerçek IP tabanlı sınırlar değişir. Tükenme işareti 00:00 UTC'de kaldırılır.",
   "providerUsage.console.requests": "İstekler",
   "providerUsage.console.today": "Bugün (UTC)",
   "providerUsage.console.sevenDays": "7 gün (UTC)",

@@ -107,7 +107,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   /** The session, when its Location belongs to the workspace. */
   const ownedSession = async (instanceId: string, client: OpenCodeClient, sessionID: string, signal: AbortSignal) => {
     const session = await client.session.get({ sessionID }, { signal: bounded(signal) })
-    if (!await manager.ownsLocation(instanceId, session.location, client, signal)) throw new Refused(403)
+    if (!await manager.ownsLocation(instanceId, session.location, client, { signal })) throw new Refused(403)
     return session
   }
   /** Fences the answer on the session still being owned at the same Location after every read. */
@@ -118,7 +118,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     })
   const fenceLocation = (context: RouteContext, instanceId: string, client: OpenCodeClient, directory: string) =>
     context.fence(`location:${directory}`, async () => {
-      if (!await manager.ownsLocation(instanceId, { directory }, client, context.signal)) throw new Refused(403)
+      if (!await manager.ownsLocation(instanceId, { directory }, client, { signal: context.signal })) throw new Refused(403)
     })
   const sessionRpc = async (context: RouteContext, instanceId: string, sessionID: string, method: string, input: Record<string, any>) => {
     const connection = await connect(instanceId)
@@ -152,7 +152,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     const client = connection.client
     const session = input.sessionID ? await ownedSession(input.instanceId, client, input.sessionID, context.signal) : undefined
     const location = session ? readLocationRef(session.location) : input.directory ? { directory: input.directory } : undefined
-    if (!location || !await manager.ownsLocation(input.instanceId, location, client, context.signal)) throw new Refused(403)
+    if (!location || !await manager.ownsLocation(input.instanceId, location, client, { signal: context.signal })) throw new Refused(403)
     if (input.sessionID) fenceSession(context, input.instanceId, client, input.sessionID, location)
     else fenceLocation(context, input.instanceId, client, location.directory)
     return readPanelImagesStatus({ imageSettings: deps.imageSettings, client }, input.instanceId, location, session, bounded(context.signal))

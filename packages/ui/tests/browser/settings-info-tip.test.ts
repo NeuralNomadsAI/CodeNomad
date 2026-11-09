@@ -29,10 +29,12 @@ async function setup(page: Page, host = "web", context = "remote") {
     w.opened = []
     w.attempts = 0
     w.failOpen = false
+    w.holdOpen = false
     window.open = (...args) => { w.attempts++; if (w.failOpen) throw new Error("opener failure"); w.opened.push(args); return null }
     w.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
       if (command === "open_external_url") {
         w.attempts++
+        if (w.holdOpen) await new Promise(resolve => { w.releaseOpen = resolve })
         if (w.failOpen) throw new Error("opener failure")
         w.opened.push([command, args])
       }
@@ -65,7 +67,15 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
       assert.deepEqual(await opened(page), [0, 1].map(() => `${base}en/settings.html#keep-computer-awake`))
       assert.equal(await page.locator(".settings-choice-row input").isChecked(), false)
       assert.deepEqual(await page.evaluate(() => [(window as any).fixture.changed(), (window as any).fixture.leaked()]), [0, 0])
+      const native = host === "tauri" && context !== "remote"
+      if (native) await page.evaluate(() => { (window as any).holdOpen = true })
       await page.locator("summary [role=link]").click()
+      if (native) {
+        await page.waitForFunction(() => typeof (window as any).releaseOpen === "function")
+        assert.equal((await opened(page)).length, 2, "native admission alone is not an opening receipt")
+        await page.evaluate(() => (window as any).releaseOpen())
+      }
+      await page.waitForFunction(() => (window as any).opened.length === 3)
       assert.equal(await page.locator("details").getAttribute("open"), null)
       assert.equal((await opened(page)).at(-1), `${base}en/opencode.html#session-environment`)
       assert.equal(page.url(), url)

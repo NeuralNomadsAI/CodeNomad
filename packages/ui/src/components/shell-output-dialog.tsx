@@ -6,6 +6,7 @@ import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { useI18n } from "../lib/i18n"
 import { appendShellOutput } from "../stores/shell-store"
 import { shellStore } from "../stores/shells"
+import WindowCloseButton from "./window-close-button"
 
 interface ShellOutputDialogProps {
   open: boolean
@@ -57,6 +58,8 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
         }
       } catch {
         if (!active) return
+        setAnsiEnabled(false)
+        setOutputHtml("")
         setOutput(t("backgroundProcessOutputDialog.loadErrorFallback"))
       } finally {
         if (!active) return
@@ -82,24 +85,23 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
       <Dialog.Portal>
         <Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content class="modal-surface flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
+          <Dialog.Content role="dialog" class="modal-surface flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
             <div class="window-header">
               <div class="min-w-0 flex-1">
                 <Dialog.Title class="window-title">{t("backgroundProcessOutputDialog.title")}</Dialog.Title>
                 <span class="block truncate text-xs text-secondary" title={props.shell?.command}>{props.shell?.command}</span>
               </div>
-              <button type="button" class="button-tertiary shrink-0" onClick={props.onClose}>
-                {t("backgroundProcessOutputDialog.actions.close")}
-              </button>
+              <WindowCloseButton label={t("backgroundProcessOutputDialog.actions.close")} onClose={props.onClose} />
             </div>
             <div class="window-body">
               <Show when={loading()}><p class="text-xs text-secondary">{t("backgroundProcessOutputDialog.loading")}</p></Show>
               <Show when={truncated()}><p class="mb-2 text-xs text-secondary">{t("backgroundProcessOutputDialog.truncatedNotice")}</p></Show>
               <Show when={!loading()}>
-                <pre
-                  class="border border-base bg-surface-inset p-4 font-mono text-xs text-primary whitespace-pre-wrap break-all"
-                  innerHTML={ansiEnabled() ? outputHtml() : undefined}
-                >{ansiEnabled() ? undefined : output()}</pre>
+                <Show when={ansiEnabled()} fallback={
+                  <pre class="border border-base bg-surface-inset p-4 font-mono text-xs text-primary whitespace-pre-wrap break-all">{output()}</pre>
+                }>
+                  <pre class="border border-base bg-surface-inset p-4 font-mono text-xs text-primary whitespace-pre-wrap break-all" innerHTML={outputHtml()} />
+                </Show>
               </Show>
             </div>
           </Dialog.Content>

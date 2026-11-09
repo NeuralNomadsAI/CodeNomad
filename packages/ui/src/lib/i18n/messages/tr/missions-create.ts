@@ -5,9 +5,9 @@ export const missionCreateMessages = {
   "missions.create.options": "Seçenekler",
   "missions.create.agents": "Ajanlar ve modeller",
   "missions.create.submit": "Oluştur",
-  "missions.create.brief.start": "Kayıtlı bir özetle başla",
+  "missions.create.brief.start": "Bir yapılandırmayla başla",
   "missions.create.brief.none": "Boş görev",
-  "missions.create.brief.more": "Kayıtlı özet işlemleri",
-  "missions.create.brief.saveAs": "Özet olarak kaydet",
-  "missions.create.brief.cancel": "Özeti kaydetmeyi iptal et",
+  "missions.create.brief.more": "Kayıtlı yapılandırma işlemleri",
+  "missions.create.brief.saveAs": "Yapılandırmayı kaydet",
+  "missions.create.brief.cancel": "Yapılandırmayı kaydetmeyi iptal et",
 } as const

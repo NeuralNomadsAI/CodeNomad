@@ -89,8 +89,8 @@ La raíz del espacio de trabajo limita qué carpetas abre CodeNomad; no es un en
 El panel Estado muestra el uso del proveedor de la sesión activa y los Shells nativos en segundo plano. El estado de las conversaciones y la actividad de sus descendientes identifican sesiones que están trabajando, compactándose o esperando entrada. Supervisar un Shell en segundo plano es distinto de enviar una solicitud Shell desde el editor de mensajes o usar un SideCar de terminal alojado por separado.
 
 1. Abre **Estado → Shells en segundo plano** para la Location de la conversación seleccionada (o el espacio de trabajo abierto si no hay una conversación seleccionada).
-2. Inspecciona el comando, el shell, el directorio, el estado, el PID y el código de salida cuando se proporcionen; elige **Ver salida** para consultar la salida nativa disponible.
-3. Para eliminar uno, usa **Detener y eliminar** mientras esté en ejecución, o **Eliminar** después de terminar, y confirma el objetivo.
+2. Solo se muestran los comandos en ejecución enviados explícitamente al segundo plano, uno por línea. Al pasar el cursor se muestran el shell, la carpeta y el PID; el icono **Ver salida** abre la salida nativa. Sin la API de tareas en segundo plano de OpenCode, aparece un error de carga.
+3. Usa el icono **Detener y eliminar** de la línea y confirma el objetivo.
 
 Eliminar un Shell en ejecución detiene ese proceso; cerrar su ventana de salida no lo detiene. Actualizar/reconectar lee el estado nativo actual en lugar de reconstruir los eventos de salida perdidos.
 

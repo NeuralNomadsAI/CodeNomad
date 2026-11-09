@@ -62,7 +62,7 @@ export class IntegrationInstaller {
   private async authorize(workspaceId: string, location: PluginControlLocation, connection: ServiceConnection, signal?: AbortSignal) {
     signal?.throwIfAborted()
     connection.assertCurrent()
-    if (!await this.deps.workspaceManager.ownsLocation(workspaceId, location, connection.client, signal)) {
+    if (!await this.deps.workspaceManager.ownsLocation(workspaceId, location, connection.client, { signal })) {
       throw new IntegrationInstallError("forbidden")
     }
     signal?.throwIfAborted()
