@@ -74,7 +74,7 @@ El chevrón despliega tareas; hacer clic selecciona Misión o tarea. Sus accione
 
 El ojo alterna el resumen central y sigue la selección. **Abrir conversación** lleva al coordinador o tarea. El menú ⋯ contiene las acciones disponibles de actualización, interrupción, configuración y edición.
 
-Más entradas y tareas se cargan automáticamente al acercarse al final. Las páginas quedan en caché independientemente de las filas mostradas. Un error conserva la vista y ofrece reintento explícito. Leer no inicia trabajo; la cabecera indica las lecturas de fondo.
+Más entradas y tareas se cargan automáticamente al acercarse al final. Las páginas quedan en caché independientemente de las filas mostradas. Un error conserva la vista y ofrece **Intentar de nuevo**. Leer no inicia trabajo; la cabecera indica las lecturas de fondo.
 
 ### Colores y estados {#status-colours}
 
