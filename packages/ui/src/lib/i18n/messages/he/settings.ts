@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "מונע מהמחשב לעבור למצב שינה כל עוד חלון מקומי של CodeNomad פתוח (גם כשהוא ממוזער); המסך עדיין יכול להיכבות. כשהאפשרות כבויה, CodeNomad משאיר את המחשב ער רק בזמן שסשן עובד.",
   "providerUsage.estimated": "משוער",
   "providerUsage.exhausted": "מוצה",
-  "providerUsage.estimateInfo": "מספר השלבים המקומיים משמש להערכת בקשות חינמיות. המגבלות בפועל משתנות. סימון המיצוי מתאפס ב־00:00 UTC.",
+  "providerUsage.estimateInfo": "משתמש בערך הגבוה מבין הצעדים המקומיים לבין הבקשות החינמיות הזמינות ב־Console מאז 00:00 UTC. Console מכסה את החשבון; המגבלות בפועל לפי IP משתנות. סימון המיצוי מתאפס ב־00:00 UTC.",
   "providerUsage.console.requests": "בקשות",
   "providerUsage.console.today": "היום (UTC)",
   "providerUsage.console.sevenDays": "7 ימים (UTC)",

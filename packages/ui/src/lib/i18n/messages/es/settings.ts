@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "Impide la suspensión del sistema mientras haya una ventana local de CodeNomad abierta (aunque esté minimizada); la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando.",
   "providerUsage.estimated": "Estimado",
   "providerUsage.exhausted": "Agotado",
-  "providerUsage.estimateInfo": "Los pasos locales estiman las solicitudes gratuitas. Los límites reales varían. La marca de agotamiento se borra a las 00:00 UTC.",
+  "providerUsage.estimateInfo": "Usa el mayor valor entre los pasos locales y las solicitudes gratuitas disponibles en Console desde las 00:00 UTC. Console abarca la cuenta; los límites reales por IP varían. La marca de agotamiento se borra a las 00:00 UTC.",
   "providerUsage.console.requests": "Solicitudes",
   "providerUsage.console.today": "Hoy (UTC)",
   "providerUsage.console.sevenDays": "7 días (UTC)",

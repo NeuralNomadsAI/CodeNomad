@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "本地 CodeNomad 窗口打开时（包括最小化状态）阻止系统进入睡眠；屏幕仍可能自动关闭。禁用此选项时，CodeNomad 仅在会话工作期间保持电脑唤醒。",
   "providerUsage.estimated": "估算",
   "providerUsage.exhausted": "已耗尽",
-  "providerUsage.estimateInfo": "根据本地步骤数估算免费请求数。实际限制可能不同。耗尽标记于 UTC 00:00 清除。",
+  "providerUsage.estimateInfo": "取本地步骤数与 Console 中可用的自 UTC 00:00 起的免费请求数中的较大值。Console 涵盖整个账户；实际的 IP 限制可能不同。耗尽标记于 UTC 00:00 清除。",
   "providerUsage.console.requests": "请求数",
   "providerUsage.console.today": "今天（UTC）",
   "providerUsage.console.sevenDays": "7天（UTC）",

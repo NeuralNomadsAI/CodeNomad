@@ -30,11 +30,11 @@ test("calibration takes the maximum, keeping zero and counts above the reference
     [null, null, null], [30, null, 30], [null, 0, null]] as const) assert.equal(calibrateOpenCodeFreeRequests(local, console), expected)
 })
 
-test("default gate OFF never reads credentials or Console; stats failure preserves exhaustion and actual count", async t => {
+test("explicit gate OFF never reads credentials or Console; stats failure preserves exhaustion and actual count", async t => {
   t.mock.method(Date, "now", () => day + 1000)
   let consoleCalls = 0
   t.mock.method(globalThis, "fetch", async () => { consoleCalls++; throw new Error("Console must not be called") })
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
+  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion, { consoleCalibration: false })
   try {
     let result = await usage.read(f.connection, "opencode", "big-pickle", signal())
     assert.deepEqual(result.freeEstimate, { requests: 30, reference: 200, exhausted: false })
@@ -61,7 +61,7 @@ test("default gate OFF never reads credentials or Console; stats failure preserv
 
 test("failure received during an in-flight stats read and before publication stays visible", async t => {
   t.mock.method(Date, "now", () => day + 1000)
-  const f = fixture(), exhaustion = createOpenCodeFreeExhaustion(), usage = createOpenCodeFreeUsage(exhaustion)
+  const f = fixture(), exhaustion = createOpenCodeFreeExhaustion(), usage = createOpenCodeFreeUsage(exhaustion, { consoleCalibration: false })
   let entered!: () => void, release!: () => void
   const started = new Promise<void>(resolve => { entered = resolve })
   const gate = new Promise<void>(resolve => { release = resolve })
@@ -80,14 +80,14 @@ test("failure received during an in-flight stats read and before publication sta
   usage.dispose()
 })
 
-test("gate ON cache is separate, credential/day scoped, shares reads and never reuses yesterday's count", async t => {
+test("default calibration cache is credential/day scoped, shares reads and never reuses yesterday's count", async t => {
   let now = day + 86_400_000 - 1000, count = 250, calls = 0
   t.mock.method(Date, "now", () => now)
   t.mock.method(globalThis, "fetch", async (input: unknown) => {
     calls++; assert.equal(new URL(String(input)).searchParams.get("range"), "24h")
     return Response.json(page(count))
   })
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion, { consoleCalibration: true })
+  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
   const read = () => usage.read(f.connection, "opencode", "big-pickle", signal())
   try {
     const [a, b] = await Promise.all([read(), read()])
@@ -105,7 +105,7 @@ test("gate ON cache is separate, credential/day scoped, shares reads and never r
   } finally { usage.dispose() }
 })
 
-test("gate ON any Console page failure retains local estimate/exhaustion, never a partial count", async t => {
+test("default calibration retains local estimate/exhaustion on any Console page failure, never a partial count", async t => {
   t.mock.method(Date, "now", () => day + 1000)
   for (const invalid of [false, true]) {
     t.mock.method(globalThis, "fetch", async (input: unknown) => {
@@ -115,13 +115,49 @@ test("gate ON any Console page failure retains local estimate/exhaustion, never 
         pageInfo: { page: 1, pageSize: 50, total: 51, pageCount: 2 } })
     })
     const f = fixture(); f.state.exhausted = true
-    const usage = createOpenCodeFreeUsage(f.exhaustion, { consoleCalibration: true })
+    const usage = createOpenCodeFreeUsage(f.exhaustion)
     const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
     assert.equal(result.freeEstimate?.requests, 30)
     assert.equal(result.freeEstimate?.exhausted, true)
     assert.equal(result.windows.daily.valueLabel, "30 / 200")
     usage.dispose()
   }
+})
+
+test("default calibration without a Console credential stays local and never calls Console", async t => {
+  t.mock.method(Date, "now", () => day + 1000)
+  t.mock.method(globalThis, "fetch", async () => { assert.fail("Console must not be called without a credential") })
+  const f = fixture()
+  t.mock.method(f.connection.client.credential, "list", async () => [])
+  const usage = createOpenCodeFreeUsage(f.exhaustion)
+  try {
+    const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
+    assert.deepEqual(result.freeEstimate, { requests: 30, reference: 200, exhausted: false })
+    assert.equal(result.estimated, true)
+  } finally { usage.dispose() }
+})
+
+test("a calibration deadline preserves local usage without cancelling another caller's shared read", async t => {
+  t.mock.method(Date, "now", () => day + 1000)
+  let entered!: () => void, release!: (response: Response) => void, calls = 0, transport: AbortSignal | undefined
+  const started = new Promise<void>(resolve => { entered = resolve })
+  t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
+    calls++; transport = init!.signal!
+    entered()
+    return new Promise<Response>(resolve => { release = resolve })
+  })
+  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion), deadline = new AbortController()
+  try {
+    const first = usage.read(f.connection, "opencode", "big-pickle", signal(), deadline.signal)
+    await started
+    const second = usage.read(f.connection, "opencode", "big-pickle", signal())
+    deadline.abort()
+    assert.equal((await first).freeEstimate?.requests, 30)
+    assert.equal(transport?.aborted, false)
+    release(Response.json(page(80)))
+    assert.equal((await second).freeEstimate?.requests, 80)
+    assert.equal(calls, 1)
+  } finally { usage.dispose() }
 })
 
 test("gate ON sums every free model across sequential 24h pages using the Console parser bounds", async t => {
