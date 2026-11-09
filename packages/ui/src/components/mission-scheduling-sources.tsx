@@ -42,7 +42,7 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
       <select aria-label={label("missions.scheduling.criterionKind")} value={kind()}
         onChange={event => patch({ kind: event.currentTarget.value as MissionCriterionKind, source: "" })}>
         <optgroup label={t("missions.scheduling.group.schedule")}>
-          <For each={missionScheduleShortcuts}>{value => <option value={value}>{t(`missions.scheduling.shortcut.${value}`)}</option>}</For>
+          <For each={missionScheduleShortcuts}>{value => <option value={value}>{t(value === "now" ? "missions.scheduling.source.now" : `missions.scheduling.shortcut.${value}`)}</option>}</For>
         </optgroup>
         <optgroup label={t("missions.scheduling.group.event")}>
           <For each={missionEventKinds}>{value => <option value={value}>{t(`missions.scheduling.condition.${value}`)}</option>}</For>

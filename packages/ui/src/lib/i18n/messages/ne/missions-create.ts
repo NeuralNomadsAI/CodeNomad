@@ -5,9 +5,9 @@ export const missionCreateMessages = {
   "missions.create.options": "विकल्पहरू",
   "missions.create.agents": "एजेन्ट र मोडेलहरू",
   "missions.create.submit": "बनाउनुहोस्",
-  "missions.create.brief.start": "सुरक्षित विवरणबाट सुरु गर्नुहोस्",
+  "missions.create.brief.start": "कन्फिगरेसनबाट सुरु गर्नुहोस्",
   "missions.create.brief.none": "खाली मिसन",
-  "missions.create.brief.more": "सुरक्षित विवरणका कार्यहरू",
-  "missions.create.brief.saveAs": "विवरणको रूपमा सुरक्षित गर्नुहोस्",
-  "missions.create.brief.cancel": "विवरण सुरक्षित गर्न रद्द गर्नुहोस्",
+  "missions.create.brief.more": "सुरक्षित कन्फिगरेसनका कार्यहरू",
+  "missions.create.brief.saveAs": "कन्फिगरेसन सुरक्षित गर्नुहोस्",
+  "missions.create.brief.cancel": "कन्फिगरेसन सुरक्षित गर्न रद्द गर्नुहोस्",
 } as const
