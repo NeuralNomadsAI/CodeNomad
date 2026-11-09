@@ -101,6 +101,26 @@ test("pairing requires the public origin and issues a host-only secure cookie on
   assert.equal(replay.status, 401)
 })
 
+test("server-to-server pairing uses its one-use code without Origin, while browser pairing requires its origin", async t => {
+  const { target, code } = await startRemoteSurface(t)
+  const browserHeaders: Record<string, string>[] = [{ origin: "https://other.tunnel.test" }, { "sec-fetch-site": "cross-site" }, { referer: "https://other.tunnel.test/" }]
+  for (const headers of browserHeaders) {
+    const denied = await send(target(), "/api/remote-control/pair", { method: "POST",
+      headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ code }) })
+    assert.equal(denied.status, 403)
+  }
+  const native = await send(target(), "/api/remote-control/pair", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) })
+  assert.equal(native.status, 200)
+  assert.ok(native.headers["set-cookie"])
+  const replay = await send(target(), "/api/remote-control/pair", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) })
+  assert.equal(replay.status, 401)
+  const cookie = String(native.headers["set-cookie"]).split(";")[0]!
+  const mutation = await send(target(), "/api/test/echo", { method: "POST", headers: { cookie } })
+  assert.equal(mutation.status, 403)
+})
+
 test("a paired device uses the app without loopback privileges or spoofed metadata", async (t) => {
   const { target, code } = await startRemoteSurface(t)
   const cookie = await pair(target(), code)
@@ -147,6 +167,20 @@ test("host-only interfaces stay closed to paired devices, including encoded path
     })
     assert.equal(response.status, 404, `${method} ${pathname}`)
   }
+})
+
+test("paired devices retain SideCar registration API access without content or local privileges", async t => {
+  const { target, code } = await startRemoteSurface(t)
+  assert.equal((await send(target(), "/api/sidecars")).status, 401)
+  const cookie = await pair(target(), code)
+  const headers = { cookie, origin: ORIGIN, "content-type": "application/json" }
+  assert.equal((await send(target(), "/api/sidecars", { headers })).status, 200)
+  const created = await send(target(), "/api/sidecars", { method: "POST", headers,
+    body: JSON.stringify({ name: "Fixture", port: 3000 }) })
+  assert.equal(created.status, 201, created.body)
+  assert.equal((await send(target(), "/sidecars/fixture/", { headers })).status, 404)
+  const meta = JSON.parse((await send(target(), "/api/meta", { headers })).body)
+  assert.equal(meta.localRequest, false)
 })
 
 // Writes a raw request line, which the HTTP client would otherwise normalize.

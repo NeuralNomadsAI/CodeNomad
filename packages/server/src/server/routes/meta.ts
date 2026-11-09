@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { ServerMeta } from "../../api-types"
-import { isRemoteRequest } from "../../remote-control/request-origin"
+import { isLocalRequest, isRemoteRequest } from "../../remote-control/request-origin"
 import { isLoopbackHost, isWildcardHost } from "../network-host"
 import { serverOperatingSystemName } from "../os-name"
 
@@ -13,6 +13,7 @@ interface RouteDeps {
 export function registerMetaRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/meta", async (request) => ({
     ...buildMetaResponse(deps.serverMeta),
+    localRequest: isLocalRequest(request),
     ...(isRemoteRequest(request) && !deps.remotePreviewsAllowed() ? { previewsUnavailable: true as const } : {}),
   }))
 }

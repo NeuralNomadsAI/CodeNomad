@@ -52,12 +52,21 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   Every other upgrade gets 404.
 - `request-origin.ts` is the only authority for local privileges:
   `isLocalRequest()` requires a loopback peer **and** a non-ingress socket.
+- The direct listener applies the shared host-only paths to every non-local
+  request, including encoded route targets and SideCar WebSocket upgrades.
+  Direct password login, its page and logout remain available to LAN clients.
+  `GET /api/remote-control/status` is available to authenticated clients and
+  returns `manageable: false` for non-local peers. SideCar registration APIs remain
+  available to authenticated clients; content and WebSockets require loopback.
+  Live preview capabilities retain their scoped admission. `/api/meta` reports
+  `localRequest` using that same transport authority; the UI hides password changes,
+  SideCar opening and remote-server management unless it is true.
 - `gate.ts` runs before CORS, authentication and routing. It requires the exact
-  tunnel `Host` and the public `Origin` on mutations, and strips forwarding
+  tunnel `Host` and the public `Origin` on browser mutations, and strips forwarding
   headers. It accepts origin-form targets only (no absolute-form, leading `//`
   or fragment, which the router would reinterpret) and judges the path the
   router routes (`server/routed-path.ts`). It denies host-only paths: login and token
-  bootstrap, Remote Control management, remote windows/proxy, SideCars,
+  bootstrap, Remote Control management, remote windows/proxy, SideCar content,
   previews and the automation bridge. A live `/previews/<token>/…` capability
   is admitted without a device cookie or public `Origin` (its sandboxed document
   sends neither) while the host's **Web previews** switch is on, the default:
@@ -69,6 +78,9 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   Every other path requires a paired device. Refusals close the connection,
   because an unread body would otherwise break the client's next keep-alive
   request.
+- Server-to-server `POST /api/remote-control/pair` accepts a valid one-use
+  code with no Origin, Referer or browser fetch metadata. Browser pairing
+  supplies the exact tunnel Origin. Other tunnel mutations require that Origin.
 - A remote `/api/auth/status` without a valid device reports
   `pairingRequired`. The recovery dialog then explains how to pair again
   instead of offering password login, keeping the page and its drafts.
@@ -94,6 +106,41 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   It refuses URLs with user info or a fragment, so a pairing code or password
   never travels on a command line; pair from Add server instead.
 
+## Direct listener origins and password sessions
+
+The direct listener grants credentialed CORS to its advertised local and remote
+origins, reachable interface addresses and explicit `CODENOMAD_ALLOWED_ORIGINS`.
+This environment variable is a comma-separated list of exact HTTP(S) origins,
+for example `https://code.example.test,https://ui.example.test:8443`. Paths,
+credentials, opaque origins and wildcards fail startup. Configure DNS aliases,
+reverse-proxy public origins and separately hosted UIs here, then restart.
+Forwarding headers grant neither origins nor local privileges; a proxy connected
+over loopback has the privileges of its loopback transport and needs an enforcing
+trusted perimeter. The configured UI development origin is admitted for local
+requests. CORS for opaque preview documents is scoped to live preview capabilities.
+Preview capability admission requires the matched route's `previewCapability`
+configuration; a capability Host on an ordinary application route retains that
+route's authentication, origin and host-only checks.
+
+Direct state-changing requests check Origin first, then the origin of Referer
+when Origin is absent. Non-local mutations require an allowed source; native
+loopback calls may omit both. Read-only methods are GET, HEAD and OPTIONS.
+Authentication and the host-only gate also apply with explicitly allowed origins;
+`--dangerously-skip-auth` retains the origin and host-only gates.
+
+SideCar WebSocket upgrades apply this same Origin/Referer policy before opening
+an upstream connection, alongside their loopback transport and session checks.
+Native loopback upgrades may omit both source headers. Preview WebSockets use
+their scoped capability admission.
+
+Password sessions expire after 24 hours without an authenticated request and
+after seven days from creation. `CODENOMAD_SESSION_IDLE_SECONDS` and
+`CODENOMAD_SESSION_ABSOLUTE_SECONDS` configure positive integer lifetimes in
+seconds at startup. Logout revokes its current token; a successful persistent
+password change revokes every session for that user, including the caller.
+A failed password change preserves the existing sessions. Remote Control device
+credentials follow their separate registry lifetime and revocation rules.
+
 ## Validation
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
@@ -101,6 +148,14 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   host-only paths including encoded ones, loopback privileges, spoofed headers,
   upgrades, web previews and their switch, revocation of a live stream, skipped
   local auth and tunnel failure.
+- `direct-listener.test.ts` exercises the real application with LAN and loopback
+  peers, credentialed CORS, Origin/Referer checks and host-only routes.
+  `server/__tests__/sidecar-proxy.test.ts` covers SideCar upgrade source checks,
+  refusal before upstream contact, authenticated and skipped-auth exchanges,
+  native origin-less calls and logout revocation.
+  `session-manager.test.ts` covers idle/absolute deadlines, configuration and
+  revocation; `auth-responsiveness.test.ts` covers logout and password replacement
+  through real auth routes alongside concurrent credential checks.
 - `manager.test.ts` covers resuming after a restart, Stop, never-started
   installations, failed resumes and backends sharing a configuration;
   `owner-lease.test.ts` the lease; `tests/browser/remote-control-settings.test.ts`

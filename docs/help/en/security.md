@@ -31,7 +31,11 @@ Bootstrap is accepted only from the host's own loopback listener, not from a LAN
 
 Direct sign-in creates an opaque in-memory backend session and a `codenomad_session` cookie (or the configured cookie name). Cookies are `HttpOnly`, `SameSite=Lax`, scoped to `/`, and marked `Secure` when issued over HTTPS. They are browser-session cookies; backend restart invalidates the in-memory sessions. Reauthenticate in place when asked rather than resending failed mutations.
 
-Changing a password changes subsequent credential checks; it does **not** invalidate already issued direct sessions or Remote Control devices. For suspected compromise:
+Logout revokes the current direct session. A successful password change on the host revokes all that user's direct sessions, including the caller; sign in again. Sessions expire after 24 hours without authenticated requests or seven days from creation. Set `CODENOMAD_SESSION_IDLE_SECONDS` and `CODENOMAD_SESSION_ABSOLUTE_SECONDS` to positive integer seconds before starting the backend to adjust these limits. Remote Control devices are revoked separately.
+
+LAN clients can sign in, sign out and use projects. Password changes, Remote Control management, remote-server/proxy tools and SideCars are managed on the loopback host. Browser mutations require an allowed Origin, or Referer when Origin is absent. The server's advertised origins are allowed; for DNS aliases, reverse proxies or a separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` to comma-separated exact HTTP(S) origins, such as `https://code.example.test,https://ui.example.test:8443`, and restart. Use no paths or wildcards. This grants browser access, not host privileges. Native clients making LAN mutations must also supply an allowed Origin. A trusted proxy connected over loopback has host privileges and needs its own access controls.
+
+For suspected compromise:
 
 1. Restrict network exposure and set a new password on the host, or change your runtime secret and restart.
 2. Restart the backend to invalidate its existing direct sessions.

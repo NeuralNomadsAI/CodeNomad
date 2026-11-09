@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
-import cors from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
@@ -90,8 +89,9 @@ import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy
 import { proxyWebSocket } from "./proxy-websocket"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
-import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
-import { isRemoteRequest } from "../remote-control/request-origin"
+import { gateRemoteRequest, isHostOnlyPath, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { registerDirectOriginPolicy } from "./direct-origin"
 import { framesNoBody } from "./bodiless-request"
 import { addProxiedHttpMethods } from "./proxied-http-methods"
 import { ROUTER_OPTIONS, routedPath } from "./routed-path"
@@ -147,6 +147,7 @@ interface HttpServerDeps {
   permissionReceipts?: PermissionReceipts
   uiStaticDir: string
   uiDevServerUrl?: string
+  allowedOrigins?: string[]
   logger: Logger
   nativeParent: NativeParent
   automationBridgeToken: string
@@ -165,8 +166,6 @@ interface HttpServerStartResult {
   url: string
   displayHost: string
 }
-
-const CORS_METHODS = "GET,HEAD,PUT,PATCH,POST,DELETE"
 
 export function shouldRetryPreferredPort(error: unknown, autoPortRequested: boolean, platform = process.platform): boolean {
   if (!autoPortRequested) return false
@@ -232,63 +231,28 @@ export function createHttpServer(deps: HttpServerDeps) {
     if (!gateRemoteRequest(request, reply, remoteGate)) done()
   })
 
-  const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
-  const getSelfOrigins = (): Set<string> => {
-    const origins = new Set<string>()
-    const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl]
-    for (const candidate of candidates) {
-      if (!candidate) continue
-      try {
-        origins.add(new URL(candidate).origin)
-      } catch {
-        // ignore
-      }
-    }
-    for (const addr of deps.serverMeta.addresses ?? []) {
-      try {
-        origins.add(new URL(addr.remoteUrl).origin)
-      } catch {
-        // ignore
-      }
-    }
-    return origins
+  const isLivePreview = (request: FastifyRequest) => {
+    // Capability admission belongs to the matched proxy route, never Host alone:
+    // explicit application routes take precedence over the host's wildcard route.
+    const config = request.routeOptions.config
+    if (!("previewCapability" in config) || config.previewCapability !== true) return false
+    const pathname = routedPath(request.raw.url ?? "/")
+    const token = parsePreviewCapabilityHost(request.headers.host) ?? pathname?.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
+    if (!token) return false
+    try { return Boolean(deps.previewManager.get(decodeURIComponent(token))) } catch { return false }
   }
-
-  app.register(cors, {
-    origin: (origin, cb) => {
-      if (!origin) {
-        cb(null, true)
-        return
-      }
-
-      const selfOrigins = getSelfOrigins()
-      if (selfOrigins.has(origin)) {
-        cb(null, true)
-        return
-      }
-
-      if (origin === "null") {
-        cb(null, true)
-        return
-      }
-
-       if (allowedDevOrigins.has(origin)) {
-         cb(null, true)
-         return
-       }
-
-       // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
-       if (isWildcardHost(deps.bindHost) || !isLoopbackHost(deps.bindHost)) {
-         cb(null, true)
-         return
-       }
-
-
-      cb(null, false)
-    },
-    // Every method the UI sends cross-origin; @fastify/cors defaults to the CORS-safelisted ones.
-    methods: CORS_METHODS,
-    credentials: true,
+  app.addHook("onRequest", (request, reply, done) => {
+    if (isLocalRequest(request) || isRemoteRequest(request)) return done()
+    const pathname = routedPath(request.raw.url ?? "/")
+    if (pathname === null) return reply.header("connection", "close").code(400).send({ error: "Invalid request path" })
+    if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)) {
+      return reply.header("connection", "close").code(404).send({ error: "Not found" })
+    }
+    done()
+  })
+  const allowsDirectSource = registerDirectOriginPolicy(app, {
+    meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, devServerUrl: deps.uiDevServerUrl,
+    publicHost: () => remoteGate.publicHost(), isPreview: isLivePreview,
   })
 
   app.register(replyFrom, {
@@ -323,18 +287,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       pathname.startsWith("/api/remote-proxy/sessions/") &&
       deps.authManager.isLoopbackRequest(request)
 
-    const encodedPreviewToken = pathname.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
-    const hostPreviewToken = parsePreviewCapabilityHost(request.headers.host)
-    let isPreviewCapability = false
-    if (hostPreviewToken) {
-      isPreviewCapability = Boolean(deps.previewManager.get(hostPreviewToken))
-    } else if (encodedPreviewToken) {
-      try {
-        isPreviewCapability = Boolean(deps.previewManager.get(decodeURIComponent(encodedPreviewToken)))
-      } catch {
-        // Malformed capability paths remain subject to normal authentication.
-      }
-    }
+    const isPreviewCapability = isLivePreview(request)
 
     if (request.headers.origin === "null" && !isPreviewCapability) {
       reply.code(403).send({ error: "Opaque origins may access preview capabilities only" })
@@ -479,6 +432,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     sidecarManager: deps.sidecarManager,
     authManager: deps.authManager,
     logger: proxyLogger,
+    allowsSource: request => allowsDirectSource({ raw: request, headers: request.headers }),
   })
   const previewUpgrade = setupPreviewWebSocketProxy(app, {
     previewManager: deps.previewManager,
@@ -590,7 +544,7 @@ interface SideCarProxyDeps {
 }
 
 interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
-  authManager: AuthManager
+  allowsSource(request: import("http").IncomingMessage): boolean
 }
 
 interface PreviewProxyDeps {
@@ -664,12 +618,13 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
       })
     }
 
-    previewApp.all("/", { constraints: { host: capabilityHost } }, hostHandler)
-    previewApp.all("/*", { constraints: { host: capabilityHost } }, hostHandler)
-    previewApp.all("/previews/:token", async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
+    const config = { previewCapability: true }
+    previewApp.all("/", { config, constraints: { host: capabilityHost } }, hostHandler)
+    previewApp.all("/*", { config, constraints: { host: capabilityHost } }, hostHandler)
+    previewApp.all("/previews/:token", { config }, async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
       await proxyPreviewRequest({ request, reply, previewManager: deps.previewManager, logger: deps.logger, pathSuffix: "" })
     })
-    previewApp.all("/previews/:token/*", async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
+    previewApp.all("/previews/:token/*", { config }, async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
       await proxyPreviewRequest({
         request,
         reply,
@@ -708,6 +663,15 @@ function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocket
     const rawUrl = request.url ?? "/"
     const parsed = parseSideCarUpgradePath(rawUrl)
     if (!parsed) {
+      return
+    }
+    if (!isLocalRequest({ raw: request })) {
+      rejectUpgrade(socket as Socket, 404, "Not Found")
+      return
+    }
+    // Upgrades bypass Fastify hooks; use the HTTP mutation source policy before proxying.
+    if (!deps.allowsSource(request)) {
+      rejectUpgrade(socket as Socket, 403, "Forbidden")
       return
     }
 
@@ -2370,12 +2334,6 @@ async function proxySideCarWebSocketUpgrade(args: {
 
   if (!isWebSocketUpgradeRequest(request)) {
     rejectUpgrade(socket, 400, "Bad Request")
-    return
-  }
-
-  // Upgrades bypass the HTTP preHandler: refuse opaque origins here as it does.
-  if (request.headers.origin === "null") {
-    rejectUpgrade(socket, 403, "Forbidden")
     return
   }
 

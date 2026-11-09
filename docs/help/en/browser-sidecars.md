@@ -69,7 +69,9 @@ Registration is server configuration, shared by its clients; it neither installs
 
 If unreachable, check the process and port on the backend. If HTML loads but assets/WebSockets fail, check the tool's base path and prefix mode. Recreate a wrong registration with the intended settings; do not expose the upstream publicly just to work around a proxy error. SideCar applications can expose a terminal or files with the server account's authority; trust their users and configuration.
 
-A SideCar is a trusted extension of CodeNomad, not a sandboxed preview: its page runs with CodeNomad's own origin, so its scripts can use CodeNomad with your signed-in access. Register only services whose code you trust. CodeNomad does not forward its own sign-in cookies to the service, while the service's own cookies are kept. Remote Control does not expose SideCar application proxy traffic; use the appropriate direct-access path described in [Remote access](remote-access.md) and [Remote Control](remote-control.md).
+A SideCar is a trusted extension of CodeNomad, not a sandboxed preview: its page runs with CodeNomad's own origin, so its scripts can use CodeNomad with your signed-in access. Register only services whose code you trust. CodeNomad does not forward its own sign-in cookies to the service, while the service's own cookies are kept.
+
+SideCar content (`/sidecars/`) and SideCar WebSockets require a loopback connection on the host. Registration through `/api/sidecars` is available to paired devices and authenticated direct LAN clients. Live preview content (`/previews/`) is available over direct LAN access with a valid capability token; [Remote Control](remote-control.md#remote-surface) web previews remain available with their capability token while enabled. See [Upgrading](remote-access.md#upgrading) for direct-access requirements.
 
 ## OpenVSCode Server recipe {#openvscode}
 

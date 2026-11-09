@@ -8,6 +8,8 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
+import { parseAllowedOrigins } from "./server/direct-origin"
+import { sessionTimeoutMs } from "./auth/session-manager"
 import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
 import { resolveConfigLocation } from "./config/location"
@@ -322,6 +324,8 @@ async function main() {
       username: options.authUsername,
       password: options.authPassword,
       cookieName: options.authCookieName,
+      sessionIdleMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_IDLE_SECONDS, "CODENOMAD_SESSION_IDLE_SECONDS"),
+      sessionAbsoluteMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_ABSOLUTE_SECONDS, "CODENOMAD_SESSION_ABSOLUTE_SECONDS"),
       generateToken: options.generateToken,
       dangerouslySkipAuth: options.dangerouslySkipAuth,
     },
@@ -527,6 +531,7 @@ async function main() {
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
+    allowedOrigins: parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS),
     memoryStore,
     workspaceManager,
     settings,
