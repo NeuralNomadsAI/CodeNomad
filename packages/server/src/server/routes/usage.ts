@@ -54,11 +54,12 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 15_000)
       const signal = controller.signal
-      // Google refresh/quota reads share a deadline from route entry, including
-      // native credential reads, leaving 3 seconds for publication revalidation.
-      const googleController = resolveUsageProvider(params.data.providerId)?.id === "google" ? new AbortController() : null
-      const googleTimeout = googleController ? setTimeout(() => googleController.abort(), 12_000) : undefined
-      const quotaSignal = googleController ? AbortSignal.any([signal, googleController.signal]) : signal
+      // Google reads and optional free calibration share an entry-time deadline,
+      // including credentials, leaving 3 seconds for publication revalidation.
+      const quotaController = resolveUsageProvider(params.data.providerId)?.id === "google" ||
+        isOpenCodeFreeModel(params.data.providerId, modelId) ? new AbortController() : null
+      const quotaTimeout = quotaController ? setTimeout(() => quotaController.abort(), 12_000) : undefined
+      const quotaSignal = quotaController ? AbortSignal.any([signal, quotaController.signal]) : signal
       let consoleTimeout: ((publicationSignal: AbortSignal) => Promise<unknown>) | undefined
       try {
         return await boundedRead(async () => {
@@ -78,7 +79,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           connection.assertCurrent()
           const free = isOpenCodeFreeModel(params.data.providerId, modelId)
           const provider = free ? null : resolveUsageProvider(params.data.providerId)
-          const native = free ? await freeUsage.read(connection, params.data.providerId, modelId, signal)
+          const native = free ? await freeUsage.read(connection, params.data.providerId, modelId, signal, quotaSignal)
             : !provider || provider.id === "codex"
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
@@ -140,7 +141,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
         const missing = error && typeof error === "object" && "_tag" in error && error._tag === "SessionNotFoundError"
         return reply.code(missing ? 404 : 503).send({ error: missing ? "Session not found" : "Provider usage unavailable" })
       } finally {
-        clearTimeout(googleTimeout)
+        clearTimeout(quotaTimeout)
         clearTimeout(timeout)
       }
     },

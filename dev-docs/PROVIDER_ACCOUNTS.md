@@ -325,13 +325,17 @@ credentials and automatic-selection policy. Marks live in backend memory and
 are lost on restart. Never feed this evidence to account selection.
 
 `OPENCODE_FREE_CONSOLE_CALIBRATION` in `usage/opencode-free-usage.ts` is
-false, keeping free usage credential-free. Enabling it requires proof that the
-Console counts free traffic in the relevant scope. The enabled path uses the
-same bounded models parser for sequential `range=24h` pages and raises a known
-local count to the maximum of local and Console free-model requests. Its
+true. With a usable active Console credential, the display uses the same bounded
+models parser for sequential `range=24h` pages and raises a known local count to
+the maximum of local and Console free-model requests since UTC midnight, keeping
+the **Estimated** label. The Console account scope can cover other clients and
+IP addresses; the 200-request reference describes an IP-based limit. Its
 separate demand cache keys by credential digest and UTC day (32 entries, 60-second
 TTL capped by midnight and OAuth expiry). Console failures retain the local
-estimate and exhaustion; reads crossing midnight discard the previous day's
+estimate and exhaustion. A per-caller calibration wait, including credential
+lookup, expires 12 seconds from route entry, reserving three seconds for ownership
+revalidation and local publication. Shared Console transports keep their own
+15-second deadline. Reads crossing midnight discard the previous day's
 counter. Publication reapplies exhaustion after asynchronous ownership checks.
 
 ## Auto-select account

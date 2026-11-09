@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "स्थानीय CodeNomad सञ्झ्याल खुला रहँदा (मिनिमाइज गरिएको अवस्थामा पनि) कम्प्युटरलाई स्लीप मोडमा जानबाट रोक्छ; स्क्रिन भने बन्द हुन सक्छ। यो विकल्प बन्द हुँदा, सत्रले काम गरिरहेको बेला मात्र CodeNomad ले कम्प्युटर जागा राख्छ।",
   "providerUsage.estimated": "अनुमानित",
   "providerUsage.exhausted": "सीमा समाप्त",
-  "providerUsage.estimateInfo": "स्थानीय चरणहरूको सङ्ख्याबाट निःशुल्क अनुरोधहरूको अनुमान गरिन्छ। वास्तविक सीमाहरू फरक हुन्छन्। सीमा समाप्त भएको चिन्ह 00:00 UTC मा हट्छ।",
+  "providerUsage.estimateInfo": "स्थानीय चरण र 00:00 UTC देखि Console मा उपलब्ध निःशुल्क अनुरोधमध्ये ठूलो मान प्रयोग गर्छ। Console ले पूरै खाता समेट्छ; वास्तविक IP आधारित सीमा फरक हुन्छन्। सीमा समाप्त भएको चिन्ह 00:00 UTC मा हट्छ।",
   "providerUsage.console.requests": "अनुरोधहरू",
   "providerUsage.console.today": "आज (UTC)",
   "providerUsage.console.sevenDays": "७ दिन (UTC)",
