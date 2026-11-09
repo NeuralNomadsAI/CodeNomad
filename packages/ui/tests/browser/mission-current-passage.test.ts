@@ -28,7 +28,7 @@ import { projectMissionPanel } from "../../../server/src/missions/mission-panel-
 import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
 import { contentDigest } from "../../../server/src/missions/content-digest"
 import { readMissionContent } from "../../../server/src/missions/mission-content"
-import { missionActivityContext } from "../../../server/src/missions/mission-activity-context"
+import { activityActorWindow, missionActivityContext } from "../../../server/src/missions/mission-activity-context"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -130,7 +130,7 @@ async function setupReaderFollow(page: Page, nativePending = true) {
           ...damage, passage: input.source, window: { offset: 0, end: 1, total: 1, order: contentDigest(JSON.stringify(input.body)) } },
         [{ available: true, ...readMissionContent("project", input.body, value) }], input.selector.cursor) })
         if (input.selector.source === "activity") return route.fulfill({ json: missionPanelPage({ source: "activity", missionID: value.id, projectID: "project", revision: value.revision,
-          ...damage, passage: input.source, phase: "observed", observedAt: 4 }, [{ context: missionActivityContext(value, damage), coverage: "observed",
+          ...damage, passage: input.source, phase: "observed", observedAt: 4 }, [{ context: activityActorWindow(missionActivityContext(value, damage), 0, 160), coverage: "observed",
           requests: { state: "observed", items: [] }, activity: { actors: [], family: { state: "observed", members: [] } } }], input.selector.cursor) })
         return route.fulfill({ json: projectMissionPanel(value, input.selector, damage, { passage: input.source }) })
       }
@@ -322,7 +322,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         [{ available: true, ...readMissionContent("project", input.body, current) }], selector.cursor) })
       }
       if (selector.source === "activity") {
-        const context = missionActivityContext(mission, damage)
+        const context = activityActorWindow(missionActivityContext(mission, damage), 0, 160)
         return route.fulfill({ json: missionPanelPage({ source: "activity", missionID: mission.id, projectID: "project", revision: mission.revision, ...damage,
           passage: input.source, phase: "observed", observedAt: 4 }, [{ context, coverage: observed ? "observed" : "unknown",
           requests: { state: observed ? "observed" : "unknown", items: [] }, activity: { actors: [{ sessionId: "ses_coordinator", state: "unknown" }, { sessionId: "ses_task", state: "running" }],

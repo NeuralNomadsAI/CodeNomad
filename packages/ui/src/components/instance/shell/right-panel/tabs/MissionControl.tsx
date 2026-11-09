@@ -536,7 +536,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const unseen = facts.filter((task, index) => taskStates[index] === "done" && missionTaskUnseen(completionScope(), value.id, task))
     const observeNative = facts.some(task => !task.actorSessionId && !task.replacedByTaskKey && !["completed", "failed", "withdrawn"].includes(task.status))
       && Boolean(family?.state !== "unknown" && family?.members.some(member => member.actorSessionId === value.coordinatorSessionId && member.sessionId !== value.coordinatorSessionId))
-    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, facts.length ? facts : undefined, conversation),
+    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, currentMarks || map ? facts : undefined, conversation),
       sessionContext, observeNative, facts, taskStates, coveredActors, offPageOwed, partialTasks, unseen }]
   })))
   const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {

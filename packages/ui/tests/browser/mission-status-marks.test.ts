@@ -11,7 +11,7 @@ import { panelMissions } from "./mission-content-fixture"
 import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
 import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
 import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
-import { missionActivityContext } from "../../../server/src/missions/mission-activity-context"
+import { activityActorWindow, missionActivityContext } from "../../../server/src/missions/mission-activity-context"
 
 let browser: Browser, url: string
 before(async () => {
@@ -63,7 +63,7 @@ async function open(missions: () => MissionMap[], activity: () => Array<{ missio
     if (selector.source === "summaries" || selector.source === "cleanups" || selector.source === "marks") throw Error("Unexpected project read")
     const damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
     if (selector.source === "activity") return route.fulfill({ json: missionPanelPage({ projectID: "project", missionID: map.id, revision: map.revision,
-      ...damage, passage: source, source: "activity", phase: "observed", observedAt: 1 }, [{ context: missionActivityContext(map, damage), coverage: "unknown",
+      ...damage, passage: source, source: "activity", phase: "observed", observedAt: 1 }, [{ context: activityActorWindow(missionActivityContext(map, damage), 0, 160), coverage: "unknown",
       requests: { state: "unknown", items: [] }, activity: { actors: map.actors.map(actor => ({ sessionId: actor.sessionId, state: "unknown" })),
         family: { state: "unknown", members: [] } } }], selector.cursor) })
     return route.fulfill({ json: projectMissionPanel(map, selector, damage, { passage: source }) })

@@ -113,7 +113,8 @@ test("the task tree is the single task view: one-line icon+title nodes, measured
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Work title", exact: true }).waitFor()
     assert.equal(await task.getAttribute("aria-current"), "true")
     // Edges leave and enter the measured status icons.
-    const [mark, edge] = await Promise.all([row.locator(".mission-tree-mark").boundingBox(), f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').boundingBox()])
+    const [mark, edge] = await Promise.all([row.locator(".mission-tree-mark").evaluate(element => element.getBoundingClientRect().toJSON()),
+      f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').evaluate(element => element.getBoundingClientRect().toJSON())])
     assert(mark && edge && Math.abs(edge.y + edge.height - (mark.y + mark.height / 2)) <= 2, "the edge ends at the dependent's icon")
     assert.equal(await f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').count(), 1)
     assert.equal(await f.page.locator('.mission-graph path[data-from="work"][data-to="after"]').count(), 1)

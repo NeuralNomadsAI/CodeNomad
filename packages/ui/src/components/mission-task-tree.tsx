@@ -150,7 +150,12 @@ export function MissionTaskTree(props: {
     <Show when={attention()}>{counts => <p class="mission-tree-summary">{t("missionsPanel.tasks")} · {total()}
       <SettingsInfoTip text={t("missionsPanel.tasks.attention.counts", counts())} /></p>}</Show>
     <Show when={total()}>
-      <div ref={element => { setFlow(element); onCleanup(() => setFlow(undefined)) }} class="mission-flow" classList={{ "mission-flow-linked": linked() }} style={{ "--mission-graph-extra": `${graphExtra()}px` }}>
+      <div ref={element => {
+        let disposed = false
+        // MissionRows attaches retained detail in an effect before viewport discovery.
+        queueMicrotask(() => { if (!disposed) setFlow(element) })
+        onCleanup(() => { disposed = true; setFlow(undefined) })
+      }} class="mission-flow" classList={{ "mission-flow-linked": linked() }} style={{ "--mission-graph-extra": `${graphExtra()}px` }}>
         <Show when={viewport.scrollRef()}>{host => <Virtualizer as={List} item="li" data={entries()} scrollRef={host()}
           startMargin={viewport.startMargin()} ref={setVirtualizer} bufferSize={400} keepMounted={kept()}
           onResize={() => setLayoutVersion(value => value + 1)}>{id => {

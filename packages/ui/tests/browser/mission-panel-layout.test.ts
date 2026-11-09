@@ -199,7 +199,7 @@ test("finished one-time Mission: titled entry, disabled inapplicable actions, pr
     for (const [key, enabled] of [["request", false], ["interrupt", false], ["save-brief", true], ["edit", false]] as const)
       assert.equal((await missionMenuItemState(page, key)).enabled, enabled, key)
     const tree = detail(page).locator(".mission-tree")
-    assert.equal(await tree.locator("li[data-state='done']").count(), 8)
+    assert.equal(await tree.locator(".mission-tree-node[data-state='done']").count(), 8)
     assert.equal(await detail(page).locator("p, .mission-result").count(), 0, "no result prose in the panel")
     assert.doesNotMatch(await page.locator(".mission-control").innerText(), /ses_|task-t0|Release notes are drafted/)
     await captureMissionView(page, "finished-one-time")
