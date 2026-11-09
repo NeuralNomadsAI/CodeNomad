@@ -111,6 +111,15 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     case "form.replied":
     case "form.cancelled":
       return
+    case "session.archived":
+    case "session.unarchived":
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+      withSession(instanceId, event.data.sessionID, session => {
+        const { archived: _archived, ...time } = session.time
+        session.time = { ...time, updated: Math.max(time.updated, event.created),
+          ...(event.type === "session.archived" ? { archived: event.created } : {}) }
+      })
+      return
     case "session.renamed":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
       withSession(instanceId, event.data.sessionID, (session) => { session.title = event.data.title })
@@ -365,6 +374,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   const generation = getOpenCodeInstanceGeneration(instanceId)
 
   try {
+    const captured = sessions().get(instanceId)?.get(sessionId)
     const info = await client.session.get({ sessionID: sessionId })
     // A project closed or a client replaced during the read publishes nothing.
     if (!isInstanceGenerationCurrent(instanceId, generation)) return null
@@ -390,7 +400,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       }
       const merged = mergeFetchedSessionRuntimeState(
         candidate,
-        existing,
+        captured,
         existing,
         getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
       )

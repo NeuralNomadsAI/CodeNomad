@@ -19,6 +19,12 @@ Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Eintr�
 
 Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die Reihenfolge der Liste. Er bleibt im Arbeitsspeicher, überspringt nicht verfügbare/gelöschte Unterhaltungen und wird nach einem Neustart nicht wiederhergestellt. Die Auswahl einer neuen Unterhaltung nach dem Zurückgehen ersetzt den Vorwärtspfad. **Vorherige Sitzung** / **Nächste Sitzung** in der Palette durchlaufen stattdessen die sichtbare Liste.
 
+## Archivieren und wiederherstellen {#archive}
+
+Wählen Sie **Sitzung archivieren** in den Zeilenaktionen, um den Verlauf zu behalten und den inaktiven Zweig aus der normalen Ansicht auszublenden. Die ausgewählte Unterhaltung sowie laufende Arbeit und offene Fragen bleiben erreichbar. Archivieren beendet keine Arbeit, löscht keine Nachrichten und ändert nicht die eigenen Archivkennzeichen der Untersitzungen.
+
+Öffnen Sie die Sitzungssuche und wählen Sie **Archivierte Sitzungen** oder **Alle Sitzungen**. Die Zeilen zeigen **Archiviert** und bieten **Sitzung wiederherstellen**. Aktivieren Sie Untersitzungen, um Kinder auch unter archivierten Eltern unabhängig zu finden. **Nicht archivierte Sitzungen** filtert nach dem eigenen Kennzeichen jeder Unterhaltung. Stellen Sie einen archivierten Vorfahren wieder her, um seinen inaktiven Zweig wieder normal anzuzeigen. Aktualisieren Sie bei unbestätigter Aktion die Liste vor einem erneuten Versuch.
+
 ## Agent, Modell und Denkaufwand wählen {#agent-model-thinking}
 
 1. Verwenden Sie vor dem Senden die Agenten- und Modellauswahl in der Fußzeile des Eingabefelds.

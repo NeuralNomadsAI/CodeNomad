@@ -173,8 +173,10 @@ reasoning identity and `stores/session-actions.ts` refuses pruning
 `Session.Message.Compaction.Completed` with `metadata` but no `recent`
 (`compatibility/negotiate.ts`). `planner.ts` hashes the
 `SessionLegacy` projection and writes surviving stored parts back unchanged
-(`pruning.test.ts`). CodeNomad never archives (`session.archived`/`unarchived`
-only invalidate); the UI compaction part keeps `native` (`normalizers.ts`). The
+(`pruning.test.ts`). Session archive/restore uses native `session.update` with
+`archived: true|false`, authoritative `time.archived` and `session.archived`/`unarchived`
+events; `scripts/test-session-archive-native.mjs` covers filtered cursor pages,
+idempotence and transcript/child preservation. The UI compaction part keeps `native` (`normalizers.ts`). The
 packed pruning plugin declares every bare import, including `@opencode/schema`
 (`package.test.ts`).
 

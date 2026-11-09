@@ -44,7 +44,7 @@ export const AdvancedSettingsSection: Component = () => {
           <summary>
             {t("advancedSettings.environmentVariables.title")}
             <span class="settings-env-count">{t(variableCount() === 1 ? "envEditor.count.one" : "envEditor.count.other", { count: variableCount() })}</span>
-            <SettingsInfoTip text={t("advancedSettings.environmentVariables.subtitle")} />
+            <SettingsInfoTip text={t("advancedSettings.environmentVariables.subtitle")} help={{ page: "opencode", anchor: "session-environment" }} />
             <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
           </summary>
           <EnvironmentVariablesEditor bare />
