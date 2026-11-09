@@ -464,16 +464,16 @@ test("free-model usage shows an estimate and estimated reset, then clears them o
     await requests[1].fulfill({ json: {
       requestedProviderId: "opencode", providerId: "opencode-free", providerName: "OpenCode",
       supported: true, configured: true, ok: true, estimated: true, fetchedAt: Date.now(),
-      freeEstimate: { requests: 42, reference: 200, exhausted: false },
-      windows: { daily: { usedPercent: 21, remainingPercent: 79, windowSeconds: 86400, resetAt: Date.now() + 86400000, valueLabel: "42 / 200" } },
+      freeEstimate: { requests: 42, reference: 800, exhausted: false },
+      windows: { daily: { usedPercent: 5.25, remainingPercent: 94.75, windowSeconds: 86400, resetAt: Date.now() + 86400000, valueLabel: "42 / 800" } },
     } })
-    await page.getByText("42 / 200", { exact: true }).waitFor()
+    await page.getByText("42 / 800", { exact: true }).waitFor()
     await page.getByText("Estimated", { exact: true }).waitFor()
     await page.getByText(/Estimated reset/).waitFor()
     await page.getByRole("button", { name: "Estimated", exact: true }).click()
-    await page.getByText(/Uses the higher of local steps and available Console free-model requests/).waitFor()
+    await page.getByText(/Sums only Console free-model requests since 00:00 UTC/).waitFor()
     await page.keyboard.press("Escape")
-    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "21")
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "5")
     await page.evaluate(() => (window as any).usageFixture.select({ providerId: "openai", modelId: "gpt-5" }))
     await waitRequests(requests, 3)
     assert.equal(await page.getByText(/Estimate:|Estimated reset/).count(), 0)
@@ -483,6 +483,31 @@ test("free-model usage shows an estimate and estimated reset, then clears them o
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+test("free quota without Console login shows the 800-request connection prompt instead of counters", async () => {
+  const page = await browser.newPage({ locale: "fr-FR", viewport: { width: 320, height: 480 } })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1); await fulfill(requests[0], 10)
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "opencode", modelId: "beam-free" }))
+    await waitRequests(requests, 2)
+    const base = { requestedProviderId: "opencode", providerId: "opencode-free", providerName: "OpenCode Console",
+      supported: true, configured: false, ok: false, estimated: true, fetchedAt: Date.now(), windows: {},
+      freeEstimate: { requests: null, reference: 800, exhausted: true }, unavailableReason: "opencode-console-missing-credential" }
+    await requests[1].fulfill({ json: base })
+    await page.getByRole("status").getByText(/Connectez-vous à OpenCode Console.*800/).waitFor()
+    await page.getByRole("button", { name: "Paramètres → Fournisseurs", exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.equal(await page.getByText(/\d+ \/ 800/).count(), 0)
+    if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE.replace(/\.png$/, "-connect.png") })
+    await page.evaluate(() => (window as any).usageFixture.event("credential.updated"))
+    await waitRequests(requests, 3)
+    await requests[2].fulfill({ json: { ...base, configured: true, unavailableReason: "opencode-console-network-error" } })
+    await page.getByRole("status").getByText("Impossible de joindre OpenCode Console.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 async function waitRequests(requests: Route[], count: number) {
   const deadline = Date.now() + 5000
   while (requests.length < count && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
@@ -1135,7 +1160,7 @@ test("French app locale formats Console numbers, USD and dates despite English b
   } finally { await page.close() }
 })
 
-test("free quota events coalesce; exhaustion remains textual with unknown count and expires at UTC midnight", async () => {
+test("free quota events coalesce; exhaustion keeps the Console count and expires at UTC midnight", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 320, height: 350 } })
   try {
     const midnight = Date.UTC(2026, 10, 7)
@@ -1145,17 +1170,17 @@ test("free quota events coalesce; exhaustion remains textual with unknown count 
     await waitRequests(requests, 1); await fulfill(requests[0], 10)
     await page.evaluate(() => (window as any).usageFixture.select({ providerId: "opencode", modelId: "big-pickle" }))
     await waitRequests(requests, 2)
-    const free = (exhausted: boolean, resetAt: number, count: number | null = null) => ({
+    const free = (exhausted: boolean, resetAt: number, count = 790) => ({
       requestedProviderId: "opencode", providerId: "opencode-free", providerName: "OpenCode", supported: true, configured: true,
-      ok: true, estimated: true, fetchedAt: midnight - 1000, freeEstimate: { requests: count, reference: 200, exhausted },
+      ok: true, estimated: true, fetchedAt: midnight - 1000, freeEstimate: { requests: count, reference: 800, exhausted },
       windows: { daily: { usedPercent: exhausted ? 100 : 0, remainingPercent: exhausted ? 0 : 100, resetAt, windowSeconds: 86400 } },
     })
     await requests[1].fulfill({ json: free(true, midnight) })
     await page.getByText("Exhausted", { exact: true }).waitFor()
     await page.getByText("Estimated", { exact: true }).waitFor()
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100")
-    assert.equal(await page.getByText("200 / 200", { exact: true }).count(), 0)
-    assert.equal(await page.getByText("--", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("800 / 800", { exact: true }).count(), 0)
+    await page.getByText("790 / 800", { exact: true }).waitFor()
     const info = page.getByRole("button", { name: "Estimated", exact: true })
     await info.focus(); await page.keyboard.press("Enter")
     await page.getByText(/Exhaustion clears at 00:00 UTC/).waitFor()
@@ -1172,7 +1197,7 @@ test("free quota events coalesce; exhaustion remains textual with unknown count 
     await waitRequests(requests, 4)
     assert.equal(await page.getByText("Exhausted", { exact: true }).count(), 0)
     await requests[3].fulfill({ json: free(false, midnight + 86400000, 0) })
-    await page.getByText("0 / 200", { exact: true }).waitFor()
+    await page.getByText("0 / 800", { exact: true }).waitFor()
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "0")
     await page.evaluate(() => (window as any).usageFixture.active(false))
     await page.evaluate(() => (window as any).usageFixture.event("session.step.failed", "first", "/repo", { error: { type: "provider.quota" } }))

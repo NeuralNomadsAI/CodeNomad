@@ -236,7 +236,7 @@ export interface ProviderUsageResponse {
   unavailableAction?: ProviderUsageUnavailableAction
   console?: import("./api-types-provider-usage").OpenCodeConsoleUsage
   freeEstimate?: import("./api-types-provider-usage").OpenCodeFreeEstimate
-  /** Computed locally from recorded activity because the provider publishes no counter. */
+  /** The allowance or reset is a local reference; request counts can come from Console. */
   estimated?: true
 }
 

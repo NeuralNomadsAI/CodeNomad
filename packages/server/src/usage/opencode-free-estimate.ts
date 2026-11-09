@@ -1,9 +1,6 @@
-import type { SessionStatsInfo } from "@opencode/client"
-import type { ProviderUsageResponse } from "../api-types"
-
-// ponytail: a 200-request reference per UTC day; replace this heuristic with an
-// upstream counter when Console counts free traffic. Actual limits vary with capacity/IP.
-export const OPENCODE_FREE_DAILY_REQUESTS = 200
+// ponytail: the daily reference is observed, not supplied by the Console API.
+// Replace it with an upstream allowance when that contract becomes available.
+export const OPENCODE_FREE_DAILY_REQUESTS = 800
 const DAY_MS = 86_400_000
 
 export function isOpenCodeFreeModel(providerId: string, modelId?: string): boolean {
@@ -11,24 +8,8 @@ export function isOpenCodeFreeModel(providerId: string, modelId?: string): boole
   return providerId.trim().toLowerCase() === "opencode" && !!model && (model === "big-pickle" || model.endsWith("-free"))
 }
 
-/** UTC calendar day used as the estimation window. */
+/** UTC calendar day used by Console's 24h range. */
 export function openCodeFreeWindow(now: number) {
   const from = Math.floor(now / DAY_MS) * DAY_MS
   return { from, to: now, resetAt: from + DAY_MS }
-}
-
-/** Estimate from this service's recorded steps: other clients behind the same IP are not seen. */
-export function estimateOpenCodeFreeUsage(stats: Pick<SessionStatsInfo, "models">, providerId: string, modelId: string | undefined, now: number): ProviderUsageResponse {
-  const steps = stats.models.filter(({ model }) => isOpenCodeFreeModel(model.providerID, model.id)).reduce((sum, model) => {
-    if (!Number.isSafeInteger(model.steps) || model.steps < 0 || !Number.isSafeInteger(sum + model.steps)) throw new Error("Invalid free-model step count")
-    return sum + model.steps
-  }, 0)
-  const usedPercent = Math.min(100, (steps / OPENCODE_FREE_DAILY_REQUESTS) * 100)
-  return {
-    requestedProviderId: providerId, providerId: "opencode-free", providerName: "OpenCode Console", modelId,
-    supported: true, configured: true, ok: true, estimated: true, fetchedAt: now,
-    freeEstimate: { requests: steps, reference: OPENCODE_FREE_DAILY_REQUESTS, exhausted: false },
-    windows: { daily: { usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: DAY_MS / 1000,
-      resetAt: openCodeFreeWindow(now).resetAt, valueLabel: `${steps} / ${OPENCODE_FREE_DAILY_REQUESTS}` } },
-  }
 }
