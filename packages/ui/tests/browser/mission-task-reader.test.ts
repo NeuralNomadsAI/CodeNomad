@@ -69,7 +69,7 @@ async function setup(value = mission()) {
  * delegation calls; anything else under /session is navigation hydration. */
 const DERIVATION = "GET /workspaces/task-reader/instance/api/session/coordinator/message"
 const sessionReads = (requests: string[]) => requests.filter(request => request.includes("/session") && request !== DERIVATION)
-const treeTask = (page: Page, key = "work") => page.locator(`.mission-tree li[data-task-key="${key}"] button.mission-tree-task`)
+const treeTask = (page: Page, key = "work") => page.locator(`.mission-tree .mission-tree-node[data-task-key="${key}"] button.mission-tree-task`)
 const show = (page: Page, id = "task") => page.evaluate(id => (window as any).taskReader.show(id), id)
 const article = (page: Page, label: string) => page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: label, exact: true }) })
 const disclosure = (page: Page, label: string) => page.locator(".mission-task-reader > details").filter({ has: page.locator("summary").filter({ hasText: new RegExp(`^${label}$`) }) })
@@ -90,14 +90,14 @@ test("the task tree is the single task view: one-line icon+title nodes, measured
   const f = await setup()
   try {
     const task = treeTask(f.page)
-    assert.deepEqual(await f.page.locator(".mission-tree li[data-task-key]").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)),
+    assert.deepEqual(await f.page.locator(".mission-tree .mission-tree-node[data-task-key]").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)),
       ["before", "work", "after"], "retired work stays in the dependency tree, in topological order")
-    assert.equal(await f.page.locator('.mission-tree li[data-task-key="before"]').getAttribute("data-state"), "retired")
-    assert.equal(await f.page.locator('.mission-tree li[data-task-key="work"]').getAttribute("data-state"), "done")
+    assert.equal(await f.page.locator('.mission-tree .mission-tree-node[data-task-key="before"]').getAttribute("data-state"), "retired")
+    assert.equal(await f.page.locator('.mission-tree .mission-tree-node[data-task-key="work"]').getAttribute("data-state"), "done")
     assert.equal(await f.page.locator(".mission-checklist, .mission-route-list").count(), 0, "no duplicate checklist or Work list")
     assert.equal(await f.page.locator(".mission-disclosure").count(), 0, "the tasks are the mission's children, with no group of their own")
     assert.equal(await f.page.locator(".mission-tree").getAttribute("aria-label"), "Tasks (3)", "the group counts every declared task")
-    const row = f.page.locator('.mission-tree li[data-task-key="work"]')
+    const row = f.page.locator('.mission-tree .mission-tree-node[data-task-key="work"]')
     assert.equal(await row.locator("summary, details, .mission-execution, .mission-task-dependencies, p").count(), 0)
     assert.equal(await row.locator(".mission-tree-mark svg").count(), 1, "the status is an icon")
     assert.deepEqual(await task.locator(":scope > :not(.sr-only):not(.mission-tree-mark)").allInnerTexts(), ["Work title"],
@@ -107,13 +107,14 @@ test("the task tree is the single task view: one-line icon+title nodes, measured
     // A row selects its task like a session row; the reader (the panel's eye) shows its detail.
     assert.equal(await task.getAttribute("aria-current"), null)
     await task.click()
-    await f.page.waitForFunction(() => document.querySelector('.mission-tree li[data-task-key="work"] .mission-tree-task')?.getAttribute("aria-current") === "true")
+    await f.page.waitForFunction(() => document.querySelector('.mission-tree .mission-tree-node[data-task-key="work"] .mission-tree-task')?.getAttribute("aria-current") === "true")
     assert.equal(await f.page.locator(".mission-reader").count(), 0, "selecting a task opens no reader")
     await show(f.page)
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Work title", exact: true }).waitFor()
     assert.equal(await task.getAttribute("aria-current"), "true")
     // Edges leave and enter the measured status icons.
-    const [mark, edge] = await Promise.all([row.locator(".mission-tree-mark").boundingBox(), f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').boundingBox()])
+    const [mark, edge] = await Promise.all([row.locator(".mission-tree-mark").evaluate(element => element.getBoundingClientRect().toJSON()),
+      f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').evaluate(element => element.getBoundingClientRect().toJSON())])
     assert(mark && edge && Math.abs(edge.y + edge.height - (mark.y + mark.height / 2)) <= 2, "the edge ends at the dependent's icon")
     assert.equal(await f.page.locator('.mission-graph path[data-from="before"][data-to="work"]').count(), 1)
     assert.equal(await f.page.locator('.mission-graph path[data-from="work"][data-to="after"]').count(), 1)
@@ -163,7 +164,7 @@ test("dependencies, dependents and replacements navigate reader identity without
     assert.equal(await article(f.page, "Task brief").getByRole("spinbutton").inputValue(), "1")
     // The finished task omits the trivial "Unblocks" pointer; the tree still reaches the follow-up.
     assert.equal(await f.page.getByRole("button", { name: /^Unblocks/ }).count(), 0)
-    await f.page.locator('.mission-tree li[data-task-key="after"] .mission-tree-task').click()
+    await f.page.locator('.mission-tree .mission-tree-node[data-task-key="after"] .mission-tree-task').click()
     await f.page.locator(".mission-reader").getByRole("heading", { name: "Later task", exact: true }).waitFor()
     assert.equal(await f.page.locator("#draft").inputValue(), "Preserved draft")
     assert.equal(await f.page.locator("#transcript").evaluate(e => e.scrollTop), 100)

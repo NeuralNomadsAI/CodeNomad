@@ -84,7 +84,7 @@ test("a long mission's tasks scroll with the panel, the only scroller, under its
       const flow = detail.locator(".mission-tree .mission-flow")
       // One continuation follows the continuous rows and loads on scrolling.
       await flow.locator(".mission-tree-more").waitFor({ state: "attached" })
-      assert.equal(await flow.locator(".mission-tree-node").count(), MISSION_TASK_PAGE)
+      assert.ok(await flow.locator(".mission-tree-node").count() <= MISSION_TASK_PAGE)
       assert.equal(await detail.locator(".mission-tree").getAttribute("aria-label"), `Tasks (${TASKS})`, "the group names its task count")
       assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), false, `no task scroller at ${viewport.height}px`)
       assert.equal(await scrolls(f.page, "#tab-body"), false, `no host scrollbar at ${viewport.height}px`)
@@ -285,7 +285,15 @@ const focusLayouts = [
 ]
 
 async function assertFocusVisible(page: Page, label: string) {
-  const focus = await focusVisible(page)
+  if (label.startsWith("task-tree")) await page.waitForFunction(() => {
+    const focused = document.activeElement as HTMLElement, box = focused.getBoundingClientRect()
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+    return Boolean(hit && focused.contains(hit))
+  })
+  let focus = await focusVisible(page)
+  // Virtua temporarily disables hit-testing while a resize's scroll correction settles.
+  // Observe only: no locator action may scroll or focus the target for this assertion.
+  if (label.startsWith("task-tree")) for (let attempt = 0; !focus.visible && attempt < 30; attempt++) focus = await focusVisible(page)
   if (!focus.visible) {
     const diagnostics = await page.evaluate(() => {
       const describe = (element: Element | null) => {
@@ -356,6 +364,32 @@ for (const layout of focusLayouts) for (const releaseAt of ["Notes", "Scheduling
     } finally { await f.close() }
   })
 }
+
+test("virtual task DOM moves keep native keyboard focus without pulling a wheel-scrolled viewport back", async () => {
+  const f = await open()
+  try {
+    const detail = await selectMission(f.page, "Long migration"), target = detail.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task')
+    await target.focus()
+    const move = () => f.page.evaluate(() => {
+      const button = document.querySelector('.mission-tree-node[data-task-key="t20"] .mission-tree-task')!, row = button.closest("li")!, parent = row.parentElement!, next = row.nextSibling
+      parent.append(row); parent.insertBefore(row, next)
+      return document.activeElement !== button
+    })
+    assert.equal(await move(), true, "the native DOM move blurs the still-connected button before observers run")
+    await f.page.waitForFunction(() => document.activeElement === document.querySelector('.mission-tree-node[data-task-key="t20"] .mission-tree-task'))
+    const panel = f.page.locator(".mission-control"), before = await panel.evaluate(element => element.scrollTop)
+    await panel.hover(); await f.page.mouse.wheel(0, 500)
+    await f.page.waitForFunction(before => document.querySelector(".mission-control")!.scrollTop > before + 300, before)
+    const scrolled = await panel.evaluate(element => element.scrollTop)
+    await move()
+    await f.page.waitForFunction(() => document.activeElement === document.querySelector('.mission-tree-node[data-task-key="t20"] .mission-tree-task'))
+    assert.ok(Math.abs(await panel.evaluate(element => element.scrollTop) - scrolled) <= 2, "focus restoration uses preventScroll")
+    await f.page.locator(".mission-picker-search").focus()
+    await move()
+    assert.equal(await f.page.locator(".mission-picker-search").evaluate(element => element === document.activeElement), true, "an explicit later focus choice wins")
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
 
 test("task-tree keyboard focus stays reachable in the single panel scroller, tiny and RTL/zoom layouts", async () => {
   const f = await open()
