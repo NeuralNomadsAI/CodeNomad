@@ -7,6 +7,8 @@ export const exemptions: Record<string, string> = {
   "automation-forms.test.ts": "electron automation harness; its machine-specific a11y flakiness pre-dates the daemon",
   "automation-input.test.ts": "served by a self-hosting harness or inline server that owns its Vite server",
   "automation-preview.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "automation-webkit-geometry.test.ts": "inline documents exercise native-driver geometry without an HTTP or Vite server",
+  "automation-webkit-page.test.ts": "inline data document exercises the WebKit reader without an HTTP or Vite server",
   "browser-emulation-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
   "browser-frame-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
   "compaction-responsiveness.test.ts": "custom Vite transform/load hook",

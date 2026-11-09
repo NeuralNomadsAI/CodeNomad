@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { readFileSync } from "node:fs"
 import { chromium } from "playwright"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { CLOSED_SHADOW_HOOK } from "../../../server/src/automation/page/webkit/hook"
 import { declaration } from "../../../server/src/automation/page/functions"
 import { nativeDriver } from "../../../server/src/automation/page/native-driver"
@@ -11,6 +12,7 @@ import type { PageOperation } from "../../../server/src/automation/page/protocol
 
 test("WebKit reader finds composed text and accepts shadow descendants without accepting overlays", { timeout: 30_000 }, async () => {
   const browser = await chromium.launch({ headless: true })
+  armFixtureNavigationBudget(browser)
   try {
     const page = await browser.newPage()
     await page.addInitScript(CLOSED_SHADOW_HOOK)
