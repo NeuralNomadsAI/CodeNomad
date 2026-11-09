@@ -18,7 +18,7 @@ Añade estos argumentos después del **ejecutable de escritorio** (Tauri o Elect
 | --- | --- |
 | `--connect-server <server>` | Abre un servidor CodeNomad remoto mediante su URL HTTP(S), nombre guardado o ID guardado. Consulta [conexión e inicio de sesión](remote-access.md#saved-servers). |
 | `--folder <path>` | Abre una carpeta de proyecto existente. Repite el argumento para varias carpetas; las rutas relativas parten del directorio de inicio. |
-| `<path> ...` | Abre carpetas de proyecto sin escribir `--folder`. |
+| `<path> ...` | Abre carpetas de proyecto sin escribir `--folder`. **Tauri en Windows, si ya está abierto:** usa `--folder` para cada carpeta. Mezclar rutas posicionales con `--folder` también descarta toda la solicitud de apertura de carpetas. |
 | `--new-window` | Solicita una ventana nueva, incluso si otro inicio normalmente enfocaría la existente. |
 
 También funcionan `--connect-server=<server>` y `--folder=<path>`. Entrecomilla rutas o nombres con espacios. Para abrir solo la ventana remota, usa únicamente `--connect-server`, sin carpetas ni `--new-window`; la restauración local se aplaza salvo que falle la conexión. La aplicación conserva su backend auxiliar local para coordinar el escritorio.

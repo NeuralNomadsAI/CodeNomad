@@ -18,7 +18,7 @@ Placez ces arguments après **l’exécutable desktop** (Tauri ou Electron), dan
 | --- | --- |
 | `--connect-server <server>` | Ouvre un serveur CodeNomad distant à partir de son URL HTTP(S), de son nom enregistré ou de son identifiant enregistré. Voir [la connexion et l’authentification](remote-access.md#saved-servers). |
 | `--folder <path>` | Ouvre un dossier de projet existant. Répétez l’argument pour plusieurs dossiers ; les chemins relatifs partent du répertoire de lancement. |
-| `<path> ...` | Ouvre des dossiers de projet sans écrire `--folder`. |
+| `<path> ...` | Ouvre des dossiers de projet sans écrire `--folder`. **Tauri Windows, si l’application est déjà ouverte :** utilisez `--folder` devant chaque dossier. Mélanger des chemins seuls avec `--folder` annule aussi toute la demande d’ouverture de dossiers. |
 | `--new-window` | Demande une nouvelle fenêtre, même lorsqu’un second lancement devrait normalement sélectionner la fenêtre existante. |
 
 Les formes `--connect-server=<server>` et `--folder=<path>` fonctionnent aussi. Entourez de guillemets les chemins ou noms contenant des espaces. Pour ouvrir uniquement la fenêtre distante, utilisez `--connect-server` seul, sans dossier ni `--new-window` ; la restauration des fenêtres locales est différée sauf si la connexion échoue. L’application conserve son backend auxiliaire local pour la coordination.

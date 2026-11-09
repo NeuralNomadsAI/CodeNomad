@@ -18,7 +18,7 @@ Pass these arguments after the **desktop executable** (Tauri or Electron), in a 
 | --- | --- |
 | `--connect-server <server>` | Open a remote CodeNomad server using its HTTP(S) URL, saved name or saved ID. See [connection and sign-in behavior](remote-access.md#saved-servers). |
 | `--folder <path>` | Open an existing project directory. Repeat the argument to open several directories; relative paths use the launch working directory. |
-| `<path> ...` | Open project directories without spelling out `--folder`. |
+| `<path> ...` | Open project directories without spelling out `--folder`. **Windows Tauri, when already running:** use `--folder` for every directory. Mixing positional paths with `--folder` also drops the entire folder request. |
 | `--new-window` | Request a new application window, including when another launch would normally focus the existing window. |
 
 `--connect-server=<server>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`; local window restoration is then deferred unless connecting fails. The desktop keeps its local helper backend for coordination.

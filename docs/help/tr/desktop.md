@@ -18,7 +18,7 @@ Bu argümanları **masaüstü çalıştırılabilir dosyasından** (Tauri veya E
 | --- | --- |
 | `--connect-server <server>` | HTTP(S) URL’si, kayıtlı adı veya kayıtlı kimliğiyle uzak CodeNomad sunucusunu açar. [Bağlantı ve oturum açma davranışına](remote-access.md#saved-servers) bakın. |
 | `--folder <path>` | Var olan bir proje klasörünü açar. Birden çok klasör için tekrarlayın; göreli yollar başlatma çalışma klasörüne göredir. |
-| `<path> ...` | `--folder` yazmadan proje klasörlerini açar. |
+| `<path> ...` | `--folder` yazmadan proje klasörlerini açar. **Windows Tauri zaten çalışıyorsa:** her klasör için `--folder` kullanın. Konumsal yolları `--folder` ile karıştırmak da tüm klasör açma isteğini düşürür. |
 | `--new-window` | Yeni başlatmanın normalde mevcut pencereyi odaklayacağı durumda bile yeni bir uygulama penceresi ister. |
 
 `--connect-server=<server>` ve `--folder=<path>` da çalışır. Boşluk içeren yol ve adları tırnak içine alın. Yalnızca uzak pencereyi açmak için klasör veya `--new-window` eklemeden `--connect-server` kullanın; bağlantı başarısız olmadıkça yerel pencereler geri yüklenmez. Masaüstü koordinasyonu için yerel yardımcı backend çalışır.

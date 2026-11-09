@@ -18,7 +18,7 @@
 | --- | --- |
 | `--connect-server <server>` | 使用 HTTP(S) URL、已保存的名称或 ID 打开远程 CodeNomad 服务器。参阅[连接和登录行为](remote-access.md#saved-servers)。 |
 | `--folder <path>` | 打开现有项目目录。可重复使用以打开多个目录；相对路径以启动时的工作目录为基准。 |
-| `<path> ...` | 省略 `--folder`，直接打开项目目录。 |
+| `<path> ...` | 省略 `--folder`，直接打开项目目录。**Windows Tauri 已在运行时：**每个目录都必须使用 `--folder`。混用位置路径和 `--folder` 也会丢弃整个目录打开请求。 |
 | `--new-window` | 请求新的应用窗口，即使再次启动通常会聚焦已有窗口。 |
 
 也支持 `--connect-server=<server>` 和 `--folder=<path>`。包含空格的路径或服务器名称应加引号。若只打开远程窗口，请单独使用 `--connect-server`，不附带目录或 `--new-window`；仅在连接失败时恢复本地窗口。桌面应用仍运行本地辅助后端进行协调。
