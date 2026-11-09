@@ -5,8 +5,10 @@ import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partiti
 import { addInstance } from "../../../src/stores/instances"
 import { attachInstanceTab, getInstanceAppTabId } from "../../../src/stores/app-tabs"
 import {
-  sessions, setSessions, withSession, setSessionDraftPrompt, onSessionDraftHydrated,
+  sessions, setSessions, withSession, setSessionDraftPrompt, onSessionDraftHydrated, getSessionDraftPrompt,
 } from "../../../src/stores/session-state"
+import { captureSessionCatalog } from "../../../src/stores/session-catalog-persistence"
+import { hydrateSeenInterruptions } from "../../../src/stores/session-interruption-seen"
 import { addAttachment } from "../../../src/stores/attachments"
 import { createFileAttachment } from "../../../src/types/attachment"
 import type { Session } from "../../../src/types/session"
@@ -18,7 +20,8 @@ for (const id of ids) {
   attachInstanceTab(id)
   const rows = ["parent", "child"].map((sessionId): Session => ({
     id: sessionId, instanceId: id, title: sessionId, parentId: sessionId === "child" ? "parent" : null,
-    projectID: "project", location: { directory: `/synthetic/${id}` }, time: { created: 1, updated: 1 },
+    projectID: "project", location: { directory: `/synthetic/${id}`, workspaceID: "workspace" },
+    time: { created: 1, updated: 1, archived: 1, idle: 1, busy: 1 }, subpath: "subpath",
     agent: "build", model: { providerId: "provider", modelId: "model" }, cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, status: "working",
   }))
@@ -39,6 +42,27 @@ await capture.ready
   state: loadedRestorableSession,
   flushStore: flushClientState,
   primary: clientStateIsPrimary,
+  draftValue: (id: string, sessionId: string) => getSessionDraftPrompt(id, sessionId),
+  catalog: () => captureSessionCatalog([...sessions().get("first")!.values()]),
+  appear: () => setSessions(previous => {
+    const rows = previous.get("first")!
+    rows.set("missing", { ...structuredClone(rows.get("parent")!), id: "missing" })
+    return new Map(previous)
+  }),
+  rename: (from: string, to: string) => setSessions(previous => {
+    const rows = previous.get("first")!, row = rows.get(from)!
+    rows.delete(from)
+    rows.set(to, { ...row, id: to })
+    return new Map(previous)
+  }),
+  mutate(path: string, value: unknown) {
+    withSession("first", "parent", row => {
+      const keys = path.split(".")
+      const target = keys.slice(0, -1).reduce((value: any, key) => value[key], row)
+      target[keys.at(-1)!] = value
+    })
+  },
+  seen: () => hydrateSeenInterruptions("first", { parent: 1 }),
   usage(id = "first", sessionId = "parent") {
     withSession(id, sessionId, row => {
       row.cost++
@@ -51,17 +75,10 @@ await capture.ready
   },
   change(field: string, id = "first", sessionId = "parent") {
     withSession(id, sessionId, row => {
-      if (field === "updated") row.time.updated++
-      else if (field === "created") row.time.created++
-      else if (field === "archived") row.time.archived = (row.time.archived ?? 0) + 1
-      else if (field === "location") row.location.directory += "/linked"
-      else if (field === "model") row.model.modelId += "-changed"
-      else if (field === "provider") row.model.providerId += "-changed"
-      else if (field === "title") row.title += "-changed"
+      if (field === "title") row.title += "-changed"
       else if (field === "parent") row.parentId = null
-      else if (field === "recovery") row.generationRecovery = "interrupted"
-      else if (field === "idleSince") row.idleSince = (row.idleSince ?? 0) + 1
       else if (field === "idle" || field === "working" || field === "compacting") row.status = field
+      else throw new Error(`Unknown fixture change: ${field}`)
     })
   },
   draft: (value: string) => setSessionDraftPrompt("first", "parent", value),
