@@ -6,7 +6,7 @@ import { serverApi } from "../lib/api-client"
 const shellStore = createShellStore((instanceId) => createShellApi(getRootClient(instanceId),
   (directory, workspaceID) => {
     if (workspaceID !== undefined) return Promise.reject(new Error("Background shell inventory requires a public directory location"))
-    return serverApi.fetchBackgroundShells(instanceId, directory).then(result => result.data)
+    return serverApi.fetchBackgroundShells(instanceId, directory)
   }))
 
 serverEvents.on("instance.event", (event) => {

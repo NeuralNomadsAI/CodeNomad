@@ -33,7 +33,7 @@ export function registerBackgroundShellRoutes(app: FastifyInstance, manager: Dep
         path => manager.ownsDirectory(id, path), signal)))
       connection.assertCurrent()
       signal.throwIfAborted()
-      return { data: candidates.filter((_, index) => ownership[index]) }
+      return { location: { directory: shells.location.directory }, data: candidates.filter((_, index) => ownership[index]) }
     } catch (error) {
       request.log.warn({ err: error }, "Background shell inventory failed")
       return reply.code(502).send({ error: "Background shell inventory is unavailable" })

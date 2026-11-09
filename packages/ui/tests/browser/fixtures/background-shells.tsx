@@ -14,9 +14,10 @@ import { serverEvents } from "../../../src/lib/server-events"
 import "../../../src/index.css"
 
 const id = "background-shells"
+const folder = new URLSearchParams(location.search).has("wsl") ? "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo" : "/repo"
 const client = OpenCode.make({ baseUrl: `${location.origin}/workspaces/${id}/instance/` })
 ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
-addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+addInstance({ id, folder, port: 0, pid: 0, proxyPath: "", status: "ready", client })
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } } as any)
 serverApi.fetchStateOwner = async () => ({} as any)
 const Fixture = () => {
@@ -29,5 +30,5 @@ const Fixture = () => {
     customization={customization} onCustomizationChange={setCustomization} /><AlertDialog /></aside>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-;(window as any).fixture = { event: (type: string) => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id,
-  event: { type, location: { directory: "/repo" }, data: {}, id: "event", created: Date.now() } }]) }
+;(window as any).fixture = { event: (type: string, directory = "/repo") => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id,
+  event: { type, location: { directory }, data: {}, id: "event", created: Date.now() } }]) }

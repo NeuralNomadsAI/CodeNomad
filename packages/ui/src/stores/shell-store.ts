@@ -51,13 +51,14 @@ export function appendShellOutput(current: string, chunk: string): { output: str
 }
 
 export interface ShellApi {
-  list(directory: string, workspaceID?: string): Promise<ShellInfo[]>
+  list(directory: string, workspaceID?: string): Promise<{ data: ShellInfo[]; location?: { directory: string } }>
   remove(directory: string, shellId: string, workspaceID?: string): Promise<void>
   output(directory: string, shellId: string, cursor?: number, workspaceID?: string): Promise<{ output: string; cursor: number; size: number; truncated: boolean }>
 }
 
 export interface ShellState {
   items: ShellInfo[]
+  nativeDirectory?: string
   loading: boolean
   failed: boolean
 }
@@ -75,7 +76,7 @@ const SHELL_EVENTS = new Set(["shell.created", "shell.exited", "shell.deleted", 
 export function createShellApi(client: OpenCodeClient, listBackground?: ShellApi["list"]): ShellApi {
   const location = (directory: string) => ({ directory })
   return {
-    list: listBackground ?? (async (directory, workspaceID) => (await client.shell.list({ location: location(directory) }, requestLocationOptions({ directory, workspaceID }))).data),
+    list: listBackground ?? ((directory, workspaceID) => client.shell.list({ location: location(directory) }, requestLocationOptions({ directory, workspaceID }))),
     remove: (directory, shellId, workspaceID) => client.shell.remove({ id: shellId, location: location(directory) }, requestLocationOptions({ directory, workspaceID })),
     output: async (directory, shellId, cursor = 0, workspaceID) => (await client.shell.output({
       id: shellId,
@@ -109,14 +110,15 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
       do {
         request.dirty = false
         try {
-          const items = await apiForInstance(instanceId).list(directory, workspaceID)
+          const inventory = await apiForInstance(instanceId).list(directory, workspaceID)
+          const items = inventory.data
           if (!request.dirty) {
             const previous = new Map(readState(stateKey).items.map(item => [item.id, item]))
             const stable = items.map(item => {
               const old = previous.get(item.id)
               return old && JSON.stringify(old) === JSON.stringify(item) ? old : item
             })
-            setState(stateKey, { items: stable, loading: false, failed: false })
+            setState(stateKey, { items: stable, nativeDirectory: inventory.location?.directory ?? directory, loading: false, failed: false })
           }
         } catch {
           if (!request.dirty) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
@@ -133,8 +135,15 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
       .map((stateKey): [string, string, string | null] => JSON.parse(stateKey))
       .filter(([trackedInstanceId, directory, workspaceID]) => trackedInstanceId === instanceId
         && demands.has(key(instanceId, directory, workspaceID ?? undefined)))
-    const matching = eventDirectory ? tracked.filter(([, directory, workspaceID]) => sameDirectory(directory, eventDirectory)
-      && (event.location?.workspaceID === undefined || event.location.workspaceID === workspaceID)) : tracked
+    const matching = eventDirectory ? tracked.filter(([, directory, workspaceID]) => {
+      if (event.location?.workspaceID !== undefined && event.location.workspaceID !== workspaceID) return false
+      const stateKey = key(instanceId, directory, workspaceID ?? undefined)
+      const nativeDirectory = readState(stateKey).nativeDirectory
+      // Before the first inventory answers, its native alias is unknown. An
+      // event during that read needs one trailing read rather than being lost.
+      return sameDirectory(directory, eventDirectory) || (nativeDirectory !== undefined
+        ? sameDirectory(nativeDirectory, eventDirectory) : requests.has(stateKey))
+    }) : tracked
     await Promise.all(matching.map(([, directory, workspaceID]) => load(instanceId, directory, workspaceID ?? undefined, true)))
   }
 

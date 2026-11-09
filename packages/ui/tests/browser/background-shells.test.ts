@@ -14,6 +14,38 @@ before(async () => {
 })
 after(async () => { await fixture?.close() })
 
+test("a WSL project without a selected conversation refreshes on its native and host directory events", async () => {
+  const page = await fixture.browser.newPage({ locale: "en-US" })
+  const host = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo", native = "/home/user/repo"
+  let present = false
+  try {
+    await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+    await page.route("**/api/**", route => {
+      const url = new URL(route.request().url())
+      if (!url.pathname.endsWith("/background-shells")) return route.fulfill({ json: {} })
+      assert.equal(url.searchParams.get("directory"), host, "the demand keeps its host-side identity")
+      return route.fulfill({ json: { location: { directory: native }, data: present ? [{ id: "sh_wsl", command: "build in WSL",
+        cwd: native, shell: "bash", file: "/tmp/log", status: "running", metadata: {}, time: { started: 1 } }] : [] } })
+    })
+    await page.goto(fixture.url + "?wsl=1")
+    await page.getByText("No background shells.", { exact: true }).waitFor()
+    for (const directory of [native, host]) {
+      present = true
+      await Promise.all([
+        page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/background-shells")),
+        page.evaluate(directory => (window as any).fixture.event("session.tool.success", directory), directory),
+      ])
+      await page.locator(".status-process-card").waitFor()
+      present = false
+      await Promise.all([
+        page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/background-shells")),
+        page.evaluate(directory => (window as any).fixture.event("shell.exited", directory), directory),
+      ])
+      await page.locator(".status-process-card").waitFor({ state: "detached" })
+    }
+  } finally { await page.close() }
+})
+
 test("compact shell rows, native output and stop target the displayed background shell", async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1000, height: 700 }, locale: "en-US" })
   const errors: string[] = [], deleted: string[] = []

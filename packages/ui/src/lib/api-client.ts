@@ -291,7 +291,7 @@ export const serverApi = {
   fetchSessionGoal(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<SessionGoalResponse> {
     return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { signal }))
   },
-  fetchBackgroundShells(instanceId: string, directory: string, signal?: AbortSignal): Promise<{ data: ShellInfo[] }> {
+  fetchBackgroundShells(instanceId: string, directory: string, signal?: AbortSignal): Promise<{ location: { directory: string }; data: ShellInfo[] }> {
     const query = new URLSearchParams({ directory })
     return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/background-shells?${query}`, { signal }))
   },
