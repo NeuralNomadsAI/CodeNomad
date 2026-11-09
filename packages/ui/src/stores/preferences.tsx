@@ -136,6 +136,8 @@ export interface UiSettings {
   keepUnseenSubagentIdleStatus: boolean
   autoExpandActiveSubsessions: boolean
   keepComputerAwake: boolean
+  /** Deleting a Mission also deletes the task conversations created for it. */
+  missionDeleteSessions: boolean
   focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
   missionProfileDefaults: MissionProfileDefault[]
@@ -254,6 +256,7 @@ const defaultUiSettings: UiSettings = {
   keepUnseenSubagentIdleStatus: true,
   autoExpandActiveSubsessions: true,
   keepComputerAwake: false,
+  missionDeleteSessions: false,
   focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
   missionProfileDefaults: [],
@@ -385,6 +388,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       ? sanitized.autoExpandActiveSubsessions : defaultUiSettings.autoExpandActiveSubsessions,
     focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
     keepComputerAwake: sanitized.keepComputerAwake === true,
+    missionDeleteSessions: sanitized.missionDeleteSessions === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     missionProfileDefaults: normalizeMissionDefaults(sanitized.missionProfileDefaults),
     missionModels: normalizeMissionModels(sanitized.missionModels),

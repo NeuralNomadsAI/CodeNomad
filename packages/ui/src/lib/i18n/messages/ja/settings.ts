@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "ローカルの CodeNomad ウィンドウが開いている間（最小化中も含む）、システムのスリープを防ぎます。画面は引き続きオフになることがあります。無効の場合、セッションが作業中の間だけコンピューターをスリープさせません。",
   "providerUsage.estimated": "推定",
   "providerUsage.exhausted": "上限到達",
-  "providerUsage.estimateInfo": "ローカルのステップ数から無料リクエスト数を推定します。実際の上限は異なります。上限到達の表示は UTC 00:00 に解除されます。",
+  "providerUsage.estimateInfo": "ローカルのステップ数と Console から取得できる UTC 00:00 以降の無料リクエスト数の大きい方を使います。Console はアカウント全体が対象で、実際の IP ごとの上限は異なります。上限到達の表示は UTC 00:00 に解除されます。",
   "providerUsage.console.requests": "リクエスト数",
   "providerUsage.console.today": "今日（UTC）",
   "providerUsage.console.sevenDays": "7日間（UTC）",

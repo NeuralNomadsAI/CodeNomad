@@ -16,12 +16,11 @@
 .mission-report-technical > summary { cursor: pointer; color: var(--text-secondary); font-size: var(--font-size-sm); }
 .mission-report-technical[open] > summary { margin-block-end: var(--space-md); }
 .mission-editor { border: 1px solid var(--border-base); margin: var(--space-md) 0; }
+.mission-editor[hidden] { display: none; }
 .mission-editor label { display: grid; gap: var(--space-xs); margin-block: var(--space-sm); }
 .mission-editor textarea, .mission-editor select { width: 100%; background: var(--surface-field); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-sm); }
 .mission-editor textarea { min-height: 6em; resize: vertical; }
 .mission-editor p { color: var(--text-secondary); font-size: var(--font-size-sm); }
-.mission-editor .mission-delete-sessions { display: flex; align-items: flex-start; font-size: var(--font-size-sm); }
-.mission-delete-sessions input { flex-shrink: 0; margin-top: 3px; }
 .mission-editor .window-body { padding: var(--space-sm); }
 .mission-editor .window-header, .mission-editor .window-footer { padding: var(--space-sm); }
 /* Schedule reader: rule, selected run, the run list, identifiers folded last. */

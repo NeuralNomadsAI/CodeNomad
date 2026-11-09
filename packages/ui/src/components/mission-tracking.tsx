@@ -1,7 +1,6 @@
 import { Show, createMemo } from "solid-js"
 import { missionDerivedTaskSession, useMissionTaskSessionDemand } from "../stores/mission-task-sessions"
-import type { MissionActivityProjection, MissionPanelMap } from "../../../server/src/api-types"
-import type { MissionReaderTarget } from "../stores/mission-view-state"
+import type { MissionActivityProjection, MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
 import { MissionTaskTree } from "./mission-task-tree"
 import { missionTaskConversation } from "./mission-task-navigation"
 import { MissionPanelPaging } from "./mission-panel-paging"
@@ -14,12 +13,11 @@ import { missionQuestions } from "./mission-questions"
 export function MissionTracking(props: {
   instanceId: string; mission: MissionPanelMap; activity?: MissionActivityProjection
   active: boolean
-  reading: (target: MissionReaderTarget) => boolean; read: (target: MissionReaderTarget) => void
+  selected: (task: MissionPanelTask) => boolean; onSelect: (task: MissionPanelTask) => void
   onOpenActor: (id: string, request?: { id: string; kind: "form" | "permission" }) => Promise<void>
 }) {
   const missionStore = useMissionPanelStore()
   const observed = () => props.activity?.missions.find(value => value.missionId === props.mission.id)
-  const target = (kind: MissionReaderTarget["kind"], itemId?: string): MissionReaderTarget => ({ missionId: props.mission.id, kind, itemId })
   // Native lifecycle invalidations (session.execution.*, inbox, Shell, Form and
   // permission events) regenerate the activity projection: its generation paces
   // rereads of the linked conversations' activity.
@@ -32,7 +30,7 @@ export function MissionTracking(props: {
       <MissionPanelPaging instanceId={props.instanceId} lane={`activity:${props.mission.id}`} actionsOnly />
     </Show>
     <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors} active={props.active}
-      reading={task => props.reading(target("task", task.id))} onRead={task => props.read(target("task", task.id))}
+      selected={props.selected} onSelect={props.onSelect}
       questions={questions()} onAnswer={(sessionId, request) => void props.onOpenActor(sessionId, request)}
       conversation={task => missionTaskConversation(props.mission, task, observed()?.family,
         missionDerivedTaskSession(props.instanceId, props.mission, task.key), [...props.mission.actors, ...missionStore.observedActors(props.instanceId, props.mission.id)])} />

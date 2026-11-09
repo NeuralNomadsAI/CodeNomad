@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "Archive session",
+  "sessionList.actions.restore.title": "Restore session",
+  "sessionList.status.archived": "Archived",
+  "sessionList.archiveFilter.ariaLabel": "Filter sessions by archive state",
+  "sessionList.archiveFilter.active": "Unarchived sessions",
+  "sessionList.archiveFilter.archived": "Archived sessions",
+  "sessionList.archiveFilter.all": "All sessions",
+  "sessionList.archive.error": "Archive not confirmed. Refresh the session list.",
+  "sessionList.restore.error": "Restore not confirmed. Refresh the session list.",
   "browser.viewport.webkitEmulationHint": "WebKit mobile identity and CSS viewport. Native density and input limits apply.",
   "browser.viewport.emulationHint": "Reloads with mobile identity, touch and pixel density. Browser engine, keyboard and system bars are not simulated.",
   "browser.viewport.dimensionsOnly": "Dimensions only.",

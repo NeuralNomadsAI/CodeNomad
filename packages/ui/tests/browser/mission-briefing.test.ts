@@ -8,7 +8,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap, MissionReport } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-navigation"
-import { inlineMissionEntry, missionEntryStatus, missionMenuItem, missionMenuItemState, missionToolbar } from "./mission-actions"
+import { expandRow, inlineMissionEntry, missionEntryStatus, missionMenuItem, missionMenuItemState, missionToolbar } from "./mission-actions"
 import { missionReadFixture } from "./mission-read-fixture"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 
@@ -85,13 +85,16 @@ async function setup(locale = "fr-FR") {
 }
 /** Select through the persistent inline list (locale-independent; the picker field's name is localized). */
 async function choose(page: Page, title: string) {
-  await (await inlineMissionEntry(page, title)).click()
+  const entry = await inlineMissionEntry(page, title)
+  await entry.click()
+  // A click only selects the row; its chevron shows the detail, as in the session list.
+  await expandRow(entry)
   await card(page).waitFor()
 }
 // The selected Mission's detail is a separate section below the picker; request
-// feedback stays under its row and all prose opens in the central reader.
+// feedback stays in the persistent header and all prose opens in the central reader.
 const card = (page: Page) => page.locator("section.mission-detail")
-const feedback = (page: Page) => card(page).locator(".mission-briefing-feedback")
+const feedback = (page: Page) => page.locator(".mission-picker-selection-actions .mission-briefing-feedback")
 const readAll = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const reader = (page: Page) => page.locator(".mission-reader")
 const prompts = (writes: Array<{ path: string; body: any }>) => writes.filter(write => write.path.endsWith("/prompt"))

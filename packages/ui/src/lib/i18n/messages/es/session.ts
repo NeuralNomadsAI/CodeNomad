@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "Archivar sesión",
+  "sessionList.actions.restore.title": "Restaurar sesión",
+  "sessionList.status.archived": "Archivada",
+  "sessionList.archiveFilter.ariaLabel": "Filtrar sesiones por estado de archivo",
+  "sessionList.archiveFilter.active": "Sesiones sin archivar",
+  "sessionList.archiveFilter.archived": "Sesiones archivadas",
+  "sessionList.archiveFilter.all": "Todas las sesiones",
+  "sessionList.archive.error": "Archivo no confirmado. Actualiza la lista de sesiones.",
+  "sessionList.restore.error": "Restauración no confirmada. Actualiza la lista de sesiones.",
   "browser.viewport.webkitEmulationHint": "Identidad móvil WebKit y viewport CSS. Se aplican límites nativos de densidad y entrada.",
   "browser.viewport.emulationHint": "Recarga con identidad móvil, entrada táctil y densidad de píxeles. No simula el motor del navegador, el teclado ni las barras del sistema.",
   "browser.viewport.dimensionsOnly": "Solo dimensiones.",

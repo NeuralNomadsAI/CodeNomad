@@ -1,4 +1,13 @@
 export const sessionMessages = {
+  "sessionList.actions.archive.title": "העברה לארכיון",
+  "sessionList.actions.restore.title": "שחזור שיחה",
+  "sessionList.status.archived": "בארכיון",
+  "sessionList.archiveFilter.ariaLabel": "סינון שיחות לפי מצב ארכיון",
+  "sessionList.archiveFilter.active": "שיחות שלא בארכיון",
+  "sessionList.archiveFilter.archived": "שיחות בארכיון",
+  "sessionList.archiveFilter.all": "כל השיחות",
+  "sessionList.archive.error": "ההעברה לארכיון לא אושרה. יש לרענן את רשימת השיחות.",
+  "sessionList.restore.error": "השחזור לא אושר. יש לרענן את רשימת השיחות.",
   "browser.viewport.webkitEmulationHint": "זיהוי נייד של WebKit ואזור תצוגה ב־CSS. חלות מגבלות מקוריות על צפיפות פיקסלים וקלט.",
   "browser.viewport.emulationHint": "טוען מחדש עם זיהוי נייד, מגע וצפיפות פיקסלים. מנוע הדפדפן, המקלדת וסרגלי המערכת אינם מדומים.",
   "browser.viewport.dimensionsOnly": "מידות בלבד.",
