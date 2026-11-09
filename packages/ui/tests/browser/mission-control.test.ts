@@ -75,9 +75,9 @@ const selectedCard = (page: Page) => page.locator("section.mission-detail")
 const selectedStatus = (page: Page, state: string) => page.locator(".mission-row-select[aria-current=true] .sr-only").filter({ hasText: new RegExp(`^${state} · `) })
 /** The selected Mission's contextual Play/Pause/Check control: the toolbar's first button. */
 const primaryControl = (page: Page) => missionToolbar(page).locator("button").first()
-const taskRow = (page: Page, key: string) => page.locator(`.mission-tree li[data-task-key="${key}"]`)
+const taskRow = (page: Page, key: string) => page.locator(`.mission-tree .mission-tree-node[data-task-key="${key}"]`)
 const taskButton = (page: Page, key: string) => taskRow(page, key).locator(".mission-tree-task")
-const taskState = (page: Page, key: string, state: string) => page.locator(`.mission-tree li[data-task-key="${key}"][data-state="${state}"]`)
+const taskState = (page: Page, key: string, state: string) => page.locator(`.mission-tree .mission-tree-node[data-task-key="${key}"][data-state="${state}"]`)
 const readAll = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const fixtureText = (page: Page, key: string) => fixtureCall(page, "text", key) as Promise<string>
@@ -595,10 +595,11 @@ test("choosing a depth in the creation form, then Enter on its menu, saves the d
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await missionGeneralAction(page, "Create mission").click()
     const form = page.locator("form.mission-editor")
-    await form.getByLabel("What should the mission do?", { exact: true }).fill("Do not create until I press Create")
-    // The footer's configuration action is a bookmark icon named by its tooltip.
+    await form.getByLabel("Objective", { exact: true }).fill("Do not create until I press Create")
+    // The footer names the action; the configuration picker carries the bookmark.
     const brief = form.locator(".window-footer").getByRole("button", { name: "Save configuration", exact: true })
-    assert.deepEqual([await brief.innerText(), await brief.getAttribute("title"), await brief.locator("svg").count()], ["", "Save configuration", 1])
+    assert.equal(await brief.innerText(), "Save configuration")
+    assert.equal(await form.locator(".mission-brief-picker > label > svg").count(), 1)
     // The depth is a row of the Delegation group, under Task sessions.
     const delegation = form.getByRole("group", { name: "Delegation", exact: true }), menu = depthMenu(delegation)
     await waitForDepthReady(form)
@@ -607,7 +608,7 @@ test("choosing a depth in the creation form, then Enter on its menu, saves the d
     await waitForDepthInfo(form, "OpenCode effective depth: 3")
     await menu.press("Enter")
     assert.deepEqual(writes, [{ path: "depth", body: { location: { directory: "fixture" }, depth: 3, expectation: "e1" } }], "no mission write")
-    assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Do not create until I press Create")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Do not create until I press Create")
   } finally { await page.close() }
 })
 
@@ -1495,12 +1496,12 @@ test("compact mission rows retain a completed branching plan, direct readers and
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, "Ship the Mission Centre")
-    assert.deepEqual(await page.locator(".mission-tree li").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)), ["research", "design", "implement", "review", "verify", "publish"])
+    assert.deepEqual(await page.locator(".mission-tree .mission-tree-node").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)), ["research", "design", "implement", "review", "verify", "publish"])
     // The tree is the dependency graph: its edges are drawn with the single task view, not behind a disclosure.
     await page.locator('.mission-graph path[data-from="review"][data-to="publish"]').waitFor()
     assert.equal(await page.locator(".mission-graph path[data-from]").count(), 6)
     assert.equal(await page.locator(".mission-checklist, .mission-route-task, .mission-detail .mission-disclosure:not(.mission-tree)").count(), 0, "no duplicate task list")
-    const lastTask = await page.locator(".mission-tree li").last().boundingBox()
+    const lastTask = await page.locator(".mission-tree .mission-tree-node").last().boundingBox()
     assert.ok(lastTask && lastTask.y + lastTask.height < 800, "the complete plan fits at a normal panel height")
     await inlineMissionEntry(page, "Ship the Mission Centre")
     const indexRows = await missionRows(page).locator("button.mission-row-select").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
@@ -1667,7 +1668,7 @@ test("native activity stays separate from the plan and refreshes only while a Mi
     await page.goto(url)
     await selectMission(page, value.objective)
     // Observed native activity colours the tree's status icons; the declared plan stays the same rows.
-    const states = () => page.locator(".mission-tree li").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.state))
+    const states = () => page.locator(".mission-tree .mission-tree-node").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.state))
     await taskState(page, "task-0", "active").waitFor()
     assert.deepEqual(await states(), ["active", "active", "assigned", "assigned"], "only observed running/background work is active")
     await taskRow(page, "task-2").getByText("Verify current native state", { exact: true }).waitFor()

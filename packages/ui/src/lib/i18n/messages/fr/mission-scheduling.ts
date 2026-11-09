@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.scheduling.startOnCreation": "Démarrer à la création",
+  "missions.scheduling.startOnCreation": "Démarrer automatiquement",
   "missions.scheduling.source.now": "Une fois, maintenant",
   "missions.settings.effectiveOrigin": "Fichier de configuration OpenCode :",
   "missions.settings.noOrigin": "Aucun chemin de document",
@@ -113,7 +113,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.condition.mission-completed": "Réussite d’une Mission unique",
   "missions.scheduling.condition.conversation-message": "Nouveau message dans une conversation suivie",
   "missions.scheduling.condition.files-changed": "Modification de fichiers explicites",
-  "missions.scheduling.capability.missing": "Programmation indisponible sur cette connexion. Une Mission sans critère de lancement reste disponible.",
+  "missions.scheduling.capability.missing": "Programmation indisponible sur cette connexion.",
   "missions.scheduling.capability.loading": "Vérification de la disponibilité de la programmation…",
   "missions.scheduling.capability.activatable": "Démarrer et Reprendre demandent votre confirmation avant d’activer le réglage natif de programmation.",
   "missions.scheduleList.runNowRequiresEnabled": "Lancer maintenant exige que la programmation native soit activée. Activez-la dans les réglages OpenCode, puis actualisez.",

@@ -138,7 +138,7 @@ test("one-time selected: red task questions, icon toolbar, Summary eye and the d
     await open(page, [active, finished])
     await selectMission(page, /^Migrate the storage layer/)
     assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")
-    const schema = detail(page).locator('li[data-task-key="schema"] .mission-tree-task')
+    const schema = detail(page).locator('.mission-tree-node[data-task-key="schema"] .mission-tree-task')
     // Its actor's "form" activity state alone (possibly an uncorrelated global request)
     // keeps the task's reader: only a correlated request makes it open a question.
     assert.equal(await schema.getAttribute("aria-description"), null)
@@ -154,7 +154,7 @@ test("one-time selected: red task questions, icon toolbar, Summary eye and the d
     assert.equal(await page.locator(".mission-control").getByText("Which index strategy should the migration keep?").count(), 0, "questions open in the dock, never in the panel")
     assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-label"), "Summary")
     // The tree merges status into the dependency graph.
-    const states = await detail(page).locator(".mission-tree li").evaluateAll(items => items.map(item => [(item as HTMLElement).dataset.taskKey, (item as HTMLElement).dataset.state]))
+    const states = await detail(page).locator(".mission-tree .mission-tree-node").evaluateAll(items => items.map(item => [(item as HTMLElement).dataset.taskKey, (item as HTMLElement).dataset.state]))
     assert.deepEqual(states, [["read", "done"], ["legacy", "failed"], ["bench", "active"], ["schema", "input"], ["write", "blocked"], ["cleanup", "waiting"]])
     assert.equal(await detail(page).locator(".mission-graph path[data-to='cleanup']").count(), 2)
     assert.equal(await detail(page).locator(".mission-tree-mark svg").count(), 6, "every node shows a status icon")
@@ -164,7 +164,7 @@ test("one-time selected: red task questions, icon toolbar, Summary eye and the d
       return copy.textContent ?? ""
     })
     assert.doesNotMatch(visibleText, /Done|Completed|Waiting|Blocked|tasks done|%|engine is wired/, "no visible status words, counts or prose")
-    assert.equal(await detail(page).locator('li[data-task-key="schema"] .sr-only').textContent(), "Awaiting your input", "status words remain available to assistive technology")
+    assert.equal(await detail(page).locator('.mission-tree-node[data-task-key="schema"] .sr-only').textContent(), "Awaiting your input", "status words remain available to assistive technology")
     assert.equal(await page.locator(".mission-control").locator("textarea, form").count(), 0, "no coordinator field")
     assert.deepEqual(await page.locator(".mission-control .mission-disclosure").evaluateAll(items => items.map(item => item.className)),
       [], "the tasks are the mission's children: no disclosure, no More")
@@ -199,7 +199,7 @@ test("finished one-time Mission: titled entry, disabled inapplicable actions, pr
     for (const [key, enabled] of [["request", false], ["interrupt", false], ["save-brief", true], ["edit", false]] as const)
       assert.equal((await missionMenuItemState(page, key)).enabled, enabled, key)
     const tree = detail(page).locator(".mission-tree")
-    assert.equal(await tree.locator("li[data-state='done']").count(), 8)
+    assert.equal(await tree.locator(".mission-tree-node[data-state='done']").count(), 8)
     assert.equal(await detail(page).locator("p, .mission-result").count(), 0, "no result prose in the panel")
     assert.doesNotMatch(await page.locator(".mission-control").innerText(), /ses_|task-t0|Release notes are drafted/)
     await captureMissionView(page, "finished-one-time")

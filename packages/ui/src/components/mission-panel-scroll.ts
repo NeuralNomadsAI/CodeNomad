@@ -1,8 +1,8 @@
 import { createEffect, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
 
 /** Single-scroller policy for a region of `.mission-control` that fills the remaining
- * height: the task group (mission-task-tree.css) and the creation form's body
- * (mission-create.css). While the rest of the panel plus the region's minimum height
+ * height: the creation form's body (mission-create.css).
+ * While the rest of the panel plus the region's minimum height
  * fits, the panel is fixed and the region alone scrolls, filling the remaining
  * height. Otherwise (short viewport, expanded picker, requests, a wrapped footer) the
  * panel becomes the only scroller and the region takes its natural height, so no

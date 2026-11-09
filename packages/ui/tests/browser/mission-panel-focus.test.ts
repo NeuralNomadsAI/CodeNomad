@@ -4,7 +4,7 @@ import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
-import { missionGeneralAction, missionRows, selectMission } from "./mission-actions"
+import { missionGeneralAction, missionRows, revealMissionTask, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -45,11 +45,11 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
   try {
     await page.goto(url, { timeout: 60_000 })
     await missionRows(page).locator("button.mission-row-select").first().waitFor()
-    if (consumer === "tree") await selectMission(page, "Focus migration")
+    if (consumer === "tree") { await selectMission(page, "Focus migration"); await revealMissionTask(target(page, consumer)) }
     else {
       const requested = holdDepth ? page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/subagent-depth")) : undefined
       await missionGeneralAction(page, "Create mission").click()
-      await page.locator("form.mission-editor").getByLabel("What should the mission do?", { exact: true }).fill("Inspect focus ownership")
+      await page.locator("form.mission-editor").getByLabel("Objective", { exact: true }).fill("Inspect focus ownership")
       await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('form.mission-editor button[type="submit"]')?.disabled)
       if (requested) await requested
       else await page.waitForFunction(() => Boolean(document.querySelector(".mission-depth [role=alert]")))
@@ -60,7 +60,7 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
 }
 
 const region = (consumer: string) => consumer === "tree" ? ".mission-tree" : "form.mission-editor > .window-body"
-const target = (page: Page, consumer: string) => page.locator(consumer === "tree" ? '.mission-tree-node[data-task-key="t20"] .mission-tree-task' : '.mission-scheduling input[type="checkbox"]')
+const target = (page: Page, consumer: string) => page.locator(consumer === "tree" ? '.mission-tree-node[data-task-key="t20"] .mission-tree-task' : '.mission-create-autostart input[type="checkbox"]')
 const frames = (page: Page) => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))))
 const visible = (page: Page) => page.evaluate(() => {
   const focused = document.activeElement!, box = focused.getBoundingClientRect(), hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
@@ -139,8 +139,11 @@ for (const consumer of ["creation", "tree"] as const) {
           assert.equal(await focus.evaluate(element => element === document.activeElement), true, "native refocus restores the same control")
           await f.page.evaluate(selector => document.querySelector(selector)!.append(document.createElement("span")), region(consumer))
           await frames(f.page)
-          assert(await f.page.evaluate(() => (window as any).focusAudit.writes.length > 0), "the same observation repairs the control after native focus returns")
-          assert.equal(await visible(f.page), true)
+          const writes = await f.page.evaluate(() => (window as any).focusAudit.writes.length)
+          if (consumer === "creation") {
+            assert(writes > 0, "the form repairs its control after native focus returns")
+            assert.equal(await visible(f.page), true)
+          } else assert.equal(writes, 0, "the task tree never snaps back to an old focused task")
         }
         assert.deepEqual(f.errors, [])
       } finally { await other?.close(); await f.close() }
@@ -164,12 +167,13 @@ for (const consumer of ["creation", "tree"] as const) {
         const state = (window as any).focusAudit
         return { queued: state.queuedBeforeDispose, cancelled: state.cancelled.length, ran: state.ran.length, writes: state.writes.length }
       })
-      assert.equal(disposed.queued, 1, "one callback owns the entire mutation burst")
-      assert.equal(disposed.cancelled, 1, "disposing the old view cancels its queued callback")
+      assert.equal(disposed.queued, consumer === "creation" ? 1 : 0, "only form focus repair schedules a mutation callback")
+      assert.equal(disposed.cancelled, consumer === "creation" ? 1 : 0, "disposing the old form cancels its queued callback")
       assert.equal(disposed.ran, 0); assert.equal(disposed.writes, 0)
       await f.page.evaluate(() => (window as any).missionHost.mount(true))
       await frames(f.page)
       assert.equal(await f.page.evaluate(() => (window as any).focusAudit.writes.length), 0, "the replacement view never revives the old focus target")
+      if (consumer === "tree") await revealMissionTask(target(f.page, consumer))
       await target(f.page, consumer).focus(); await frames(f.page)
       await f.page.evaluate(selector => {
         const state = (window as any).focusAudit
@@ -179,7 +183,8 @@ for (const consumer of ["creation", "tree"] as const) {
       }, region(consumer))
       await frames(f.page)
       const burst = await f.page.evaluate(() => ({ scheduled: (window as any).focusAudit.scheduled.length, ran: (window as any).focusAudit.ran as number[] }))
-      assert(burst.scheduled > 0 && burst.scheduled <= burst.ran.length + 1, "a live mutation burst keeps at most one pending callback")
+      if (consumer === "creation") assert(burst.scheduled > 0 && burst.scheduled <= burst.ran.length + 1, "a live mutation burst keeps at most one pending callback")
+      else assert.equal(burst.scheduled, 0, "task mutations never create focus-repair work")
       assert.equal(new Set(burst.ran).size, burst.ran.length, "at most one consumer callback runs in each animation frame")
       assert.deepEqual(f.errors, [])
     } finally { await f.close() }

@@ -8,14 +8,16 @@ import { MissionTaskPageReadError, MissionPanelMissingError, taskPageDigest, typ
 import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS } from "../lib/mission-task-read-lifetime"
 import { panelSummarySchema, panelCleanupSchema, panelHeaderSchema, panelObservationSchema, panelMarksSchema, panelPersistedActorSchema, panelHistorySchema, panelReportSchema, type PanelHeader, type PanelObservation } from "../lib/mission-panel-schema"
 import { recordMissionRowRevision, recordMissionTaskSource } from "./mission-task-pages"
+import { missionTaskMarksSchema, type MissionTaskMark } from "../../../server/src/missions/mission-task-marks"
 import { seedMissionFinishedSeen } from "./mission-view-state"
 
 type Selector = Exclude<MissionPanelPageRequest, { source: "tasks" }>
 type Answer = { envelope: MissionPanelPage; values: unknown[] }
 type Window = NonNullable<MissionPanelPage["window"]>
 export interface MissionPanelProgress { loading: boolean; loaded: number; total?: number; more: boolean; failure?: "changed" | "failed" }
-interface Page { values: unknown[]; window: Window; revision?: number; observedAt?: number; serial: number; epoch: number; cycle: number }
+interface Page { values: unknown[]; window: Window; revision?: number; observedAt?: number; taskMarksThrough?: number; serial: number; epoch: number; cycle: number }
 interface Lane { pages: Map<number, Page>; loading: boolean; cycle: number; failed?: { selector: Selector; changed: boolean }; pending?: Promise<void>
+  running?: Promise<void>; refreshAfter?: { selector: Selector; scope: MissionPanelReadScope }
   field?: Pick<Extract<Selector, { source: "mission" }>, "missionID" | "field" | "part" | "text">
   pendingSelector?: string; pendingCurrent?: () => boolean; failures: Map<string, { selector: Selector; changed: boolean }>
   inventoryRows?: Map<string, { value: unknown; revision: number; serial: number; epoch: number }> }
@@ -88,7 +90,7 @@ export function createMissionPanelInventory(input: {
         || (key === "marks" || key.startsWith("activity:")) && page.cycle !== value!.cycle) break
       loaded = page.window.end
     }
-    return { loading: value?.loading ?? false, loaded, total: first?.window.total, more: first !== undefined && loaded < first.window.total,
+    return { loading: Boolean(value?.loading || value?.pending), loaded, total: first?.window.total, more: first !== undefined && loaded < first.window.total,
       ...(value?.failed ? { failure: value.failed.changed ? "changed" as const : "failed" as const } : {}) }
   }
   const scope = (instanceId: string, own: Entry, missionID?: string, expires = performance.now() + TASK_READ_TIMEOUT_MS): MissionPanelReadScope => {
@@ -146,16 +148,22 @@ export function createMissionPanelInventory(input: {
           .filter(member => member.kind !== undefined).map(member => [member.sessionId, { ...member, kind: member.kind! }])).values()] } }
     }) }
   }
-  async function readLane(instanceId: string, key: string, selector: Selector, parent?: MissionPanelReadScope, restart = false): Promise<void> {
+  async function readLane(instanceId: string, key: string, selector: Selector, parent?: MissionPanelReadScope, restart = false, revalidate = false): Promise<void> {
     const own = entry(instanceId), target = lane(own, key)
     if (selector.source === "mission") target.field = { missionID: selector.missionID, field: selector.field, part: selector.part, text: selector.text }
     const admittedFailures = new Map(target.failures)
     const fieldDigest = selector.source === "mission" && selector.field ? own.maps.get(selector.missionID)?.header.collections[selector.field]?.digest : undefined
     const signature = JSON.stringify([selector.source, "missionID" in selector ? selector.missionID : null, selector.source === "mission" ? [selector.field, selector.part, selector.text] : null, offsetOf(selector), orderOf(selector)]), waiting = target.pending
-    if (!restart && waiting && target.pendingSelector === signature && target.pendingCurrent?.()) return waiting
-    const serial = ++readSerial
     const ownLife = scope(instanceId, own, selector.source === "mission" || selector.source === "activity" ? selector.missionID : undefined)
     const life = parent ? { ...ownLife, deadline: Math.min(ownLife.deadline!, parent.deadline!), signal: AbortSignal.any([ownLife.signal!, parent.signal!]), current: () => ownLife.current() && parent.current() } : ownLife
+    if (!restart && waiting && target.pendingSelector === signature && target.pendingCurrent?.()) {
+      // A refresh that arrives after native IO began needs one trailing read. A
+      // future queued read already captures the latest state when it starts.
+      if (revalidate && target.running === waiting) target.refreshAfter = { selector, scope: life }
+      return waiting
+    }
+    if (restart || selector.source === "marks" && !selector.missionOffset || selector.source === "activity" && !selector.actorOffset) target.refreshAfter = undefined
+    const serial = ++readSerial
     const failed = (error: unknown) => {
       if (life.current()) {
         const previous = target.failures.get(signature)
@@ -166,6 +174,7 @@ export function createMissionPanelInventory(input: {
     }
     let operation: Promise<void>
     const run = async () => {
+      target.running = operation
       const advancing = selector.source === "activity" && !selector.actorOffset || selector.source === "marks" && !selector.missionOffset
       const cycle = target.cycle + Number(advancing)
       try {
@@ -181,6 +190,15 @@ export function createMissionPanelInventory(input: {
           const ids = rows.map(value => selector.source === "summaries" ? (value as { id: string }).id : JSON.stringify([(value as { missionID: string }).missionID, (value as { deletionID: string }).deletionID]))
           if (new Set(ids).size !== ids.length || !answer.envelope.window) throw new MissionTaskPageReadError("invalid")
           window = answer.envelope.window
+        } else if (selector.source === "task-marks") {
+          rows = missionTaskMarksSchema.parse(answer.values)
+          if (!answer.envelope.window) throw new MissionTaskPageReadError("invalid")
+          if (answer.envelope.taskMarksThrough === undefined || (rows as MissionTaskMark[]).some(task => task.updatedAt > answer.envelope.taskMarksThrough!))
+            throw new MissionTaskPageReadError("invalid")
+          window = answer.envelope.window
+          const summary = (values(own, "summaries") as MissionSummary[]).find(row => row.id === selector.missionID)
+          if (summary && summary.revision === answer.envelope.revision && summary.taskCount !== undefined && summary.taskCount !== window.total)
+            throw new MissionTaskPageReadError("invalid")
         } else if (selector.source === "marks") {
           if (answer.values.length !== 1) throw new MissionTaskPageReadError("invalid")
           const observed = panelMarksSchema.parse(answer.values[0]); rows = observed.observations; window = observed.missionPage
@@ -218,6 +236,7 @@ export function createMissionPanelInventory(input: {
         }
         const rowIdentity = selector.source === "summaries" ? (value: unknown) => (value as { id: string }).id
           : selector.source === "cleanups" ? (value: unknown) => JSON.stringify([(value as { missionID: string }).missionID, (value as { deletionID: string }).deletionID])
+          : selector.source === "task-marks" ? (value: unknown) => (value as MissionTaskMark).id
           : selector.source === "mission" && !selector.text && selector.field === "actors" ? (value: unknown) => (value as { sessionId: string }).sessionId
           : selector.source === "mission" && !selector.text && selector.field === "reports" ? (value: unknown) => (value as { id: string }).id
           : selector.source === "mission" && !selector.text && selector.field === "history" ? (value: unknown) => String((value as { revision: number }).revision) : undefined
@@ -225,6 +244,11 @@ export function createMissionPanelInventory(input: {
           const ids = new Set(rows.map(rowIdentity))
           if (ids.size !== rows.length || [...target.pages.values()].some(page => page.epoch === own.epoch && page.window.order === window.order
             && page.window.offset !== window.offset && page.values.some(value => ids.has(rowIdentity(value))))) throw new MissionTaskPageReadError("invalid")
+        }
+        if (selector.source === "task-marks") {
+          const keys = new Set((rows as MissionTaskMark[]).map(task => task.key))
+          if ([...target.pages.values()].some(page => page.epoch === own.epoch && page.window.order === window.order && page.window.offset !== window.offset
+            && (page.values as MissionTaskMark[]).some(task => keys.has(task.key)))) throw new MissionTaskPageReadError("invalid")
         }
         assertTaskReadLive(life.signal, life.deadline)
         if (!life.current()) return
@@ -240,7 +264,7 @@ export function createMissionPanelInventory(input: {
         }
         const pages = new Map(target.pages), old = pages.get(window.offset)
         let inventoryRows = target.inventoryRows
-        if (!old || old.epoch !== own.epoch || (old.revision ?? 0) <= (answer.envelope.revision ?? 0)) pages.set(window.offset, { values: rows, window, revision: answer.envelope.revision, observedAt: answer.envelope.observedAt, serial, epoch: own.epoch, cycle })
+        if (!old || old.epoch !== own.epoch || (old.revision ?? 0) <= (answer.envelope.revision ?? 0)) pages.set(window.offset, { values: rows, window, revision: answer.envelope.revision, observedAt: answer.envelope.observedAt, taskMarksThrough: answer.envelope.taskMarksThrough, serial, epoch: own.epoch, cycle })
         if (selector.source === "summaries" || selector.source === "cleanups") {
           const retained = inventoryRows = new Map(target.inventoryRows), keyOf = (value: unknown) => selector.source === "summaries" ? (value as { id: string }).id : JSON.stringify([(value as { missionID: string }).missionID, (value as { deletionID: string }).deletionID])
           for (const value of rows) {
@@ -275,7 +299,17 @@ export function createMissionPanelInventory(input: {
         if (selector.source === "summaries" && !own.seeded && error instanceof MissionTaskPageReadError && ["invalid", "damaged", "too-large"].includes(error.reason)) own.baseline = undefined
         failed(error)
         throw error
-      } finally { target.loading = false; if (target.pending === operation) { target.pending = undefined; target.pendingSelector = undefined }; changed() }
+      } finally {
+        target.loading = false
+        if (target.running === operation) target.running = undefined
+        if (target.pending === operation) {
+          target.pending = undefined; target.pendingSelector = undefined
+          const after = target.refreshAfter; target.refreshAfter = undefined
+          if (after?.scope.current() && !target.failed && (after.selector.source !== "marks" || own.panel))
+            void readLane(instanceId, key, after.selector, after.scope).catch(() => {})
+        }
+        changed()
+      }
     }
     operation = (waiting ?? Promise.resolve()).catch(() => {}).then(run)
     target.pending = operation; target.pendingSelector = signature; target.pendingCurrent = life.current
@@ -319,7 +353,7 @@ export function createMissionPanelInventory(input: {
     // The selected source alone observes actor roots. Additional windows are explicit.
     recordMissionTaskSource(map, header.tasks.version)
     own.maps.set(id, { header, map, epoch: own.epoch })
-    void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }).catch(() => {})
+    void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, undefined, false, true).catch(() => {})
     return map
   }
   const base = createMissionStore(async (instanceId, request): Promise<MissionDisplayResponse> => {
@@ -333,7 +367,7 @@ export function createMissionPanelInventory(input: {
     const maps = [...own.maps.values()].filter(value => wanted.has(value.map.id)).map(value => value.map)
     if (!life.current()) throw new DOMException("Obsolete panel read", "AbortError")
     assertTaskReadLive(life.signal, life.deadline)
-    if (own.panel && !input.passage) void readLane(instanceId, "marks", { source: "marks", missionOffset: 0 }).catch(() => {})
+    if (own.panel && !input.passage) void readLane(instanceId, "marks", { source: "marks", missionOffset: 0 }, undefined, false, true).catch(() => {})
     const summaries = summaryRows(own, maps)
     return { available: true, version: 1, projectID: own.projectID!, generatedAt: Date.now(), discardedEvents: 0, missions: maps, summaries, panelDeadline: life.deadline, panelCurrent: life.current,
       activity: activity(own), cleanups: values(own, "cleanups") as NonNullable<Extract<MissionListResponse, { available: true }>["cleanups"]>,
@@ -358,6 +392,7 @@ export function createMissionPanelInventory(input: {
       const offset = at ?? (retry ? 0 : state.loaded), order = retry ? undefined : first?.window.order
       if (key === "summaries" || key === "cleanups") selector = { source: key, window: { offset, order } }
       else if (key === "marks") selector = { source: "marks", missionOffset: offset, missionOrder: order }
+      else if (key.startsWith("task-marks:")) selector = { source: "task-marks", missionID: key.slice(11), window: { offset, order } }
       else if (key.startsWith("activity:")) selector = { source: "activity", missionID: key.slice(9), actorOffset: offset, actorOrder: order }
       else if (target.field) selector = { source: "mission", ...target.field, window: { offset, order } }
       else { const [kind, id, field, part] = key.split(":"); selector = { source: "mission", missionID: id, field, ...(kind === "text" ? { text: true as const } : {}), ...(part === "receipts" || part === "pending" ? { part } : {}), window: { offset, order } } }
@@ -423,10 +458,18 @@ export function createMissionPanelInventory(input: {
     return [...rows.values()].map(value => value.row)
   }
   return { ...base, bounded: true as const, progress, more, observations,
+    taskMarks: (instanceId: string, id: string) => {
+      version(); const own = entries.get(instanceId), key = `task-marks:${id}`, target = own?.lanes.get(key), first = target?.pages.get(0)
+      const status = progress(instanceId, key)
+      return { ...status, revision: first?.epoch === own?.epoch ? first?.revision : undefined,
+        through: first?.epoch === own?.epoch ? first?.taskMarksThrough : undefined,
+        tasks: first ? [...target!.pages.values()].filter(page => page.epoch === own!.epoch && page.window.order === first.window.order && page.window.end <= status.loaded)
+          .sort((a, b) => a.window.offset - b.window.offset).flatMap(page => page.values as MissionTaskMark[]) : [] }
+    },
     reading: (instanceId: string) => {
       version(); const own = entries.get(instanceId), state = base.state(instanceId)
       return state.status === "loading" || Boolean(own?.headerReads.size)
-        || [...(own?.lanes.values() ?? [])].some(lane => lane.loading)
+        || [...(own?.lanes.values() ?? [])].some(lane => lane.loading || lane.pending)
         || Object.values(state.taskReads ?? {}).some(read => read.loading)
     },
     observedActors: (instanceId: string, id: string) => {

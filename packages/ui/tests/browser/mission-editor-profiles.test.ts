@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { openMissionProfiles } from "./mission-actions"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
@@ -11,7 +12,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
 
 let browser: Browser, url: string
-const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create"
+const OBJECTIVE = "Objective", CREATE_ONLY = "Create"
 const openOptions = (page: Page) => page.getByLabel("Playbook", { exact: true }).waitFor()
 async function connect(page: Page) {
   // Module scripts with top-level await do not hold the document load event.
@@ -23,7 +24,10 @@ async function connect(page: Page) {
     updateInstance("fixture", { client: getRootClient("fixture") })
   })
 }
-const openAgents = (page: Page) => page.getByLabel("Coordinator · Agent", { exact: true }).waitFor()
+const openAgents = async (page: Page) => {
+  await openMissionProfiles(page)
+  await page.getByLabel("Coordinator · Agent", { exact: true }).waitFor()
+}
 before(async () => {
   const fixture = await borrowFixture({
       name: "mission-editor-profiles",
@@ -66,7 +70,7 @@ test("inactivation cancels visible catalog demand and late responses cannot popu
   try {
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
-    assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).isVisible(), true)
+    assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).isVisible(), false)
     await openAgents(page)
     await page.evaluate(async () => {
       const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
@@ -74,6 +78,7 @@ test("inactivation cancels visible catalog demand and late responses cannot popu
       updateInstance("fixture", { client: getRootClient("fixture") })
     })
     await reached
+    assert.equal(await page.locator(".mission-profiles p[role='status']").count(), 0, "catalog loading never inserts a line that moves the form")
     await page.evaluate(() => window.missionEditorLifetime.activate(false))
     release(); await settled
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).locator('option[value="late-root"]').count(), 0)
@@ -128,6 +133,14 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     ] } })
   })
   await page.route("**/workspaces/fixture/instance/api/provider**", route => route.fulfill({ json: { data: [{ id: "p", name: "Provider P" }] } }))
+  await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: {
+    location: { directory: "/fixture" }, api: { available: true }, enabled: true, origin: null,
+    activation: { available: true, targets: [] },
+  } }))
+  await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
+    location: { directory: "/fixture" }, capability: { minimum: 1, maximum: 10 }, effectiveDepth: 2,
+    project: { path: "/fixture/opencode.jsonc", depth: null, expectation: "fixture" },
+  } }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => typeof (window as any).releaseProfileState === "function")
@@ -140,7 +153,7 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Profile fixture")
     await openOptions(page)
     await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
-    assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).isVisible(), true)
+    assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).isVisible(), false)
     await openAgents(page)
     const root = page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }), child = page.locator("form.mission-editor").getByLabel("Specification reviewer · Agent", { exact: true })
     await root.locator('option[value="root-only"]').waitFor({ state: "attached" })
@@ -162,6 +175,25 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     assert.equal(geometry.radius, "0px")
     assert.ok(geometry.rowWidth <= geometry.formWidth, "compact profile row fits the narrow editor")
     assert.equal(await page.getByLabel("Specification reviewer · Model", { exact: true }).locator('option').filter({ hasText: "disabled" }).count(), 0)
+    const captureDirectory = process.env.CODENOMAD_MISSION_CAPTURE_DIR
+    if (captureDirectory) {
+      await mkdir(captureDirectory, { recursive: true })
+      await page.locator("aside").evaluate(element => { element.style.width = "min(370px, 100vw)" })
+      for (const width of [420, 240]) {
+        await page.setViewportSize({ width, height: 1800 })
+        assert.ok(await page.locator(".mission-brief-picker > label").evaluate(label => label.getBoundingClientRect().height < 30), "Configuration keeps its label on one line")
+        await page.locator("form.mission-editor").screenshot({ path: path.join(captureDirectory, `creation-profiles-${width}.png`) })
+        if (width === 240) {
+          await page.locator(".mission-scheduling").scrollIntoViewIfNeeded()
+          await page.locator("form.mission-editor").screenshot({ path: path.join(captureDirectory, "creation-scheduling-240.png") })
+        }
+      }
+      await page.locator(".mission-profiles-disclosure > summary").click()
+      await page.locator("form.mission-editor").screenshot({ path: path.join(captureDirectory, "creation-profiles-folded.png") })
+      await openAgents(page)
+      await page.locator("aside").evaluate(element => { element.style.width = "370px" })
+      await page.setViewportSize({ width: 1280, height: 720 })
+    }
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
     const expected = { coordinator: { agent: "root-only", model: { providerID: "p", id: "m", variant: "high" } },
@@ -243,7 +275,10 @@ test("creation waits for owned defaults and sends their exact snapshot through v
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
     assert.match(await page.locator("form.mission-editor").innerText(), /saved-root/)
     assert.match(await page.locator("form.mission-editor").innerText(), /saved-child/)
-    assert.equal(await page.locator("form.mission-editor summary").filter({ hasText: /^Agents and models$/ }).count(), 0)
+    assert.equal(await page.locator("form.mission-editor .mission-profiles-disclosure > summary").count(), 1)
+    assert.match(await page.locator("form.mission-editor .mission-profiles-disclosure > summary").innerText(), /saved-root.*saved-model.*high/)
+    assert.deepEqual(catalogs, [], "a folded profile summary requires no catalog read")
+    await openAgents(page)
     assert.equal(await page.locator("form.mission-editor").getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "saved-root")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
@@ -291,7 +326,8 @@ test("recurring creation shares the draft, prefills its title and picks named co
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
-    assert.equal(await form.locator("summary").filter({ hasText: /^(Options|Agents and models)$/ }).count(), 0)
+    assert.equal(await form.locator("summary").filter({ hasText: /^Options$/ }).count(), 0)
+    assert.equal(await form.locator(".mission-profiles-disclosure > summary").count(), 1)
     assert.equal(await form.locator(":scope > header").count(), 0, "the panel's Create button heads the form")
     assert.equal(await page.locator(".mission-rows").isVisible(), false, "the creation form replaces the tree")
     assert.equal(await form.getByRole("button", { name: /start/i }).count(), 0, "creation never offers a start action; Play stays separate")
@@ -306,6 +342,7 @@ test("recurring creation shares the draft, prefills its title and picks named co
     assert.equal(await form.locator('input[type="number"]').count(), await form.locator('.mission-depth input[type="number"]').count(),
       "a daily criterion has no interval, duration end or launch quota field")
     assert.doesNotMatch(await form.innerText(), /Publications|Native calls|Effect budget/)
+    await openAgents(page)
     assert.equal(await form.getByLabel("Coordinator · Agent", { exact: true }).isVisible(), true)
     await form.locator("textarea").first().fill("Updated daily review\nKeep the reference conversation in context.")
     assert.equal(await title.inputValue(), "Updated daily review")
@@ -341,7 +378,7 @@ test("recurring creation shares the draft, prefills its title and picks named co
   } finally { await page.close() }
 })
 
-test("the compact Playbook selector keeps every profile visible without scenario prose or a details action", async () => {
+test("the Playbook selector keeps a folded model summary, separated groups and no permanent scenario prose", async () => {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
@@ -350,6 +387,10 @@ test("the compact Playbook selector keeps every profile visible without scenario
   await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions/recurrence")
     ? recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] })
     : { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } }))
+  await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: {
+    location: { directory: "/fixture" }, api: { available: true }, enabled: false,
+    origin: null, activation: { available: true, targets: [] },
+  } }))
   try {
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
@@ -358,9 +399,17 @@ test("the compact Playbook selector keeps every profile visible without scenario
     assert.equal(await playbook.inputValue(), "custom")
     assert.equal(await playbook.getAttribute("aria-describedby"), null)
     await playbook.selectOption("wayfinder")
+    assert.equal(await page.getByLabel("Cartographer · Agent", { exact: true }).isVisible(), false)
+    await openAgents(page)
     assert.equal(await page.getByLabel("Cartographer · Agent", { exact: true }).isVisible(), true)
     assert.equal(await page.getByRole("button", { name: "See details", exact: true }).count(), 0)
     assert.equal(await page.locator(".mission-create-template > p").count(), 0)
+    assert.equal(await page.locator(".mission-create-option button").count(), 0, "profiles have no reset or Preferences commands")
+    assert.deepEqual(await page.locator(".mission-create-group, form.mission-editor .mission-scheduling").evaluateAll(groups =>
+      groups.map(group => getComputedStyle(group).borderBlockStartWidth)), ["1px", "1px", "1px"])
+    const row = page.locator("form.mission-editor .mission-profile-row").first()
+    const columns = await row.locator("label").evaluateAll(labels => labels.map(label => label.getBoundingClientRect().x))
+    assert.ok(columns[0] < columns[1] && columns[1] < columns[2], "Agent, Model and Thinking use the shared three-column layout")
     const captureDirectory = process.env.CODENOMAD_MISSION_CAPTURE_DIR
     if (captureDirectory) {
       await mkdir(captureDirectory, { recursive: true })
@@ -369,6 +418,13 @@ test("the compact Playbook selector keeps every profile visible without scenario
     await playbook.selectOption("compare")
     assert.equal(await page.getByLabel("Model A · Model", { exact: true }).isVisible(), true)
     assert.equal(await page.getByLabel("Blind judge · Model", { exact: true }).isVisible(), true)
+    assert.equal(await page.locator("form.mission-editor > .window-body > [role='alert']").count(), 0, "Compare validation belongs beside the profiles")
+    assert.equal(await page.locator(".mission-create-option [role='alert']").count(), 1)
+    assert.equal(await page.locator(".mission-scheduling > p[role='status']").count(), 0, "activation prose stays out of the form")
+    await page.locator(".mission-profiles-disclosure > summary").click()
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    assert.equal(await page.locator(".mission-profiles-disclosure").evaluate((element: HTMLDetailsElement) => element.open), false, "the draft retains its fold state")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

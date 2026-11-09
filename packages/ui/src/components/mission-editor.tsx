@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
-import { compareModelError, freezeCompareProfiles, sameCompareModel, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import { compareModelError, freezeCompareProfiles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
@@ -10,6 +10,7 @@ import { isDefinitiveCreationRejection, missionMutationErrorKey } from "../lib/m
 import { copyMissionProfiles, holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation,
   retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
 import { MissionProfileControls } from "./mission-profile-controls"
+import { MissionProfileSummary } from "./mission-profile-summary"
 import { missionProfileRoles, profilesForTemplate } from "./mission-profile-controls-data"
 import { useConfig } from "../stores/preferences"
 import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionTaskMode } from "../lib/mission-defaults"
@@ -112,6 +113,9 @@ export function MissionEditor(props: {
   const [template, setTemplate] = createSignal<MissionPanelMap["template"]>(recurrenceHold?.template ?? held?.template ?? draft?.template ?? original?.template ?? "custom")
   const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(recurrenceHold?.profiles ?? held?.profiles ?? draft?.profiles ?? original?.profiles))
   const [customProfiles, setCustomProfiles] = createSignal(Boolean(held || recurrenceHold || draft?.customProfiles))
+  const [profilesOpen, setProfilesOpen] = createSignal(draft?.profileDetailsOpen ?? false)
+  let profilesFold: HTMLDetailsElement | undefined
+  const [profilesReading, setProfilesReading] = createSignal(false)
   const [taskMode, setTaskMode] = createSignal<MissionTaskMode | undefined>(draft ? draft.taskMode : recurrenceHold?.taskMode ?? held?.taskMode ?? original?.taskMode ?? "native")
   const [customTaskMode, setCustomTaskMode] = createSignal(Boolean(held || recurrenceHold || draft?.customTaskMode))
   const [defaults, setDefaults] = createSignal<MissionProfileDefault[]>(draft?.defaults ?? [])
@@ -121,8 +125,6 @@ export function MissionEditor(props: {
   const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held || recurrenceHold) || config.isUiConfigLoaded())
   const effectiveProfiles = () => freezeCompareProfiles(template(), profiles())
   const compareError = () => template() === "compare" ? compareModelError(profiles()) : undefined
-  const judgeWarning = () => template() === "compare" && ["model-a", "model-b"].some(role =>
-    sameCompareModel(effectiveProfiles()?.roles?.comparator?.model, profiles()?.roles?.[role]?.model))
   const [selectedModel, setSelectedModel] = createSignal<Pick<UserMissionModel, "id" | "name"> | undefined>(held ? submittedMissionModel(held.requestId)
     : recurrenceHold ? submittedMissionModel(recurrenceHold.requestID) : draft?.selectedModel)
   // One creation-time snapshot only, after the owned preference document loads.
@@ -156,6 +158,7 @@ export function MissionEditor(props: {
   const [error, setError] = createSignal("")
   const [fieldError, setFieldError] = createSignal<FieldError>()
   const fail = (field: FieldError["field"], message: string) => {
+    if (field === "profiles") setProfilesOpen(true)
     setFieldError({ field, message })
   }
   const errorFor = (field: FieldError["field"]) => fieldError()?.field === field ? fieldError()!.message : undefined
@@ -170,7 +173,7 @@ export function MissionEditor(props: {
       setProfiles(copyMissionProfiles(config.profiles)); setTaskMode(config.taskMode); setWatched(config.watchedConversationIDs)
       setCustomProfiles(true); setCustomTaskMode(true)
     }, captureDraft: () => captureDraft(), onSaved: (mission, scheduleID) => props.onSaved(mission, scheduleID) })
-  createEffect(() => props.onReading?.(schedule.revalidating()))
+  createEffect(() => props.onReading?.(schedule.revalidating() || profilesReading()))
   onCleanup(() => props.onReading?.(false))
   const policy = createMemo(() => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } })
   const mode = () => policy() && !requiresMissionCalendar(policy()!) ? "once" : "recurring"
@@ -233,7 +236,7 @@ export function MissionEditor(props: {
   const captureDraft = (): MissionEditorDraft => ({ mode: mode(), titleOverride: titleOverride(), time: time(), zone: zone(),
     watched: watched(), objective: objective(), notes: notes(), template: template(), profiles: copyMissionProfiles(profiles()),
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
-    defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: true, profileDetailsOpen: true,
+    defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: true, profileDetailsOpen: profilesFold?.open ?? profilesOpen(),
     requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(), startOnCreation: startOnCreation(),
     deleteAutoSubmitted: kind === "delete" && !autoSubmit(), deleteError: kind === "delete" ? error() : undefined,
     scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(),
@@ -426,6 +429,7 @@ export function MissionEditor(props: {
         setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
         setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
       }} /></Show>
+    <section class="mission-create-group">
     <label class="mission-create-field" for={ids.objective}><span>{t("missions.create.objective")}</span>
     <textarea id={ids.objective} rows={1} required maxLength={mode() === "recurring" ? MISSION_LIFECYCLE_TEXT_LIMIT : 20_000} value={objective()}
       placeholder={t("missions.create.objectivePlaceholder")} disabled={textLocked()}
@@ -440,10 +444,12 @@ export function MissionEditor(props: {
         onInput={e => setTitleOverride(e.currentTarget.value)} />
     </label>
     <Show when={kind === "edit" && structuralReason()}>{reason => <p role="status">{t(`missions.scheduling.lock.${reason()}`)}</p>}</Show>
-    <Show when={template() === "compare"}>
-      <Show when={compareError()}>{error => <p role="alert" class="mission-create-field-error">{t(`missions.compare.${error()}`)}</p>}</Show>
-      <Show when={judgeWarning()}><p role="status">{t("missions.compare.judgeWarning")}</p></Show>
-    </Show>
+    <label class="mission-create-field"><span>{t("missions.control.notes")}</span>
+      <textarea rows={1} maxLength={20_000} value={notes()} disabled={textLocked()} onInput={e => setNotes(e.currentTarget.value)} />
+    </label>
+    </section>
+    <section class="mission-create-group" aria-label={t("missions.create.options")}>
+      <h4>{t("missions.create.options")}</h4>
       <div class="mission-create-template">
         <label class="mission-create-field"><span>{t("missions.control.template")}
           <SettingsInfoTip text={t(`missions.control.template.${template()}.description`)} help={{ page: "playbooks", anchor: template() }} />
@@ -463,28 +469,33 @@ export function MissionEditor(props: {
         {/* Native nesting depth is project configuration, shared with every conversation there. */}
         <Show when={kind === "create"}><MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={isActive} /></Show>
       </MissionTaskModeControls>
-      <section class="mission-create-option" aria-label={t("missions.create.agents")} aria-describedby={errorFor("profiles") ? ids.profilesError : undefined}>
+    </section>
+      <section class="mission-create-option" aria-label={t("missions.create.agents")} aria-describedby={errorFor("profiles") || compareError() ? ids.profilesError : undefined}>
+        <details ref={profilesFold} class="settings-disclosure mission-profiles-disclosure" open={profilesOpen()} onToggle={event => setProfilesOpen(event.currentTarget.open)}>
+          <summary>{t("missions.create.agents")}
+            <MissionProfileSummary inline instanceId={props.instanceId} directory={props.directory} template={template()} profiles={effectiveProfiles()} />
+          </summary>
             <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
               taskMode={taskMode()}
-              disabled={structuralLocked()} active={isActive}
+              disabled={structuralLocked()} active={() => isActive() && profilesOpen()}
+              onReading={setProfilesReading}
               onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
-          <div class="mission-create-option-actions">
-            <button type="button" class="window-action" disabled={structuralLocked()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
-            <Show when={props.onOpenPreferences}><button type="button" class="window-action" title={t("missions.defaults.hint")} onClick={props.onOpenPreferences}>{t("missions.defaults.manage")}</button></Show>
-          </div>
-        {inlineError("profiles", ids.profilesError)}
+        </details>
+        <Show when={compareError()} fallback={inlineError("profiles", ids.profilesError)}>{error =>
+          <span id={ids.profilesError} role="alert" class="mission-create-field-error">{t(`missions.compare.${error()}`)}</span>
+        }</Show>
       </section>
-      <label class="mission-create-field"><span>{t("missions.control.notes")}</span>
-        <textarea rows={1} maxLength={20_000} value={notes()} disabled={textLocked()} onInput={e => setNotes(e.currentTarget.value)} />
-      </label>
       <Show when={mode() === "recurring" || watchedIDs().length > 0}>
         <MissionConversationPicker instanceId={props.instanceId} directory={props.directory} projectID={props.projectID}
           value={watchedIDs()} disabled={structuralLocked()} active={() => mode() === "recurring" && isActive()} onChange={setWatched} />
         {inlineError("followed", ids.followedError)}
         <Show when={needsSourceLocation() && !sourceLocationReady() && !errorFor("followed")}><p role={sourceLocationFailed() ? "alert" : "status"}>{t(sourceLocationFailed() ? "missions.recurrence.sourceLocationUnavailable" : "missions.control.loading")}</p></Show>
       </Show>
+    <Show when={kind === "create"}><label class="mission-create-autostart">
+      <input type="checkbox" checked={startOnCreation()} disabled={structuralLocked()}
+        onChange={event => setStartOnCreation(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
+    </label></Show>
     <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()}
-      startOnCreation={startOnCreation()} onStartOnCreation={kind === "create" ? setStartOnCreation : undefined}
       capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
     <Show when={immediateFollowed()}><p role="status">{t(immediateCreationFollowed() ? "missions.scheduling.immediateCreationFollowed" : "missions.scheduling.immediateFollowed")}</p></Show>
     <Show when={schedule.capability() === "missing"}><button type="button" class="window-action" disabled={busy() || schedule.reading()}

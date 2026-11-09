@@ -1,6 +1,7 @@
 import { For, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionPanelTask } from "../../../server/src/api-types"
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
+import type { VirtualizerHandle } from "virtua/solid"
 
 /** Stable topological order, including retired work; unrelated tasks never gain an edge.
  * The order the server pages compact maps in, for a map that holds all its tasks. */
@@ -24,11 +25,17 @@ const MISSION_GRAPH_WIDTH = 30, FIRST_LANE = 14, LANE_STEP = 6, LANE_MARGIN = 10
  * the edge, in the SVG's own (possibly scaled or RTL-mirrored) user space. */
 export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUListElement; omitted?: MissionGraphOmitted
   /** The width beyond `MISSION_GRAPH_WIDTH` the lanes need, which the rows' indent adds. */
-  onExtra?: (pixels: number) => void }) {
+  onExtra?: (pixels: number) => void
+  virtualizer?: VirtualizerHandle; layoutVersion?: number }) {
   let svg!: SVGSVGElement
-  const [points, setPoints] = createSignal<Array<{ key: string; x: number; y: number }>>([])
+  const [points, setPoints] = createSignal<Array<{ key: string; x: number; y: number }>>([], {
+    equals: (previous, next) => previous.length === next.length && previous.every((point, index) =>
+      point.key === next[index].key && point.x === next[index].x && point.y === next[index].y),
+  })
   const [height, setHeight] = createSignal(0)
+  let anchorX = MISSION_GRAPH_WIDTH
   createEffect(() => {
+    props.layoutVersion
     const tasks = props.tasks
     const list = props.list
     const measure = () => {
@@ -37,8 +44,14 @@ export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUList
       const scaleX = list.offsetWidth ? bounds.width / list.offsetWidth : 1
       // Mirrored in RTL (mission-graph.css): user x = 0 is the SVG's right edge.
       const rtl = getComputedStyle(svg).direction === "rtl"
-      const rows = new Map([...list.children].map(row => [(row as HTMLElement).dataset.taskKey, row]))
-      setPoints(tasks.flatMap(task => {
+      const rows = new Map([...list.querySelectorAll<HTMLElement>("[data-task-key]")].map(row => [row.dataset.taskKey, row]))
+      const sample = list.querySelector("[data-graph-anchor]")?.getBoundingClientRect()
+      if (sample?.width) anchorX = (rtl ? origin.right - sample.right : sample.left - origin.left) / scaleX
+      setPoints(tasks.flatMap((task, index) => {
+        // Offscreen rows use Virtua's measured/estimated layout; rails never require
+        // mounting every task or fetching an unread dependency's task body.
+        if (props.virtualizer) return [{ key: task.key, x: Math.max(MISSION_GRAPH_WIDTH, anchorX),
+          y: props.virtualizer.getItemOffset(index) + props.virtualizer.getItemSize(index) / 2 }]
         const anchor = rows.get(task.key)?.querySelector("[data-graph-anchor]")
         if (!anchor) return []
         const box = anchor.getBoundingClientRect()
@@ -93,9 +106,15 @@ export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUList
       .map(([side, rise]) => ({ key: point.key, side, d: `M ${point.x} ${point.y} H ${STUB_LANE} V ${point.y + rise}` }))
   })
   const width = () => Math.ceil(Math.max(MISSION_GRAPH_WIDTH, ...points().map(point => point.x)))
+  // Retain each existing rail's DOM node as pages arrive or measured coordinates change.
+  const byEdge = createMemo(() => new Map(edges().links.map(edge => [JSON.stringify([edge.from.key, edge.to.key]), edge])))
+  const edgeKeys = createMemo(() => [...byEdge().keys()])
   return <svg ref={svg} class="mission-graph" width={width()} height={height()} aria-hidden="true">
-    <For each={edges().links}>{edge => <path data-from={edge.from.key} data-to={edge.to.key}
-      d={`M ${edge.from.x} ${edge.from.y} H ${edge.lane} V ${edge.to.y} H ${edge.to.x}`} />}</For>
+    <For each={edgeKeys()}>{key => {
+      const edge = () => byEdge().get(key)!
+      return <path data-from={edge().from.key} data-to={edge().to.key}
+        d={`M ${edge().from.x} ${edge().from.y} H ${edge().lane} V ${edge().to.y} H ${edge().to.x}`} />
+    }}</For>
     <For each={stubs()}>{stub => <path class="mission-graph-omitted" data-task={stub.key} data-omitted={stub.side} d={stub.d} />}</For>
   </svg>
 }

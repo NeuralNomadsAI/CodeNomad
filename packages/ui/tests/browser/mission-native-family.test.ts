@@ -502,7 +502,7 @@ test("a red task opens its asking descendant with the question focused; the Miss
   const ctx = await setup("red-task", false, false, true), { page } = ctx
   try {
     await select(page, "A"); await pickMission(page, "A"); await page.evaluate(() => window.missionNativeFamily.ask())
-    const task = page.locator('.mission-tree li[data-task-key="work"][data-state="input"]')
+    const task = page.locator('.mission-tree .mission-tree-node[data-task-key="work"][data-state="input"]')
     await task.waitFor()
     const row = missionRow(page, "Objective A")
     assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), "permission", "the chevron carries the task's question")

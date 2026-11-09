@@ -1,9 +1,10 @@
-import { Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Component, type JSX } from "solid-js"
+import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Component, type JSX } from "solid-js"
 import { AlertTriangle, Flag, Loader2, RefreshCw, Settings } from "lucide-solid"
 
 import type { MissionActivityProjection, MissionPanelMap } from "../../../../../../../server/src/api-types"
 import type { MissionUnavailableReason } from "../../../../../../../server/src/missions/model"
 import { missionTaskExecutionEvidence } from "../../../../../../../server/src/missions/execution-evidence"
+import type { MissionTaskMark } from "../../../../../../../server/src/missions/mission-task-marks"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
 import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-data"
@@ -37,13 +38,14 @@ import { missionTaskConversation } from "../../../../mission-task-navigation"
 import { conversationActivity, missionTaskRowState } from "../../../../mission-task-tree"
 import { MissionTaskActions, type MissionTaskSelection } from "../../../../mission-task-actions"
 import { MissionTaskPreview } from "../../../../mission-task-preview"
-import { missionDerivedSessionIncludes, missionDerivedTaskSession } from "../../../../../stores/mission-task-sessions"
+import { missionDerivedSessionIncludes, missionDerivedTaskSession, useMissionTaskSessionDemand } from "../../../../../stores/mission-task-sessions"
 import { useMissionCurrentPassage } from "../../../../../stores/mission-recurrence"
 import { createMissionViewFence, createReportedChanges } from "../../../../../lib/mission-view-fence"
 import { sessionListRestored } from "../../../../../stores/session-list-restoration"
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
 import { MissionPanelScope, MissionViewScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
+import { MissionListPaging } from "../../../../mission-list-paging"
 
 interface MissionControlProps {
   instanceId: string
@@ -193,6 +195,29 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // views keep their cached snapshot for activation revalidation.
   // Task trees are shown, and read, while the panel is active and the creation form is closed.
   const treeShown = () => (props.isActive?.() ?? true) && editor()?.kind !== "create"
+  const directoryTaskMarks = createMemo(() => new Map(rows().map(row => [row.id, missionStore.taskMarks(props.instanceId, row.id)])))
+  createEffect(() => {
+    if (!visible() || !treeShown()) return
+    for (const row of rows()) {
+      if (row.taskCount === 0) continue
+      const marks = directoryTaskMarks().get(row.id)!
+      if (marks.loading) return
+      if (marks.failure) continue
+      const stale = marks.revision === undefined || marks.revision < row.revision
+      if (stale || marks.more) {
+        untrack(() => void missionStore.more(props.instanceId, `task-marks:${row.id}`, stale))
+        return
+      }
+    }
+  })
+  // State marks belong to the rows already displayed, not a second user-managed
+  // inventory. Continue one bounded window at a time, never beyond the shown directory.
+  // Failures stay parked until an explicit Retry; inactive/covered trees stop demand.
+  createEffect(() => {
+    const marks = missionStore.progress(props.instanceId, "marks")
+    if (!visible() || !treeShown() || marks.loading || marks.failure || !marks.more || marks.loaded >= rows().length) return
+    untrack(() => void missionStore.more(props.instanceId, "marks"))
+  })
   const refreshVisible = () => (props.isActive?.() ?? true) && missionStore.demandedInstanceIds().includes(props.instanceId)
     ? missionStore.refresh(props.instanceId) : Promise.resolve()
 
@@ -481,44 +506,48 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       return { reading: isReading(overview), onToggle: () => void read(overview),
         onOpenConversation: () => void openActor(passage.coordinatorSessionId) }
     } })
-  // Each row's questions: the flag's (the coordinator's, or none of its loaded tasks'),
-  // answered by selecting the row, and its tasks', carried by the chevron, which also
-  // shows a native task's work (it has no declared actor of its own) once the map is read.
+  const mapsById = createMemo(() => new Map(missions().map(map => [map.id, map])))
+  const activityById = createMemo(() => new Map(state().activity?.missions.map(value => [value.missionId, value])))
+  // Directory task facts own row attention. Selection only demands the detailed plan.
   const rowQuestions = createMemo(() => new Map(rows().map(value => {
-    const family = state().activity?.missions.find(item => item.missionId === value.id)?.family
-    const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
+    const observed = activityById().get(value.id), family = observed?.family
+    const map = mapsById().get(value.id)
     const key = map ?? { ...value, projectID: projectID() ?? "" }
-    // A read map's declared actors, else the row's.
-    const questions = missionQuestions({ instanceId: props.instanceId, mission: key, actors: map?.actors ?? value.actorSessionIds.map(sessionId => ({ sessionId })),
+    const observations = currentMissionObservations(missionStore, props.instanceId, value.id)
+    const marks = directoryTaskMarks().get(value.id)
+    const currentMarks = marks?.revision !== undefined && marks.revision >= value.revision && marks.revision >= (map?.revision ?? 0)
+    const facts: readonly MissionTaskMark[] = currentMarks ? marks.tasks : map?.tasks ?? []
+    const actors = [...map?.actors ?? observations.flatMap(page => page.context.actors), ...missionStore.observedActors(props.instanceId, value.id)]
+    const sessionContext = { id: value.id, projectID: key.projectID, coordinatorSessionId: value.coordinatorSessionId,
+      revision: currentMarks ? marks.revision! : map?.revision ?? value.revision, tasks: facts }
+    const questions = missionQuestions({ instanceId: props.instanceId, mission: { ...key, tasks: facts }, actors,
       family, store: missionStore })
-    const actors = map ? [...map.actors, ...missionStore.observedActors(props.instanceId, map.id)] : []
-    const conversation = map ? (task: MissionPanelMap["tasks"][number]) => missionTaskConversation(map, task, family,
-      missionDerivedTaskSession(props.instanceId, map, task.key), actors) : undefined
-    // Each loaded task's row state, computed exactly as its row computes it.
-    const activities = new Map(state().activity?.missions.find(item => item.missionId === value.id)?.actors.map(actor => [actor.sessionId, actor.state]))
-    const taskStates = map && conversation ? map.tasks.map(task => missionTaskRowState(props.instanceId, map, task, activities, conversation(task), false)) : []
-    // Loaded rows decide their own state, including completed actors wrapping up.
-    // A partial plan still admits positive activity from its other observed actors.
-    const coveredActors = new Set(map?.tasks.flatMap(task => [task.actorSessionId, conversation?.(task)].filter((id): id is string => Boolean(id))))
+    const conversation = (task: MissionTaskMark) => missionTaskConversation({ ...sessionContext, actors }, task, family,
+      missionDerivedTaskSession(props.instanceId, key, task.key), actors)
+    const activities = new Map(observed?.actors.map(actor => [actor.sessionId, actor.state]))
+    const taskStates = facts.map(task => missionTaskRowState(props.instanceId, key, task, activities, conversation(task), false))
+    const coveredActors = new Set(facts.flatMap(task => [task.actorSessionId, conversation(task)].filter((id): id is string => Boolean(id))))
     const loadedOwed = new Set(map?.tasks.filter(task => missionTaskExecutionEvidence(task).missingReport).map(task => task.actorSessionId))
-    const wholeOwed = [...map?.actorEvidence?.reportOwed ?? [], ...currentMissionObservations(missionStore, props.instanceId, value.id)
+    const wholeOwed = [...map?.actorEvidence?.reportOwed ?? [], ...observations
       .flatMap(page => page.context.actors.filter(actor => actor.reportOwed).map(actor => actor.sessionId))]
     const offPageOwed = new Set(wholeOwed.filter(id => !loadedOwed.has(id)))
-    const partialTasks = !map || (map.taskPage?.total ?? map.tasks.length) > map.tasks.length
+    const partialTasks = currentMarks ? marks.more : !map || (map.taskPage?.total ?? map.tasks.length) > map.tasks.length
     // Finished tasks this window has not shown yet (green, like an idle subsession).
-    const unseen = map ? map.tasks.filter((task, index) => taskStates[index] === "done" && missionTaskUnseen(completionScope(), value.id, task)) : []
-    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, map?.tasks, conversation), taskStates, coveredActors, offPageOwed, partialTasks, unseen }]
+    const unseen = facts.filter((task, index) => taskStates[index] === "done" && missionTaskUnseen(completionScope(), value.id, task))
+    const observeNative = facts.some(task => !task.actorSessionId && !task.replacedByTaskKey && !["completed", "failed", "withdrawn"].includes(task.status))
+      && Boolean(family?.state !== "unknown" && family?.members.some(member => member.actorSessionId === value.coordinatorSessionId && member.sessionId !== value.coordinatorSessionId))
+    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, currentMarks || map ? facts : undefined, conversation),
+      sessionContext, observeNative, facts, taskStates, coveredActors, offPageOwed, partialTasks, unseen }]
   })))
   const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {
-    const observed = state().activity?.missions.find(item => item.missionId === value.id)
+    const observed = activityById().get(value.id)
     const questions = rowQuestions().get(value.id)
     const others = questions?.partialTasks ? observed?.actors.filter(actor => actor.sessionId !== value.coordinatorSessionId
       && (!questions.coveredActors.has(actor.sessionId) || questions.offPageOwed.has(actor.sessionId))).map(actor => actor.state) ?? [] : []
     const mark = missionMark(value, { openRequests: questions?.flag.length ?? 0, actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
       seen: missionFinishedSeen(completionScope(), value) })
-    // Like a session row's chevron, the most urgent state of its children: the loaded
-    // task rows' own states, else (tasks not read yet) its observed task actors'.
+    // Like session rows, input, work and unseen results propagate independently of selection.
     const tasks = questions?.taskStates ?? []
     const childActivity = questions?.tasks.length || tasks.includes("input")
       || others.some(state => state === "permission" || state === "form") ? "permission" as const
@@ -654,6 +683,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           </button>
         </>} />
       </header>
+      <For each={rows().map(row => row.id)}>{id => {
+        useMissionTaskSessionDemand({ instanceId: () => props.instanceId, mission: () => rowQuestions().get(id)?.sessionContext,
+          active: () => visible() && treeShown() && Boolean(rowQuestions().get(id)?.observeNative), pulse: () => state().activity?.generatedAt })
+        return null
+      }}</For>
       <Show when={passageSchedule() && taskSelected() && !passageTask()}><MissionActionBar task label={props.t("missionsPanel.picker.actions")} reading={false} /></Show>
       <Show when={navigationError()}><p class="mission-control-stale" role="alert">{props.t("sessionList.reload.error")}</p></Show>
       <Show when={editor()} keyed>{action => {
@@ -712,12 +746,18 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           const unseen = rowQuestions().get(id)?.unseen ?? [], finished = entry?.mark === "done"
           // Like a session hierarchy: clears the finished-unseen tasks and the Mission's own completion.
           return unseen.length || finished ? () => batch(() => {
-            const map = missionStore.state(props.instanceId).missions.find(item => item.id === id)
-             if (map) markMissionTasksSeen(completionScope(), id, map.tasks, true, map.updatedAt)
+            markMissionTasksSeen(completionScope(), id, rowQuestions().get(id)?.facts ?? [], true,
+              Math.max(directoryTaskMarks().get(id)?.through ?? 0, mapsById().get(id)?.updatedAt ?? 0, rows().find(row => row.id === id)?.updatedAt ?? 0))
             if (finished) markMissionsFinishedSeen(completionScope(), [id], rows().filter(value => value.status === "completed"), true)
           }) : undefined
         }}
-        paging={<>{recurrence.listView()}{scheduled.listView()}<MissionPanelPaging instanceId={props.instanceId} lane="summaries" search /></>}
+        paging={<>{recurrence.listView()}{scheduled.listView()}
+          <MissionListPaging instanceId={props.instanceId} active={treeShown()}
+            taskMarksError={[...directoryTaskMarks().values()].some(value => Boolean(value.failure))}
+            taskMarksLoading={[...directoryTaskMarks().values()].some(value => Boolean(value.failure && value.loading))}
+            onTaskMarksRetry={() => { for (const [id, value] of directoryTaskMarks()) if (value.failure) void missionStore.more(props.instanceId, `task-marks:${id}`, true) }}
+            scheduleMore={Boolean(scheduled.next())} scheduleLoading={scheduled.loading()} scheduleError={scheduled.error()}
+            onScheduleMore={scheduled.more} onScheduleRetry={scheduled.retry} /></>}
         onSelect={entry => {
           const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
           if (kind === "schedule" || kind === "scheduled") {
@@ -812,7 +852,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       <Show when={missionStore.progress(props.instanceId, "cleanups").more || missionStore.progress(props.instanceId, "cleanups").failure}>
         <MissionPanelPaging instanceId={props.instanceId} lane="cleanups" />
       </Show>
-      <MissionPanelPaging instanceId={props.instanceId} lane="marks" />
       <Show when={cleanupPending()}><MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
         disabled={Boolean(editor()) || !["ready", "loading"].includes(state().status) || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} /></Show>

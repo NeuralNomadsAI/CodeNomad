@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.scheduling.startOnCreation": "Oluştururken başlat",
+  "missions.scheduling.startOnCreation": "Otomatik başlat",
   "missions.scheduling.source.now": "Bir kez, şimdi",
   "missions.settings.effectiveOrigin": "OpenCode yapılandırma dosyası:",
   "missions.settings.noOrigin": "Belge yolu yok",
@@ -113,7 +113,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.condition.mission-completed": "Tek seferlik Görev başarıyla tamamlanır",
   "missions.scheduling.condition.conversation-message": "Takip edilen konuşmada yeni mesaj",
   "missions.scheduling.condition.files-changed": "Belirtilen dosyalar değişir",
-  "missions.scheduling.capability.missing": "Bu bağlantıda zamanlama kullanılamıyor. Başlatma ölçütü olmayan bir Görev kullanılabilir.",
+  "missions.scheduling.capability.missing": "Bu bağlantıda zamanlama kullanılamıyor.",
   "missions.scheduling.capability.loading": "Zamanlama kullanılabilirliği denetleniyor…",
   "missions.scheduling.capability.activatable": "Başlat ve Sürdür, yerel zamanlama ayarını etkinleştirmeden önce onayınızı gerektirir.",
   "missions.scheduleList.runNowRequiresEnabled": "Şimdi çalıştır için yerel zamanlama etkin olmalıdır. OpenCode ayarlarında etkinleştirip yenileyin.",

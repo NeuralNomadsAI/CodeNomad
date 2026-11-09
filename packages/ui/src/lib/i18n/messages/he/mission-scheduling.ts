@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.scheduling.startOnCreation": "התחלה בעת היצירה",
+  "missions.scheduling.startOnCreation": "התחלה אוטומטית",
   "missions.scheduling.source.now": "פעם אחת, עכשיו",
   "missions.settings.effectiveOrigin": "קובץ התצורה של OpenCode:",
   "missions.settings.noOrigin": "ללא נתיב מסמך",
@@ -113,7 +113,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.condition.mission-completed": "משימה חד־פעמית מסתיימת בהצלחה",
   "missions.scheduling.condition.conversation-message": "הודעה חדשה בשיחה במעקב",
   "missions.scheduling.condition.files-changed": "שינוי בקבצים מפורשים",
-  "missions.scheduling.capability.missing": "התזמון אינו זמין בחיבור זה. משימה ללא קריטריוני הפעלה נשארת זמינה.",
+  "missions.scheduling.capability.missing": "התזמון אינו זמין בחיבור זה.",
   "missions.scheduling.capability.loading": "זמינות התזמון נבדקת…",
   "missions.scheduling.capability.activatable": "התחלה והמשך דורשים אישור לפני הפעלת הגדרת התזמון המקורית.",
   "missions.scheduleList.runNowRequiresEnabled": "הרצה עכשיו דורשת תזמון מקורי פעיל. יש להפעיל אותו בהגדרות OpenCode ואז לרענן.",

@@ -124,7 +124,7 @@ test("existing mobile project keeps a prose-free detail and exact current result
     assert.equal(await card(page).getByText(/%|Point du coordinateur|tâches terminées/).count(), 0)
     const tree = card(page).locator(".mission-tree")
     assert.equal(await tree.getAttribute("aria-label"), "Tâches (4)")
-    assert.deepEqual(await tree.locator("li[data-task-key]").evaluateAll(rows => rows.map(row => [(row as HTMLElement).dataset.taskKey, (row as HTMLElement).dataset.state])),
+    assert.deepEqual(await tree.locator(".mission-tree-node[data-task-key]").evaluateAll(rows => rows.map(row => [(row as HTMLElement).dataset.taskKey, (row as HTMLElement).dataset.state])),
       [["xcode", "done"], ["android-boot", "blocked"], ["old-xcode", "retired"], ["compile-ios", "waiting"]])
     assert.equal(await tree.locator('[data-task-key="compile-ios"] .sr-only').textContent(), "En attente")
     assert.equal(await tree.locator('[data-task-key="android-boot"] .sr-only').textContent(), "Bloquée")

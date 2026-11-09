@@ -1,5 +1,11 @@
 import type { Locator, Page } from "playwright"
 
+/** Open the shared creation/Preferences profile disclosure through its native summary. */
+export async function openMissionProfiles(page: Page): Promise<void> {
+  const fold = page.locator(".mission-profiles-disclosure")
+  if (!await fold.evaluate((element: HTMLDetailsElement) => element.open)) await fold.locator("summary").click()
+}
+
 /** Exercise a `MissionListItem` action through its inline or measured-overflow presentation
  * (cleanup receipts and other shared list rows; the Mission picker has no row menus). */
 export async function clickListItemAction(row: Locator, label: string): Promise<void> {
@@ -160,7 +166,20 @@ export async function toggleMissionOverview(page: Page, title: string | RegExp):
 /** A row's task button (`.mission-tree-task`) for a task title, wherever its tree is shown. */
 export const missionTask = (scope: Page | Locator, title: string | RegExp) => {
   const page = "keyboard" in scope ? scope : scope.page()
-  return scope.locator("li.mission-tree-node").filter({ has: page.locator(".mission-tree-task .session-item-title", { hasText: exact(title) }) }).locator(".mission-tree-task")
+  return scope.locator(".mission-tree-node").filter({ has: page.locator(".mission-tree-task .session-item-title", { hasText: exact(title) }) }).locator(".mission-tree-task")
+}
+
+/** Reveal a virtual task through its real scroll owner before native focus or clicks. */
+export async function revealMissionTask(task: Locator): Promise<void> {
+  const page = task.page(), panel = page.locator(".mission-control")
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  if (!await task.count()) await panel.evaluate(element => { element.scrollTop = 0 })
+  const deadline = Date.now() + 10_000
+  while (!await task.count() && Date.now() < deadline) {
+    await panel.evaluate(element => { element.scrollTop += element.clientHeight * 0.75 })
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  }
+  await task.click({ trial: true })
 }
 
 /** Gives the toolbar back to the selected task's Mission (or schedule): selecting the row whose
