@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import { showAlertDialog } from "../../stores/alerts"
 import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
@@ -73,8 +73,9 @@ export function useSpeech(options: UseSpeechOptions) {
     resetState()
   }
 
+  const ownerId = createMemo(options.id)
   createEffect(() => {
-    options.id()
+    ownerId()
     onCleanup(stop)
   })
 

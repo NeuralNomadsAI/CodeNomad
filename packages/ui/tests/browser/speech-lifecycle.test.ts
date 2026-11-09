@@ -57,6 +57,35 @@ test("identity replacement stops its audio; duplicate identities keep distinct o
   assert.deepEqual(stopped.revoked, ["blob:speech-1"])
 }))
 
+for (const phase of ["playing", "synthesis", "capabilities"]) test(`same-ID record replacement preserves speech during ${phase}`, () => withPage(async page => {
+  await page.evaluate(phase => {
+    const f = (window as any).fixture
+    if (phase === "capabilities") f.holdCapabilities()
+    f.mount("a", "same-message"); f.toggle("a")
+  }, phase)
+  if (phase !== "capabilities") await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)
+  if (phase === "playing") {
+    await page.evaluate(() => (window as any).fixture.resolve(0))
+    await state(page, "a", "playing")
+  }
+  await page.evaluate(() => (window as any).fixture.replace("a"))
+  assert.equal(await page.evaluate(() => (window as any).fixture.state("a")), phase === "playing" ? "playing" : "loading")
+  if (phase === "capabilities") {
+    await page.evaluate(() => (window as any).fixture.resolveCapabilities())
+    await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)
+  }
+  if (phase !== "playing") {
+    await page.evaluate(() => (window as any).fixture.resolve(0))
+    await state(page, "a", "playing")
+  }
+  const playing = await snapshot(page)
+  assert.deepEqual(playing.audios, [{ paused: false, src: "blob:speech-1", loads: 0 }])
+  assert.deepEqual(playing.revoked, [])
+  await page.evaluate(() => (window as any).fixture.change("a", "different-message"))
+  await state(page, "a", "idle")
+  assert.deepEqual((await snapshot(page)).revoked, ["blob:speech-1"])
+}))
+
 test("only the newest request can play, including colliding identities and stale events", () => withPage(async page => {
   await page.evaluate(() => { const f = (window as any).fixture; f.mount("a", "same"); f.mount("b", "same"); f.toggle("a") })
   await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)

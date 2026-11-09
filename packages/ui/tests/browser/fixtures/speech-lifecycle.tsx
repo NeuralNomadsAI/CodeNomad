@@ -37,15 +37,15 @@ URL.revokeObjectURL = url => { revoked.push(url) }
 
 const Providers = (props: any) => <ConfigProvider><I18nProvider><ThemeProvider>{props.children}</ThemeProvider></I18nProvider></ConfigProvider>
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
-const owners = new Map<string, { speech: ReturnType<typeof useSpeech>; setId: (id: string) => void; dispose: () => void }>()
+const owners = new Map<string, { speech: ReturnType<typeof useSpeech>; setId: (id: string) => void; replace: () => void; dispose: () => void }>()
 function mount(key: string, id: string, mode: "buffered" | "streaming" = "buffered") {
   const root = document.createElement("section")
   document.body.append(root)
-  const [identity, setId] = createSignal(id)
+  const [record, setRecord] = createSignal({ id, text: "Read this" })
   let speech!: ReturnType<typeof useSpeech>
-  function Harness() { speech = useSpeech({ id: identity, text: () => "Read this", settingsOverride: () => ({ playbackMode: mode, ttsFormat: "mp3" }) }); return null }
+  function Harness() { speech = useSpeech({ id: () => record().id, text: () => record().text, settingsOverride: () => ({ playbackMode: mode, ttsFormat: "mp3" }) }); return null }
   const dispose = render(() => <Providers><Harness /></Providers>, root)
-  owners.set(key, { speech, setId, dispose: () => { dispose(); root.remove() } })
+  owners.set(key, { speech, setId: id => setRecord(record => ({ ...record, id })), replace: () => setRecord(record => ({ ...record, text: `${record.text} updated` })), dispose: () => { dispose(); root.remove() } })
 }
 
 // The real tool card is position-recycled exactly like MessageBlock's Index.
@@ -83,6 +83,7 @@ async function cards(count: number, drift: boolean) {
   resolveCapabilities: () => resolveCapabilities!(),
   retained: () => refs.filter(ref => ref.deref()).length,
   change: (key: string, id: string) => owners.get(key)!.setId(id),
+  replace: (key: string) => owners.get(key)!.replace(),
   remove: (key: string) => { owners.get(key)!.dispose(); owners.delete(key) },
   toggle: (key: string) => { void owners.get(key)!.speech.toggle() },
   state: (key: string) => owners.get(key)!.speech.state(),
