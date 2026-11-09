@@ -82,6 +82,9 @@ type TranscriptEntry = {
    * arriving mid-read may invalidate the message key and chain a trailing
    * read, and the newest read's completion owns the publication. */
   settlementReadPromise?: Promise<unknown>
+  /** The publishing chain the recorded read armed; callers holding obligations
+   * on the read settle with it (the SDK promise settles one hop earlier). */
+  settlementReadChain?: Promise<unknown>
   /** The execution epoch the followed read owes a publication for; a newer
    * settlement arriving mid-read upgrades it, so sharing the fetch never
    * drops the newest publication demand. */
@@ -350,6 +353,7 @@ function replaceTranscriptEntry(transcript: TranscriptEntry, next: DataEntry): v
   transcript.settlementReadPending = false
   transcript.settlementReadEntry = undefined
   transcript.settlementReadPromise = undefined
+  transcript.settlementReadChain = undefined
   transcript.entry = next
   previous.dispose()
   transcript.entryRevision[1]((value) => value + 1)
@@ -1075,10 +1079,10 @@ function completeSettlementRead(
   transcript.settlementReadEntry = entry
   transcript.settlementReadEpoch = transcript.executionEpoch
   const promise = entry.data.session.message.sync(sessionId)
-  if (transcript.settlementReadPromise === promise) return promise
+  if (transcript.settlementReadPromise === promise) return transcript.settlementReadChain ?? promise
   transcript.settlementReadPromise = promise
   const followed = promise
-  void followed
+  const chain = followed
     .catch(() => undefined)
     .then(() => {
       // A newer demand re-followed a later read, or a replaced reducer
@@ -1087,6 +1091,7 @@ function completeSettlementRead(
       transcript.settlementReadPending = false
       transcript.settlementReadEntry = undefined
       transcript.settlementReadPromise = undefined
+      transcript.settlementReadChain = undefined
       // Publish unless an execution newer than every recorded demand
       // superseded this settlement: same-round activity (a late terminal tool
       // event) must not suppress the repair.
@@ -1103,7 +1108,8 @@ function completeSettlementRead(
       }
       retireDrainedTranscript(instanceId, sessionId, transcript)
     })
-  return promise
+  transcript.settlementReadChain = chain
+  return chain
 }
 
 /** Non-event settlement evidence: the liveness activity read observed a run
