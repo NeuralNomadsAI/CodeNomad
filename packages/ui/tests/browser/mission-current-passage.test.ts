@@ -168,7 +168,7 @@ test("pressed eye follows one-time → daily passage → native scheduled passag
     }
     await selectMission(page, "One-time review")
     await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
-    await page.locator('.mission-tree li[data-task-key="second"] .mission-tree-task').click()
+    await page.locator('.mission-tree .mission-tree-node[data-task-key="second"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByRole("heading", { name: "Next task has no actor", exact: true }).waitFor()
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.", { exact: true }).waitFor()
     assert.deepEqual(await readerTarget(page), { missionId: f.ordinary.id, kind: "task", itemId: "tsk_second" })
@@ -198,13 +198,13 @@ for (const [id, title] of [["rec_daily", "Daily review"], ["msn_native", "Native
       gate.release.resolve(); await gate.settled.promise; await paint(page)
       if (close) {
         // The selected schedule still demands its passage: prove it rendered after release.
-        await page.locator(`section.mission-detail[aria-label="${title}"] .mission-tree li[data-task-key="second"]`).waitFor({ state: "attached" })
+        await page.locator(`section.mission-detail[aria-label="${title}"] .mission-tree .mission-tree-node[data-task-key="second"]`).waitFor({ state: "attached" })
         assert.equal(await readerTarget(page), undefined)
         assert.equal(await eye(page).getAttribute("aria-pressed"), "false")
         assert.equal(await page.locator(".mission-reader").count(), 0)
         await (await inlineMissionEntry(page, "One-time review")).click()
         assert.equal(await page.locator(".mission-reader").count(), 0, "later row selections keep the eye released")
-        await page.locator('.mission-tree li[data-task-key="second"] .mission-tree-task').click()
+        await page.locator('.mission-tree .mission-tree-node[data-task-key="second"] .mission-tree-task').click()
         assert.equal(await page.locator(".mission-reader").count(), 0, "later task selections keep the eye released")
       } else assert.deepEqual(await readerTarget(page), { missionId: f.ordinary.id, kind: "overview" })
       assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
@@ -515,7 +515,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     // A finished task no longer points at work it unblocked; open the unbound follow-up from the tree.
     assert.equal(await page.locator(".mission-task-dependencies").getByRole("button", { name: /^Unblocks/ }).count(), 0)
     // The open reader follows the selection: selecting the task shows its own reader.
-    await page.locator('.mission-tree li[data-task-key="second"] .mission-tree-task').click()
+    await page.locator('.mission-tree .mission-tree-node[data-task-key="second"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.").waitFor()
     assert.equal(await page.locator(".mission-reader .mission-reader-open").count(), 0, "unbound task never navigates to coordinator")
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
@@ -537,7 +537,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.locator(".mission-reader").getByRole("button", { name: "Back to chat" }).click()
     mission.briefing = savedBriefing
     await page.evaluate(() => (window as any).passageFixture.invalidate())
-    const firstTask = page.locator('.mission-tree li[data-task-key="first"] .mission-tree-task')
+    const firstTask = page.locator('.mission-tree .mission-tree-node[data-task-key="first"] .mission-tree-task')
     await openTaskReader(firstTask)
     // The selected passage task takes the header toolbar from its schedule: read-only,
     // with the task's own conversation, and Summary toggling the task's reader.
@@ -581,7 +581,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.evaluate(() => (window as any).passageFixture.invalidate())
     await page.getByText(/last confirmed snapshot/).waitFor()
     assert.equal(await card.locator(".mission-tree").getByText("Review commits", { exact: true }).count(), 1, "failed refresh preserves map")
-    assert.equal(await card.locator('.mission-tree li[data-task-key="first"]').count(), 1)
+    assert.equal(await card.locator('.mission-tree .mission-tree-node[data-task-key="first"]').count(), 1)
     await page.evaluate(() => (window as any).passageFixture.activate(false))
     const beforeHidden = reads
     await page.evaluate(() => (window as any).passageFixture.invalidate())

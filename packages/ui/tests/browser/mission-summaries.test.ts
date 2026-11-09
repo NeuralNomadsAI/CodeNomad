@@ -198,12 +198,12 @@ test("closed missions list as rows with their marks and open their full map only
     await selectMission(page, "Objective failed")
     assert.deepEqual([requests.at(-1)?.get("include"), requests.at(-1)?.get("panelHeader")], ["failed", "true"])
     await missionToolbarAction(page, "Recover interrupted mission").waitFor()
-    await missionDetail(page).locator('.mission-tree li[data-task-key="work"]').waitFor()
+    await missionDetail(page).locator('.mission-tree .mission-tree-node[data-task-key="work"]').waitFor()
     // The included closed map serves the readers: its overview, then its task.
     await page.locator(".mission-picker-selection-actions .mission-overview-toggle").click()
     await page.locator(".mission-reader").getByText("Stopped short of the release").waitFor()
     // With the eye pressed, the reader follows the selected task.
-    await missionDetail(page).locator('.mission-tree li[data-task-key="work"] .mission-tree-task').click()
+    await missionDetail(page).locator('.mission-tree .mission-tree-node[data-task-key="work"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByText("Result of failed").waitFor()
 
     // Refreshes keep the held rows (omitted, same version) and re-read the selection.

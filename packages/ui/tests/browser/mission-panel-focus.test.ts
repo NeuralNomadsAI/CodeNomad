@@ -139,8 +139,11 @@ for (const consumer of ["creation", "tree"] as const) {
           assert.equal(await focus.evaluate(element => element === document.activeElement), true, "native refocus restores the same control")
           await f.page.evaluate(selector => document.querySelector(selector)!.append(document.createElement("span")), region(consumer))
           await frames(f.page)
-          assert(await f.page.evaluate(() => (window as any).focusAudit.writes.length > 0), "the same observation repairs the control after native focus returns")
-          assert.equal(await visible(f.page), true)
+          const writes = await f.page.evaluate(() => (window as any).focusAudit.writes.length)
+          if (consumer === "creation") {
+            assert(writes > 0, "the form repairs its control after native focus returns")
+            assert.equal(await visible(f.page), true)
+          } else assert.equal(writes, 0, "the task tree never snaps back to an old focused task")
         }
         assert.deepEqual(f.errors, [])
       } finally { await other?.close(); await f.close() }
@@ -164,8 +167,8 @@ for (const consumer of ["creation", "tree"] as const) {
         const state = (window as any).focusAudit
         return { queued: state.queuedBeforeDispose, cancelled: state.cancelled.length, ran: state.ran.length, writes: state.writes.length }
       })
-      assert.equal(disposed.queued, 1, "one callback owns the entire mutation burst")
-      assert.equal(disposed.cancelled, 1, "disposing the old view cancels its queued callback")
+      assert.equal(disposed.queued, consumer === "creation" ? 1 : 0, "only form focus repair schedules a mutation callback")
+      assert.equal(disposed.cancelled, consumer === "creation" ? 1 : 0, "disposing the old form cancels its queued callback")
       assert.equal(disposed.ran, 0); assert.equal(disposed.writes, 0)
       await f.page.evaluate(() => (window as any).missionHost.mount(true))
       await frames(f.page)
@@ -179,7 +182,8 @@ for (const consumer of ["creation", "tree"] as const) {
       }, region(consumer))
       await frames(f.page)
       const burst = await f.page.evaluate(() => ({ scheduled: (window as any).focusAudit.scheduled.length, ran: (window as any).focusAudit.ran as number[] }))
-      assert(burst.scheduled > 0 && burst.scheduled <= burst.ran.length + 1, "a live mutation burst keeps at most one pending callback")
+      if (consumer === "creation") assert(burst.scheduled > 0 && burst.scheduled <= burst.ran.length + 1, "a live mutation burst keeps at most one pending callback")
+      else assert.equal(burst.scheduled, 0, "task mutations never create focus-repair work")
       assert.equal(new Set(burst.ran).size, burst.ran.length, "at most one consumer callback runs in each animation frame")
       assert.deepEqual(f.errors, [])
     } finally { await f.close() }

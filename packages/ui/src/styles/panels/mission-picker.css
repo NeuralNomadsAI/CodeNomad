@@ -35,6 +35,7 @@
   padding: var(--space-xs) var(--space-sm) var(--space-xs) calc(var(--space-sm) + var(--space-lg));
 }
 .mission-picker-empty { padding: var(--space-xs) var(--space-sm); color: var(--text-muted); font-size: var(--font-size-xs); }
+.mission-list-paging { display: flex; align-items: center; min-height: 36px; padding: var(--space-xs) var(--space-sm); overflow-anchor: none; }
 
 @media (pointer: coarse) {
   .mission-picker-search { min-height: var(--touch-target-size); }

@@ -1,4 +1,5 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
+import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { Dynamic } from "solid-js/web"
 import { AlertTriangle, Check, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
 import type { MissionActorActivity, MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
@@ -9,9 +10,11 @@ import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { useMissionPanelStore, useMissionViewScope } from "./mission-panel-scope"
 import { markMissionTasksSeen, missionTaskUnseen } from "../stores/mission-task-seen"
 import { toggleSweepClear, toggleSweepGroup } from "../lib/toggle-sweep"
+import { missionVirtualViewport } from "./mission-virtual-viewport"
+import { observeListEnd } from "../lib/list-end-observer"
+import { preserveListFocus } from "../lib/preserve-list-focus"
 import { taskQuestion, type MissionQuestion } from "./mission-question-owners"
 import { missionQuestionContext } from "./mission-questions"
-import { missionPanelScroll } from "./mission-panel-scroll"
 import type { MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
@@ -21,7 +24,7 @@ export type MissionTaskState = "done" | "active" | "input" | "assigned" | "ready
  * "waiting"; an open native Form/permission is "input". Admission is only
  * "assigned": observed native activity of the task's own conversation alone
  * makes a task "active". */
-export function missionTaskState(task: MissionPanelTask, activity?: MissionActorActivity["state"]): MissionTaskState {
+export function missionTaskState(task: Pick<MissionPanelTask, "status" | "replacedByTaskKey">, activity?: MissionActorActivity["state"]): MissionTaskState {
   if (task.status === "completed") return "done"
   if (task.status === "withdrawn" || task.replacedByTaskKey) return "retired"
   if (task.status === "failed") return "failed"
@@ -36,7 +39,7 @@ export function missionTaskState(task: MissionPanelTask, activity?: MissionActor
 /** A natively delegated task has no declared actor: the live status of its exact
  * linked conversation stands in. Loaded sessions supply open requests; the native
  * active set covers children the session list has not loaded. */
-export function conversationActivity(instanceId: string, mission: MissionPanelMap, sessionId: string): MissionActorActivity["state"] | undefined {
+export function conversationActivity(instanceId: string, mission: Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId">, sessionId: string): MissionActorActivity["state"] | undefined {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (session?.pendingPermission) return "permission"
   if (session?.pendingForm) return "form"
@@ -47,11 +50,13 @@ export function conversationActivity(instanceId: string, mission: MissionPanelMa
 /** The state a task row shows: its question first, then its own conversation's
  * activity (its declared actor's, else its linked native conversation's). The
  * Mission row's chevron takes the most urgent of these, so both always agree. */
-export function missionTaskRowState(instanceId: string, mission: MissionPanelMap, task: MissionPanelTask,
+export function missionTaskRowState(instanceId: string, mission: Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId">,
+  task: Pick<MissionPanelTask, "status" | "replacedByTaskKey" | "actorSessionId">,
   activities: ReadonlyMap<string, MissionActorActivity["state"]>, conversation: string | undefined, asked: boolean): MissionTaskState {
   if (asked) return "input"
-  const activity = task.actorSessionId ? activities.get(task.actorSessionId)
-    : conversation ? conversationActivity(instanceId, mission, conversation) : undefined
+  const actor = task.actorSessionId !== mission.coordinatorSessionId ? task.actorSessionId : undefined
+  const observed = actor ? activities.get(actor) : undefined, target = actor ?? (conversation !== mission.coordinatorSessionId ? conversation : undefined)
+  const activity = observed && observed !== "unknown" ? observed : target ? conversationActivity(instanceId, mission, target) : undefined
   return missionTaskState(task, activity)
 }
 
@@ -74,7 +79,10 @@ export function MissionTaskTree(props: {
 }) {
   const missionStore = useMissionPanelStore(), viewScope = useMissionViewScope()
   const { t } = useI18n()
-  let list!: HTMLUListElement
+  const [list, setList] = createSignal<HTMLUListElement>()
+  const [virtualizer, setVirtualizer] = createSignal<VirtualizerHandle>()
+  const [layoutVersion, setLayoutVersion] = createSignal(0)
+  const [focusedTask, setFocusedTask] = createSignal<string>()
   // A compact map holds a page of its tasks, each with its place in the whole display order;
   // a passage's full map holds them all.
   const page = () => props.mission.taskPage
@@ -115,11 +123,17 @@ export function MissionTaskTree(props: {
       value?.dependents ? t(`missionsPanel.task.omittedDependents.${value.dependents === 1 ? "one" : "other"}`, { count: value.dependents }) : ""].filter(Boolean).join(" · ")
   }
   let root!: HTMLElement
-  // Keeps the focused task in view through nested growth; the panel is the only scroller.
-  missionPanelScroll(() => root, () => props.active ?? true)
-  const [sentinel, setSentinel] = createSignal<HTMLLIElement>()
+  // The browser owns task scrolling and anchoring. A previously focused row must
+  // never pull a wheel-scrolled viewport back when later task pages or rails arrive.
+  const [sentinel, setSentinel] = createSignal<HTMLDivElement>()
   // The dependency rail's lanes beyond the rows' indent (mission-graph.tsx).
   const [graphExtra, setGraphExtra] = createSignal(0)
+  const [flow, setFlow] = createSignal<HTMLDivElement>()
+  preserveListFocus(flow)
+  const viewport = missionVirtualViewport(flow, () => props.active ?? true)
+  const kept = createMemo(() => ordered().flatMap((task, index) =>
+    props.selected(task) || task.key === focusedTask() ? [index] : []))
+  const List = (attributes: JSX.HTMLAttributes<HTMLUListElement>) => <ul {...attributes} ref={setList} class="mission-tree-list" />
   const loadNext = () => {
     const offset = nextOffset()
     if (props.active !== false && offset !== undefined && !read()?.loading) readFurther({ offset })
@@ -127,20 +141,19 @@ export function MissionTaskTree(props: {
   createEffect(() => {
     const target = sentinel(), offset = nextOffset()
     if (!target || props.active === false || offset === undefined || read()?.loading || read()?.failure) return
-    const observer = new IntersectionObserver(entries => {
-      // Reaching the manual fallback with the keyboard is not an activation.
-      if (entries.some(entry => entry.isIntersecting) && !target.contains(document.activeElement) && !read()?.failure) loadNext()
-    // The panel is the tree's only scroller.
-    }, { root: root.closest(".mission-control"), rootMargin: "0px 0px 120px 0px" })
-    observer.observe(target)
-    onCleanup(() => observer.disconnect())
+    onCleanup(observeListEnd(target, root.closest<HTMLElement>(".mission-control"), () => {
+      if (!read()?.failure) loadNext()
+    }, 120))
   })
-  return <section ref={root} class="mission-tree" aria-label={`${t("missionsPanel.tasks")} (${total()})`}>
+  return <section ref={root} class="mission-tree" aria-label={`${t("missionsPanel.tasks")} (${total()})`}
+    onFocusIn={event => setFocusedTask((event.target as Element).closest<HTMLElement>("[data-task-key]")?.dataset.taskKey)}>
     <Show when={attention()}>{counts => <p class="mission-tree-summary">{t("missionsPanel.tasks")} · {total()}
       <SettingsInfoTip text={t("missionsPanel.tasks.attention.counts", counts())} /></p>}</Show>
     <Show when={total()}>
-      <div class="mission-flow" classList={{ "mission-flow-linked": linked() }} style={{ "--mission-graph-extra": `${graphExtra()}px` }}>
-        <ul ref={list} class="mission-tree-list"><For each={entries()}>{id => {
+      <div ref={element => { setFlow(element); onCleanup(() => setFlow(undefined)) }} class="mission-flow" classList={{ "mission-flow-linked": linked() }} style={{ "--mission-graph-extra": `${graphExtra()}px` }}>
+        <Show when={viewport.scrollRef()}>{host => <Virtualizer as={List} item="li" data={entries()} scrollRef={host()}
+          startMargin={viewport.startMargin()} ref={setVirtualizer} bufferSize={400} keepMounted={kept()}
+          onResize={() => setLayoutVersion(value => value + 1)}>{id => {
           const task = () => byID().get(id)!
           const question = () => props.questions?.length
             ? taskQuestion(questionContext(), props.questions, task(), props.conversation(task())) : undefined
@@ -160,7 +173,7 @@ export function MissionTaskTree(props: {
             if (asked) props.onAnswer?.(asked.sessionId, asked.request)
           }
           const icon = () => <Dynamic component={ICONS[state()]} class="h-4 w-4" aria-hidden="true" />
-          return <li class="mission-tree-node session-list-item" data-task-key={task().key} data-status={task().status} data-state={state()}
+          return <div class="mission-tree-node session-list-item" data-task-key={task().key} data-status={task().status} data-state={state()}
             data-unseen={unseen() || undefined}>
             <div class={`session-item-base session-item-nested ${selected() ? "session-item-active" : "session-item-inactive"}`}>
               <span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />
@@ -178,12 +191,12 @@ export function MissionTaskTree(props: {
                 <span class="sr-only">{[word(), omittedText(task())].filter(Boolean).join(" · ")}</span>
               </button>
             </div>
-          </li>
-        }}</For><Show when={nextOffset() !== undefined && !read()?.failure}><li ref={setSentinel} class="mission-tree-more">
-          <button type="button" class="window-text-button" aria-disabled={read()?.loading || undefined}
-            onClick={loadNext}>{t("missionsPanel.tasks.showMore")}</button>
-        </li></Show></ul>
-        <Show when={linked()}><MissionGraph tasks={ordered()} list={list} omitted={omitted()} onExtra={setGraphExtra} /></Show>
+          </div>
+        }}</Virtualizer>}</Show><Show when={nextOffset() !== undefined && !read()?.failure}>
+          <div ref={setSentinel} class="mission-tree-more" aria-hidden="true" />
+        </Show>
+        <Show when={linked() && list() && virtualizer()}><MissionGraph tasks={ordered()} list={list()!} virtualizer={virtualizer()}
+          layoutVersion={layoutVersion()} omitted={omitted()} onExtra={setGraphExtra} /></Show>
       </div>
       <Show when={read()?.failure}>{failed =>
         <p class="mission-tree-read" role="status">{t(failed().reason === "changed" ? "missionsPanel.tasks.readChanged" : "missionsPanel.tasks.readFailed")}{" "}

@@ -194,7 +194,7 @@ test("a stopped coordinator offers recovery in Pause's place only while nothing 
       const probe = document.createElement("span"); probe.style.color = "var(--text-muted)"; document.body.append(probe)
       const color = getComputedStyle(probe).color; probe.remove()
       return [...["done", "blocked"].map(state =>
-        getComputedStyle(document.querySelector(`.mission-tree li[data-state="${state}"] .mission-tree-mark`)!).color), color]
+        getComputedStyle(document.querySelector(`.mission-tree .mission-tree-node[data-state="${state}"] .mission-tree-mark`)!).color), color]
     })
     assert.equal(done, muted, "a finished task is history, not a green status")
     assert.equal(blocked, muted, "a reported blockage is an outcome, shown by its icon")

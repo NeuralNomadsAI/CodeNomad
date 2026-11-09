@@ -24,12 +24,12 @@ function deferred<T>() {
 
 /** A native replay: coordinator has no completed call yet; its direct child is listed. */
 function harness() {
-  const state = { connection: {} as object, generation: 1, first: [] as unknown[], firstReads: 0, activeReads: 0, warnings: [] as unknown[] }
+  const state = { connection: {} as object, generation: 1, first: [] as unknown[], coordinatorReads: 0, firstReads: 0, activeReads: 0, warnings: [] as unknown[] }
   let gate: ReturnType<typeof deferred<void>> | undefined
   const root = {
     message: {
       list: async (input: { sessionID: string }) => {
-        if (input.sessionID === "ses_root") return { data: [], cursor: {} }
+        if (input.sessionID === "ses_root") { state.coordinatorReads++; return { data: [], cursor: {} } }
         state.firstReads += 1
         if (gate) await gate.promise
         return { data: state.first }
@@ -73,6 +73,70 @@ test("an admitted non-assignment first message is examined once and never links"
   await store.demand("inst", mission, 2, "view")
   assert.equal(state.firstReads, 1)
   assert.equal(store.taskSession("inst", mission, "build"), undefined)
+})
+
+test("a task key arriving in a later directory window adopts cached canonical evidence without rereading the child", async () => {
+  const { state, store } = harness()
+  state.first = [{ type: "user", text: assignment("msn_one", "later") }]
+  await store.demand("inst", mission, 1, "directory")
+  assert.equal(store.taskSession("inst", mission, "later"), undefined)
+  assert.equal(store.sessionIncludes("inst", mission, "ses_child"), false, "an undeclared key is only a cached candidate")
+  const extended = { ...mission, tasks: [...mission.tasks, { key: "later", status: "ready" }] } as MissionMap
+  await store.demand("inst", extended, 1, "directory")
+  assert.equal(store.taskSession("inst", extended, "later"), "ses_child")
+  assert.equal(store.sessionActive("inst", extended, "ses_child"), true)
+  assert.equal(state.firstReads, 1)
+})
+
+test("directory and selected-tree owners retain monotonic key coverage at one revision and pulse", async () => {
+  const { state, store } = harness()
+  state.first = [{ type: "user", text: assignment("msn_one", "later") }]
+  const directory = { ...mission, tasks: [...mission.tasks, { key: "later", status: "ready" }] } as MissionMap
+  await store.demand("inst", mission, 1, "tree")
+  await store.demand("inst", directory, 1, "directory")
+  const before = { first: state.firstReads, active: state.activeReads }
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await store.demand("inst", mission, 1, "tree")
+    await store.demand("inst", directory, 1, "directory")
+    assert.equal(store.taskSession("inst", directory, "later"), "ses_child")
+  }
+  assert.deepEqual({ first: state.firstReads, active: state.activeReads }, before, "owner windows do not trigger native rereads without a new pulse")
+  assert.equal(state.firstReads, 1)
+})
+
+test("a retained older tree cannot downgrade newer directory evidence or queue an older continuation", async () => {
+  const { state, store, hold } = harness()
+  state.first = [{ type: "user", text: assignment("msn_one", "build") }]
+  const newer = { ...mission, revision: mission.revision + 1 }
+  const gate = hold(), pending = store.demand("inst", newer, 1, "directory")
+  await new Promise(resolve => setImmediate(resolve))
+  void store.demand("inst", mission, 2, "retained-tree")
+  gate.resolve(); await pending
+  await new Promise(resolve => setImmediate(resolve))
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await store.demand("inst", mission, 2, "retained-tree")
+    await store.demand("inst", newer, 1, "directory")
+  }
+  assert.equal(state.coordinatorReads, 1)
+  assert.equal(state.firstReads, 1)
+  assert.equal(state.activeReads, 1)
+  assert.equal(store.taskSession("inst", newer, "build"), "ses_child")
+})
+
+test("an older demand cannot replace a newer queued directory revision", async () => {
+  const { state, store, hold } = harness()
+  state.first = [{ type: "user", text: assignment("msn_one", "later") }]
+  const newer = { ...mission, revision: mission.revision + 1, tasks: [...mission.tasks, { key: "later", status: "ready" }] } as MissionMap
+  const gate = hold(), pending = store.demand("inst", mission, 1, "tree")
+  await new Promise(resolve => setImmediate(resolve))
+  void store.demand("inst", newer, 2, "directory")
+  void store.demand("inst", mission, 1, "tree")
+  gate.resolve(); await pending
+  await new Promise(resolve => setImmediate(resolve))
+  await store.demand("inst", newer, 2, "directory")
+  assert.equal(store.taskSession("inst", newer, "later"), "ses_child")
+  assert.equal(state.coordinatorReads, 2, "one leading revision and its newest continuation")
+  assert.equal(state.activeReads, 1)
 })
 
 test("a late child read after a connection or generation change publishes nothing", async () => {
