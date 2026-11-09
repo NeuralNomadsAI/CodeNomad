@@ -127,5 +127,16 @@ for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "s
     assert.equal(revalidation.status, 200)
     assert.equal(revalidation.headers.get(HEADER), new URL(replacement.url("/api/workspaces")).searchParams.get(QUERY))
     assert.equal(old.admitRelayAuthority!(revalidation.headers.get(HEADER)), false)
+    const currentSignal = events.signal("saved")!
+    const detached = new Promise<void>(resolve => currentSignal.addEventListener("abort", () => resolve(), { once: true }))
+    const remote = destination === "A" ? a : b
+    remote.state.handlers.set("/api/meta", (_q, r) => {
+      r.setHeader("content-type", "application/json")
+      r.end(JSON.stringify({ apiContract: CODENOMAD_API_CONTRACT, serverId: "observed-replacement" }))
+    })
+    replacement.events.restart()
+    await detached
+    assert.equal(registry.state("saved"), "refused", "observed identity replacement revokes registry admission")
+    assert.equal(new URL(replacement.url("/api/workspaces")).searchParams.get(QUERY), revalidation.headers.get(HEADER))
   })
 }

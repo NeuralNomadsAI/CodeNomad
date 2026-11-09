@@ -209,11 +209,13 @@ export class RemoteServerBrowseManager {
     // Reuse the bounded JSON reader: identity is observed before a local proof is published.
     const result = await client.json<{ serverId?: unknown }>(target, init)
     this.assertCurrent(authority)
-    if (result.status !== 200 || typeof result.body?.serverId !== "string" || !result.body.serverId) throw new CodeNomadServerError("unreachable")
+    if (result.status !== 200 || typeof result.body?.serverId !== "string" || !result.body.serverId.trim()) {
+      return new Response(result.body === undefined ? null : JSON.stringify(result.body), { status: result.status, headers: { "content-type": "application/json" } })
+    }
     const known = this.#state.serverIds.get(authority)
     if (known && known !== result.body.serverId) {
       this.remove(id)
-      throw new CodeNomadServerError("unreachable")
+      throw new CodeNomadServerError("unknown_server")
     }
     this.#state.serverIds.set(authority, result.body.serverId)
     return Response.json(result.body, { headers: { [RELAY_AUTHORITY_HEADER]: authority.proof } })

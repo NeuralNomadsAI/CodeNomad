@@ -45,7 +45,7 @@ test("local metadata proof ignores forged upstream headers/body; stale and malfo
   assert.equal((await f.call(`/api/filesystem?path=app&${RELAY_AUTHORITY_QUERY}=${proof}`)).status, 200)
   assert.equal(f.remote.state.requests.at(-1)!.path, "/api/filesystem?path=app")
   f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "B", apiContract: 1 } })
-  assert.equal((await f.call("/api/meta", { headers: { [AUTHORITY]: proof } })).status, 502)
+  assert.equal((await f.call("/api/meta", { headers: { [AUTHORITY]: proof } })).status, 404)
   const afterObservation = f.remote.state.requests.length
   assert.equal((await f.call("/api/filesystem", { headers: { [AUTHORITY]: proof } })).status, 502)
   assert.equal((await f.call(`/api/filesystem?${RELAY_AUTHORITY_QUERY}=${proof}`)).status, 502)
@@ -67,6 +67,18 @@ test("revocation during a bounded metadata read publishes no proof", async t => 
   const result = await pending
   assert.equal(result.status, 502)
   assert.equal(result.headers[AUTHORITY], undefined)
+})
+
+test("metadata refusal retains status and invalid body for registry classification without issuing a proof", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  for (const result of [{ status: 404, body: { error: "missing" } }, { status: 200, body: {} }, { status: 200, body: { serverId: " " } }]) {
+    f.remote.state.overrides.set("/api/meta", result)
+    const response = await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })
+    assert.equal(response.status, result.status)
+    assert.deepEqual(JSON.parse(response.body), result.body)
+    assert.equal(response.headers[AUTHORITY], undefined)
+  }
 })
 
 test("proof is shared across listeners until last owner closes and never persists with credentials", async t => {
