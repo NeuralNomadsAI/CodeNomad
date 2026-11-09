@@ -56,8 +56,8 @@ export default function ServerAddField(props: ServerAddFieldProps) {
       setAddress(""); setErrorServer(serverDisplayName(target, remoteServers())); setError("remoteBrowse.pairAgain"); return
     }
     const existing = remoteServers().find(server => server.baseUrl === link.baseUrl)
-    const input = { id: target?.id ?? existing?.id, name: existing?.name ?? "", baseUrl: value,
-      skipTlsVerify: tlsFailedFor() === link.baseUrl && skipTls() }
+    const input = { id: target?.id ?? existing?.id, name: target?.name ?? existing?.name ?? "", baseUrl: value,
+      skipTlsVerify: tlsFailedFor() === link.baseUrl && skipTls() || (existing?.skipTlsVerify ?? false) }
     const flight = ++generation, focus = captureRequestFocus()
     releaseFocus = focus.dispose
     const current = () => alive && flight === generation && enabled() && !props.disabled

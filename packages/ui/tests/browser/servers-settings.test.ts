@@ -426,3 +426,22 @@ test("renaming an existing exact URL preserves it offline even when it contains 
   assert.equal(f.a.state.requests.length, 0)
   f.check()
 })
+
+test("adding a saved address retains its own explicit TLS policy without probing or rotating credentials", { timeout: 90_000 }, async t => {
+  const f = await fixture(t), { page } = f
+  const saved = { ...f.rows[0], skipTlsVerify: true }
+  f.settings.mergePatchDoc("state", { ui: { remoteServers: [saved, f.rows[1]] } })
+  await f.sync()
+  assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/a/connect", headers: { origin: f.origin }, payload: { username: "codenomad", password: "remote-password" } })).statusCode, 200)
+  const credentialsPath = path.join(f.directory, "remote-server-credentials.json")
+  const credentials = fs.readFileSync(credentialsPath, "utf8")
+  const before = f.a.state.requests.length
+  await field(page).fill(f.a.origin)
+  await field(page).press("Enter")
+  await page.waitForFunction(() => document.querySelector<HTMLInputElement>("[data-server-add-field]")?.value === "" && !document.querySelector<HTMLInputElement>("[data-server-add-field]")?.disabled)
+  assert.equal(f.profileRows().find(row => row.id === "a")?.skipTlsVerify, true)
+  assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)
+  assert.equal(f.a.state.requests.length, before)
+  assert.equal(fs.readFileSync(credentialsPath, "utf8"), credentials)
+  f.check()
+})
