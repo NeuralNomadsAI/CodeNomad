@@ -136,7 +136,7 @@ async function infoProbe(input, credentials) {
   finally { clearTimeout(timer); abort.abort(); void reader?.cancel().catch(() => {}) }
 }
 
-function logs(input, redact) {
+function logs(input) {
   const output = { sharedIncarnations: true, files: [], truncated: false }, dir = path.join(input.root, "xdg-data", "opencode", "log")
   let listing, remaining = LOGS
   try {
@@ -150,10 +150,9 @@ function logs(input, redact) {
       try {
         const evidence = ownedFile(input.root, path.join(dir, item.name), remaining, true)
         remaining -= evidence.bytes.length
-        // Redact the complete bounded read before serializing or truncating output.
-        output.files.push({ name: path.relative(input.root, path.join(dir, item.name)), observedBytes: evidence.observedBytes,
-          truncated: evidence.truncated, ...(evidence.truncated ? { error: "log-truncated-content-omitted" }
-            : { text: redact(evidence.bytes.toString("utf8")) }) })
+        // Free text has arbitrary reversible encodings; export only file metadata.
+        output.files.push({ observedBytes: evidence.observedBytes,
+          truncated: evidence.truncated, error: evidence.truncated ? "log-truncated-content-omitted" : "log-private-content-omitted" })
       } catch { output.files.push({ error: "log-unavailable" }) }
     }
     if (!output.files.length) output.error = "logs-unavailable"
@@ -250,7 +249,7 @@ if (process.argv[2] === "--cold-diagnostic-child") process.once("message", async
     {
       const secrets = [...input.secrets, ...credentials.secrets], redact = fixtureRedactor(secrets)
       const observedAt = Date.now(), http = await infoProbe(input, credentials)
-      const evidence = { failureAt: input.failureAt, observedAt, http, logs: logs(input, redact), sql: sql(input) }
+      const evidence = { failureAt: input.failureAt, observedAt, http, logs: logs(input), sql: sql(input) }
       const after = registration(input)
       if (!same(credentials.info, after.info) || credentials.basic !== after.basic || !await ownerCheck()) throw Error("incarnation-changed")
       let json = JSON.stringify(evidence, (_key, value) => typeof value === "string" ? redact(value) : value)
@@ -258,8 +257,9 @@ if (process.argv[2] === "--cold-diagnostic-child") process.once("message", async
       const safe = JSON.parse(json)
       let saveError
       if (input.diagnostic) try {
-        const clean = value => typeof value === "string" ? redact(value).slice(0, 64000) : value
-        const original = JSON.parse(JSON.stringify(input.diagnostic, (_key, value) => clean(value)))
+        const original = { stage: input.stage, error: input.diagnostic.error?.message === "bounded-product-qualification-deadline"
+          ? "bounded-product-qualification-deadline" : "private-text-omitted",
+          nativeErrorTail: "private-text-omitted", nativeErrorTruncated: input.diagnostic.nativeErrorTruncated === true }
         let diagnostic = JSON.stringify({ ...original, failureAt: input.failureAt, coldFailure: safe })
         if (Buffer.byteLength(diagnostic) > OUTPUT) diagnostic = JSON.stringify({ stage: input.stage, failureAt: input.failureAt, error: "failure-diagnostic-overflow" })
         if (diagnosticFd === undefined) throw Error("diagnostic-save-unavailable")

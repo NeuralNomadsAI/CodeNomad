@@ -12,9 +12,15 @@ import { stopFixtureChild } from "./native-fixture-guards.mjs"
 const oldPassword = 'old-long-"password\\é', password = 'cold-long-"password\\漢'
 const token = value => Buffer.from(`opencode:${value}`).toString("base64")
 const driver = (await readFile(new URL("./test-native-mission-schedule-product.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n")
-const catchBody = driver.slice(driver.indexOf('  } catch (error) {\n    result.status = "failed"') + '  } catch (error) {'.length,
-  driver.indexOf('\n  }\n  finally {\n    releaseBarrier'))
-const catchFunction = new (Object.getPrototypeOf(async function () {}).constructor)("error", "context", `with(context) {${catchBody}}`)
+const catchStart = driver.indexOf('  } catch (error) {', driver.indexOf('result.stage = "after-purge-replay"'))
+const finallyStart = driver.indexOf('\n  finally {', catchStart), journeyEnd = driver.indexOf('\n}\n\n', finallyStart)
+assert(catchStart > 0 && finallyStart > catchStart && journeyEnd > finallyStart)
+const catchBody = driver.slice(catchStart + '  } catch (error) {'.length, finallyStart).trimEnd().replace(/\}$/, "")
+const finalBody = driver.slice(finallyStart, journeyEnd)
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+const catchFunction = new AsyncFunction("error", "context", `with(context) {${catchBody}}`)
+const lifecycleFunction = new AsyncFunction("error", "context", `with(context) {try { if (error) throw error } catch(error) {${catchBody}}${finalBody}}`)
+const outerFunction = new AsyncFunction("context", `with(context) {${driver.slice(journeyEnd + 3)}\nreturn qualificationError}`)
 
 async function fixture(t) {
   await mkdir(path.join(os.tmpdir(), "opencode"), { recursive: true })
@@ -32,6 +38,8 @@ async function fixture(t) {
   t.after(async () => {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve))
     if (child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, closed)
+    await closed
+    assert(child.exitCode !== null || child.signalCode !== null, `Owned fixture child ${child.pid} exited and closed`)
     await rm(root, { recursive: true, force: true })
   })
   const expected = { id: "owned-cold", pid: child.pid, url: `http://127.0.0.1:${server.address().port}`, version: "2.2.3" }
@@ -67,17 +75,24 @@ async function fixture(t) {
     databaseFile, expected, documentID: "doc", prefix: "test:", child, secrets: [oldPassword, token(oldPassword)],
     onSecrets: secrets => { learned.push(...secrets) } }
   const collect = extra => collectColdFailure({ ...input, ...extra })
-  const runCatch = async (message = "bounded-product-qualification-deadline", patch = {}) => {
+  const runCatch = async (message = "bounded-product-qualification-deadline", patch = {}, overrides = {}, lifecycle = false) => {
     const result = { status: "running", stage: input.stage, documentID: "doc", serviceStarts: [expected], ...patch }
     const secrets = new Set(input.secrets)
     const context = { result, secrets, child, root, registrationFile, databaseFile, prefix: input.prefix,
+      qualificationError: undefined, credentialsChild: undefined, nativeErrorTruncated: false,
       nativeErrorTail: `${oldPassword}\n${password}\n${token(password)}`, collectColdFailure, fixtureRedactor,
       save() { throw Error("Unexpected main-thread cold save") }, snapshot() { throw Error("Unexpected main-thread cold SQL") },
-      maintenanceEvents() { throw Error("Unexpected main-thread cold disk") }, writeFile, path }
+      maintenanceEvents() { throw Error("Unexpected main-thread cold disk") }, writeFile, path,
+      releaseBarrier() {}, holdBusiness: true, releases: new Set(), closeBackend: async () => {}, children: [], calls: [],
+      provider: { closeAllConnections() {}, close(done) { done() } }, barrier: { closeAllConnections() {}, listening: false },
+      stopFixtureChild, assert, ...overrides }
+    const original = message instanceof Error ? message : Error(message), originalReason = original.reason, originalCause = original.cause
     let thrown
-    try { await catchFunction(Error(message), context) } catch (error) { thrown = error }
-    assert(thrown); assert.equal(result.status, "failed"); assert.equal(result.stage, input.stage)
-    return { result, thrown, secrets }
+    try { await (lifecycle ? lifecycleFunction : catchFunction)(original, context) } catch (error) { thrown = error }
+    assert.strictEqual(thrown, original); assert.strictEqual(context.qualificationError, original)
+    assert.strictEqual(thrown.reason, originalReason); assert.strictEqual(thrown.cause, originalCause)
+    assert.equal(result.status, "failed")
+    return { result, thrown, secrets, context }
   }
   return { ...input, closed, collect, runCatch, register, requests, learned, logDir, documentKey, document,
     handle(value) { handler = value }, edit(use) { const db = new DatabaseSync(databaseFile); try { use(db) } finally { db.close() } } }
@@ -89,7 +104,7 @@ for (const status of [503, 500, 200]) test(`cold catch retains failed verdict wi
     response.writeHead(status).end(JSON.stringify({ pid: f.child.pid, version: "2.2.3", password, config: "PRIVATE CONFIG" }))
   })
   const { result, thrown } = await f.runCatch()
-  assert.match(thrown.message, /Native product qualification failed at natural-cold-first-admission: bounded-product-qualification-deadline/)
+  assert.equal(thrown.message, "bounded-product-qualification-deadline")
   assert.equal(result.error, "bounded-product-qualification-deadline")
   const raw = await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"), diagnostic = JSON.parse(raw)
   assert.equal(diagnostic.coldFailure.http.status, status)
@@ -121,7 +136,7 @@ for (const mode of ["dead-child", "undefined-expected", "invalid-expected"]) tes
     : mode === "invalid-expected" ? { serviceStarts: [{ ...f.expected, pid: "foreign" }] } : {}
   const { result, thrown, secrets } = await f.runCatch(undefined, patch)
   assert.equal(result.error, "bounded-product-qualification-deadline")
-  assert.match(thrown.message, /Native product qualification failed at natural-cold-first-admission: bounded-product-qualification-deadline/)
+  assert.equal(thrown.message, "bounded-product-qualification-deadline")
   const raw = await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"), marker = JSON.parse(raw)
   assert.equal(marker.stage, f.stage)
   assert.equal(marker.error, "owned-child-unavailable")
@@ -160,7 +175,7 @@ test("no network or disk collection before failure, on success, or at another st
   for (const patch of [{ status: "running" }, { status: "passed" }, { stage: "business-report" }]) assert.equal(await f.collect(patch), undefined)
   assert.deepEqual(f.requests, []); assert.deepEqual(f.learned, [])
   assert.equal(driver.match(/default: "120000"/g)?.length, 1)
-  assert(driver.includes('if (!cold && result.documentID) try {'))
+  assert.match(driver, /if \(!cold && privateEvidenceAvailable && result\.documentID\) try \{/)
 })
 
 for (const mode of ["transport", "never-ending", "redirect", "body-overflow", "bad-pid", "bad-version", "bad-json"]) test(`single bounded GET: ${mode}`, async t => {
@@ -238,27 +253,29 @@ test("missing and oversized logs have explicit evidence and never exceed the sha
   assert(!JSON.stringify(result).includes(password))
 })
 
-test("output overflow and refused artifact writes preserve the actual catch failure", async t => {
+test("refused artifact writes preserve the original private failure without exporting its text", async t => {
   const f = await fixture(t)
   await mkdir(path.join(f.root, "failure-diagnostic.json"))
   const { result, thrown } = await f.runCatch(`original ${password}`)
-  assert.equal(result.error, "original <redacted>")
-  assert.match(thrown.message, /original <redacted>/)
-  assert(!thrown.message.includes(password))
+  assert.equal(result.error, "private-text-omitted")
+  assert.equal(thrown.message, `original ${password}`)
   await writeFile(path.join(f.logDir, "native.log"), "\u0000".repeat(256 * 1024))
   const output = await f.collect()
-  assert.equal(output.evidence.error, "collector-output-overflow")
+  assert.equal(output.evidence.logs.files[0].error, "log-private-content-omitted")
+  assert(!Object.hasOwn(output.evidence.logs.files[0], "text"))
   assert(Buffer.byteLength(JSON.stringify(output)) <= 512 * 1024)
 })
 
-test("a complete in-budget log remains complete when the artifact is serialized", async t => {
+test("a complete in-budget log exports metadata and an explicit private-content omission", async t => {
   const f = await fixture(t), content = "a".repeat(100000) + "\nlast-line\n"
   await writeFile(path.join(f.logDir, "native.log"), content)
   await f.runCatch()
   const diagnostic = JSON.parse(await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"))
   const log = diagnostic.coldFailure.logs.files[0]
   assert.equal(log.truncated, false)
-  assert.equal(log.text, content)
+  assert.equal(log.observedBytes, Buffer.byteLength(content))
+  assert.equal(log.error, "log-private-content-omitted")
+  assert(!Object.hasOwn(log, "text"))
 })
 
 test("private symlink escaping the owned root is refused before HTTP", async t => {
@@ -293,6 +310,185 @@ test("malformed Unicode credentials remain redacted without masking the original
   const value = "private-\ud800-value", redact = fixtureRedactor([value])
   for (const form of [value, value.toWellFormed(), JSON.stringify(value).slice(1, -1), encodeURIComponent(value.toWellFormed()),
     Buffer.from(value).toString("base64")]) assert.equal(redact(form), "<redacted>")
+})
+
+for (const form of ["unicode", "mixed", "backslash", "surrogate"]) test(`saved artifacts omit recoverable JSON ${form} credential spellings`, async t => {
+  const f = await fixture(t), value = `${password}-😀-\ud800`
+  await f.register({ password: value })
+  const units = value.split(""), unicode = unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`
+  const encoded = form === "unicode" ? units.map(unicode).join("")
+    : form === "mixed" ? units.map((unit, i) => i % 2 ? unicode(unit) : JSON.stringify(unit).slice(1, -1)).join("")
+    : form === "backslash" ? JSON.stringify(value).slice(1, -1).replaceAll("\\\\", "\\u005c")
+    : units.map(unit => /[\ud800-\udfff]/.test(unit) ? unicode(unit) : JSON.stringify(unit).slice(1, -1)).join("")
+  const content = `{"password":"${encoded}"}`
+  assert.equal(JSON.parse(content).password, value)
+  await writeFile(path.join(f.logDir, "native.log"), content)
+  await f.runCatch()
+  const raw = await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8")
+  const sql = await readFile(path.join(f.root, "failure-sql.json"), "utf8")
+  const log = JSON.parse(raw).coldFailure.logs.files[0]
+  assert.equal(log.error, "log-private-content-omitted"); assert(!Object.hasOwn(log, "text"))
+  assert.equal(log.observedBytes, Buffer.byteLength(content))
+  for (const secret of [encoded, value, value.toWellFormed(), token(value)]) assert(!(raw + sql).includes(secret))
+})
+
+test("real stderr handler tracks a credential crossing its tail boundary and omits the saved tail", async t => {
+  const f = await fixture(t)
+  const marker = 'child.stderr.on("data", bytes => {'
+  const start = driver.indexOf(marker), end = driver.indexOf("})", start)
+  assert(start > 0 && end > start)
+  const state = { nativeErrorLength: 0, nativeErrorTruncated: false }
+  const receive = new Function("bytes", "context", `with(context) {${driver.slice(start + marker.length, end)}}`)
+  receive(Buffer.from(password + "x".repeat(32000 - 5)), state)
+  assert.equal(state.nativeErrorTruncated, true)
+  assert.equal(state.nativeErrorLength, 32000)
+  assert(!JSON.stringify(state).includes(password.slice(-5)))
+  receive(Buffer.from("more"), state)
+  assert.equal(state.nativeErrorLength, 32000); assert.equal(state.nativeErrorTruncated, true)
+  await f.runCatch(undefined, {}, { ...state, nativeErrorTail: (password + "x".repeat(32000 - 5)).slice(-32000) })
+  const raw = await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"), diagnostic = JSON.parse(raw)
+  assert.equal(diagnostic.nativeErrorTruncated, true)
+  assert.equal(diagnostic.nativeErrorTail, "private-text-omitted")
+  assert(!raw.includes(password.slice(-5)))
+  const launch = driver.slice(driver.indexOf("const launch = async"), driver.indexOf("const connect = async"))
+  assert.match(launch, /credentialsChild\s*=\s*undefined/)
+  assert.match(launch, /nativeErrorLength\s*=\s*0/)
+  assert.match(launch, /nativeErrorTruncated\s*=\s*false/)
+})
+
+for (const stage of ["business-report", "first-original-admission-held", "play", "natural-live-first-admission"]) test(`unknown current incarnation at ${stage} performs zero discovery, network or SQL reads`, async t => {
+  const f = await fixture(t), reads = []
+  await rm(f.registrationFile)
+  const original = Object.assign(Error(`private-error ${password}`), {
+    reason: Object.assign(Error(`private-reason ${password}`), { _tag: password }),
+    cause: Error(`private-cause ${password}`), type: password,
+  })
+  const forbidden = name => () => { reads.push(name); throw Error(`Unexpected ${name}`) }
+  const { result } = await f.runCatch(original, { stage }, {
+    // An old Child with the same PID is still a different incarnation handle.
+    credentialsChild: { pid: f.child.pid }, nativeErrorTail: password,
+    collectColdFailure: forbidden("collector/discovery"), snapshot: forbidden("SQL"), maintenanceEvents: forbidden("maintenance"),
+    save: (name, value) => writeFile(path.join(f.root, `${name}.json`), JSON.stringify(value)),
+  })
+  assert.deepEqual(reads, []); assert.deepEqual(f.requests, []); assert.deepEqual(f.learned, [])
+  assert.equal(result.error, "private-text-omitted")
+  const raw = await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"), diagnostic = JSON.parse(raw)
+  for (const key of ["error", "reason", "cause", "nativeErrorTail"]) assert.equal(diagnostic[key], "private-text-omitted")
+  assert(!raw.includes(password)); assert(!raw.includes("private-error")); assert(!raw.includes("private-reason")); assert(!raw.includes("private-cause"))
+  await assert.rejects(readFile(path.join(f.root, "failure-sql.json")), { code: "ENOENT" })
+})
+
+test("known credentials still omit error, reason, cause and stderr private text in real cold artifacts", async t => {
+  const f = await fixture(t), original = Object.assign(Error(`private-error ${password}`), {
+    reason: Error(`private-reason ${password}`), cause: Error(`private-cause ${password}`),
+  })
+  await f.runCatch(original, {}, { credentialsChild: f.child })
+  const raw = await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"), diagnostic = JSON.parse(raw)
+  for (const key of ["error", "nativeErrorTail"]) assert.equal(diagnostic[key], "private-text-omitted")
+  for (const key of ["reason", "cause"]) assert(!Object.hasOwn(diagnostic, key))
+  assert(!raw.includes(password)); assert(!raw.includes("private-error")); assert(!raw.includes("private-reason")); assert(!raw.includes("private-cause"))
+})
+
+test("known current incarnation keeps useful non-cold SQL metadata without new discovery", async t => {
+  const f = await fixture(t)
+  let reads = 0
+  await f.runCatch(Error("private failure"), { stage: "business-report" }, {
+    credentialsChild: f.child,
+    collectColdFailure() { throw Error("Unexpected discovery") },
+    snapshot() {
+      reads++
+      let state
+      f.edit(db => { state = { document: { calendarOwner: { slots: [] } },
+        schedule: db.prepare("SELECT status,run_count,next_due_at FROM schedule").get() } })
+      return state
+    },
+    maintenanceEvents: async () => [],
+    save: (name, value) => writeFile(path.join(f.root, `${name}.json`), JSON.stringify(value)),
+  })
+  const sql = JSON.parse(await readFile(path.join(f.root, "failure-sql.json"), "utf8"))
+  assert.deepEqual(sql.schedule, { status: "active", run_count: 0, next_due_at: 1000 })
+  assert.equal(reads, 1); assert.deepEqual(f.requests, [])
+})
+
+for (const mode of ["EISDIR", "ENOSPC", "cleanup"]) test(`exact catch and finally preserve original error identity and reason through ${mode}`, async t => {
+  const f = await fixture(t), original = Object.assign(Error(`original ${password}`), { reason: { private: password } })
+  const io = Object.assign(Error(`private-io ${password}`), { code: "ENOSPC" })
+  let storageFailure, cleanupCalls = 0
+  if (mode === "EISDIR") await mkdir(path.join(f.root, "receipt.json"))
+  const { result } = await f.runCatch(original, {}, {
+    closeBackend: async () => { cleanupCalls++; if (mode === "cleanup") throw io },
+    save: async (name, value) => {
+      try {
+        if (name === "receipt" && mode === "ENOSPC") throw io
+        await writeFile(path.join(f.root, `${name}.json`), JSON.stringify(value))
+      } catch (error) { storageFailure = error; throw error }
+    },
+  }, true)
+  assert.equal(cleanupCalls, 1)
+  assert.strictEqual(original.reason.private, password)
+  assert.equal(result.status, "failed")
+  if (mode === "EISDIR") assert.equal(storageFailure?.code, "EISDIR")
+  if (mode === "ENOSPC") assert.strictEqual(storageFailure, io)
+  if (mode === "cleanup") assert.equal(result.cleanupError, "backend-cleanup-failed")
+  else assert.equal(result.storageError, "receipt-save-unavailable")
+  assert(!JSON.stringify(result).includes(password))
+})
+
+for (const mode of ["EISDIR", "ENOSPC"]) test(`exact finally rejects successful qualification when receipt fails with ${mode}`, async t => {
+  const f = await fixture(t), io = Object.assign(Error("synthetic-quota"), { code: "ENOSPC" })
+  if (mode === "EISDIR") await mkdir(path.join(f.root, "receipt.json"))
+  const result = { status: "passed", stage: "completed" }
+  const context = { result, qualificationError: undefined, releaseBarrier() {}, holdBusiness: false, releases: new Set(),
+    closeBackend: async () => {}, children: [], calls: [], stopFixtureChild, assert,
+    provider: { closeAllConnections() {}, close(done) { done() } }, barrier: { closeAllConnections() {}, listening: false },
+    save: async (name, value) => { if (mode === "ENOSPC") throw io; await writeFile(path.join(f.root, `${name}.json`), JSON.stringify(value)) },
+  }
+  await assert.rejects(lifecycleFunction(undefined, context), error => mode === "ENOSPC" ? error === io : error.code === "EISDIR")
+  assert.equal(result.status, "failed")
+  assert.equal(result.storageError, "receipt-save-unavailable")
+})
+
+for (const mode of ["EISDIR", "ENOSPC"]) for (const failed of [true, false]) test(`exact outer entrypoint keeps ${failed ? "original failure" : "receipt failure"} and safe output with ${mode}`, async t => {
+  const f = await fixture(t), original = Object.assign(Error(`original ${password}`), { reason: { private: password } })
+  const io = Object.assign(Error(`private-storage ${password}`), { code: "ENOSPC" }), receipt = { outcome: "running" }, printed = [], processStub = { env: {}, exitCode: 0 }
+  let storageFailure
+  if (mode === "EISDIR") await mkdir(path.join(f.root, "receipt.json"))
+  const returned = await outerFunction({ kinds: ["at"], journey: async () => { if (failed) throw original }, receipt, values: {},
+    scratch: f.root, path, originalEnvironment: {}, process: processStub, console: { error: (...args) => printed.push(args.join(" ")), log: (...args) => printed.push(args.join(" ")) },
+    writeFile: async (...args) => { try { if (mode === "ENOSPC") throw io; await writeFile(...args) } catch (error) { storageFailure = error; throw error } },
+  })
+  assert.equal(storageFailure?.code, mode)
+  assert.strictEqual(returned, failed ? original : storageFailure)
+  if (failed) assert.strictEqual(returned.reason, original.reason)
+  assert.equal(receipt.outcome, "failed"); assert.equal(processStub.exitCode, 1)
+  assert.equal(receipt.storageError, "receipt-save-unavailable")
+  assert.deepEqual(printed, ["Native product qualification failed; see receipt"])
+  assert(!JSON.stringify(receipt).includes(password)); assert(!printed.join("").includes(password))
+})
+
+for (const mode of ["EISDIR", "ENOSPC"]) test(`full extracted inner/outer lifecycle preserves original failure with ${mode} at both receipts`, async t => {
+  const f = await fixture(t), original = Object.assign(Error(`original ${password}`), { reason: { private: password } })
+  const io = Object.assign(Error("synthetic-quota"), { code: "ENOSPC" }), printed = [], receipt = { outcome: "running", cases: [] }
+  const processStub = { env: {}, exitCode: 0 }
+  if (mode === "EISDIR") await mkdir(path.join(f.root, "receipt.json"))
+  const store = async (file, value) => { if (mode === "ENOSPC" && path.basename(file) === "receipt.json") throw io; await writeFile(file, value) }
+  const returned = await outerFunction({ kinds: ["at"], receipt, values: {}, scratch: f.root, path,
+    originalEnvironment: {}, process: processStub, console: { error: text => printed.push(text) }, writeFile: store,
+    journey: async () => {
+      const { result, thrown } = await f.runCatch(original, {}, {
+        children: [{ child: f.child, closed: f.closed }],
+        save: (name, value) => store(path.join(f.root, `${name}.json`), JSON.stringify(value)),
+      }, true)
+      receipt.cases.push(result)
+      throw thrown
+    },
+  })
+  assert.strictEqual(returned, original); assert.strictEqual(returned.reason, original.reason)
+  assert.equal(receipt.outcome, "failed"); assert.equal(receipt.cases[0].status, "failed")
+  assert.equal(receipt.cases[0].allOwnedServicesStopped, true); assert.equal(processStub.exitCode, 1)
+  assert.equal(receipt.cases[0].storageError, "receipt-save-unavailable")
+  assert.deepEqual(printed, ["Native product qualification failed; see receipt"])
+  assert(!JSON.stringify(receipt).includes(password))
 })
 
 test("ten-second collector deadline kills and reaps synchronous SQL without retaining handles", { timeout: 18000 }, async t => {
