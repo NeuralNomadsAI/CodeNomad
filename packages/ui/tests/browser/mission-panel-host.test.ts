@@ -10,7 +10,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type BrowserContextOptions, type Page, type Route } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { MISSION_TASK_PAGE } from "../../../server/src/missions/mission-panel-map"
-import { missionDetail, missionGeneralAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
+import { missionDetail, missionGeneralAction, inlineMissionEntry, revealMissionTask, selectMission, selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -90,8 +90,7 @@ test("a long mission's tasks scroll with the panel, the only scroller, under its
       assert.equal(await scrolls(f.page, "#tab-body"), false, `no host scrollbar at ${viewport.height}px`)
       assert.equal(await scrolls(f.page, ".mission-control"), true, `the panel scrolls at ${viewport.height}px`)
       // The list's end (its read further) is reachable by scrolling the panel; the header stays.
-      const last = flow.locator(".mission-tree-list > li").last()
-      await last.scrollIntoViewIfNeeded()
+      await flow.locator(".mission-tree-more").scrollIntoViewIfNeeded()
       assert.equal(await f.page.locator("#tab-body").evaluate(element => element.scrollTop), 0)
       assert(await f.page.locator(".mission-control").evaluate(element => element.scrollTop) > 0)
       const [header, panel] = await Promise.all([f.page.locator(".mission-control-header").boundingBox(), f.page.locator(".mission-control").boundingBox()])
@@ -151,7 +150,7 @@ test("rows select a Mission whose detail is the row's children; its chevron fold
     assert.equal(await chevron("Long migration").getAttribute("aria-expanded"), "true")
     assert.equal(await selectedMissionTitle(f.page).innerText(), "Short audit")
     const preview = row("Long migration").locator("xpath=following-sibling::div[contains(@class, 'mission-row-children')]")
-    await preview.locator('.mission-tree-node[data-task-key="t20"]').waitFor()
+    await revealMissionTask(preview.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task'))
     // Like a selected mission, an expanded one reads its native task conversations.
     for (let attempt = 0; !f.sessionReads.some(path => path.includes("ses_long")) && attempt < 100; attempt++) await f.page.waitForTimeout(50)
     assert.ok(f.sessionReads.some(path => path.includes("ses_long")), `the expanded mission's coordinator delegations are read: ${f.sessionReads.join(", ")}`)
@@ -369,6 +368,7 @@ test("virtual task DOM moves keep native keyboard focus without pulling a wheel-
   const f = await open()
   try {
     const detail = await selectMission(f.page, "Long migration"), target = detail.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task')
+    await revealMissionTask(target)
     await target.focus()
     const move = () => f.page.evaluate(() => {
       const button = document.querySelector('.mission-tree-node[data-task-key="t20"] .mission-tree-task')!, row = button.closest("li")!, parent = row.parentElement!, next = row.nextSibling
@@ -396,6 +396,7 @@ test("task-tree keyboard focus stays reachable in the single panel scroller, tin
   try {
     const detail = await selectMission(f.page, "Long migration")
     const target = detail.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task')
+    await revealMissionTask(target)
     await target.focus()
     for (const layout of focusLayouts) {
       await f.page.setViewportSize(layout.viewport)

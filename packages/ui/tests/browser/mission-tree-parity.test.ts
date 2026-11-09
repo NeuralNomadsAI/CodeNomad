@@ -100,7 +100,7 @@ const chevron = (page: Page, title: string) => missionRow(page, title).locator("
 const rowBase = (page: Page, title: string) => missionRow(page, title).locator(".session-item-base")
 /** The nested session row (`.session-item-base`) holding a task button. */
 const taskBase = (button: Locator) => button.locator("xpath=..")
-const taskNode = (page: Page, key: string) => missionRows(page).locator(`li.mission-tree-node[data-task-key="${key}"]`)
+const taskNode = (page: Page, key: string) => missionRows(page).locator(`.mission-tree-node[data-task-key="${key}"]`)
 const eye = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const reader = (page: Page) => page.locator(".mission-reader")
 async function until(check: () => Promise<boolean>, what: string, timeout = 10_000) {
@@ -260,7 +260,7 @@ test("a Mission's chevron carries its task rows' most urgent state: input, worki
     await until(async () => await chevron(page, "Work on the importer").getAttribute("data-child-activity") === "working", "a working task")
     assert.equal(await taskNode(page, "build").getAttribute("data-state"), "active")
     // Read, its rows decide: no row works, though an actor's conversation still runs.
-    assert.deepEqual(await missionRows(page).locator("li.mission-tree-node").evaluateAll(items => items
+    assert.deepEqual(await missionRows(page).locator(".mission-tree-node").evaluateAll(items => items
       .filter(item => ["ship", "wait"].includes((item as HTMLElement).dataset.taskKey!)).map(item => (item as HTMLElement).dataset.state)), ["done", "waiting"])
     assert.equal(await chevron(page, "Ship the exporter").getAttribute("data-child-activity"), null)
     assert.deepEqual(errors, [])

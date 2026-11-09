@@ -105,10 +105,11 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await page.locator(".mission-tree").waitFor()
     assert.equal(selections.some(input => input.body), false, "initial tracking never requests prose or full passage bodies")
     assert.equal(await page.locator(".mission-tree-gap").count(), 0)
-    assert.equal(await page.locator(".mission-tree-more button").count(), 1)
-    const initialRows = await page.locator(".mission-tree-node").count()
+    assert.equal(await page.locator(".mission-tree-more button").count(), 0, "ordinary continuation needs no button")
+    const continued = page.waitForResponse(response => response.request().method() === "POST"
+      && response.request().postDataJSON()?.selector?.source === "tasks" && response.request().postDataJSON()?.selector?.task?.offset > 0)
     await page.locator(".mission-tree-more").scrollIntoViewIfNeeded()
-    await page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, initialRows)
+    assert.equal((await continued).status(), 200, "scrolling reads the next task window independently of mounted row count")
     assert.ok(selections.some(input => input.selector.source === "tasks" && input.selector.task.offset > 0
       && input.selector.task.missionID === map.id && input.source.owner === owner && input.source.missionID === map.id), "scroll continuation retains the exact passage owner")
     const openTaskReader = () => page.evaluate(async ({ root, missionID, scheduleID, passageID, owner, taskID }) => {

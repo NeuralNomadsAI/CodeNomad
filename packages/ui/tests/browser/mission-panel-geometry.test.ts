@@ -82,18 +82,20 @@ const scrollers = (page: Page) => page.evaluate(() => [...document.querySelector
 
 /** Both ends of the panel stay reachable through its single scroller. */
 async function reachable(page: Page) {
+  await page.locator(".mission-control").evaluate(panel => { panel.scrollTop = panel.scrollHeight })
+  await settle(page)
+  await page.locator(".mission-tree-node").last().scrollIntoViewIfNeeded()
+  await settle(page)
   return page.evaluate(() => {
     const panel = document.querySelector<HTMLElement>(".mission-control")!, box = () => panel.getBoundingClientRect()
     const inside = (element: Element) => { const rect = element.getBoundingClientRect(), bounds = box(); return rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1 }
-    panel.scrollTop = 0
-    const top = inside(document.querySelector(".mission-picker-search")!) && inside(document.querySelector('.mission-picker-actions button')!)
     // Rows of the missions after the selected one follow its tasks.
     const last = [...document.querySelectorAll(".mission-tree-node")].at(-1)!
-    last.scrollIntoView({ block: "end" })
     const bottom = inside(last) && panel.scrollTop > 0
     // The header stays at the top of the scrolled panel.
     const header = inside(document.querySelector('.mission-picker-actions button')!) && inside(document.querySelector(".mission-picker-search")!)
     panel.scrollTop = 0
+    const top = inside(document.querySelector(".mission-picker-search")!) && inside(document.querySelector('.mission-picker-actions button')!)
     return { top, bottom, header }
   })
 }

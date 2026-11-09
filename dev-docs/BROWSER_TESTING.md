@@ -125,6 +125,10 @@ synthetic provider.
   so Virtua can finish its size estimate. After resizing, assert that the same row
   remains connected outside the viewport before dispatching activity, then retain
   its identity through scrolling and the fresh visible transition.
+- Mission task fixtures target `.mission-tree-node` independently of Virtua's item
+  wrapper. Reveal offscreen targets with `revealMissionTask` before focus/click
+  observation begins; continuation assertions track exact source reads rather than
+  mounted row counts. Scroll geometry is sampled after the virtual viewport settles.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
   `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;
