@@ -79,6 +79,7 @@ synthetic provider.
 
 ## Agent conventions
 
+- History keyboard scenarios await publication of both exact store keys; a controller-held remote response verifies the absence of premature gestures and the actual keydown recipient.
 - A new browser test either borrows via `borrowFixture({ name, routes })` or
   joins `fixture-exemptions.ts` with a reason that matches reality (the
   checker's failure text is the review).
