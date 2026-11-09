@@ -167,11 +167,11 @@ A logical read budget retains one deadline and signal across slices, continuatio
 Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > candidate.json` from the repository root. Compare the candidate with the checked-in registry, review changed accesses and their delegated continuations, update the ownership table where needed, then transfer the reviewed entries. Tests read the registry. Run `node --conditions=browser --import tsx --test packages/ui/src/lib/backend-async-inventory.test.ts` to verify it; its in-memory counterexamples include new HTTP and HTTP-timer operations in an existing backend module and ordinary DOM-only transformations.
 
 <!-- backend-async-inventory:start -->
+| File | Lifetime | Operation families | Current authority / retained ownership |
+|---|---|---|---|
 | `components/server-add-field.tsx` | C | inline profile save/pair; focus and completion | Strict host flag, mounted generation and captured profile policy; transient pairing cleared before IO; exact flight owns busy and focus publication. |
 | `components/settings/servers-settings-section.tsx` | C | profile edit/remove confirmation; selection intent | Strict host flag and mounted hook; immutable target policy rechecked after confirmation; host Forget precedes awaitable persisted removal; selection callback receives captured profile. |
 | `lib/remote-server-request.ts` | C | connect/forget host requests and stable errors | Host transport id required before dispatch; caller signal; allowlisted error codes, private response bodies discarded. |
-| File | Lifetime | Operation families | Current authority / retained ownership |
-|---|---|---|---|
 | `stores/backend-registry.ts` | A+C | candidate metadata, admission, profile/policy reconciliation, reconnect validation and disposal | Exact candidate controller/profile URL/TLS/entry identity; fresh no-store metadata with deadline; current host flag before publication. Registered fan-in signal owns domain reads; reconnect attempt signal fences superseded validation; revocation precedes resource disposal and client removal. |
 | `stores/remote-backends.ts` | A | renderer registry composition; backend workspace list after SSE start | Host preference/profile getters; retained admitted client and captured attachment signal checked after lazy domain import and passed into refreshWorkspaceList. |
 | `App.tsx` | A+C | foreground timeout/retries; pending liveness → session refresh → messages; folder/temp/SideCar/tab/session handlers; agent/model changes; preview claiming; fullscreen | Foreground controller/attachment signal and instance/client checks; delegated action guards; native preview claim and fullscreen are IPC; local launch/admin uses retained client. |
