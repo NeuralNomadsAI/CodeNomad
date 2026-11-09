@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { createServer, type Server } from "node:http"
-import { chromium, type Browser, type Page } from "playwright"
+import { chromium, type Browser, type Page, type Request } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
@@ -101,9 +101,24 @@ async function setup(page: Page, options: { enabled?: boolean; lose?: "create" |
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: {
       available: true, version: 1, projectID: "project", missions: [], cleanups: [], generatedAt: 1, discardedEvents: 0 } }))
   }
+  const kinds = ["agent", "model", "provider"], completed: Request[] = []
+  const matches = (request: Request, kind: string) => request.method() === "GET"
+    && new URL(request.url()).pathname === `/workspaces/fixture/instance/api/${kind}`
+  // Capture body-completion receipts without starting action deadlines during navigation.
+  const remember = (request: Request) => { if (kinds.some(kind => matches(request, kind))) completed.push(request) }
+  page.on("requestfinished", remember)
+  const waitForCatalog = () => {
+    page.off("requestfinished", remember)
+    const early = completed.splice(0) // Initial receipts are consumed once; later waves require new events.
+    return Promise.all(kinds.map(async kind => {
+      if (!early.some(request => matches(request, kind))) await page.waitForEvent("requestfinished", { predicate: request => matches(request, kind) })
+    }))
+  }
   await page.goto(options.realEditor ? `${url}?realEditor=1` : url)
   await page.waitForFunction(realEditor => realEditor ? (window as any).realCreationStartFixture : (window as any).creationStartFixture, !!options.realEditor)
-  return { posts, reads, failedRequests, errors, get revision() { return doc.revision }, set activationGate(value: Promise<void>) { activationGate = value } }
+  if (options.realEditor) await waitForCatalog()
+  else page.off("requestfinished", remember)
+  return { posts, reads, failedRequests, errors, waitForCatalog, get revision() { return doc.revision }, set activationGate(value: Promise<void>) { activationGate = value } }
 }
 const save = (page: Page, requested = true) => page.evaluate(({ configuration, requested }) =>
   (window as any).creationStartFixture.save(configuration, requested), { configuration, requested })
@@ -194,13 +209,17 @@ test("real editor adopts discovered project before creation; lost Play remains r
     assert.ok(originalForm)
     assert.equal(await page.locator("[data-project]").textContent(), "undiscovered")
     await form.getByLabel("What should the mission do?", { exact: true }).fill("Inspect changes after project discovery")
-    await page.evaluate(() => (window as any).realCreationStartFixture.discoverProject())
+    await Promise.all([
+      f.waitForCatalog(),
+      page.evaluate(() => (window as any).realCreationStartFixture.discoverProject()),
+    ])
     await page.getByText("project", { exact: true }).waitFor()
     assert.equal(await originalForm.evaluate(element => element.isConnected && element === document.querySelector("form.mission-editor")), true,
       "project discovery must update the already-mounted MissionEditor")
     assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Inspect changes after project discovery")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByRole("checkbox", { name: "Start on creation", exact: true }).check()
+    await form.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Fixture model" }).waitFor({ state: "attached" })
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await form.waitFor({ state: "detached" }); await saved(page)
 

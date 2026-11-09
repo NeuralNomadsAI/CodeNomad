@@ -6,7 +6,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { createMissionFailureDiagnostics } from "./mission-failure-diagnostics"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import type {} from "./fixtures/mission-editor-lifetime"
-import { clickMissionAction, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { clickMissionAction, missionRefresh, missionRow, missionToolbarAction, selectMission } from "./mission-actions"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 
@@ -110,6 +110,8 @@ async function holdPartial(page: Page, action: "pause" | "stop", title = TITLE) 
   await missionToolbarAction(page, CHECK(title)).waitFor()
   await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText(UNCONFIRMED, { exact: true }).waitFor()
   assert.equal(await missionRefresh(page).getAttribute("aria-label"), RESEND)
+  // The partial result schedules a row read; feedback can precede its publication.
+  await missionRow(page, title).locator(".sr-only", { hasText: action === "pause" ? /^Daily · Paused/ : /^Daily · Stopped/ }).waitFor({ state: "attached" })
 }
 /** Starts an event-driven row read that stays in flight until released. */
 async function rowReadInFlight(page: Page, state: Awaited<ReturnType<typeof openPage>>["state"]) {
