@@ -56,7 +56,11 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   // The guest must load before a snapshot; no installed app or foreground window is involved.
   const page = await running.firstWindow()
   await page.waitForFunction(() => Boolean(document.querySelector("webview")))
-  assert.equal(await running.evaluate(() => (globalThis as any).automationPreview.ready()), true)
+  const hiddenOwner = { visible: false, focused: false, focusedWindow: false }
+  const { captures, ...prepared } = await running.evaluate(() => (globalThis as any).automationPreview.ready())
+  assert.deepEqual(prepared, { loaded: true, rendered: true, before: hiddenOwner, after: hiddenOwner },
+    "the guest renders before any input while its window stays hidden and unfocused")
+  assert.ok(captures >= 1)
   assert.equal((await execute({ action: "wait", text: "Title", gone: false, timeout: 15000 })).found, true,
     "the actual guest document is loaded before taking accessibility refs")
   const outline = String((await execute({ action: "snapshot" })).snapshot)

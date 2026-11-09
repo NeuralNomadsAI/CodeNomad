@@ -1,4 +1,4 @@
-import { createEffect, createSignal, createUniqueId, For, Show, onCleanup } from "solid-js"
+import { createEffect, createMemo, createSignal, createUniqueId, For, Show, onCleanup } from "solid-js"
 import { BookmarkPlus } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { MAX_MISSION_MODELS, parseMissionModel, type UserMissionModel } from "../lib/mission-model-library"
@@ -7,6 +7,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 import ActionOverflowMenu from "./action-overflow-menu"
 import { MissionBodyPending } from "./mission-reader-body"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 export type MissionModelBrief = Pick<UserMissionModel, "objective" | "notes" | "template" | "profiles" | "taskMode">
 
@@ -120,9 +121,18 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
   const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
   const [selected, setSelected] = createSignal(props.value ?? ""), selectId = createUniqueId()
   const selection = () => config.preferences().missionModels.find(model => model.id === selected())
-  return <Show when={config.preferences().missionModels.length > 0 || config.isUiConfigLoaded() && !config.missionModelsValid()}>
+  const items = createMemo(() => [
+    { key: "remove", label: t("missions.models.remove"), disabled: actions.disabled() || !selection(), onSelect: async () => {
+      const model = selection()
+      if (model && await actions.remove(model)) setSelected("")
+    } },
+    { key: "reload", label: t("missions.models.reload"), disabled: actions.pending() || !(props.active?.() ?? true), onSelect: () => actions.reload() },
+  ])
+  return <>
     <section class="mission-brief-picker" aria-label={t("missions.models.title")}>
-      <label for={selectId} title={t("missions.models.hint")}>{t("missions.create.brief.start")}</label>
+      <label for={selectId}>{t("missions.create.brief.start")}
+        <SettingsInfoTip text={t("missions.models.hint")} help={{ page: "missions", anchor: "saved-briefs" }} />
+      </label>
       <div class="mission-brief-picker-row">
           <select id={selectId} value={selected()} disabled={actions.disabled()} onChange={event => {
             const model = config.preferences().missionModels.find(item => item.id === event.currentTarget.value)
@@ -132,18 +142,12 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
             <option value="">{t("missions.create.brief.none")}</option>
             <For each={config.preferences().missionModels}>{model => <option value={model.id}>{model.name}</option>}</For>
           </select>
-          <ActionOverflowMenu label={t("missions.create.brief.more")} items={[
-            { key: "remove", label: t("missions.models.remove"), disabled: actions.disabled() || !selection(), onSelect: async () => {
-              const model = selection()
-              if (model && await actions.remove(model)) setSelected("")
-            } },
-            { key: "reload", label: t("missions.models.reload"), disabled: actions.pending() || !(props.active?.() ?? true), onSelect: () => actions.reload() },
-          ]} />
+          <ActionOverflowMenu label={t("missions.create.brief.more")} items={items()} />
       </div>
       <Show when={config.isUiConfigLoaded() && !config.missionModelsValid()}><p role="alert">{t("missions.models.invalid")}</p></Show>
       {actions.status()}
     </section>
-  </Show>
+  </>
 }
 
 /** The command that opens a brief's inline name field from elsewhere (a menu item). */

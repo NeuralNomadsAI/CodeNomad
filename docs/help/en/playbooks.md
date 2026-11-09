@@ -2,7 +2,7 @@
 
 A playbook is the working method a mission's coordinator follows: the steps, the roles it can give tasks, and the instructions each agent receives. This page describes each playbook, what CodeNomad itself enforces and what remains an instruction the model is asked to follow.
 
-To read a playbook's exact definition, open **Options** in the mission creation form, choose a **Playbook** and select **See details** under its description. The central reader shows its steps and roles; **Instructions the agents receive (English prompt text)** folds, for the selected **Task sessions** policy, the complete text the coordinator receives on every turn and each role's complete assignment message (with **Independent sessions**, also the context each turn of the task's session adds). Bracketed fields such as [objective] stand for each mission's own data; separate messages start or resume the mission and deliver task results. In those instructions, Exploration is called *Wayfinder Map*.
+The **ⓘ** beside **Playbook** in the mission form opens this guide in your language at the selected playbook's section. Choose a playbook below to read its steps, roles, questions and checks. In the agents' instructions, Exploration is called *Wayfinder Map*.
 
 ## Choose a playbook {#choose}
 
@@ -125,7 +125,7 @@ When no failing reproduction can be built, the diagnostician reports what is mis
 - Only the six Debugging roles are accepted.
 - Order: an implementer must depend on a diagnosis, each reviewer on an implementation, the continuation on both reviews and the validator on the continuation. A step starts only once the step it depends on is complete.
 - The reviewers and the validator must run in new conversations; the continuation must continue the completed implementer's conversation.
-- Each completed role report must contain that role's structured report in its exact format (shown by **See details**), or it is refused. For example, the fix must state that the regression test was seen failing and passing, and the validation must list all four check kinds with none failed.
+- Each completed role report must contain that role's structured report in its required format, or it is refused. For example, the fix must state that the regression test was seen failing and passing, and the validation must list all four check kinds with none failed.
 - The mission finishes green only when the latest implementation has a completed diagnosis before it and two reviews, a continuation and a validation after it, all connected by dependencies and with valid structured reports.
 
 Instructions only: the quality of the diagnosis, the reviewers and the validator not editing files, and the truth of what a report claims. CodeNomad checks that the fix states the test went red then green, not that it ran it.

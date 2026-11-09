@@ -76,7 +76,7 @@ async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: s
     if (seen.has(id)) throw new Error("Human answer ancestry cycle")
     seen.add(id)
     const session = await client.session.get({ sessionID: id }, { signal })
-    if (session.id !== id || !await deps.manager.ownsLocation(workspaceID, session.location, client, signal)
+    if (session.id !== id || !await deps.manager.ownsLocation(workspaceID, session.location, client, { signal })
       || ownedLocation && !sameLocation(session.location, ownedLocation)) {
       throw new Error("Human answer session changed")
     }
@@ -137,7 +137,7 @@ export async function verifyMissionHumanAnswer(raw: unknown, deps: Omit<Deps, "b
   const session = await connection.client.session.get({ sessionID: body.sessionID }, { signal })
   current(); connection.assertCurrent()
   if (session.id !== body.sessionID || session.projectID !== body.projectID || !sameLocation(session.location, body.location)
-    || !await deps.manager.ownsLocation(body.workspaceID, body.location, connection.client, signal)) throw new Error("Human answer Location changed")
+    || !await deps.manager.ownsLocation(body.workspaceID, body.location, connection.client, { signal })) throw new Error("Human answer Location changed")
   current(); connection.assertCurrent()
   if (deps.manager.get(body.workspaceID) !== workspace) throw new Error("Human answer workspace changed")
   return { admitted: true as const }

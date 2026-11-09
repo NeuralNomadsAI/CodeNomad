@@ -82,9 +82,8 @@ test("Scheduling keeps its display, focus and open picker through passive revali
   try {
     const f = await setup(page)
     await missionGeneralAction(page, "Create mission").click()
-    await scheduling(page).locator("summary").click()
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("form.mission-editor .mission-scheduling-add")?.disabled)
-    await add(page).click()
+    await kind(page).selectOption("daily")
     await scheduling(page).locator(".mission-criterion").waitFor()
     await page.waitForTimeout(300)
     const baseline = f.reads.length
@@ -145,7 +144,6 @@ test("a new client resets Scheduling to its first read, and a late response of a
   try {
     const f = await setup(page)
     await missionGeneralAction(page, "Create mission").click()
-    await scheduling(page).locator("summary").click()
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("form.mission-editor .mission-scheduling-add")?.disabled)
     f.hold()
     const setClient = (original: boolean) => page.evaluate(async original => {
@@ -172,14 +170,22 @@ test("a new client resets Scheduling to its first read, and a late response of a
   } finally { await page.close() }
 })
 
-test("the scheduling i opens the real Settings on the OpenCode login-start row and the native hint targets the same anchor", async () => {
+test("scheduling help opens the guide independently of the native Settings row hint", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {
     const f = await setup(page)
     await missionGeneralAction(page, "Create mission").click()
-    await scheduling(page).locator("summary").click()
-    await scheduling(page).getByRole("button", { name: /The Mission only runs while OpenCode is running\.$/ }).click()
-    await page.locator(".settings-info-link-content").locator(".settings-info-link-action").click()
+    await page.evaluate(() => {
+      ;(window as any).schedulingOpens = []
+      window.open = url => { (window as any).schedulingOpens.push(String(url)); return null }
+    })
+    await scheduling(page).getByRole("link").focus(); await page.keyboard.press("Enter")
+    assert.match((await page.evaluate(() => (window as any).schedulingOpens))[0], /\/en\/missions\.html#native-scheduling$/)
+    assert.equal(await page.locator(".settings-screen-shell").count(), 0)
+    await page.evaluate(async () => {
+      const path = "/src/stores/settings-screen.ts", { openSettingsRow } = await import(path)
+      await openSettingsRow("opencode", "opencode-login-start")
+    })
     const row = page.locator(".settings-screen-shell #opencode-login-start")
     await row.waitFor()
     await page.waitForFunction(() => document.activeElement?.id === "opencode-login-start")

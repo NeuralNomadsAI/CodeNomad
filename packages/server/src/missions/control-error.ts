@@ -1,3 +1,5 @@
+export const MISSION_CREATION_REQUEST_CONFLICT = "Creation request ID was already used with a different mission"
+
 export class MissionControlError extends Error {
   constructor(message: string, readonly code: string) {
     super(message)
@@ -21,7 +23,7 @@ export class MissionCreateNoEffectError extends MissionControlError {
   readonly noEffect: { requestID: string; missionID: string }
 
   constructor(requestID: string, missionID: string) {
-    super("Creation request ID was already used with a different mission", "request-conflict")
+    super(MISSION_CREATION_REQUEST_CONFLICT, "request-conflict")
     this.noEffect = { requestID, missionID }
   }
 }

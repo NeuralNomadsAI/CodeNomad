@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "Empêche la mise en veille de l’ordinateur tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée) ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille.",
   "providerUsage.estimated": "Estimé",
   "providerUsage.exhausted": "Épuisé",
-  "providerUsage.estimateInfo": "Le nombre d’étapes locales estime les requêtes gratuites. Les limites réelles varient. L’épuisement est levé à 00:00 UTC.",
+  "providerUsage.estimateInfo": "Retient le maximum entre les étapes locales et les requêtes gratuites disponibles dans la Console depuis 00:00 UTC. La Console couvre le compte ; les limites réelles par IP varient. L’épuisement est levé à 00:00 UTC.",
   "providerUsage.console.requests": "Requêtes",
   "providerUsage.console.today": "Aujourd’hui (UTC)",
   "providerUsage.console.sevenDays": "7 jours (UTC)",

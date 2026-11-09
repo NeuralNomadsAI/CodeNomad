@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "Предотвращает переход системы в спящий режим, пока открыто локальное окно CodeNomad (в том числе свёрнутое); экран по-прежнему может выключаться. Если параметр отключён, CodeNomad предотвращает переход в спящий режим только во время работы сессии.",
   "providerUsage.estimated": "Оценка",
   "providerUsage.exhausted": "Лимит исчерпан",
-  "providerUsage.estimateInfo": "Локальное число шагов даёт оценку бесплатных запросов. Фактические лимиты различаются. Отметка исчерпания снимается в 00:00 UTC.",
+  "providerUsage.estimateInfo": "Используется большее из числа локальных шагов и доступного числа бесплатных запросов Console с 00:00 UTC. Console охватывает аккаунт; фактические лимиты по IP различаются. Отметка исчерпания снимается в 00:00 UTC.",
   "providerUsage.console.requests": "Запросы",
   "providerUsage.console.today": "Сегодня (UTC)",
   "providerUsage.console.sevenDays": "7 дней (UTC)",
