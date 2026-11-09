@@ -18,6 +18,25 @@ export class CodeNomadServerError extends Error {
 
 const READ_LIMIT_BYTES = 8 * 1024 * 1024
 const CALL_TIMEOUT_MS = 10_000
+const AuthStatus = z.object({ authenticated: z.boolean(), pairingRequired: z.boolean().optional(),
+  username: z.string().optional(), passwordUserProvided: z.boolean().optional(),
+}).strict().refine(value => !(value.authenticated && value.pairingRequired)
+  && (value.username === undefined) === (value.passwordUserProvided === undefined)
+  && (value.authenticated || value.username === undefined))
+type Status = z.infer<typeof AuthStatus>
+type AuthFlight = { controller: AbortController; signal: AbortSignal; timer: ReturnType<typeof setTimeout>;
+  users: number; loginUsed: boolean; rejected: boolean; observation?: Promise<Status>; restoration?: Promise<void> }
+type AuthMode = "observe-status"
+
+/** A follower owns its wait, never the shared exchange's cancellation. */
+function waitFor<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new CodeNomadServerError("unreachable"))
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
+    if (signal.aborted) { abort(); return }
+    signal.addEventListener("abort", abort, { once: true })
+  })
+}
 const PairResponse = z.object({
   device: z.object({ id: z.string().uuid(), name: z.string().min(1).max(80), createdAt: z.string().datetime(), lastSeenAt: z.string().datetime() }).strict(),
   credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -44,6 +63,8 @@ function cookiePairs(values: string[]): Map<string, string> {
 export class CodeNomadServerClient {
   #cookies = new Map<string, string>()
   #login?: Promise<void>
+  #loginController?: AbortController
+  #authFlight?: AuthFlight
   #controller = new AbortController()
   readonly #signal: AbortSignal
   readonly #transport: ReturnType<typeof createExplicitTransport>
@@ -70,7 +91,7 @@ export class CodeNomadServerClient {
   }
 
   private capture(values: string[]) {
-    if (this.secret?.kind === "device") return
+    if (this.closed || this.secret?.kind === "device") return
     for (const [name, value] of cookiePairs(values)) {
       if (value) this.#cookies.set(name, value)
       else this.#cookies.delete(name)
@@ -113,25 +134,133 @@ export class CodeNomadServerClient {
   }
 
   /** Password login; cookies and passwords stay in the backend's private store. */
-  login(signal?: AbortSignal): Promise<void> {
+  login(signal?: AbortSignal, destructive = true): Promise<void> {
     if (this.secret?.kind !== "password") return Promise.reject(new CodeNomadServerError("needs_credentials"))
+    if (this.#login) return this.#login
+    const controller = this.#loginController = new AbortController()
     const secret = this.secret
     return this.#login ??= (async () => {
       const response = await this.#transport.fetch(new URL("/api/auth/login", this.origin), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ username: secret.username, password: secret.password }),
-        signal: AbortSignal.any([AbortSignal.timeout(CALL_TIMEOUT_MS), ...(signal ? [signal] : [])]),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(CALL_TIMEOUT_MS), ...(signal ? [signal] : [])]),
       })
-      await response.body?.cancel().catch(() => {})
-      if (response.status === 401 || response.status === 400) { this.options.onRejected?.(); throw new CodeNomadServerError("auth") }
+      void response.body?.cancel().catch(() => {})
+      if (response.status === 401 || response.status === 400) { if (destructive) this.options.onRejected?.(); throw new CodeNomadServerError("auth") }
       if (!response.ok) throw new CodeNomadServerError("unreachable")
-    })().finally(() => { this.#login = undefined })
+    })().finally(() => { this.#login = undefined; this.#loginController = undefined })
   }
 
-  /** Authenticated call. A 401 means the remote did not process the request: log in again and retry once. */
-  async fetch(path: string, init: RequestInit = {}): Promise<Response> {
+  private acquireAuth() {
+    let flight = this.#authFlight
+    if (!flight || flight.signal.aborted) {
+      const controller = new AbortController()
+      flight = { controller, signal: AbortSignal.any([this.#signal, controller.signal]), users: 0,
+        loginUsed: false, rejected: false, timer: setTimeout(() => controller.abort(), 8000) }
+      this.#authFlight = flight
+    }
+    flight.users++
+    const owned = flight
+    return { flight, release: () => {
+      if (--owned.users) return
+      clearTimeout(owned.timer)
+      owned.controller.abort()
+      if (this.#authFlight === owned) this.#authFlight = undefined
+    } }
+  }
+
+  private async restore(flight: AuthFlight) {
+    flight.signal.throwIfAborted()
+    if (flight.restoration) return flight.restoration
+    flight.loginUsed = true
+    const login = this.login(flight.signal, false)
+    const controller = this.#loginController!
+    const abort = () => controller.abort()
+    flight.signal.addEventListener("abort", abort, { once: true })
+    return flight.restoration = waitFor(login, flight.signal).finally(() => flight.signal.removeEventListener("abort", abort))
+  }
+
+  private observe(flight: AuthFlight): Promise<Status> {
+    // Publish the flight before dispatch, including direct status followers.
+    return flight.observation ??= Promise.resolve().then(async () => {
+      const status = async () => {
+        flight.signal.throwIfAborted()
+        const response = await this.#transport.fetch(new URL("/api/auth/status", this.origin), { signal: flight.signal, cache: "no-store" })
+        if (response.status !== 200 || !/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i.test(response.headers.get("content-type") ?? "")) {
+          void response.body?.cancel().catch(() => {})
+          throw new CodeNomadServerError("unreachable")
+        }
+        return readStatus(response)
+      }
+      // A login already owned by this client consumes the episode's single quota.
+      if (this.#login && !flight.loginUsed) {
+        try { await this.restore(flight) }
+        catch (error) {
+          if (error instanceof CodeNomadServerError && error.code === "auth") return { authenticated: false }
+          throw error
+        }
+      }
+      const loginBeforeStatus = flight.loginUsed
+      let result = await status()
+      if (!result.authenticated && !loginBeforeStatus && flight.loginUsed) {
+        await flight.restoration
+        result = await status()
+      }
+      if (!result.authenticated && !result.pairingRequired && this.secret?.kind === "password" && !flight.loginUsed) {
+        try { await this.restore(flight) }
+        catch (error) {
+          if (error instanceof CodeNomadServerError && error.code === "auth") return { authenticated: false }
+          throw error
+        }
+        result = await status()
+      }
+      return result
+    })
+  }
+
+  private rejectAuth(flight: AuthFlight) {
+    if (flight.rejected || flight.signal.aborted || this.#authFlight !== flight) return
+    flight.rejected = true
+    this.options.onRejected?.()
+  }
+
+  private async observedFetch(path: string, init: RequestInit): Promise<Response> {
+    const direct = new URL(path, this.origin).pathname === "/api/auth/status" && (init.method ?? "GET") === "GET"
+    const signal = init.signal ? AbortSignal.any([this.#signal, init.signal]) : this.#signal
+    signal.throwIfAborted()
+    const lease = this.acquireAuth()
+    try {
+      if (!direct && this.secret?.kind === "password" && !this.#cookies.size) {
+        const flight = lease.flight
+        if (!flight.loginUsed) {
+          try { await waitFor(this.restore(flight), AbortSignal.any([signal, flight.signal])) }
+          catch (error) {
+            if (!signal.aborted && error instanceof CodeNomadServerError && error.code === "auth") this.rejectAuth(flight)
+            throw error
+          }
+        } else if (flight.restoration) await waitFor(flight.restoration, AbortSignal.any([signal, flight.signal]))
+      }
+      const response = direct ? undefined : await this.#transport.fetch(new URL(path, this.origin), init)
+      if (response && response.status !== 401) return response
+      const flight = lease.flight
+      let result: Status
+      try { result = await waitFor(this.observe(flight), AbortSignal.any([signal, flight.signal])) }
+      catch (error) { signal.throwIfAborted(); if (response && !this.closed) return response; throw error }
+      init.signal?.throwIfAborted()
+      if (this.closed && !flight.rejected) throw new CodeNomadServerError("unreachable")
+      if (!result.authenticated) {
+        this.rejectAuth(flight)
+        if (response) throw new CodeNomadServerError(this.secret ? "auth" : "needs_credentials")
+      }
+      return response ?? Response.json(result)
+    } finally { lease.release() }
+  }
+
+  /** Legacy recovery or per-call status observation; opted-in business calls are never replayed. */
+  async fetch(path: string, init: RequestInit = {}, mode?: AuthMode): Promise<Response> {
     const url = new URL(path, this.origin)
     if (url.origin !== this.origin) throw new CodeNomadServerError("unreachable")
+    if (mode === "observe-status") return this.observedFetch(path, init)
     if (this.secret?.kind === "password" && !this.#cookies.size) await this.login(init.signal ?? undefined)
     let response = await this.#transport.fetch(url, init)
     if (response.status === 401 && this.secret?.kind === "password" && !init.body) {
@@ -149,12 +278,30 @@ export class CodeNomadServerClient {
   }
 
   /** Bounded JSON read of a fixed backend route. */
-  async json<T>(path: string, init: RequestInit = {}): Promise<{ status: number; body: T | undefined }> {
+  async json<T>(path: string, init: RequestInit = {}, mode?: AuthMode): Promise<{ status: number; body: T | undefined }> {
     const signal = AbortSignal.any([AbortSignal.timeout(CALL_TIMEOUT_MS), ...(init.signal ? [init.signal] : [])])
-    const response = await this.fetch(path, { ...init, signal })
+    const response = await this.fetch(path, { ...init, signal }, mode)
     return { status: response.status, body: await readJson(response, READ_LIMIT_BYTES) as T | undefined }
   }
 
+}
+
+async function readStatus(response: Response): Promise<Status> {
+  const reader = response.body?.getReader()
+  if (!reader) throw new CodeNomadServerError("unreachable")
+  const decoder = new TextDecoder("utf-8", { fatal: true })
+  let bytes = 0, text = ""
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      bytes += chunk.value.byteLength
+      if (bytes > 4096) throw new CodeNomadServerError("unreachable")
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    return AuthStatus.parse(JSON.parse(text + decoder.decode()))
+  } catch (error) { void reader.cancel().catch(() => {}); throw error }
+  finally { reader.releaseLock() }
 }
 
 async function readJson(response: Response, limit: number): Promise<unknown> {

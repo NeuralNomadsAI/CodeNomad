@@ -184,7 +184,7 @@ export class RemoteServerBrowseManager {
       if (!entry) {
         const client = new CodeNomadServerClient(profile.origin, this.credentials.read(id, profile.origin, profile.skipTlsVerify), {
           skipTlsVerify: profile.skipTlsVerify,
-          onRejected: () => { if (this.#state.clients.get(id)?.client === client) this.remove(id) },
+          onRejected: () => { if (this.#state.clients.get(id)?.client === client && this.#state.authorities.get(id) === profile) this.remove(id) },
           onSecretChanged: secret => {
             if (this.#state.clients.get(id)?.client === client && !client.closed) {
               this.assertCurrent(profile)
@@ -205,9 +205,10 @@ export class RemoteServerBrowseManager {
     if (bootstrap && !metadata && !(target === "/api/auth/status" && method === "GET")) throw new CodeNomadServerError("unreachable")
     const authority = proof === undefined || bootstrap ? this.capture(id) : this.assertProof(id, proof)
     const client = this.client(authority).client
-    if (proof === undefined || !metadata) return client.fetch(target, init)
+    const mode = proof === undefined ? undefined : "observe-status"
+    if (proof === undefined || !metadata) return client.fetch(target, init, mode)
     // Reuse the bounded JSON reader: identity is observed before a local proof is published.
-    const result = await client.json<{ serverId?: unknown }>(target, init)
+    const result = await client.json<{ serverId?: unknown }>(target, init, mode)
     this.assertCurrent(authority)
     if (result.status !== 200 || typeof result.body?.serverId !== "string" || !result.body.serverId.trim()) {
       return new Response(result.body === undefined ? null : JSON.stringify(result.body), { status: result.status, headers: { "content-type": "application/json" } })
