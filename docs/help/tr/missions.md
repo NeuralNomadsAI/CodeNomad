@@ -38,8 +38,8 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 
 ## Ağacı izleyin ve sonuçları okuyun {#tracking}
 
-1. Bir görevin satırını seçin: görev düğümleri altında, eylemleri ise üst bilginin ikinci satırında görünür. Satırın oku görev düğümlerini daraltır veya genişletir; başka bir görevin oku, o görevi seçmeden düğümlerini gösterir. **Görevleri filtrele** diğer satırları süzer.
-2. Merkezi genel bakış için **Özet** (göz) eylemini seçin; açıkken başka bir görevi seçmek o görevin genel bakışını gösterir. İlgili sonucu, iş özetini ve kanıtları görmek için bir görev düğümünü seçin: okuyucusu açıkken üst bilgideki eylemler o düğüme uygulanır; **Görevin konuşmasını aç** ve raporu eksikse **Eksik raporu doğrula ve kurtar** da bunlar arasındadır. Ardından **Özet**, düğümün okuyucusunu kapatır.
+1. Oturum listesinde olduğu gibi, satırın oku görev düğümlerini gösterir veya gizler; tıklama ise tek bir satırı seçer: bir görev ya da onun görev düğümlerinden biri. Seçimin eylemleri üst bilginin ikinci satırındadır. Görev düğümü olmayan bir görevin oku yoktur. **Görevleri filtrele** diğer satırları süzer.
+2. Seçimi merkezi okuyucuda okumak için **Özet** (göz) düğmesine basın: bir görevin genel bakışı ya da bir görev düğümünün ilgili sonucu, iş özeti ve kanıtları. Düğme basılıyken okuyucu seçtiğiniz öğeyi izler; konuşmaya dönmek için yeniden basın. Bir görev düğümü seçiliyken üst bilgideki eylemler o düğüme uygulanır; **Görevin konuşmasını aç** ve raporu eksikse **Eksik raporu doğrula ve kurtar** da bunlar arasındadır.
 3. **Diğer eylemler** (⋯), **Güncelleme iste**, **Şimdi kes**, **Özet olarak kaydet** ve **Seçili görevi düzenle** eylemlerini içerir; geçerli olmayan eylemler devre dışı kalır.
 4. Bağımlılık bağlantılarını ve **Raporlar** bölümünü izleyin; koordinatörün konuşma dökümüne ihtiyaç duyduğunuzda **Konuşmayı aç** eylemini kullanın.
 5. Bir görev veya görev düğümlerinden biri kırmızıya döndüğünde onu seçin: soruyu soran konuşma, sorusu istek panelinde olacak şekilde açılır.
@@ -69,8 +69,8 @@ Görev bayrakları ve görev düğümü simgeleri oturum listesinin renklerini k
 | Kırmızı | Sizden bir yanıt bekleniyor. Bir görevin bayrağı koordinatörünün sorusu için, bir görev düğümü kendi sorusu için kırmızıya döner; görevin oku ise görev düğümlerinden birinin soru sorduğunu gösterir. Soruyu açmak için kırmızı görevi veya görev düğümünü seçin. |
 | Sarı, yanıp sönen | Çalışma sürüyor. |
 | Turuncu | Görev duraklatıldı veya kesintiye uğradı; devam ettirmek için bir eylem var. |
-| Yeşil | Bu pencerede henüz açmadığınız tamamlanmış bir görev; seçtiğiniz anda nötr olur. |
-| Mavi | Hazırlanmış bir görev; yazılmış bir istem gibi başlatılmaya hazırdır. |
+| Yeşil | Bu pencerede henüz görmediğiniz tamamlanmış bir görev veya bitmiş bir görev düğümü ve böyle bir düğümü olan görevin oku. Seçtiğiniz anda nötr olur; temizlemek için yeşil bir görev düğümü simgesine tıklayın veya birkaçının üzerinden sürükleyin. Görevi ve tüm görev düğümlerini tek seferde temizlemek için görevin okuna sağ tıklayıp **Okundu olarak işaretle** seçeneğini seçin. |
+| Mavi | Hazırlanmış bir görev; yazılmış bir istem gibi başlatılmaya hazırdır. Henüz başlamamış bir görev düğümü de mavidir. |
 
 Geri kalan her şey nötrdür; tamamlanan ve başarısız görev düğümleri de: sonuçlar durum metninde ve simgelerde yer alır.
 
@@ -280,8 +280,8 @@ Düzenlenebilir tek seferlik görev veya yerel zamanlama için **Diğer eylemler
 
 Yerel zamanlamada **Seçili görevi sil…**, kaydı kaldırmadan önce gelecek geçişleri devre dışı bırakır. Konuşmalar ve sonuçlar korunur; uzlaştırma bekleyen temizlik **Teknik ayrıntılar** içinde görünür kalır. Doğrulanmamış silme isteğini koruyup özgün isteği yenileyin.
 
-1. Artık gerek duymadığınız tek seferlik görev için **Seçili görevi sil…** eylemini seçip onayı inceleyin.
-2. Onaylamadan önce isteğe bağlı olarak **Bu görev için oluşturulan uzman konuşmalarını da sil** seçeneğini işaretleyin.
+1. Sildiğiniz görevler için oluşturulan görev düğümü konuşmalarını da silmek için **Ayarlar → Görevler** altında **Bir görevi silmek, görev düğümlerinin konuşmalarını da siler** seçeneğini işaretleyin.
+2. Artık gerek duymadığınız tek seferlik görev için **Seçili görevi sil…** eylemini seçin: görev hemen silinir. Yalnızca silme başarısız olursa veya doğrulanmazsa **Tekrar dene** içeren bir form görünür.
 3. Kaldırılan/korunan/bekleyen sayılarını **Konuşma temizliği** bölümünde kontrol edin. Sunuluyorsa yalnızca kaydedilmiş, kalan temizliği yeniden deneyin.
 
 Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Konuşma temizliği 0 bekleyen gösterse bile silme doğrulaması beklenirken görev kartı kaybolabilir. Silme doğrulanana kadar özgün **Tekrar dene** eylemini kullanmaya devam edin; aynı silme isteği ve seçenekler korunur. Genel bakış okuyucusu tamamlanan en son 20 temizliği tutar. Görevleri silmek projedeki depolama alanlarını boşaltır: daha eski silinmiş görevler otomatik olarak temizlenir.

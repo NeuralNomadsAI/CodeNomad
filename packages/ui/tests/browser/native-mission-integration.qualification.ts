@@ -218,7 +218,7 @@ test("captured actual-native mission frames render dependencies, reports and exa
     await clickMissionAction(page, "Open conversation")
     assert.equal((await page.evaluate(() => window.nativeMissionIntegration.snapshot())).selectedID, finalMission.coordinatorSessionId)
     for (const task of finalMission.tasks) {
-      // A task's open reader gives the header toolbar its own conversation.
+      // A selected task gives the header toolbar its own conversation.
       // Tasks without their own worker may only link a derived native delegation; descendants are covered below.
       if (!task.actorSessionId || task.actorSessionId === finalMission.coordinatorSessionId) continue
       await taskRow(page, task.key).locator(".mission-tree-task").click()

@@ -38,8 +38,8 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 ## Follow the tree and read results {#tracking}
 
-1. Select a mission's row: its tasks appear beneath it and its actions on the header's second line. The row's chevron folds or unfolds its tasks; another mission's chevron shows its tasks without selecting it. **Filter missions** narrows the other rows.
-2. Choose **Summary** (eye) for the central overview; while it is open, selecting another mission shows that mission's overview. Select a task for its exact result, brief and evidence: while its reader is open, the header's actions apply to that task, with **Open the task's conversation** and, when its report is missing, **Verify and recover missing report**. **Summary** then closes the task's reader.
+1. As in the session list, a row's chevron shows or hides its tasks, and a click selects one row: a mission, or one of its tasks. The selection's actions are on the header's second line. A mission without tasks has no chevron. **Filter missions** narrows the other rows.
+2. Press **Summary** (eye) to read the selection in the central reader: a mission's overview, or a task's exact result, brief and evidence. While it is pressed, the reader follows what you select; press it again to return to the conversation. With a task selected, the header's actions apply to that task, with **Open the task's conversation** and, when its report is missing, **Verify and recover missing report**.
 3. **More actions** (⋯) holds **Request an update**, **Interrupt now**, **Save as brief** and **Edit selected mission**; actions that do not apply stay disabled.
 4. Follow dependency links and **Reports**; use **Open conversation** for the coordinator when you need its transcript.
 5. When a mission or one of its tasks turns red, select it: the asking conversation opens with its question in the interruption dock.
@@ -69,8 +69,8 @@ Mission flags and task icons use the session list's colours: colour shows only w
 | Red | An answer is expected from you. A mission's flag turns red for its coordinator's question, a task for its own, and the mission's chevron shows that one of its tasks asks. Select the red mission or task to open the question. |
 | Yellow, pulsing | Work is running. |
 | Orange | The mission is paused, or interrupted, with an action to continue it. |
-| Green | A completed mission you have not opened yet in this window; it turns neutral once you select it. |
-| Blue | A prepared mission, ready to start like a composed prompt. |
+| Green | A completed mission or a finished task you have not seen yet in this window, and the chevron of a mission with such a task. It turns neutral once you select it; click a green task icon, or drag across several, to clear them. Right-click a mission's chevron and choose **Mark as read** to clear the mission and all its tasks at once. |
+| Blue | A prepared mission, ready to start like a composed prompt, or a task that has not started yet. |
 
 Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons.
 
@@ -280,8 +280,8 @@ Use **Edit selected mission** under **More actions** (⋯) on an editable one-ti
 
 For a native schedule, **Delete selected mission…** disables future passages before removing the entry. Conversations and results are kept; cleanup awaiting reconciliation remains visible in **Technical details**. Preserve an unconfirmed deletion and refresh its original request.
 
-1. For a one-time mission you no longer need, choose **Delete selected mission…** and review the confirmation.
-2. Optionally select **Also delete specialist conversations created for this mission** before confirming.
+1. To also delete the task conversations created for missions you delete, check **Deleting a mission also deletes its task conversations** under **Settings → Missions**.
+2. For a one-time mission you no longer need, choose **Delete selected mission…**: it is deleted at once. A form appears only if the deletion fails or is unconfirmed, with **Try again**.
 3. Check **Conversation cleanup** for removed/kept/pending counts. Retry only the remaining recorded cleanup if offered.
 
 Deleting a mission is not the same as stopping it; use Stop and inspect remaining work first. Coordinators and reused conversations are kept. Shared, moved, child-bearing or unverifiably owned specialists may also be retained. Partial cleanup is not rolled back and is not silently completed in the background. The mission card can disappear while deletion confirmation is still pending, even when conversation cleanup shows 0 pending. Keep using the original **Try again** action until deletion is confirmed; it retains the same deletion request and options. The overview reader keeps the 20 most recent completed cleanups. Deleting missions frees their project storage: older deleted missions are cleared automatically.

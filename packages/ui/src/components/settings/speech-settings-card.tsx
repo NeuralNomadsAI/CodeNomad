@@ -296,7 +296,7 @@ export const SpeechSettingsCard: Component = () => {
       <div class="settings-stack">
         <div class="settings-toggle-row settings-toggle-row-compact">
           <div>
-            <div class="settings-toggle-title">{t("settings.speech.provider.title")}<SettingsInfoTip text={t("settings.speech.provider.subtitle")} /></div>
+            <div class="settings-toggle-title">{t("settings.speech.provider.title")}<SettingsInfoTip text={t("settings.speech.provider.subtitle")} help={{ page: "voice", anchor: "configure" }} /></div>
           </div>
           <div class="settings-toolbar-inline">
             <span class="settings-inline-note">{capabilityLabel()}</span>
@@ -359,7 +359,7 @@ export const SpeechSettingsCard: Component = () => {
                     : t("settings.speech.testPlayback.action")}
               </span>
             </button>
-            <SettingsInfoTip text={t("settings.speech.testPlayback.note")} />
+            <SettingsInfoTip text={t("settings.speech.testPlayback.note")} help={{ page: "voice", anchor: "test" }} />
             <button
               type="button"
               class="selector-button selector-button-primary w-auto whitespace-nowrap"
@@ -374,7 +374,7 @@ export const SpeechSettingsCard: Component = () => {
         <Show when={serverSupportsSeparateProviders()}>
           <div class="settings-toggle-row settings-toggle-row-compact">
             <div>
-              <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}<SettingsInfoTip text={t("settings.speech.separateProviders.subtitle")} /></div>
+              <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}<SettingsInfoTip text={t("settings.speech.separateProviders.subtitle")} help={{ page: "voice", anchor: "configure" }} /></div>
             </div>
             <SettingsSwitch
               checked={drafts().separateProviders}
@@ -567,7 +567,7 @@ const Field: Component<{
   return (
     <div class="settings-toggle-row settings-toggle-row-compact">
       <div>
-        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} />}</Show></div>
+        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} help={{ page: "voice", anchor: "configure" }} />}</Show></div>
       </div>
       <div class="flex items-center gap-2 w-full min-w-0 sm:min-w-[18rem] sm:max-w-[24rem]">
         {props.icon}
@@ -593,7 +593,7 @@ const SelectField: Component<{
   return (
     <div class="settings-toggle-row settings-toggle-row-compact">
       <div>
-        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} />}</Show></div>
+        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} help={{ page: "voice", anchor: "configure" }} />}</Show></div>
       </div>
       <div class="w-full min-w-0 sm:min-w-[18rem] sm:max-w-[24rem]">
         <select value={props.value} onInput={(event) => props.onInput(event.currentTarget.value)} class="selector-input w-full">

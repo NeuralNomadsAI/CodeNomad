@@ -1,4 +1,4 @@
-import { Show, createContext, createMemo, useContext, type Accessor, type JSX } from "solid-js"
+import { Show, createContext, createMemo, createSignal, onCleanup, onMount, useContext, type Accessor, type JSX } from "solid-js"
 import { Portal } from "solid-js/web"
 import { ArrowUpRight, BookmarkPlus, PauseCircle, Eye, FastForward, Pause, Pencil, Play, RefreshCw, Square, Trash2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
@@ -21,7 +21,8 @@ function primaryIcon(key?: string): JSX.Element {
  * line: contextual Play/Pause (or recovery), Stop and, for schedules only, Run now,
  * then the summary reader, coordinator conversation and delete, then the shared
  * overflow menu (update request, interrupt now, save as brief, edit). Inapplicable buttons stay in
- * place, disabled. Optional secondary text actions and feedback stay in the detail. */
+ * place, disabled. Optional secondary text actions stay in the detail; command feedback
+ * is announced and joins the primary button's tooltip. */
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader?: () => void
   primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; onOpenConversation?: () => void
@@ -31,6 +32,8 @@ export function MissionActionBar(props: {
   interrupt?: MissionPrimaryAction
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
+  /** The brief name form belongs to the deliberately revealed task detail. */
+  secondaryInDetail?: boolean
   /** Opens the selected Mission's inline brief name field (in `secondary`). */
   saveBrief?: MissionBriefSaveTrigger
   /** Renders in place instead of in the header's selection line. */
@@ -44,6 +47,17 @@ export function MissionActionBar(props: {
   // A refreshed action object must keep the SVG beneath an already-held pointer.
   const primaryKey = createMemo(() => props.primary?.key)
   const primaryLabel = () => props.primary ? props.primary.ariaLabel ?? props.primary.label : t("missionsPanel.action.start")
+  // Command progress and errors are announced, not shown: their text joins the primary
+  // button's tooltip, so the panel gains no status line (actions they offer stay visible).
+  let feedbackRoot!: HTMLDivElement
+  const [feedbackText, setFeedbackText] = createSignal("")
+  onMount(() => {
+    const update = () => setFeedbackText([...feedbackRoot.querySelectorAll("small, p")].map(element => element.textContent?.trim()).filter(Boolean).join(" · "))
+    const observer = new MutationObserver(update)
+    observer.observe(feedbackRoot, { subtree: true, childList: true, characterData: true })
+    update()
+    onCleanup(() => observer.disconnect())
+  })
   const stopLabel = () => props.stop ? props.stop.ariaLabel ?? props.stop.label : t("missions.control.run.stop")
   const menu: ActionOverflowMenuItem[] = [
     { key: "request", get label() { return props.request?.label ?? t("missionsPanel.action.requestUpdate") },
@@ -65,7 +79,7 @@ export function MissionActionBar(props: {
   ]
   let bar: HTMLDivElement | undefined
   const toolbar = () => <div ref={bar} class="mission-action-bar" role="toolbar" aria-label={props.label}>
-    <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={primaryLabel()}
+    <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={[primaryLabel(), feedbackText()].filter(Boolean).join(" — ")}
       disabled={!props.primary || props.primary.disabled} onClick={() => void props.primary?.onSelect()}>
       {primaryIcon(primaryKey())}
     </button>
@@ -94,11 +108,16 @@ export function MissionActionBar(props: {
   const mount = () => props.inline ? undefined : slot?.()
   // A schedule's toolbar yields the line while one of its passage tasks' reader is open.
   const yielded = () => !props.inline && !props.task && Boolean(taskOwned?.())
+  // Live announcements and recovery buttons share the persistent header owner;
+  // folding the task content must preserve their accessibility and reachability.
+  const feedback = <div ref={feedbackRoot} class="mission-action-feedback">{props.feedback}</div>
+  const secondary = <Show when={props.secondary}><div class="mission-action-texts">{props.secondary}</div></Show>
   return <>
     <Show when={!yielded()}>
       <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
     </Show>
-    <Show when={props.secondary}><div class="mission-action-texts">{props.secondary}</div></Show>
-    <div class="mission-action-feedback">{props.feedback}</div>
+    <Show when={props.secondaryInDetail}>{secondary}</Show>
+    <Show when={mount()} keyed fallback={<><Show when={!props.secondaryInDetail}>{secondary}</Show>{feedback}</>}>{element =>
+      <Portal mount={element}><Show when={!props.secondaryInDetail}>{secondary}</Show>{feedback}</Portal>}</Show>
   </>
 }

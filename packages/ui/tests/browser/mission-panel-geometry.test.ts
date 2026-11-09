@@ -10,6 +10,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { compactMissionMap } from "../../../server/src/missions/mission-compact-map"
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
 import { panelMissions, routeMissionTasks } from "./mission-content-fixture"
+import { expandRow, showSelection } from "./mission-actions"
 
 // Real MissionControl with the full stylesheet: single-scroller policy on short
 // layouts, measured dependency rail endpoints and native picker key semantics.
@@ -65,6 +66,8 @@ async function open(context: BrowserContextOptions, missions: MissionMap[], sele
     ;(await import(instances)).updateInstance("fixture", { metadata: { project: { id: "project" } } })
     ;(await import(state)).updateMissionProjectView("fixture", { selected })
   }, { selected, view })
+  // Selected through the view state: its chevron shows its tasks.
+  await showSelection(page)
   await page.locator(".mission-tree-node").first().waitFor()
   await settle(page)
   return { page, errors }
@@ -195,16 +198,16 @@ test("a map of 500 tasks and 40 actors shows a page of rows, reads further on re
     assert.deepEqual(await rows(), missionTaskOrder(tasks).map(task => task.key))
     await page.waitForFunction(() => document.querySelectorAll(".mission-graph path[data-from]").length === 450)
     assert.equal(await page.locator(".mission-graph path.mission-graph-omitted").count(), 0, "every edge's both ends are shown")
-    // Toggling one task's reader re-renders the tree in place without rebuilding it.
+    // Selecting one task re-renders the tree in place without rebuilding it.
     const elapsed = await page.evaluate(async () => {
       const row = document.querySelector<HTMLButtonElement>('.mission-tree-node[data-task-key="t499"] .mission-tree-task')!
       const start = performance.now()
       row.click()
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-      return { ms: performance.now() - start, pressed: row.getAttribute("aria-pressed") }
+      return { ms: performance.now() - start, selected: row.getAttribute("aria-current"), connected: row.isConnected }
     })
-    assert.equal(elapsed.pressed, "true")
-    assert.ok(elapsed.ms < 1_000, `one row toggle took ${elapsed.ms} ms`)
+    assert.deepEqual([elapsed.selected, elapsed.connected], ["true", true])
+    assert.ok(elapsed.ms < 1_000, `one row selection took ${elapsed.ms} ms`)
     const edge = (await railEnds(page)).find(item => item.edge === "t1>t2")!
     assert.ok(edge.gaps.every(gap => gap <= 0.75), `t1>t2 meets its icons: ${edge.gaps}`)
     assert.deepEqual(errors, [])
@@ -225,14 +228,17 @@ test("rows are buttons: Enter and Space select; the filter keeps composition key
     await page.keyboard.press("Space")
     assert.equal(await selected(), "Objective other0")
     assert.equal(await focusedTitle(), "Objective other0", "Space keeps focus on the selected row")
-    const chevron = page.locator(".mission-row").filter({ has: page.locator(".session-item-title", { hasText: /^Objective other2$/ }) }).locator(".session-item-expander")
+    // A Mission without tasks has no chevron; another mission's chevron expands its tasks without selecting it.
+    const leaf = page.locator(".mission-row").filter({ has: page.locator(".session-item-title", { hasText: /^Objective other2$/ }) })
+    assert.equal(await leaf.locator("button.session-item-expander").count(), 0)
+    const chevron = page.locator(".mission-row").filter({ has: page.locator(".session-item-title", { hasText: /^Objective long$/ }) }).locator(".session-item-expander")
+    if (await chevron.getAttribute("aria-expanded") === "true") await chevron.click()
     await chevron.focus()
-    // Another mission's chevron expands its tasks without selecting it.
     await page.keyboard.press("Enter")
     assert.equal(await selected(), "Objective other0")
     assert.equal(await chevron.getAttribute("aria-expanded"), "true")
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("session-item-expander")), true, "the chevron keeps focus")
-    assert.equal(await focusedTitle(), "Objective other2")
+    assert.equal(await focusedTitle(), "Objective long")
     await page.keyboard.press("Enter")
     assert.equal(await chevron.getAttribute("aria-expanded"), "false")
     await row("Objective other2").focus()
@@ -240,6 +246,7 @@ test("rows are buttons: Enter and Space select; the filter keeps composition key
     assert.equal(await selected(), "Objective other2")
     // Focusing a header control never scrolls the tree beneath it.
     await row("Objective long").click()
+    await expandRow(row("Objective long"))
     await page.locator(".mission-control").evaluate(panel => { panel.scrollTop = 500 })
     await settle(page)
     const before = await page.locator(".mission-control").evaluate(panel => panel.scrollTop)

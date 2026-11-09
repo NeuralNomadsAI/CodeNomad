@@ -10,6 +10,7 @@ import { compactMissionMap } from "../../../server/src/missions/mission-compact-
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { missionContentFixture, missionTaskFixture, missionTaskQuery, olderPluginMap, panelMissions } from "./mission-content-fixture"
+import { expandRow, missionToolbar } from "./mission-actions"
 
 // Real MissionControl and reader over a compact map that holds a page of its tasks:
 // scroll continuation, graph's omitted edges, reads further and questions beyond the page.
@@ -55,7 +56,8 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
   page.on("pageerror", error => errors.push(error.message))
   page.setDefaultTimeout(15_000); page.setDefaultNavigationTimeout(60_000)
   await page.addInitScript(`Object.assign(window,{__name:f=>f,__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
-    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:JSON.parse(localStorage.getItem('fixture-native')??'null')}),
+    saveClientState:async (_token,snapshot)=>{localStorage.setItem('fixture-native',JSON.stringify(snapshot));return true}}})`)
   await page.route("**/api/**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
     const tasks = missionTaskFixture(request.url(), request.method(), [project ? project(current) as MissionMap : current], "project", request.postData())
@@ -81,6 +83,10 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
     ;(await import("/src/stores/instances.ts")).updateInstance("fixture", { metadata: { project: { id: "project" } } })
     ;(await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: id })
   }, value.id)
+  // A selection is not expanded: its chevron shows its tasks, as in the session list. The
+  // chevron then gives up focus, which would otherwise pin the panel's scroll (focus policy).
+  await expandRow(page.locator(".mission-rows .mission-row-select[aria-current=true]"))
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
   await page.locator(".mission-tree-node").first().waitFor()
   reads.length = 0 // selectors below measure reads further, after initial header/task/pin adoption
   return { page, errors, reads, contents, current: () => current, replace: (next: MissionMap) => { current = next },
@@ -92,7 +98,121 @@ const rows = (page: Page) => page.locator(".mission-tree-node").evaluateAll(node
 // Exercise the keyboard fallback without scrolling the sentinel into view as a
 // side effect. Scroll-driven loading has its own real-scroller regression below.
 const more = (page: Page) => page.locator(".mission-tree-more button").evaluate((button: HTMLButtonElement) => button.click())
+/** Selects t119 (without scrolling its row into view), then opens its reader with the eye. */
+async function readTask119(page: Page) {
+  await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
+  await page.waitForFunction(() => document.querySelector('.mission-tree-node[data-task-key="t119"] .mission-tree-task')?.getAttribute("aria-current") === "true")
+  await missionToolbar(page).locator(".mission-overview-toggle").click()
+}
 const attentionInfo = (page: Page) => page.locator(".mission-tree > .mission-tree-summary .settings-info-tip")
+const view = (page: Page) => page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("fixture"))
+async function assertMissionActionsDisabled(page: Page) {
+  const toolbar = missionToolbar(page)
+  assert.equal(await toolbar.locator("button").first().isDisabled(), true, "Mission lifecycle never inherits unresolved task selection")
+  assert.equal(await toolbar.getByRole("button", { name: "Stop mission permanently", exact: true }).isDisabled(), true)
+  assert.equal(await toolbar.getByRole("button", { name: "Delete selected mission…", exact: true }).isDisabled(), true)
+  assert.equal(await toolbar.locator(".action-overflow-trigger").isDisabled(), true, "Mission edit/interrupt actions stay unavailable")
+}
+
+for (const reused of [false, true]) test(`a partial task page keeps its off-page actor's activity ${reused ? "when reusing a completed task's conversation" : "and excludes loaded completed actors wrapping up"}`, async () => {
+  const task = (index: number, status: MissionTask["status"]): MissionTask => ({ id: `task-t${index}`, key: `t${index}`, title: `Task ${index}`,
+    brief: "Brief", role: "worker", status, blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 })
+  const tasks: MissionTask[] = [...Array.from({ length: 50 }, (_, index) => task(index, "completed")),
+    ...Array.from({ length: 20 }, (_, index) => task(index + 50, "needs-input")),
+    { ...task(70, "dispatching"), actorSessionId: "ses_far", admissionId: "adm_far", outstandingExecution: true,
+      executionMode: { kind: "independent", reason: "existing-root", explanation: "Continue in the owned root" } }]
+  tasks[0] = { ...tasks[0], actorSessionId: reused ? "ses_far" : "ses_wrap" }
+  const value: MissionMap = { ...paged(), taskMode: "independent", tasks, reports: [], actors: [...paged().actors.map(actor => ({ ...actor, managed: false })),
+    ...reused ? [] : [{ ...paged().actors[0], sessionId: "ses_wrap", title: "Completed worker wrapping up" }]] }
+  const activity = [{ sessionId: "ses_far", state: "running" }, ...reused ? [] : [{ sessionId: "ses_wrap", state: "running" }]]
+  const f = await open(value, activity)
+  try {
+    const chevron = f.page.locator('.mission-row[data-mission-key="mission:paged"] .session-item-expander')
+    const expect = async (state: string | null) => {
+      await f.page.waitForFunction(expected => document.querySelector('.mission-row[data-mission-key="mission:paged"] .session-item-expander')
+        ?.getAttribute("data-child-activity") === expected, state)
+      assert.equal(await chevron.getAttribute("data-child-activity"), state)
+      assert.equal(await f.page.locator('.mission-tree-node[data-task-key="t70"]').count(), 0, "activity needs no task-page scan")
+    }
+    assert.equal(compactMissionMap(value).tasks.length, 70, "blockages fill the pins ahead of the admitted task")
+    assert.equal((await rows(f.page)).length, 70)
+    await expect("working")
+    for (const [state, expected] of [["form", "permission"], ["permission", "permission"], ["idle-without-report", null]] as const) {
+      activity[0].state = state
+      await f.refresh()
+      await expect(expected)
+    }
+    assert.equal(await f.page.locator('.mission-tree-node[data-task-key="t0"]').getAttribute("data-state"), "done")
+    assert.deepEqual(f.reads, [], "positive observed activity and loaded completion evidence suffice")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.context().close() }
+})
+
+for (const outcome of ["present", "absent", "failed"] as const) test(`a persisted off-page task with the eye off resolves by bounded ID (${outcome}) before yielding Mission actions`, async () => {
+  const f = await open(paged()), taskId = outcome === "present" ? "task-t108" : "task-gone"
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const requests: unknown[] = [], mutations: string[] = []
+  try {
+    // Save while unmounted, then restore through the native client-state bridge in a fresh document.
+    await f.page.evaluate(async taskId => {
+      ;(window as any).missionFixture.mount(false)
+      ;(await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", {
+        selectedTask: { missionId: "paged", taskId }, reader: undefined,
+      })
+      await (window as any).missionFixture.flush()
+    }, taskId)
+    await f.page.route("**/missions/panel-page", async route => {
+      const request = route.request(), input = request.postDataJSON()
+      if (!input.task.ids?.includes(taskId)) return route.fallback()
+      requests.push(input)
+      assert.deepEqual(input.task.ids, [taskId], "one named task, never an ordinary/attention scan")
+      assert.ok(Buffer.byteLength(request.postData()!) <= 16_384)
+      const answer = missionTaskFixture(request.url(), request.method(), [f.current()], "project", request.postData())
+      assert.ok(Buffer.byteLength(JSON.stringify(answer)) <= 65_536)
+      await gate
+      return route.fulfill(outcome === "failed" ? { status: 503, json: { error: "Offline" } } : { json: answer }).catch(() => {})
+    })
+    f.page.on("request", request => {
+      const pathname = new URL(request.url()).pathname
+      if (["PATCH", "DELETE"].includes(request.method()) || request.method() === "POST" && /\/(control|recover|prompt|message|synthetic)$/.test(pathname)) mutations.push(pathname)
+    })
+    const started = f.page.waitForRequest(request => request.url().endsWith("/missions/panel-page") && request.postDataJSON()?.task?.ids?.includes(taskId), { timeout: 60_000 })
+    await f.page.reload()
+    await f.page.waitForFunction(() => Boolean((window as any).missionFixture), undefined, { timeout: 60_000 })
+    await f.page.evaluate(async () => {
+      ;(window as any).missionFixture.connectCatalog()
+      ;(await import("/src/stores/instances.ts")).updateInstance("fixture", { metadata: { project: { id: "project" } } })
+    })
+    await started
+    await missionToolbar(f.page).waitFor()
+    assert.deepEqual((await view(f.page)).selectedTask, { missionId: "paged", taskId })
+    assert.equal(await f.page.locator(".mission-reader").count(), 0)
+    assert.equal(await missionToolbar(f.page).locator(".mission-overview-toggle").isDisabled(), true)
+    await assertMissionActionsDisabled(f.page)
+    release()
+    await f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.state("fixture").taskReads?.paged?.loading)
+    if (outcome === "absent") {
+      await f.page.waitForFunction(async () => !(await import("/src/stores/mission-view-state.ts")).missionProjectView("fixture").selectedTask)
+      assert.equal(await missionToolbar(f.page).getByRole("button", { name: "Delete selected mission…", exact: true }).isEnabled(), true)
+      assert.equal((await view(f.page)).selected, "paged")
+    } else {
+      if (outcome === "present") await f.page.locator('.mission-tree-node[data-task-key="t108"] .mission-tree-task[aria-current=true]').waitFor()
+      else await f.page.locator(".mission-tree-read").waitFor()
+      assert.deepEqual((await view(f.page)).selectedTask, { missionId: "paged", taskId })
+      await assertMissionActionsDisabled(f.page)
+      assert.equal(await missionToolbar(f.page).locator(".mission-overview-toggle").isEnabled(), outcome === "present")
+      if (outcome === "failed") {
+        await f.refresh(); await settle(f.page)
+        await assertMissionActionsDisabled(f.page)
+      }
+    }
+    assert.equal(await f.page.locator(".mission-reader").count(), 0, "resolving selection never opens the eye")
+    assert.equal(requests.length, 1, "one bounded ID demand, a failure stays parked")
+    assert.deepEqual(mutations, []); assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.page.context().close() }
+})
+
 const stubs = (page: Page) => page.locator(".mission-graph path.mission-graph-omitted").evaluateAll(paths => paths.map(path =>
   `${(path as SVGPathElement).dataset.task}:${(path as SVGPathElement).dataset.omitted}`).sort())
 /** Every declared edge starts and ends at its tasks' status icons, in client space. */
@@ -150,7 +270,7 @@ test("the continuous tree has one continuation, retains pins and omitted edges, 
 test("the reader opens a dependency the page does not hold by reading it, and shows all earlier results on request", async () => {
   const { page, errors, reads } = await open(paged())
   try {
-    await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
+    await readTask119(page)
     const reader = page.locator(".mission-reader")
     await reader.getByRole("heading", { name: "Task t119", exact: true }).waitFor()
     // Its row holds three of its five reports: the rest are counted, and read whole on request.
@@ -166,10 +286,45 @@ test("the reader opens a dependency the page does not hold by reading it, and sh
     assert.equal(await page.locator('.mission-tree-node[data-task-key="t118"]').count(), 0)
     await reader.locator(".mission-task-link", { hasText: "t118" }).click()
     await reader.getByRole("heading", { name: "Task t118", exact: true }).waitFor()
+    assert.deepEqual((await view(page)).selectedTask, { missionId: "paged", taskId: "task-t118" })
+    assert.equal((await view(page)).selected, "paged")
     assert.ok(reads.some(query => /^\?order=[^&]+&keys=t118$/.test(query)), reads.join(" "))
     await page.locator('.mission-tree-node[data-task-key="t118"]').waitFor()
     assert.deepEqual(errors, [])
   } finally { await page.context().close() }
+})
+
+test("a delayed dependency read cannot replace a newer task selection or its reader", async () => {
+  const f = await open(paged())
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  try {
+    await readTask119(f.page)
+    const reader = f.page.locator(".mission-reader")
+    await f.page.route("**/missions/panel-page", async route => {
+      const request = route.request()
+      if (!request.postDataJSON().task.keys?.includes("t118")) return route.fallback()
+      const answer = missionTaskFixture(request.url(), request.method(), [f.current()], "project", request.postData())
+      await gate
+      return route.fulfill({ json: answer }).catch(() => {})
+    })
+    const started = f.page.waitForRequest(request => request.url().endsWith("/missions/panel-page") && request.postDataJSON()?.task?.keys?.includes("t118"))
+    await reader.locator(".mission-task-link", { hasText: "t118" }).click()
+    await started
+    await f.page.locator('.mission-tree-node[data-task-key="t0"] .mission-tree-task').click()
+    await reader.getByRole("heading", { name: "Task t0", exact: true }).waitFor()
+    release()
+    await f.page.waitForFunction(async () => {
+      const state = (await import("/src/stores/missions.ts")).missionStore.state("fixture")
+      return !state.taskReads?.paged?.loading && state.missions[0].tasks.some(task => task.key === "t118")
+    })
+    await settle(f.page)
+    const current = await view(f.page)
+    assert.deepEqual(current.selectedTask, { missionId: "paged", taskId: "task-t0" })
+    assert.deepEqual(current.reader, { missionId: "paged", kind: "task", itemId: "task-t0" })
+    assert.equal(await reader.getByRole("heading", { level: 2 }).innerText(), "Task t0")
+    assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.page.context().close() }
 })
 
 test("a reader target the page does not hold, a task or an earlier report, is read by ID and shown", async () => {
@@ -193,7 +348,7 @@ test("a reader target the page does not hold, a task or an earlier report, is re
 test("Show all reads the whole history again once a new report arrives, keeping the earlier ones", async () => {
   const value = paged(), f = await open(value)
   try {
-    await f.page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
+    await readTask119(f.page)
     const reader = f.page.locator(".mission-reader")
     const earlier = reader.locator("section", { has: f.page.getByRole("heading", { name: "Previous and late results", exact: true }) })
     const excerpts = () => earlier.locator("details > summary .mission-advance-summary").allTextContents()
@@ -219,7 +374,7 @@ function withLateResult(value: MissionMap): MissionMap {
 const WHOLE_HISTORY = ["Summary of rep_late_new", ...[4, 3, 2, 1].map(index => `Summary of rep_attempt_${index}`)]
 /** Opens t119's reader and its whole history; the history's section and its excerpts. */
 async function showAllOf119(page: Page) {
-  await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
+  await readTask119(page)
   const earlier = page.locator(".mission-reader section", { has: page.getByRole("heading", { name: "Previous and late results", exact: true }) })
   await earlier.getByRole("button", { name: "Show all", exact: true }).click()
   return { earlier, excerpts: () => earlier.locator("details > summary .mission-advance-summary").allTextContents() }

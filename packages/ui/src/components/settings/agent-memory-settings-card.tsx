@@ -69,7 +69,7 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
   const badge = (createdAt: string, updatedAt: string) => Date.parse(createdAt) > review.baseline() ? "new" : Date.parse(updatedAt) > review.baseline() ? "modified" : undefined
   return <section id="agent-memory" class="settings-card agent-memory" aria-labelledby={`${id}-heading`}>
     <div class="settings-card-header">
-      <h3 id={`${id}-heading`} class="settings-card-title">{t("settings.memory.title")}<SettingsInfoTip text={t("settings.memory.info")} /></h3>
+      <h3 id={`${id}-heading`} class="settings-card-title">{t("settings.memory.title")}<SettingsInfoTip text={t("settings.memory.info")} help={{ page: "settings", anchor: "agent-memory" }} /></h3>
       <SettingsSwitch label={t("settings.memory.title")} checked={enabled() === true} disabled={enabled() === undefined || changing()} onChange={next => void change(next)} />
     </div>
     <Show when={settingsError()}><div role="alert" class="agent-memory-actions"><span>{t("settings.memory.error.unavailable")}</span><button type="button" class="window-action" disabled={changing()} onClick={() => void loadSettings()}>{t("settings.memory.retry")}</button></div></Show>
@@ -82,7 +82,7 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
           void review.changeScope(value)
         }}><option value="global">{t("settings.memory.global")}</option><option value="project" disabled={!context()}>{t("settings.memory.project")}</option></select>
         <Show when={review.available() && review.hasSnapshot()}><span class="agent-memory-counter">{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}</span></Show>
-        <span class="agent-memory-tidy"><button type="button" class="window-action" disabled={!canTidy()} onClick={() => void tidy()}>{t("settings.memory.tidy")}</button><SettingsInfoTip text={t("settings.memory.tidyInfo")} /></span>
+        <span class="agent-memory-tidy"><button type="button" class="window-action" disabled={!canTidy()} onClick={() => void tidy()}>{t("settings.memory.tidy")}</button><SettingsInfoTip text={t("settings.memory.tidyInfo")} help={{ page: "settings", anchor: "agent-memory" }} /></span>
       </div>
       <Show when={tidyError()}><p role="alert">{t("settings.memory.tidyFailed")}</p></Show>
       <Show when={!review.available()}><p role="status">{t("settings.memory.noProject")}</p></Show>
