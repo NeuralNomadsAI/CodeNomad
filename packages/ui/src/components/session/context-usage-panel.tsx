@@ -1,17 +1,16 @@
-import { createMemo, For, Show, type Component } from "solid-js"
+import { createMemo, Show, type Component } from "solid-js"
 import { getChildSessions, getSessionInfo, getThreadTotals } from "../../stores/sessions"
 import { formatTokenTotal } from "../../lib/formatters"
 import { useI18n } from "../../lib/i18n"
+import { UsageMetricChips } from "../usage-metric-chips"
 
 interface ContextUsagePanelProps {
   instanceId: string
   sessionId: string
   class?: string
   summary?: boolean
+  expanded?: boolean
 }
-
-const chipClass = "badge-shape inline-flex items-center gap-1 border border-base px-2 py-0.5 text-xs text-primary"
-const chipLabelClass = "uppercase text-[10px] tracking-wide text-muted"
 
 const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
   const { t } = useI18n()
@@ -35,28 +34,20 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
     costMetric("totalCost", `$${(threadTotals()?.cost ?? 0).toFixed(2)}`),
     tokenMetric("totalReasoning", threadTotals()?.reasoningTokens),
   ])
-  const summaryLabel = createMemo(() => sessionMetrics().map(metric => `${metric.label}: ${metric.full}`).join(" · "))
-  const renderMetrics = (metrics: ReturnType<typeof sessionMetrics>) => (
-    <For each={metrics}>
-      {(metric) => (
-        <span class={props.summary ? "status-token-metric" : chipClass} title={`${metric.label}: ${metric.full}`}>
-          <span class={props.summary ? "status-token-label" : chipLabelClass}>{metric.label}</span>
-          <span class={props.summary ? "" : "font-semibold text-primary"}>{metric.value}</span>
-        </span>
-      )}
-    </For>
-  )
+  const metrics = () => props.expanded ? [sessionMetrics()[0], sessionMetrics()[1],
+    { label: t("messageBlock.usage.reasoning"), value: formatTokenTotal(info()?.reasoningTokens ?? 0), full: String(info()?.reasoningTokens ?? 0) },
+    sessionMetrics()[2]] : sessionMetrics()
+  const summaryLabel = () => metrics().map(metric => `${metric.label}: ${metric.full}`).join(" · ")
 
   return (
     <Show when={props.summary} fallback={
-      <div class={`session-context-panel status-token-groups py-2 text-xs text-primary opacity-50 ${props.class ?? ""}`}>
-        <div class="status-token-group" data-token-group="session">{renderMetrics(sessionMetrics())}</div>
-        <Show when={hasChildren()}>
-          <div class="status-token-group" data-token-group="thread">{renderMetrics(totalMetrics())}</div>
-        </Show>
-      </div>
+      <Show when={hasChildren()}><div class={`session-context-panel status-token-group ${props.class ?? ""}`} data-token-group="thread">
+        <UsageMetricChips metrics={totalMetrics()} />
+      </div></Show>
     }>
-      <span class="status-token-summary" title={summaryLabel()} aria-label={summaryLabel()}>{renderMetrics(sessionMetrics())}</span>
+      <span class="status-token-summary" data-expanded={props.expanded || undefined} title={summaryLabel()} aria-label={summaryLabel()}>
+        <UsageMetricChips metrics={metrics()} />
+      </span>
     </Show>
   )
 }

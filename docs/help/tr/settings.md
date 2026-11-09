@@ -58,6 +58,10 @@ Belleği ajan yönetir. Zaten `.claude/…/MEMORY.md` gibi başka bir yerde bell
 
 ## Paneller ve Durum bölümleri {#panels-status}
 
+**Durum** varsayılan olarak ilk sıradadır; kaydedilmiş sekme sırası önceliklidir. Sekme kullanılabilir kalır. **Sağ paneli özelleştir** içindeki oku, bölümlerin kendisini gizlemeden bölüm onay kutularının listesini daraltır veya genişletir.
+
+**Tokenlar** mesajlarla aynı metrik etiketlerini kullanır. Daraltıldığında girdi, çıktı ve maliyet başlık satırında kalır; genişletildiğinde düşünme de aynı satıra eklenir ve etiketler gerektiğinde alt satırlara geçer. Alt oturumları içeren toplamlar aşağıda gösterilir.
+
 Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyin. İşaretçi kenarın dışına çıksa bile sürükleme boyunca tutamaç vurgulanır ve işaretçi yakalama korunur. Bitirmek için bırakın.
 
 1. Panelleri göstermek/gizlemek için dış başlık köşelerindeki **Sol panel** ve **Sağ panel** kontrollerini veya **Görünüm** menüsündeki karşılıklarını kullanın.
