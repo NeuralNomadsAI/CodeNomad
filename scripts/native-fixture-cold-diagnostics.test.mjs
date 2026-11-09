@@ -8,6 +8,8 @@ import path from "node:path"
 import os from "node:os"
 import { collectColdFailure, fixtureRedactor } from "./native-fixture-cold-diagnostics.mjs"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
+import { createHash } from "node:crypto"
 
 const oldPassword = 'old-long-"password\\é', password = 'cold-long-"password\\漢'
 const token = value => Buffer.from(`opencode:${value}`).toString("base64")
@@ -85,7 +87,7 @@ async function fixture(t) {
       maintenanceEvents() { throw Error("Unexpected main-thread cold disk") }, writeFile, path,
       releaseBarrier() {}, holdBusiness: true, releases: new Set(), closeBackend: async () => {}, children: [], calls: [],
       provider: { closeAllConnections() {}, close(done) { done() } }, barrier: { closeAllConnections() {}, listening: false },
-      stopFixtureChild, assert, ...overrides }
+      stopFixtureChild, projectFailureSQL, assert, ...overrides }
     const original = message instanceof Error ? message : Error(message), originalReason = original.reason, originalCause = original.cause
     let thrown
     try { await (lifecycle ? lifecycleFunction : catchFunction)(original, context) } catch (error) { thrown = error }
@@ -109,6 +111,7 @@ for (const status of [503, 500, 200]) test(`cold catch retains failed verdict wi
   const raw = await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"), diagnostic = JSON.parse(raw)
   assert.equal(diagnostic.coldFailure.http.status, status)
   assert.equal(diagnostic.coldFailure.http.pid, f.child.pid)
+  assert.equal(diagnostic.coldFailure.http.version, "2.2.3")
   assert(diagnostic.coldFailure.observedAt >= diagnostic.failureAt)
   assert.equal(diagnostic.coldFailure.logs.sharedIncarnations, true)
   assert.equal(diagnostic.coldFailure.sql.schedules[0].run_count, 0)
@@ -117,7 +120,7 @@ for (const status of [503, 500, 200]) test(`cold catch retains failed verdict wi
   assert.equal(diagnostic.coldFailure.sql.schedules[0].messages[0].message.textBytes, 14)
   assert.deepEqual(diagnostic.coldFailure.sql.document.scheduleActivation, { state: "ready" })
   assert.deepEqual(diagnostic.coldFailure.sql.document.calendarOwner, { auxiliaryReady: true, slotCount: 1, operation: { pending: true } })
-  assert.equal(diagnostic.coldFailure.sql.business.sessionID, "business")
+  assert.equal(diagnostic.coldFailure.sql.business.sessionID, `sha256:${createHash("sha256").update("business").digest("hex")}`)
   assert.equal(diagnostic.coldFailure.sql.business.session.time_suspended, 456)
   const sql = await readFile(path.join(f.root, "failure-sql.json"), "utf8")
   for (const secret of [oldPassword, password, token(oldPassword), token(password), JSON.stringify(password).slice(1, -1),
@@ -399,14 +402,14 @@ test("known current incarnation keeps useful non-cold SQL metadata without new d
       reads++
       let state
       f.edit(db => { state = { document: { calendarOwner: { slots: [] } },
-        schedule: db.prepare("SELECT status,run_count,next_due_at FROM schedule").get() } })
+        schedules: [db.prepare("SELECT status,run_count,next_due_at FROM schedule").get()] } })
       return state
     },
     maintenanceEvents: async () => [],
     save: (name, value) => writeFile(path.join(f.root, `${name}.json`), JSON.stringify(value)),
   })
   const sql = JSON.parse(await readFile(path.join(f.root, "failure-sql.json"), "utf8"))
-  assert.deepEqual(sql.schedule, { status: "active", run_count: 0, next_due_at: 1000 })
+  assert.equal(sql.schedules[0].status, "active"); assert.equal(sql.schedules[0].run_count, 0); assert.equal(sql.schedules[0].next_due_at, 1000)
   assert.equal(reads, 1); assert.deepEqual(f.requests, [])
 })
 
@@ -489,6 +492,91 @@ for (const mode of ["EISDIR", "ENOSPC"]) test(`full extracted inner/outer lifecy
   assert.equal(receipt.cases[0].storageError, "receipt-save-unavailable")
   assert.deepEqual(printed, ["Native product qualification failed; see receipt"])
   assert(!JSON.stringify(receipt).includes(password))
+})
+
+const encodedPassword = () => password.split("").map(c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`).join("")
+const sha = value => createHash("sha256").update(value).digest("hex")
+
+test("HTTP mismatched version cannot export a recoverable Unicode credential", async t => {
+  const f = await fixture(t), encoded = encodedPassword()
+  assert.equal(JSON.parse(`"${encoded}"`), password)
+  f.handle((_req, res) => res.end(JSON.stringify({ pid: f.child.pid, version: encoded })))
+  await f.runCatch()
+  const raw = await readFile(path.join(f.root, "failure-diagnostic.json"), "utf8"), http = JSON.parse(raw).coldFailure.http
+  assert.equal(http.version, null); assert.equal(http.pid, f.child.pid); assert.equal(http.status, 200)
+  assert.equal(http.error, "http-identity-mismatch"); assert(!raw.includes(encoded)); assert.equal(f.requests.length, 1)
+})
+
+for (const id of ["owned", "foreign", "unicode", "malformed"]) test(`SQL schedule proof projects ${id} identity without free text`, async t => {
+  const f = await fixture(t), encoded = encodedPassword(), value = { owned: "schedule", foreign: "another-schedule", unicode: encoded, malformed: { private: encoded } }[id]
+  f.edit(db => db.prepare("UPDATE session_message SET data=? WHERE id=?").run(JSON.stringify({ text: encoded,
+    metadata: { schedule: { id: value, run: 1, dueAt: 1000, title: encoded } } }), "msg_schedule_1"))
+  await f.runCatch()
+  const raw = await readFile(path.join(f.root, "failure-sql.json"), "utf8"), sql = JSON.parse(raw), proof = sql.schedules[0].messages[0].message
+  assert.equal(proof.schedule.correlated, id === "owned")
+  assert.equal(proof.schedule.id, typeof value === "string" ? `sha256:${sha(value)}` : null)
+  assert.equal(proof.textSHA256, sha(encoded)); assert.equal(proof.schedule.run, 1); assert.equal(proof.schedule.dueAt, 1000)
+  assert(!raw.includes(encoded)); assert(!raw.includes("another-schedule")); assert.equal(f.requests.length, 1)
+})
+
+for (const field of ["session", "message"]) test(`SQL schedule proof refuses foreign ${field} context`, async t => {
+  const f = await fixture(t)
+  f.edit(db => {
+    if (field === "session") db.prepare("UPDATE schedule SET session_id=?").run("foreign-session")
+    else db.prepare("UPDATE session_message SET data=? WHERE id='msg_schedule_1'").run(JSON.stringify({ metadata: { schedule: { id: "schedule", run: 99 } } }))
+  })
+  await f.runCatch()
+  const sql = JSON.parse(await readFile(path.join(f.root, "failure-sql.json"), "utf8"))
+  assert.equal(sql.schedules[0].messages[0].message.schedule.correlated, false)
+})
+
+test("cold SQL validates every enum and hashes opaque schema strings before export", async t => {
+  const f = await fixture(t), encoded = "opencode".split("").map(c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`).join("")
+  f.edit(db => {
+    db.prepare("UPDATE kv SET value=?").run(JSON.stringify({ ...f.document, configuration: { objective: encoded },
+      scheduleActivation: { state: encoded }, pending: { ...f.document.pending, id: encoded } }))
+    db.prepare("UPDATE schedule SET status=?,last_outcome=?,next_due_at=?,last_message_id=?").run(encoded, "privateletters", encoded, encoded)
+    db.prepare("UPDATE session_v2 SET idle_outcome=?").run(encoded)
+    db.prepare("UPDATE session_message SET type=? WHERE session_id='carrier'").run(encoded)
+  })
+  await f.runCatch()
+  const raw = await readFile(path.join(f.root, "failure-sql.json"), "utf8"), sql = JSON.parse(raw), row = sql.schedules[0]
+  assert.equal(row.status, null); assert.equal(row.statusSHA256, sha(encoded)); assert.equal(row.next_due_at, null)
+  assert.equal(row.last_outcome, null); assert.equal(row.lastOutcomeSHA256, sha("privateletters"))
+  assert.equal(row.last_message_id, `sha256:${sha(encoded)}`); assert.equal(sql.document.scheduleActivation.state, null)
+  assert.equal(sql.document.pending.id, `sha256:${sha(encoded)}`); assert.equal(row.session.idleOutcomeSHA256, sha(encoded))
+  assert(!raw.includes(encoded)); assert(!raw.includes("privateletters")); assert.equal(f.requests.length, 1)
+})
+
+test("non-cold actual document and snapshot export only typed metadata without IO additions", async t => {
+  const f = await fixture(t), encoded = encodedPassword()
+  f.edit(db => {
+    db.exec("ALTER TABLE session_v2 ADD COLUMN parent_id TEXT; ALTER TABLE session_v2 ADD COLUMN metadata TEXT; ALTER TABLE session_message ADD COLUMN time_updated INTEGER; ALTER TABLE session_inbox ADD COLUMN delivery TEXT; ALTER TABLE session_inbox ADD COLUMN enqueued_seq INTEGER;")
+    db.prepare("UPDATE kv SET value=? WHERE key=?").run(JSON.stringify({ ...f.document, configuration: { objective: encoded },
+      title: encoded, scheduleActivation: { state: encoded } }), f.documentKey)
+    db.prepare("UPDATE session_message SET data=? WHERE id='start'").run(JSON.stringify({ text: encoded, description: "privateletters",
+      metadata: { [encoded]: encoded, "codenomad.mission": { document: { objective: encoded } } } }))
+    db.prepare("UPDATE session_inbox SET delivery=?").run(encoded)
+    db.prepare("UPDATE schedule SET last_outcome=?").run(encoded)
+  })
+  const definitions = driver.slice(driver.indexOf("  const document ="), driver.indexOf("  const technicalRows ="))
+  const readSQL = use => { const db = new DatabaseSync(f.databaseFile, { readOnly: true, timeout: 100 }); try { db.exec("BEGIN"); return use(db) } finally { db.close() } }
+  const snapshot = new Function("readSQL", "prefix", "assert", "hash", definitions + "\nreturn snapshot")(readSQL, f.prefix, assert, sha)
+  const internal = snapshot("doc", true)
+  assert.equal(internal.document.configuration.objective, encoded)
+  await f.runCatch(Error("known-incarnation-failure"), { stage: "business-report" }, {
+    credentialsChild: f.child, secrets: new Set([...f.secrets, password, token(password)]), snapshot,
+    maintenanceEvents: async () => [{ kind: encoded, title: encoded, command: encoded, sessionID: encoded }],
+    save: (name, value) => writeFile(path.join(f.root, `${name}.json`), JSON.stringify(value)),
+  })
+  const raw = await readFile(path.join(f.root, "failure-sql.json"), "utf8"), artifact = JSON.parse(raw)
+  assert.equal(artifact.document.configuration, undefined); assert.equal(artifact.document.title, undefined)
+  assert.equal(artifact.document.scheduleActivation.state, null); assert.deepEqual(artifact.maintenance, { count: 1 })
+  assert.equal(artifact.schedules[0].run_count, 0); assert.equal(artifact.schedules[0].retry_at, 1200)
+  assert.equal(artifact.schedules[0].messages[0].message.schedule.correlated, true)
+  assert.equal(artifact.startDetails[0].textSHA256, sha(encoded))
+  assert(!raw.includes(encoded)); assert(!raw.includes("privateletters")); assert.equal(f.requests.length, 0)
+  assert.equal(internal.document.configuration.objective, encoded)
 })
 
 test("ten-second collector deadline kills and reaps synchronous SQL without retaining handles", { timeout: 18000 }, async t => {

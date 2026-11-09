@@ -14,7 +14,8 @@ import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
 import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
-import { collectColdFailure, fixtureRedactor } from "./native-fixture-cold-diagnostics.mjs"
+import { collectColdFailure } from "./native-fixture-cold-diagnostics.mjs"
+import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: true, options: {
   "parent-ready": { type: "boolean" }, kinds: { type: "string", default: "at,in" }, "natural-every": { type: "boolean" },
@@ -676,8 +677,6 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
         if (collected?.saveError) result.storageError = "diagnostic-save-unavailable"
       } catch { coldFailure = { error: "cold-failure-diagnostic-unavailable" } }
     }
-    const clean = fixtureRedactor(secrets)
-    const redact = input => clean(input).slice(0, 64000)
     const detail = item => item && "private-text-omitted"
     result.status = "failed"; result.error = error?.message === "bounded-product-qualification-deadline" ? error.message : "private-text-omitted"
     if (!cold) try {
@@ -687,11 +686,10 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       await save("failure-diagnostic", Buffer.byteLength(json) <= 512 * 1024 ? diagnostic : { stage: result.stage, failureAt, error: "failure-diagnostic-overflow" })
     } catch { result.storageError = "diagnostic-save-unavailable" }
     if (!cold && privateEvidenceAvailable && result.documentID) try {
-      const state = snapshot(result.documentID, true)
-      state.maintenance = await maintenanceEvents().then(events => ({ count: events.length,
-        tail: events.filter(event => !event.sessionID || state.document.calendarOwner?.slots.some(slot => slot.sessionID === event.sessionID)).slice(-32) }),
+      const state = projectFailureSQL(snapshot(result.documentID, true))
+      state.maintenance = await maintenanceEvents().then(events => ({ count: events.length }),
       () => ({ error: "maintenance-events-unavailable" }))
-      const json = JSON.stringify(state, (_key, value) => typeof value === "string" ? redact(value) : value)
+      const json = JSON.stringify(state)
       await writeFile(path.join(root, "failure-sql.json"), Buffer.byteLength(json) <= 512 * 1024 ? json : '{"error":"failure-sql-bound"}')
     } catch { result.storageError = "sql-save-unavailable" }
     throw error

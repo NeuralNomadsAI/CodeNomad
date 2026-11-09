@@ -5,6 +5,7 @@ import path from "node:path"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const REGISTRATION = 32 * 1024, LOGS = 256 * 1024, OUTPUT = 512 * 1024
 const same = (a, b) => ["id", "pid", "url", "version"].every(key => a?.[key] === b?.[key])
@@ -130,7 +131,7 @@ async function infoProbe(input, credentials) {
     let raw
     try { raw = JSON.parse(Buffer.concat(chunks).toString("utf8")) } catch { return { status: response.status, error: "http-body-unavailable" } }
     const pid = Number.isSafeInteger(raw.pid) ? raw.pid : null
-    const version = typeof raw.version === "string" && raw.version.length <= 1024 ? raw.version : null
+    const version = pid === input.expected.pid && raw.version === input.expected.version ? input.expected.version : null
     return { status: response.status, pid, version, ...(pid !== input.expected.pid || version !== input.expected.version ? failure("http-identity-mismatch") : {}) }
   } catch { return failure(abort.signal.aborted ? "http-timeout" : "http-transport-unavailable") }
   finally { clearTimeout(timer); abort.abort(); void reader?.cancel().catch(() => {}) }
@@ -191,7 +192,7 @@ function sql(input) {
       const schedule = data.metadata?.schedule
       return { ...status, textBytes: typeof text === "string" ? Buffer.byteLength(text) : null,
         textSHA256: typeof text === "string" ? hash(text) : null,
-        schedule: schedule && { id: typeof schedule.id === "string" ? schedule.id.slice(0, 240) : null,
+        schedule: schedule && { id: typeof schedule.id === "string" ? schedule.id : null,
           run: Number.isSafeInteger(schedule.run) ? schedule.run : null, dueAt: Number.isSafeInteger(schedule.dueAt) ? schedule.dueAt : null } }
     }
     let count = 0
@@ -205,9 +206,6 @@ function sql(input) {
       if (schedule) {
         schedule.whenSHA256 = typeof schedule.native_when === "string" ? hash(schedule.native_when) : null
         delete schedule.native_when
-        if (typeof schedule.last_outcome === "string" && !/^[a-z_-]{1,64}$/.test(schedule.last_outcome)) {
-          schedule.lastOutcomeSHA256 = hash(schedule.last_outcome); schedule.last_outcome = "omitted"
-        }
       }
       const session = sessionRow(slot.sessionID)
       const ids = [...new Set([schedule?.last_message_id, schedule && `msg_${schedule.id}_${schedule.run_count + 1}`].filter(Boolean))]
@@ -219,7 +217,7 @@ function sql(input) {
     const business = passage && (slots.length < 16 ? { sessionID: passage.coordinatorSessionID, session: sessionRow(passage.coordinatorSessionID) }
       : { sessionID: passage.coordinatorSessionID, error: "sql-session-overflow" })
     return { document: { id: doc.id, revision: doc.revision, state: doc.state, launchedCount: doc.launchedCount,
-      scheduleActivation: { state: typeof doc.scheduleActivation?.state === "string" && /^[a-z-]{1,64}$/.test(doc.scheduleActivation.state) ? doc.scheduleActivation.state : null },
+      scheduleActivation: { state: doc.scheduleActivation?.state },
       calendarOwner: { auxiliaryReady: doc.calendarOwner?.auxiliaryReady === true, slotCount: slots.length,
         operation: { pending: !!doc.calendarOwner?.operation?.pending } },
       pending: doc.pending && { id: doc.pending.id, coordinatorSessionID: doc.pending.coordinatorSessionID, messageID: doc.pending.messageID,
@@ -249,7 +247,7 @@ if (process.argv[2] === "--cold-diagnostic-child") process.once("message", async
     {
       const secrets = [...input.secrets, ...credentials.secrets], redact = fixtureRedactor(secrets)
       const observedAt = Date.now(), http = await infoProbe(input, credentials)
-      const evidence = { failureAt: input.failureAt, observedAt, http, logs: logs(input), sql: sql(input) }
+      const evidence = { failureAt: input.failureAt, observedAt, http, logs: logs(input), sql: projectFailureSQL(sql(input)) }
       const after = registration(input)
       if (!same(credentials.info, after.info) || credentials.basic !== after.basic || !await ownerCheck()) throw Error("incarnation-changed")
       let json = JSON.stringify(evidence, (_key, value) => typeof value === "string" ? redact(value) : value)
