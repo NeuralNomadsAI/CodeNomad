@@ -335,7 +335,7 @@ The coordinator writes one task/input/criteria protocol; `model-a` and `model-b`
 receive byte-identical briefs and use required, different provider/model pairs.
 Their instructions and report contract are shared; per-task model changes are refused.
 The fresh `comparator` always judges anonymized X/Y outputs, even failed attempts,
-using the coordinator's model by default. Creation warns if the judge matches A/B.
+using the coordinator's model by default. The playbook help explains judge-model bias.
 Version-1 `comparison` contains completed A/B `runRefs`, both scores (0–10) per
 criterion, evidence for each observation and `a`/`b`/`equivalent`/`inconclusive`.
 Current and archived readers show the verdict, model names and criterion scores.
@@ -460,7 +460,7 @@ values, focus and open picker stay unchanged, and the panel's existing update ic
 only indicator; a failed document read shows its error with Retry and locks the form.
 Save rereads the document before dispatch.
 Create stores a paused immediate Mission or a paused calendar-owned document.
-**Start on creation** defaults off. When selected, only the direct positive creation
+**Start automatically** defaults off, outside Scheduling. When selected, only the direct positive creation
 acknowledgement may continue the captured user intention through guarded Play;
 receipt recovery leaves Play explicit. The editor supplies discovered project identity
 reactively; the continuation freezes project, physical directory, client and native
@@ -468,8 +468,18 @@ generation at submission and retains schedule requests under that same control o
 Scheduled autostart requires a discovered project; an unidentified owner leaves the
 created schedule paused for explicit Play.
 The saved-configuration picker is the form's
-first row. Notes, profiles, delegation and scheduling are directly visible compact
-rows; Notes begins at one line and grows with its content.
+first row. Separators distinguish instructions, Options, Agents and models and
+Scheduling. Agents and models uses the shared Settings disclosure with an inline
+requested-profile summary and Agent / Model / Thinking columns. Its fold state
+survives editor drafts; catalog demand follows its visibility. Options and Scheduling
+stay open. Notes begins at one line and grows with its content. Blocking profile
+errors remain beside the disclosure; scheduling activation is confirmed at Play.
+Objective, Title and Notes share the instructions group. The footer names Save
+configuration with a text button; the Configuration picker uses the bookmark glyph.
+Catalog reads use the panel's existing read indicator and preserve form geometry.
+Scheduling starts with its first criterion, with contextual help beside its title;
+Add a criterion uses the shared primary button. Public help follows this group order,
+with delegation and scheduling explained in their own sections.
 
 H9 editing uses the document projection and the mutator's fresh guards:
 

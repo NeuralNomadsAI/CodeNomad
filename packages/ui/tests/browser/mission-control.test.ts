@@ -595,10 +595,11 @@ test("choosing a depth in the creation form, then Enter on its menu, saves the d
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await missionGeneralAction(page, "Create mission").click()
     const form = page.locator("form.mission-editor")
-    await form.getByLabel("What should the mission do?", { exact: true }).fill("Do not create until I press Create")
-    // The footer's configuration action is a bookmark icon named by its tooltip.
+    await form.getByLabel("Objective", { exact: true }).fill("Do not create until I press Create")
+    // The footer names the action; the configuration picker carries the bookmark.
     const brief = form.locator(".window-footer").getByRole("button", { name: "Save configuration", exact: true })
-    assert.deepEqual([await brief.innerText(), await brief.getAttribute("title"), await brief.locator("svg").count()], ["", "Save configuration", 1])
+    assert.equal(await brief.innerText(), "Save configuration")
+    assert.equal(await form.locator(".mission-brief-picker > label > svg").count(), 1)
     // The depth is a row of the Delegation group, under Task sessions.
     const delegation = form.getByRole("group", { name: "Delegation", exact: true }), menu = depthMenu(delegation)
     await waitForDepthReady(form)
@@ -607,7 +608,7 @@ test("choosing a depth in the creation form, then Enter on its menu, saves the d
     await waitForDepthInfo(form, "OpenCode effective depth: 3")
     await menu.press("Enter")
     assert.deepEqual(writes, [{ path: "depth", body: { location: { directory: "fixture" }, depth: 3, expectation: "e1" } }], "no mission write")
-    assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Do not create until I press Create")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Do not create until I press Create")
   } finally { await page.close() }
 })
 

@@ -16,7 +16,6 @@ export function MissionScheduling(props: {
   draft: MissionSchedulingDraft; directory?: string; sources: MissionSchedulingSourceLists
   capability: "available" | "activatable" | "missing" | "loading"
   lockReason?: MissionSchedulingLock | null; disabled?: boolean
-  startOnCreation?: boolean; onStartOnCreation?: (enabled: boolean) => void
   onChange: (draft: MissionSchedulingDraft) => void
   onPolicy: (policy: MissionLaunchPolicy | undefined) => void
 }) {
@@ -43,7 +42,7 @@ export function MissionScheduling(props: {
   })
   createEffect(() => props.onPolicy(result().policy))
   const reason = () => props.lockReason ? t(`missions.scheduling.lock.${props.lockReason}`)
-    : unavailable() || props.capability === "activatable" ? t(`missions.scheduling.capability.${props.capability}`) : undefined
+    : props.capability === "missing" && result().error !== "capability" ? t("missions.scheduling.capability.missing") : undefined
   const rowError = (index: number) => result().index === index ? errorID : undefined
   const ids = createMemo(() => criteria().map(row => row.id), undefined, { equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]) })
   // While dragging, the connectors follow the order the cards are shown in (the sortable's
@@ -85,11 +84,9 @@ export function MissionScheduling(props: {
   let zoneLatched = false
   const zoneShown = createMemo(() => zoneLatched ||= props.draft.zone !== systemZone || result().error === "zone")
   return <section class="mission-scheduling" aria-label={t("missions.scheduling.title")}>
-    <h4>{t("missions.scheduling.title")}</h4>
-    <Show when={props.onStartOnCreation}><label class="mission-scheduling-autostart">
-      <input type="checkbox" checked={!!props.startOnCreation} disabled={props.disabled}
-        onChange={event => props.onStartOnCreation?.(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
-    </label></Show>
+    <h4 id={whenID}>{t("missions.scheduling.title")}
+      <SettingsInfoTip text={t("missions.scheduling.whenHint")} help={{ page: "missions", anchor: "native-scheduling" }} />
+    </h4>
     <Show when={reason()}>{text => <p id={description} role="status">{text()}</p>}</Show>
     <Show when={retained()}>{reason => <section aria-label={t("missions.scheduling.retained.title")}>
       <p role="status">{t(`missions.scheduling.retained.${reason()}`)}</p>
@@ -98,14 +95,9 @@ export function MissionScheduling(props: {
         onClick={() => props.onChange(newMissionSchedulingDraft(props.draft.zone))}>{t("missions.scheduling.retained.replace")}</button>
     </section>}</Show>
     <Show when={!retained()}>
-      {/* Outside the fieldset: the information and its link stay available while editing is locked. */}
-      <div class="mission-scheduling-when-head">
-        <span id={whenID} class="mission-scheduling-label">{t("missions.scheduling.when")}</span>
-        <SettingsInfoTip text={t("missions.scheduling.whenHint")} help={{ page: "missions", anchor: "native-scheduling" }} />
-      </div>
       <fieldset disabled={locked()} aria-describedby={[reason() ? description : "", result().error ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!result().error}>
       <div ref={list} class="mission-scheduling-when" role="group" aria-labelledby={whenID}>
-        {/* Launch when titles the list; each later card shows its connector to the card above. */}
+        {/* Scheduling titles the list; each later card shows its connector to the card above. */}
         <DragDropProvider collisionDetector={closestCenter} onDragOver={over} onDragEnd={dropped}>
           <DragDropSensors>
             <SortableProvider ids={ids()}>
@@ -121,7 +113,7 @@ export function MissionScheduling(props: {
           </DragDropSensors>
         </DragDropProvider>
         <p class="sr-only" aria-live="polite">{moved()}</p>
-        <button type="button" class="window-action mission-scheduling-add" disabled={unavailable() || criteria().length >= MISSION_CRITERIA_LIMIT}
+        <button type="button" class="button-primary mission-scheduling-add" disabled={unavailable() || criteria().length >= MISSION_CRITERIA_LIMIT}
           onClick={() => patchCriteria([...criteria(), newMissionCriterion("daily", criteria())])}><Plus class="h-3.5 w-3.5" aria-hidden="true" />{t("missions.scheduling.addCriterion")}</button>
       </div>
       <Show when={criteria().length && zoneShown()}>

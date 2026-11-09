@@ -110,6 +110,7 @@ test("the editor and Compare follow favorites-only and keep hidden or non-favori
       }
     })
     await publishConversationCatalog(page, CATALOG)
+    await page.locator(".mission-profiles-disclosure > summary").click()
     await loadedCatalog(page, "Coordinator · Model")
     assert.deepEqual(await listing(page, "Coordinator · Model"), { value: key(OPUS.providerID, OPUS.id), shown: "Opus 5.5 Fast",
       options: [native, ["Claude Code", ["Opus 5.5 Fast"]], ["OpenAI", ["GPT-6.1 Sol Fast"]]] }, "favorites only, plus the saved non-favorite")

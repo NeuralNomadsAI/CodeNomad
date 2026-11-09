@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); })
 
-const OBJECTIVE = "What should the mission do?"
+const OBJECTIVE = "Objective"
 const UNCONFIRMED = "native creation result is unconfirmed"
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }

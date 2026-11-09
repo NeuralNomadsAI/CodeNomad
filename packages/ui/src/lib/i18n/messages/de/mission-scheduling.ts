@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.scheduling.startOnCreation": "Beim Erstellen starten",
+  "missions.scheduling.startOnCreation": "Automatisch starten",
   "missions.scheduling.source.now": "Einmal, jetzt",
   "missions.settings.effectiveOrigin": "OpenCode-Konfigurationsdatei:",
   "missions.settings.noOrigin": "Kein Dokumentpfad",
@@ -113,7 +113,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.condition.mission-completed": "Eine einmalige Mission wird erfolgreich abgeschlossen",
   "missions.scheduling.condition.conversation-message": "Neue Nachricht in einer verfolgten Unterhaltung",
   "missions.scheduling.condition.files-changed": "Änderung expliziter Dateien",
-  "missions.scheduling.capability.missing": "Zeitplanung ist auf dieser Verbindung nicht verfügbar. Eine Mission ohne Startkriterien bleibt verfügbar.",
+  "missions.scheduling.capability.missing": "Zeitplanung ist auf dieser Verbindung nicht verfügbar.",
   "missions.scheduling.capability.loading": "Verfügbarkeit der Zeitplanung wird geprüft…",
   "missions.scheduling.capability.activatable": "Starten und Fortsetzen erfordern Ihre Bestätigung, bevor die native Zeitplaneinstellung aktiviert wird.",
   "missions.scheduleList.runNowRequiresEnabled": "Jetzt ausführen erfordert eine aktivierte native Zeitplanung. Aktivieren Sie sie in den OpenCode-Einstellungen und aktualisieren Sie anschließend.",
