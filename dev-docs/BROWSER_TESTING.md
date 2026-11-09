@@ -92,6 +92,9 @@ synthetic provider.
   explicitly. Mutation collectors match the exact HTTP method and path. Hold the
   intended panel source independently of schedule reads, and await lifecycle
   feedback settlement before asserting its final status.
+  Project ABA cases with held inventory discovery restore an exact target through
+  view state and await its point-read detail, keeping the mutation's view fence
+  independent of later row-click intent.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
@@ -125,6 +128,12 @@ synthetic provider.
   so Virtua can finish its size estimate. After resizing, assert that the same row
   remains connected outside the viewport before dispatching activity, then retain
   its identity through scrolling and the fresh visible transition.
+- Mission task fixtures target `.mission-tree-node` independently of Virtua's item
+  wrapper. Reveal offscreen targets with `revealMissionTask` before focus/click
+  observation begins; continuation assertions track exact source reads rather than
+  mounted row counts. Scroll geometry is sampled after the virtual viewport settles.
+  Rail checks compare mounted icons with fresh bounds and unmounted icons with
+  independently measured SVG-local anchors; endpoint counts and tolerances stay explicit.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
   `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;
