@@ -39,6 +39,8 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   private readonly settled = new Set<string>()
   private readonly settledRequests = new Set<string>()
   private readonly cancelledRequests = new Map<string, number>()
+  // Admission survives retries; only confirmed cancellation enters the observation fence.
+  private readonly cancellationOrders = new Map<string, number>()
   private readonly userOpenings = new Map<string, number>()
   private observationSequence = 0
   private readonly markers = new Map<string, { requestKey: string; tombstone: boolean }>()
@@ -88,8 +90,18 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     this.pendingRequestIds.delete(requestId)
   }
 
+  captureOperationOrder(): number {
+    return ++this.observationSequence
+  }
+
+  beginCancellation(requestKey: string): number {
+    let order = this.cancellationOrders.get(requestKey)
+    if (order === undefined) this.cancellationOrders.set(requestKey, order = this.captureOperationOrder())
+    return order
+  }
+
   settleRequest(requestKey: string): void {
-    if (!this.settledRequests.has(requestKey)) this.cancelledRequests.set(requestKey, ++this.observationSequence)
+    if (!this.settledRequests.has(requestKey)) this.cancelledRequests.set(requestKey, this.beginCancellation(requestKey))
     this.settledRequests.add(requestKey)
     this.finishRequest(requestKey)
     for (const owner of [this.owned, this.retired]) {
@@ -110,8 +122,17 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     if (reused || cancelled === undefined) return false
     if (this.options.isCurrentKey && !this.options.isCurrentKey(workspaceId, requestKey)) return false
     // A delayed cancelled descriptor stays stale; a later user occurrence stays visible.
-    if (cancelled > (this.userOpenings.get(workspaceId) ?? 0)) this.markers.set(workspaceId, { requestKey, tombstone: true })
+    this.markCancelledOccurrence(workspaceId, requestKey)
     return true
+  }
+
+  private markCancelledOccurrence(workspaceId: string, requestKey: string): void {
+    const order = this.cancelledRequests.get(requestKey) ?? 0
+    const marker = this.markers.get(workspaceId)
+    if (order > (this.userOpenings.get(workspaceId) ?? 0)
+      && order >= (marker ? this.cancelledRequests.get(marker.requestKey) ?? 0 : 0)) {
+      this.markers.set(workspaceId, { requestKey, tombstone: true })
+    }
   }
 
   forgetRequest(workspaceId: string, requestId: string): void {
@@ -123,6 +144,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   quarantineRequest(requestId: string): Promise<void> | undefined {
+    this.beginCancellation(requestId)
     if (!this.pendingRequestIds.has(requestId)) return undefined
     this.pendingRequestIds.set(requestId, true)
     for (const [workspaceId, entry] of this.owned) {
@@ -168,8 +190,8 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     if (requestKey) {
       if (this.options.requestKey) this.settledRequests.add(requestKey)
       else this.settled.add(JSON.stringify([workspace.id, requestKey]))
-      if (tombstone && !this.cancelledRequests.has(requestKey)) this.cancelledRequests.set(requestKey, ++this.observationSequence)
-      if (owner === this.owned && tombstone) this.markers.set(workspace.id, { requestKey, tombstone })
+      if (tombstone && !this.cancelledRequests.has(requestKey)) this.cancelledRequests.set(requestKey, this.beginCancellation(requestKey))
+      if (owner === this.owned && tombstone) this.markCancelledOccurrence(workspace.id, requestKey)
     }
     this.options.onSettled?.(workspace)
   }
@@ -205,9 +227,10 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     }
   }
 
-  releaseTombstoneForUserCreate(workspaceId: string): void {
-    this.userOpenings.set(workspaceId, ++this.observationSequence)
-    this.markers.delete(workspaceId)
+  releaseTombstoneForUserCreate(workspaceId: string, order = this.captureOperationOrder()): void {
+    this.userOpenings.set(workspaceId, Math.max(order, this.userOpenings.get(workspaceId) ?? 0))
+    const marker = this.markers.get(workspaceId)
+    if (!marker || (this.cancelledRequests.get(marker.requestKey) ?? 0) < this.userOpenings.get(workspaceId)!) this.markers.delete(workspaceId)
     const entry = this.owned.get(workspaceId)
     if (entry && ("tombstone" in entry || "released" in entry)) {
       this.retire(workspaceId, entry)
@@ -250,6 +273,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   private start(workspace: T, options?: { retainTombstone?: boolean }): Promise<void> {
     const requestKey = this.requestKey(workspace)
     if (requestKey && this.isReleased(workspace.id, requestKey)) return Promise.resolve()
+    if (requestKey) this.beginCancellation(requestKey)
     let current = this.owned.get(workspace.id)
     let owner = this.owned, key = workspace.id
     const retired = this.retired.get(this.requestKey(workspace) ?? "")

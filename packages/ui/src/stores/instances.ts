@@ -1835,6 +1835,7 @@ async function createInstance(
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
   const receipt = captureWorkspaceOperation(folder, options?.backend, restoreRequestId, options?.signal)
+  const userOpeningOrder = !options?.signal ? restoreCreatedWorkspaceCleanup.captureOperationOrder() : undefined
   const signal = receipt.signal
   if (restoreRequestId) {
     restoreCreationReceipts.set(receipt.requestKey, receipt)
@@ -1896,7 +1897,7 @@ async function createInstance(
         ...(reused ? { reused: true as const } : {}),
       })
     }
-    else if (!options?.signal) restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(workspace.id)
+    else if (!options?.signal) restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(workspace.id, userOpeningOrder)
     if (commitGate) await commitGate.wait
     if (!receipt.current()) {
       if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
