@@ -153,6 +153,7 @@ test("a tool running inside its own round is not reconciled", async () => {
 
 test("a settlement arriving while a shared read is in flight still publishes", async () => {
   const f = fixture("native-settlement-shared-epoch")
+  const running = { ...completed, content: [{ ...(completed.content[0] as any), state: { status: "running", input: { command: "pwd" }, metadata: {} } }] }
   try {
     const base = { sessionID: "s", assistantMessageID: "m1" }
     f.emit("session.step.started", { ...base, agent: "build", model, started: 1 })
@@ -162,14 +163,20 @@ test("a settlement arriving while a shared read is in flight still publishes", a
     // read A starts and stays in flight.
     f.emit("session.execution.succeeded", { sessionID: "s" })
     assert.ok(f.reads.length >= 1, "settlement read A started")
-    // A newer execution starts and settles before A resolves.
+    // A newer execution starts and settles before A resolves; its terminal
+    // event invalidates the SDK message key and queues a trailing read B.
     f.emit("session.execution.started", { sessionID: "s" })
     f.emit("session.execution.succeeded", { sessionID: "s" })
-    for (const read of f.reads) read.resolve({ data: [completed], cursor: {} })
+    // A resolves with the tool still running: only the trailing B carries
+    // the completed truth, so the publication must follow B, not A.
+    f.reads[0].resolve({ data: [running], cursor: {} })
+    for (let index = 0; index < 100 && f.reads.length < 2; index++) await flush()
+    assert.equal(f.reads.length, 2, "the trailing read B dispatched after A settled")
+    f.reads[1].resolve({ data: [completed], cursor: {} })
     await flush()
     const m1 = messageStoreBus.getOrCreate("native-settlement-shared-epoch").getMessage("m1")
     const tool = Object.values(m1?.parts ?? {}).map((part: any) => part.data).find((part: any) => part.type === "tool")
-    assert.equal((tool as any)?.state?.status, "completed", "the shared read must publish for the newer settlement's demand")
+    assert.equal((tool as any)?.state?.status, "completed", "the latest read's publication must heal the tool without another event")
   } finally { f.cleanup() }
 })
 

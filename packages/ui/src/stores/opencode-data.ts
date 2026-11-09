@@ -77,9 +77,13 @@ type TranscriptEntry = {
    * nor publish against it. */
   settlementReadPending: boolean
   settlementReadEntry?: DataEntry
-  /** The execution epoch the pending read owes a publication for; a demand
-   * arriving mid-read — a newer settlement or a step boundary — upgrades it,
-   * so sharing the fetch never drops the newest publication demand. */
+  /** The SDK reconciliation promise publication currently follows: a demand
+   * arriving mid-read may invalidate the message key and chain a trailing
+   * read, and the newest read's completion owns the publication. */
+  settlementReadPromise?: Promise<unknown>
+  /** The execution epoch the followed read owes a publication for; a newer
+   * settlement arriving mid-read upgrades it, so sharing the fetch never
+   * drops the newest publication demand. */
   settlementReadEpoch: number
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
@@ -336,6 +340,7 @@ function replaceTranscriptEntry(transcript: TranscriptEntry, next: DataEntry): v
   // started is abandoned with it.
   transcript.settlementReadPending = false
   transcript.settlementReadEntry = undefined
+  transcript.settlementReadPromise = undefined
   transcript.entry = next
   previous.dispose()
   transcript.entryRevision[1]((value) => value + 1)
@@ -993,27 +998,29 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
  * admitted execution supersedes the publication; same-round activity does
  * not. */
 function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
-  // A reconciliation read in flight against this reducer reconciles the same
-  // rows: share the fetch instead of chaining a duplicate beneath it. The
-  // demand still upgrades to the current execution epoch, so the shared read
-  // resolves publishing for the newest settlement rather than dropping it.
-  if (transcript.settlementReadPending && transcript.settlementReadEntry === transcript.entry) {
-    transcript.settlementReadEpoch = transcript.executionEpoch
-    return
-  }
   const entry = transcript.entry
-  const epoch = transcript.executionEpoch
+  // A reconciliation read in flight against this reducer reconciles the same
+  // rows: share its fetch instead of chaining a duplicate beneath it. The
+  // demand still upgrades the recorded epoch, and publication follows the
+  // SDK's current promise: a settlement that invalidated the message key
+  // chained a trailing read, and the newest read's completion — not the one
+  // already resolving — owns publishing the reconciled page.
   transcript.settlementReadPending = true
   transcript.settlementReadEntry = entry
-  transcript.settlementReadEpoch = epoch
-  void entry.data.session.message.sync(sessionId)
+  transcript.settlementReadEpoch = transcript.executionEpoch
+  const promise = entry.data.session.message.sync(sessionId)
+  if (transcript.settlementReadPromise === promise) return
+  transcript.settlementReadPromise = promise
+  const followed = promise
+  void followed
     .catch(() => undefined)
     .then(() => {
-      // A replaced reducer abandons its read: the completion cannot clear a
-      // successor's flag or publish against it.
-      if (transcript.settlementReadEntry !== entry) return
+      // A newer demand re-followed a later read, or a replaced reducer
+      // abandoned this one: only the followed promise's owner publishes.
+      if (transcript.settlementReadEntry !== entry || transcript.settlementReadPromise !== followed) return
       transcript.settlementReadPending = false
       transcript.settlementReadEntry = undefined
+      transcript.settlementReadPromise = undefined
       // Publish unless an execution newer than every recorded demand
       // superseded this settlement: same-round activity (a late terminal tool
       // event) must not suppress the repair.
