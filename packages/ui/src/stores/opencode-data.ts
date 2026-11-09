@@ -71,9 +71,16 @@ type TranscriptEntry = {
   /** Admitted `session.execution.started` events; a settlement's publication
    * fence is a newer execution, not same-round activity. */
   executionEpoch: number
-  /** A settlement-style reconciliation read started but not yet finished; a
-   * step-boundary reconcile shares it instead of chaining a second read. */
+  /** A settlement-style reconciliation read in flight, scoped to the reducer
+   * entry that started it: replacing the entry abandons the read and its
+   * flag, and the abandoned completion can neither clear a successor's flag
+   * nor publish against it. */
   settlementReadPending: boolean
+  settlementReadEntry?: DataEntry
+  /** The execution epoch the pending read owes a publication for; a demand
+   * arriving mid-read — a newer settlement or a step boundary — upgrades it,
+   * so sharing the fetch never drops the newest publication demand. */
+  settlementReadEpoch: number
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
 }
@@ -314,6 +321,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     retireWhenDrained: false,
     executionEpoch: 0,
     settlementReadPending: false,
+    settlementReadEpoch: 0,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -324,6 +332,10 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
  * one would keep its last state, e.g. a delivered prompt shown as queued. */
 function replaceTranscriptEntry(transcript: TranscriptEntry, next: DataEntry): void {
   const previous = transcript.entry
+  // The successor owns reconciliation from here; a read the previous entry
+  // started is abandoned with it.
+  transcript.settlementReadPending = false
+  transcript.settlementReadEntry = undefined
   transcript.entry = next
   previous.dispose()
   transcript.entryRevision[1]((value) => value + 1)
@@ -981,22 +993,33 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
  * admitted execution supersedes the publication; same-round activity does
  * not. */
 function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
-  // A reconciliation read already in flight reconciles the same rows and
-  // publishes them under the same fence; chaining another beneath it only
-  // duplicates the fetch.
-  if (transcript.settlementReadPending) return
+  // A reconciliation read in flight against this reducer reconciles the same
+  // rows: share the fetch instead of chaining a duplicate beneath it. The
+  // demand still upgrades to the current execution epoch, so the shared read
+  // resolves publishing for the newest settlement rather than dropping it.
+  if (transcript.settlementReadPending && transcript.settlementReadEntry === transcript.entry) {
+    transcript.settlementReadEpoch = transcript.executionEpoch
+    return
+  }
+  const entry = transcript.entry
   const epoch = transcript.executionEpoch
   transcript.settlementReadPending = true
-  void transcript.entry.data.session.message.sync(sessionId)
+  transcript.settlementReadEntry = entry
+  transcript.settlementReadEpoch = epoch
+  void entry.data.session.message.sync(sessionId)
     .catch(() => undefined)
     .then(() => {
+      // A replaced reducer abandons its read: the completion cannot clear a
+      // successor's flag or publish against it.
+      if (transcript.settlementReadEntry !== entry) return
       transcript.settlementReadPending = false
-      // Publish unless a newer execution superseded this settlement:
-      // same-round activity (a late terminal tool event) must not
-      // suppress the repair.
+      transcript.settlementReadEntry = undefined
+      // Publish unless an execution newer than every recorded demand
+      // superseded this settlement: same-round activity (a late terminal tool
+      // event) must not suppress the repair.
       if (!isTranscriptCurrent(instanceId, sessionId, transcript)
-        || transcript.executionEpoch !== epoch) return
-      projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+        || transcript.executionEpoch !== transcript.settlementReadEpoch) return
+      projectOpenCodeMessages(instanceId, sessionId, entry.data, true)
       retireDrainedTranscript(instanceId, sessionId, transcript)
     })
 }
@@ -1035,13 +1058,19 @@ function hasStrandedFinishedRoundTool(messages: SessionMessageInfo[]): boolean {
  * began: the loop feeds every tool result back before it continues, so the
  * terminal event was lost mid-execution. The settlement read that reconciles
  * it must not wait for the execution to end — later rounds keep its spinner
- * live, and a quickly following execution would suppress that repair. */
+ * live, and a quickly following execution would suppress that repair.
+ *
+ * Re-reading is event-driven and bounded: an authoritative page that keeps
+ * the tool running makes each later step boundary issue one further read,
+ * never a loop — the daemon's own state is the progress guard. */
 function reconcileStrandedRoundTools(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
   if (!isTranscriptCurrent(instanceId, sessionId, transcript)
     || transcript.needsAuthoritativeResync || transcript.resyncing) return
-  // A settlement read already in flight reconciles the same rows; invalidating
-  // beneath it would only chain a duplicate fetch.
-  if (transcript.settlementReadPending) return
+  // A settlement read already in flight against this reducer reconciles the
+  // same rows; invalidating beneath it would only chain a duplicate fetch.
+  // One started by a replaced reducer is abandoned with it and does not
+  // suppress this demand.
+  if (transcript.settlementReadPending && transcript.settlementReadEntry === transcript.entry) return
   if (!hasStrandedFinishedRoundTool(transcript.entry.data.session.message.list(sessionId))) return
   // Nothing invalidated the SDK's message key at a step boundary; a key an
   // earlier sync completed would make this read a no-op.
