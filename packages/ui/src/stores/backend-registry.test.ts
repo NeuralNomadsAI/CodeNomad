@@ -15,7 +15,7 @@ function deferred<T>() {
   const promise = new Promise<T>(done => { resolve = done })
   return { promise, resolve }
 }
-function harness(initial: unknown = true) {
+function harness(initial: unknown = true, bound = false) {
   const [enabled, setEnabled] = createSignal(initial)
   const [profiles, setProfiles] = createSignal([profile])
   const clients = new Map<string, BackendClient>()
@@ -26,7 +26,7 @@ function harness(initial: unknown = true) {
   const events = new BackendEvents()
   const registry = createBackendRegistry({ enabled, profiles, events,
     createClient: id => {
-      const client = createBackendClient({ id, baseUrl: "http://relay.test", fetcher: async input => {
+      const client = createBackendClient({ id, baseUrl: "http://relay.test", ...(bound ? { relayProfileId: id, bindRelayAuthority: true } : {}), fetcher: async input => {
         requests.push(String(input))
         return read()
       }, eventSource: () => {
@@ -59,6 +59,44 @@ test("off is strict and observing or ensuring adds no requests or registrations"
       assert.equal(h.clients.size, 0)
     } finally { h.registry.dispose() }
   }
+})
+
+test("opted-in candidates require a local proof after metadata validation, never a body field", async () => {
+  for (const proof of [undefined, "malformed", ""]) {
+    const h = harness(true, true)
+    h.read(async () => Response.json({ ...metadata, "x-codenomad-backend-authority": "x".repeat(43) }, {
+      headers: proof === undefined ? {} : { "x-codenomad-backend-authority": proof },
+    }))
+    try {
+      assert.equal(await h.registry.ensure("saved"), undefined)
+      assert.equal(h.registry.state("saved"), "refused")
+      assert.equal(h.loads(), 0)
+      assert.equal(h.streams(), 0)
+      assert.equal(h.clients.size, 0)
+      await assert.rejects(h.created[0].api.deleteWorkspace("w"))
+      assert.equal(h.requests.length, 1, "no legacy fallback after proof refusal")
+    } finally { h.registry.dispose() }
+  }
+})
+
+test("reconnect refuses a different local generation without retargeting the admitted client", async () => {
+  const previous = globalThis.window
+  Object.assign(globalThis, { window: { location: { origin: "http://relay.test" } } })
+  const h = harness(true, true), header = "x-codenomad-backend-authority"
+  h.read(async () => Response.json(metadata, { headers: { [header]: "a".repeat(43) } }))
+  try {
+    const client = await h.registry.ensure("saved")
+    assert.ok(client)
+    const token = h.events.signal("saved")!
+    const before = client.url("/api/workspaces")
+    h.read(async () => Response.json(metadata, { headers: { [header]: "b".repeat(43) } }))
+    client.events.restart()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(h.registry.state("saved"), "refused")
+    assert.equal(token.aborted, true)
+    assert.equal(client.url("/api/workspaces"), before)
+    assert.equal(h.streams(), 1)
+  } finally { h.registry.dispose(); Object.assign(globalThis, { window: previous }) }
 })
 
 test("concurrent ensure coalesces, rename retains client, replacement revokes the exact old token", async () => {

@@ -16,6 +16,7 @@ import { registerBackendRelayRoutes } from "../../../server/src/server/routes/ba
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { RELAY_AUTHORITY_HEADER, RELAY_AUTHORITY_QUERY } from "../../../server/src/codenomad-servers/relay-authority"
 
 test("registry admits two real relayed backends and revalidates before reconnect resync", { timeout: 90_000 }, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-registry-"))
@@ -45,6 +46,11 @@ test("registry admits two real relayed backends and revalidates before reconnect
     })
   }
   const app = Fastify(), origins = new Set<string>(), local: string[] = []
+  const bound: { path: string; header: unknown; query: string | null }[] = []
+  app.addHook("onRequest", async request => {
+    if (request.url.startsWith("/api/backends/")) bound.push({ path: new URL(request.url, "http://fixture").pathname,
+      header: request.headers[RELAY_AUTHORITY_HEADER], query: new URL(request.url, "http://fixture").searchParams.get(RELAY_AUTHORITY_QUERY) })
+  })
   const manager = new RemoteServerBrowseManager({ getOwner: () => ({ remoteServers: [
     { id: "a", baseUrl: a.origin, skipTlsVerify: false }, { id: "b", baseUrl: b.origin, skipTlsVerify: false },
   ] }), configYamlPathForAuthority: () => path.join(directory, "config.yaml") })
@@ -119,6 +125,20 @@ test("registry admits two real relayed backends and revalidates before reconnect
   })
   await page.waitForFunction(() => (window as any).registryFixture.snapshot().opens.length === 2)
   assert.deepEqual(reads.sort(), ["a", "a", "b", "b"])
+  const proofs: string[] = []
+  for (const id of ["a", "b"]) {
+    const stream = bound.find(request => request.path === `/api/backends/${id}/api/events`)!
+    assert.match(stream.query!, /^[A-Za-z0-9_-]{43}$/)
+    proofs.push(stream.query!)
+    const workspaces = bound.filter(request => request.path === `/api/backends/${id}/api/workspaces`)
+    assert.equal(workspaces.length, 2)
+    assert(workspaces.every(request => request.header === stream.query && request.query === stream.query))
+    for (const request of (id === "a" ? a : b).state.requests) {
+      assert.equal(request.headers[RELAY_AUTHORITY_HEADER], undefined)
+      assert.equal(new URL(request.path, "http://fixture").searchParams.has(RELAY_AUTHORITY_QUERY), false)
+    }
+  }
+  assert.notEqual(proofs[0], proofs[1])
   for (const id of ["a", "b"]) streams.get(id)!.write(`data: ${JSON.stringify({ type: "workspace.removed", workspaceId: "same" })}\n\n`)
   await page.waitForFunction(() => (window as any).registryFixture.snapshot().frames.length === 2)
   assert.deepEqual((await page.evaluate(() => (window as any).registryFixture.snapshot())).frames.sort(), ["a~same", "b~same"])
