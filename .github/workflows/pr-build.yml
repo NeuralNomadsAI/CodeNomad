@@ -291,6 +291,7 @@ jobs:
           path: |
             ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/receipt.json
             ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-diagnostic.json
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-sql.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Upload isolated schedule foundation failure diagnostics
