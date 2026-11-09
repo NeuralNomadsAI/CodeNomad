@@ -1,5 +1,11 @@
 import type { Locator, Page } from "playwright"
 
+/** Select an event source through its own searchable picker, without changing another criterion. */
+export async function selectMissionSource(page: Page, number: number, id: string): Promise<void> {
+  await page.getByRole("button", { name: `Criterion ${number} source`, exact: true }).click()
+  await page.getByRole("option").and(page.locator(`[data-source-id=${JSON.stringify(id)}]`)).click()
+}
+
 /** Open the shared creation/Preferences profile disclosure through its native summary. */
 export async function openMissionProfiles(page: Page): Promise<void> {
   const fold = page.locator(".mission-profiles-disclosure")

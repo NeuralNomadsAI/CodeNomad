@@ -8,6 +8,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { missionLaunchPolicySchema } from "../../../server/src/missions/launch-policy"
 import { fixtureEventStream } from "./fixture-event-stream"
+import { selectMissionSource } from "./mission-actions"
 
 let browser: Browser, url: string
 let events: Awaited<ReturnType<typeof fixtureEventStream>>
@@ -93,7 +94,7 @@ test("the first criterion defaults to once; Add appends a daily card; connectors
     await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
     assert.equal(await label(page, "Criterion 2 type").inputValue(), "daily")
     await label(page, "Criterion 2 type").selectOption("files-changed")
-    await page.getByRole("alert").waitFor()
+    assert.equal(await page.getByRole("alert").count(), 0, "a new empty criterion is a field to complete")
     await label(page, "Criterion 2 file paths").fill("src/main.ts")
     assert.equal(await page.getByRole("alert").count(), 0)
     const daily = { kind: "cron", expression: "0 9 * * *", zone: "UTC" }, files = { kind: "files-changed", paths: ["src/main.ts"] }
@@ -149,14 +150,14 @@ test("every invalid field exposes its exact translated error and keeps focus", a
       ["hours", { hours: "24" }, "Criterion 1 hours"], ["daily", { time: "" }, "Criterion 1 time"],
       ["monthly", { monthDay: "32" }, "Criterion 1 day of month"], ["cron", { expression: "invalid" }, "Criterion 1 cron expression"],
       ["daily", {}, "Saved time zone (IANA)", { zone: "invalid" }],
-      ["files-changed", { files: "../outside" }, "Criterion 1 file paths"], ["conversation-message", { source: "" }, "Criterion 1 source"],
+      ["files-changed", { files: "../outside" }, "Criterion 1 file paths"], ["conversation-message", { source: "ses_missing" }, "Criterion 1 source"],
     ] as [string, object, string, object?][]) {
       await rows(page, [[kind, fields]], { zone: "UTC", ...extra })
       const field = label(page, name)
       assert.equal(await field.getAttribute("aria-invalid"), "true", name)
       await field.focus()
       assert.equal(await field.evaluate(element => element === document.activeElement), true, name)
-      assert.equal(await field.getAttribute("aria-describedby"), await page.getByRole("alert").getAttribute("id"), name)
+      assert.ok((await field.getAttribute("aria-describedby"))?.split(/\s+/).includes((await page.getByRole("alert").getAttribute("id"))!), name)
     }
     await rows(page, [["daily"]], { zone: "UTC" })
     assert.equal(await page.getByRole("alert").count(), 0)
@@ -227,13 +228,13 @@ test("each event row reads its own sources; an unavailable source keeps the draf
     const sources = [["schedule-success", "msn_schedule"], ["branch-commits", "refs/heads/dev"], ["mission-completed", "msn_oneoff"], ["conversation-message", "ses_followed"]]
     await rows(page, sources.map(([kind]) => [kind]))
     assert.equal(await policy(page), undefined)
-    for (const [index, [, source]] of sources.entries()) await label(page, `Criterion ${index + 1} source`).selectOption(source)
+    for (const [index, [, source]] of sources.entries()) await selectMissionSource(page, index + 1, source)
     const saved = missionLaunchPolicySchema.parse(await policy(page))
     assert.ok("when" in saved)
     assert.deepEqual(saved.when.map(item => item.kind), sources.map(([kind]) => kind))
     await page.evaluate(() => (window as any).schedulingFixture.sources({}))
-    assert.equal(await label(page, "Criterion 4 source").inputValue(), "ses_followed")
-    assert.match(await label(page, "Criterion 1 source").locator("option").first().innerText(), /could not be read/)
+    assert.equal(await label(page, "Criterion 4 source").getAttribute("data-source-id"), "ses_followed")
+    assert.match(await label(page, "Criterion 1 source").innerText(), /Unavailable source/)
     assert.equal(await policy(page), undefined)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
@@ -363,7 +364,7 @@ test("stored policies reopen in order, legacy frequency + condition reads as a s
       condition: { kind: "branch-commits", directory: "/fixture", ref: "refs/heads/dev" }, ends: { maxLaunches: null, afterMs: null, at: Date.parse("2027-01-01T00:00:00Z") } }
     await load(legacy)
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
-    assert.equal(await label(page, "Criterion 2 source").inputValue(), "refs/heads/dev")
+    assert.equal(await label(page, "Criterion 2 source").getAttribute("data-source-id"), "refs/heads/dev")
     assert.equal(await roleOf(page, 2).innerText(), "if")
     assert.deepEqual(await policy(page), legacy, "an unchanged reopen keeps the stored bytes, end date included")
     await handle(page, 2).focus(); await page.keyboard.press("Alt+ArrowUp")

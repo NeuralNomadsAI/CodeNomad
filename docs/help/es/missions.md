@@ -54,7 +54,7 @@ Hay una vez ahora, cada N horas, diario, días de semana, día del mes y cron. S
 
 ### Eventos y combinaciones {#scheduling-conditions}
 
-Los eventos siguen el éxito de otra programación o Misión, commits locales, mensajes nuevos o archivos explícitos del proyecto. Las conversaciones seguidas aportan contexto aparte del evento.
+Los eventos siguen el éxito de otra programación o Misión, commits locales, mensajes nuevos o archivos explícitos del proyecto. Elige la fuente dentro del criterio. El selector permite buscar y carga más fuentes al desplazarte; si la lectura falla, ofrece **Intentar de nuevo** allí. La conversación elegida para mensajes nuevos también aporta contexto a la ejecución. Cambiar el tipo de criterio borra su fuente. La edición conserva el contexto de conversación guardado.
 
 **o** une horarios vecinos o eventos vecinos. **si** convierte eventos después de horarios en condiciones: alguno debe haber cambiado desde la última pasada exitosa. **si no** convierte horarios posteriores a eventos en respaldo: nada de arriba debe haber lanzado una pasada desde su horario anterior o su activación. Los eventos posteriores condicionan ese respaldo.
 

@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "搜索来源",
+  "missions.scheduling.error.files": "请输入有效的相对文件路径。",
   "missions.scheduling.startOnCreation": "自动启动",
   "missions.scheduling.source.now": "一次，现在",
   "missions.settings.effectiveOrigin": "OpenCode 配置文件：",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "保存的时区（IANA）",
   "missions.scheduling.chooseSource": "选择来源",
   "missions.scheduling.sourceMissing": "来源不可用：{source}",
-  "missions.scheduling.sourcesUnavailable": "无法读取来源。请保留草稿，并在保存前重新加载项目。",
+  "missions.scheduling.sourcesUnavailable": "无法读取来源。",
   "missions.scheduling.files": "相对文件路径（每行一个）",
   "missions.scheduling.filesHint": "最多128个指定项目文件。不允许递归模式和链接路径；播放时检查访问权限。",
   "missions.scheduling.error.zone": "请输入有效的 IANA 时区。",

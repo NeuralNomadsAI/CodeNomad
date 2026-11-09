@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "חיפוש מקור",
+  "missions.scheduling.error.files": "הזינו נתיבי קבצים יחסיים תקינים.",
   "missions.scheduling.startOnCreation": "התחלה אוטומטית",
   "missions.scheduling.source.now": "פעם אחת, עכשיו",
   "missions.settings.effectiveOrigin": "קובץ התצורה של OpenCode:",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "אזור זמן שמור (IANA)",
   "missions.scheduling.chooseSource": "בחירת מקור",
   "missions.scheduling.sourceMissing": "מקור לא זמין: {source}",
-  "missions.scheduling.sourcesUnavailable": "לא ניתן לקרוא את המקורות. שמור את הטיוטה וטען מחדש את הפרויקט לפני השמירה.",
+  "missions.scheduling.sourcesUnavailable": "לא ניתן לקרוא את המקורות.",
   "missions.scheduling.files": "נתיבי קבצים יחסיים (אחד בכל שורה)",
   "missions.scheduling.filesHint": "עד 128 קבצים מפורשים בפרויקט. תבניות רקורסיביות ונתיבים מקושרים נדחים; הגישה נבדקת בהפעלה.",
   "missions.scheduling.error.zone": "יש להזין אזור זמן תקין של IANA.",

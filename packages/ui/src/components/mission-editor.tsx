@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, untrack } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { compareModelError, freezeCompareProfiles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
@@ -27,7 +27,6 @@ import { MISSION_TITLE_MAX, deriveMissionTitle } from "../../../server/src/missi
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
-import { MissionConversationPicker } from "./mission-conversation-picker"
 import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
 import { MissionBodyPending } from "./mission-reader-body"
 import { missionTargetState, retryMissionTarget, useTargetBody } from "./mission-target-bodies"
@@ -173,7 +172,7 @@ export function MissionEditor(props: {
       setProfiles(copyMissionProfiles(config.profiles)); setTaskMode(config.taskMode); setWatched(config.watchedConversationIDs)
       setCustomProfiles(true); setCustomTaskMode(true)
     }, captureDraft: () => captureDraft(), onSaved: (mission, scheduleID) => props.onSaved(mission, scheduleID) })
-  createEffect(() => props.onReading?.(schedule.revalidating() || profilesReading()))
+  createEffect(() => props.onReading?.(schedule.revalidating() || profilesReading() || sourceChoices.loading()))
   onCleanup(() => props.onReading?.(false))
   const policy = createMemo(() => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } })
   const mode = () => policy() && !requiresMissionCalendar(policy()!) ? "once" : "recurring"
@@ -202,16 +201,18 @@ export function MissionEditor(props: {
   const sourceChoices = createMissionEditorSources({ instanceId: props.instanceId, projectID: props.projectID,
     target: action.scheduleID ?? original?.id, directory: schedule.directory,
     kinds: () => schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
+    selected: () => schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && row.source
+      ? [{ kind: row.kind, id: row.source }] : []),
     active: isActive, captureView })
   const watchedIDs = watched
   const needsSourceLocation = createMemo(() => mode() === "recurring" && watchedIDs().length > 0)
-  const sourceIdentity = () => JSON.stringify([identity(), props.directory, getOpenCodeInstanceGeneration(props.instanceId)])
+  const sourceIdentity = createMemo(() => JSON.stringify([identity(), props.directory, getOpenCodeInstanceGeneration(props.instanceId)]))
   const [sourceLocation, setSourceLocation] = createSignal<{ key: string; directory: string }>()
   const [sourceLocationFailed, setSourceLocationFailed] = createSignal(false)
   const [sourceLocationRevision, setSourceLocationRevision] = createSignal(0)
-  createEffect(() => {
-    sourceLocationRevision()
-    if (!needsSourceLocation() || !creationReady() || !isActive()) return
+  const sourceLocationActive = createMemo(() => needsSourceLocation() && creationReady() && isActive())
+  createEffect(on([sourceIdentity, sourceLocationRevision, sourceLocationActive], () => {
+    if (!sourceLocationActive()) return
     const key = sourceIdentity(), viewCurrent = captureView(), controller = new AbortController()
     let alive = true
     setSourceLocation(undefined); setSourceLocationFailed(false)
@@ -226,7 +227,7 @@ export function MissionEditor(props: {
       setSourceLocation({ key, directory: value.directory })
     }).catch(() => { if (current()) setSourceLocationFailed(true) })
     onCleanup(() => { alive = false; controller.abort() })
-  })
+  }))
   const sourceLocationReady = () => !needsSourceLocation() || sourceLocation()?.key === sourceIdentity()
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
     roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
@@ -485,28 +486,22 @@ export function MissionEditor(props: {
           <span id={ids.profilesError} role="alert" class="mission-create-field-error">{t(`missions.compare.${error()}`)}</span>
         }</Show>
       </section>
-      <Show when={mode() === "recurring" || watchedIDs().length > 0}>
-        <MissionConversationPicker instanceId={props.instanceId} directory={props.directory} projectID={props.projectID}
-          value={watchedIDs()} disabled={structuralLocked()} active={() => mode() === "recurring" && isActive()} onChange={setWatched} />
-        {inlineError("followed", ids.followedError)}
-        <Show when={needsSourceLocation() && !sourceLocationReady() && !errorFor("followed")}><p role={sourceLocationFailed() ? "alert" : "status"}>{t(sourceLocationFailed() ? "missions.recurrence.sourceLocationUnavailable" : "missions.control.loading")}</p></Show>
-      </Show>
     <Show when={kind === "create"}><label class="mission-create-autostart">
       <input type="checkbox" checked={startOnCreation()} disabled={structuralLocked()}
         onChange={event => setStartOnCreation(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
     </label></Show>
-    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()}
+    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} paging={sourceChoices.reader} active={isActive}
       capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
+    {inlineError("followed", ids.followedError)}
+    <Show when={needsSourceLocation() && sourceLocationFailed() && !errorFor("followed")}>
+      <p role="alert">{t("missions.recurrence.sourceLocationUnavailable")}</p>
+    </Show>
     <Show when={immediateFollowed()}><p role="status">{t(immediateCreationFollowed() ? "missions.scheduling.immediateCreationFollowed" : "missions.scheduling.immediateFollowed")}</p></Show>
     <Show when={schedule.capability() === "missing"}><button type="button" class="window-action" disabled={busy() || schedule.reading()}
       onClick={schedule.retryRead}>{t("missions.control.retry")}</button></Show>
     <Show when={(observationUnknown() || schedule.document()?.edit.reason === "uncertain") && !schedule.held() && !schedule.conflict()}>
       <button type="button" class="window-action" disabled={pending() || schedule.reading()} onClick={schedule.retryRead}>{t("missions.scheduling.reload")}</button>
     </Show>
-    <Show when={sourceChoices.next()}><button type="button" class="window-action" disabled={sourceChoices.loading() || structuralLocked()}
-      onClick={sourceChoices.more}>{t("missions.scheduling.moreSources")}</button></Show>
-    <Show when={sourceChoices.failed()}><button type="button" class="window-action" disabled={sourceChoices.loading() || structuralLocked()}
-      onClick={sourceChoices.reload}>{t("missions.control.refresh")}</button></Show>
     <Show when={!defaultsReady() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid()}>
       <p role={config.uiConfigLoadFailed() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "alert" : "status"}>
         {t(config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "missions.defaults.invalid"

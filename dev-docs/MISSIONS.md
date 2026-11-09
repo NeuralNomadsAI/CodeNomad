@@ -435,8 +435,9 @@ The owning editor retains revision/request fencing and performs authenticated wr
 `mission-editor.tsx` shares its preparation form between Create and Edit. Calendar-owned
 documents open through `MissionEditorAction.scheduleID`, read their exact configuration
 and retain the loaded document revision in `MissionEditorDraft`. Title, instructions,
-notes, playbook, requested agent/model/variant profiles, task mode, followed inputs and
-scheduling use the same controls. Structural/template guards and their explanations
+notes, playbook, requested agent/model/variant profiles, task mode and
+scheduling use the same controls. Stored followed inputs remain in the draft and payload.
+Structural/template guards and their explanations
 come from the document; incomplete native observation also fences editing. The
 execution-journal format exposes objective/notes edits. A unified immediate preparation
 also edits title, playbook, requested profiles and task mode before its first admission.
@@ -528,8 +529,16 @@ directory's bounded local ref listing (`GET /api/workspaces/:id/git-branches`, a
 200 refs under `refs/heads/`, including branches without a worktree). The read uses
 the Git worker, a ten-second/output bound and physical ownership/deletion fences;
 over-bound inventories expose source unavailability. Never fetch for source choices.
-Choosing a source or typing another field preserves the loaded page.
-Further pages require an explicit action.
+Each event card owns its searchable, virtualized source popup (`mission-source-select.tsx`);
+opening it and approaching its list end requests continuation for that source kind.
+Conversation search uses debounced native title search; opaque continuation cursors
+retain that query. Selected off-page sources resolve through bounded owned point reads.
+Selected labels remain pinned across searches. Failed reads retain the loaded display
+and offer Retry inside the popup. Changing a card's type disposes its selector and clears
+its source; hiding or locking the editor closes open popups. Source reads follow semantic
+owner, native generation and visibility changes; transcript retirement and unrelated
+typing preserve the loaded display. A conversation-message criterion supplies its
+conversation to native passage context alongside stored `watchedConversationIDs`.
 
 `stores/mission-schedules.ts` owns the visible panel's bounded document pages, with
 one read lane and coalesced trailing refreshes through the shared event scheduler.
