@@ -503,6 +503,14 @@ function observeRestoreWorkspace(workspace: WorkspaceDescriptor): RestoreWorkspa
 const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreWorkspaceDescriptor>({
   requestKey: workspace => workspace.receipt?.requestKey,
   isCurrent: workspace => workspace.receipt?.attached() === true,
+  isCurrentKey: (id, key) => {
+    const backendId = parseInstanceKey(id).backendId
+    const [, requestId] = JSON.parse(key) as [string, string]
+    return key === workspaceRequestKey(backendId, requestId, serverEvents.signal(backendId))
+  },
+  onSettled: workspace => {
+    if (workspace.receipt) restoreCreationReceipts.delete(workspace.receipt.requestKey)
+  },
   discardWorkspace: (workspace) => {
     if (!workspace.requestId) return Promise.reject(new Error(`Restore workspace ${workspace.id} has no creation request`))
     if (!workspace.receipt) return Promise.reject(new Error("Workspace creation owner unavailable"))
@@ -1508,7 +1516,7 @@ function handleWorkspaceEvent(event: BackendEventPayload) {
       }
       requestInstanceTabClose(event.workspaceId)
       const tracked = restoreCreatedWorkspaceCleanup.get(event.workspaceId, true)
-      if (!tracked?.receipt || tracked.receipt.attached()) restoreCreatedWorkspaceCleanup.release(event.workspaceId)
+      if (tracked?.receipt?.attached()) restoreCreatedWorkspaceCleanup.release(event.workspaceId, tracked.receipt.requestKey)
       // Clear the instance after this event batch has unmounted its tab: clearing
       // a visible shell's state in the same update remounted views inside the
       // dying subtree and broke the whole window. Skip a re-created workspace.
@@ -1771,7 +1779,7 @@ async function releaseRestoreCreatedInstance(instanceId: string, requestId: stri
   // ponytail: linear in outstanding claims; index requests if very large restores make this measurable.
   const receipts = [...restoreCreationReceipts.values()].filter(receipt => receipt.instanceId === instanceId && receipt.requestId === requestId)
   if (receipts.length > 1) throw new Error("Workspace creation owner ambiguous")
-  const receipt = receipts.length === 1 ? receipts[0] : receipts.length === 0 ? restoreCreatedWorkspaceCleanup.get(instanceId)?.receipt : undefined
+  const receipt = receipts[0]
   if (!receipt) return
   if (receipt.requestId !== requestId) throw new Error("Workspace creation owner unavailable")
   await restoreCreatedWorkspaceCleanup.releaseAfter(instanceId, (workspace) => {
@@ -1781,7 +1789,7 @@ async function releaseRestoreCreatedInstance(instanceId: string, requestId: stri
       initialDelayMs: 250,
       maxDelayMs: 2_000,
       backoffMultiplier: 4,
-    }).then(() => { restoreCreationReceipts.delete(workspace.receipt!.requestKey) })
+    })
   }, receipt.requestKey)
 }
 
@@ -1802,7 +1810,7 @@ async function settleRestoreWorkspaceTerminal(
   terminal: RestoreWorkspaceTerminal,
 ): Promise<void> {
   if (terminal.status === "stopped") {
-    restoreCreatedWorkspaceCleanup.release(workspace.id)
+    if (workspace.receipt) restoreCreatedWorkspaceCleanup.release(workspace.id, workspace.receipt.requestKey)
     if (workspace.receipt?.attached()) removeRestoreCreatedInstanceFromUi(workspace.id)
     return
   }
@@ -1840,7 +1848,11 @@ async function createInstance(
     cancellationRequest ??= trackedCleanup
       ? trackedCleanup.then(() => true)
       : cancelRestoreCreationRequest(receipt)
-          .then(() => true, (error) => {
+          .then(() => {
+            restoreCreationReceipts.delete(receipt.requestKey)
+            restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
+            return true
+          }, (error) => {
             log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
             return false
           })
@@ -1857,9 +1869,13 @@ async function createInstance(
     }, { signal })
     const id = instanceKey(receipt.backendId, response.id)
     const responseReceipt = Object.freeze({ ...receipt, rawId: response.id, instanceId: id })
-    if (restoreRequestId) restoreCreationReceipts.set(receipt.requestKey, responseReceipt)
+    if (restoreRequestId && !restoreCreatedWorkspaceCleanup.isRequestSettled(receipt.requestKey)) restoreCreationReceipts.set(receipt.requestKey, responseReceipt)
     const workspace: RestoreWorkspaceDescriptor = { ...response, id, receipt: responseReceipt }
     requestResolved = true
+    if (restoreRequestId && !workspace.requestId) {
+      restoreCreationReceipts.delete(receipt.requestKey)
+      restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
+    }
     const reused = workspace.reused === true
     if (restoreRequestId) restoreCreationCommitGates.bindResponse(restoreRequestId, workspace.id, receipt.attached)
     if (!receipt.current()) {
@@ -1918,6 +1934,12 @@ async function createInstance(
     }
     return { instanceId: workspace.id, reused, requestId: workspace.requestId }
   } catch (error) {
+    // The create route's explicit rejection is definitive; transport/abort/5xx failures remain unknown.
+    if (restoreRequestId && !requestResolved && error instanceof HttpResponseError
+      && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 499) {
+      restoreCreationReceipts.delete(receipt.requestKey)
+      restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
+    }
     if (!terminalHandled && commitGate?.terminal && commitGate.workspace) {
       terminalHandled = true
       await settleRestoreWorkspaceTerminal(commitGate.workspace, commitGate.terminal)

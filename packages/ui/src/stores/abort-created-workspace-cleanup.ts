@@ -23,6 +23,8 @@ interface AbortCreatedWorkspaceCleanupOptions<T> {
   restoreWorkspace: (workspace: T) => void
   requestKey?: (workspace: T) => string | undefined
   isCurrent?: (workspace: T) => boolean
+  isCurrentKey?: (workspaceId: string, requestKey: string) => boolean
+  onSettled?: (workspace: T) => void
   retryDelaysMs?: readonly number[]
   wait?: (delayMs: number) => Promise<void>
   onPermanentFailure?: (workspace: T, error: unknown) => void
@@ -33,6 +35,10 @@ const DEFAULT_RETRY_DELAYS_MS = [250, 1_000, 2_000] as const
 export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   private readonly owned = new Map<string, OwnedWorkspace<T>>()
   private readonly retired = new Map<string, OwnedWorkspace<T>>()
+  // Exact request fences survive duplicate responses; settled entries retain no client or attachment.
+  private readonly settled = new Set<string>()
+  private readonly settledRequests = new Set<string>()
+  private readonly markers = new Map<string, { requestKey: string; tombstone: boolean }>()
   private readonly pendingRequestIds = new Map<string, boolean>()
 
   constructor(private readonly options: AbortCreatedWorkspaceCleanupOptions<T>) {}
@@ -50,6 +56,13 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   track(workspace: T): void {
+    const key = this.requestKey(workspace)
+    if (key && this.isReleased(workspace.id, key)) return
+    const marker = this.markers.get(workspace.id)
+    if (marker) {
+      if (!this.options.isCurrent || this.options.isCurrent(workspace)) this.markers.delete(workspace.id)
+      else return
+    }
     const entry = this.owned.get(workspace.id)
     if (!entry) this.owned.set(workspace.id, { workspace })
     else {
@@ -70,6 +83,22 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
 
   finishRequest(requestId: string): void {
     this.pendingRequestIds.delete(requestId)
+  }
+
+  settleRequest(requestKey: string): void {
+    this.settledRequests.add(requestKey)
+    this.finishRequest(requestKey)
+    for (const owner of [this.owned, this.retired]) {
+      for (const [key, entry] of owner) {
+        if (this.requestKey(entry.workspace) !== requestKey) continue
+        this.settle(entry.workspace, !("released" in entry) && entry.workspace.reused !== true, owner, key)
+        if ("completion" in entry) entry.resolve()
+      }
+    }
+  }
+
+  isRequestSettled(requestKey: string): boolean {
+    return this.settledRequests.has(requestKey)
   }
 
   forgetRequest(workspaceId: string, requestId: string): void {
@@ -98,7 +127,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     const quarantined = this.pendingRequestIds.get(requestId)
     if (quarantined === undefined) return false
     this.track(workspace)
-    if (quarantined) void this.discardTracked(workspace.id, { retainTombstone: workspace.reused !== true })
+    if (quarantined) void this.discardCreated(workspace, { retainTombstone: workspace.reused !== true })
       .finally(() => this.finishRequest(requestId))
     return true
   }
@@ -112,10 +141,23 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   release(workspaceId: string, requestKey?: string): T | undefined {
+    if (this.options.requestKey && !requestKey) return undefined
     const { owner, key, entry } = this.slot(workspaceId, requestKey)
-    if (!entry || "tombstone" in entry || "released" in entry || "completion" in entry) return undefined
-    owner.set(key, { released: true, workspace: entry.workspace })
+    if (!entry) return undefined
+    this.settle(entry.workspace, false, owner, key)
+    if ("completion" in entry) entry.resolve()
     return entry.workspace
+  }
+
+  private settle(workspace: T, tombstone: boolean, owner: Map<string, OwnedWorkspace<T>>, key: string): void {
+    owner.delete(key)
+    const requestKey = this.requestKey(workspace)
+    if (requestKey) {
+      if (this.options.requestKey) this.settledRequests.add(requestKey)
+      else this.settled.add(JSON.stringify([workspace.id, requestKey]))
+      if (owner === this.owned && tombstone) this.markers.set(workspace.id, { requestKey, tombstone })
+    }
+    this.options.onSettled?.(workspace)
   }
 
   get(workspaceId: string, includePending = false): T | undefined {
@@ -125,11 +167,18 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
 
   async releaseAfter(workspaceId: string, operation: (workspace: T) => Promise<void>, requestKey?: string): Promise<T | undefined> {
     const slot = this.slot(workspaceId, requestKey)
-    const workspace = this.release(workspaceId, requestKey)
-    if (!workspace) return undefined
-    const released = slot.owner.get(slot.key)
+    const entry = slot.entry
+    if (!entry || "tombstone" in entry || "released" in entry || "completion" in entry) return undefined
+    const workspace = entry.workspace
+    const released = { released: true as const, workspace }
+    slot.owner.set(slot.key, released)
     try {
       await operation(workspace)
+      if (slot.owner.get(slot.key) === released) this.settle(workspace, false, slot.owner, slot.key)
+      else {
+        const key = this.requestKey(workspace)
+        if (key && this.retired.get(key) === released) this.settle(workspace, false, this.retired, key)
+      }
       return workspace
     } catch (error) {
       const entry = slot.owner.get(slot.key)
@@ -143,6 +192,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   releaseTombstoneForUserCreate(workspaceId: string): void {
+    this.markers.delete(workspaceId)
     const entry = this.owned.get(workspaceId)
     if (entry && ("tombstone" in entry || "released" in entry)) {
       this.retire(workspaceId, entry)
@@ -151,16 +201,21 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   owns(workspaceId: string): boolean {
+    if (this.markers.has(workspaceId)) return this.shouldIgnoreEvent(workspaceId)
     const entry = this.owned.get(workspaceId)
     return Boolean(entry && !("released" in entry) && (!this.options.isCurrent || this.options.isCurrent(entry.workspace)))
   }
 
   isReleased(workspaceId: string, requestKey?: string): boolean {
+    if (requestKey && (this.settled.has(JSON.stringify([workspaceId, requestKey])) || this.settledRequests.has(requestKey))) return true
+    if (!requestKey && this.markers.has(workspaceId)) return true
     const { entry } = this.slot(workspaceId, requestKey)
     return !!entry && "released" in entry
   }
 
   shouldIgnoreEvent(workspaceId: string): boolean {
+    const marker = this.markers.get(workspaceId)
+    if (marker) return marker.tombstone && (!this.options.isCurrentKey || this.options.isCurrentKey(workspaceId, marker.requestKey))
     const entry = this.owned.get(workspaceId)
     return !!entry && ("completion" in entry || "tombstone" in entry)
       && (!this.options.isCurrent || this.options.isCurrent(entry.workspace))
@@ -178,6 +233,8 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   private start(workspace: T, options?: { retainTombstone?: boolean }): Promise<void> {
+    const requestKey = this.requestKey(workspace)
+    if (requestKey && this.isReleased(workspace.id, requestKey)) return Promise.resolve()
     let current = this.owned.get(workspace.id)
     let owner = this.owned, key = workspace.id
     const retired = this.retired.get(this.requestKey(workspace) ?? "")
@@ -234,8 +291,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
       }
     }
     if (!deleted) entry.owner.set(entry.key, { workspace: entry.workspace })
-    else if (deleted && entry.retainTombstone) entry.owner.set(entry.key, { tombstone: true, workspace: entry.workspace })
-    else entry.owner.delete(entry.key)
+    else this.settle(entry.workspace, entry.retainTombstone, entry.owner, entry.key)
     entry.resolve()
 
     if (deleted) return
