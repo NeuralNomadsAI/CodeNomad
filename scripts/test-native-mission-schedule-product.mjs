@@ -14,6 +14,7 @@ import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
 import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
+import { collectColdFailure, fixtureRedactor } from "./native-fixture-cold-diagnostics.mjs"
 
 const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: true, options: {
   "parent-ready": { type: "boolean" }, kinds: { type: "string", default: "at,in" }, "natural-every": { type: "boolean" },
@@ -653,11 +654,32 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     const deduped = snapshot(id); assert.equal(deduped.document.launchedCount, 1); assert.deepEqual(deduped.start, completedStarts)
     result.calls = calls; result.status = "passed"; result.stage = "completed"
   } catch (error) {
-    const redact = input => { let text = String(input ?? ""); for (const secret of secrets) text = text.replaceAll(secret, "<redacted>"); return text.slice(0, 64000) }
+    result.status = "failed"
+    const failureAt = Date.now(), cold = result.stage === "natural-cold-first-admission"
+    let coldFailure, privateEvidenceAvailable = !cold
+    if (cold) {
+      try {
+        const collected = await collectColdFailure({ status: result.status, stage: result.stage, failureAt,
+          root, registrationFile, databaseFile, documentID: result.documentID, prefix, secrets: [...secrets],
+          onSecrets: learned => { for (const secret of learned) secrets.add(secret); privateEvidenceAvailable = true },
+          child, expected: result.serviceStarts.at(-1), diagnostic: { stage: result.stage, nativeErrorTail,
+            error: error && { name: error.name, type: error.type ?? error._tag, message: error.message, stack: error.stack },
+            reason: error?.reason && { name: error.reason.name, message: error.reason.message },
+            cause: error?.cause && { name: error.cause.name, message: error.cause.message } } })
+        coldFailure = collected?.evidence ?? { error: collected?.error ?? "cold-failure-diagnostic-unavailable" }
+      } catch { coldFailure = { error: "cold-failure-diagnostic-unavailable" } }
+    }
+    const clean = fixtureRedactor(secrets)
+    const redact = input => privateEvidenceAvailable ? clean(input).slice(0, 64000)
+      : input === "bounded-product-qualification-deadline" ? input : "cold-private-evidence-unavailable"
     const detail = item => item && { name: redact(item.name), type: redact(item.type ?? item._tag), message: redact(item.message), stack: redact(item.stack) }
     result.status = "failed"; result.error = redact(error?.message ?? "qualification-failed")
-    await save("failure-diagnostic", { stage: result.stage, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause), nativeErrorTail: redact(nativeErrorTail) })
-    if (result.documentID) try {
+    if (!cold) try {
+      const diagnostic = { stage: result.stage, failureAt, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause), nativeErrorTail: redact(nativeErrorTail), coldFailure }
+      const json = JSON.stringify(diagnostic)
+      await save("failure-diagnostic", Buffer.byteLength(json) <= 512 * 1024 ? diagnostic : { stage: result.stage, failureAt, error: "failure-diagnostic-overflow" })
+    } catch { /* Preserve the original failure. */ }
+    if (!cold && result.documentID) try {
       const state = snapshot(result.documentID, true)
       state.maintenance = await maintenanceEvents().then(events => ({ count: events.length,
         tail: events.filter(event => !event.sessionID || state.document.calendarOwner?.slots.some(slot => slot.sessionID === event.sessionID)).slice(-32) }),

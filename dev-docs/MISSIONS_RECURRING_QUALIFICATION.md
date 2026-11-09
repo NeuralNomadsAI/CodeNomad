@@ -27,6 +27,7 @@ Product checks cover authenticated paused creation, activation/control receipts,
 backend closure and managed-service restart. Terminal checks require original-input
 correlation and whole-family/background-delivery quiescence before settlement.
 Desktop packaging and host-login gates require their own evidence.
+After a cold-first-admission failure, a disposable ten-second worker records a timestamped status/PID/version HTTP projection, shared-incarnation redacted logs bounded to 256 KiB and targeted read-only SQL within 512 KiB, preserving the failed verdict.
 
 UI qualification uses the real Solid/HTTP fixtures under
 `packages/ui/tests/browser/` with `npm run test:browser --workspace @codenomad/ui`:
