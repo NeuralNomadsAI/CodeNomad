@@ -66,6 +66,8 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
       assert.equal(await page.locator(".settings-choice-row input").isChecked(), false)
       assert.deepEqual(await page.evaluate(() => [(window as any).fixture.changed(), (window as any).fixture.leaked()]), [0, 0])
       await page.locator("summary [role=link]").click()
+      // The native opener completes asynchronously after the browser click.
+      await page.waitForFunction(() => (window as any).opened.length === 3)
       assert.equal(await page.locator("details").getAttribute("open"), null)
       assert.equal((await opened(page)).at(-1), `${base}en/opencode.html#session-environment`)
       assert.equal(page.url(), url)

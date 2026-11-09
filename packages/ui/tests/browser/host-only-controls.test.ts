@@ -1,31 +1,18 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
 import { chromium, type Browser } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
+import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [shutdown.plugin, solid(), { name: "host-only-controls", configureServer(s) { s.middlewares.use("/fixture", async (_req, res) => {
-      res.setHeader("Content-Type", "text/html")
-      res.end(await s.transformIndexHtml("/fixture", `<html><body><div id="root"></div><script>window.__CODENOMAD_WINDOW_CONTEXT__="local";window.__CODENOMAD_RUNTIME_HOST__="electron";window.electronAPI={}</script><script type="module" src="/tests/browser/fixtures/host-only-controls.tsx"></script></body></html>`))
-    }) } }], resolve: { dedupe: ["solid-js"] },
-    optimizeDeps: { entries: ["tests/browser/fixtures/host-only-controls.tsx"], exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } }).catch(async error => { await cache.dispose(); throw error })
-  shutdown.own(server)
-  await server.listen()
-  await server.transformRequest("/tests/browser/fixtures/host-only-controls.tsx")
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  const fixture = await borrowFixture({ name: "host-only-controls", routes: [{ path: "/fixture",
+    html: '<html><body><div id="root"></div><script>window.__CODENOMAD_WINDOW_CONTEXT__="local";window.__CODENOMAD_RUNTIME_HOST__="electron";window.electronAPI={}</script><script type="module" src="/tests/browser/fixtures/host-only-controls.tsx"></script></body></html>' }] })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close() })
 
 for (const mode of ["local", "nonlocal", "missing", "failure"]) {
   for (const surface of ["home", "settings", "picker"]) {
