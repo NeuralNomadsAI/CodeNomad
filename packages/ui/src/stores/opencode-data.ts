@@ -381,7 +381,14 @@ function reconcileDeliveredPromptPage(instanceId: string, sessionId: string, tra
   transcript.deliveryRepairOwed = false
   transcript.entry.data.session.message.invalidate(sessionId)
   void completeSettlementRead(instanceId, sessionId, transcript, { publishGated: true })
-    ?.finally(() => { transcript.deliveryRepairPending = Math.max(0, transcript.deliveryRepairPending - 1) })
+    ?.finally(() => {
+      transcript.deliveryRepairPending = Math.max(0, transcript.deliveryRepairPending - 1)
+      // The read's own publication pass ran its retirement check while this
+      // counter still held the barrier; retry it now that the repair settled,
+      // so a drained settlement is not left resident. Abandoned scopes are
+      // already guarded by the current-transcript check.
+      retireDrainedTranscript(instanceId, sessionId, transcript)
+    })
 }
 
 function getOpenCodeFullDataRevision(instanceId: string, sessionId: string): number {

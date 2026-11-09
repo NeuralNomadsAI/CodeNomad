@@ -286,3 +286,61 @@ test("a delivery crossing an HTTP-ahead settlement read reconciles through its o
     assert.deepEqual(order(), ["m1", "msg_4", "msg_user", "reply", "msg_8"], "the crossing prompt reconciles above its reply")
   } finally { f.cleanup() }
 })
+
+test("a delivery repair completing over a history window leaves that window's membership alone", async () => {
+  const instanceId = "native-delivery-history-window"
+  const f = fixture(instanceId)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const sessionId = "s"
+  try {
+    f.emit("session.inbox.enqueued", { sessionID: sessionId, inboxID: "msg_h", item: { type: "user", payload: { text: "parked" }, delivery: "steer" } })
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "h_reply", agent: "build", model, started: 2 })
+    f.emit("session.inbox.delivered", { sessionID: sessionId, inboxID: "msg_h" })
+    assert.equal(f.reads.length, 1, "the relocating delivery owed a repair read")
+    await flush()
+    const sunk = store.getSessionMessageIds(sessionId)
+    assert.deepEqual(sunk, ["h_reply", "msg_h"], "the late delivery sinks the prompt until the repair lands")
+
+    // The reader moves to a history window before the repair completes: the
+    // repair must not rewrite that window's membership or cursors.
+    store.setMessageWindow(sessionId, { kind: "history", resumeCursor: "c1", newerCursors: [null] })
+    f.reads[0].resolve({
+      data: [
+        { id: "msg_h", type: "user", text: "parked", time: { created: 3 } },
+        { id: "h_reply", type: "assistant", agent: "build", model, time: { created: 2 }, content: [] },
+      ].reverse(),
+      cursor: {},
+    })
+    await flush()
+    assert.deepEqual(store.getSessionMessageIds(sessionId), sunk, "the history window keeps its membership")
+    assert.equal(store.getMessageWindow(sessionId)?.kind, "history", "the window keeps its cursors")
+  } finally { f.cleanup() }
+})
+
+test("a delivery repair completing for an inactive session does not project into its display", async () => {
+  const instanceId = "native-delivery-inactive"
+  const f = fixture(instanceId)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const sessionId = "s"
+  try {
+    f.emit("session.inbox.enqueued", { sessionID: sessionId, inboxID: "msg_i", item: { type: "user", payload: { text: "parked" }, delivery: "steer" } })
+    f.emit("session.step.started", { sessionID: sessionId, assistantMessageID: "i_reply", agent: "build", model, started: 2 })
+    f.emit("session.inbox.delivered", { sessionID: sessionId, inboxID: "msg_i" })
+    assert.equal(f.reads.length, 1, "the relocating delivery owed a repair read")
+    await flush()
+    const before = store.getSessionMessageIds(sessionId)
+
+    // The reader switches sessions before the repair completes: the inactive
+    // session's display is left to its next activation read.
+    setActiveSession(instanceId, "other")
+    f.reads[0].resolve({
+      data: [
+        { id: "msg_i", type: "user", text: "parked", time: { created: 3 } },
+        { id: "i_reply", type: "assistant", agent: "build", model, time: { created: 2 }, content: [] },
+      ].reverse(),
+      cursor: {},
+    })
+    await flush()
+    assert.deepEqual(store.getSessionMessageIds(sessionId), before, "an inactive session's display keeps its projected page")
+  } finally { f.cleanup() }
+})

@@ -35,11 +35,7 @@ async function open(run: (page: Page) => Promise<void>) {
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
-  page.on("requestfailed", request => {
-    // A canceled in-flight receipts read is the UI superseding it, not a failure.
-    if (request.url().includes("/permission-receipts") && request.failure()?.errorText === "net::ERR_ABORTED") return
-    errors.push(`request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`)
-  })
+  page.on("requestfailed", request => errors.push(`request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`))
   page.on("response", response => { if (response.status() >= 400) errors.push(`http ${response.status()}: ${response.url()}`) })
   await page.route("**/api/**", route => {
     if (new URL(route.request().url()).pathname.endsWith("/permission-receipts")) {
