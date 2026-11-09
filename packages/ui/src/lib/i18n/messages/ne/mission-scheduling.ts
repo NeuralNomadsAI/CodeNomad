@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.startOnCreation": "सिर्जना गर्दा सुरु गर्नुहोस्",
+  "missions.scheduling.source.now": "एकपटक, अहिले",
   "missions.settings.effectiveOrigin": "OpenCode कन्फिगरेसन फाइल:",
   "missions.settings.noOrigin": "कागजातको बाटो छैन",
   "missions.settings.projectTarget": "परियोजनाको लेखन लक्ष्य",

@@ -1,6 +1,6 @@
 import type { MissionCondition, MissionLaunchPolicy } from "./launch-policy"
 
-export type MissionLaunchSchedule = { kind: "cron"; expression: string; zone: string } | { kind: "every"; intervalMs: number }
+export type MissionLaunchSchedule = { kind: "now" } | { kind: "cron"; expression: string; zone: string } | { kind: "every"; intervalMs: number }
   | { kind: "at"; at: number; zone: string } | { kind: "in"; delayMs: number }
 /** How one schedule slot launches: only if one of `conditions` changed since the last
  * passage ("if"), and, as a `fallback` ("else"), only if the criteria above its `group`
@@ -21,7 +21,7 @@ export type MissionCriterionRole = "trigger" | "condition"
  * (the schedule run is the fallback of the events above it). Events in the first run
  * trigger; any later event run only conditions the schedule run before it. Shared by
  * the codec, the engine, the editor and the list summary. */
-export function missionCriteriaStructure(items: readonly { kind: string }[], isSchedule: (kind: string) => boolean = kind => kind === "cron") {
+export function missionCriteriaStructure(items: readonly { kind: string }[], isSchedule: (kind: string) => boolean = kind => kind === "cron" || kind === "now") {
   const scheduled = items.map(item => isSchedule(item.kind))
   const connectors: MissionCriterionConnector[] = scheduled.slice(1).map((current, index) =>
     current === scheduled[index] ? "or" : current ? "else" : "if")
@@ -43,18 +43,21 @@ export function missionCriteriaStructure(items: readonly { kind: string }[], isS
 /** Browser-safe policy classification shared by preparation and controls. */
 export function missionLaunchModel(policy: MissionLaunchPolicy): MissionLaunchModel {
   if ("when" in policy) {
-    const { roles, plans } = missionCriteriaStructure(policy.when)
-    const events = policy.when.filter(item => item.kind !== "cron")
+    // A sole now criterion uses ordinary first-Play journal admission. Mixed lists
+    // retain now as a native schedule so their OR/if/else groups stay composable.
+    const criteria = policy.when.length === 1 && policy.when[0].kind === "now" ? [] : policy.when
+    const { roles, plans } = missionCriteriaStructure(criteria)
+    const events = criteria.filter(item => item.kind !== "cron" && item.kind !== "now")
     const schedules: MissionLaunchSchedule[] = [], schedulePlans: MissionSchedulePlan[] = []
-    policy.when.forEach((item, index) => {
-      if (item.kind !== "cron") return
+    criteria.forEach((item, index) => {
+      if (item.kind !== "cron" && item.kind !== "now") return
       const plan = plans.get(index)!
       schedules.push(item)
-      schedulePlans.push({ conditions: plan.conditions.map(position => policy.when[position] as MissionCondition), fallback: plan.fallback, group: plan.group })
+      schedulePlans.push({ conditions: plan.conditions.map(position => criteria[position] as MissionCondition), fallback: plan.fallback, group: plan.group })
     })
     return { schedules, plans: schedulePlans,
-      triggers: events.filter(item => roles[policy.when.indexOf(item)] === "trigger"),
-      conditions: events.filter(item => roles[policy.when.indexOf(item)] === "condition"),
+      triggers: events.filter(item => roles[criteria.indexOf(item)] === "trigger"),
+      conditions: events.filter(item => roles[criteria.indexOf(item)] === "condition"),
       events, until: null, endAfterMs: null, maxLaunches: null }
   }
   const timing = policy.timing, events = policy.condition ? [policy.condition] : []

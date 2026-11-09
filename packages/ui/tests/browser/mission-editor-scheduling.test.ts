@@ -49,6 +49,8 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   await events.route(page)
+  await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
+    location: { directory: "/fixture" }, capability: null, effectiveDepth: null, project: null } }))
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: {
     missionProfileDefaults: [{ template: "custom", profiles }], locale } } }))
   await page.route("**/api/storage/state/ui", route => route.fulfill({ json: { theme, colorScheme: theme === "light" ? "porcelain" : "mist" } }))
@@ -98,8 +100,7 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
     set contentProof(value: boolean) { contentProof = value } }
 }
 const form = (page: Page) => page.locator("form.mission-editor")
-const scheduling = (page: Page) => form(page).locator(".mission-scheduling > summary")
-const options = (page: Page) => form(page).locator("summary").filter({ hasText: /^Options$/ })
+const scheduling = (page: Page) => form(page).locator("section.mission-scheduling")
 const addCriterion = (page: Page) => form(page).getByRole("button", { name: "Add a criterion", exact: true }).click()
 const ready = (page: Page) => page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
 async function capture(page: Page, name: string) {
@@ -110,17 +111,38 @@ async function capture(page: Page, name: string) {
 test("shared Create stores a paused two-time policy with exact profiles and sends no Play", async () => {
   const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1100 } }), f = await setup(page)
   try {
+    await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
+      location: { directory: "/fixture" }, capability: { minimum: 0, maximum: 10 }, effectiveDepth: 3,
+      project: { path: "/fixture/opencode.jsonc", depth: null, expectation: "fixture-depth" } } }))
+    await page.route("**/workspaces/fixture/instance/api/{agent,model,provider}**", route => {
+      const pathname = new URL(route.request().url()).pathname
+      return route.fulfill({ json: { data: pathname.endsWith("/agent") ? [{ id: "coordinator", mode: "primary" }, { id: "specialist", mode: "subagent" }]
+        : pathname.endsWith("/provider") ? [{ id: "p", name: "Fixture provider" }]
+          : [{ providerID: "p", id: "m", name: "Project model", status: "active", enabled: true,
+            capabilities: { tools: true }, cost: [], limit: { context: 1, output: 1 }, variants: [{ id: "precise" }, { id: "fast" }] }] } })
+    })
+    await page.waitForFunction(() => !!window.schedulingEditor)
+    await page.evaluate(async () => {
+      const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
+      const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
+      updateInstance("fixture", { client: getRootClient("fixture") })
+    })
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Review project changes")
     await ready(page)
-    assert.equal(await form(page).locator(".mission-scheduling").getAttribute("open"), null)
-    assert.match(await scheduling(page).innerText(), /Once, immediately/)
-    await scheduling(page).click()
-    await addCriterion(page)
+    assert.equal(await scheduling(page).locator("summary").count(), 0)
+    assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "now")
+    const autostart = scheduling(page).getByRole("checkbox", { name: "Start on creation", exact: true })
+    assert.equal(await autostart.isChecked(), false)
+    assert.equal(await scheduling(page).locator("input, select, button").first().getAttribute("type"), "checkbox", "autostart is the first scheduling control")
+    await form(page).getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Project model" }).waitFor({ state: "attached" })
+    await form(page).getByLabel("Subagent depth", { exact: true }).locator('option[value="10"]').waitFor({ state: "attached" })
+    await capture(page, "editor-compact-default.png")
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form(page).getByLabel("Criterion 1 time", { exact: true }).fill("09:15")
     await addCriterion(page)
     await form(page).getByLabel("Criterion 2 time", { exact: true }).fill("17:45")
-    assert.match(await scheduling(page).innerText(), /2 criteria/)
+    assert.equal(await scheduling(page).getByRole("group", { name: /^Criterion \d+$/ }).count(), 2)
     await capture(page, "editor-create-en-dark.png")
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
@@ -139,7 +161,6 @@ test("shared Edit loads all preparation fields and preserves the exact stored cr
   try {
     await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
     assert.equal(await form(page).getByLabel("Title", { exact: true }).inputValue(), "Stored title")
-    await scheduling(page).click()
     assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "cron")
     await addCriterion(page)
     await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("files-changed")
@@ -147,10 +168,8 @@ test("shared Edit loads all preparation fields and preserves the exact stored cr
     await form(page).getByRole("button", { name: "Move criterion 2", exact: true }).focus(); await page.keyboard.press("Alt+ArrowUp")
     await page.evaluate(() => window.schedulingEditor.mount(false))
     await page.evaluate(() => window.schedulingEditor.mount(true)); await ready(page)
-    if (await form(page).locator(".mission-scheduling").getAttribute("open") === null) await scheduling(page).click()
     assert.equal(await form(page).getByLabel("Criterion 1 file paths", { exact: true }).inputValue(), "src/a.ts")
     assert.equal(await form(page).getByLabel("Criterion 2 type", { exact: true }).inputValue(), "cron")
-    await options(page).click()
     assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), false)
     await form(page).getByLabel("Notes", { exact: true }).fill("Future instructions only")
     await form(page).getByLabel("Title", { exact: true }).fill("Updated title")
@@ -190,7 +209,7 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     await page.evaluate(kind => window.schedulingEditor[kind](), kind)
     if (kind === "create") {
       await form(page).getByLabel(objective, { exact: true }).fill("Original creation")
-      await scheduling(page).click(); await addCriterion(page)
+      await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     }
     await ready(page); f.lose = true
     await form(page).locator('button[type="submit"]').click()
@@ -226,7 +245,6 @@ test("H9 locks structural fields during a passage, with reasons, while keeping i
     await form(page).getByRole("status").filter({ hasText: /passage is in progress/ }).first().waitFor()
     assert.equal(await form(page).getByLabel("Title", { exact: true }).isDisabled(), true)
     assert.equal(await form(page).getByLabel(objective, { exact: true }).isDisabled(), false)
-    await options(page).click()
     assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), true)
     await form(page).getByLabel("Notes", { exact: true }).fill("Editable guidance")
     await capture(page, "editor-h9-en-dark.png")
@@ -303,7 +321,7 @@ test("an ever-created task locks the template after retirement; incomplete nativ
   const page = await browser.newPage(), f = await setup(page)
   try {
     f.doc.everCreatedTask = true
-    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page); await options(page).click()
+    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
     assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), true)
     assert.equal(await form(page).getByLabel("Title", { exact: true }).isDisabled(), false)
     assert.match(await form(page).innerText(), /including after tasks finish or are retired/)
@@ -324,7 +342,7 @@ test("missing capability keeps criterion-free creation available and disables ad
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Immediate remains available")
-    await ready(page); await scheduling(page).click()
+    await ready(page)
     assert.equal(await form(page).getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
     assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), false)
     assert.match(await form(page).locator(".mission-scheduling").innerText(), /Mission without launch criteria remains available/)
@@ -338,8 +356,7 @@ for (const kind of ["create", "edit"] as const) test(`${kind} rejects impossible
     if (kind === "edit") { f.doc.firstPlayedAt = Date.now(); f.doc.state = "running" }
     await page.evaluate(kind => window.schedulingEditor[kind](), kind)
     if (kind === "create") await form(page).getByLabel(objective, { exact: true }).fill("Valid instructions")
-    await ready(page); await scheduling(page).click()
-    if (kind === "create") await addCriterion(page)
+    await ready(page)
     await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("cron")
     await form(page).getByLabel("Criterion 1 cron expression", { exact: true }).fill("0 0 31 2 *")
     await form(page).getByRole("alert").waitFor()
@@ -371,8 +388,7 @@ test("the real editor selects all five explicit project sources per event row, p
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Check explicit sources")
-    await ready(page); await scheduling(page).click()
-    await addCriterion(page)
+    await ready(page)
     const condition = form(page).getByLabel("Criterion 1 type", { exact: true }), source = form(page).getByLabel("Criterion 1 source", { exact: true })
     for (const [kind, id] of [["schedule-success", "msn_schedule"], ["mission-completed", "msn_once"],
       ["branch-commits", "refs/heads/not-checked-out"], ["conversation-message", "ses_reference"]]) {
@@ -426,7 +442,6 @@ test("remounting during the first document read still decodes the stored policy;
     await page.evaluate(() => window.schedulingEditor.mount(false))
     await page.evaluate(() => window.schedulingEditor.mount(true))
     release(); await ready(page)
-    await scheduling(page).click()
     assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "cron")
     assert.equal(await form(page).getByLabel("Title", { exact: true }).inputValue(), "Stored title")
     await form(page).getByRole("button", { name: "Cancel", exact: true }).click()
@@ -444,8 +459,8 @@ for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).locator("textarea").first().fill(locale === "fr" ? "Vérifier les sources du projet" : "בדיקת מקורות הפרויקט")
-    await ready(page); await scheduling(page).click()
-    await form(page).locator(".mission-scheduling-add").click()
+    await ready(page)
+    await form(page).locator(".mission-criterion select").first().selectOption("daily")
     await form(page).locator('input[type="time"]').nth(0).fill("09:15")
     await form(page).locator(".mission-scheduling-add").click()
     await form(page).locator(".mission-criterion select").nth(1).selectOption("files-changed")
@@ -476,9 +491,9 @@ test("launch criteria journey: an event, a schedule, else, if, or, the approved 
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Review the latest changes on main and report risks")
-    await ready(page); await scheduling(page).click()
+    await ready(page)
     await capture(page, "00-empty-form.png")
-    await addCriterion(page); await time(1, "18:00")
+    await type(1).selectOption("daily"); await time(1, "18:00")
     assert.deepEqual(await connectors(), [])
     await shot("02-schedule-only.png")
     await choose(1, "branch-commits", "refs/heads/main")
@@ -527,8 +542,8 @@ test("two schedules, then two events: both times launch only if one of the event
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Review the latest changes on main and report risks")
-    await ready(page); await scheduling(page).click()
-    await addCriterion(page); await time(1, "09:00")
+    await ready(page)
+    await type(1).selectOption("daily"); await time(1, "09:00")
     await addCriterion(page); await time(2, "18:00")
     await addCriterion(page); await type(3).selectOption("branch-commits")
     const source = form(page).getByLabel("Criterion 3 source", { exact: true })
@@ -551,8 +566,7 @@ for (const locale of ["en", "fr"]) test(`a stored legacy frequency with a condit
     const stored = structuredClone(f.doc.configuration.launch)
     await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
     const section = form(page).locator(".mission-scheduling")
-    if (!await section.evaluate(element => (element as HTMLDetailsElement).open)) await scheduling(page).click()
-    assert.equal(await section.evaluate(element => (element as HTMLDetailsElement).open), true, "the reopened criteria are shown")
+    assert.equal(await section.getByRole("group", { name: /^(Criterion \d+|Critère \d+)$/ }).first().isVisible(), true, "the reopened criteria are shown")
     const label = (en: string, fr: string) => form(page).getByLabel(locale === "fr" ? fr : en, { exact: true })
     assert.equal(await label("Criterion 1 type", "Type du critère 1").inputValue(), "daily")
     assert.equal(await label("Criterion 2 time", "Heure du critère 2").inputValue(), "18:00")

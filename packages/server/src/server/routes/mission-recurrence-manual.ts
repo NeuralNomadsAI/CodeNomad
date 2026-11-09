@@ -40,13 +40,13 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
           || !sameLocation(deps.manager.getServiceLocation(request.params.id) ?? { directory: "" }, base)
           || recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId) throw new Error("Manual status changed")
       }
-      if (!await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, lifetime.signal))) throw new Error("Foreign Location")
+      if (!await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, { signal: lifetime.signal }))) throw new Error("Foreign Location")
       current()
       const result = recurrenceManualResultSchema.parse(await lifetime.wait(connection.client.rpc(CODENOMAD_MISSIONS_RPC).recurrenceRunNowStatus({ ...input.data, ...hint },
         { location, ...locationRequestOptions(location), signal: lifetime.signal })))
       current()
       if (result.scheduleID !== input.data.scheduleID || result.requestID !== input.data.requestID || result.expectedRevision !== input.data.expectedRevision
-        || !sameLocation(result.location, location) || !await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, lifetime.signal))) throw new Error("Foreign manual status")
+        || !sameLocation(result.location, location) || !await lifetime.wait(deps.manager.ownsLocation(request.params.id, location, connection.client, { signal: lifetime.signal }))) throw new Error("Foreign manual status")
       current()
       if (result.outcome !== "unknown") {
         const owner = recurrenceControlHeldElsewhere(deps.fence, request.params.id, identity, connection)

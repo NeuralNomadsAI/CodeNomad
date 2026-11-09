@@ -62,7 +62,7 @@ export async function verifyHumanRecurrenceRequest(input: unknown, deps: {
   const distro = deps.manager.getServiceWslDistro(body.workspaceID)
   if (body.profileSource.executionHost !== (distro ? `wsl:${distro}` : "local")) throw new Error("Recurrence execution host changed")
   const connection = await deps.manager.getSharedServiceConnection(body.workspaceID)
-  if (!workspace || !connection || !await deps.manager.ownsLocation(body.workspaceID, body.location, connection.client, signal)) throw new Error("Recurrence owner unavailable")
+  if (!workspace || !connection || !await deps.manager.ownsLocation(body.workspaceID, body.location, connection.client, { signal })) throw new Error("Recurrence owner unavailable")
   const location = await connection.client.location.get({ location: { directory: body.location.directory } }, { signal })
   connection.assertCurrent(); signal.throwIfAborted()
   if (!sameLocation(location, body.location) || deps.manager.get(body.workspaceID) !== workspace

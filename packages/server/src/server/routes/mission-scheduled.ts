@@ -166,7 +166,7 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
               },
               refresh: async () => {
                 check(owned)
-                if (!await manager.ownsLocation(selected.data.id, location, client, lifetime.signal)) throw new Error("Mission schedule Location changed")
+                if (!await manager.ownsLocation(selected.data.id, location, client, { signal: lifetime.signal })) throw new Error("Mission schedule Location changed")
                 const owner = await readRecurrenceHoldOwner(manager, selected.data.id, workspace, location.directory, client, lifetime.signal)
                 check(owned)
                 if (!owner) throw new Error("Mission schedule physical owner unavailable")

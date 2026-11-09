@@ -23,6 +23,9 @@ export function missionCalendarPlans(doc: MissionDocument, now: number, principa
   // Schedules keep slots 0..n-1; the internal event check, when present, follows them.
   const principal = model.schedules.map((timing): { when: MissionCalendarWhen; anchorAt: number } => {
     switch (timing.kind) {
+      case "now":
+        if (doc.oneShotAt === null) throw new Error("Mission once-now instant unavailable")
+        return { when: { type: "at", at: new Date(doc.oneShotAt).toISOString(), tz: zone }, anchorAt: doc.oneShotAt - 1 }
       case "at": return { when: { type: "at", at: new Date(doc.oneShotAt ?? timing.at).toISOString(), tz: timing.zone }, anchorAt: doc.firstPlayedAt! }
       case "in": return { when: { type: "in", in: `${timing.delayMs} millis`, tz: zone }, anchorAt: (doc.oneShotAt ?? now + timing.delayMs) - timing.delayMs }
       case "every":

@@ -64,7 +64,9 @@ test("a legacy frequency with a condition reads as schedule cards first, then th
     assert.deepEqual(alone.criteria.map(row => row.kind), [event.kind]); assert.deepEqual(missionCardConnectors(alone.criteria), [])
     assert.ok("timing" in missionSchedulingPolicy(alone, "/project"), "unchanged, it keeps launching once")
   }
-  assert.deepEqual(decode(legacy({ kind: "immediate" })).criteria, [], "one-time Missions have no criteria")
+  const immediate = legacy({ kind: "immediate" }), decodedImmediate = decode(immediate)
+  assert.deepEqual(decodedImmediate.criteria.map(row => row.kind), ["now"])
+  assert.deepEqual(missionSchedulingPolicy(decodedImmediate), immediate, "the visible once-now keeps stored immediate policy bytes")
 })
 
 test("retired options and mixed zones retain the exact stored policy until replaced", () => {

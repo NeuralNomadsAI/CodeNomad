@@ -16,7 +16,7 @@ export async function admitMissionCreationLocations(manager: MissionCreationMana
   workspaceID: string, connection: ServiceConnection, locations: readonly LocationRef[], signal: AbortSignal,
   operation?: MissionCreationOperation) {
   const resolve = async (location: LocationRef) => {
-    if (!manager.get(workspaceID) || !await manager.ownsLocation(workspaceID, location, connection.client, signal)) {
+    if (!manager.get(workspaceID) || !await manager.ownsLocation(workspaceID, location, connection.client, { signal })) {
       throw new MissionControlError("Mission creation location is not owned", "foreign-session")
     }
     const directory = await manager.getServiceDirectoryForPath(workspaceID, location.directory)
@@ -72,7 +72,7 @@ export async function prepareMissionRootCreationLocation(input: {
       ...locationRequestOptions(input.rootLocation), signal,
     })
     if (resolved.project.id !== input.projectID || !sameLocation(resolved, { directory })
-      || !await manager.ownsLocation(workspaceID, resolved, connection.client, signal)) {
+      || !await manager.ownsLocation(workspaceID, resolved, connection.client, { signal })) {
       throw new MissionControlError("Foreign effective mission root location", "foreign-session")
     }
     await assertCurrent()

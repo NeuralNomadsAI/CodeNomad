@@ -5,9 +5,9 @@ export const missionCreateMessages = {
   "missions.create.options": "选项",
   "missions.create.agents": "代理和模型",
   "missions.create.submit": "创建",
-  "missions.create.brief.start": "从已保存的简述开始",
+  "missions.create.brief.start": "从配置开始",
   "missions.create.brief.none": "空白任务",
-  "missions.create.brief.more": "已保存简述的操作",
-  "missions.create.brief.saveAs": "另存为简述",
-  "missions.create.brief.cancel": "取消保存简述",
+  "missions.create.brief.more": "已保存配置的操作",
+  "missions.create.brief.saveAs": "保存配置",
+  "missions.create.brief.cancel": "取消保存配置",
 } as const

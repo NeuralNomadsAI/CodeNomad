@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.startOnCreation": "Oluştururken başlat",
+  "missions.scheduling.source.now": "Bir kez, şimdi",
   "missions.settings.effectiveOrigin": "OpenCode yapılandırma dosyası:",
   "missions.settings.noOrigin": "Belge yolu yok",
   "missions.settings.projectTarget": "Projenin yazma hedefi",

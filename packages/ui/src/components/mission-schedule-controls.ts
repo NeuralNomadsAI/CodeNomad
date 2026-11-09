@@ -23,7 +23,7 @@ export function exactMissionScheduleControl(result: ControlReceipt, hold: Hold, 
 
 export function createMissionScheduleControls(props: { instanceId: string; projectID?: string; directory: string;
   document: () => UnifiedMissionSchedule; active: () => boolean; enabled: () => boolean; refreshVersion: () => number;
-  refresh: () => void; onDeleted: () => void }) {
+  refresh: () => void; onDeleted: () => void; captureOperation?: () => (() => boolean) }) {
   const { t } = useI18n()
   const identity = () => JSON.stringify([props.instanceId, props.projectID, props.directory, props.document().id])
   const [busy, setBusy] = createSignal(false), [feedback, setFeedback] = createSignal<string>()
@@ -36,8 +36,8 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     client: instances().get(props.instanceId)?.client, generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
     { equals: (a, b) => !!a && a.key === b.key && a.active === b.active && a.client === b.client && a.generation === b.generation })
   const capture = () => {
-    const owner = capabilityOwner()
-    return () => alive && props.active() && capabilityOwner() === owner
+    const owner = capabilityOwner(), operation = props.captureOperation?.() ?? (() => true)
+    return () => alive && props.active() && capabilityOwner() === owner && operation()
   }
   let previousOwner: ReturnType<typeof capabilityOwner> | undefined
   createEffect(() => {
@@ -64,10 +64,10 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       bump()
     })
   }
-  const capable = (action: Action) => props.active() && props.enabled() && !busy() && props.document().availableActions.includes(action)
+  const capable = (action: Action, creation = false) => props.active() && props.enabled() && !busy() && props.document().availableActions.includes(action)
      && (held()?.minimumRevision === undefined || props.document().revision >= held()!.minimumRevision!)
      && (!requiresMissionCalendar(props.document().configuration.launch) || !["play", "resume", "run-now"].includes(action)
-       || capability() === "available" || action !== "run-now" && capability() === "activatable")
+        || creation && action === "play" || capability() === "available" || action !== "run-now" && capability() === "activatable")
     && (!held() || action === "check" && held()!.phase === "control" && held()!.partial && !held()!.original)
   async function receipt(key: string, hold: Hold, current: () => boolean) {
     const doc = props.document(), result = await serverApi.fetchMissionSchedule(props.instanceId, doc.id,
@@ -108,8 +108,8 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     } catch { /* Negative or failed reads preserve the original identity. */ }
     finally { if (current()) setBusy(false) }
   }
-  async function act(action: Action) {
-    if (!capable(action)) return
+  async function act(action: Action, creation = false) {
+    if (!capable(action, creation)) return
     const current = capture(), key = identity(), original = props.document(), previous = held()
     setBusy(true); setFeedback(undefined)
     let dispatched: Hold | undefined
@@ -117,7 +117,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       // The button/confirmation describes an exact revision, not a live draft.
       const latest = await serverApi.fetchMissionSchedule(props.instanceId, original.id, { directory: props.directory })
       if (!current()) return
-      if (!latest.document || latest.document.revision !== original.revision) {
+      if (!latest.document || latest.document.id !== original.id || latest.document.revision !== original.revision) {
         setFeedback("missions.scheduleList.conflict"); props.refresh(); return
       }
       if (action === "stop" || action === "delete" || action === "run-now") {
@@ -181,5 +181,8 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   }
   const label = (action: Action) => t(action === "delete" ? "missionsPanel.picker.delete" : action === "run-now" ? "missionsPanel.action.runNow"
     : action === "check" ? "missionsPanel.action.checkPassage" : action === "play" ? "missionsPanel.action.start" : `missionsPanel.action.${action}`)
-  return { held, publishing, busy, feedback, capability, capable, act, reconcile, label }
+  // Direct creation already has an exact document receipt. Its continuation still
+  // rereads the document and capability before any activation or Play dispatch.
+  return { held, publishing, busy, feedback, capability, capable, act, reconcile, label,
+    startCreated: () => act("play", true) }
 }
