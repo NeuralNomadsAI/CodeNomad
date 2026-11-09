@@ -18,6 +18,9 @@ type Entry = {
   remove?: () => void
   revoked: boolean
   validation: number
+  validationResult?: Promise<boolean>
+  health: number
+  inventoryFailed?: boolean
   inventory?: Promise<BackendClient>
   inventoryDirty?: boolean
 }
@@ -73,9 +76,16 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     return dispose
   })
 
-  async function validate(id: string, entry: Entry, attempt?: AbortSignal, publish = true): Promise<boolean> {
+  function validate(id: string, entry: Entry, attempt?: AbortSignal, publish = true): Promise<boolean> {
+    return entry.validationResult = runValidation(id, entry, attempt, publish)
+  }
+
+  async function runValidation(id: string, entry: Entry, attempt?: AbortSignal, publish = true): Promise<boolean> {
     const validation = ++entry.validation
     const active = () => validation === entry.validation && !attempt?.aborted && current(id, entry)
+    // A superseded stream gate follows the newer verdict, without publishing its own reply.
+    const superseded = () => publish && !attempt?.aborted && current(id, entry)
+      ? entry.validationResult! : false
     if (!active()) return false
     const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(8000), ...attempt ? [attempt] : []])
     try {
@@ -83,12 +93,12 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       const response = await entry.client.fetch(entry.client.url("/api/meta"), {
         credentials: "include", cache: "no-store", signal,
       })
-      if (!active()) return false
+      if (!active()) return superseded()
       signal.throwIfAborted()
       if (response.status === 404) { detach(id, "refused"); return false }
       if (!response.ok) throw response.status === 401 ? "unauthorized" : "unreachable"
       const meta: ServerMeta | null = await response.json()
-      if (!active()) return false
+      if (!active()) return superseded()
       signal.throwIfAborted()
       if (backendCompatibility(meta) !== "compatible" || entry.serverId && entry.serverId !== meta?.serverId) {
         detach(id, "refused")
@@ -99,10 +109,12 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         detach(id, "refused")
         return false
       }
-      if (entry.detach && publish) setState(id, "compatible")
+      if (entry.detach && publish && !entry.inventoryFailed) setState(id, "compatible")
       return active()
     } catch (error) {
+      if (!active()) return superseded()
       if (active()) {
+        entry.health++
         if (error instanceof SyntaxError) { detach(id, "refused"); return false }
         // Temporary connection failure preserves the attachment and its ordinary retry path.
         setState(id, error === "unauthorized" ? "unauthorized" : "unreachable")
@@ -122,7 +134,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     if (active) return active.revoked ? Promise.resolve(undefined) : active.pending
     const client = options.createClient ? options.createClient(id) : createRemoteBackendClient(id, { bindRelayAuthority: true })
     const entry: Entry = { profile: { ...profile }, client, controller: new AbortController(),
-      pending: Promise.resolve(undefined), revoked: false, validation: 0 }
+      pending: Promise.resolve(undefined), revoked: false, validation: 0, health: 0 }
     entries.set(id, entry)
     setState(id, "admitting")
     entry.pending = (async () => {
@@ -145,7 +157,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         return current(id, entry) ? client : undefined
       } catch {
         if (current(id, entry) && !entry.detach) detach(id, "unreachable")
-        if (current(id, entry)) { setState(id, "unreachable"); return client }
+        if (current(id, entry)) { entry.inventoryFailed = true; setState(id, "unreachable"); return client }
         return undefined
       }
     })()
@@ -171,15 +183,19 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       for (let pass = 0; pass < 2; pass++) {
         if (!active()) throw unavailable()
         if (!await validate(id, entry, signal, false) || !active()) throw unavailable()
-        const validation = entry.validation
+        const health = entry.health
         try {
           await options.loadWorkspaces(entry.client, signal!)
         } catch (error) {
-          if (active() && entry.validation === validation && states[id] !== "unauthorized") setState(id, "unreachable")
+          if (active()) {
+            entry.inventoryFailed = true
+            if (states[id] !== "unauthorized") setState(id, "unreachable")
+          }
           throw error
         }
-        if (!active() || entry.validation !== validation) throw unavailable()
+        if (!active() || entry.health !== health) throw unavailable()
         if (!entry.inventoryDirty) {
+          entry.inventoryFailed = false
           setState(id, "compatible")
           return entry.client
         }
