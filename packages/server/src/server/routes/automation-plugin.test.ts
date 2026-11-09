@@ -233,6 +233,35 @@ test("WebKit browser claims, probes and native actions succeed independently of 
   }
 })
 
+test("Mission preference and preparation claims remain available without browser automation", async t => {
+  const app = Fastify({ logger: false })
+  t.after(() => app.close())
+  const strictReads: boolean[] = []
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
+    nativeParent: { available: true, browserAutomationUnavailable: true },
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+      list: () => [{ id: "owner" }],
+      ownsLocation: async (_id: string, _location: unknown, _client: unknown, options: { strict: boolean }) => {
+        strictReads.push(options.strict)
+        return true
+      },
+    },
+  } as never)
+  for (const purpose of ["mission-preferences", "mission-prepare"]) {
+    const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+      headers: { "x-codenomad-automation-token": "secret" }, payload: { mode: "browser-claim", sessionID: "owned", purpose } })
+    assert.equal(response.statusCode, 200, purpose)
+    assert.deepEqual(response.json(), { result: { available: true, missionCreationDefaults: true } })
+  }
+  const browser = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "secret" }, payload: { mode: "browser-claim", sessionID: "owned" } })
+  assert.equal(browser.statusCode, 409)
+  assert.equal(browser.json().code, "unsupported")
+  assert.deepEqual(strictReads, [true, true, false])
+})
+
 test("a backend without a desktop host claims owned sessions for Mission dispatch only", async () => {
   const app = Fastify({ logger: false })
   const nativeCalls: string[] = []

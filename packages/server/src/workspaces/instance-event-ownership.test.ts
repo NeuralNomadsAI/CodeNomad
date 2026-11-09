@@ -115,7 +115,7 @@ test("registered-only event ownership retains clone, nested-folder, alias and in
   assert.equal(await owns(linked), false, "a nested opening must not grant the whole sibling checkout")
   assert.equal(await owns(path.join(clone, "nested")), false, "native project IDs cannot authorize an independent physical clone")
   assert.equal(refreshes, 0)
-  assert.equal(await manager.getServiceDirectoryForPath(workspace.id, path.join(alias, "nested"), "event"), realpathSync(path.join(linked, "nested")))
+  assert.equal(await manager.getServiceDirectoryForPath(workspace.id, path.join(alias, "nested"), { purpose: "event" }), realpathSync(path.join(linked, "nested")))
   // Even if the files remain present, removal from the native registration is
   // sufficient to revoke membership after a worktree event/mutation fence.
   registered = [repo, clone]
@@ -169,13 +169,13 @@ test("cold registered-only ownership after cancellation never acquires or provis
   const cancelled = new AbortController()
   cancelled.abort(new Error("cancelled observation"))
   const target = path.join(linked, "nested")
-  await assert.rejects(manager.ownsLocation(workspace.id, { directory: target }, undefined, cancelled.signal, "event"), /cancelled observation/)
-  assert.equal(await manager.ownsLocation(workspace.id, { directory: target }, undefined, undefined, "event"), true)
+  await assert.rejects(manager.ownsLocation(workspace.id, { directory: target }, undefined, { signal: cancelled.signal, purpose: "event" }), /cancelled observation/)
+  assert.equal(await manager.ownsLocation(workspace.id, { directory: target }, undefined, { purpose: "event" }), true)
   assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, target, "event"), canonicalWorktreeIdentity(linked))
   assert.deepEqual([discoveries, starts, preparations, constructions, refreshes], [1, 0, 1, 1, 0])
   service.invalidate()
   manager.invalidateWorktrees("blocking")
-  await assert.rejects(manager.ownsLocation(workspace.id, { directory: target }, undefined, undefined, "event"), /no existing connection/)
+  await assert.rejects(manager.ownsLocation(workspace.id, { directory: target }, undefined, { purpose: "event" }), /no existing connection/)
   await assert.rejects(manager.getWorktreeIdentityForPath(workspace.id, target, "event"), /no existing connection/)
   assert.throws(connection.assertCurrent, /connection changed/)
   assert.deepEqual([discoveries, starts, preparations, constructions, refreshes], [1, 0, 1, 1, 0])

@@ -139,7 +139,7 @@ export class PermissionReceipts {
       for (const value of locations) {
         if (!current()) return
         const location = readLocationRef(value)
-        if (!await this.recoveryRead(signal, () => this.manager.ownsLocation(event.instanceId, location, connection.client, signal, "event"))) continue
+        if (!await this.recoveryRead(signal, () => this.manager.ownsLocation(event.instanceId, location, connection.client, { signal, purpose: "event" }))) continue
         if (!current()) return
         const pending = await connection.client.permission.request.list({ location: { directory: location.directory } }, {
           ...locationRequestOptions(location), ...options(),
@@ -152,7 +152,7 @@ export class PermissionReceipts {
           try { session = await connection.client.session.get({ sessionID: request.sessionId }, options()) }
           catch (error) { if (isSessionNotFoundError(error)) continue; throw error }
           if (!current()) return
-          if (!await this.recoveryRead(signal, () => this.manager.ownsLocation(event.instanceId, session.location, connection.client, signal, "event"))) continue
+          if (!await this.recoveryRead(signal, () => this.manager.ownsLocation(event.instanceId, session.location, connection.client, { signal, purpose: "event" }))) continue
           if (!current()) return
           await this.store.capture(scope, request)
         }

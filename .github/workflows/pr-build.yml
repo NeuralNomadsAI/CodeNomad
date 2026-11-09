@@ -508,6 +508,7 @@ jobs:
           packages/ui/src/stores/mission-task-pages.test.ts
           packages/ui/src/stores/mission-task-seen.test.ts
           packages/ui/tests/contracts/mission-task-page-read.test.ts
+          packages/ui/tests/contracts/mission-defaults.test.ts
           packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
           packages/ui/src/components/mission-briefing-model.test.ts
