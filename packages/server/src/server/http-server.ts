@@ -31,6 +31,8 @@ import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerImagesConversationRoute } from "./routes/images-conversation"
 import { registerSessionGoalRoute } from "./routes/session-goal"
+import { registerBackgroundShellRoutes } from "./routes/background-shells"
+import { ownedShellDirectory } from "../opencode/background-shells"
 import { registerSessionMediaRoutes } from "./routes/session-media"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerPendingRequestRoutes } from "./routes/pending-requests"
@@ -490,6 +492,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
+  registerBackgroundShellRoutes(app, deps.workspaceManager)
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
@@ -1155,11 +1158,12 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   if (shellId) {
     try {
       const shell = await wait((await clientForRequest()).shell.get({ id: shellId, location: { directory: runtimeLocation.directory } }, runtimeLocationOptions))
-      if (!(await wait(workspaceManager.ownsDirectory(workspaceId, shell.data.cwd)))) {
+      const ownerDirectory = await wait(ownedShellDirectory(shell.data, await clientForRequest(), directory => workspaceManager.ownsDirectory(workspaceId, directory), signal))
+      if (!ownerDirectory) {
         reply.code(403).send({ error: "Shell does not belong to workspace" })
         return
       }
-      mutationDirectories.add(shell.data.cwd)
+      mutationDirectories.add(ownerDirectory)
     } catch (error) {
       if (isShellNotFoundError(error)) {
         reply.code(404).send({ error: "Shell not found" })

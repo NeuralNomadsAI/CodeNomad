@@ -89,8 +89,8 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 Le panneau Statut expose l’utilisation du fournisseur de la session active et les Shells natifs en arrière-plan. Le statut des conversations et l’activité des enfants indiquent les sessions actives, en compactage ou en attente de saisie. Surveiller un Shell en arrière-plan est distinct de l’envoi d’une demande Shell depuis la zone de saisie ou de l’utilisation d’un SideCar terminal hébergé séparément.
 
 1. Ouvrez **Statut → Shells en arrière-plan** pour la Location de la conversation sélectionnée (ou l’espace de travail ouvert si aucune conversation n’est sélectionnée).
-2. Consultez la commande, le shell, le répertoire, le statut, le PID et le code de sortie lorsqu’ils sont fournis ; choisissez **Afficher la sortie** pour voir la sortie native disponible.
-3. Pour en retirer un, utilisez **Arrêter et supprimer** pendant son exécution, ou **Supprimer** après sa sortie, et confirmez la cible.
+2. Seules les commandes en cours explicitement passées en arrière-plan sont listées, une par ligne. Survolez une ligne pour voir le shell, le dossier et le PID ; son icône **Afficher la sortie** ouvre la sortie native. Si OpenCode ne fournit pas l’API des tâches en arrière-plan, une erreur de chargement s’affiche.
+3. Utilisez l’icône **Arrêter et supprimer** de la ligne et confirmez la cible.
 
 Supprimer un Shell en cours arrête ce processus ; fermer sa fenêtre de sortie ne l’arrête pas. L’actualisation ou la reconnexion lit l’état natif actuel au lieu de reconstruire les événements de sortie manqués.
 
