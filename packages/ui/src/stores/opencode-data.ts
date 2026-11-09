@@ -86,6 +86,11 @@ type TranscriptEntry = {
    * drops the newest publication demand. */
   settlementReadEpoch: number
   queue: QueuedTranscriptEvent[]
+  /** Delivered prompts (inbox id → the row that followed the prompt's row at
+   * admission). The SDK reducer answers `session.inbox.delivered` by moving
+   * the prompt's row to the tail, which sinks it below a reply row appended
+   * between enqueue and admission; projections restore the recorded pair. */
+  deliveredPromptAnchors: Map<string, string>
   onResynced?: (data: Data) => void
 }
 
@@ -327,6 +332,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     settlementReadPending: false,
     settlementReadEpoch: 0,
     queue: [],
+    deliveredPromptAnchors: new Map(),
   }
   transcriptEntries.set(key, transcript)
   return transcript
@@ -344,6 +350,40 @@ function replaceTranscriptEntry(transcript: TranscriptEntry, next: DataEntry): v
   transcript.entry = next
   previous.dispose()
   transcript.entryRevision[1]((value) => value + 1)
+}
+
+/** Records, before admitting `session.inbox.delivered`, the reducer row that
+ * follows the delivered prompt. The SDK's delivery handler moves the prompt's
+ * row to the tail of its list; when a reply row was appended between the
+ * prompt's enqueue and its admission, that move would sink the prompt below
+ * the reply it triggered until an authoritative read replaces the reducer. */
+function captureDeliveredPromptAnchor(transcript: TranscriptEntry, entry: DataEntry, event: OpenCodeEvent): void {
+  if (event.type !== "session.inbox.delivered") return
+  const sessionId = eventSessionId(event)
+  const inboxID = (event.data as { inboxID?: unknown }).inboxID
+  if (!sessionId || typeof inboxID !== "string") return
+  const rows = entry.data.session.message.list(sessionId)
+  const index = rows.findIndex(row => row.id === inboxID)
+  if (index < 0) return
+  const follower = rows[index + 1]
+  if (follower && follower.id !== inboxID) transcript.deliveredPromptAnchors.set(inboxID, follower.id)
+}
+
+/** Restores each recorded prompt directly above the row that followed it at
+ * admission, matching the native order the authoritative page carries. The
+ * record is consumed once both rows sit in that order or either is gone. */
+function applyDeliveredPromptAnchors(anchors: Map<string, string>, rows: SessionMessageInfo[]): void {
+  if (!anchors.size) return
+  for (const [promptId, followerId] of anchors) {
+    const promptIndex = rows.findIndex(row => row.id === promptId)
+    const followerIndex = rows.findIndex(row => row.id === followerId)
+    if (promptIndex < 0 || followerIndex < 0 || promptIndex < followerIndex) {
+      anchors.delete(promptId)
+      continue
+    }
+    const [prompt] = rows.splice(promptIndex, 1)
+    rows.splice(rows.findIndex(row => row.id === followerId), 0, prompt)
+  }
 }
 
 function getOpenCodeFullDataRevision(instanceId: string, sessionId: string): number {
@@ -589,6 +629,7 @@ async function drainTranscriptQueue(
         break
       }
       transcript.queue.shift()
+      captureDeliveredPromptAnchor(transcript, entry, queued.event)
       entry.emit(queued.event)
       if (queued.event.type === "session.step.started") {
         // Keep each replay chunk's synchronous budget untouched: the scan runs
@@ -794,6 +835,7 @@ export function applyOpenCodeDataEvent(
       return transcript.entry.data
     }
   }
+  if (transcript) captureDeliveredPromptAnchor(transcript, entry, event)
   entry.emit(event)
   // A finished round's tool still running or streaming once a later round
   // began lost its terminal event mid-execution: reconcile it at this step
@@ -919,6 +961,7 @@ export function projectOpenCodeMessages(
     || transcript.needsAuthoritativeResync
     || (transcript.resyncing && !transcript.reconnectResync))) return
   const source = data.session.message.list(sessionId).slice(-MESSAGE_WINDOW_PAGE_SIZE)
+  if (transcript) applyDeliveredPromptAnchors(transcript.deliveredPromptAnchors, source)
   const store = messageStoreBus.getOrCreate(instanceId)
   // During pruning reconciliation, only loadMessages owns native page
   // membership and pagination. The SDK seed may update resident messages, not

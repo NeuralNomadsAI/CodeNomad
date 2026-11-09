@@ -97,6 +97,20 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     nativeInbox.push({ id, sessionID: sessionId, type: "user", payload: { text }, delivery: "queue", time: { created: ++time } })
     emit("session.inbox.enqueued", { inboxID: id, item: { type: "user", payload: { text }, delivery: "queue" } })
   },
+  /** Another client sends to the idle session: the daemon parks the prompt in
+   * the inbox (delivery steer) and the execution starts before admission, so
+   * `session.inbox.delivered` lands only once the engine admits the prompt. */
+  remoteEnqueue: (id: string, text: string) => {
+    nativeInbox.push({ id, sessionID: sessionId, type: "user", payload: { text }, delivery: "steer", time: { created: ++time } })
+    emit("session.inbox.enqueued", { inboxID: id, item: { type: "user", payload: { text }, delivery: "steer" } })
+    emit("session.execution.started", {})
+  },
+  /** The engine admits the parked prompt: it leaves the inbox and its row persists. */
+  remoteDeliver: (id: string) => {
+    const [item] = nativeInbox.splice(nativeInbox.findIndex(entry => entry.id === id), 1)
+    nativeMessages.push({ type: "user", text: item.payload.text, id, time: { created: ++time } })
+    emit("session.inbox.delivered", { inboxID: id })
+  },
   /** The engine starts the parked follow-up: its native row persists and it leaves the inbox. */
   deliverQueued: (id: string) => {
     const [item] = nativeInbox.splice(nativeInbox.findIndex(entry => entry.id === id), 1)

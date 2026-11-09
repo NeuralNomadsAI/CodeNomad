@@ -1618,7 +1618,11 @@ describe("OpenCode data projection", () => {
       } })
       apply({ id: "delivered", type: "session.inbox.delivered", created: 3, data: { sessionID: sessionId, inboxID: "queued" } })
 
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["other", "queued"])
+      // The delivered prompt keeps the row it held at admission; the parked
+      // prompt stays a pending tail the transcript pins for display either way.
+      // Sinking the delivered prompt below later rows is what the native page
+      // order never carries.
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["queued", "other"])
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
