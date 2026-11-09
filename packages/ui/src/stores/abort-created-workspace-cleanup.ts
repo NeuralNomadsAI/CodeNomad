@@ -38,6 +38,9 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   // Exact request fences survive duplicate responses; settled entries retain no client or attachment.
   private readonly settled = new Set<string>()
   private readonly settledRequests = new Set<string>()
+  private readonly cancelledRequests = new Map<string, number>()
+  private readonly userOpenings = new Map<string, number>()
+  private observationSequence = 0
   private readonly markers = new Map<string, { requestKey: string; tombstone: boolean }>()
   private readonly pendingRequestIds = new Map<string, boolean>()
 
@@ -86,6 +89,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   settleRequest(requestKey: string): void {
+    if (!this.settledRequests.has(requestKey)) this.cancelledRequests.set(requestKey, ++this.observationSequence)
     this.settledRequests.add(requestKey)
     this.finishRequest(requestKey)
     for (const owner of [this.owned, this.retired]) {
@@ -99,6 +103,15 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
 
   isRequestSettled(requestKey: string): boolean {
     return this.settledRequests.has(requestKey)
+  }
+
+  shouldIgnoreObservation(workspaceId: string, requestKey: string, reused = false): boolean {
+    const cancelled = this.cancelledRequests.get(requestKey)
+    if (reused || cancelled === undefined) return false
+    if (this.options.isCurrentKey && !this.options.isCurrentKey(workspaceId, requestKey)) return false
+    // A delayed cancelled descriptor stays stale; a later user occurrence stays visible.
+    if (cancelled > (this.userOpenings.get(workspaceId) ?? 0)) this.markers.set(workspaceId, { requestKey, tombstone: true })
+    return true
   }
 
   forgetRequest(workspaceId: string, requestId: string): void {
@@ -155,6 +168,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     if (requestKey) {
       if (this.options.requestKey) this.settledRequests.add(requestKey)
       else this.settled.add(JSON.stringify([workspace.id, requestKey]))
+      if (tombstone && !this.cancelledRequests.has(requestKey)) this.cancelledRequests.set(requestKey, ++this.observationSequence)
       if (owner === this.owned && tombstone) this.markers.set(workspace.id, { requestKey, tombstone })
     }
     this.options.onSettled?.(workspace)
@@ -162,7 +176,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
 
   get(workspaceId: string, includePending = false): T | undefined {
     const entry = this.owned.get(workspaceId)
-    return entry && !("released" in entry) && !("tombstone" in entry) && (includePending || !("completion" in entry)) ? entry.workspace : undefined
+    return entry && !("tombstone" in entry) && (includePending || (!("released" in entry) && !("completion" in entry))) ? entry.workspace : undefined
   }
 
   async releaseAfter(workspaceId: string, operation: (workspace: T) => Promise<void>, requestKey?: string): Promise<T | undefined> {
@@ -192,6 +206,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   releaseTombstoneForUserCreate(workspaceId: string): void {
+    this.userOpenings.set(workspaceId, ++this.observationSequence)
     this.markers.delete(workspaceId)
     const entry = this.owned.get(workspaceId)
     if (entry && ("tombstone" in entry || "released" in entry)) {

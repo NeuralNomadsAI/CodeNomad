@@ -487,11 +487,13 @@ type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean; rece
 const workspaceListReconciliationFence = new BackendWorkspaceListReconciliationFence()
 const restoreCreationReceipts = new Map<string, WorkspaceOperationReceipt>()
 
-function observeRestoreWorkspace(workspace: WorkspaceDescriptor): RestoreWorkspaceDescriptor {
+function observeRestoreWorkspace(workspace: WorkspaceDescriptor): RestoreWorkspaceDescriptor | undefined {
   const backendId = parseInstanceKey(workspace.id).backendId
+  const requestKey = workspace.requestId && workspaceRequestKey(backendId, workspace.requestId, serverEvents.signal(backendId))
+  if (requestKey && restoreCreatedWorkspaceCleanup.shouldIgnoreObservation(workspace.id, requestKey, (workspace as RestoreWorkspaceDescriptor).reused)) return undefined
   const tracked = restoreCreatedWorkspaceCleanup.get(workspace.id, true)
-  const receipt = workspace.requestId
-    ? restoreCreationReceipts.get(workspaceRequestKey(backendId, workspace.requestId, serverEvents.signal(backendId)))
+  const receipt = requestKey
+    ? restoreCreationReceipts.get(requestKey)
     : tracked?.receipt
   // An observation may enrich a claim only on its original attachment.
   return receipt?.attached() ? { ...workspace, requestId: workspace.requestId ?? receipt.requestId,
@@ -1383,6 +1385,7 @@ async function refreshWorkspaceList(
     const remoteIds = new Set(workspaces.map(({ id }) => id))
     for (const descriptor of workspaces) {
       const workspace = observeRestoreWorkspace(descriptor)
+      if (!workspace) continue
       if (signal?.aborted) return
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
       restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
@@ -1480,6 +1483,7 @@ function handleWorkspaceEvent(event: BackendEventPayload) {
   }
   if ("workspace" in event) {
     const workspace = observeRestoreWorkspace(event.workspace)
+    if (!workspace) return
     restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
     if (restoreCreationCommitGates.deferWorkspace(workspace)) return
   }
