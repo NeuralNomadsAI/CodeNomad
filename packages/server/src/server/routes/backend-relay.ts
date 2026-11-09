@@ -1,14 +1,29 @@
 import { Readable } from "node:stream"
-import type { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyRequest } from "fastify"
 import { ConnectBody, type RemoteServerBrowseManager } from "../../codenomad-servers/browse-manager"
 import { endpointErrorCode } from "../../codenomad-servers/client"
 import { guardLocalBackendCaller } from "../../codenomad-servers/local-caller"
 import { isLocalOnly } from "../../remote-control/gate"
 import { routedPath } from "../routed-path"
-import { RELAY_AUTHORITY_HEADER, RELAY_AUTHORITY_QUERY, RELAY_BOOTSTRAP } from "../../codenomad-servers/relay-authority"
+import { isRelayAuthority, RELAY_AUTHORITY_HEADER, RELAY_AUTHORITY_QUERY, RELAY_BOOTSTRAP } from "../../codenomad-servers/relay-authority"
 
 const profileId = /^[A-Za-z0-9_-]{1,64}$/
 const responseHeaders = new Set(["content-type", "content-length", "content-disposition", "content-range", "accept-ranges", "etag", "last-modified", "retry-after"])
+
+function relayAuthority(request: FastifyRequest, target = request.raw.url ?? "") {
+  let proof = request.headers[RELAY_AUTHORITY_HEADER]
+  const url = new URL(target, "http://relay.invalid")
+  const query = url.searchParams.getAll(RELAY_AUTHORITY_QUERY)
+  const headerCount = request.raw.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === RELAY_AUTHORITY_HEADER).length
+  if (headerCount > 1 || query.length > 1 || query.length && proof !== undefined && proof !== query[0]) throw new Error("unreachable")
+  if (query.length) {
+    proof = query[0]
+    url.searchParams.delete(RELAY_AUTHORITY_QUERY)
+    target = `${url.pathname}${url.search}`
+  }
+  if (proof !== undefined && proof !== RELAY_BOOTSTRAP && !isRelayAuthority(proof)) throw new Error("unreachable")
+  return { proof, target }
+}
 
 /** Raw bodies and response streams retain the request and saved client's cancellation. */
 export function registerBackendRelayRoutes(app: FastifyInstance, deps: { manager: RemoteServerBrowseManager; getSelfOrigins(): Set<string> }) {
@@ -20,7 +35,7 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: { manager
       const abort = () => controller.abort()
       reply.raw.once("close", abort)
       try {
-        const proof = request.headers[RELAY_AUTHORITY_HEADER]
+        const { proof } = relayAuthority(request)
         // Login/status bootstrap is needed to authenticate a candidate before metadata admission.
         if (proof !== undefined && proof !== RELAY_BOOTSTRAP) deps.manager.assertProof(request.params.id, proof)
         return await deps.manager.connect(request.params.id, ConnectBody.parse(request.body ?? {}), controller.signal)
@@ -31,7 +46,7 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: { manager
     scope.post<{ Params: { id: string } }>("/api/backends/:id/api/auth/logout", async (request, reply) => {
       if (!profileId.test(request.params.id)) return reply.code(404).send({ error: "unknown_server" })
       try {
-        const proof = request.headers[RELAY_AUTHORITY_HEADER]
+        const { proof } = relayAuthority(request)
         if (proof !== undefined) deps.manager.assertProof(request.params.id, proof)
         return deps.manager.forget(request.params.id)
       } catch { return reply.code(502).send({ error: "unreachable" }) }
@@ -62,15 +77,9 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: { manager
         reply.raw.once("finish", cleanup)
         reply.raw.once("close", cleanup)
         try {
-          let proof: unknown = request.headers[RELAY_AUTHORITY_HEADER]
-          const url = new URL(target, "http://relay.invalid")
-          const query = url.searchParams.getAll(RELAY_AUTHORITY_QUERY)
-          if (query.length) {
-            if (query.length !== 1 || proof !== undefined && proof !== query[0]) throw new Error("unreachable")
-            proof = query[0]
-            url.searchParams.delete(RELAY_AUTHORITY_QUERY)
-            target = `${url.pathname}${url.search}`
-          }
+          const authority = relayAuthority(request, target)
+          const { proof } = authority
+          target = authority.target
           const headers = new Headers()
           for (const name of ["content-type", "accept", "accept-language", "if-none-match", "if-modified-since", "range", "last-event-id",
             "x-codenomad-media", "x-codenomad-location", "x-codenomad-pending-reconciliation", "x-codenomad-human-answer", "x-opencode-directory", "x-opencode-workspace"]) {
