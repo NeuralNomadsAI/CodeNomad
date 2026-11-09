@@ -64,9 +64,21 @@ test("the first criterion defaults to once; Add appends a daily card; connectors
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "now")
     assert.equal(await schedule.locator("details, summary").count(), 0, "scheduling is always expanded")
     assert.equal(await page.getByRole("checkbox").count(), 0)
-    const help = page.locator(".mission-scheduling-when-head").getByRole("link")
+    const help = schedule.locator("h4").getByRole("link")
     assert.equal(await help.count(), 1)
-    await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    const add = page.getByRole("button", { name: "Add a criterion", exact: true })
+    assert.equal(await add.evaluate(button => button.classList.contains("button-primary")), true, "Add uses the shared primary button")
+    const colours = await add.evaluate(button => {
+      const probe = document.createElement("span")
+      probe.style.backgroundColor = "var(--button-primary-bg)"
+      button.append(probe)
+      const expected = getComputedStyle(probe).backgroundColor, actual = getComputedStyle(button).backgroundColor
+      probe.remove()
+      return { expected, actual, radius: getComputedStyle(button).borderRadius }
+    })
+    assert.equal(colours.actual, colours.expected)
+    assert.equal(colours.radius, "0px")
+    await add.click()
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "now")
     assert.equal(await label(page, "Criterion 2 type").inputValue(), "daily")
     assert.deepEqual(await policy(page), { when: [{ kind: "now" }, { kind: "cron", expression: "0 9 * * *", zone: "UTC" }] })
@@ -405,7 +417,7 @@ test("scheduling help opens the localized guide by keyboard without reading the 
         ;(window as any).schedulingOpens = []
         window.open = url => { (window as any).schedulingOpens.push(String(url)); return null }
       })
-      const info = page.locator(".mission-scheduling-when-head").getByRole("link")
+      const info = page.locator(".mission-scheduling h4").getByRole("link")
       await info.focus(); await page.keyboard.press("Enter")
       await page.waitForFunction(() => (window as any).schedulingOpens.length === 1)
       const opened = await page.evaluate(() => (window as any).schedulingOpens as string[])

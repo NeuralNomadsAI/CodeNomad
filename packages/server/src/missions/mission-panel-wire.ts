@@ -9,12 +9,14 @@ export type MissionPanelPageRequest =
   | { source: "tasks"; task: MissionTaskRequest & { missionID: string }; cursor?: MissionPanelCursor }
   | { source: "activity"; missionID: string; actorOffset?: number; actorOrder?: string; cursor?: MissionPanelCursor }
   | { source: "marks"; missionOffset?: number; missionOrder?: string; cursor?: MissionPanelCursor }
+  | { source: "task-marks"; missionID: string; window: MissionPanelSelection; cursor?: MissionPanelCursor }
 export interface MissionPanelPiece { index: number; offset: number; characters: number; text: string }
 export interface MissionPanelPage {
   passage?: import("./mission-current-source").MissionCurrentSource
   available: true; version: 1; projectID: string; source: MissionPanelPageRequest["source"]
   missionID?: string; field?: string; part?: "receipts" | "pending"; text?: true; revision?: number; header?: true; finishHighWater?: number
   phase?: "context" | "observed"; observedAt?: number
+  taskMarksThrough?: number
   discardedEvents?: number; controlUnavailable?: boolean; notificationUnavailable?: boolean; cleanupUnavailable?: boolean
   window?: { order: string; offset: number; end: number; total: number }
   page: { digest: string; total: number; pieces: MissionPanelPiece[]; next?: MissionPanelCursor }

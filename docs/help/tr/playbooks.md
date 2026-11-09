@@ -2,8 +2,6 @@
 
 Rehber, bir görevin koordinatörünün izlediği çalışma yöntemidir: adımlar, işlere verebileceği roller ve her ajanın aldığı talimatlar. Bu sayfa her rehberi, CodeNomad'in kendisinin neyi zorunlu kıldığını ve neyin modelden uyması istenen bir talimat olarak kaldığını açıklar.
 
-Görev formunda **Rehber** yanındaki **ⓘ**, bu kılavuzu dilinizde seçili rehberin bölümünde açar. Adımları, rolleri, soruları ve denetimleri okumak için aşağıdan rehber seçin. Ajan talimatlarında Keşif *Wayfinder Map* olarak adlandırılır.
-
 ## Rehber seçin {#choose}
 
 | Rehber | Ne zaman seçilir |
@@ -258,7 +256,7 @@ Koordinatör tam olarak iki farklı modeli karşılaştırır. Başarısızlıkl
 
 ### CodeNomad'in denetledikleri {#compare-checks}
 
-- Oluşturma sırasında **Model A** ve **Model B** zorunludur ve farklı modeller olmalıdır; yalnızca farklı bir **Düşünme** düzeyi farklı bir model sayılmaz. Siz bir model seçmedikçe hakem, oluşturma sırasında sabitlenen koordinatör modelini kullanır; bu model A veya B ile aynıysa form uyarır.
+- Oluşturma sırasında **Model A** ve **Model B** zorunludur ve farklı modeller olmalıdır; yalnızca farklı bir **Düşünme** düzeyi farklı bir model sayılmaz. Siz bir model seçmedikçe hakem, oluşturma sırasında sabitlenen koordinatör modelini kullanır.
 - Yalnızca İki modeli karşılaştır rehberinin üç rolü kabul edilir. Her çalıştırma ve hakem yeni bir konuşmada başlamalıdır, bir çalıştırma rolünün modelini değiştiremez, model başına tek bir etkin çalıştırma vardır ve iki özet bayt bayt aynı olmalıdır.
 - Yapılandırılmış rapor yalnızca hakem ekleyebilir; rapor tamamlanmış A ve B çalıştırmalarına bu sırayla başvurmalı, her ölçütü en az bir kanıtla 0'dan 10'a kadar bir kez puanlamalı ve dört karardan birini vermelidir.
 - Görev yalnızca tamamlanmış A, B ve hakem işleri ve geçerli bir karşılaştırmayla biter.

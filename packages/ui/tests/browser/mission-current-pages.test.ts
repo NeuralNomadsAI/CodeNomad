@@ -42,7 +42,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     let map = (await f.control.snapshot()).missions[0]
     for (let revision = 0; revision < 15; revision++) map = (await f.control.revise(map.coordinatorSessionId, { missionID: map.id,
       requestID: `tasks-${revision}`, expectedRevision: map.revision, reason: "More tasks", retireTasks: [], dependencyUpdates: [],
-      addTasks: Array.from({ length: 12 }, (_, index) => ({ taskKey: `work-${revision}-${index}`, title: `Work ${revision}-${index}`, brief: "Exact brief 😀 ".repeat(800),
+      addTasks: Array.from({ length: 12 }, (_, index) => ({ taskKey: `work-${revision}-${index}`, title: `Work ${revision}-${index}`, brief: "Exact brief ­ƒÿÇ ".repeat(800),
         role: "specialist", blockedBy: [], executionMode: { kind: "native" as const, parentTaskKey: null } })) })).mission
     for (const [index, task] of map.tasks.entries()) {
       const id = `ses_current_${index}`
@@ -105,10 +105,16 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await page.locator(".mission-tree").waitFor()
     assert.equal(selections.some(input => input.body), false, "initial tracking never requests prose or full passage bodies")
     assert.equal(await page.locator(".mission-tree-gap").count(), 0)
-    assert.equal(await page.locator(".mission-tree-more button").count(), 1)
-    const initialRows = await page.locator(".mission-tree-node").count()
+    assert.equal(await page.locator(".mission-tree-more").count(), 1)
+    assert.equal(await page.locator(".mission-tree-more button").count(), 0)
+    const continued = page.waitForResponse(response => {
+      if (response.request().method() !== "POST") return false
+      const input = response.request().postDataJSON()
+      return input?.selector?.source === "tasks" && input.selector.task.offset > 0
+        && input.source.owner === owner && input.source.missionID === map.id
+    })
     await page.locator(".mission-tree-more").scrollIntoViewIfNeeded()
-    await page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, initialRows)
+    assert.equal((await continued).ok(), true)
     assert.ok(selections.some(input => input.selector.source === "tasks" && input.selector.task.offset > 0
       && input.selector.task.missionID === map.id && input.source.owner === owner && input.source.missionID === map.id), "scroll continuation retains the exact passage owner")
     const openTaskReader = () => page.evaluate(async ({ root, missionID, scheduleID, passageID, owner, taskID }) => {
@@ -210,8 +216,8 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
   page.on("pageerror", error => errors.push(error.message))
   page.on("requestfailed", request => failures.push({ id: request.headers()["x-body-read"], url: request.url(), error: request.failure()?.errorText }))
   try {
-    const lead = "FIRST_PAGE_MARKER\n\n" + "\u0001".repeat(12_000) + "\n", middle = "\n\nSECOND_PAGE_MARKER\n\n"
-    const brief = lead + "\u0001".repeat(17_000 - lead.length) + middle + "\u0001".repeat(3_000 - middle.length)
+    const lead = "FIRST_PAGE_MARKER\n\n" + "^A".repeat(12_000) + "\n", middle = "\n\nSECOND_PAGE_MARKER\n\n"
+    const brief = lead + "^A".repeat(17_000 - lead.length) + middle + "^A".repeat(3_000 - middle.length)
     assert.equal(brief.length, 20_000)
     let map = (await f.control.snapshot()).missions[0]
     map = (await f.control.revise(map.coordinatorSessionId, { missionID: map.id, requestID: "page-back", expectedRevision: map.revision,

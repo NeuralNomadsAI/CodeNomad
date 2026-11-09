@@ -2,7 +2,7 @@
 
 The browser suite lives in `packages/ui/tests/browser/`. Every test file
 borrows its fixture page from a runner-owned fixture daemon, or carries an
-exemption with its own server — `packages/ui/tests/browser/fixture-exemptions.ts`
+exemption with its own server ÔÇö `packages/ui/tests/browser/fixture-exemptions.ts`
 is the single map of who does which, and
 `fixture-wiring.test.ts` enforces the split (borrow-or-exempt, owned-cache
 and protected-shutdown rules for exempt servers, armed navigation budgets
@@ -11,7 +11,7 @@ for every Chromium launch).
 ## Commands
 
 - Local, tiered: `npm run test:browser --workspace @codenomad/ui` runs
-  `tests/browser/run.mjs` — one file at a time in both tiers by default (the
+  `tests/browser/run.mjs` ÔÇö one file at a time in both tiers by default (the
   Git fixtures rebuild one checkout-wide Monaco asset directory that is
   concurrently unsafe, and wide runs grow load-sensitive failures on slow
   machines), with the daemon serving the borrowed tier.
@@ -21,7 +21,7 @@ for every Chromium launch).
   from `packages/ui` (without `xvfb-run -a` on Windows and macOS). Without a
   runner the borrower process gets its own daemon child, which follows it.
 - CI: each matrix shard runs `node tests/browser/shard.mjs <index 1-based> 4`
-  — one interleaved serial slice per runner, wall clock divided by four.
+  ÔÇö one interleaved serial slice per runner, wall clock divided by four.
 
 ## The fixture daemon model
 
@@ -31,8 +31,8 @@ a child of the runner (run.mjs, shard.mjs): the endpoint and its secret are
 announced as one stdout line and handed to the test processes through the
 environment; `daemon.log` records the endpoint without its secret, and there
 is no discovery directory and no adoption across runs. The runner stops the
-daemon with an authenticated HTTP request when its slice ends — portable, the
-daemon runs its own cleanup — and fails the run when that cleanup fails or
+daemon with an authenticated HTTP request when its slice ends ÔÇö portable, the
+daemon runs its own cleanup ÔÇö and fails the run when that cleanup fails or
 has to be forced. The daemon also watches its owner's pid and cleans up after
 an owner that ended without stopping it (on Windows it is spawned detached,
 so the owner's exit does not end it first). Detached, it has no console, so
@@ -79,6 +79,7 @@ synthetic provider.
 
 ## Agent conventions
 
+- Fixture shutdown tracks Vite 7 optimizer disposal and pending requests across every server environment before deleting its owned cache. Qualify the optimized-load hook and native cleanup acknowledgements together when changing Vite.
 - A new browser test either borrows via `borrowFixture({ name, routes })` or
   joins `fixture-exemptions.ts` with a reason that matches reality (the
   checker's failure text is the review).

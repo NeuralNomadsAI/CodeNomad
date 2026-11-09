@@ -23,10 +23,10 @@ async function open(run: (page: Page) => Promise<void>, query = "") {
   } finally { await page.close() }
 }
 const trigger = (page: Page) => page.locator("[data-status] .right-panel-accordion-trigger")
-const groupValues = (page: Page) => page.locator("[data-status] .status-token-group").evaluateAll(groups => groups.map(group =>
+const groupValues = (page: Page) => page.locator("[data-status] .status-token-summary, [data-status] .status-token-group").evaluateAll(groups => groups.map(group =>
   [...group.children].map(chip => chip.getAttribute("title"))))
 const expected = [
-  ["Input: 1234567", "Output: 23456", "Cost: $12.34"],
+  ["Input: 1234567", "Output: 23456", "Reasoning: 500", "Cost: $12.34"],
   ["Total In: 1240567", "Total Out: 24356", "Total Cost: $15.94", "Total Reasoning: 650"],
 ]
 
@@ -66,11 +66,11 @@ test("collapsed summary, expanded groups, keyboard disclosure and live session t
     await page.evaluate(({ width, direction }) => { (window as any).fixture.width(width); document.querySelector("[data-status]")!.setAttribute("dir", direction) }, { width, direction })
     assert.equal(await header.locator(".status-token-summary").count(), 1)
     assert.equal(await page.locator("[data-status] .status-token-group").count(), 0)
-    assert.match(await trigger(page).textContent() ?? "", /Input.*1\.2M.*Output.*23K.*Cost.*\$12.34/)
+    assert.deepEqual(await header.locator(".usage-metric-chip").evaluateAll(chips => chips.map(chip => chip.textContent!.trim())), ["1.2M", "23K", "$12.34"])
     assert.match(await page.locator(".status-token-summary").getAttribute("title") ?? "", /Input: 1234567/)
     assert.equal(await page.getByRole("button", { name: /Tokens.*Input: 1234567/ }).count(), 1, "full counts remain in the disclosure's accessible name")
     const geometry = await header.evaluate(element => {
-      const summary = element.querySelector<HTMLElement>(".right-panel-section-summary")!
+      const summary = element.querySelector<HTMLElement>(".status-token-summary")!
       const chevron = element.querySelector(".disclosure-chevron")!.getBoundingClientRect()
       const button = element.querySelector("button")!.getBoundingClientRect()
       return { overflow: element.scrollWidth > element.clientWidth, truncated: summary.scrollWidth > summary.clientWidth,
@@ -85,9 +85,9 @@ test("collapsed summary, expanded groups, keyboard disclosure and live session t
     await trigger(page).focus()
     await page.keyboard.press("Enter")
     assert.equal(await trigger(page).getAttribute("aria-expanded"), "true")
-    assert.equal(await header.locator(".status-token-summary").count(), 0)
+    assert.equal(await header.locator(".status-token-summary").count(), 1, "expanded session metrics stay in the header")
     assert.deepEqual(await groupValues(page), expected)
-    const groups = await page.locator(".status-token-group").evaluateAll(elements => elements.map(element => {
+    const groups = await page.locator("[data-status] .right-panel-accordion-header-row, [data-status] .status-token-group").evaluateAll(elements => elements.map(element => {
       const rect = element.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, overflow: element.scrollWidth > element.clientWidth }
     }))
     assert.ok(groups[1].top >= groups[0].bottom, "session and thread rows never mix")
@@ -102,7 +102,7 @@ test("collapsed summary, expanded groups, keyboard disclosure and live session t
   await trigger(page).click()
   assert.deepEqual((await groupValues(page))[1], ["Total In: 462789", "Total Out: 2134", "Total Cost: $8.16", "Total Reasoning: 230"])
   await page.evaluate(() => (window as any).fixture.select("subscription"))
-  assert.deepEqual(await groupValues(page), [["Input: 9876", "Output: 543", "Cost: Included"]])
+  assert.deepEqual(await groupValues(page), [["Input: 9876", "Output: 543", "Reasoning: 20", "Cost: Included"]])
   await trigger(page).click()
   assert.match(await trigger(page).textContent() ?? "", /Included/)
   await page.evaluate(() => (window as any).fixture.select("parent"))

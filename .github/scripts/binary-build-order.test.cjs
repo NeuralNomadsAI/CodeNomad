@@ -37,3 +37,11 @@ test("PR builds and both release channels share the ordering without bypassing P
   assert.equal(pr.with.upload, false)
   assert.equal(pr.with.set_versions, false)
 })
+
+test("npm server publication installs the locked optional dependencies once before building", () => {
+  const { steps } = workflow("manual-npm-publish.yml").jobs.publish
+  const installs = steps.filter(step => /^node "\$PINNED_NPM_CLI" (?:ci|install)\b/.test(step.run ?? ""))
+  assert.deepEqual(installs.map(step => step.run), ['node "$PINNED_NPM_CLI" ci --include=optional'])
+  const build = steps.findIndex(step => step.run === 'node "$PINNED_NPM_CLI" run build --workspace packages/server')
+  assert.ok(build > steps.indexOf(installs[0]), "build follows the frozen installation")
+})

@@ -1,5 +1,11 @@
 import type { Locator, Page } from "playwright"
 
+/** Open the shared creation/Preferences profile disclosure through its native summary. */
+export async function openMissionProfiles(page: Page): Promise<void> {
+  const fold = page.locator(".mission-profiles-disclosure")
+  if (!await fold.evaluate((element: HTMLDetailsElement) => element.open)) await fold.locator("summary").click()
+}
+
 /** Exercise a `MissionListItem` action through its inline or measured-overflow presentation
  * (cleanup receipts and other shared list rows; the Mission picker has no row menus). */
 export async function clickListItemAction(row: Locator, label: string): Promise<void> {

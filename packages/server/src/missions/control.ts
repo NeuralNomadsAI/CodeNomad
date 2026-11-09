@@ -205,6 +205,12 @@ export class MissionControl {
     * List/mission readers retain explicit compatibility and reconciliation callers. */
   async panelPage(request: MissionPanelPageRequest): Promise<MissionPanelPageResult> {
     const base = { projectID: this.options.project.id, source: request.source }
+    if (request.source === "task-marks") return this.journal.readHints(hints => {
+      const context = hints.taskMarks(request.missionID)
+      if (!context) return { available: false, reason: "mission-not-found" }
+      const { taskMarks, ...header } = context
+      return missionPanelWindow({ ...base, ...header, missionID: request.missionID }, taskMarks ?? [], request.window, request.cursor)
+    })
     if (request.source === "marks") {
       const value = await this.journal.readHints(hints => ({ ...hints.activity(request.missionOffset ?? 0), damage: hints.aggregate() }))
       if (request.missionOrder !== undefined && request.missionOrder !== value.order) return { available: false, reason: "changed" }

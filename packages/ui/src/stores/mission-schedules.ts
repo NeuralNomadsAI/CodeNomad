@@ -51,7 +51,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
     }
     if (changed) changedUnifiedScheduleHolds()
   }
-  const read = async () => {
+  const read = async (append = false) => {
     const owner = binding()
     if (!owner.active || !owner.project) return
     if (controller) { trailing = true; return }
@@ -60,14 +60,21 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
     setLoading(true)
     try {
       const collected = new Map<string, UnifiedMissionSchedule>()
-      let after: string | undefined
-      for (let page = 0; page < pages; page++) {
+      let after: string | undefined = append ? next() : undefined
+      for (let page = 0; page < (append ? 1 : pages); page++) {
         const value = await serverApi.fetchMissionSchedules(owner.instance, { directory: owner.directory, after, limit: 8 }, abort.signal)
         if (!current()) return
         if (value.projectID !== owner.project || value.version !== 1 || value.next && value.next === after) throw new Error("Foreign schedule page")
         for (const row of value.schedules) collected.set(row.id, row)
         after = value.next
         if (!after) break
+      }
+      if (append) {
+        pages++
+        setRows([...new Map([...snapshot(), ...collected.values()].map(row => [row.id, row])).values()])
+        setNext(after); setFresh(previous => new Set([...previous, ...collected.keys()])); setError(false)
+        published(owner, [...collected.values()])
+        return
       }
       const selected = props.selected(), selectedEpoch = selectionEpoch
       const selectedCurrent = () => current() && selectedEpoch === selectionEpoch && props.selected() === selected
@@ -102,7 +109,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       if (trailing && current()) { trailing = false; scheduler.schedule("list", "urgent") }
     }
   }
-  const scheduler = createEventRefreshScheduler(read)
+  const scheduler = createEventRefreshScheduler(() => read())
   let displayScope: string | undefined
   createEffect(() => {
     const owner = binding()
@@ -131,5 +138,5 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
   const opened = serverEvents.onOpen(() => scheduler.schedule("list", "urgent"))
   onCleanup(() => { epoch++; controller?.abort(); scheduler.cancel("list"); event(); reconnect(); opened() })
   return { rows, error, selectionError, fresh: (id: string) => fresh().has(id), loading, next, refresh: () => scheduler.schedule("list", "urgent"),
-    more: () => { if (next() && !loading()) { pages++; scheduler.schedule("list", "urgent") } } }
+    more: () => { if (next() && !loading()) void read(true) } }
 }

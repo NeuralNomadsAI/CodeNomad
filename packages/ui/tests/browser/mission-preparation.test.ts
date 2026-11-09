@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { openMissionProfiles } from "./mission-actions"
 import { before, after, test } from "node:test"
 import path from "node:path"
 import { mkdir } from "node:fs/promises"
@@ -86,6 +87,7 @@ async function edit(page: Page) {
   assert.equal(await form.getByLabel("Playbook", { exact: true }).isDisabled(), false)
   await form.getByLabel("Playbook", { exact: true }).selectOption("delivery")
   await form.locator(".mission-delegation select").selectOption("independent")
+  await openMissionProfiles(page)
   const agent = form.getByLabel("Coordinator · Agent", { exact: true })
   await agent.locator('option[value="coordinator"]').waitFor({ state: "attached" }); await agent.selectOption("coordinator")
   await form.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))
@@ -233,7 +235,7 @@ test("real conversion conflict preserves its unsent draft and reloads only by ex
     assert.equal(f.writes.length, 0); assert.equal((await f.read()).dormantJournal, null)
     await reload.click()
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
-    assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Concurrent authoritative text")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Concurrent authoritative text")
     assert.equal(calendar.calls.length, 0); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

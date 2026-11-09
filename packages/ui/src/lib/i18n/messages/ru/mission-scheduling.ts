@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.scheduling.startOnCreation": "Запустить при создании",
+  "missions.scheduling.startOnCreation": "Запускать автоматически",
   "missions.scheduling.source.now": "Один раз, сейчас",
   "missions.settings.effectiveOrigin": "Файл конфигурации OpenCode:",
   "missions.settings.noOrigin": "Путь к документу отсутствует",
@@ -113,7 +113,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.condition.mission-completed": "Успешное завершение разовой Миссии",
   "missions.scheduling.condition.conversation-message": "Новое сообщение в отслеживаемом разговоре",
   "missions.scheduling.condition.files-changed": "Изменение явно указанных файлов",
-  "missions.scheduling.capability.missing": "Планирование недоступно в этом подключении. Миссия без критериев запуска остаётся доступной.",
+  "missions.scheduling.capability.missing": "Планирование недоступно в этом подключении.",
   "missions.scheduling.capability.loading": "Проверяется доступность расписания…",
   "missions.scheduling.capability.activatable": "Запустить и Возобновить требуют подтверждения перед включением нативной настройки расписания.",
   "missions.scheduleList.runNowRequiresEnabled": "Запустить сейчас требует включённого нативного расписания. Включите его в настройках OpenCode, затем обновите данные.",

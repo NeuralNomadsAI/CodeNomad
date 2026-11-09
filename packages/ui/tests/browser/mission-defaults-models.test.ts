@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { openMissionProfiles } from "./mission-actions"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
@@ -32,16 +33,16 @@ const text = (page: Page, key: string) => page.evaluate(key => window.missionDef
 const ensureOptions = async (page: Page) => {
   await page.getByLabel("Playbook", { exact: true }).waitFor()
   await page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).waitFor()
-  assert.equal(await page.locator("form.mission-editor summary").filter({ hasText: /^(Options|Agents and models)$/ }).count(), 0)
+  assert.equal(await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).count(), 0)
 }
-const openProfiles = (page: Page) => page.getByLabel("Coordinator · Agent", { exact: true }).waitFor()
+const openProfiles = async (page: Page) => {
+  await openMissionProfiles(page)
+  await page.getByLabel("Coordinator · Agent", { exact: true }).waitFor()
+}
 const openModels = ensureOptions
 /** Settings folds every agent/model choice under one "Agents and models" disclosure. */
-const openSettingsProfiles = async (page: Page) => {
-  const summary = page.locator(".mission-profiles-disclosure > summary")
-  if (!await summary.evaluate(item => (item.parentElement as HTMLDetailsElement).open)) await summary.click()
-}
-const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create"
+const openSettingsProfiles = openMissionProfiles
+const OBJECTIVE = "Objective", CREATE_ONLY = "Create"
 const pickBrief = async (page: Page, id: string) => page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).selectOption(id)
 const nameBrief = async (page: Page, name: string) => {
   await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).click()
@@ -120,6 +121,7 @@ test("creation waits for loaded defaults and exposes exact requested choices", a
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     release()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await openProfiles(page)
     await page.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Model M" }).waitFor({ state: "attached" })
     assert.equal(await page.getByLabel("Coordinator · Thinking", { exact: true }).inputValue(), "high")
     await page.getByLabel("Playbook", { exact: true }).selectOption("wayfinder")
@@ -175,7 +177,7 @@ test("saved models store briefs only and manual use creates fresh authority requ
       return first === select
     }), true, "the configuration picker is the first form field")
     assert.equal(fixture.creates.length, 0, "loading a brief is not a launch")
-    await page.getByRole("checkbox", { name: "Start on creation", exact: true }).check()
+    await page.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
     await nameBrief(page, "Second reusable brief")
     await page.getByLabel("Notes", { exact: true }).focus()
     assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(), "Second reusable brief", "editing another field keeps the configuration name draft")
@@ -313,6 +315,7 @@ test("failed UI-owner reads stay fenced despite general readiness and server/sta
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     fail = false
     await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).click()
+    await openProfiles(page)
     await page.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Model M" }).waitFor({ state: "attached" })
     assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), false)
@@ -321,19 +324,18 @@ test("failed UI-owner reads stay fenced despite general readiness and server/sta
   } finally { await page.close() }
 })
 
-test("Use saved defaults explicitly resnapshots after Settings edits while a creation draft otherwise remains frozen", async () => {
+test("Preferences edits preserve the creation draft and profiles have no reset or Preferences commands", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles }] })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await ensureOptions(page)
-    fixture.replace({ settings: { missionProfileDefaults: [{ template: "custom", profiles: { coordinator: { agent: "all" } } }] } })
     assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
     await openProfiles(page)
-    await page.getByRole("button", { name: await text(page, "missions.defaults.use"), exact: true }).click()
-    await page.getByLabel("Coordinator · Agent", { exact: true }).filter({ has: page.locator('option[value="all"]') }).waitFor()
+    await page.evaluate(() => window.missionDefaultsModels.update({ missionProfileDefaults: [{ template: "all", profiles: { coordinator: { agent: "all" } } }] }))
     await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionProfileDefaults[0]?.profiles.coordinator?.agent === "all")
-    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "all")
-    assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), "")
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "root")
+    assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
+    assert.equal(await page.locator(".mission-create-option button").count(), 0)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
@@ -396,18 +398,18 @@ test("stale model saves and deletes fail closed without resurrecting another win
   } finally { await page.close() }
 })
 
-test("explicit defaults reload locks every profile-affecting control until its fenced result settles", async () => {
+test("failed defaults recovery locks every profile-affecting control until its fenced result settles", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const fixture = await setup(page, { missionModels: [{ version: 1, id: modelID, name: "Locked brief", objective: "A task", notes: "", template: "custom" }] })
   let release!: () => void, started!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
+  await page.route("**/api/storage/config/ui*", route => route.fulfill({ status: 503, json: {} }))
   try {
-    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.goto(url); await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).waitFor()
     await ensureOptions(page)
     await openModels(page); await openProfiles(page)
-    await page.getByLabel("Coordinator · Agent", { exact: true }).locator('option[value="root"]').waitFor({ state: "attached" })
     await page.route("**/api/storage/config/ui*", async route => { started(); await hold; return route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }) })
-    await page.getByRole("button", { name: await text(page, "missions.defaults.use"), exact: true }).click()
+    await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).click()
     await reached
     assert.equal(await page.getByLabel("Playbook", { exact: true }).isDisabled(), true)
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).isDisabled(), true)
@@ -842,7 +844,7 @@ test("native task defaults and an independent preference edit save once, compare
   } finally { await page.close() }
 })
 
-test("Compare exposes two main model selectors, refuses identical models and warns about the judge", async () => {
+test("Compare groups model selectors, refuses identical models beside the group and keeps judge explanations out of the form", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const fixture = await setup(page, { missionProfileDefaults: [{ template: "all", profiles }] })
   await page.route("**/api/workspaces/fixture/missions", route => {
@@ -856,12 +858,14 @@ test("Compare exposes two main model selectors, refuses identical models and war
     await ensureOptions(page)
     const template = page.getByLabel("Playbook", { exact: true })
     await template.selectOption("compare")
+    await openProfiles(page)
     const first = page.getByLabel("Model A · Model", { exact: true }), second = page.getByLabel("Model B · Model", { exact: true })
     await first.locator('option[value=\'["p","m"]\']').waitFor({ state: "attached" })
-    assert.equal(await first.evaluate(node => Boolean(node.closest("details"))), false)
+    assert.equal(await first.evaluate(node => Boolean(node.closest("details"))), true)
     await first.selectOption(JSON.stringify(["p", "m"])); await second.selectOption(JSON.stringify(["p", "m"]))
     await page.getByRole("alert").filter({ hasText: "A and B must use different models" }).waitFor()
-    await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).waitFor()
+    assert.equal(await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).count(), 0)
+    assert.equal(await page.locator(".mission-create-option").getByRole("alert").count(), 1)
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Compare two models")
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     await second.selectOption(JSON.stringify(["p", "n"]))
