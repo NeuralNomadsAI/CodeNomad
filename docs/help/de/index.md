@@ -89,8 +89,8 @@ Das Arbeitsbereichs-Stammverzeichnis begrenzt, welche Ordner CodeNomad öffnet; 
 Das Status-Panel zeigt die Anbieternutzung und nativen Hintergrund-Shells der aktiven Sitzung. Unterhaltungsstatus und Unteraktivität kennzeichnen arbeitende, komprimierende und auf Eingaben wartende Sitzungen. Eine Hintergrund-Shell zu beobachten ist etwas anderes, als im Eingabefeld eine Shell-Anfrage zu senden oder einen separat gehosteten Terminal-SideCar zu verwenden.
 
 1. Öffnen Sie **Status → Hintergrund-Shells** für die Location der ausgewählten Unterhaltung (oder den geöffneten Arbeitsbereich, wenn keine Unterhaltung ausgewählt ist).
-2. Prüfen Sie Befehl, Shell, Verzeichnis, Status, PID und Exit-Code, soweit vorhanden; wählen Sie **Ausgabe anzeigen** für die verfügbare native Ausgabe.
-3. Zum Entfernen verwenden Sie während der Ausführung **Stoppen und entfernen** oder nach dem Ende **Entfernen** und bestätigen das Ziel.
+2. Nur laufende, ausdrücklich in den Hintergrund verschobene Befehle werden angezeigt, einer pro Zeile. Beim Darüberfahren erscheinen Shell, Verzeichnis und PID; das Symbol **Ausgabe anzeigen** öffnet die native Ausgabe. Ohne OpenCodes API für Hintergrundaufgaben erscheint ein Ladefehler.
+3. Verwenden Sie das Symbol **Stoppen und entfernen** der Zeile und bestätigen Sie das Ziel.
 
 Das Entfernen einer laufenden Shell beendet diesen Prozess; das Schließen ihres Ausgabefensters nicht. Aktualisieren/Wiederverbinden liest den aktuellen nativen Zustand, statt verpasste Ausgabeereignisse zu rekonstruieren.
 

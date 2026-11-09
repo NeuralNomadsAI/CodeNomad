@@ -31,7 +31,7 @@
 | Concern | Owner |
 |---|---|
 | Session/message/Shell/instructions | OpenCode native API; session Shell remains separate from background Shell and PTY management |
-| Background Shell list/metadata/output/remove | Location-scoped OpenCode native API through CodeNomad ownership checks; Status UI refreshes on Shell events/reconnect |
+| Background Shell list/metadata/output/remove | Native running background-job IDs joined to Location-scoped Shell records; tool-session ownership for output/removal. Visible Status refreshes on Shell events, tool completion and reconnect. |
 | Interactive PTYs | Separate native `pty.*` API |
 | Service status/start/password | CodeNomad adapter using the selected host or WSL CLI; only the explicit setup restart may stop/start the shared daemon |
 | Workspace and directory authorization | CodeNomad |

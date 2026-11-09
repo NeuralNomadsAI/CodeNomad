@@ -7,7 +7,7 @@ it("does not subscribe a calling effect to internal shell loading state", async 
   let listCalls = 0
   let effectRuns = 0
   const api: ShellApi = {
-    list: async () => { listCalls += 1; return [] },
+    list: async () => { listCalls += 1; return { data: [] } },
     remove: async () => {},
     output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
   }
