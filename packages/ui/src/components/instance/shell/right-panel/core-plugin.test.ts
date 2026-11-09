@@ -5,6 +5,7 @@ import { it } from "node:test"
 it("defines built-in tabs and status sections without a plugin loading layer", async () => {
   const hooks = registerHooks({ resolve(specifier, context, next) {
     if (specifier === "lucide-solid") return { url: "data:text/javascript,export const Info = () => null", shortCircuit: true }
+    if (specifier.endsWith("/settings/settings-info-tip")) return { url: "data:text/javascript,export const SettingsInfoTip = () => null", shortCircuit: true }
     return next(specifier, context)
   } })
   try {
@@ -20,7 +21,7 @@ it("defines built-in tabs and status sections without a plugin loading layer", a
     assert.equal(module.tabs?.every(entry => entry.render === render), true)
     assert.equal(sections.statusSections?.every(entry => entry.render === render), true)
     assert.equal(sections.statusSections?.every(entry => typeof entry.renderInfo === "function"), true)
-    assert.equal(sections.statusSections?.find(entry => entry.id === "tokens")?.renderSummary, summary)
-    assert.equal(sections.statusSections?.filter(entry => entry.id !== "tokens").every(entry => !entry.renderSummary), true)
+    assert.equal(sections.statusSections?.find(entry => entry.id === "tokens")?.renderStatus, summary)
+    assert.equal(sections.statusSections?.filter(entry => entry.id !== "tokens").every(entry => !entry.renderStatus), true)
   } finally { hooks.deregister() }
 })

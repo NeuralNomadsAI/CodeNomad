@@ -58,6 +58,10 @@ Das Gedächtnis wird vom Agenten gepflegt. Führt er bereits anderswo eines, etw
 
 ## Panels und Statusabschnitte {#panels-status}
 
+**Status** steht standardmäßig an erster Stelle; eine gespeicherte Tab-Reihenfolge hat Vorrang. Der Tab bleibt verfügbar. Unter **Rechtes Panel anpassen** klappt sein Pfeil die Liste der Abschnitts-Checkboxen ein oder aus, ohne die Abschnitte selbst auszublenden.
+
+**Tokens** verwendet dieselben Kennzahlen-Chips wie Nachrichten. Eingeklappt bleiben Eingabe, Ausgabe und Kosten in der Kopfzeile; ausgeklappt kommt dort das Denken hinzu, und die Chips umbrechen bei Bedarf. Summen einschließlich Untersitzungen erscheinen darunter.
+
 Ziehen Sie am inneren Rand eines angedockten Panels, um seine Größe zu ändern. Der Griff bleibt während des Ziehens hervorgehoben und behält die Zeigererfassung, auch wenn der Zeiger den Rand verlässt. Lassen Sie los, um abzuschließen.
 
 1. Verwenden Sie **Linke Seitenleiste** und **Rechte Seitenleiste** an den äußeren Kopfecken oder deren Menüpunkte unter **Ansicht** zum Ein-/Ausblenden.

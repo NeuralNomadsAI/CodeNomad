@@ -58,6 +58,10 @@ La mémoire est tenue par l’agent. S’il tient déjà une mémoire ailleurs, 
 
 ## Panneaux et sections Statut {#panels-status}
 
+**Statut** est en premier par défaut ; un ordre d’onglets enregistré reste prioritaire. Il reste disponible. Dans **Personnaliser le panneau droit**, son chevron replie ou déplie la liste des cases de ses rubriques sans masquer les rubriques elles-mêmes.
+
+**Tokens** reprend les mêmes indicateurs que les messages. Repliée, la rubrique garde entrée, sortie et coût sur sa ligne d’en-tête ; dépliée, elle y ajoute la réflexion et les indicateurs passent à la ligne si nécessaire. Les totaux incluant les sous-sessions s’affichent en dessous.
+
 Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner. La poignée reste surlignée et garde la capture du pointeur pendant tout le glissement, même si le pointeur dépasse son bord. Relâchez pour terminer.
 
 1. Utilisez **Volet gauche** et **Volet droit** aux coins extérieurs de l’en-tête, ou leurs entrées du menu **Affichage**, pour afficher ou masquer chaque panneau.
