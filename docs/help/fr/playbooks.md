@@ -2,7 +2,7 @@
 
 Un scénario est la méthode de travail que suit le coordinateur d’une mission : les étapes, les rôles qu’il peut attribuer aux tâches et les instructions que reçoit chaque agent. Cette page décrit chaque scénario, ce que CodeNomad impose lui-même et ce qui reste une instruction que le modèle doit suivre.
 
-Pour lire la définition exacte d’un scénario, ouvrez **Options** dans le formulaire de création de mission, choisissez un **Scénario** et sélectionnez **Voir les détails** sous sa description. Le lecteur central affiche ses étapes et ses rôles ; **Instructions reçues par les agents (texte du prompt en anglais)** replie, pour la politique **Sessions des tâches** choisie, le texte complet que reçoit le coordinateur à chaque tour et le message d’affectation complet de chaque rôle (avec **Sessions indépendantes**, aussi le contexte qu’ajoute chaque tour de la session de la tâche). Les champs entre crochets, comme [objective], représentent les données propres à chaque mission ; des messages distincts démarrent ou reprennent la mission et transmettent les résultats des tâches. Dans ces instructions, Exploration s’appelle *Wayfinder Map*.
+L’**ⓘ** à côté de **Scénario** dans le formulaire ouvre ce guide dans votre langue à la section du scénario sélectionné. Choisissez un scénario ci-dessous pour ses étapes, rôles, questions et vérifications. Dans les instructions des agents, Exploration s’appelle *Wayfinder Map*.
 
 ## Choisir un scénario {#choose}
 
@@ -125,7 +125,7 @@ Quand aucune reproduction en échec ne peut être construite, le diagnosticien s
 - Seuls les six rôles de Débogage sont acceptés.
 - Ordre : un implémenteur doit dépendre d’un diagnostic, chaque réviseur d’une implémentation, la reprise des deux revues et le validateur de la reprise. Une étape ne démarre qu’une fois terminée l’étape dont elle dépend.
 - Les réviseurs et le validateur doivent s’exécuter dans de nouvelles conversations ; la reprise doit poursuivre la conversation de l’implémenteur terminé.
-- Chaque rapport de rôle terminé doit contenir le rapport structuré de son rôle dans son format exact (affiché par **Voir les détails**), sinon il est refusé. Par exemple, la correction doit indiquer que le test de régression a été vu en échec puis en succès, et la validation doit lister les quatre types de vérification sans aucun échec.
+- Chaque rapport de rôle terminé doit contenir le rapport structuré de son rôle au format requis, sinon il est refusé. Par exemple, la correction doit indiquer que le test de régression a été vu en échec puis en succès, et la validation doit lister les quatre types de vérification sans aucun échec.
 - La mission ne se termine au vert que si la dernière implémentation a un diagnostic terminé avant elle et deux revues, une reprise et une validation après elle, toutes reliées par des dépendances et avec des rapports structurés valides.
 
 Simples instructions : la qualité du diagnostic, le fait que les réviseurs et le validateur ne modifient pas de fichiers, et la véracité de ce qu’affirme un rapport. CodeNomad vérifie que la correction déclare que le test est passé du rouge au vert, pas qu’elle l’a exécuté.

@@ -166,7 +166,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     ].filter(Boolean).join("\n")
   }
   return <div class="mission-depth">
-    <label><span>{t("missions.depth.label")}<SettingsInfoTip text={details()} /></span>
+    <label><span>{t("missions.depth.label")}<SettingsInfoTip text={details()} help={{ page: "missions", anchor: "profiles" }} /></span>
       <select ref={menu} aria-label={t("missions.depth.label")} value={selected()} disabled={disabled()} aria-disabled={locked() ? "true" : undefined}
         onChange={event => choose(event.currentTarget)}>
         <option value="">{inheritLabel()}</option>

@@ -352,7 +352,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           // capability verification; malformed native data above fails the batch.
           const owned = await (async () => snapshot.location.workspaceID === undefined && nativePath.isAbsolute(snapshot.location.directory)
             && await manager.getServiceDirectoryForPath(id, snapshot.location.directory) === entry.directory
-            && await manager.ownsLocation(id, snapshot.location, connection.client, signal))().catch((error) => {
+            && await manager.ownsLocation(id, snapshot.location, connection.client, { signal }))().catch((error) => {
             isolate(error)
             return undefined
           })

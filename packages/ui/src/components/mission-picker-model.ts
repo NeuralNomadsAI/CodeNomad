@@ -13,8 +13,10 @@ export interface MissionPickerEntry {
   status: string
   mark: MissionMark
   /** The most urgent state of a Mission's tasks, carried by its chevron like a
-   * session's children: a task asks for an answer, or works. */
-  childActivity?: "permission" | "working"
+   * session's children: a task asks for an answer, works, or finished unseen. */
+  childActivity?: "permission" | "working" | "idle"
+  /** A Mission whose plan holds no task: like a session without children, no chevron. */
+  leaf?: boolean
 }
 
 /** A one-time Mission's own state from native requests and observed actor activity:

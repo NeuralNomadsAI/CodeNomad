@@ -19,6 +19,12 @@ La navigation normale est hiérarchique ; les résultats de recherche/filtre son
 
 Retour/Avancer est un historique de visites par onglet de projet et par fenêtre, pas l’ordre de la liste. Il reste en mémoire, ignore les conversations indisponibles/supprimées et n’est pas restauré après redémarrage. Sélectionner une nouvelle conversation après un retour remplace le parcours suivant. **Session précédente** / **Session suivante** dans la palette parcourent plutôt la liste visible.
 
+## Archiver et restaurer {#archive}
+
+Choisissez **Archiver la session** dans les actions d’une ligne pour conserver son historique tout en retirant sa branche inactive de la navigation normale. La conversation sélectionnée et les conversations en cours de travail ou attendant une réponse restent accessibles. L’archivage n’arrête pas le travail, ne supprime aucun message et ne change pas l’état d’archivage propre aux sous-sessions.
+
+Ouvrez la recherche de sessions et choisissez **Sessions archivées** ou **Toutes les sessions**. Les lignes portent la mention **Archivée** et proposent **Restaurer la session**. Activez le filtre des sous-sessions pour trouver les enfants indépendamment, y compris sous un parent archivé. **Sessions non archivées** filtre selon l’état propre à chaque conversation. Restaurez un ancêtre archivé pour retrouver sa branche inactive dans la navigation normale. Si une action n’est pas confirmée, actualisez la liste avant de réessayer.
+
 ## Choisir Agent, Modèle et Réflexion {#agent-model-thinking}
 
 1. Utilisez les sélecteurs d’agent et de modèle du pied de la zone de saisie avant l’envoi.

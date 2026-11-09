@@ -25,10 +25,15 @@
 .mission-row-flag[data-mark="done"] { color: var(--session-status-idle-fg); }
 .mission-row-flag:is([data-mark="paused"], [data-mark="interrupted"]) { color: var(--status-warning); }
 .mission-row-flag[data-mark="prepared"] { color: var(--accent-primary); }
-/* The selection's detail: the selected row's children, indented like subsessions. */
-.mission-row-children { padding-inline: calc(var(--space-sm) + var(--space-lg)) var(--space-sm); border-block-end: 1px solid var(--border-base); }
+/* An expanded row's children: its task rows span the panel like subsession rows,
+   each with its own separator; other content (a schedule's detail, the brief name
+   field, command feedback) is indented under the row. */
 .mission-row-children:empty, .mission-row-children[hidden] { display: none; }
-.mission-row-children > .mission-detail { border-block-end: 0; }
+.mission-row-children > .mission-detail { padding-block: 0; gap: 0; border-block-end: 0; }
+.mission-row-children > :not(.mission-detail, .mission-tree), .mission-row-children > .mission-detail > :not(.mission-tree),
+.mission-row-children .mission-tree > :not(.mission-flow) {
+  padding: var(--space-xs) var(--space-sm) var(--space-xs) calc(var(--space-sm) + var(--space-lg));
+}
 .mission-picker-empty { padding: var(--space-xs) var(--space-sm); color: var(--text-muted); font-size: var(--font-size-xs); }
 
 @media (pointer: coarse) {

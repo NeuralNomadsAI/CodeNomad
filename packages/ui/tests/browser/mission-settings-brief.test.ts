@@ -106,24 +106,25 @@ test("Save as brief copies only a finished Mission's recorded inputs and launche
   try {
     const detail = page.locator("section.mission-detail")
     // Save as brief is an overflow-menu item, never a control under the Mission's row.
-    assert.equal(await page.locator(".mission-control").getByRole("button", { name: "Save as brief", exact: true }).count(), 0)
+    assert.equal(await page.locator(".mission-control").getByRole("button", { name: "Save configuration", exact: true }).count(), 0)
     assert.equal(await detail.locator(".mission-action-texts").isVisible(), false, "no empty row under the Mission")
     // From a folded Mission, the menu unfolds its detail to show the name field; Escape
     // closes it and gives focus back to the menu's trigger.
-    const chevron = page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
-    await chevron.click()
-    assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    // This Mission has no tasks: its row has no chevron and its selected detail starts folded.
+    const row = page.locator(".mission-row:has(.mission-row-select[aria-current=true])")
+    assert.equal(await row.locator("button.session-item-expander").count(), 0)
+    assert.equal(await detail.isVisible(), false)
     await (await missionMenuItem(page, "save-brief")).click()
-    await detail.getByLabel("Brief name", { exact: true }).waitFor()
-    assert.equal(await chevron.getAttribute("aria-expanded"), "true", "the menu unfolds the Mission")
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
+    await detail.getByLabel("Configuration name", { exact: true }).waitFor()
+    assert.equal(await detail.isVisible(), true, "the menu unfolds the Mission")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Configuration name", undefined, { timeout: 5_000 })
     await page.keyboard.press("Escape")
-    await detail.getByLabel("Brief name", { exact: true }).waitFor({ state: "detached" })
+    await detail.getByLabel("Configuration name", { exact: true }).waitFor({ state: "detached" })
     assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("action-overflow-trigger")), true, "focus returns to the menu's trigger")
     await (await missionMenuItem(page, "save-brief")).click()
-    const name = detail.getByLabel("Brief name", { exact: true })
+    const name = detail.getByLabel("Configuration name", { exact: true })
     assert.equal(await name.inputValue(), "Dependency audit", "the Mission title prefills the name")
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Configuration name", undefined, { timeout: 5_000 })
     await name.fill("Weekly dependency audit")
     // Enter saves; focus returns to the menu's trigger even though the write disabled the field.
     await name.press("Enter")
@@ -149,8 +150,8 @@ test("saving the brief that fills the library returns focus to an enabled toolba
   try {
     const detail = page.locator("section.mission-detail")
     await (await missionMenuItem(page, "save-brief")).click()
-    const name = detail.getByLabel("Brief name", { exact: true })
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Brief name", undefined, { timeout: 5_000 })
+    const name = detail.getByLabel("Configuration name", { exact: true })
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Configuration name", undefined, { timeout: 5_000 })
     await name.fill("Twentieth brief")
     await name.press("Enter")
     await name.waitFor({ state: "detached" })

@@ -15,6 +15,8 @@ function available(doc: MissionDocument) {
 }
 function oneShotAt(config: MissionConfiguration, now: number): number | null {
   for (const timing of missionLaunchModel(config.launch).schedules) {
+    // One native clock tick gives a first "else" slot a nonempty arming period.
+    if (timing.kind === "now") return documentTimestamp.parse(now + 1)
     if (timing.kind === "at") {
       if (timing.at <= now) throw new Error("Mission date has passed")
       return timing.at
@@ -74,6 +76,9 @@ export function missionLaunches(doc: MissionDocument, wakes: readonly { schedule
     const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID && item.role === "principal")
     if (!calendar) return false
     if (calendar.slot === eventSlot) return news.triggers
+    // An unchanged one-shot may get a replacement native row after another timing
+    // is edited. Its processed slot stays consumed across that replacement.
+    if (model.schedules[calendar.slot]?.kind === "now" && calendar.lastDueAt !== undefined) return false
     const plan = model.plans[calendar.slot]
     return !!plan && changed(plan.conditions) && (!plan.fallback || missionFallbackClear(doc, wake.scheduleID, wake.dueAt))
   })
@@ -107,6 +112,8 @@ export const missionDocumentChanges = {
     const temporal = missionTemporalPolicy
     const changedTime = !same(temporal(config), temporal(doc.configuration))
     const changedTiming = !same(temporal(config).schedules, temporal(doc.configuration).schedules)
+    const keepsNow = temporal(config).schedules.some(item => item.kind === "now")
+      && temporal(doc.configuration).schedules.some(item => item.kind === "now")
     if (doc.firstPlayedAt !== null && !same(missionLaunchModel(config.launch).events, missionLaunchModel(doc.configuration.launch).events)) {
       if (!checkpoints) throw new Error("Mission condition baseline reconciliation required")
       baseline(config, checkpoints)
@@ -131,7 +138,7 @@ export const missionDocumentChanges = {
       doc.fanIn = null
       doc.timeGeneration++
       if (doc.firstPlayedAt !== null) {
-        if (changedTiming) doc.oneShotAt = oneShotAt(config, now)
+        if (changedTiming && !keepsNow) doc.oneShotAt = oneShotAt(config, now)
         doc.synchronization = { requestID: `edit_${doc.revision + 1}`, kind: "replace", retiredCalendars: doc.calendars }
         doc.calendars = []
       }

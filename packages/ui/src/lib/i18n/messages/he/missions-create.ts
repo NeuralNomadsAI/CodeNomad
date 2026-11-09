@@ -5,9 +5,9 @@ export const missionCreateMessages = {
   "missions.create.options": "אפשרויות",
   "missions.create.agents": "סוכנים ומודלים",
   "missions.create.submit": "יצירה",
-  "missions.create.brief.start": "להתחיל מתקציר",
+  "missions.create.brief.start": "להתחיל מתצורה",
   "missions.create.brief.none": "משימה ריקה",
-  "missions.create.brief.more": "פעולות לתקצירים שמורים",
-  "missions.create.brief.saveAs": "שמירה כתקציר",
-  "missions.create.brief.cancel": "ביטול שמירת התקציר",
+  "missions.create.brief.more": "פעולות לתצורות שמורות",
+  "missions.create.brief.saveAs": "שמירת התצורה",
+  "missions.create.brief.cancel": "ביטול שמירת התצורה",
 } as const

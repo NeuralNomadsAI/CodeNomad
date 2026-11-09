@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "Verhindert den Ruhezustand, solange ein lokales CodeNomad-Fenster geöffnet ist (auch minimiert); der Bildschirm kann sich weiterhin ausschalten. Wenn deaktiviert, hält CodeNomad den Computer nur wach, während eine Sitzung arbeitet.",
   "providerUsage.estimated": "Geschätzt",
   "providerUsage.exhausted": "Ausgeschöpft",
-  "providerUsage.estimateInfo": "Lokale Schritte schätzen die kostenlosen Anfragen. Tatsächliche Limits variieren. Die Erschöpfungsmarkierung endet um 00:00 UTC.",
+  "providerUsage.estimateInfo": "Verwendet den höheren Wert aus lokalen Schritten und verfügbaren kostenlosen Console-Anfragen seit 00:00 UTC. Die Console gilt für das Konto; tatsächliche IP-basierte Limits variieren. Die Erschöpfungsmarkierung endet um 00:00 UTC.",
   "providerUsage.console.requests": "Anfragen",
   "providerUsage.console.today": "Heute (UTC)",
   "providerUsage.console.sevenDays": "7 Tage (UTC)",

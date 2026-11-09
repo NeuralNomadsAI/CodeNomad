@@ -40,7 +40,7 @@ export function registerSessionGoalRoute(app: FastifyInstance, deps: SessionGoal
       const session = await client.session.get({ sessionID }, { signal }).catch(() => undefined)
       if (!session) return reply.code(404).send({ error: "Session not found" })
       const location = readLocationRef(session.location)
-      if (!await manager.ownsLocation(request.params.id, location, client, signal)) return reply.code(403).send({ error: "Session does not belong to workspace" })
+      if (!await manager.ownsLocation(request.params.id, location, client, { signal })) return reply.code(403).send({ error: "Session does not belong to workspace" })
       let result: SessionGoalResponse
       try {
         const response = await client.rpc.call({ rpcID: GOAL_RPC_ID, method: "get", input: { sessionID }, location: { directory: location.directory } },

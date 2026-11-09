@@ -6,7 +6,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { createMissionFailureDiagnostics } from "./mission-failure-diagnostics"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import type {} from "./fixtures/mission-editor-lifetime"
-import { clickMissionAction, missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { clickMissionAction, missionRefresh, missionRow, missionToolbarAction, selectMission } from "./mission-actions"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 
@@ -108,8 +108,10 @@ async function holdPartial(page: Page, action: "pause" | "stop", title = TITLE) 
     await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click()
   }
   await missionToolbarAction(page, CHECK(title)).waitFor()
-  await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText(UNCONFIRMED, { exact: true }).waitFor()
+  await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText(UNCONFIRMED, { exact: true }).waitFor()
   assert.equal(await missionRefresh(page).getAttribute("aria-label"), RESEND)
+  // The partial result schedules a row read; feedback can precede its publication.
+  await missionRow(page, title).locator(".sr-only", { hasText: action === "pause" ? /^Daily · Paused/ : /^Daily · Stopped/ }).waitFor({ state: "attached" })
 }
 /** Starts an event-driven row read that stays in flight until released. */
 async function rowReadInFlight(page: Page, state: Awaited<ReturnType<typeof openPage>>["state"]) {
@@ -222,7 +224,7 @@ for (const transition of ["inactive", "instance"] as const) test(`a late refusal
     const current = deferred(); current.release()
     state.controlReply.set("rec_fixture", async route => { await current.promise; await route.fulfill(notDispatched) })
     await clickMissionAction(page, `Pause schedule ${TITLE}`)
-    await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText(NOT_SENT, { exact: true }).waitFor()
+    await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText(NOT_SENT, { exact: true }).waitFor()
     assert.equal(state.posts.length, 2)
     assert.deepEqual(state.errors, [])
   } catch (error) { console.error(state.errors, state.log, state.posts, await page.locator("body").innerText()); throw error } finally { await page.close() }
@@ -246,7 +248,7 @@ test("a late refusal for another row leaves the selected row's held request and 
     reply.release()
     await page.waitForTimeout(500)
     assert.equal(await missionToolbarAction(page, CHECK(OTHER)).count(), 1, "the selected row stays held")
-    await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText(UNCONFIRMED, { exact: true }).waitFor()
+    await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText(UNCONFIRMED, { exact: true }).waitFor()
     assert.equal(await page.getByText(NOT_SENT, { exact: true }).count(), 0, "no stale refusal message")
     assert.equal(state.rows, rows, "no refresh from the other row's late refusal")
     assert.equal(await missionRefresh(page).getAttribute("aria-label"), RESEND)

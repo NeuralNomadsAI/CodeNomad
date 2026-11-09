@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { readFileSync } from "node:fs"
 import { chromium, webkit } from "playwright"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { nativeDriver } from "../../../server/src/automation/page/native-driver"
 import { performAction } from "../../../server/src/automation/page/actions"
 import { aim } from "../../../server/src/automation/page/input"
@@ -10,6 +11,7 @@ import { PageDriverUnsupportedError, type PageOperation } from "../../../server/
 // WEBKIT_GEOMETRY_ENGINE=webkit replays these same actions on native WebKit on Linux.
 test("WebKit affine frame aiming agrees with native input, including reflected and nested frames", { timeout: 60_000 }, async () => {
   const browser = await (process.env.WEBKIT_GEOMETRY_ENGINE === "webkit" ? webkit : chromium).launch({ headless: true })
+  armFixtureNavigationBudget(browser)
   try {
     const page = await browser.newPage({ viewport: { width: 1000, height: 800 } })
     const source = readFileSync(new URL("../../../server/src/automation/page/webkit/read.generated.js", import.meta.url), "utf8")

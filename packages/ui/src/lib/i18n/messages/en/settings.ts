@@ -3,7 +3,7 @@ export const settingsMessages = {
   "settings.behavior.keepComputerAwake.info": "Prevents system sleep while a local CodeNomad window is open (including minimized); the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working.",
   "providerUsage.estimated": "Estimated",
   "providerUsage.exhausted": "Exhausted",
-  "providerUsage.estimateInfo": "Local step counts estimate free requests. Actual limits vary. Exhaustion clears at 00:00 UTC.",
+  "providerUsage.estimateInfo": "Uses the higher of local steps and available Console free-model requests since 00:00 UTC. Console covers the account; actual IP-based limits vary. Exhaustion clears at 00:00 UTC.",
   "providerUsage.console.requests": "Requests",
   "providerUsage.console.today": "Today (UTC)",
   "providerUsage.console.sevenDays": "7 days (UTC)",

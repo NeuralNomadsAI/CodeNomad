@@ -19,6 +19,12 @@ Normal gezinme hiyerarşiktir; arama/filtre sonuçları her konuşmanın kendi k
 
 Geri/İleri, liste sırası değil, proje sekmesi başına, pencere başına ziyaret geçmişidir. Bellekte tutulur, kullanılamayan/silinmiş konuşmalar atlanır ve yeniden başlatıldıktan sonra geri yüklenmez. Geri döndükten sonra yeni bir görüşme seçmek ileri yolun yerini alır. Paletin **Önceki Session** / **Sonraki Session**'si bunun yerine görünür listeyi döndürür.
 
+## Arşivleme ve geri yükleme {#archive}
+
+Geçmişi koruyup etkin olmayan dalı normal listeden gizlemek için satır eylemlerinden **Oturumu arşivle** seçeneğini kullanın. Seçili konuşma, çalışan işler ve yanıt bekleyen soruları olan konuşmalar erişilebilir kalır. Arşivleme işi durdurmaz, mesajları silmez ve alt oturumların kendi arşiv durumlarını değiştirmez.
+
+Oturum aramasını açıp **Arşivlenmiş oturumlar** veya **Tüm oturumlar** seçeneğini kullanın. Satırlar **Arşivlendi** olarak işaretlenir ve **Oturumu geri yükle** eylemini sunar. Arşivlenmiş üst oturumların altındakiler dahil çocukları bağımsız bulmak için alt oturumları etkinleştirin. **Arşivlenmemiş oturumlar**, her konuşmanın kendi durumuna göre filtreler. Etkin olmayan dalı normal listeye döndürmek için arşivlenmiş üst oturumu geri yükleyin. Eylem doğrulanmazsa yeniden denemeden önce listeyi yenileyin.
+
 ## Ajan, Model ve Düşünme seçimi {#agent-model-thinking}
 
 1. Göndermeden önce ileti düzenleyicisinin altındaki ajan ve model seçicilerini kullanın.

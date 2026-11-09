@@ -8,6 +8,10 @@
 /* Save as brief lives in the overflow menu: its row shows only while naming a brief or reporting. */
 .mission-action-texts .mission-brief-save:empty, .mission-action-texts:not(:has(> :not(:empty))) { display: none; }
 .mission-action-texts .mission-brief-save input { width: 10em; min-width: 0; flex: 1 1 8em; }
-.mission-action-feedback { display: grid; color: var(--text-muted); font-size: var(--font-size-xs); }
-.mission-action-feedback:empty { display: none; }
-.mission-action-feedback small[role="alert"] { color: var(--status-warning); }
+/* Command progress and errors are announced to assistive technology and shown in the
+   primary button's tooltip, never as a line under the row; actions they offer stay. */
+.mission-action-feedback { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.mission-action-feedback:not(:has(button)) { display: contents; }
+.mission-action-feedback :is(small, p) {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}

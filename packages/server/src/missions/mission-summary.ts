@@ -25,6 +25,8 @@ export interface MissionSummary {
   /** The map's `finishSequence`: the project-wide order of its finish. */
   finishSequence?: number
   revision: number
+  /** How many tasks the plan holds: a row without tasks has no chevron. Absent when unknown. */
+  taskCount?: number
 }
 export type MissionInventorySummary = Omit<MissionSummary, "actorSessionIds"> & { actorCount: number }
 export function missionInventorySummary(summary: MissionSummary): MissionInventorySummary {
@@ -49,6 +51,8 @@ export function missionSummary(mission: MissionMap | MissionPanelMap): MissionSu
     status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }),
     coordinatorSessionId: mission.coordinatorSessionId, actorSessionIds: mission.actors.map(actor => actor.sessionId), updatedAt: mission.updatedAt,
     ...(mission.finishSequence === undefined ? {} : { finishSequence: mission.finishSequence }), revision: mission.revision,
+    // A compact map holds one page of its tasks; its page names the whole count.
+    taskCount: ("taskPage" in mission && mission.taskPage ? mission.taskPage.total : mission.tasks.length),
   }
 }
 
@@ -60,5 +64,6 @@ export const missionSummarySchema = {
     runState: { type: "string", enum: ["prepared", "running", "paused", "stopped"] },
     coordinatorSessionId: { type: "string" }, actorSessionIds: { type: "array", items: { type: "string" } },
     updatedAt: { type: "number" }, finishSequence: { type: "integer", minimum: 1 }, revision: { type: "number" },
+    taskCount: { type: "integer", minimum: 0 },
   }, required: ["id", "objective", "status", "coordinatorSessionId", "actorSessionIds", "updatedAt", "revision"], additionalProperties: false,
 } as const
