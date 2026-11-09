@@ -11,8 +11,10 @@ import { registerBackendRelayRoutes } from "../../server/src/server/routes/backe
 import { CODENOMAD_API_CONTRACT } from "../../server/src/meta-contract"
 import { RELAY_AUTHORITY_HEADER as HEADER, RELAY_AUTHORITY_QUERY as QUERY, RELAY_BOOTSTRAP } from "../../server/src/codenomad-servers/relay-authority"
 import { createRemoteBackendClient } from "../src/lib/backend-client"
-import { BackendEvents } from "../src/lib/backend-events"
+import { backendEvents } from "../src/lib/backend-events"
 import { createBackendRegistry } from "../src/stores/backend-registry"
+import { createInstance, instances } from "../src/stores/instances"
+import { preferences } from "../src/stores/preferences"
 
 for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "same-target-recreate", "tls"] as const) {
   test(`immutable relay destination: ${mode}`, { timeout: 20_000 }, async t => {
@@ -37,8 +39,9 @@ for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "s
           assert.equal(new URL(q.url!, remote.origin).searchParams.has(QUERY), false)
           if (q.method === "GET") { r.setHeader("content-type", "application/json"); r.end("[]"); return }
           counters[name][kind]++
-          q.resume()
-          q.on("end", () => { r.setHeader("content-type", "application/json"); r.end(JSON.stringify(kind === "create" ? { id: "w", path: "/same", status: "ready" } : {})) })
+          let body = ""
+          q.on("data", chunk => { body += chunk })
+          q.on("end", () => { r.setHeader("content-type", "application/json"); r.end(JSON.stringify(kind === "create" ? { id: "w", requestId: JSON.parse(body).requestId, path: "/same", status: "ready" } : {})) })
         })
       }
     }
@@ -57,7 +60,9 @@ for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "s
       seen.push(new Headers(init?.headers).get(HEADER) ?? "absent")
       return fetch(input, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), origin } })
     }
-    const events = new BackendEvents()
+    const events = backendEvents
+    const previousFlag = preferences().multiBackend
+    preferences().multiBackend = true
     const make = (id: string) => createRemoteBackendClient(id, { bindRelayAuthority: true, fetcher,
       eventSource: url => { streams.push(url); return { close() {}, addEventListener() {}, onopen: null, onerror: null } as unknown as EventSource } })
     const registry = createBackendRegistry({ enabled: () => true, profiles, events, createClient: make,
@@ -65,6 +70,7 @@ for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "s
     })
     t.after(async () => {
       registry.dispose(); manager.close(); app.server.closeAllConnections(); await app.close(); await a.close(); await b.close()
+      preferences().multiBackend = previousFlag
       fs.rmSync(directory, { recursive: true })
       if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow)
       else Reflect.deleteProperty(globalThis, "window")
@@ -84,7 +90,7 @@ for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "s
     await old.sdk.createClient("saved~w", "/workspaces/w/instance").session.prompt({ sessionID: "s", text: "fixture" })
     assert.equal(a.state.requests.at(-1)!.path, "/workspaces/w/instance/api/session/s/prompt")
     assert.equal(seen.at(-1), proof, "generated SDK URL keeps its base and uses bound fetch")
-    const operations = [() => old.api.cancelWorkspaceCreation("r"), () => old.api.releaseWorkspaceCreation("w", "r"), () => old.api.deleteWorkspace("w")]
+    const operations = [() => old.api.cancelWorkspaceCreation("r"), () => old.api.releaseWorkspaceCreation("saved~w", "r"), () => old.api.deleteWorkspace("saved~w")]
     assert.equal((await old.api.createWorkspace({ path: "/same", requestId: "r" })).id, "w")
     for (const operation of operations) await operation()
     assert.deepEqual(counters.A, { create: 1, cancel: 1, release: 1, close: 1 })
@@ -100,6 +106,17 @@ for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "s
       assert.equal(response.status, 502)
     }
     assert.equal(a.state.requests.length + b.state.requests.length, beforeForged)
+    // Hold a real store creation at its commit gate while the relay authority is replaced.
+    let commit!: () => void, postReturned!: () => void
+    const gate = new Promise<void>(resolve => { commit = resolve })
+    const posted = new Promise<void>(resolve => { postReturned = resolve })
+    const create = old.api.createWorkspace
+    old.api.createWorkspace = async (...args) => { const response = await create(...args); postReturned(); return response }
+    let callbacks = 0
+    const creating = createInstance("/same", undefined, { backend: old, signal: new AbortController().signal,
+      waitForCreateCommit: () => gate, onBeforeCreateCommit: () => { callbacks++ }, onCreateCommit: () => { callbacks++ } })
+    const revokedCreation = assert.rejects(creating)
+    await posted
     if (mode.includes("recreate")) { setProfiles([]); manager.reconcile(); assert.equal(signal.aborted, true) }
     const beforeQueuedClose = structuredClone(counters)
     const queuedClose = assert.rejects(Promise.resolve().then(operations[2]))
@@ -111,6 +128,11 @@ for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "s
     const replacement = await registry.ensure("saved")
     assert.ok(replacement); assert.notEqual(replacement, old)
     assert.notEqual(new URL(replacement.url("/api/workspaces")).searchParams.get(QUERY), proof)
+    commit()
+    await revokedCreation
+    assert.equal(callbacks, 0)
+    assert.equal(instances().has("saved~w"), false)
+    assert.deepEqual(counters, beforeQueuedClose, "revoked store cleanup never dispatches to either upstream")
     assert.equal((await replacement.api.createWorkspace({ path: "/same", requestId: "r" })).id, "w")
     const beforeLate = structuredClone(counters), requestsBeforeLate = a.state.requests.length + b.state.requests.length
     await assert.rejects(old.fetch(old.url("/api/workspaces/w"), { method: "DELETE", signal }))

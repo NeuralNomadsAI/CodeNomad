@@ -22,11 +22,21 @@ test("registry admits two real relayed backends and revalidates before reconnect
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-registry-"))
   const a = await startFakeCodeNomad(), b = await startFakeCodeNomad()
   const streams = new Map<string, ServerResponse>(), closed: string[] = [], reads: string[] = []
+  const mutations: string[] = []
+  const bodies: unknown[] = []
+  const requestId = "restore-11111111-1111-4111-8111-111111111111"
+  const descriptor = { id: "w", requestId, path: "/same", status: "starting", proxyPath: "/workspaces/w/instance", binaryId: "fixture", binaryLabel: "Fixture", createdAt: "", updatedAt: "" }
+  let respondA: (() => void) | undefined
   let incompatible = false, hold: (() => void) | undefined
   let metadataHeld!: () => void, streamsClosed!: () => void
   const heldMetadata = new Promise<void>(resolve => { metadataHeld = resolve })
   const allStreamsClosed = new Promise<void>(resolve => { streamsClosed = resolve })
   for (const [id, remote] of [["a", a], ["b", b]] as const) {
+    for (const route of ["/api/storage/config/ui", "/api/storage/config/server", "/api/storage/state/ui"]) {
+      remote.state.handlers.set(route, (_request, response) => {
+        response.writeHead(200, { "content-type": "application/json" }); response.end("{}")
+      })
+    }
     remote.state.handlers.set("/api/meta", (_request, response) => {
       const send = () => { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({
         apiContract: incompatible && id === "b" ? -1 : CODENOMAD_API_CONTRACT, serverId: `server-${id}`,
@@ -34,9 +44,36 @@ test("registry admits two real relayed backends and revalidates before reconnect
       if (incompatible && id === "b") { hold = send; metadataHeld() }
       else send()
     })
-    remote.state.handlers.set("/api/workspaces", (_request, response) => {
+    remote.state.handlers.set("/api/workspaces", (request, response) => {
+      if (request.method === "POST") {
+        mutations.push(`${id}:POST`)
+        let body = ""
+        request.on("data", chunk => { body += chunk })
+        request.on("end", () => {
+          bodies.push(JSON.parse(body))
+          const send = () => { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(descriptor)) }
+          if (id === "a") {
+            respondA = send
+            streams.get(id)!.write(`data: ${JSON.stringify({ type: "workspace.created", workspace: descriptor })}\n\n`)
+          } else send()
+        })
+        return
+      }
       reads.push(id)
       response.writeHead(200, { "content-type": "application/json" }); response.end("[]")
+    })
+    remote.state.handlers.set("/api/workspaces/w", (request, response) => {
+      mutations.push(`${id}:${request.method}`)
+      response.writeHead(200, { "content-type": "application/json" }); response.end("{}")
+    })
+    remote.state.handlers.set("/api/workspaces/w/creation/release", (request, response) => {
+      mutations.push(`${id}:release`)
+      let body = ""
+      request.on("data", chunk => { body += chunk })
+      request.on("end", () => {
+        assert.deepEqual(JSON.parse(body), { requestId })
+        response.writeHead(200, { "content-type": "application/json" }); response.end("{}")
+      })
     })
     remote.state.handlers.set("/api/events", (_request, response) => {
       streams.set(id, response)
@@ -123,7 +160,10 @@ test("registry admits two real relayed backends and revalidates before reconnect
     fixture.setEnabled(true)
     await Promise.all([fixture.ensure("a"), fixture.ensure("a"), fixture.ensure("b")])
   })
-  await page.waitForFunction(() => (window as any).registryFixture.snapshot().opens.length === 2)
+  await page.waitForFunction(() => {
+    const state = (window as any).registryFixture.snapshot()
+    return state.opens.length === 2 && state.settled.length === 4
+  })
   assert.deepEqual(reads.sort(), ["a", "a", "b", "b"])
   const proofs: string[] = []
   for (const id of ["a", "b"]) {
@@ -139,6 +179,26 @@ test("registry admits two real relayed backends and revalidates before reconnect
     }
   }
   assert.notEqual(proofs[0], proofs[1])
+  // Real lifecycle store, real relay and native SSE: event-before-response A, response-before-event B.
+  const openA = page.evaluate(() => (window as any).registryFixture.open("a"))
+  await page.waitForFunction(() => (window as any).registryFixture.workspaces().includes("a~w"))
+  respondA!(); respondA = undefined
+  assert.equal((await openA).instanceId, "a~w")
+  assert.equal((await page.evaluate(() => (window as any).registryFixture.open("b"))).instanceId, "b~w")
+  streams.get("b")!.write(`data: ${JSON.stringify({ type: "workspace.created", workspace: descriptor })}\n\n`)
+  await page.waitForFunction(() => (window as any).registryFixture.snapshot().created.includes("b~w"))
+  assert.deepEqual((await page.evaluate(() => (window as any).registryFixture.workspaces())).sort(), ["a~w", "b~w"])
+  assert.deepEqual(bodies, [{ path: "/same", requestId }, { path: "/same", requestId }])
+  await page.evaluate(async requestId => { const f = (window as any).registryFixture; await f.release("b~w", requestId); await f.release("b~w", requestId) }, requestId)
+  assert.equal(await page.evaluate(async () => {
+    const f = (window as any).registryFixture
+    f.closeTab("b~w")
+    const detached = !f.tabs().includes("b~w")
+    await f.close("b~w")
+    return detached
+  }), true, "ordinary tab close detaches synchronously before its queued DELETE")
+  assert.deepEqual(mutations, ["a:POST", "b:POST", "b:release", "b:DELETE"])
+  assert.equal(local.some(route => /^(POST|DELETE) \/api\/workspaces/.test(route)), false)
   for (const id of ["a", "b"]) streams.get(id)!.write(`data: ${JSON.stringify({ type: "workspace.removed", workspaceId: "same" })}\n\n`)
   await page.waitForFunction(() => (window as any).registryFixture.snapshot().frames.length === 2)
   assert.deepEqual((await page.evaluate(() => (window as any).registryFixture.snapshot())).frames.sort(), ["a~same", "b~same"])
