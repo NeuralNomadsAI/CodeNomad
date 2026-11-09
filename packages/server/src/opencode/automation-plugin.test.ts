@@ -241,8 +241,8 @@ test("registers developer tools while execution remains session-gated", async ()
   assert.deepEqual(tools, ["inspect", "act", "screenshot"])
 })
 
-test("discovers the Windows bridge registry from a WSL plugin", () => {
-  assert.deepEqual(automationBridgeDirectories({
+test("discovers the Windows bridge registry from a WSL plugin", async () => {
+  assert.deepEqual(await automationBridgeDirectories({
     platform: "linux",
     env: { WSL_DISTRO_NAME: "Ubuntu", XDG_RUNTIME_DIR: "/run/user/1000" },
     home: "/home/dev",
@@ -276,7 +276,7 @@ test("slow WSL registry discovery stays cancellable, retries cancellation and ca
       return {} as never
     }) as unknown as typeof childProcess.execFile)
     syncBuiltinESMExports()
-    const expected = automationBridgeDirectories({ ...options, windowsLocalAppData: "/mnt/c/Users/dev/AppData/Local" })
+    const expected = await automationBridgeDirectories({ ...options, windowsLocalAppData: "/mnt/c/Users/dev/AppData/Local" })
     assert.deepEqual(await discoverAutomationBridgeDirectories(undefined, options), expected)
     assert.deepEqual(await discoverAutomationBridgeDirectories(undefined, options), expected)
     assert.equal(calls, 3, "successful Windows discovery is cached across demands")

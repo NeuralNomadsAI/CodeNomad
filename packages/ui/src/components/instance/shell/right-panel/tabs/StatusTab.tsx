@@ -29,7 +29,6 @@ import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { ShellOutputDialog } from "../../../../shell-output-dialog"
-import { SettingsInfoTip } from "../../../../settings/settings-info-tip"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -240,7 +239,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   // Built once: a changed extra-section list must never recreate (remount) the core sections.
   const coreSections = untrack(() => createCoreStatusSectionManifest({
-      renderInfo: section => <SettingsInfoTip text={props.t(section.tooltipKey)} help={section.help} />,
       renderTokens: () => (
         <Show when={props.activeSession()?.id}>
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} />

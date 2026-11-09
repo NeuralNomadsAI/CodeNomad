@@ -2,6 +2,8 @@ import type { JSX } from "solid-js"
 
 import type { RightPanelModule } from "./registry"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
+import { SettingsInfoTip } from "../../../settings/settings-info-tip"
+import { tGlobal } from "../../../../lib/i18n"
 
 interface CoreRightPanelRenderers {
   renderFilesTab: () => JSX.Element
@@ -9,7 +11,6 @@ interface CoreRightPanelRenderers {
 }
 
 interface CoreStatusSectionRenderers {
-  renderInfo: (section: typeof CORE_STATUS_SECTION_ITEMS[number]) => JSX.Element
   renderTokens: () => JSX.Element
   renderTokensSummary?: () => JSX.Element
   renderYoloModeSection: () => JSX.Element
@@ -62,7 +63,7 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
       const render = sectionRenderers[section.id]
       if (!render) throw new Error(`Missing core right panel section renderer: ${section.id}`)
       return { ...section, render, renderSummary: section.id === "tokens" ? renderers.renderTokensSummary : undefined,
-        renderInfo: () => renderers.renderInfo(section) }
+        renderInfo: () => <SettingsInfoTip text={tGlobal(section.tooltipKey)} help={section.help} /> }
     }),
   }
 }

@@ -19,8 +19,7 @@ const [checked, setChecked] = createSignal(false)
 function Example() {
   const { t } = useI18n()
   const sections = createCoreStatusSectionManifest({ renderTokens: () => null, renderYoloModeSection: () => null,
-    renderProviderUsage: () => null, renderBackgroundProcesses: () => null, renderMcpStatus: () => null, renderPluginStatus: () => null,
-    renderInfo: section => <SettingsInfoTip text={t(section.tooltipKey)} help={section.help} /> }).statusSections
+    renderProviderUsage: () => null, renderBackgroundProcesses: () => null, renderMcpStatus: () => null, renderPluginStatus: () => null }).statusSections
   return <main class="settings-content" style={{ width: "min(700px, 100%)", margin: "auto", padding: "24px" }}>
     <OpenCodeLoginStartCard />
     <div class="settings-card" onClick={() => setLeaked(n => n + 1)} onPointerDown={() => setLeaked(n => n + 1)} onKeyDown={() => setLeaked(n => n + 1)}>

@@ -5,6 +5,7 @@ import { missionCoordinatorSessionID, isMissionCoordinatorSession } from "./sess
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { missionCalendarOwnerSchema } from "./mission-calendar-owner-state"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
+import { missionCreationDefaultsSchema } from "./creation-defaults"
 import {
   documentCounter, documentID, documentTimestamp, nativeDocumentID, missionConfigurationSchema,
   missionLaunchLimit, missionLaunchModel, missionSlotEndsAt, requiresMissionCalendar, MISSION_DOCUMENT_MAX_BYTES,
@@ -37,6 +38,7 @@ export const missionScheduleActivationSchema = z.object({ requestID, expectedRev
 }).strict().refine(value => value.state !== "ready" || value.targets.every(target => target.acknowledged) && value.effectiveOrigin !== undefined)
 export type MissionScheduleActivation = z.infer<typeof missionScheduleActivationSchema>
 const oneTime = z.object({ creationRequestID: requestID, creationDigest: digest, coordinatorSessionID: nativeDocumentID,
+  creationDefaults: missionCreationDefaultsSchema.optional(),
   location: z.object({ directory: z.string().min(1).max(4096), workspaceID: nativeDocumentID.optional() }).strict(),
   firstPlay: z.object({ requestID, expectedRevision: documentCounter.positive(), operationID: nativeDocumentID,
     messageID: nativeDocumentID, requestedAt: documentTimestamp, admittedAt: documentTimestamp.nullable(),
