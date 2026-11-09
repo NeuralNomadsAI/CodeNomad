@@ -4,7 +4,7 @@ import { chromium } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-for (const mode of ["control", "reader"]) test(`real composers retain exact local history and isolate backends; Missions ${mode} uses physical directories`, { timeout: 60000 }, async () => {
+for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "held"]) test(`real composers retain exact local history and isolate backends; Missions ${mode} uses physical directories; history ${delivery}`, { timeout: 60000 }, async () => {
   const fixture = await borrowFixture({ name: "backend-consumers", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-consumers.tsx"></script></body></html>' }] })
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -13,10 +13,17 @@ for (const mode of ["control", "reader"]) test(`real composers retain exact loca
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: 'window.EventSource = class extends EventTarget { close() {} }' })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
-  await page.route("**/api/backends/lab/api/**", route => {
+  let releaseRemote!: () => void
+  const remoteGate = new Promise<void>(resolve => { releaseRemote = resolve })
+  let markRemoteRequested!: () => void
+  const remoteRequested = new Promise<void>(resolve => { markRemoteRequested = resolve })
+  if (delivery === "immediate") releaseRemote()
+  await page.route("**/api/backends/lab/api/**", async route => {
     const request = new URL(route.request().url())
     if (request.pathname.startsWith("/api/backends/lab/api/storage/instances/")) {
       remoteHistory.push(decodeURIComponent(request.pathname.slice("/api/backends/lab/api/storage/instances/".length)))
+      markRemoteRequested()
+      await remoteGate
       return route.fulfill({ json: { messageHistory: ["remote history"], agentModelSelections: {} } })
     }
     if (request.pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled") {
@@ -33,12 +40,40 @@ for (const mode of ["control", "reader"]) test(`real composers retain exact loca
     const recurrence = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/recurrence")
     const schedule = mode === "control" ? page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled") : undefined
     await page.goto(`${fixture.url}?mode=${mode}`)
-    await page.waitForFunction(() => (window as any).backendConsumers?.reads.length >= 1)
     const local = page.locator('[data-composer="local"] textarea'), remote = page.locator('[data-composer="remote"] textarea')
-    await local.press("ArrowUp")
-    assert.equal(await local.inputValue(), "legacy local history", "the persisted Windows key must retain case, backslashes and trailing slash")
-    await remote.press("ArrowUp")
-    assert.equal(await remote.inputValue(), "remote history", "the real remote composer must receive its history identity")
+    await Promise.all([
+      (async () => {
+        await page.waitForFunction(() => {
+          const state = (window as any).backendConsumers
+          if (!state) return false
+          state.readinessChecks++
+          const [localHistory, remoteHistory] = state.histories()
+          return localHistory[0] === "legacy local history" && remoteHistory[0] === "remote history"
+        })
+        await local.press("ArrowUp")
+        assert.equal(await local.inputValue(), "legacy local history", "the persisted Windows key must retain case, backslashes and trailing slash")
+        await remote.press("ArrowUp")
+        assert.equal(await remote.inputValue(), "remote history", "the real remote composer must receive its history identity")
+      })(),
+      (async () => {
+        if (delivery !== "held") return
+        await page.waitForFunction(() => {
+          const state = (window as any).backendConsumers
+          return state?.readinessChecks > 0 && state.histories()[0][0] === "legacy local history"
+        })
+        await remoteRequested
+        const blocked = await page.evaluate(() => {
+          const state = (window as any).backendConsumers
+          return { histories: state.histories(), keys: state.keys }
+        })
+        assert.deepEqual(blocked, { histories: [["legacy local history"], []], keys: [] })
+        releaseRemote()
+      })(),
+    ])
+    assert.deepEqual(await page.evaluate(() => (window as any).backendConsumers.keys), [
+      { target: "local", focused: true, published: true },
+      { target: "remote", focused: true, published: true },
+    ])
     await recurrence
     await schedule
     const result = await page.evaluate(() => (window as any).backendConsumers)
@@ -49,5 +84,5 @@ for (const mode of ["control", "reader"]) test(`real composers retain exact loca
     assert.ok(recurrences.length)
     assert.ok(recurrences.every(path => path === "/api/backends/lab/api/workspaces/mission/missions/recurrence"))
     assert.deepEqual(errors, [])
-  } finally { await browser.close() }
+  } finally { releaseRemote(); await browser.close() }
 })
