@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "服务器",
+  "settings.servers.open": "打开",
+  "settings.servers.dialog.name": "名称",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "禁用此服务器的证书检查，将无法验证其身份。",
+  "settings.servers.dialog.errorRequired": "服务器 URL 为必填项。",
   "settings.preferenceSaveFailed": "无法保存偏好设置。",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "预计重置时间 {time}",

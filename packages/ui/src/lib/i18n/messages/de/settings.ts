@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Server",
+  "settings.servers.open": "Öffnen",
+  "settings.servers.dialog.name": "Name",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Deaktiviert die Zertifikatsprüfung für diesen Server. Seine Identität kann nicht überprüft werden.",
+  "settings.servers.dialog.errorRequired": "Die Server-URL ist erforderlich.",
   "settings.preferenceSaveFailed": "Die Einstellung konnte nicht gespeichert werden.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Geschätzte Rücksetzung {time}",

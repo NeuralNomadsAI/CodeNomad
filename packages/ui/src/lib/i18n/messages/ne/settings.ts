@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "सर्भरहरू",
+  "settings.servers.open": "खोल्नुहोस्",
+  "settings.servers.dialog.name": "नाम",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "यो सर्भरको प्रमाणपत्र जाँच बन्द गर्छ। यसको पहिचान प्रमाणित गर्न सकिँदैन।",
+  "settings.servers.dialog.errorRequired": "सर्भर URL आवश्यक छ।",
   "settings.preferenceSaveFailed": "प्राथमिकता सुरक्षित गर्न सकिएन।",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "अनुमानित रिसेट {time}",

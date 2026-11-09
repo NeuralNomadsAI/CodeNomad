@@ -1,4 +1,18 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.unreachable": "Servidor inaccesible.",
+  "remoteBrowse.pairAgain": "{name}: pega un nuevo enlace de vinculación.",
+  "remoteBrowse.pairingLink": "Nuevo enlace de vinculación",
+  "remoteBrowse.pairingExpired": "Enlace de emparejamiento inválido o caducado.",
+  "remoteBrowse.pairingRateLimited": "Demasiados intentos de emparejamiento. Inténtalo más tarde.",
+  "remoteBrowse.pairingUnavailable": "Emparejamiento de Control remoto en el servidor no disponible.",
+  "remoteBrowse.tlsError": "Error al verificar el certificado.",
+  "folderSelection.remoteProject.removeConfirm": "¿Quitar {name}?",
+  "folderSelection.remoteProject.edit": "Editar servidor",
+  "folderSelection.browseMenu.addField": "Dirección o enlace del servidor",
+  "folderSelection.browseMenu.add": "Añadir servidor",
+  "folderSelection.browseMenu.skipTls": "Omitir la verificación TLS",
+  "folderSelection.browseMenu.errorCredentials": "Quita el usuario y la contraseña de la dirección.",
+  "folderSelection.browseMenu.errorInvalid": "Introduce una dirección http(s) o un enlace de emparejamiento.",
   "folderSelection.language.ariaLabel": "Idioma",
 
   "folderSelection.logoAlt": "Logo de CodeNomad",

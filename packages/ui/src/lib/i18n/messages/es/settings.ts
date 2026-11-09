@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Servidores",
+  "settings.servers.open": "Abrir",
+  "settings.servers.dialog.name": "Nombre",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Desactiva la verificación del certificado de este servidor. Su identidad no se puede verificar.",
+  "settings.servers.dialog.errorRequired": "La URL del servidor es obligatoria.",
   "settings.preferenceSaveFailed": "No se pudo guardar la preferencia.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Reinicio estimado {time}",

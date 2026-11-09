@@ -83,6 +83,10 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
+Con el ajuste multibackend experimental, usa **Configuración → Servidores**: pega una dirección o enlace de vinculación en **Dirección o enlace del servidor**, o pulsa Intro. Añadir guarda un perfil en el anfitrión sin abrir un proyecto. **Editar servidor** cambia la **URL** o el **Nombre** opcional; renombrar con la misma URL y política TLS funciona sin conexión. **Eliminar servidor guardado** pide confirmación, olvida su conexión y guarda la eliminación; si falla el guardado, el perfil permanece para reintentar. Las otras conexiones se mantienen.
+
+**Omitir la verificación TLS** aparece tras un fallo de certificado para esa dirección; cambiar la dirección borra el consentimiento. La vinculación siempre verifica TLS. **Abrir** está desactivado en estos ajustes experimentales. Los pasos siguientes describen el modo predeterminado.
+
 1. En la página de inicio de escritorio, elige **Conectar servidor CodeNomad**. El mismo botón aparece en una pestaña **Servidores** vacía y en **Configuración → Acceso remoto → Servidores**.
 2. En **Conectar a un servidor**, introduce **Nombre del servidor** y **URL del servidor** usando un origen HTTPS de confianza. Deja sin marcar **Omitir la verificación TLS para certificados autofirmados.**; establece confianza en su lugar.
 3. Elige **Guardar** para crear un marcador o **Conectar** para guardarlo y abrirlo. Inicia sesión en ese servidor.

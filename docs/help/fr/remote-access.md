@@ -83,6 +83,10 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
+Avec le réglage multi-backend expérimental, utilisez **Paramètres → Serveurs** : collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou validez par Entrée. L’ajout enregistre un profil sur l’hôte sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. **Supprimer le serveur enregistré** demande confirmation, oublie sa connexion puis enregistre le retrait ; une erreur de sauvegarde conserve le profil pour réessayer. Les autres connexions restent disponibles.
+
+**Ignorer la vérification TLS** est proposé après un échec de certificat pour cette adresse ; changer d’adresse retire l’accord. L’appairage vérifie toujours TLS. **Ouvrir** est désactivé dans ces réglages expérimentaux. Les étapes ci-dessous décrivent le mode par défaut.
+
 1. Sur l’accueil de bureau, choisissez **Se connecter au serveur CodeNomad**. Le même bouton apparaît dans un onglet **Serveurs** vide et dans **Paramètres → Accès distant → Serveurs**.
 2. Dans **Se connecter à un serveur**, saisissez **Nom du serveur** et **URL du serveur** avec une origine HTTPS de confiance. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance.
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.

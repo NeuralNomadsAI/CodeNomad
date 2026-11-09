@@ -1,4 +1,18 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.unreachable": "サーバーに接続できません。",
+  "remoteBrowse.pairAgain": "{name}: 新しいペアリングリンクを貼り付けてください。",
+  "remoteBrowse.pairingLink": "新しいペアリングリンク",
+  "remoteBrowse.pairingExpired": "ペアリングリンクが無効か期限切れです。",
+  "remoteBrowse.pairingRateLimited": "ペアリングの試行が多すぎます。後でもう一度試してください。",
+  "remoteBrowse.pairingUnavailable": "サーバー側のリモートコントロールのペアリングは利用できません。",
+  "remoteBrowse.tlsError": "証明書の検証に失敗しました。",
+  "folderSelection.remoteProject.removeConfirm": "{name} を削除しますか？",
+  "folderSelection.remoteProject.edit": "サーバーを編集",
+  "folderSelection.browseMenu.addField": "サーバーのアドレスまたはリンク",
+  "folderSelection.browseMenu.add": "サーバーを追加",
+  "folderSelection.browseMenu.skipTls": "TLS 検証をスキップ",
+  "folderSelection.browseMenu.errorCredentials": "アドレスからユーザー名とパスワードを削除してください。",
+  "folderSelection.browseMenu.errorInvalid": "http(s) のアドレスまたはペアリングリンクを入力してください。",
   "folderSelection.language.ariaLabel": "言語",
 
   "folderSelection.logoAlt": "CodeNomad ロゴ",

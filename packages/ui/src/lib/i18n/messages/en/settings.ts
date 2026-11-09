@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Servers",
+  "settings.servers.open": "Open",
+  "settings.servers.dialog.name": "Name",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Disables certificate checks for this server. Its identity cannot be verified.",
+  "settings.servers.dialog.errorRequired": "Server URL is required.",
   "settings.preferenceSaveFailed": "Could not save the preference.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Estimated reset {time}",

@@ -6,6 +6,8 @@ describe("native Preferences requests", () => {
   it("accepts current section-only events and contextual requests", () => {
     assert.deepEqual(normalizeNativePreferencesRequest("speech"), { section: "speech" })
     assert.deepEqual(normalizeNativePreferencesRequest("usage"), { section: "usage" })
+    assert.deepEqual(normalizeNativePreferencesRequest("servers"), { section: "servers" })
+    assert.deepEqual(readPreferencesRequestFromUrl("http://localhost:3000/?preferences=servers"), { section: "servers" })
     assert.deepEqual(normalizeNativePreferencesRequest({
       section: "providers",
       instanceId: "workspace-1",

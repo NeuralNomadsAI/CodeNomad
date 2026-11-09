@@ -83,6 +83,10 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
+Mit der experimentellen Multi-Backend-Einstellung verwenden Sie **Einstellungen → Server**: Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein oder bestätigen Sie mit Enter. Das Hinzufügen speichert ein Profil auf dem Host, ohne ein Projekt zu öffnen. **Server bearbeiten** ändert **URL** oder den optionalen **Name**; Umbenennen bei gleicher URL und TLS-Richtlinie funktioniert offline. **Gespeicherten Server entfernen** fragt nach Bestätigung, vergisst die Verbindung und speichert die Entfernung; bei einem Speicherfehler bleibt das Profil für einen neuen Versuch erhalten. Andere Verbindungen bleiben bestehen.
+
+**TLS-Prüfung überspringen** erscheint nach einem Zertifikatsfehler für diese Adresse; eine neue Adresse löscht die Zustimmung. Kopplung prüft TLS immer. **Öffnen** ist in diesen experimentellen Einstellungen deaktiviert. Die folgenden Schritte gelten für den Standardmodus.
+
 1. Wählen Sie auf der Desktop-Startseite **CodeNomad-Server verbinden**. Dieselbe Schaltfläche erscheint auf einem leeren Tab **Server** und unter **Einstellungen → Remote-Zugriff → Server**.
 2. Geben Sie in **Mit Server verbinden** **Servername** und **Server-URL** mit einer vertrauenswürdigen HTTPS-Origin ein. Lassen Sie **TLS-Verifizierung für selbstsignierte Zertifikate überspringen.** deaktiviert; richten Sie stattdessen Vertrauen ein.
 3. Wählen Sie **Speichern** für ein Lesezeichen oder **Verbinden** zum Speichern und Öffnen. Melden Sie sich auf diesem Server an.

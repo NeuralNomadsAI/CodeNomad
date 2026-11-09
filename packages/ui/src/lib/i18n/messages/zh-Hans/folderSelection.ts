@@ -1,4 +1,18 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.unreachable": "无法连接服务器。",
+  "remoteBrowse.pairAgain": "{name}：请粘贴新的配对链接。",
+  "remoteBrowse.pairingLink": "新配对链接",
+  "remoteBrowse.pairingExpired": "配对链接无效或已过期。",
+  "remoteBrowse.pairingRateLimited": "配对尝试过多。请稍后重试。",
+  "remoteBrowse.pairingUnavailable": "服务器端远程控制配对不可用。",
+  "remoteBrowse.tlsError": "证书验证失败。",
+  "folderSelection.remoteProject.removeConfirm": "移除 {name}？",
+  "folderSelection.remoteProject.edit": "编辑服务器",
+  "folderSelection.browseMenu.addField": "服务器地址或链接",
+  "folderSelection.browseMenu.add": "添加服务器",
+  "folderSelection.browseMenu.skipTls": "跳过 TLS 验证",
+  "folderSelection.browseMenu.errorCredentials": "请从地址中移除用户名和密码。",
+  "folderSelection.browseMenu.errorInvalid": "请输入 http(s) 地址或配对链接。",
   "folderSelection.language.ariaLabel": "语言",
 
   "folderSelection.logoAlt": "CodeNomad 徽标",

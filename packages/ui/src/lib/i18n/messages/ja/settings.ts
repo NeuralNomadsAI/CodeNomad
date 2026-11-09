@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "サーバー",
+  "settings.servers.open": "開く",
+  "settings.servers.dialog.name": "名前",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "このサーバーの証明書検証を無効にします。サーバーの身元を確認できなくなります。",
+  "settings.servers.dialog.errorRequired": "サーバー URL は必須です。",
   "settings.preferenceSaveFailed": "設定を保存できませんでした。",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "推定リセット時刻 {time}",

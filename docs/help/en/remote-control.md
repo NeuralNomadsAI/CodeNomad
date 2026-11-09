@@ -15,6 +15,8 @@ To pair another desktop CodeNomad, choose **Connect CodeNomad Server** on its ho
 
 ## Manage paired devices {#paired-devices}
 
+With experimental multi-backend settings, paste the desktop pairing link into **Settings → Servers → Server address or link**. The field clears before the request; only the origin is saved. The local backend retains its private device identity across launches, and **Remove saved server** forgets that profile's connection before removing it. Pairing keeps TLS verification enabled and does not open a project. The desktop-window instructions above apply to the default mode.
+
 1. On the host, return to **Settings → Remote Access → Remote Control**.
 2. Review **Paired devices** and their **Last seen** time. Each device is named after the platform and browser that paired it, such as `iPhone · Safari`.
 3. Choose **Revoke** for a device that should no longer connect.

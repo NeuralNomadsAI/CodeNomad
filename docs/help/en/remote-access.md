@@ -83,6 +83,10 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 ## Save a remote server {#saved-servers}
 
+With the experimental multi-backend setting enabled, use **Settings → Servers** instead: paste an address or pairing link into **Server address or link**, or press Enter to add it. Adding saves a host-owned profile without opening a project. **Edit server** changes its **URL** or optional **Name**; renaming with the same URL and TLS policy works offline. **Remove saved server** asks for confirmation, forgets this profile's connection and saves its removal; a save error leaves the profile available to retry. Other profiles keep their connections.
+
+**Skip TLS verification** is offered after a certificate failure for that address; changing the address clears the consent. Pairing always verifies TLS. **Open** is disabled in this experimental settings composition. The steps below describe the default mode.
+
 1. On the desktop home page, choose **Connect CodeNomad Server**. The same button appears on an empty **Servers** tab and in **Settings → Remote Access → Servers**.
 2. In **Connect to Server**, enter **Server name** and **Server URL** using a trusted HTTPS origin. Leave **Skip TLS verification for self-signed certificates.** unchecked; establish trust instead.
 3. Choose **Save** to bookmark, or **Connect** to save and open it. Sign in on that server.

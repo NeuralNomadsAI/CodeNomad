@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Sunucular",
+  "settings.servers.open": "Aç",
+  "settings.servers.dialog.name": "Ad",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Bu sunucunun sertifika denetimini devre dışı bırakır. Sunucunun kimliği doğrulanamaz.",
+  "settings.servers.dialog.errorRequired": "Sunucu URL'si gerekli.",
   "settings.preferenceSaveFailed": "Tercih kaydedilemedi.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Tahmini sıfırlanma {time}",

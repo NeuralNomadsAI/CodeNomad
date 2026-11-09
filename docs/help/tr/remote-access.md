@@ -83,6 +83,10 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
+Deneysel çoklu arka uç ayarı açıkken **Ayarlar → Sunucular** bölümünü kullanın: **Sunucu adresi veya bağlantısı** alanına adres ya da eşleştirme bağlantısı yapıştırın veya Enter tuşuna basın. Ekleme, proje açmadan ana bilgisayarda bir profil kaydeder. **Sunucuyu düzenle**, **URL** veya isteğe bağlı **Ad** alanını değiştirir; aynı URL ve TLS ilkesiyle ad değiştirme çevrimdışı çalışır. **Kayıtlı sunucuyu kaldır** onay ister, bağlantıyı unutur ve kaldırmayı kaydeder; kayıt hatasında profil yeniden denemek için kalır. Diğer bağlantılar sürer.
+
+**TLS doğrulamasını atla**, o adresin sertifika hatasından sonra sunulur; adres değişince onay silinir. Eşleştirme her zaman TLS doğrular. Bu deneysel ayarlarda **Aç** devre dışıdır. Aşağıdaki adımlar varsayılan modu anlatır.
+
 1. Masaüstü ana sayfasında **CodeNomad Sunucusuna Bağlan** öğesini seçin. Aynı düğme boş bir **Sunucular** sekmesinde ve **Ayarlar → Uzak Erişim → Sunucular** bölümünde de bulunur.
 2. **Sunucuya Bağlan** penceresinde, güvenilir bir HTTPS kaynağını kullanarak **Sunucu adı** ve **Sunucu URL'si** öğesini girin. **Kendinden imzalı sertifikalar için TLS doğrulamasını atla.** öğesini işaretlemeden bırakın; bunun yerine güven oluşturun.
 3. Yer imlerine eklemek için **Kaydet** öğesini veya kaydedip açmak için **Bağlan** öğesini seçin. Bu sunucuda oturum açın.

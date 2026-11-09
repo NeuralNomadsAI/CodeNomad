@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Серверы",
+  "settings.servers.open": "Открыть",
+  "settings.servers.dialog.name": "Имя",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Отключает проверку сертификата этого сервера. Его подлинность нельзя проверить.",
+  "settings.servers.dialog.errorRequired": "Требуется URL сервера.",
   "settings.preferenceSaveFailed": "Не удалось сохранить настройку.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Предполагаемый сброс {time}",
