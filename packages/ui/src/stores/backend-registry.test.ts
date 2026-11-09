@@ -195,6 +195,40 @@ test("unauthorized and unavailable candidates stay distinct and an explicit retr
   }
 })
 
+test("detach and disposal close a live stream and cancel its watchdog", async t => {
+  const previous = globalThis.window
+  Object.assign(globalThis, { window: { location: { origin: "http://relay.test" } } })
+  t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"] })
+  try {
+    for (const action of ["detach", "dispose"] as const) {
+      const h = harness()
+      try {
+        const client = await h.registry.ensure("saved")
+        assert.ok(client)
+        let disposed = 0
+        client.events.onDispose(() => { disposed++ })
+        await new Promise(resolve => setImmediate(resolve))
+        h.opens[0]()
+        const token = h.events.signal("saved")!
+        assert.equal(h.streams(), 1)
+        assert.equal(h.closes(), 0, "the source is still live before revocation")
+        if (action === "detach") h.registry.detach("saved")
+        else h.registry.dispose()
+        assert.equal(h.closes(), 1, action)
+        assert.equal(disposed, 1, action)
+        const requests = h.requests.length
+        t.mock.timers.tick(60_000)
+        await new Promise(resolve => setImmediate(resolve))
+        assert.equal(h.closes(), 1, action)
+        assert.equal(h.requests.length, requests, action)
+        assert.equal(h.streams(), 1, action)
+        assert.equal(token.aborted, true, action)
+        assert.equal(h.clients.size, 0, action)
+      } finally { h.registry.dispose() }
+    }
+  } finally { Object.assign(globalThis, { window: previous }); t.mock.timers.reset() }
+})
+
 test("superseded reconnect metadata cannot revoke a newer connection; disposal cancels retry timers", async t => {
   const previous = globalThis.window
   Object.assign(globalThis, { window: { location: { origin: "http://relay.test" } } })

@@ -66,7 +66,7 @@ test("registry admits two real relayed backends and revalidates before reconnect
     plugins: [shutdown.plugin, solid(), { name: "registry", configureServer(vite) {
       vite.middlewares.use("/fixture", async (_request, response) => {
         response.setHeader("content-type", "text/html")
-        response.end(await vite.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-registry.tsx"></script></body></html>'))
+        response.end(await vite.transformIndexHtml("/fixture", '<html><head><link rel="icon" href="data:,"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-registry.tsx"></script></body></html>'))
       })
     } }], server: { host: "127.0.0.1", port: 0, hmr: false, watch: null, proxy: { "/api": { target } } },
   }).catch(async error => { await cache.dispose(); throw error })
