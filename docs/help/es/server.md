@@ -59,6 +59,8 @@ Para exposición de listeners, certificados, VPN/SSH y proxies inversos, usa [Ac
 
 ## Referencia de la CLI pública {#cli-reference}
 
+Para iniciar Tauri o Electron, consulta [Argumentos de inicio de escritorio](desktop.md#desktop-cli): `--connect-server`, `--folder`, `--new-window` y ejemplos de comandos y accesos directos. Esta tabla corresponde al ejecutable del servidor independiente.
+
 Las opciones prevalecen sobre sus equivalentes del entorno. Las opciones con valor usan el argumento mostrado; los interruptores no. Los valores HTTPS/HTTP reconocen `1`, `true`, `yes`, `y` y `on` como activados, sin distinguir mayúsculas; usa `true`/`false` explícitos para mayor claridad. La actualización automática de interfaz reconoce `1`, `true` y `yes`.
 
 **Las variables de entorno booleanas estrictas** (`CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` y `CODENOMAD_SKIP_AUTH`) activan sus interruptores con `1`, `true`, `yes` u `on`, sin distinguir mayúsculas y minúsculas e ignorando los espacios alrededor. `0`, `false`, `no`, `off`, los valores vacíos o solo con espacios y las variables sin definir dejan los interruptores desactivados. Cualquier otro valor impide que el servidor arranque, incluso con la opción CLI correspondiente. Una opción CLI activa su interruptor aunque haya un valor válido de desactivación; en caso contrario, se aplican los valores predeterminados `false` de abajo.
