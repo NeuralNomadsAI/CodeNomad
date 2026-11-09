@@ -116,6 +116,38 @@ test("native terminal history settles under a newer streaming assistant in one r
   } finally { f.cleanup() }
 })
 
+test("a stranded running tool is reconciled when the next round begins", async () => {
+  const f = fixture("native-settlement-stranded-round")
+  try {
+    const base = { sessionID: "s", assistantMessageID: "m1" }
+    f.emit("session.step.started", { ...base, agent: "build", model, started: 1 })
+    f.emit("session.tool.input.started", { ...base, id: "tool", name: "read" })
+    f.emit("session.tool.called", { ...base, id: "tool", input: {} })
+    // The daemon's loop fed the tool's result back and continued with a new
+    // round, but the terminal tool event never arrived: the part is stranded
+    // running in a finished round while the execution keeps going.
+    f.emit("session.step.started", { ...f.next, agent: "build", model, started: 6 })
+    assert.equal(f.reads.length, 1, "the next round's start must reconcile the stranded tool without waiting for settlement")
+    f.reads[0].resolve({ data: [completed], cursor: {} })
+    await flush()
+    const m1 = messageStoreBus.getOrCreate("native-settlement-stranded-round").getMessage("m1")
+    const tool = Object.values(m1?.parts ?? {}).map((part: any) => part.data).find((part: any) => part.type === "tool")
+    assert.equal((tool as any)?.state?.status, "completed", "the stranded tool stayed running through the next round")
+  } finally { f.cleanup() }
+})
+
+test("a tool running inside its own round is not reconciled", async () => {
+  const f = fixture("native-settlement-active-round")
+  try {
+    const base = { sessionID: "s", assistantMessageID: "m1" }
+    f.emit("session.step.started", { ...base, agent: "build", model, started: 1 })
+    f.emit("session.tool.input.started", { ...base, id: "tool", name: "read" })
+    f.emit("session.tool.called", { ...base, id: "tool", input: {} })
+    f.emit("session.tool.progress", { ...base, id: "tool", metadata: {} })
+    assert.equal(f.reads.length, 0, "a tool running inside the active round is normal")
+  } finally { f.cleanup() }
+})
+
 test("a disposed native projection does not retry a delayed terminal history read", async () => {
   const f = fixture("native-settlement-disposed")
   try {

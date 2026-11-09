@@ -71,6 +71,9 @@ type TranscriptEntry = {
   /** Admitted `session.execution.started` events; a settlement's publication
    * fence is a newer execution, not same-round activity. */
   executionEpoch: number
+  /** A settlement-style reconciliation read started but not yet finished; a
+   * step-boundary reconcile shares it instead of chaining a second read. */
+  settlementReadPending: boolean
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
 }
@@ -310,6 +313,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     retryCount: 0,
     retireWhenDrained: false,
     executionEpoch: 0,
+    settlementReadPending: false,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -569,6 +573,11 @@ async function drainTranscriptQueue(
       }
       transcript.queue.shift()
       entry.emit(queued.event)
+      if (queued.event.type === "session.step.started") {
+        // Keep each replay chunk's synchronous budget untouched: the scan runs
+        // at the next task boundary, never inside a chunk.
+        queueMicrotask(() => reconcileStrandedRoundTools(instanceId, sessionId, transcript))
+      }
       if (!current()) return false
       if (queued.publication) events.push(queued.event)
       if (queued.onApplied) {
@@ -769,6 +778,12 @@ export function applyOpenCodeDataEvent(
     }
   }
   entry.emit(event)
+  // A finished round's tool still running or streaming once a later round
+  // began lost its terminal event mid-execution: reconcile it at this step
+  // boundary instead of waiting for the execution's settlement.
+  if (event.type === "session.step.started" && transcript && typeof sessionId === "string") {
+    reconcileStrandedRoundTools(instanceId, sessionId, transcript)
+  }
   if (coalesced) {
     onDeferred?.(entry.data)
     if (!transcript || (isTranscriptCurrent(instanceId, sessionId!, transcript) && transcript.entry === entry)) {
@@ -966,10 +981,16 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
  * admitted execution supersedes the publication; same-round activity does
  * not. */
 function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  // A reconciliation read already in flight reconciles the same rows and
+  // publishes them under the same fence; chaining another beneath it only
+  // duplicates the fetch.
+  if (transcript.settlementReadPending) return
   const epoch = transcript.executionEpoch
+  transcript.settlementReadPending = true
   void transcript.entry.data.session.message.sync(sessionId)
     .catch(() => undefined)
     .then(() => {
+      transcript.settlementReadPending = false
       // Publish unless a newer execution superseded this settlement:
       // same-round activity (a late terminal tool event) must not
       // suppress the repair.
@@ -1000,6 +1021,32 @@ function hasUnsettledToolRow(messages: SessionMessageInfo[]): boolean {
   return messages.some((message) => message.type === "assistant"
     && message.content.some((part) => part.type === "tool"
       && (part.state.status === "streaming" || part.state.status === "running")))
+}
+
+/** Streaming or running tool parts in assistant rounds the native loop already
+ * completed; the active round's parallel tools are excluded. */
+function hasStrandedFinishedRoundTool(messages: SessionMessageInfo[]): boolean {
+  return messages.some((message) => message.type === "assistant" && message.time?.completed !== undefined
+    && message.content.some((part) => part.type === "tool"
+      && (part.state.status === "streaming" || part.state.status === "running")))
+}
+
+/** A finished round's tool still streaming or running once a later round
+ * began: the loop feeds every tool result back before it continues, so the
+ * terminal event was lost mid-execution. The settlement read that reconciles
+ * it must not wait for the execution to end — later rounds keep its spinner
+ * live, and a quickly following execution would suppress that repair. */
+function reconcileStrandedRoundTools(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+    || transcript.needsAuthoritativeResync || transcript.resyncing) return
+  // A settlement read already in flight reconciles the same rows; invalidating
+  // beneath it would only chain a duplicate fetch.
+  if (transcript.settlementReadPending) return
+  if (!hasStrandedFinishedRoundTool(transcript.entry.data.session.message.list(sessionId))) return
+  // Nothing invalidated the SDK's message key at a step boundary; a key an
+  // earlier sync completed would make this read a no-op.
+  transcript.entry.data.session.message.invalidate(sessionId)
+  completeSettlementRead(instanceId, sessionId, transcript)
 }
 
 /** A `session.tool.called` whose newest matching part already settled. The
