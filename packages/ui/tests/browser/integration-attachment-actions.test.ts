@@ -67,7 +67,6 @@ test(`AC-C5 ${dismissal} cancels and restores the exact Status opener at ${width
 test("AC-C5 attachment rejects activation below 500ms and admits one double-click after 600ms", async () => {
   await withAttachment(async ({ page, model, calls }) => {
     const time = new Date("2026-11-03T12:00:00Z")
-    await page.clock.install({ time })
     await page.clock.pauseAt(time)
     await launch(page)
     const confirm = picker(page).getByRole("button", { name: "Attach", exact: true })

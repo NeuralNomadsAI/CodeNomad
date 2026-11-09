@@ -164,12 +164,29 @@ async function journey(kind) {
     assert(Buffer.byteLength(rows[0].value) <= 256 * 1024)
     return JSON.parse(rows[0].value)
   }
-  const snapshot = id => readSQL(db => {
+  const snapshot = (id, failureDetails = false) => readSQL(db => {
     const doc = document(db, id), passage = doc.pending ?? doc.history?.at(-1)
     const start = passage ? db.prepare("SELECT id,type FROM session_message WHERE session_id=? AND type IN ('user','synthetic') ORDER BY seq LIMIT 16").all(passage.coordinatorSessionID) : []
     const sessions = db.prepare("SELECT id,parent_id,metadata,time_suspended FROM session_v2 WHERE json_extract(metadata,'$.\"codenomad.mission\".document.missionID')=? LIMIT 16").all(id)
-    const schedules = (doc.calendarOwner?.slots ?? []).filter(slot => slot.scheduleID).map(slot => ({ role: slot.role,
-      ...db.prepare('SELECT id,session_id,status,next_due_at,run_count,time_created,"when" AS native_when FROM schedule WHERE id=?').get(slot.scheduleID) }))
+    const schedules = (doc.calendarOwner?.slots ?? []).filter(slot => slot.scheduleID).map(slot => {
+      const schedule = { role: slot.role,
+        ...db.prepare('SELECT id,session_id,status,next_due_at,run_count,time_created,"when" AS native_when FROM schedule WHERE id=?').get(slot.scheduleID) }
+      if (failureDetails) {
+        Object.assign(schedule, db.prepare("SELECT last_outcome,retry_at,time_updated,last_message_id FROM schedule WHERE id=?").get(slot.scheduleID))
+        const proof = row => {
+          if (!row) return null
+          const { body, ...status } = row, data = body === null ? null : JSON.parse(body), text = data?.text
+          return { ...status, bodyOmitted: body === null, schedule: data?.metadata?.schedule ?? null,
+            textBytes: typeof text === "string" ? Buffer.byteLength(text) : null, textSHA256: typeof text === "string" ? hash(text) : null }
+        }
+        schedule.carrier = { sessionID: slot.sessionID,
+          session: db.prepare("SELECT id,time_suspended,time_busy,time_idle,idle_outcome FROM session_v2 WHERE id=?").get(slot.sessionID) ?? null,
+          messages: Array.from(new Set([schedule.last_message_id, ...(schedule.id ? [`msg_${schedule.id}_${schedule.run_count + 1}`] : [])].filter(Boolean)), messageID => ({ messageID,
+            message: proof(db.prepare("SELECT type,seq,time_created,time_updated,length(CAST(data AS BLOB)) AS bytes,CASE WHEN length(CAST(data AS BLOB))<=262144 THEN data END AS body FROM session_message WHERE id=? AND session_id=?").get(messageID, slot.sessionID)),
+            inbox: proof(db.prepare("SELECT type,delivery,enqueued_seq,time_created,length(CAST(payload AS BLOB)) AS bytes,CASE WHEN length(CAST(payload AS BLOB))<=262144 THEN payload END AS body FROM session_inbox WHERE id=? AND session_id=?").get(messageID, slot.sessionID)) })) }
+      }
+      return schedule
+    })
     const startDetails = passage ? db.prepare("SELECT id,type,data FROM session_message WHERE session_id=? AND type IN ('user','synthetic') ORDER BY seq LIMIT 64").all(passage.coordinatorSessionID)
       .map(row => { const data = JSON.parse(row.data); return { id: row.id, type: row.type, textSHA256: hash(data.text ?? ""),
         metadataKeys: Object.keys(data.metadata ?? {}), missionDocument: data.metadata?.["codenomad.mission"]?.document,
@@ -640,7 +657,14 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     const detail = item => item && { name: redact(item.name), type: redact(item.type ?? item._tag), message: redact(item.message), stack: redact(item.stack) }
     result.status = "failed"; result.error = redact(error?.message ?? "qualification-failed")
     await save("failure-diagnostic", { stage: result.stage, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause), nativeErrorTail: redact(nativeErrorTail) })
-    if (result.documentID) try { await save("failure-sql", snapshot(result.documentID)) } catch { /* Preserve the original failure. */ }
+    if (result.documentID) try {
+      const state = snapshot(result.documentID, true)
+      state.maintenance = await maintenanceEvents().then(events => ({ count: events.length,
+        tail: events.filter(event => !event.sessionID || state.document.calendarOwner?.slots.some(slot => slot.sessionID === event.sessionID)).slice(-32) }),
+      () => ({ error: "maintenance-events-unavailable" }))
+      const json = JSON.stringify(state, (_key, value) => typeof value === "string" ? redact(value) : value)
+      await writeFile(path.join(root, "failure-sql.json"), Buffer.byteLength(json) <= 512 * 1024 ? json : '{"error":"failure-sql-bound"}')
+    } catch { /* Preserve the original failure. */ }
     throw Error(`Native product qualification failed at ${result.stage ?? "setup"}: ${result.error}; private redacted diagnostic saved`)
   }
   finally {
