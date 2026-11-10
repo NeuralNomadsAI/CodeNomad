@@ -56,12 +56,12 @@ Gekoppelte Geräte können normale Projekt-/Unterhaltungs-APIs verwenden, Prompt
 | Passwortanmeldung/-abmeldung, Passwortänderungen, lokale Token-Ersteinrichtung | Nicht verfügbar; Gerätezugangsdaten sind auch bei deaktivierter direkter Authentifizierung nötig. |
 | Fernsteuerungsstatus | Für gekoppelte Geräte lesbar; Verwaltung nicht verfügbar. Start/Stop, Kopplungserstellung, Geräteliste und Widerruf bleiben auf dem Host-Zugriffsweg. |
 | Desktop-Remote-Fenster-/Serververwaltung und Proxy-Routen | Nicht verfügbar (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| SideCar-**Inhaltsproxy** | Nicht verfügbar (`/sidecars/`). Dies bedeutet **nicht**, dass alle SideCar-APIs blockiert sind: Gekoppelte Clients können weiterhin die Registrierungs-APIs `/api/sidecars` nutzen. |
+| SideCar-**Inhaltsproxy** | Erfordert Loopback (`/sidecars/`), ebenso wie SideCar-WebSockets. Die Registrierungs-APIs `/api/sidecars` sind für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. |
 | Inhalt der Web-Vorschau | Verfügbar, solange **Web-Vorschauen** (Standard) unter **Einstellungen → Remote-Zugriff → Fernsteuerung** auf dem Host eingeschaltet ist. Jede Vorschauadresse öffnet ihre Seite ohne Kopplung; halten Sie sie privat. Das Ausschalten beendet ausgelieferte Vorschauen und ihre WebSockets; gekoppelte Geräte blenden **Web-Vorschau öffnen** nach dem Neuladen aus. |
 | Automatisierungsbrücke | Nicht verfügbar (`/api/opencode-plugin/`). Native Desktop-Fähigkeiten werden nicht zu Browserfähigkeiten. |
 | WebSocket-Upgrades | Nur für Web-Vorschauen verfügbar. |
 
-Verwenden Sie eine entsprechend geschützte [Direktverbindung](remote-access.md), wenn ein Ablauf eine blockierte Proxy-/WebSocket-Oberfläche benötigt. Fernsteuerung wechselt nicht automatisch dorthin.
+Verwenden Sie eine Loopback-Verbindung auf dem Host für hostgebundene Proxy-/WebSocket-Funktionen und die Fernsteuerungsverwaltung (`/api/remote-control/`). Auch direkter LAN-Zugriff erfordert dafür Loopback; siehe [Aktualisieren](remote-access.md#upgrading). Web-Vorschauen der Fernsteuerung verwenden ein Berechtigungstoken in ihrer Adresse und bleiben verfügbar, solange sie auf dem Host aktiviert sind; halten Sie diese Adresse privat.
 
 ## Relay und Datenschutz {#relay-privacy}
 

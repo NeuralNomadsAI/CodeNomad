@@ -84,6 +84,9 @@ synthetic provider.
   checker's failure text is the review).
 - Fixture names must stay free of route fragments: borrowed URLs are
   namespaced `/<name><route>` and tests derive sibling URLs by substitution.
+- Fixtures exercising host-local actions serve valid `/api/meta` data with
+  `localRequest: true`; non-local, missing and failed metadata retain their
+  fail-closed coverage in `host-only-controls.test.ts`.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
@@ -92,6 +95,12 @@ synthetic provider.
   explicitly. Mutation collectors match the exact HTTP method and path. Hold the
   intended panel source independently of schedule reads, and await lifecycle
   feedback settlement before asserting its final status.
+  Project ABA cases with held inventory discovery restore an exact target through
+  view state and await its point-read detail, keeping the mutation's view fence
+  independent of later row-click intent.
+- Mission selection helpers retain `data-mission-key` and resolve row/chevron
+  Locators at each action across retitling and panel remounts. Wait for the row's
+  visibility before distinguishing a leaf from an expandable row; use native clicks.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
@@ -125,6 +134,12 @@ synthetic provider.
   so Virtua can finish its size estimate. After resizing, assert that the same row
   remains connected outside the viewport before dispatching activity, then retain
   its identity through scrolling and the fresh visible transition.
+- Mission task fixtures target `.mission-tree-node` independently of Virtua's item
+  wrapper. Reveal offscreen targets with `revealMissionTask` before focus/click
+  observation begins; continuation assertions track exact source reads rather than
+  mounted row counts. Scroll geometry is sampled after the virtual viewport settles.
+  Rail checks compare mounted icons with fresh bounds and unmounted icons with
+  independently measured SVG-local anchors; endpoint counts and tolerances stay explicit.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
   `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;

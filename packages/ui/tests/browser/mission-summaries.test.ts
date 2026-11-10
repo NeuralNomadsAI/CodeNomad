@@ -191,6 +191,8 @@ test("closed missions list as rows with their marks and open their full map only
   const { page, errors, requests } = await open()
   try {
     await (await inlineMissionEntry(page, "Objective stopped")).waitFor()
+    // Summary rows publish before their separate native activity observation.
+    await page.locator('[data-mission-key="mission:open"] .mission-row-flag[data-mark="working"]').waitFor()
     assert.deepEqual(await Promise.all(["Objective open", "Objective failed", "Objective done", "Objective stopped"].map(title => mark(page, title))),
       ["working", "interrupted", "idle", "idle"], "rows alone carry every closed mark")
     assert.equal(requests[0]?.get("panelSource"), "summaries", "discovery starts with a bounded summary window")

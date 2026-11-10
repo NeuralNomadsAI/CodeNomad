@@ -59,6 +59,8 @@ Dinleyicinin erişimi, sertifikalar, VPN/SSH ve ters proxy'ler için [Doğrudan 
 
 ## Genel CLI referansı {#cli-reference}
 
+Tauri veya Electron başlatmak için [Masaüstü başlatma argümanlarına](desktop.md#desktop-cli) bakın: `--connect-server`, `--folder`, `--new-window` ve komut/kısayol örnekleri. Aşağıdaki tablo bağımsız sunucu çalıştırılabilir dosyasına aittir.
+
 Bayraklar karşılık gelen ortam değişkenlerini geçersiz kılar. Değer alan bayraklar gösterilen argümanı kullanır; anahtarlar değer almaz. HTTPS/HTTP değerleri büyük/küçük harfe duyarsız olarak `1`, `true`, `yes`, `y` ve `on` değerlerini etkin sayar; açıklık için `true`/`false` kullanın. Arayüzün otomatik güncellemesi `1`, `true` ve `yes` değerlerini tanır.
 
 **Katı boole ortam değişkenleri** (`CLI_UNRESTRICTED_ROOT`, `CLI_UI_NO_UPDATE`, `CLI_LAUNCH`, `CODENOMAD_GENERATE_TOKEN` ve `CODENOMAD_SKIP_AUTH`), büyük/küçük harf ayrımı yapmadan ve baştaki/sondaki boşlukları yok sayarak `1`, `true`, `yes` veya `on` ile anahtarlarını etkinleştirir. `0`, `false`, `no`, `off`, boş veya yalnızca boşluk içeren değerler ve tanımlanmamış değişkenler anahtarları kapalı bırakır. Diğer tüm değerler, ilgili CLI bayrağı verilse bile sunucunun başlamasını engeller. CLI bayrağı, geçerli bir kapalı değerini geçersiz kılarak anahtarı etkinleştirir; aksi halde aşağıdaki `false` varsayılanları uygulanır.

@@ -22,6 +22,9 @@ const logger = createLogger({ level: "silent" } as never)
  */
 export async function startRemoteSurface(t: TestContext, options: {
   skipAuth?: boolean
+  bindHost?: string
+  allowedOrigins?: string[]
+  configureApp?: (app: ReturnType<typeof createHttpServer>["instance"]) => void
   openTunnel?: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
   /** Real panel extension routes over this store, with `workspaceManager` in place of the stub. */
   panelExtensions?: { store: PanelExtensionStore; workspaceManager: unknown }
@@ -71,7 +74,8 @@ export async function startRemoteSurface(t: TestContext, options: {
 
   const stub = new Proxy({}, { get: () => () => undefined }) as never
   const server = createHttpServer({
-    bindHost: "127.0.0.1",
+    bindHost: options.bindHost ?? "127.0.0.1",
+    allowedOrigins: options.allowedOrigins,
     bindPort: 0,
     defaultPort: 0,
     protocol: "http",
@@ -108,6 +112,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     const timer = setInterval(() => reply.raw.write("data: tick\n\n"), 20)
     reply.raw.on("close", () => clearInterval(timer))
   })
+  options.configureApp?.(app)
   options.routes?.(app)
   const started = await server.start()
   t.after(async () => {
@@ -116,6 +121,8 @@ export async function startRemoteSurface(t: TestContext, options: {
   })
   const { pairing } = await manager.start()
   return {
+    app,
+    authManager,
     manager,
     previewManager,
     pairing,

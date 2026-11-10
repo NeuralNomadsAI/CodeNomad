@@ -37,7 +37,8 @@ export function parseShellEnvironment(output: string): ShellEnvironment | null {
 
 export function shellEnvironmentScript(node: string): string {
   const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`
-  return `exec ${quote(node)} -e ${quote("process.stdout.write('\\0CODENOMAD_SHELL_ENV\\0'+JSON.stringify({executable:process.execPath,env:process.env})+'\\0')")}`
+  // Keep the group leader signalable until cleanup, with a bound if its parent disappears.
+  return `exec ${quote(node)} -e ${quote(`setTimeout(()=>process.exit(0),${TIMEOUT_MS});process.stdout.write('\\0CODENOMAD_SHELL_ENV\\0'+JSON.stringify({executable:process.execPath,env:process.env})+'\\0')`)}`
 }
 
 /** Optional, bounded discovery; the backend itself must always be spawned directly. */

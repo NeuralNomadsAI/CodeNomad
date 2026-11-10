@@ -30,7 +30,7 @@ type and its completion notices' `metadata.source` (`IMAGE_TOOL` in
 `session-pruning/assets-gallery-proof.ts`), and the tool offered while an image
 model is available unless `experimental.image_generate` is `false`
 (`image-settings.ts` reads it that way). Notices wrap their text in
-`<image id="ÔÇª" state="ÔÇª">`; the gallery reads the `Saved image: <path> (` line.
+`<image id="…" state="…">`; the gallery reads the `Saved image: <path> (` line.
 The minimum also provides the replay contract (below) consumed by the pinned
 reducer and Code Mode JavaScript run-to-completion, whose regression
 `scripts/test-codemode-jobs-native.mjs` runs in CI against minimum and latest.

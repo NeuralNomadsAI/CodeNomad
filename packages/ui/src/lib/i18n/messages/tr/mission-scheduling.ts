@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "Kaynak ara",
+  "missions.scheduling.error.files": "Geçerli göreli dosya yolları girin.",
   "missions.scheduling.startOnCreation": "Otomatik başlat",
   "missions.scheduling.source.now": "Bir kez, şimdi",
   "missions.settings.effectiveOrigin": "OpenCode yapılandırma dosyası:",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "Kayıtlı saat dilimi (IANA)",
   "missions.scheduling.chooseSource": "Kaynak seç",
   "missions.scheduling.sourceMissing": "Kullanılamayan kaynak: {source}",
-  "missions.scheduling.sourcesUnavailable": "Kaynaklar okunamadı. Taslağı koruyun ve kaydetmeden önce projeyi yeniden yükleyin.",
+  "missions.scheduling.sourcesUnavailable": "Kaynaklar okunamadı.",
   "missions.scheduling.files": "Göreli dosya yolları (satır başına bir tane)",
   "missions.scheduling.filesHint": "Projede en fazla 128 açık dosya yolu. Özyinelemeli kalıplar ve bağlantılı yollar reddedilir; erişim Oynat’ta denetlenir.",
   "missions.scheduling.error.zone": "Geçerli bir IANA saat dilimi girin.",

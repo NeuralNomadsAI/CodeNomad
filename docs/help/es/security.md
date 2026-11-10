@@ -31,7 +31,11 @@ La inicialización se acepta solo desde el listener loopback del propio anfitri�
 
 El inicio de sesión directo crea una sesión opaca en memoria del backend y una cookie `codenomad_session` (o el nombre de cookie configurado). Las cookies son `HttpOnly`, `SameSite=Lax`, tienen ámbito `/` y se marcan `Secure` al emitirse por HTTPS. Son cookies de sesión del navegador; reiniciar el backend invalida las sesiones en memoria. Vuelve a autenticarte sin abandonar la vista cuando se solicite, en lugar de reenviar modificaciones fallidas.
 
-Cambiar una contraseña cambia las comprobaciones de credenciales posteriores; **no** invalida las sesiones directas ya emitidas ni los dispositivos de Control remoto. Si sospechas una intrusión:
+Cerrar sesión revoca la sesión directa actual. Cambiar correctamente la contraseña en el anfitrión revoca todas las sesiones directas de ese usuario, incluida la actual; vuelve a iniciar sesión. Las sesiones caducan tras 24 horas sin solicitudes autenticadas o siete días desde su creación. Ajusta estos límites con `CODENOMAD_SESSION_IDLE_SECONDS` y `CODENOMAD_SESSION_ABSOLUTE_SECONDS` en segundos enteros positivos antes de iniciar el backend. Los dispositivos de Control remoto se revocan por separado.
+
+Los clientes LAN pueden iniciar y cerrar sesión y usar proyectos. Los cambios de contraseña, la gestión de Control remoto, las herramientas de servidores remotos/proxy y los SideCars se administran en el anfitrión por loopback. Las modificaciones del navegador requieren un Origin permitido o, si falta, Referer. Se permiten los orígenes anunciados del servidor; para alias DNS, proxies inversos o una interfaz alojada aparte, configura `CODENOMAD_ALLOWED_ORIGINS` con orígenes HTTP(S) exactos separados por comas, como `https://code.example.test,https://ui.example.test:8443`, y reinicia. No uses rutas ni comodines. Esto concede acceso al navegador, no privilegios del anfitrión. Los clientes nativos también deben enviar un Origin permitido para cambios LAN. Un proxy de confianza conectado por loopback tiene privilegios del anfitrión y necesita sus propios controles de acceso.
+
+Si sospechas una intrusión:
 
 1. Restringe la exposición de red y establece una contraseña nueva en el anfitrión, o cambia el secreto de ejecución y reinicia.
 2. Reinicia el backend para invalidar sus sesiones directas existentes.

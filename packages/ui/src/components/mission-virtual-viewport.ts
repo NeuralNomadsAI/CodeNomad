@@ -30,7 +30,9 @@ export function missionVirtualViewport(element: () => HTMLElement | undefined, a
       focusFrame = requestAnimationFrame(() => {
         focusFrame = 0
         if (!active() || !document.hasFocus() || document.visibilityState !== "visible" || !list.checkVisibility()
-          || !focused?.isConnected || document.activeElement !== focused) return
+          || !focused?.isConnected || document.activeElement !== focused
+          || !focused.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })
+          || focused.closest('[inert], [aria-hidden="true"]')) return
         const box = focused.getBoundingClientRect(), bounds = visibleBounds()
         const delta = box.top < bounds.top ? box.top - bounds.top : box.bottom > bounds.bottom ? box.bottom - bounds.bottom : 0
         if (delta) host.scrollTop += delta / bounds.scale

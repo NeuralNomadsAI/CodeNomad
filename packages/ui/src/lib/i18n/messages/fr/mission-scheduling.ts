@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "Rechercher une source",
+  "missions.scheduling.error.files": "Saisissez des chemins de fichiers relatifs valides.",
   "missions.scheduling.startOnCreation": "Démarrer automatiquement",
   "missions.scheduling.source.now": "Une fois, maintenant",
   "missions.settings.effectiveOrigin": "Fichier de configuration OpenCode :",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "Fuseau enregistré (IANA)",
   "missions.scheduling.chooseSource": "Choisir une source",
   "missions.scheduling.sourceMissing": "Source indisponible : {source}",
-  "missions.scheduling.sourcesUnavailable": "Lecture des sources impossible. Conservez le brouillon et rechargez le projet avant d’enregistrer.",
+  "missions.scheduling.sourcesUnavailable": "Lecture des sources impossible.",
   "missions.scheduling.files": "Chemins relatifs des fichiers (un par ligne)",
   "missions.scheduling.filesHint": "Jusqu’à 128 fichiers explicites du projet. Motifs récursifs et chemins liés refusés ; accès vérifié au premier Play.",
   "missions.scheduling.error.zone": "Saisissez un fuseau IANA valide.",

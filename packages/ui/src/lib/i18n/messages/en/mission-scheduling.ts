@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "Search sources",
+  "missions.scheduling.error.files": "Enter valid relative file paths.",
   "missions.scheduling.startOnCreation": "Start automatically",
   "missions.scheduling.source.now": "Once, now",
   "missions.settings.effectiveOrigin": "OpenCode configuration file:",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "Saved time zone (IANA)",
   "missions.scheduling.chooseSource": "Choose a source",
   "missions.scheduling.sourceMissing": "Unavailable source: {source}",
-  "missions.scheduling.sourcesUnavailable": "Sources could not be read. Keep the draft and reload the project before saving.",
+  "missions.scheduling.sourcesUnavailable": "Sources could not be read.",
   "missions.scheduling.files": "Relative file paths (one per line)",
   "missions.scheduling.filesHint": "Up to 128 explicit files in this project. Recursive patterns and linked paths are refused; source access is checked at Play.",
   "missions.scheduling.error.zone": "Enter a valid IANA time zone.",

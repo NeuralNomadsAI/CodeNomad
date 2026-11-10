@@ -5,7 +5,7 @@ import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-po
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
-import { MissionSchedulingCriterion, type MissionSchedulingSourceLists } from "./mission-scheduling-sources"
+import { MissionSchedulingCriterion, type MissionSchedulingSourceLists, type MissionSourcePage, type SelectedSource } from "./mission-scheduling-sources"
 import { isMissionEventKind, missionCardConnectors, missionSchedulingPolicy, MissionSchedulingError, MISSION_CRITERIA_LIMIT, newMissionCriterion,
   newMissionSchedulingDraft, type MissionSchedulingDraft } from "./mission-scheduling-data"
 
@@ -14,7 +14,9 @@ export type MissionSchedulingLock = "uncertain" | "passage" | "launched-once" | 
 /** Shared controlled scheduling fields. This component performs no reads or mutations. */
 export function MissionScheduling(props: {
   draft: MissionSchedulingDraft; directory?: string; sources: MissionSchedulingSourceLists
+  paging?: (kind: SelectedSource, value?: string) => MissionSourcePage | undefined
   capability: "available" | "activatable" | "missing" | "loading"
+  active?: () => boolean
   lockReason?: MissionSchedulingLock | null; disabled?: boolean
   onChange: (draft: MissionSchedulingDraft) => void
   onPolicy: (policy: MissionLaunchPolicy | undefined) => void
@@ -24,7 +26,7 @@ export function MissionScheduling(props: {
   const patch = (change: Partial<MissionSchedulingDraft>) => props.onChange({ ...props.draft, ...change })
   const patchCriteria = (next: MissionSchedulingDraft["criteria"]) => patch({ criteria: next })
   const retained = () => props.draft.stored?.reason
-  const locked = () => !!props.disabled || !!props.lockReason || !!retained()
+  const locked = () => !!props.disabled || !!props.lockReason || !!retained() || props.active?.() === false
   const unavailable = () => props.capability === "missing" || props.capability === "loading"
   const criteria = () => props.draft.criteria
   const result = createMemo((): { error?: string; index?: number; policy?: MissionLaunchPolicy } => {
@@ -34,16 +36,27 @@ export function MissionScheduling(props: {
       if (unavailable() && calendar) return { error: "capability" }
       const missing = criteria().findIndex(row => isMissionEventKind(row.kind) && row.kind !== "files-changed"
         && !props.sources[row.kind]?.some(item => item.id === row.source))
-      if (missing >= 0) return { error: "source", index: missing }
+      if (missing >= 0) return props.paging?.(criteria()[missing].kind as SelectedSource, criteria()[missing].source)?.loading() ? {} : { error: "source", index: missing }
       return { policy }
     } catch (error) {
       return error instanceof MissionSchedulingError ? { error: error.field, index: error.index } : { error: "empty" }
     }
   })
   createEffect(() => props.onPolicy(result().policy))
+  const visibleError = createMemo(() => {
+    const error = result(), row = error.index === undefined ? undefined : criteria()[error.index]
+    if (error.error === "source" && row && !(row.kind === "files-changed" ? row.files.trim() : row.source.trim())) return undefined
+    return error.error
+  })
+  const errorText = () => {
+    if (!visibleError()) return undefined
+    const row = result().index === undefined ? undefined : criteria()[result().index!]
+    return t(visibleError() === "source" ? row?.kind === "files-changed" ? "missions.scheduling.error.files" : "missions.scheduling.chooseSource"
+      : `missions.scheduling.error.${visibleError()}`)
+  }
   const reason = () => props.lockReason ? t(`missions.scheduling.lock.${props.lockReason}`)
     : props.capability === "missing" && result().error !== "capability" ? t("missions.scheduling.capability.missing") : undefined
-  const rowError = (index: number) => result().index === index ? errorID : undefined
+  const rowError = (index: number) => visibleError() && result().index === index ? errorID : undefined
   const ids = createMemo(() => criteria().map(row => row.id), undefined, { equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]) })
   // While dragging, the connectors follow the order the cards are shown in (the sortable's
   // projected order); the stored order changes only on drop.
@@ -95,7 +108,7 @@ export function MissionScheduling(props: {
         onClick={() => props.onChange(newMissionSchedulingDraft(props.draft.zone))}>{t("missions.scheduling.retained.replace")}</button>
     </section>}</Show>
     <Show when={!retained()}>
-      <fieldset disabled={locked()} aria-describedby={[reason() ? description : "", result().error ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!result().error}>
+      <fieldset disabled={locked()} aria-describedby={[reason() ? description : "", visibleError() ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!visibleError()}>
       <div ref={list} class="mission-scheduling-when" role="group" aria-labelledby={whenID}>
         {/* Scheduling titles the list; each later card shows its connector to the card above. */}
         <DragDropProvider collisionDetector={closestCenter} onDragOver={over} onDragEnd={dropped}>
@@ -104,6 +117,7 @@ export function MissionScheduling(props: {
               <For each={ids()}>{(id, index) => {
                 const row = () => criteria().find(item => item.id === id)!
                 return <MissionSchedulingCriterion row={row()} number={index() + 1} sources={props.sources} errorID={rowError(index())}
+                  errorText={rowError(index()) ? errorText() : undefined} paging={props.paging} disabled={locked()}
                   sortable={criteria().length > 1} connector={connectorOf(id)}
                   onChange={value => patchCriteria(criteria().map(item => item.id === id ? value : item))}
                   onMove={delta => reorder(index(), index() + delta)}
@@ -123,6 +137,6 @@ export function MissionScheduling(props: {
         <datalist id={zoneList}><For each={zones}>{zone => <option value={zone} />}</For></datalist>
       </Show>
     </fieldset></Show>
-    <Show when={result().error}>{error => <p id={errorID} class="mission-create-field-error" role="alert">{t(`missions.scheduling.error.${error()}`)}</p>}</Show>
+    <Show when={visibleError() && result().index === undefined}><p id={errorID} class="mission-create-field-error" role="alert">{errorText()}</p></Show>
   </section>
 }

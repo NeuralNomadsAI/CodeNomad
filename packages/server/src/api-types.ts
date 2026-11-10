@@ -943,6 +943,8 @@ export interface SupportMeta {
 }
 
 export interface ServerMeta {
+  /** Whether this request has host-local privileges (loopback, outside Remote Control). */
+  localRequest?: boolean
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
   /** URL direct remote clients should use (prefers HTTPS when enabled). */
