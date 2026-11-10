@@ -543,6 +543,10 @@ continuation cursors retain that candidate. Every search continuation requires t
 popup's explicit action, including when earlier matches remain, so sparse matches keep
 the same read bound. Browsing without a query uses ordinary end-of-list continuation.
 Pointer focus preserves scroll position; keyboard focus scrolls only to reveal its row.
+The source selector binds both inputs' active descendant to the focused collection key's
+mounted option ID. Each selector owns a reactive registry; options publish their actual
+ID after mount, revoke changed keys and remove only their own registration on cleanup.
+Closed popups and absent collection or mounted entries expose an undefined descendant.
 Selected off-page sources resolve through bounded owned point reads.
 Selected labels remain pinned across searches. Failed reads retain the loaded display
 and offer Retry inside the popup. Changing a card's type disposes its selector and clears

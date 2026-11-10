@@ -1,7 +1,8 @@
-import { Combobox } from "@kobalte/core/combobox"
+import { Combobox, useComboboxContext, type ComboboxInputProps, type ComboboxItemProps } from "@kobalte/core/combobox"
+import type { PolymorphicProps } from "@kobalte/core/polymorphic"
 import { ChevronDown } from "lucide-solid"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, splitProps, type JSX } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { observeListEnd } from "../lib/list-end-observer"
 import type { MissionSourcePage } from "./mission-scheduling-sources"
@@ -18,6 +19,35 @@ export function MissionSourceSelect(props: {
   const [open, setOpen] = createSignal(false), [list, setList] = createSignal<HTMLElement>(), [end, setEnd] = createSignal<HTMLElement>()
   const [query, setQuery] = createSignal("")
   const [openSelection, setOpenSelection] = createSignal<Choice | null>(null)
+  const [mounted, setMounted] = createSignal(new Map<string, { id: string; element: HTMLElement }>())
+  function SourceInput(inputProps: PolymorphicProps<"input", ComboboxInputProps<"input">>) {
+    const context = useComboboxContext()
+    const activeID = createMemo(() => {
+      const state = context.listState(), key = state.selectionManager().focusedKey()
+      return context.isOpen() && key != null && state.collection().getItem(key) ? mounted().get(key)?.id : undefined
+    })
+    // Strip the internal attribute before the DOM spread: mergeProps treats undefined as a fallback.
+    const Input = (domProps: JSX.InputHTMLAttributes<HTMLInputElement>) => {
+      const [, rest] = splitProps(domProps, ["aria-activedescendant"])
+      return <input {...rest} aria-activedescendant={activeID()} />
+    }
+    return <Combobox.Input {...inputProps} as={Input} />
+  }
+  function SourceItem(itemProps: { item: ComboboxItemProps["item"] }) {
+    const id = createUniqueId()
+    let element!: HTMLElement
+    onMount(() => createEffect(() => {
+      const key = itemProps.item.key, entry = { id: element.id, element }
+      setMounted(previous => new Map(previous).set(key, entry))
+      onCleanup(() => setMounted(previous => {
+        if (previous.get(key) !== entry) return previous
+        const next = new Map(previous); next.delete(key); return next
+      }))
+    }))
+    return <Combobox.Item as="div" id={id} ref={element} item={itemProps.item} class="selector-option" data-source-id={itemProps.item.rawValue.id}>
+      <Combobox.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Combobox.ItemLabel>
+    </Combobox.Item>
+  }
   let virtualizer: VirtualizerHandle | undefined, itemKeys: string[] = []
   let pointerNavigation = false
   let input: HTMLInputElement | undefined, retry: HTMLButtonElement | undefined, more: HTMLButtonElement | undefined
@@ -50,7 +80,7 @@ export function MissionSourceSelect(props: {
       options={options()} optionValue="id" optionLabel="label" optionTextValue="label" optionDisabled="unavailable"
       placeholder={t("missions.scheduling.chooseSource")} allowsEmptyCollection>
       <Combobox.Control>
-        <Combobox.Input class="sr-only" tabindex={-1} aria-label={t("missions.scheduling.chooseSource")} aria-required="true" {...invalid()} />
+        <SourceInput class="sr-only" tabindex={-1} aria-label={t("missions.scheduling.chooseSource")} aria-required="true" {...invalid()} />
         <Combobox.Trigger class="selector-trigger" aria-label={props.label} data-source-id={props.value} {...invalid()}
           aria-describedby={[valueID, props.errorID].filter(Boolean).join(" ")} title={selected()?.label ?? t("missions.scheduling.chooseSource")}>
           <span id={valueID} class="selector-trigger-primary">{selected()?.label ?? t("missions.scheduling.chooseSource")}</span>
@@ -64,7 +94,7 @@ export function MissionSourceSelect(props: {
           const action = [more, retry].find(button => button?.isConnected && !button.disabled)
           if (event.key !== "Tab" || event.shiftKey || !action) return
           event.preventDefault(); event.stopPropagation(); action.focus()
-        }}><Combobox.Input ref={input} class="selector-search-input" value={query()}
+        }}><SourceInput ref={input} class="selector-search-input" value={query()}
           onInput={event => props.paging?.search?.(event.currentTarget.value)}
           aria-label={t("missions.scheduling.searchSource")} placeholder={t("missions.scheduling.searchSource")} /></div>
         <Combobox.Listbox as="div" class="selector-listbox" ref={setList} aria-label={props.label} aria-busy={props.paging?.loading()}
@@ -80,9 +110,7 @@ export function MissionSourceSelect(props: {
           return <>
             <Show when={list()}>{root => <Virtualizer data={entries()} scrollRef={root()}
               startMargin={parseFloat(getComputedStyle(root()).paddingTop) || 0} ref={value => { virtualizer = value }} itemSize={40}>
-              {item => <Combobox.Item as="div" item={item} class="selector-option" data-source-id={item.rawValue.id}>
-                <Combobox.ItemLabel class="selector-option-label">{item.rawValue.label}</Combobox.ItemLabel>
-              </Combobox.Item>}
+              {item => <SourceItem item={item} />}
             </Virtualizer>}</Show>
             <Show when={props.paging?.next() && !props.paging.failed() && !query().trim()}>
               <div ref={setEnd} aria-hidden="true" class="mission-source-end" />

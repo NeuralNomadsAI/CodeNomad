@@ -7,6 +7,7 @@ import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { installSourceScrollDelivery } from "./source-scroll-delivery"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
@@ -585,10 +586,19 @@ for (const firstMatch of [false, true]) test(`filtered search pages require expl
   } finally { await page.close() }
 })
 
-test("source keyboard navigation scrolls the real popup and selecting with Enter never submits the form", async () => {
-  const page = await browser.newPage(), f = await setup(page)
-  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: {
-    data: Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })), cursor: {} } }))
+for (const held of [false, true]) test(`source keyboard navigation scrolls the real popup and selecting with Enter never submits the form (held scroll: ${held})`, async t => {
+  const page = await browser.newPage(), consoleErrors: string[] = [], failed: string[] = [], posts: string[] = []
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()) })
+  page.on("requestfailed", request => failed.push(`${request.url()}: ${request.failure()?.errorText}`))
+  page.on("request", request => { if (request.method() === "POST") posts.push(request.url()) })
+  if (held) await installSourceScrollDelivery(page)
+  const f = await setup(page)
+  let nativeReads = 0
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    nativeReads++
+    return route.fulfill({ json: {
+      data: Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })), cursor: {} } })
+  })
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Handle new messages")
@@ -598,20 +608,126 @@ test("source keyboard navigation scrolls the real popup and selecting with Enter
     await page.getByRole("listbox").getByRole("option").first().waitFor()
     const search = page.getByRole("combobox", { name: "Search sources", exact: true })
     await search.focus()
+    const beforeReads = nativeReads
+    await form(page).evaluate(element => {
+      Object.assign(window, { sourceSubmitCount: 0 })
+      element.addEventListener("submit", () => { (window as any).sourceSubmitCount++ })
+    })
+    assert.deepEqual(f.errors, [])
+    if (held) await page.evaluate(() => window.sourceScrollDelivery.arm())
     for (let index = 0; index < 24; index++) await page.keyboard.press("ArrowDown")
-    await page.waitForFunction(() => {
+    if (held) {
+      const released = await page.evaluate(() => window.sourceScrollDelivery.release())
+      assert.ok(released.retained > 0); assert.equal(released.pending, 0)
+    }
+    let geometryError: unknown
+    try { await page.waitForFunction(() => {
       const field = document.querySelector<HTMLInputElement>('.mission-source-popover input[role="combobox"]')!
       const option = document.getElementById(field.getAttribute("aria-activedescendant") ?? ""), list = document.querySelector('.mission-source-popover [role="listbox"]')!
       if (!option) return false
       const box = option.getBoundingClientRect(), port = list.getBoundingClientRect()
       return list.scrollTop > 0 && box.top >= port.top - 1 && box.bottom <= port.bottom + 1
+    }) } catch (error) { geometryError = error }
+    const snapshot = await page.evaluate(() => {
+      const field = document.querySelector<HTMLInputElement>('.mission-source-popover input[role="combobox"]')!
+      const list = document.querySelector('.mission-source-popover [role="listbox"]')!
+      const focused = list.querySelector<HTMLElement>('[data-highlighted]')
+      const box = focused?.getBoundingClientRect(), port = list.getBoundingClientRect()
+      return { aria: field.getAttribute("aria-activedescendant"), focusedKey: focused?.getAttribute("data-key"),
+        actualID: focused?.id, connected: focused?.isConnected, visible: Boolean(box && box.top >= port.top - 1 && box.bottom <= port.bottom + 1),
+        scrollTop: list.scrollTop, selected: list.querySelectorAll('[aria-selected="true"]').length,
+        focus: document.activeElement === field, barrier: window.sourceScrollDelivery?.state() }
     })
+    t.diagnostic(JSON.stringify(snapshot))
+    assert.equal(snapshot.focusedKey, "ses_23"); assert.equal(snapshot.selected, 0); assert.equal(snapshot.focus, true)
+    assert.equal(nativeReads, beforeReads)
+    if (geometryError) {
+      // Preserve the original oracle failure after observing the same single Enter.
+      await page.keyboard.press("Enter")
+      assert.equal(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).getAttribute("data-source-id"), snapshot.focusedKey)
+      assert.equal((await page.evaluate(() => (window as any).sourceSubmitCount)), 0)
+      assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
+      assert.deepEqual(posts, [])
+      assert.deepEqual(consoleErrors, []); assert.deepEqual(failed, [])
+      throw geometryError
+    }
+    assert.equal(snapshot.aria, snapshot.actualID)
+    assert.deepEqual(await page.locator('.mission-source-select input[role="combobox"], .mission-source-popover input[role="combobox"]').evaluateAll(fields => fields.map(field => field.getAttribute("aria-activedescendant"))), [snapshot.actualID, snapshot.actualID])
     const id = await search.evaluate(field => document.getElementById(field.getAttribute("aria-activedescendant")!)!.getAttribute("data-source-id"))
     await page.keyboard.press("Enter")
     assert.equal(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).getAttribute("data-source-id"), id)
     assert.equal(f.posts.length, 0)
+    assert.equal((await page.evaluate(() => (window as any).sourceSubmitCount)), 0)
+    assert.equal(nativeReads, beforeReads)
     assert.equal(await page.getByRole("listbox").count(), 0)
     assert.deepEqual(f.errors, [])
+    assert.deepEqual(consoleErrors, []); assert.deepEqual(failed, [])
+    assert.deepEqual(posts, [])
+    assert.equal(await form(page).locator('.mission-source-select input').getAttribute("aria-activedescendant"), null)
+  } finally { try { if (held) await page.evaluate(() => window.sourceScrollDelivery?.dispose()) } finally { await page.close() } }
+})
+
+test("source descendants follow mounted option identities across range, filter, close and criterion lifetimes", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: {
+    data: Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })), cursor: {} } }))
+  const source = (number: number) => form(page).getByRole("button", { name: `Criterion ${number} source`, exact: true })
+  const hidden = (number: number) => form(page).getByRole("group", { name: `Criterion ${number}`, exact: true }).locator('.mission-source-select input')
+  const search = page.getByRole("combobox", { name: "Search sources", exact: true })
+  const descendants = async (number: number) => {
+    const id = await search.getAttribute("aria-activedescendant")
+    assert.ok(id)
+    assert.equal(await hidden(number).getAttribute("aria-activedescendant"), id)
+    const option = page.locator(`[id="${id}"]`)
+    assert.equal(await option.getAttribute("data-key"), "ses_0")
+    assert.ok((await option.getAttribute("aria-labelledby"))?.startsWith(`${id}-`), "ItemLabel shares the supplied actual option ID")
+    assert.equal(await source(number).getAttribute("data-source-id"), "", "focus never commits selection")
+    return id
+  }
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Keep source option lifetimes isolated"); await ready(page)
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
+    await addCriterion(page)
+    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("conversation-message")
+    assert.equal(await hidden(1).getAttribute("aria-activedescendant"), null)
+    assert.equal(await hidden(2).getAttribute("aria-activedescendant"), null)
+    await source(1).click(); await page.getByRole("listbox").getByRole("option").first().waitFor(); await search.press("ArrowDown")
+    const original = await descendants(1)
+    await page.getByRole("listbox").evaluate(element => { element.scrollTop = element.scrollHeight })
+    await page.locator(`[id="${original}"]`).waitFor({ state: "detached" })
+    assert.equal(await search.getAttribute("aria-activedescendant"), null)
+    assert.equal(await hidden(1).getAttribute("aria-activedescendant"), null)
+    await page.getByRole("listbox").evaluate(element => { element.scrollTop = 0 })
+    await page.waitForFunction(() => !!document.querySelector('.mission-source-popover input')?.getAttribute("aria-activedescendant"))
+    const remounted = await descendants(1)
+    assert.notEqual(remounted, original, "the same focused key gets the remount's actual ID")
+    await search.fill("Missing source")
+    await page.getByRole("status").filter({ hasText: "No results found" }).waitFor()
+    assert.equal(await search.getAttribute("aria-activedescendant"), null)
+    assert.equal(await hidden(1).getAttribute("aria-activedescendant"), null)
+    await search.fill(""); await page.getByRole("listbox").getByRole("option").first().waitFor(); await search.press("ArrowDown")
+    const filtered = await descendants(1)
+    assert.notEqual(filtered, remounted)
+    await search.press("Escape"); await page.getByRole("listbox").waitFor({ state: "detached" })
+    assert.equal(await hidden(1).getAttribute("aria-activedescendant"), null)
+    await source(1).click(); await page.getByRole("listbox").getByRole("option").first().waitFor(); await search.press("ArrowDown")
+    const reopened = await descendants(1)
+    assert.notEqual(reopened, filtered)
+    await search.press("Escape"); await source(2).click(); await page.getByRole("listbox").getByRole("option").first().waitFor(); await search.press("ArrowDown")
+    const second = await descendants(2)
+    assert.notEqual(second, reopened)
+    assert.equal(await hidden(1).getAttribute("aria-activedescendant"), null)
+    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("daily")
+    await page.getByRole("listbox").waitFor({ state: "detached" })
+    assert.equal(await page.locator(`[id="${second}"]`).count(), 0)
+    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("conversation-message")
+    await source(2).click(); await page.getByRole("listbox").getByRole("option").first().waitFor(); await search.press("ArrowDown")
+    assert.notEqual(await descendants(2), second)
+    await page.evaluate(() => window.schedulingEditor.activate(false))
+    await page.getByRole("listbox").waitFor({ state: "detached" })
+    assert.equal(await hidden(2).getAttribute("aria-activedescendant"), null)
+    assert.deepEqual(f.posts, []); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
