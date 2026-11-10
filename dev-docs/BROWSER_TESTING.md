@@ -48,6 +48,8 @@ edits are the developer's own signal to restart the run.
 
 The daemon serves the browser's implicit `GET /favicon.ico` as a small PNG.
 Other missing resources retain their HTTP errors and strict browser collectors.
+Its dependency optimizer scans `tests/browser/fixtures/*.tsx`, keeping dependency
+module URLs stable across the daemon's dynamically registered HTML routes.
 
 ## Logs, cleanup and platform limits
 

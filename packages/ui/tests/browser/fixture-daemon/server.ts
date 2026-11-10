@@ -73,7 +73,7 @@ export async function startFixtureDaemon({ directory, cacheDir }: {
       },
     ],
     resolve: { dedupe: ["solid-js"] },
-    optimizeDeps: { exclude: ["lucide-solid"] },
+    optimizeDeps: { entries: ["tests/browser/fixtures/*.tsx"], exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
   shutdown.own(server)
