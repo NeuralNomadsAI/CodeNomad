@@ -150,7 +150,11 @@ export class DesktopPluginLifecycle {
       check()
       while (true) {
         check()
-        const catalogue = await abortable(connection.client.plugin.list({ location }, { signal }), signal)
+        // This call owns its transport. Cancellation must settle that transport
+        // before returning; only the shared installation uses an early waiter.
+        let catalogue
+        try { catalogue = await connection.client.plugin.list({ location }, { signal }) }
+        catch (error) { check(); throw error }
         check()
         if (catalogue.location.directory !== location.directory) throw new Error("Pruning catalogue Location changed")
         const plugin = catalogue.data.find(plugin => plugin.id === "codenomad-session-pruning")
@@ -162,7 +166,7 @@ export class DesktopPluginLifecycle {
       check()
       await presence.prepare(location.directory, signal, check, deadlineAt)
       check()
-    } finally { clearTimeout(timer) }
+    } finally { controller.abort(); clearTimeout(timer) }
   }
 
   /**

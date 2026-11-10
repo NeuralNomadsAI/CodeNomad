@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { lstat, mkdir, open, opendir, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, open, opendir, rm, rmdir, writeFile, type FileHandle } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 
@@ -10,6 +10,8 @@ export const READINESS_MAX_BYTES = 8_192
 export const READINESS_MAX_PENDING = 32
 const MAX_LEASES = 64
 const MAX_RESPONSES = 64
+// Includes inert scopes after a crash; refuse admission without erasing foreign records.
+const MAX_NAMESPACE_ENTRIES = 256
 const UUID = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/
 const leaseName = (name: string) => name.endsWith(".lease") && UUID.test(name.slice(0, -6))
 type Request = { version: 1; nonce: string; lease: string; directory: string; expires: number }
@@ -69,7 +71,10 @@ async function liveLease(file: string, check: () => void) {
 
 async function names(directory: string, max: number, check: () => void) {
   check()
-  const stream = await opendir(directory).catch(() => undefined)
+  const stream = await opendir(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error
+    return undefined
+  })
   if (!stream) { check(); return [] }
   const result: string[] = []
   try {
@@ -85,11 +90,30 @@ async function names(directory: string, max: number, check: () => void) {
   } finally { await stream.close() }
 }
 
+type OwnedFile = { file: string; handle: FileHandle }
+async function removeOwned(owned: OwnedFile) {
+  try {
+    const expected = await owned.handle.stat({ bigint: true })
+    const actual = await lstat(owned.file, { bigint: true }).catch(() => undefined)
+    if (actual?.isFile() && !actual.isSymbolicLink() && actual.nlink === 1n
+      && actual.dev === expected.dev && actual.ino === expected.ino) await rm(owned.file, { force: true })
+  } finally { await owned.handle.close() }
+}
+
+async function createOwned(file: string, content: string, check: () => void): Promise<OwnedFile> {
+  // EEXIST acquires nothing. Retain the handle, including across partial writes,
+  // so a replacement at the same name never acquires our cleanup ownership.
+  const owned = { file, handle: await open(file, "wx") }
+  try { check(); await writeFile(owned.handle, content); return owned }
+  catch (error) { await removeOwned(owned); throw error }
+}
+
 /** One owner per backend lease; close drains requests before removing the lease. */
 export function ownReadiness(lease: string) {
   let closed = false
   const pending = new Set<Promise<unknown>>()
   const directory = `${lease}.prepare`
+  let directoryIdentity: { dev: bigint; ino: bigint } | undefined
   return {
     prepare(location: string, signal: AbortSignal, assertCurrent: () => void, deadlineAt = Date.now() + READINESS_WAIT_MS): Promise<Ack> {
       const expires = Math.min(deadlineAt, Date.now() + READINESS_WAIT_MS)
@@ -108,16 +132,18 @@ export function ownReadiness(lease: string) {
         if (Buffer.byteLength(content) > READINESS_MAX_BYTES) throw new Error("Readiness Location exceeds limit")
         const file = path.join(directory, `${value.nonce}.json`)
         const ackFile = path.join(directory, `${value.nonce}.ack`)
+        let owned: OwnedFile | undefined
         try {
           check()
           await plainDirectory(path.dirname(lease), check)
           check()
-          await mkdir(directory).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error })
+          await mkdir(directory).then(async () => { directoryIdentity = await lstat(directory, { bigint: true }) })
+            .catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error })
           check()
           await plainDirectory(directory, check)
           if (!await liveLease(lease, check)) throw new Error("Readiness lease expired")
           check()
-          await writeFile(file, content, { flag: "wx" })
+          owned = await createOwned(file, content, check)
           check()
           while (true) {
             check()
@@ -138,9 +164,7 @@ export function ownReadiness(lease: string) {
             check()
           }
         } finally {
-          // These are owned cleanup effects, including after cancellation.
-          await rm(file, { force: true })
-          await rm(ackFile, { force: true })
+          if (owned) await removeOwned(owned)
         }
       })()
       pending.add(run)
@@ -150,7 +174,13 @@ export function ownReadiness(lease: string) {
     async close() {
       closed = true
       await Promise.allSettled([...pending])
-      await rm(directory, { recursive: true, force: true })
+      const actual = await lstat(directory, { bigint: true }).catch(() => undefined)
+      if (directoryIdentity && actual?.isDirectory() && !actual.isSymbolicLink()
+        && actual.dev === directoryIdentity.dev && actual.ino === directoryIdentity.ino) {
+        await rmdir(directory).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT" && error.code !== "ENOTEMPTY" && error.code !== "EEXIST") throw error
+        })
+      }
     },
   }
 }
@@ -159,8 +189,8 @@ export function ownReadiness(lease: string) {
 export function registeredReadiness(directory: string, location: string, current: () => void) {
   const incarnation = randomUUID()
   const marker = path.join(directory, `${incarnation}.scope`)
-  const responses = new Set<string>()
-  let published = false
+  const responses = new Map<string, OwnedFile>()
+  let published: OwnedFile | undefined
   let closed = false
   const check = () => { if (closed) throw new Error("Readiness scope closed"); current() }
   return {
@@ -169,21 +199,26 @@ export function registeredReadiness(directory: string, location: string, current
       if (!published) {
         await plainDirectory(directory, check)
         check()
-        await writeFile(marker, JSON.stringify({ version: 1, directory: location, incarnation }), { flag: "wx" })
-        published = true
+        const entries = await names(directory, MAX_NAMESPACE_ENTRIES, check)
+        if (entries.length >= MAX_NAMESPACE_ENTRIES) throw new Error("Readiness namespace exceeds limit")
+        published = await createOwned(marker, JSON.stringify({ version: 1, directory: location, incarnation }), check)
+        // Concurrent followers also validate after their exclusive creation.
+        try { await names(directory, MAX_NAMESPACE_ENTRIES, check) }
+        catch (error) { await removeOwned(published); published = undefined; throw error }
         check()
       }
       // Reclaim only our own responses whose request has gone; at most 64 held.
-      for (const file of responses) {
+      for (const [file, owned] of responses) {
         check()
         const value = await read(file.slice(0, -4) + ".json", check)
         check()
         if (request(value)) continue
-        await rm(file, { force: true })
+        await removeOwned(owned)
         responses.delete(file)
         check()
       }
       if (leases.length > MAX_LEASES) throw new Error("Too many readiness leases")
+      const plan: Array<{ ackFile: string; value: Request }> = []
       for (const lease of leases) {
         check()
         if (!leaseName(lease) || !await liveLease(path.join(directory, lease), check)) continue
@@ -200,7 +235,6 @@ export function registeredReadiness(directory: string, location: string, current
           const file = path.join(requests, entry)
           const ackFile = file.slice(0, -5) + ".ack"
           if (responses.has(ackFile)) continue
-          if (responses.size >= MAX_RESPONSES) return
           const value = await read(file, check)
           check()
           if (!request(value) || Object.keys(value).sort().join(",") !== requestKeys
@@ -208,20 +242,27 @@ export function registeredReadiness(directory: string, location: string, current
           if (!await liveLease(path.join(directory, lease), check)) continue
           check()
           if (!request(value)) continue
-          // wx refuses a foreign or old scope's response rather than replacing it.
-          try {
-            await writeFile(ackFile, JSON.stringify({ ...value, incarnation }), { flag: "wx" })
-            responses.add(ackFile)
-          } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error }
-          check()
+          if (responses.size + plan.length >= MAX_RESPONSES) throw new Error("Too many readiness responses")
+          plan.push({ ackFile, value })
         }
+      }
+      // Validate the entire bounded snapshot before publishing consumable ACKs.
+      for (const { ackFile, value } of plan) {
+        check()
+        if (!request(value) || !await liveLease(path.join(directory, value.lease), check)) continue
+        check()
+        // wx refuses a foreign or old scope's response rather than replacing it.
+        try {
+          responses.set(ackFile, await createOwned(ackFile, JSON.stringify({ ...value, incarnation }), check))
+        } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error }
+        check()
       }
     },
     async close() {
       closed = true
       // Caller serializes reconciliation and joins any admitted write first.
-      await rm(marker, { force: true })
-      for (const file of responses) await rm(file, { force: true })
+      if (published) { await removeOwned(published); published = undefined }
+      for (const owned of responses.values()) await removeOwned(owned)
       responses.clear()
     },
   }

@@ -50,6 +50,7 @@ test("fresh Location challenges echo the owned lease and change incarnation afte
   const next = await prepare()
   assert.notEqual(first.nonce, next.nonce)
   assert.notEqual(first.incarnation, next.incarnation)
+  await scope.reconcile([path.basename(f.lease)])
   assert.deepEqual(await fs.readdir(`${f.lease}.prepare`), [])
 })
 
@@ -221,10 +222,10 @@ test("a late admitted ACK write is joined and removed on scope close, with no ne
   const pending = f.owner.prepare(f.root, controller.signal, () => { if (!current) throw new Error("caller invalid") })
   const refused = assert.rejects(pending, /invalid|abort/i)
   await f.request()
-  const original = fs.writeFile
-  t.mock.method(fs, "writeFile", async (...args: Parameters<typeof fs.writeFile>) => {
+  const original = fs.open
+  t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
     if (observedInvalid) lateAdmissions++
-    if (String(args[0]).endsWith(".ack")) { admitted(); await hold }
+    if (String(args[0]).endsWith(".ack") && args[1] === "wx") { admitted(); await hold }
     return original(...args)
   })
   syncBuiltinESMExports()
