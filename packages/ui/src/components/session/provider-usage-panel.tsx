@@ -99,6 +99,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const hasReadings = createMemo(() => displayedLabels().length > 0 || Boolean(usage()?.console))
   const unavailableMessage = createMemo(() => {
     const data = usage()
+    if (data?.freeEstimate && data.unavailableReason === "opencode-console-missing-credential") return t("providerUsage.freeConnect")
     const consoleMessage = data ? consoleError(data) : undefined
     if (consoleMessage) return t(consoleMessage)
     if (data?.unavailableReason === "openai-token-sharing-unsupported") return t("providerUsage.openaiTokenSharingUnsupported")

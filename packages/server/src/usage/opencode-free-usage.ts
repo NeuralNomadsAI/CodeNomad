@@ -2,36 +2,32 @@ import { createHash } from "node:crypto"
 import type { ProviderUsageResponse } from "../api-types"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import { openCodeConsoleCredential, readUsageCredentials } from "./native-credentials"
-import { estimateOpenCodeFreeUsage, OPENCODE_FREE_DAILY_REQUESTS, openCodeFreeWindow } from "./opencode-free-estimate"
+import { OPENCODE_FREE_DAILY_REQUESTS, openCodeFreeWindow } from "./opencode-free-estimate"
 import type { OpenCodeFreeExhaustion } from "./opencode-free-exhaustion"
-import { readOpenCodeConsoleFreeRequests } from "./providers/opencode-console"
+import { openCodeConsoleError, readOpenCodeConsoleFreeRequests } from "./providers/opencode-console"
 import type { AuthEntry } from "./types"
 
-export const OPENCODE_FREE_CONSOLE_CALIBRATION = true
+type ConsoleReading = Pick<ProviderUsageResponse, "configured" | "unavailableReason"> & { requests: number | null }
 
-export function calibrateOpenCodeFreeRequests(local: number | null, console: number | null): number | null {
-  return local === null || console === null ? local : Math.max(local, console)
-}
-
-export function createOpenCodeFreeUsage(exhaustion: Pick<OpenCodeFreeExhaustion, "exhausted">,
-  options: { consoleCalibration?: boolean } = {}) {
-  const cache = new Map<string, { expiresAt: number; read: Promise<number | null> }>()
+export function createOpenCodeFreeUsage(exhaustion: Pick<OpenCodeFreeExhaustion, "exhausted">) {
+  const cache = new Map<string, { expiresAt: number; read: Promise<number> }>()
   const lifetime = new AbortController()
-  async function consoleRequests(connection: ServiceConnection, day: number, signal: AbortSignal) {
+  async function consoleRequests(connection: ServiceConnection, day: number, signal: AbortSignal): Promise<ConsoleReading> {
     const auth = await readUsageCredentials(connection, signal)
     signal.throwIfAborted()
-    if ("reason" in openCodeConsoleCredential(auth)) return null
+    const credential = openCodeConsoleCredential(auth)
+    if ("reason" in credential) return { requests: null, configured: credential.configured, unavailableReason: credential.reason }
     const entry = auth.opencode as AuthEntry
     const key = `${day}:${createHash("sha256").update(JSON.stringify(entry)).digest("hex")}`
     const cached = cache.get(key)
-    if (cached && cached.expiresAt > Date.now()) return cached.read
+    if (cached && cached.expiresAt > Date.now()) return { requests: await cached.read, configured: true }
     if (cache.size >= 32) cache.delete(cache.keys().next().value!)
     const expiry = entry.type === "oauth" && typeof entry.expires === "number" ? entry.expires : Infinity
     const record = { expiresAt: Math.min(openCodeFreeWindow(day).resetAt, expiry, Date.now() + 60_000),
       read: readOpenCodeConsoleFreeRequests(auth, AbortSignal.any([lifetime.signal, AbortSignal.timeout(15_000)]))
-        .catch(() => { if (cache.get(key) === record) cache.delete(key); return null }) }
+        .catch(error => { if (cache.get(key) === record) cache.delete(key); throw error }) }
     cache.set(key, record)
-    return record.read
+    return { requests: await record.read, configured: true }
   }
   function refreshExhaustion(connection: ServiceConnection, usage: ProviderUsageResponse): ProviderUsageResponse {
     if (!usage.freeEstimate) return usage
@@ -40,43 +36,39 @@ export function createOpenCodeFreeUsage(exhaustion: Pick<OpenCodeFreeExhaustion,
     const requests = sameDay ? usage.freeEstimate.requests : null
     const reference = OPENCODE_FREE_DAILY_REQUESTS
     const usedPercent = exhausted ? 100 : Math.min(100, (requests ?? 0) / reference * 100)
-    return { ...usage, fetchedAt: now, ok: requests !== null || exhausted,
+    return { ...usage, fetchedAt: now, ok: requests !== null,
       freeEstimate: { requests, reference, exhausted },
-      windows: requests === null && !exhausted ? {} : { daily: {
+      windows: requests === null ? {} : { daily: {
         usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: 86_400,
         resetAt: openCodeFreeWindow(now).resetAt,
-        ...(requests === null ? {} : { valueLabel: `${requests} / ${reference}` }),
+        valueLabel: `${requests} / ${reference}`,
       } } }
   }
   return {
     async read(connection: ServiceConnection, providerId: string, modelId: string | undefined, signal: AbortSignal,
-      calibrationSignal: AbortSignal = AbortSignal.timeout(12_000)) {
-      const now = Date.now(), { from, to } = openCodeFreeWindow(now)
-      let usage: ProviderUsageResponse = { requestedProviderId: providerId, providerId: "opencode-free", providerName: "OpenCode Console", modelId,
-        supported: true, configured: true, ok: false, estimated: true, fetchedAt: now, windows: {},
-        freeEstimate: { requests: null, reference: OPENCODE_FREE_DAILY_REQUESTS, exhausted: false } }
+      readSignal: AbortSignal = AbortSignal.timeout(12_000)) {
+      const now = Date.now(), { from } = openCodeFreeWindow(now)
+      const unavailable: ConsoleReading = { requests: null, configured: true, unavailableReason: "opencode-console-network-error" }
+      const bounded = AbortSignal.any([signal, readSignal])
+      let abort!: () => void
+      const aborted = new Promise<ConsoleReading>(resolve => {
+        abort = () => resolve(unavailable)
+        bounded.addEventListener("abort", abort, { once: true })
+      })
+      let reading = unavailable
       try {
-        const stats = to === from ? { models: [] } : await connection.client.session.stats({ from, to, timezone: "UTC", tools: "none" }, { signal })
-        usage = estimateOpenCodeFreeUsage(stats, providerId, modelId, now)
-      } catch { /* Preserve display evidence when native stats are unavailable. */ }
+        // Caller cancellation leaves another caller's shared Console transport alive.
+        reading = bounded.aborted ? unavailable : await Promise.race([consoleRequests(connection, from, bounded), aborted])
+      } catch (error) {
+        reading = { ...unavailable, unavailableReason: openCodeConsoleError(error) }
+      } finally { bounded.removeEventListener("abort", abort) }
       signal.throwIfAborted()
-      if (options.consoleCalibration ?? OPENCODE_FREE_CONSOLE_CALIBRATION) {
-        // Optional calibration leaves the route time to publish its local reading.
-        // Abandoning this caller's wait must not cancel another caller's shared read.
-        const optional = AbortSignal.any([signal, calibrationSignal])
-        let abort!: () => void
-        const aborted = new Promise<null>(resolve => {
-          abort = () => resolve(null)
-          optional.addEventListener("abort", abort, { once: true })
-        })
-        try {
-          const console = optional.aborted ? null
-            : await Promise.race([consoleRequests(connection, from, optional).catch(() => null), aborted])
-          signal.throwIfAborted()
-          usage.freeEstimate!.requests = calibrateOpenCodeFreeRequests(usage.freeEstimate!.requests, console)
-        } finally { optional.removeEventListener("abort", abort) }
-      }
-      return refreshExhaustion(connection, usage)
+      return refreshExhaustion(connection, {
+        requestedProviderId: providerId, providerId: "opencode-free", providerName: "OpenCode Console", modelId,
+        supported: true, configured: reading.configured, ok: false, estimated: true, fetchedAt: now, windows: {},
+        ...(reading.unavailableReason ? { unavailableReason: reading.unavailableReason } : {}),
+        freeEstimate: { requests: reading.requests, reference: OPENCODE_FREE_DAILY_REQUESTS, exhausted: false },
+      })
     },
     refreshExhaustion,
     dispose() { lifetime.abort(); cache.clear() },
