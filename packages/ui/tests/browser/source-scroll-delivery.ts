@@ -5,7 +5,8 @@ export async function installSourceScrollDelivery(page: Page) {
   await page.addInitScript(() => {
     Object.assign(window, { __name: Object })
     const prototype = EventTarget.prototype, add = prototype.addEventListener, remove = prototype.removeEventListener
-    const registrations = new WeakMap<EventTarget, Map<EventListenerOrEventListenerObject, Map<boolean, EventListener>>>()
+    type Registration = EventListener & { revoke(): void }
+    const registrations = new WeakMap<EventTarget, Map<EventListenerOrEventListenerObject, Map<boolean, Registration>>>()
     const cleanup = new Set<() => void>()
     let armed = false, retained = 0
     const pending: Array<() => void> = []
@@ -18,6 +19,8 @@ export async function installSourceScrollDelivery(page: Page) {
       if (type !== "scroll" || !listener || !(this instanceof Element)
         || !this.matches('.mission-source-popover [role="listbox"]')) return add.call(this, type, listener, options)
       const capture = typeof options === "boolean" ? options : Boolean(options?.capture)
+      const signal = typeof options === "object" ? options?.signal : undefined
+      if (signal?.aborted) return add.call(this, type, listener, options)
       let listeners = registrations.get(this)
       if (!listeners) registrations.set(this, listeners = new Map())
       let captures = listeners.get(listener)
@@ -25,23 +28,33 @@ export async function installSourceScrollDelivery(page: Page) {
       let wrapper = captures.get(capture)
       if (!wrapper) {
         let active = true
-        const target = this
-        wrapper = function(event) {
+        const target = this, once = typeof options === "object" && Boolean(options?.once)
+        const retire = (revoke: boolean) => {
+          if (captures!.get(capture) === registered) captures!.delete(capture)
+          if (signal) remove.call(signal, "abort", dispose)
+          if (revoke) { active = false; cleanup.delete(dispose) }
+        }
+        const dispose = () => { retire(true); remove.call(target, type, registered, capture) }
+        const registered: Registration = Object.assign(function(this: EventTarget, event: Event) {
+          // Native once removal precedes invocation; its consumed delivery still belongs to it.
+          if (once) retire(false)
           const deliver = () => {
-            if (active && !(typeof options === "object" && options.signal?.aborted)) {
+            if (!active) return
+            try {
               if (typeof listener === "function") listener.call(this, event)
               else listener.handleEvent.call(listener, event)
-            }
+            } finally { if (once) { active = false; cleanup.delete(dispose) } }
           }
           if (armed && target instanceof Element && target.matches('.mission-source-popover [role="listbox"]')) {
             retained++; pending.push(deliver)
           } else deliver()
-        }
-        // Native removal still owns listener lifetime, including queued deliveries.
-        Object.assign(wrapper, { revoke: () => { active = false } })
-        captures.set(capture, wrapper)
-        const registered = wrapper
-        cleanup.add(() => { active = false; remove.call(target, type, registered, capture) })
+        }, { revoke: dispose })
+        wrapper = registered
+        captures.set(capture, registered)
+        cleanup.add(dispose)
+        try { add.call(target, type, registered, options) } catch (error) { dispose(); throw error }
+        if (signal) add.call(signal, "abort", dispose, { once: true })
+        return
       }
       return add.call(this, type, wrapper, options)
     }
@@ -50,8 +63,7 @@ export async function installSourceScrollDelivery(page: Page) {
       const captures = listener && registrations.get(this)?.get(listener)
       const wrapper = type === "scroll" && captures?.get(capture)
       if (wrapper) {
-        (wrapper as EventListener & { revoke(): void }).revoke()
-        captures!.delete(capture)
+        wrapper.revoke()
       }
       return remove.call(this, type, wrapper || listener, options)
     }
