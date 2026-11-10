@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createMemo, createSignal, createUniqueId, lazy, on, onCleanup, Show } from "solid-js"
-import { ListEnd, Loader2, Mic, Paperclip, SendHorizontal, Volume2, X } from "lucide-solid"
+import { ArrowDown, ArrowUp, ListEnd, Loader2, Mic, Paperclip, SendHorizontal, Volume2, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
@@ -9,7 +9,7 @@ import { hotkeyLabel, withHotkey } from "../lib/hotkeys"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { PROMPT_CLEAR_EVENT } from "../lib/session-sidebar-events"
 import { getActiveInstance } from "../stores/instances"
-import { agents, executeCustomCommand } from "../stores/sessions"
+import { agents, executeCustomCommand, sessions } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
@@ -42,6 +42,7 @@ import {
   toggleConversationMode,
 } from "../stores/conversation-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import { requestUserMessageJump } from "./user-message-navigation"
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 const DEFAULT_PROMPT_FIELD_HEIGHT = 104
@@ -724,6 +725,7 @@ export default function PromptInput(props: PromptInputProps) {
   // Boolean memos, so the action menu rebuilds only when they flip, not per keystroke.
   const canClearPrompt = createMemo(() => prompt().length > 0)
   const canSendDraft = createMemo(() => canSend())
+  const canNavigateUserMessages = createMemo(() => props.isActive !== false && props.sessionId !== "info" && Boolean(sessions().get(props.instanceId)?.has(props.sessionId)))
 
   const submitOnEnter = () => preferences().promptSubmitOnEnter
 
@@ -848,6 +850,17 @@ export default function PromptInput(props: PromptInputProps) {
       disabled: Boolean(props.disabled) || isReadingFiles(),
       onSelect: handleUploadFiles,
     })
+    for (const [direction, label, shortcut] of [["previous", "previousUserMessage", "user-message-prev"], ["next", "nextUserMessage", "user-message-next"]] as const) {
+      const target = { instanceId: props.instanceId, sessionId: props.sessionId, direction }
+      items.push({
+        key: shortcut,
+        label: t(`commands.${label}.label`),
+        description: hotkeyLabel(shortcut) || undefined,
+        icon: direction === "previous" ? <ArrowUp class="h-4 w-4" aria-hidden="true" /> : <ArrowDown class="h-4 w-4" aria-hidden="true" />,
+        disabled: !canNavigateUserMessages(),
+        onSelect: () => requestUserMessageJump(target),
+      })
+    }
     if (hasHistory()) {
       items.push({
         key: "history-previous",
