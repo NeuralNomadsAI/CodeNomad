@@ -60,7 +60,7 @@ Schedules include Once, now, Every N hours, Every day, Selected weekdays, Day of
 
 ### Events and combinations {#scheduling-conditions}
 
-An event can follow another schedule's success, a completed one-time Mission, commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Its picker searches sources and loads more as you scroll; a failed read offers **Try again** there. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
+An event can follow another schedule's success, a completed one-time Mission, commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Browsing without a search loads more as you scroll; a failed read offers **Try again** there. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
 
 - **or** combines adjacent schedules, or adjacent events.
 - **if**: events after schedules are their conditions. At each scheduled time, one of those events must have changed since the last successful passage.

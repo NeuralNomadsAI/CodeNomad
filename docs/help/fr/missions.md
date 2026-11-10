@@ -60,7 +60,7 @@ Les horaires proposent Une fois, maintenant, Toutes les N heures, Tous les jours
 
 ### Événements et combinaisons {#scheduling-conditions}
 
-Un événement peut suivre la réussite d’un autre programme, une Mission ponctuelle terminée, des commits sur une branche locale, de nouveaux messages ou des changements de fichiers explicites. Choisissez la source dans ce critère. Son sélecteur permet de rechercher et charge la suite au défilement ; en cas d’échec, **Réessayer** apparaît au même endroit. La conversation choisie pour les nouveaux messages fournit aussi du contexte au passage. Changer le type de critère efface sa source. La modification conserve le contexte de conversation déjà enregistré.
+Un événement peut suivre la réussite d’un autre programme, une Mission ponctuelle terminée, des commits sur une branche locale, de nouveaux messages ou des changements de fichiers explicites. Choisissez la source dans ce critère. Sans recherche, le sélecteur charge la suite au défilement ; en cas d’échec, **Réessayer** apparaît au même endroit. La recherche ignore les majuscules et minuscules, y compris pour les lettres accentuées. Pendant une recherche, utilisez **Charger d’autres sources** dans le sélecteur pour poursuivre, même si la page contient déjà des résultats. La conversation choisie pour les nouveaux messages fournit aussi du contexte au passage. Changer le type de critère efface sa source. La modification conserve le contexte de conversation déjà enregistré.
 
 - **ou** combine des horaires voisins, ou des événements voisins.
 - **si** : les événements après des horaires sont leurs conditions. À chaque horaire, l’un d’eux doit avoir changé depuis le dernier passage réussi.

@@ -463,6 +463,128 @@ test("a saved Mission source outside the first page resolves through its workspa
   } finally { await page.close() }
 })
 
+test("hovering visible source rows never scrolls them away and pointer clicks choose the pointed conversation", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: {
+    data: Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })), cursor: {} } }))
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Choose the conversation under the pointer")
+    await ready(page)
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
+    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await source.click()
+    const list = page.getByRole("listbox")
+    await list.getByRole("option").first().waitFor()
+    for (let pass = 0; pass < 2; pass++) {
+      const before = await list.evaluate(element => element.scrollTop)
+      const targets = await list.getByRole("option").evaluateAll(options => {
+        const port = options[0].closest('[role="listbox"]')!.getBoundingClientRect()
+        return options.flatMap(option => {
+          const box = option.getBoundingClientRect()
+          return box.top >= port.top && box.bottom <= port.bottom
+            ? [{ id: option.getAttribute("data-source-id"), x: box.x + box.width / 2, y: box.y + box.height / 2 }] : []
+        })
+      })
+      assert.ok(targets.length >= 3)
+      const port = (await list.boundingBox())!
+      await page.mouse.move(port.x + port.width / 2, port.y + port.height + 12, { steps: 5 })
+      for (const target of targets) {
+        await page.mouse.move(target.x, target.y, { steps: 80 })
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+        assert.equal(await list.evaluate(element => element.scrollTop), before, "pointer focus leaves visible rows in place")
+      }
+      if (pass === 0) { await page.mouse.wheel(0, 900); await page.waitForFunction(() => document.querySelector('[role="listbox"]')!.scrollTop > 500); continue }
+      const target = targets[Math.floor(targets.length / 2)]
+      await page.mouse.move(target.x, target.y, { steps: 5 })
+      await page.mouse.down(); await page.mouse.up()
+      assert.equal(await source.getAttribute("data-source-id"), target.id)
+    }
+    assert.equal(f.posts.length, 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("conversation search ignores accented case without dropping uppercase-accent titles", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  const sessions = ["Écouter les résultats", "écouter les résultats", "ÉCOUTER LES RÉSULTATS", "Vérifier les résultats", "VÉRIFIER LES RÉSULTATS", "Keyboard", "İstanbul"]
+    .map((title, index) => ({ id: `ses_case_${index}`, title }))
+  const asciiLower = (text: string) => text.replace(/[A-Z]/g, letter => letter.toLowerCase())
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const search = new URL(route.request().url()).searchParams.get("search") ?? ""
+    return route.fulfill({ json: { data: sessions.filter(row => asciiLower(row.title).includes(asciiLower(search))), cursor: {} } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Find accented conversation titles regardless of case")
+    await ready(page)
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
+    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await source.click()
+    await page.getByRole("listbox").getByRole("option").first().waitFor()
+    const search = page.getByRole("combobox", { name: "Search sources", exact: true })
+    for (const [query, candidate, count] of [["écouter", "couter", 3], ["ÉCOUTER", "COUTER", 3], ["éCoUtEr", "CoUtEr", 3],
+      ["keyboard", "eyboard", 1], ["KEYBOARD", "EYBOARD", 1], ["i", null, 3], ["i\u0307", null, 1],
+      ["VÉRIFIER", "RIFIER", 2], ["vérifier", "rifier", 2]] as const) {
+      const read = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/api/session")
+        && new URL(response.url()).searchParams.get("search") === candidate)
+      await search.fill(query); await read
+      await page.waitForFunction(count => document.querySelectorAll('.mission-source-popover [role="option"]').length === count, count)
+      const titles = await page.getByRole("listbox").getByRole("option").allTextContents()
+      assert.ok(titles.every(title => title.toLowerCase().includes(query.toLowerCase())), JSON.stringify({ query, titles }))
+      assert.equal(await search.inputValue(), query)
+    }
+    await page.getByRole("option", { name: "VÉRIFIER LES RÉSULTATS", exact: true }).click()
+    assert.equal(await source.getAttribute("data-source-id"), "ses_case_4")
+    assert.deepEqual(f.posts, []); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+for (const firstMatch of [false, true]) test(`filtered search pages require explicit continuation even with a retained match (${firstMatch})`, async () => {
+  const page = await browser.newPage(), f = await setup(page), reads: URL[] = []
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const request = new URL(route.request().url()); reads.push(request)
+    const cursor = request.searchParams.get("cursor")
+    const rows = cursor === "page_4" ? [{ id: "ses_greek", title: "Δοκιμή δεύτερη" }]
+      : Array.from({ length: 200 }, (_, index) => ({ id: `ses_${cursor ?? "first"}_${index}`, title: `Conversation ${index}` }))
+    if (!cursor && firstMatch) rows[199] = { id: "ses_greek_first", title: "Δοκιμή πρώτη" }
+    return route.fulfill({ json: { data: rows, cursor: cursor === "page_4" ? {}
+      : { next: !cursor ? "page_2" : cursor === "page_2" ? "page_3" : "page_4" } } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Keep Unicode search reads bounded")
+    await ready(page)
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
+    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await source.click()
+    await page.getByRole("listbox").getByRole("option").first().waitFor()
+    const read = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/api/session"))
+    const search = page.getByRole("combobox", { name: "Search sources", exact: true })
+    await search.fill("ΔΟΚΙΜΉ"); await read
+    const more = page.locator(".mission-source-popover").getByRole("button", { name: "Load more sources", exact: true })
+    await more.waitFor()
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(reads.length, 2, "a short filtered page never automatically drains the catalogue")
+    assert.ok(reads.every(request => !request.searchParams.has("search")), "case-sensitive native filtering cannot omit the requested Greek title")
+    await search.press("Tab")
+    assert.equal(await more.evaluate(element => element === document.activeElement), true)
+    for (const cursor of ["page_2", "page_3", "page_4"]) {
+      const read = page.waitForResponse(response => new URL(response.url()).searchParams.get("cursor") === cursor)
+      await more.press("Enter"); await read
+      await page.waitForFunction(() => document.querySelector('.mission-source-popover [role="listbox"]')?.getAttribute("aria-busy") !== "true")
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      assert.equal(reads.length, Number(cursor.slice(-1)) + 1, "nonmatching pages keep the earlier match without automatically continuing")
+      if (cursor !== "page_4") { await search.press("Tab"); assert.equal(await more.evaluate(element => element === document.activeElement), true) }
+    }
+    await page.getByRole("option", { name: "Δοκιμή δεύτερη", exact: true }).click()
+    assert.equal(await source.getAttribute("data-source-id"), "ses_greek")
+    assert.equal(reads.length, 5)
+    assert.deepEqual(reads.slice(2).map(request => request.searchParams.get("cursor")), ["page_2", "page_3", "page_4"])
+    assert.deepEqual(f.posts, []); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
 test("source keyboard navigation scrolls the real popup and selecting with Enter never submits the form", async () => {
   const page = await browser.newPage(), f = await setup(page)
   await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: {
