@@ -73,6 +73,8 @@ pairing link single-use र छोटो आयुका हुन्; direct-ac
 
 ## provider, plugin र extension अवस्था {#providers-and-addons}
 
+**पूरा टाइमलाइन उपलब्ध छैन** सँगै `codenomad-session-pruning` plugin असफल भएको देखिए OpenCode लगमा यसको लोड त्रुटि हेर्नुहोस्। यस plugin ले पूरा इतिहास नेभिगेसन र बाँकी प्रश्न तथा अनुमति पुनर्स्थापना दिन्छ। plugin सफलतापूर्वक लोड भएपछि टाइमलाइन फेरि प्रयास गर्नुहोस्; आफ्नो सत्र डेटा सुरक्षित राख्नुहोस्।
+
 | समस्या | पुनःप्राप्ति |
 | --- | --- |
 | गलत provider account/quota | selected native account र **प्रयोग** जाँच्नुहोस्। quota display token/cost total होइन। अनिश्चित account परिवर्तनपछि refresh; चयनले उही सेवाका अरू client असर गर्न सक्छ। |

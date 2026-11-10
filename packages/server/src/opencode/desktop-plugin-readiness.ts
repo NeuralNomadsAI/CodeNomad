@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { lstat, mkdir, open, opendir, rm, rmdir, writeFile, type FileHandle } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
@@ -10,7 +10,7 @@ export const READINESS_MAX_BYTES = 8_192
 export const READINESS_MAX_PENDING = 32
 const MAX_LEASES = 64
 const MAX_RESPONSES = 64
-// Includes inert scopes after a crash; refuse admission without erasing foreign records.
+// Per-Location reservations include crash residues; preserve foreign records.
 const MAX_NAMESPACE_ENTRIES = 256
 const UUID = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/
 const leaseName = (name: string) => name.endsWith(".lease") && UUID.test(name.slice(0, -6))
@@ -189,8 +189,13 @@ export function ownReadiness(lease: string) {
 export function registeredReadiness(directory: string, location: string, current: () => void) {
   const incarnation = randomUUID()
   const marker = path.join(directory, `${incarnation}.scope`)
+  // Presence includes leases from other backends and scopes from other Locations.
+  // Bound only this Location's registrations; retain the root marker's wire path.
+  const namespaces = path.join(directory, "readiness")
+  const namespace = path.join(namespaces, createHash("sha256").update(location).digest("hex"))
   const responses = new Map<string, OwnedFile>()
   let published: OwnedFile | undefined
+  let reservation: OwnedFile | undefined
   let closed = false
   const check = () => { if (closed) throw new Error("Readiness scope closed"); current() }
   return {
@@ -198,13 +203,19 @@ export function registeredReadiness(directory: string, location: string, current
       check()
       if (!published) {
         await plainDirectory(directory, check)
-        check()
-        const entries = await names(directory, MAX_NAMESPACE_ENTRIES, check)
+        for (const folder of [namespaces, namespace]) {
+          check()
+          await mkdir(folder).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error })
+          await plainDirectory(folder, check)
+        }
+        const entries = await names(namespace, MAX_NAMESPACE_ENTRIES, check)
         if (entries.length >= MAX_NAMESPACE_ENTRIES) throw new Error("Readiness namespace exceeds limit")
-        published = await createOwned(marker, JSON.stringify({ version: 1, directory: location, incarnation }), check)
-        // Concurrent followers also validate after their exclusive creation.
-        try { await names(directory, MAX_NAMESPACE_ENTRIES, check) }
-        catch (error) { await removeOwned(published); published = undefined; throw error }
+        reservation = await createOwned(path.join(namespace, `${incarnation}.claim`), "", check)
+        try {
+          // Concurrent followers validate their bounded Location before publishing proof.
+          await names(namespace, MAX_NAMESPACE_ENTRIES, check)
+          published = await createOwned(marker, JSON.stringify({ version: 1, directory: location, incarnation }), check)
+        } catch (error) { await removeOwned(reservation); reservation = undefined; throw error }
         check()
       }
       // Reclaim only our own responses whose request has gone; at most 64 held.
@@ -262,6 +273,7 @@ export function registeredReadiness(directory: string, location: string, current
       closed = true
       // Caller serializes reconciliation and joins any admitted write first.
       if (published) { await removeOwned(published); published = undefined }
+      if (reservation) { await removeOwned(reservation); reservation = undefined }
       for (const owned of responses.values()) await removeOwned(owned)
       responses.clear()
     },
