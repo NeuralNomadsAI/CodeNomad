@@ -50,6 +50,8 @@ Turning it off removes only that task, LaunchAgent or service; a running OpenCod
 3. Review the running-service status. Use **Restart shared service** only when you intend to activate the selected installation for every connected client.
 4. For a process restart without installing anything, expand **Troubleshooting** and choose **Restart OpenCode service**, then confirm.
 
+Restart remains clickable during a background status refresh. Each request checks the current service status again before changing the service; a failed check blocks the restart.
+
 | Action | Scope and effect | Safe recovery |
 | --- | --- | --- |
 | Update CLI | Changes the supported installed executable; does not implicitly restart the running daemon. | Check both installed and running versions after a failure; retry explicitly only after resolving the error. |

@@ -50,6 +50,8 @@ Kapatmak yalnızca o görevi, LaunchAgent'ı veya hizmeti kaldırır; çalışan
 3. Çalışan hizmet durumunu gözden geçirin. **Paylaşılan hizmeti yeniden başlat** öğesini yalnızca seçilen kurulumu bağlı her istemci için etkinleştirmek istediğinizde kullanın.
 4. Hiçbir şey yüklemeden işlemi yeniden başlatmak için **Sorun giderme** öğesini genişletin ve **OpenCode hizmetini yeniden başlat** öğesini seçip onaylayın.
 
+Arka planda durum yenilenirken yeniden başlatma tıklanabilir kalır. Her istek, hizmeti değiştirmeden önce güncel durumu yeniden denetler; denetim başarısız olursa yeniden başlatma engellenir.
+
 | Eylem | Kapsam ve etki | Güvenli kurtarma |
 | --- | --- | --- |
 | CLI'yi güncelleyin | Desteklenen yüklü yürütülebilir dosyayı değiştirir; çalışan arka plan programını dolaylı olarak yeniden başlatmaz. | Bir arızadan sonra hem yüklü hem de çalışan sürümleri kontrol edin; yalnızca hatayı çözdükten sonra açıkça yeniden deneyin. |

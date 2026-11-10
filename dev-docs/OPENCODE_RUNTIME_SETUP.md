@@ -209,6 +209,11 @@ executable or unmounted view and never resumes a pending workspace-open callback
 Opening settings, checking status, reconnecting and reloading never restart
 implicitly; both actions keep session history.
 
+Both restart controls remain actionable during passive status refreshes, including
+window focus. They exclude concurrent mutations and pending confirmations, retain
+failed-check and executable-selection fences, and use the setup action's fresh
+pre-mutation status read before dispatching the explicit restart.
+
 Mounted Windows discovery directories and Linux aliases are canonicalized through
 the selected distro, then translated for host filesystem access. Native import
 URLs and lease paths stay Linux-native; canonical outside-root storage is kept.
