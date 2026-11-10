@@ -73,6 +73,8 @@ Les liens d’appairage sont à usage unique et de courte durée ; le mot de pas
 
 ## État des fournisseurs, plugins et extensions {#providers-and-addons}
 
+Si **Timeline complète indisponible** accompagne un échec du plugin `codenomad-session-pruning`, consultez son erreur de chargement dans le journal OpenCode. Ce plugin assure la navigation dans l’historique complet et la récupération des questions et permissions en attente. Réessayez la timeline après son chargement réussi ; conservez vos données de session.
+
 | Problème | Récupération |
 | --- | --- |
 | Mauvais compte/quota fournisseur | Vérifiez le compte natif sélectionné et **Utilisation**. Un quota affiché n’est pas un total de tokens/coût. Actualisez après un changement de compte incertain ; la sélection peut affecter d’autres clients du service. |

@@ -73,6 +73,8 @@ Kopplungslinks sind einmalig und kurzlebig; das Direktzugriffspasswort ersetzt s
 
 ## Anbieter-, Plugin- und Erweiterungszustand {#providers-and-addons}
 
+Wenn **Vollständige Zeitleiste nicht verfügbar** zusammen mit einem fehlgeschlagenen `codenomad-session-pruning`-Plugin erscheint, prüfen Sie dessen Ladefehler im OpenCode-Protokoll. Das Plugin stellt die vollständige Verlaufsnavigation und die Wiederherstellung ausstehender Fragen und Berechtigungen bereit. Versuchen Sie die Zeitleiste nach erfolgreichem Laden erneut; behalten Sie Ihre Sitzungsdaten.
+
 | Problem | Wiederherstellung |
 | --- | --- |
 | Falsches Anbieterkonto/Kontingent | Ausgewähltes natives Konto und **Nutzung** prüfen. Eine Kontingentanzeige ist keine Token-/Kostensumme. Nach ungewissem Kontowechsel aktualisieren; Auswahl kann andere Dienstclients betreffen. |

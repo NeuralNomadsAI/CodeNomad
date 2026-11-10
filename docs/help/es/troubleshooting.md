@@ -73,6 +73,8 @@ Los enlaces de emparejamiento son de un solo uso y corta duración; la contrase�
 
 ## Estado de proveedores, plugins y extensiones {#providers-and-addons}
 
+Si **Cronología completa no disponible** aparece junto a un fallo del plugin `codenomad-session-pruning`, consulta su error de carga en el registro de OpenCode. Este plugin proporciona la navegación por todo el historial y la recuperación de preguntas y permisos pendientes. Reintenta la cronología cuando el plugin se haya cargado correctamente; conserva los datos de tus sesiones.
+
 | Problema | Recuperación |
 | --- | --- |
 | Cuenta/cuota de proveedor incorrecta | Comprueba la cuenta nativa seleccionada y **Uso**. Una cuota mostrada no es un total de tokens/coste. Actualiza tras un cambio de cuenta incierto; la selección puede afectar a otros clientes de ese servicio. |

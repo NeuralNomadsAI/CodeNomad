@@ -73,6 +73,8 @@ Pairing links are single-use and short-lived; the direct-access password is not 
 
 ## Provider, plugin and extension state {#providers-and-addons}
 
+If **Full timeline unavailable** accompanies a failed `codenomad-session-pruning` plugin, inspect its load error in the OpenCode log. This plugin supplies full-history navigation and pending-question/permission recovery. Retry the timeline after the plugin loads successfully; preserve your session data.
+
 | Problem | Recovery |
 | --- | --- |
 | Wrong provider account/quota | Check the selected native account and **Usage**. A quota display is not a token/cost total. Refresh after an uncertain account change; selection can affect other clients of that service. |
