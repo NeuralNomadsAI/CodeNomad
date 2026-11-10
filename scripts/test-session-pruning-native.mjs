@@ -248,6 +248,21 @@ try {
   const location = { directory: root }
   const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
   const locationOptions = locationRequestOptions(location)
+  const waitForPruning = async (nativeClient, nativeLocation) => {
+    let plugins
+    try {
+      await until(async () => {
+        plugins = (await nativeClient.plugin.list({ location: nativeLocation }, locationRequestOptions(nativeLocation))).data
+        const failed = plugins.filter(item => item.source.type !== "builtin" && item.state.status === "failed")
+        if (failed.length) throw new Error(JSON.stringify(failed))
+        return plugins.some(item => item.id === "codenomad-session-pruning" && item.state.status === "active")
+      })
+    } catch (error) {
+      const snapshot = { runtimeVersion, bundled, location: nativeLocation, config: env.OPENCODE_CONFIG_DIR, plugins }
+      await writeFile(path.join(root, "discovery.json"), JSON.stringify(snapshot, null, 2))
+      throw new Error(`Native pruning discovery failed: ${JSON.stringify(snapshot)}`, { cause: error })
+    }
+  }
   const session = await client.session.create({ location }, locationOptions)
   assert.equal(session.location.workspaceID, location.workspaceID)
   // Install after the daemon and location exist: desktop startup must not need a restart.
@@ -256,19 +271,7 @@ try {
     assert(!beforeInstallation.some(item => item.id === "codenomad-session-pruning"), "Bundled plugin must be absent before late installation")
     closePresence = await openPresence()
   }
-  let plugins
-  try {
-    await until(async () => {
-      plugins = (await client.plugin.list({ location }, locationOptions)).data
-      const failed = plugins.filter(item => item.source.type !== "builtin" && item.state.status === "failed")
-      if (failed.length) throw new Error(JSON.stringify(failed))
-      return plugins.some(item => item.id === "codenomad-session-pruning" && item.state.status === "active")
-    })
-  } catch (error) {
-    const snapshot = { runtimeVersion, bundled, location, config: env.OPENCODE_CONFIG_DIR, plugins }
-    await writeFile(path.join(root, "discovery.json"), JSON.stringify(snapshot, null, 2))
-    throw new Error(`Native pruning discovery failed: ${JSON.stringify(snapshot)}`, { cause: error })
-  }
+  await waitForPruning(client, location)
   const first = [], second = []
   const observe = (subscriber, events) => (async () => {
     for await (const event of subscriber.event.subscribe({ signal: streams.signal })) events.push(event)
@@ -293,12 +296,7 @@ try {
   await mkdir(historyDirectory)
   execFileSync("git", ["init", historyDirectory], { stdio: "pipe" })
   const historyLocation = { directory: historyDirectory }
-  await until(async () => {
-    const { data } = await client.plugin.list({ location: historyLocation }, locationRequestOptions(historyLocation))
-    const plugin = data.find(plugin => plugin.id === "codenomad-session-pruning")
-    if (plugin?.state.status === "failed") throw new Error(plugin.state.error)
-    return plugin?.state.status === "active"
-  })
+  await waitForPruning(client, historyLocation)
   await testSessionHistoryNative({ client, location: historyLocation, locationOptions: locationRequestOptions(historyLocation), template: target })
   const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
   await testSessionNavigationNative({ client, location, locationOptions, template: target })
@@ -430,6 +428,7 @@ try {
   const restartedEndpoint = { ...connection.endpoint, url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0] }
   rememberRuntime(restartedEndpoint, { version: runtimeVersion, pid: child.pid, discovery: "info" })
   const restarted = OpenCode.make({ baseUrl: restartedEndpoint.url, fetch: createRuntimeFetch(restartedEndpoint) })
+  await waitForPruning(restarted, location)
   if (mixed) {
     assert.deepEqual((await restarted.session.message.get({ sessionID: mixed.sessionID, messageID: mixed.messageID })).content, mixed.content)
     const found = (await restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "history", location,
