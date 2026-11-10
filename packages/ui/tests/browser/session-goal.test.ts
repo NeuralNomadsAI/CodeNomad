@@ -81,6 +81,25 @@ test("a session without a goal, or a runtime without the goal RPC, shows nothing
   } finally { await page.close() }
 })
 
+test("late plugin activation reveals a persisted goal and keeps hidden sessions unread", async () => {
+  const answers: Record<string, unknown> = { ses_goal: { status: "unavailable" } }
+  const { page, errors, reads } = await open(answers)
+  try {
+    await waitFor(() => reads.includes("ses_goal"), "the first goal read is unavailable")
+    assert.equal(await line(page).count(), 0)
+    answers.ses_goal = { status: "goal", goal: paused }
+    await call(page, "pluginUpdated")
+    await line(page).waitFor()
+    assert.equal(await line(page).locator(".session-goal-badge").innerText(), "Paused")
+    await call(page, "select", null)
+    const before = reads.length
+    await call(page, "pluginUpdated")
+    await page.waitForTimeout(150)
+    assert.equal(reads.length, before)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("the goal line sits above Tokens and drives /goal pause, resume and clear from its changes", async () => {
   const answers: Record<string, unknown> = { ses_goal: { status: "goal", goal: active } }
   const { page, errors, reads } = await open(answers)

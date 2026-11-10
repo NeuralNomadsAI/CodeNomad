@@ -491,6 +491,7 @@ jobs:
           packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-goal-store.test.ts
+          packages/ui/src/stores/session-goal-activation.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-outline-persistence.test.ts
           packages/ui/src/stores/session-pagination.test.ts
