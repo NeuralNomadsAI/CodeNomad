@@ -27,23 +27,24 @@ export function registerRankedHistoryRoute(app: FastifyInstance, deps: HistoryRo
     if (!parsed.success) return reply.code(400).send({ error: "Invalid ranked history query" })
     const id = request.params.id, manager = deps.workspaceManager
     const base = manager.getServiceLocation(id)
+    const workspace = manager.get(id)
     if (!base) return reply.code(404).send({ error: "Workspace not found" })
     const controller = new AbortController()
     const abort = () => { if (!reply.raw.writableEnded) controller.abort() }
     reply.raw.once("close", abort)
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)])
+    const deadlineAt = Date.now() + 15_000
+    const fences: Array<() => boolean> = [deps.worktreeDeletionFence.captureDisplay([base.directory])]
     try {
       const connection = await manager.getSharedServiceConnection?.(id)
       if (!connection) return { status: "blocked", reason: "unavailable" }
       const client = connection.client
-      const fences: Array<() => boolean> = [deps.worktreeDeletionFence.captureDisplay([base.directory])]
       const current = () => {
         signal.throwIfAborted(); connection.assertCurrent()
         const location = manager.getServiceLocation(id)
-        if (!location || !sameLocation(base, location) || fences.some(check => !check())) throw new Error("History location changed")
+        if (!workspace || manager.get(id) !== workspace || location !== base || !sameLocation(base, location) || fences.some(check => !check())) throw new Error("History location changed")
       }
       current()
-      await manager.desktopPluginsReady(); current()
       if (!await manager.ownsLocation(id, base, client, { signal })) return reply.code(403).send({ error: "History location does not belong to workspace" })
       current()
       if (unsupported.has(connection)) return { status: "unsupported" }
@@ -67,9 +68,15 @@ export function registerRankedHistoryRoute(app: FastifyInstance, deps: HistoryRo
       for (const [index, directory] of selected.entries()) {
         const cursor = continuation?.pages.find(page => page.index === index)?.page
         if (continuation && !cursor) continue
+        if (!await manager.ownsLocation(id, { directory }, client, { signal })) return reply.code(403).send({ error: "History location does not belong to workspace" })
+        current()
         const location = directory === base.directory ? base : readLocationRef(await client.location.get({ location: { directory } }, { ...locationRequestOptions({ directory }), signal }))
         current()
         if (location.directory !== directory || !await manager.ownsLocation(id, location, client, { signal })) return reply.code(403).send({ error: "History location does not belong to workspace" })
+        current()
+        await manager.desktopPluginsReady({ connection, location: { directory }, signal, deadlineAt, assertCurrent: current })
+        current()
+        if (!await manager.ownsLocation(id, location, client, { signal })) throw new Error("History ownership changed")
         current()
         let response
         try {

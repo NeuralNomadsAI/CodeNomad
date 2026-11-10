@@ -67,7 +67,7 @@ const missingHost = (host: string) => lstat(host).then(() => false, error => (er
 
 export interface PendingRequestsRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation" | "desktopPluginsReady">
-  worktreeDeletionFence: Pick<WorktreeDeletionFence, "isBlocked">
+  worktreeDeletionFence: Pick<WorktreeDeletionFence, "isBlocked" | "captureDisplay">
   /** Test seam only; production always uses the real Git common-directory reader. */
   readGitCommonDirectory?: typeof readGitCommonDirectory
 }
@@ -82,7 +82,13 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
     const workspace = manager.get(id)
     if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
     // Includes bounded Git ownership reads before/after the native reader's independent two-second deadline.
-    const signal = AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)
+    const abandoned = new AbortController()
+    const abort = () => { if (!reply.raw.writableEnded) abandoned.abort() }
+    reply.raw.once("close", abort)
+    const signal = AbortSignal.any([abandoned.signal, AbortSignal.timeout(PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS)])
+    const deadlineAt = Date.now() + PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS
+    const bootstrap = manager.getServiceLocation(id)
+    const fences = [deps.worktreeDeletionFence.captureDisplay(bootstrap ? [bootstrap.directory] : [])]
     const started = Date.now()
     let phase = "ownership"
     let nativeStatus: number | undefined
@@ -117,7 +123,6 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       // or a rejected native placement. Others changed during the read.
       const deleting = new Set<string>()
       const rejectedPlacement = new Map<string, "not-owned" | "unverified">()
-      const bootstrap = manager.getServiceLocation(id)
       const style = manager.getServicePathStyle(id)
       const nativePath = style === "win32" ? path.win32 : style === "posix" ? path.posix : undefined
       const root = await manager.getServiceDirectoryForPath(id, workspace.path)
@@ -125,6 +130,15 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       if (!bootstrap || bootstrap.workspaceID !== undefined || !root || !rootIdentity || !nativePath?.isAbsolute(bootstrap.directory)
         || await manager.getServiceDirectoryForPath(id, bootstrap.directory) !== root) throw new Error("Pending bootstrap unavailable")
       const bootstrapDirectory = bootstrap.directory
+      fences.push(deps.worktreeDeletionFence.captureDisplay([rootIdentity]))
+      const assertCurrent = () => {
+        signal.throwIfAborted()
+        connection.assertCurrent()
+        const currentRoot = manager.getServiceLocation(id)
+        if (manager.get(id) !== workspace || currentRoot !== bootstrap || currentRoot?.directory !== bootstrapDirectory || currentRoot.workspaceID !== undefined
+          || fences.some(check => !check()) || deps.worktreeDeletionFence.isBlocked(rootIdentity)) throw new Error("Pending request ownership changed")
+      }
+      assertCurrent()
       const isolate = (error: unknown) => {
         if (signal.aborted) throw error
       }
@@ -237,15 +251,6 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       if (!resolved.length && result.directories.some((entry) => entry.status !== "excluded")) {
         return reply.code(403).send({ error: "Directory does not belong to workspace", directories: result.directories })
       }
-      const assertCurrent = () => {
-        signal.throwIfAborted()
-        connection.assertCurrent()
-        const currentRoot = manager.getServiceLocation(id)
-        if (manager.get(id) !== workspace || currentRoot?.directory !== bootstrapDirectory || currentRoot.workspaceID !== undefined
-          || deps.worktreeDeletionFence.isBlocked(rootIdentity)) {
-          throw new Error("Pending request ownership changed")
-        }
-      }
       const assertOrigin = async (directory: string) => {
         // Resolve spelling/realpath aliases through existing ownership, but never accept a host alias as WSL-native provenance.
         if (!nativePath.isAbsolute(directory) || await manager.getServiceDirectoryForPath(id, directory) !== root
@@ -311,14 +316,21 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
       // Even an all-excluded historical batch must negotiate real RPC capability.
       // The established root is the only bootstrap, never an inactive candidate.
-      const expected = new Set(resolved.length ? resolved.map((entry) => entry.directory) : [root])
-      // A start-up read must not reach the plugin before it registered for this
-      // backend and be taken as unsupported. Bounded; revalidated below.
-      await manager.desktopPluginsReady()
+      await manager.desktopPluginsReady({ connection, location: { directory: bootstrapDirectory }, signal, deadlineAt, assertCurrent })
+      await assertOrigin(bootstrapDirectory)
+      await revalidateCandidates()
       assertCurrent()
+      const admitted = resolved.filter(entry => !failed.has(entry.submitted))
+      if (!admitted.length && failed.size) return reply.code(403).send({ error: "Directory does not belong to workspace", directories: [
+        ...result.directories.filter(entry => !failed.has(entry.directory)),
+        ...[...failed].map(directory => ({ directory, status: "error", reason: deleting.has(directory) ? "deleting" : "changed" })),
+      ] })
+      const expected = new Set(admitted.length ? admitted.map(entry => entry.directory) : [root])
+      if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
       const url = new URL("/api/rpc/codenomad.pending-requests/snapshot", connection.endpoint.url)
       url.searchParams.set("location[directory]", bootstrapDirectory)
       phase = "native-read"
+      assertCurrent()
       const response = await connection.fetch(url, { method: "POST", signal, redirect: "error",
         headers: { "content-type": "application/json" }, body: JSON.stringify({ input: { directories: [...expected] } }) })
       nativeStatus = response.status
@@ -399,7 +411,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       request.log.warn({ workspaceId: id, phase, nativeStatus, timedOut: signal.aborted, elapsedMs: Date.now() - started }, "Pending request recovery failed")
       // Never convert transport, malformed coverage or ownership errors to empty.
       return reply.code(503).send({ error: "Pending requests unavailable; retain existing queues", ...(signal.aborted ? { code: "timeout" } : {}) })
-    }
+    } finally { reply.raw.removeListener("close", abort) }
   })
 }
 

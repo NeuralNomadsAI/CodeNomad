@@ -3,7 +3,10 @@ import assert from "node:assert/strict"
 // The image gallery and Images conversation RPCs inside the official runtime: the
 // authoritative lookup, one creation for concurrent opens from two clients, and the
 // gallery membership check on a stored non-`read` tool file in whichever form the runtime stores it.
-export async function testSessionImagesNative({ client, second, location, locationOptions, other, generate }) {
+export async function testSessionImagesNative({ client, second, location, locationOptions, other, generate, ready }) {
+  await ready({ client, location, locationOptions })
+  await ready({ client: second, location, locationOptions })
+  await ready({ client, location: other.location, locationOptions: other.locationOptions })
   const rpc = async (input, method = "imagesConversation", at = location, options = locationOptions, caller = client) =>
     (await caller.rpc.call({ rpcID: "codenomad.session-pruning", method, location: at, input }, options)).output
   assert.deepEqual(await rpc({ mode: "lookup" }), { status: "absent" })

@@ -380,7 +380,7 @@ async function main() {
           automation: nativeParent.available ? automationLifecycle : undefined,
           missions: missions ? missionsLifecycle : undefined,
           memory: missions ? memoryLifecycle : undefined,
-        })
+        }, connection)
       },
     })
   const temporaryFolders = await TemporaryFolderRegistry.open(
@@ -398,7 +398,7 @@ async function main() {
     eventBus,
     logger: workspaceLogger,
     prepareDesktopPlugins,
-    desktopPluginsReady: () => pruningLifecycle.ready(),
+    desktopPluginsReady: target => pruningLifecycle.ready(target),
     startServiceCommand: nativeServiceStarter(nativeParent),
   })
   const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")

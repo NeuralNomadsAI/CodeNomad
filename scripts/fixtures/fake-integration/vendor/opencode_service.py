@@ -13,8 +13,9 @@ Contract (spec/host-handshake.md, HST-18 to HST-22):
   global configuration directory, $XDG_CONFIG_HOME/opencode (default
   ~/.config/opencode). A daemon started with OPENCODE_CONFIG_DIR has another
   global configuration directory that cannot be deduced: when the default
-  Location reports the RPC unavailable, the client retries with the
-  directory of an explicit add-on setting.
+  Location's bounded status preparation reports the RPC unavailable, the
+  client tries the directory of an explicit add-on setting. Announcements
+  and withdrawals are sent once after preparation, never as probes.
 - Every service is targeted by default; a service name selects one
   registration file.
 - Nothing is logged or printed: neither the daemon password nor the host
@@ -29,6 +30,7 @@ import http.client
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -192,19 +194,45 @@ def _outcome(method, status, body):
     return value if status == 200 and value in OUTCOMES[method] else "error"
 
 
+def _ready(service, rpc_id, directory, deadline):
+    # Registration is asynchronous on cold Locations. Only the payload-free
+    # status read is repeated; an advertisement/withdrawal is never a probe.
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return 400, {"_tag": "RpcError", "type": "rpc.unavailable"}
+        status, body = call(service, rpc_id, "status", {}, directory, remaining)
+        loading = (status in (400, 404) and isinstance(body, dict)
+                   and body.get("_tag") == "RpcError" and body.get("type") == "rpc.unavailable")
+        if not loading:
+            return status, body
+        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+
+
 def _each_service(method, rpc_id, payload, service_name, config_dir_setting, env, timeout):
     results = []
     for service in discover(service_name, env, timeout):
         outcome = "unavailable"
         for directory in location_candidates(config_dir_setting, env):
             try:
-                status, body = call(service, rpc_id, method, payload, directory, timeout)
+                deadline = time.monotonic() + timeout
+                status, body = _ready(service, rpc_id, directory, deadline)
+                if _unavailable(status, body):
+                    continue
+                if status != 200 or not isinstance(body, dict) or not isinstance(body.get("output"), dict):
+                    outcome = "error"
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    continue
+                status, body = call(service, rpc_id, method, payload, directory, remaining)
             except (OSError, ValueError):
                 outcome = "error"
                 break
             if _unavailable(status, body):
-                continue
-            outcome = _outcome(method, status, body)
+                outcome = "unavailable"
+            else:
+                outcome = _outcome(method, status, body)
             break
         results.append({"service": service.file, "outcome": outcome})
     return results

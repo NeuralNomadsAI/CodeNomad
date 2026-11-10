@@ -40,6 +40,13 @@ blob IDs (`git rev-parse <revision>:<source>`), adapt `contract.ts` and extend t
 
 ### OpenCode RPC definitions
 
+Headless host discovery prepares each candidate Location through its payload-free
+`status` RPC before `advertise` or `withdraw`. Only registration-unavailable status
+reads repeat within the Location deadline; the mutation uses its remaining budget
+and is sent once. Directory fallback belongs to preparation. The Python reference
+and Blender host carry the same implementation; native fixture qualification checks
+cold advertisement, attachment and withdrawal against the real runtime.
+
 OpenCode imports RPC definitions through Effect's JSON Schema import, which refuses `pattern` ("Patterns may block
 validation and are disabled"; OpenCode 2.2.5): a call whose declared output schema has a pattern fails with
 `rpc.invalid_output`. Integration packages (spec/rpc-contract.md §4) register their definitions without

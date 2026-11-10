@@ -13,10 +13,11 @@ import { OpenCode } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
 import { createNativeFixtureReporter } from "./native-fixture-diagnostics.mjs"
 import { fixtureEnvironment } from "./native-product-fixture.mjs"
+import { waitNativePruningPlugin } from "./native-pruning-ready.mjs"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute path to the CLI executable to test in isolation")
-const runtimeVersion = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().replace(/^opencode2? v/, "")
+const runtimeVersion = execFileSync(cli, ["--version"], { encoding: "utf8", windowsHide: true }).trim().replace(/^opencode2? v/, "")
 const ui = process.argv.includes("--ui")
 const splitParts = process.argv.includes("--part-rows")
 const pluginArgument = process.argv[3]?.startsWith("--") ? undefined : process.argv[3]
@@ -36,7 +37,6 @@ if (pruningUI) {
   diagnostics.stage("ui-dependencies-ready-before-native-preamble")
 }
 const env = await fixtureEnvironment(root, {
-  USERPROFILE: root, HOME: root, OPENCODE_TEST_HOME: root,
   OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "test.db"),
   OPENCODE_SERVER_PASSWORD: "isolated-pruning-fixture", OPENCODE_CONFIG_PROJECT_DISABLE: "1",
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
@@ -152,6 +152,9 @@ async function until(predicate) {
   }
   throw new Error("Isolated test condition timed out")
 }
+const ready = ({ client, location, locationOptions }) => waitNativePruningPlugin({
+  client, location, locationOptions, until, signal: AbortSignal.timeout(60_000),
+})
 try {
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
   const baseUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
@@ -248,21 +251,6 @@ try {
   const location = { directory: root }
   const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
   const locationOptions = locationRequestOptions(location)
-  const waitForPruning = async (nativeClient, nativeLocation) => {
-    let plugins
-    try {
-      await until(async () => {
-        plugins = (await nativeClient.plugin.list({ location: nativeLocation }, locationRequestOptions(nativeLocation))).data
-        const failed = plugins.filter(item => item.source.type !== "builtin" && item.state.status === "failed")
-        if (failed.length) throw new Error(JSON.stringify(failed))
-        return plugins.some(item => item.id === "codenomad-session-pruning" && item.state.status === "active")
-      })
-    } catch (error) {
-      const snapshot = { runtimeVersion, bundled, location: nativeLocation, config: env.OPENCODE_CONFIG_DIR, plugins }
-      await writeFile(path.join(root, "discovery.json"), JSON.stringify(snapshot, null, 2))
-      throw new Error(`Native pruning discovery failed: ${JSON.stringify(snapshot)}`, { cause: error })
-    }
-  }
   const session = await client.session.create({ location }, locationOptions)
   assert.equal(session.location.workspaceID, location.workspaceID)
   // Install after the daemon and location exist: desktop startup must not need a restart.
@@ -271,7 +259,13 @@ try {
     assert(!beforeInstallation.some(item => item.id === "codenomad-session-pruning"), "Bundled plugin must be absent before late installation")
     closePresence = await openPresence()
   }
-  await waitForPruning(client, location)
+  try {
+    await ready({ client, location, locationOptions })
+  } catch (error) {
+    const snapshot = { runtimeVersion, bundled, location, config: env.OPENCODE_CONFIG_DIR, error: error.message }
+    await writeFile(path.join(root, "discovery.json"), JSON.stringify(snapshot, null, 2))
+    throw new Error(`Native pruning discovery failed: ${JSON.stringify(snapshot)}`, { cause: error })
+  }
   const first = [], second = []
   const observe = (subscriber, events) => (async () => {
     for await (const event of subscriber.event.subscribe({ signal: streams.signal })) events.push(event)
@@ -294,12 +288,11 @@ try {
   const { testSessionHistoryNative } = await import("./test-session-history-native.mjs")
   const historyDirectory = path.join(root, "history-project")
   await mkdir(historyDirectory)
-  execFileSync("git", ["init", historyDirectory], { stdio: "pipe" })
+  execFileSync("git", ["init", historyDirectory], { stdio: "pipe", env, windowsHide: true })
   const historyLocation = { directory: historyDirectory }
-  await waitForPruning(client, historyLocation)
-  await testSessionHistoryNative({ client, location: historyLocation, locationOptions: locationRequestOptions(historyLocation), template: target })
+  await testSessionHistoryNative({ client, location: historyLocation, locationOptions: locationRequestOptions(historyLocation), template: target, ready })
   const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
-  await testSessionNavigationNative({ client, location, locationOptions, template: target })
+  await testSessionNavigationNative({ client, location, locationOptions, template: target, ready })
   if (ui) {
     await pruningUI.testPruningUI({ client, connection, baseUrl, root, location, diagnostics, busy: async (sessionID) => {
       held = new Promise(resolve => { releaseProvider = resolve })
@@ -387,9 +380,9 @@ try {
       await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
     } finally { probeName = "prune_probe" }
   }
-  await testSessionMediaBlobNative({ client, location, locationOptions, db, revision, generate: generateMedia })
+  await testSessionMediaBlobNative({ client, location, locationOptions, db, revision, generate: generateMedia, ready })
   const { testSessionImagesNative } = await import("./test-session-images-native.mjs")
-  const imagesConversation = await testSessionImagesNative({ client, second: makeClient(), location, locationOptions, generate: generateMedia,
+  const imagesConversation = await testSessionImagesNative({ client, second: makeClient(), location, locationOptions, generate: generateMedia, ready,
     other: { location: historyLocation, locationOptions: locationRequestOptions(historyLocation) } })
   let mixed
   if (splitParts) {
@@ -428,7 +421,7 @@ try {
   const restartedEndpoint = { ...connection.endpoint, url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0] }
   rememberRuntime(restartedEndpoint, { version: runtimeVersion, pid: child.pid, discovery: "info" })
   const restarted = OpenCode.make({ baseUrl: restartedEndpoint.url, fetch: createRuntimeFetch(restartedEndpoint) })
-  await waitForPruning(restarted, location)
+  await ready({ client: restarted, location, locationOptions })
   if (mixed) {
     assert.deepEqual((await restarted.session.message.get({ sessionID: mixed.sessionID, messageID: mixed.messageID })).content, mixed.content)
     const found = (await restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "history", location,
@@ -440,12 +433,9 @@ try {
   assert.deepEqual((await restarted.session.message.get({ sessionID: session.id, messageID: target.id })).content, [])
   assert.deepEqual((await restarted.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
   assert.deepEqual(await restarted.session.context({ sessionID: fork.id }), contextBefore)
-  await until(async () => {
-    try {
-      const found = (await restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "imagesConversation", location, input: { mode: "lookup" } }, locationOptions)).output
-      return found.status === "found" && found.sessionID === imagesConversation
-    } catch { return false }
-  })
+  const found = (await restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "imagesConversation", location, input: { mode: "lookup" } }, locationOptions)).output
+  assert.equal(found.status, "found")
+  assert.equal(found.sessionID, imagesConversation)
   console.log("PASS: the Images conversation is found again after a daemon restart")
   if (bundled) {
     const preview = () => restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "preview", location, input: { sessionID: session.id, messageID: target.id } }, locationOptions)

@@ -2,6 +2,7 @@ import { open, readdir, stat, writeFile } from "node:fs/promises"
 import { performance } from "node:perf_hooks"
 import path from "node:path"
 import { DESIGN_LEASE_MAX_BYTES, leaseRequestsDesign } from "./design/activation"
+import { registeredReadiness } from "./desktop-plugin-readiness"
 
 export const PRESENCE_INTERVAL_MS = 2_000
 export const PRESENCE_EXPIRY_MS = 15_000
@@ -170,8 +171,10 @@ export async function followPresence(
   register: () => Promise<() => void | Promise<void>>,
   onError: (error: unknown) => void = console.error,
   retainWithoutPresence: () => Promise<boolean> = async () => false,
+  readinessLocation?: string,
 ) {
-  const readers = [...new Set(typeof directory === "string" ? [directory] : directory)].map(acquireSnapshot)
+  const directories = [...new Set(typeof directory === "string" ? [directory] : directory)]
+  const readers = directories.map(acquireSnapshot)
   // The first directory is the current backend namespace; older ones are read-only.
   const primary = readers[0]
   const follower: Follower = { acknowledged: new Set() }
@@ -181,16 +184,25 @@ export async function followPresence(
   let pending: Promise<void> | undefined
   let cleanup: Promise<void> | undefined
   let released = false
+  let readiness: ReturnType<typeof registeredReadiness> | undefined
   const reconcile = () => {
     if (pending) return pending
     pending = (async () => {
       const observed = stopped ? [] : await Promise.all(readers.map(reader => reader.read()))
       const active = !stopped && observed.some(leases => leases.length > 0)
-      if (active && !dispose && !stopped) dispose = await register()
+      if (active && !dispose && !stopped) {
+        dispose = await register()
+        if (readinessLocation && directories[0]) readiness = registeredReadiness(directories[0], readinessLocation, () => {
+          if (stopped || !dispose) throw new Error("Pruning readiness scope disposed")
+        })
+      }
       if (dispose && (stopped || (!active && !await retainWithoutPresence()))) {
+        await readiness?.close()
+        readiness = undefined
         await dispose()
         dispose = undefined
       }
+      if (!stopped && dispose) await readiness?.reconcile(observed[0] ?? [])
       follower.acknowledged = new Set(dispose ? observed[0] : [])
       // Outside the serialized reconciliation: marker IO must not delay or
       // swallow the next presence check.
@@ -207,7 +219,8 @@ export async function followPresence(
   try {
     await reconcile()
   } catch (error) {
-    releaseReaders()
+    try { await readiness?.close(); await dispose?.() }
+    finally { releaseReaders() }
     throw error
   }
   const timer = setInterval(() => void reconcile().catch(onError), PRESENCE_INTERVAL_MS)

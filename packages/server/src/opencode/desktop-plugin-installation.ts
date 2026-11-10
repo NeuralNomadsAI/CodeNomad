@@ -14,6 +14,7 @@ import { type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
 import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
 import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
 import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
+import { ownReadiness } from "./desktop-plugin-readiness"
 
 export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "provider" | "runtime">>
 
@@ -112,6 +113,7 @@ export async function installDesktopPluginPresence(
   await assertBundlePath()
   assertCurrent()
   const lease = path.join(leases, `${randomUUID()}.lease`)
+  const readiness = ownReadiness(lease)
   let written = leaseContent()
   try {
     await writeLease(lease, written)
@@ -151,18 +153,23 @@ export async function installDesktopPluginPresence(
   // follower in the daemon process has observed this lease while registered.
   // Bounded: an older plugin without markers only delays the first RPC.
   const readyMarker = `${lease}${PRESENCE_READY_SUFFIX}`
+  const readyStop = new AbortController()
   const ready = (async () => {
     for (const deadline = Date.now() + PRESENCE_READY_WAIT_MS; !disposed && Date.now() < deadline;) {
       if (await stat(readyMarker).then(() => true, () => false)) return true
-      await delay(PRESENCE_READY_POLL_MS, undefined, { ref: false })
+      await delay(PRESENCE_READY_POLL_MS, undefined, { ref: false, signal: readyStop.signal })
+        .catch(error => { if (!readyStop.signal.aborted) throw error })
     }
     return false
   })()
   return Object.assign(async () => {
     disposed = true
+    readyStop.abort()
     clearInterval(timer)
+    await readiness.close()
+    await ready
     await pending
     await rm(lease, { force: true })
     await rm(readyMarker, { force: true })
-  }, { ready, sync: () => sync(false) })
+  }, { ready, sync: () => sync(false), prepare: readiness.prepare })
 }

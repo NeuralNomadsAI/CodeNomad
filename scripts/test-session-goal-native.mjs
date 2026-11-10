@@ -12,10 +12,13 @@ import { registerSessionGoalRoute } from "../packages/server/src/server/routes/s
 import { GOAL_CHANGED_EVENT, goalChangedSchema } from "../packages/server/src/opencode/goal-contract.ts"
 import { getOpencodeErrorMessage } from "../packages/ui/src/lib/opencode-api.ts"
 
-await withProductRuntime(process.argv[2], async () => ({}), async ({ client, root }) => {
+await withProductRuntime(process.argv[2], async () => ({}), async ({ client, root, connection }) => {
   const owns = async (id, location) => id === "fixture" && location?.directory === root
   const records = [{ id: "fixture", path: root }]
+  const location = { directory: root }
   const manager = {
+    get: id => records.find(record => record.id === id), getServiceLocation: id => id === "fixture" ? location : undefined,
+    getSharedServiceConnection: async () => connection,
     list: () => records, ownsDirectory: async (id, directory) => owns(id, { directory }), ownsLocation: owns,
     getSharedServiceClient: async () => client, subscribeToSharedService: signal => client.event.subscribe({ signal }),
     invalidateWorktrees() {},
@@ -45,12 +48,6 @@ await withProductRuntime(process.argv[2], async () => ({}), async ({ client, roo
     const command = text => client.session.command({ sessionID: session.id, name: "goal", text, delivery: "steer" })
     const changes = () => routed.filter(event => event.event.data?.sessionID === session.id)
 
-    await until(async () => {
-      const current = await read()
-      assert.equal(current.status, 200)
-      assert.ok(["goal", "unsupported"].includes(current.body.status), "known native goal bootstrap state")
-      return current.body.status === "goal"
-    }, "the native goal RPC becomes available")
     assert.deepEqual(await read(), { status: 200, body: { status: "goal", goal: null } }, "a new session has no goal")
     assert.equal((await read(session.id, "elsewhere")).status, 403, "another workspace cannot read it")
     const refused = await command("pause").then(() => undefined, error => error)

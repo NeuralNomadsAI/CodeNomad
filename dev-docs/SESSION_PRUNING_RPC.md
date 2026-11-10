@@ -32,12 +32,50 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `assets-store.ts`, `assets-gallery*.ts`, `assets-conversation.ts`: tool-file assets, the [image gallery](#image-gallery) and the [Images conversation](#images-conversation).
 - `history-ranked-service.ts`: the presence-owned Code Mode `codenomad.session_search` tool and versioned ranked-history RPC; ranking, scope and bounds are specified in [full-history queries](SESSION_HISTORY_QUERIES.md).
 - `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry. At load, before following presence, the entry also registers the Design agent and skills that backend leases request (`../design/register.ts`, contract in [OpenCode compatibility](OPENCODE_COMPATIBILITY.md#agent-conventions)).
+  The initial effect awaits registration reconciliation before native activation completes. Each successful presence registration acquires a fresh scope incarnation for the Location's `ctx.location.directory`. Targeted preparation observes that incarnation through a nonce-correlated ACK, a live owned backend lease and the scope's presence record. The wire format, quantitative bounds and cleanup ownership are specified in the compatibility contract above; `desktop-plugin-readiness.test.ts` exercises that protocol and the lifecycle seam.
   Closing the native plugin scope stops its follower and joins that follower's admitted readiness writes before releasing its observations. Other live followers retain their registrations and writes; backend shutdown removes its own lease while OpenCode continues independently.
+  Readiness files retain their exclusive creator's handle for identity-checked cleanup: backends own requests, followers own ACKs and scope records. Reconciliation validates its complete bounded snapshot before publishing new ACKs. Scope admission counts all namespace entries, including crash residues, against a 256-entry scan/refusal bound and preserves foreign files. Targeted cancellation aborts and joins its owned catalogue transport before returning; shared installation claims retain their own lifetimes.
 
 `pruning-lifecycle.ts` and `pruning-installation.ts` beside that directory own
 automatic provisioning and backend leases. The server build bundles the payload
 and its dependencies under `dist/plugins/session-pruning/`, copied by both desktop hosts.
 Provisioning and lease placement follow the `OPENCODE_COMPATIBILITY.md` Agent conventions.
+
+`WorkspaceManager.desktopPluginsReady(target)` exposes Location-local preparation
+for fixed pruning consumers. The caller authorizes the exact native directory
+before invoking it and supplies its captured connection, cancellation/budget and
+monotone authority/placement assertion. The five-second preparation budget covers
+catalogue activation and fresh presence proof. A result attests observed registration
+for this wait; callers retain adjacent authorization, cancellation, connection and
+deletion-fence checks and issue one useful RPC. The no-argument overload retains
+its startup-marker semantics for existing callers.
+
+The fixed brokers capture the published workspace record, native root Location,
+connection object and monotone deletion/display fences before preparation. Session
+descriptors supply session-scoped directories; history pages authorize their selected
+inventory directory, and ranked history prepares each queried directory on every
+continuation. Session and directory ownership are revalidated after preparation and
+after native IO. The navigation outline retains its `outlineLayout` to `outline`
+adaptation exclusively for `rpc.method_not_found`.
+
+Pruning, history, navigation and extension assets use a 15-second request budget;
+batch pruning uses 30 seconds. Preparation consumes the remaining budget, with its
+own five-second admission bound. API 4 retains its 19-second route budget and
+eight-second reads. Cancellation and connection assertions sit immediately beside
+the fixed dispatch. Native carrier guards share the pruning request's signal and
+current-placement assertion. Responses retain their connection/ownership fences.
+
+Extension assets and API 4 reauthorize the exact enabled package and permission
+after preparation and before publication. Images conversation resolution retains
+its entered deletion fence through the settlement of admitted IO and uses one
+connection throughout Location resolution, preparation, dispatch and Git exclusion.
+API 4 passes its captured outer connection and current grant into that resolver.
+
+Pending recovery prepares only its established, authorized execution-host bootstrap.
+Candidate ownership is admitted before preparation and revalidated afterward; the
+fixed snapshot keeps its loaded-only candidate semantics. Root identity, compaction
+admission, cancellation and connection are checked beside its single HTTP dispatch.
+The route preserves per-directory non-authoritative errors and retained queues.
 
 The UI offers individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
@@ -241,6 +279,7 @@ node --import tsx --test packages/server/src/server/routes/images-conversation.t
 node --import tsx --test tests/browser/images-conversation.test.ts  # from packages/ui
 node --import tsx --conditions=browser --test --test-force-exit packages/ui/src/stores/session-actions.test.ts packages/ui/src/stores/session-pruning-events.test.ts packages/ui/src/stores/session-pruning-projection.test.ts packages/ui/src/stores/opencode-data.test.ts
 node scripts/test-session-pruning-native.mjs C:/isolated-install/opencode2.exe
+node --import tsx scripts/test-pruning-location-ready-native.mjs C:/isolated-install/opencode2.exe
 node scripts/test-design-companion-native.mjs C:/isolated-install/opencode2.exe  # gallery end to end, scripted chat and image models
 node scripts/test-design-companion-native.mjs C:/isolated-install/opencode2.exe --ui C:/abs/neuralnomads.design-1.0.0.zip  # plus the Design panel, composer and transcript
 npm run typecheck --workspace @neuralnomads/codenomad
@@ -253,6 +292,12 @@ the assertions finish. The separate native test creates its own DB/config/home,
 starts `serve --port 0` directly (never service discovery), supplies a local provider,
 and terminates only its own child. It retains its synthetic fixture/logs for inspection.
 An optional third argument tests an independently installed plugin package directory.
+The pruning driver awaits the exact `codenomad-session-pruning` active catalogue
+entry in each captured Location, with that client's location options and a 60-second
+abort deadline, before its first useful RPC and after daemon restart. The shared
+`scripts/native-pruning-ready.mjs` keeps missing/failed activation diagnostics and
+the driver's bounded polling checks. Presence withdrawal/reopening has its own
+explicit lifecycle assertions in the bundled run.
 
 ## Agent conventions
 
