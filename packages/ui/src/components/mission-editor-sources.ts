@@ -10,6 +10,20 @@ import { backgroundReads } from "../lib/background-read-queue"
 
 type Kind = keyof MissionSchedulingSourceLists
 
+// Native title matching folds ASCII only. Narrow by a case-stable substring;
+// the picker matches the complete query locally, including accented letter case.
+function conversationTitleQuery(query: string): string {
+  const characters = Array.from(query)
+  // K lowercases to ASCII k; İ adds i + a combining dot. Keep those possible
+  // lowercase outputs out of the native candidate, including a terminal i.
+  return characters.map((character, index) => {
+    const lower = character.toLowerCase()
+    const stable = (character.codePointAt(0)! < 128 || lower === character.toUpperCase())
+      && lower !== "k" && character !== "\u0307" && !(lower === "i" && (index === characters.length - 1 || characters[index + 1] === "\u0307"))
+    return stable ? character : "\0"
+  }).join("").split("\0").reduce((best, part) => part.trim().length > best.length ? part.trim() : best, "")
+}
+
 /** Bounded source pages per selected event kind. Open source pickers own continuation. */
 export function createMissionEditorSources(props: { instanceId: string; projectID?: string; target?: string
   directory: () => string | undefined; kinds: () => readonly MissionConditionKind[]; active: () => boolean
@@ -88,7 +102,7 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
       const read = async () => {
         if (kind === "conversation-message") {
           const page = await getRootClient(props.instanceId).session.list(buildProjectSessionListOptions(after ? { cursor: after }
-            : { directory, search: query, order: "desc" }), { signal })
+            : { directory, search: conversationTitleQuery(query), order: "desc" }), { signal })
           if (page.data.length > 200) throw new Error("Oversized source page")
           return { rows: page.data.filter(row => !isReservedMissionScheduleSessionID(row.id)).map(row => ({ id: row.id, label: row.title || row.id })), next: page.cursor?.next }
         }

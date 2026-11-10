@@ -531,8 +531,15 @@ the Git worker, a ten-second/output bound and physical ownership/deletion fences
 over-bound inventories expose source unavailability. Never fetch for source choices.
 Each event card owns its searchable, virtualized source popup (`mission-source-select.tsx`);
 opening it and approaching its list end requests continuation for that source kind.
-Conversation search uses debounced native title search; opaque continuation cursors
-retain that query. Selected off-page sources resolve through bounded owned point reads.
+Conversation search uses a debounced native candidate query and matches the full query
+locally without letter-case distinctions. The native filter folds ASCII; the candidate
+keeps the longest substring guaranteed in the original title, excluding Unicode-to-ASCII
+lowercase outputs, with an unfiltered bounded page when the query has none. Opaque
+continuation cursors retain that candidate. Every search continuation requires the
+popup's explicit action, including when earlier matches remain, so sparse matches keep
+the same read bound. Browsing without a query uses ordinary end-of-list continuation.
+Pointer focus preserves scroll position; keyboard focus scrolls only to reveal its row.
+Selected off-page sources resolve through bounded owned point reads.
 Selected labels remain pinned across searches. Failed reads retain the loaded display
 and offer Retry inside the popup. Changing a card's type disposes its selector and clears
 its source; hiding or locking the editor closes open popups. Source reads follow semantic

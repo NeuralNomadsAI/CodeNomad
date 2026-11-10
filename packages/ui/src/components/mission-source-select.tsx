@@ -19,7 +19,8 @@ export function MissionSourceSelect(props: {
   const [query, setQuery] = createSignal("")
   const [openSelection, setOpenSelection] = createSignal<Choice | null>(null)
   let virtualizer: VirtualizerHandle | undefined, itemKeys: string[] = []
-  let input: HTMLInputElement | undefined, retry: HTMLButtonElement | undefined
+  let pointerNavigation = false
+  let input: HTMLInputElement | undefined, retry: HTMLButtonElement | undefined, more: HTMLButtonElement | undefined
   const options = createMemo(() => props.value && !props.choices?.some(item => item.id === props.value)
     ? [...props.choices ?? [], { id: props.value, label: props.paging?.loading() ? t("missions.control.loading")
       : t("missions.scheduling.sourceMissing", { source: props.value }), unavailable: true }] : [...props.choices ?? []])
@@ -32,17 +33,19 @@ export function MissionSourceSelect(props: {
   createEffect(() => {
     const target = end(), root = list(), page = props.paging
     if (!open() || !target || !root || !page?.next() || page.loading() || page.failed() || props.disabled) return
+    if (query().trim()) return
     onCleanup(observeListEnd(target, root, () => { if (open() && !props.disabled) page.more() }, 80))
   })
   return <div class="mission-source-select">
     <Combobox<Choice> open={open()} onOpenChange={next => {
+      pointerNavigation = false
       // Keep the controlled selection stable while source pages change beneath the search.
       if (next) setOpenSelection(selected())
       setOpen(next)
       if (next) { setQuery(""); props.paging?.search?.("") }
     }} disabled={props.disabled} virtualized
       onInputChange={setQuery} noResetInputOnBlur
-      defaultFilter={item => item.label.toLocaleLowerCase().includes(query().trim().toLocaleLowerCase())}
+      defaultFilter={item => item.label.toLowerCase().includes(query().trim().toLowerCase())}
       value={open() ? openSelection() : selected()} onChange={item => { if (item && !item.unavailable) props.onChange(item.id) }}
       options={options()} optionValue="id" optionLabel="label" optionTextValue="label" optionDisabled="unavailable"
       placeholder={t("missions.scheduling.chooseSource")} allowsEmptyCollection>
@@ -57,13 +60,21 @@ export function MissionSourceSelect(props: {
       <Combobox.Portal><Combobox.Content class="selector-popover mission-source-popover"
         onCloseAutoFocus={event => { if (props.disabled) event.preventDefault() }}>
         <div class="selector-search-container" on:keydown={event => {
-          if (event.key !== "Tab" || event.shiftKey || !retry?.isConnected) return
-          event.preventDefault(); event.stopPropagation(); retry.focus()
+          pointerNavigation = false
+          const action = [more, retry].find(button => button?.isConnected && !button.disabled)
+          if (event.key !== "Tab" || event.shiftKey || !action) return
+          event.preventDefault(); event.stopPropagation(); action.focus()
         }}><Combobox.Input ref={input} class="selector-search-input" value={query()}
           onInput={event => props.paging?.search?.(event.currentTarget.value)}
           aria-label={t("missions.scheduling.searchSource")} placeholder={t("missions.scheduling.searchSource")} /></div>
         <Combobox.Listbox as="div" class="selector-listbox" ref={setList} aria-label={props.label} aria-busy={props.paging?.loading()}
-          scrollToItem={key => { const index = itemKeys.indexOf(key); if (index >= 0) virtualizer?.scrollToIndex(index) }}>{items => {
+          on:pointermove={() => { pointerNavigation = true }} on:pointerdown={() => { pointerNavigation = true }}
+          scrollToItem={key => {
+            // Native pointer handlers run before Kobalte's delegated option focus.
+            if (pointerNavigation) return
+            const index = itemKeys.indexOf(key)
+            if (index >= 0) virtualizer?.scrollToIndex(index, { align: "nearest" })
+          }}>{items => {
           const entries = createMemo(() => [...items()])
           createEffect(() => { itemKeys = entries().map(item => item.key) })
           return <>
@@ -73,12 +84,23 @@ export function MissionSourceSelect(props: {
                 <Combobox.ItemLabel class="selector-option-label">{item.rawValue.label}</Combobox.ItemLabel>
               </Combobox.Item>}
             </Virtualizer>}</Show>
-            <Show when={props.paging?.next() && !props.paging.failed()}><div ref={setEnd} aria-hidden="true" class="mission-source-end" /></Show>
+            <Show when={props.paging?.next() && !props.paging.failed() && !query().trim()}>
+              <div ref={setEnd} aria-hidden="true" class="mission-source-end" />
+            </Show>
             <Show when={!entries().length && !props.paging?.loading() && !props.paging?.next() && !props.paging?.failed()}>
               <div class="selector-option" role="status"><span class="selector-option-label">{t("unifiedPicker.empty")}</span></div>
             </Show>
           </>
         }}</Combobox.Listbox>
+        <Show when={query().trim() && props.paging?.next() && !props.paging.failed()}>
+          <div class="selector-search-container"><button ref={more} type="button" class="window-action" disabled={props.paging?.loading()}
+            on:keydown={event => {
+              if (event.key !== "Tab" || !event.shiftKey) return
+              event.preventDefault(); event.stopPropagation(); input?.focus()
+            }} onClick={() => { props.paging?.more(); if (open()) input?.focus({ preventScroll: true }) }}>
+            {t("missions.scheduling.moreSources")}
+          </button></div>
+        </Show>
         <Show when={props.paging?.failed() || props.paging?.lookupFailed?.()}><div class="selector-search-container">
           <p role="alert" class="mission-create-field-error">{t("missions.scheduling.sourcesUnavailable")}</p>
           <button ref={retry} type="button" class="window-action" on:keydown={event => {

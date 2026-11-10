@@ -54,7 +54,7 @@ Bir kez şimdi, N saatte bir, günlük, haftanın günleri, ayın günü ve cron
 
 ### Olaylar ve birleşimler {#scheduling-conditions}
 
-Olaylar; başka programın/Görevin başarısını, yerel commitleri, yeni mesajları veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Seçicide arama yapılır ve kaydırdıkça devamı yüklenir; okuma başarısız olursa aynı yerde **Tekrar dene** görünür. Yeni mesajlar için seçilen konuşma geçişe bağlam da sağlar. Ölçüt türünü değiştirmek kaynağını temizler. Düzenleme, kayıtlı konuşma bağlamını korur.
+Olaylar; başka programın/Görevin başarısını, yerel commitleri, yeni mesajları veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Arama yokken kaydırdıkça devamı yüklenir; okuma başarısız olursa aynı yerde **Tekrar dene** görünür. Arama, aksanlı harfler dâhil büyük ve küçük harfleri ayırt etmez. Arama sırasında sayfada eşleşme olsa bile seçicide **Daha fazla kaynak yükle** ile devam edin. Yeni mesajlar için seçilen konuşma geçişe bağlam da sağlar. Ölçüt türünü değiştirmek kaynağını temizler. Düzenleme, kayıtlı konuşma bağlamını korur.
 
 **veya**, bitişik zamanları veya olayları birleştirir. **eğer**, zamanlardan sonraki olayları koşul yapar: son başarılı geçişten beri biri değişmiş olmalıdır. **aksi halde**, olaylardan sonraki zamanı yedek yapar: önceki yuvasından veya etkinleştirilmesinden beri üstteki ölçütler geçiş başlatmamışsa çalışır. Sonraki olaylar bu yedeği koşullandırır.
 
