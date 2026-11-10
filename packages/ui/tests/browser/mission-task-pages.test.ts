@@ -289,12 +289,27 @@ function blockages(revision: number): MissionMap {
 
 test("scrolling loads all 400 tasks without gap controls and preserves independent failed-window Retry", async () => {
   const value = blockages(4), f = await open(value)
+  let release!: () => void, crossed = false
+  const gate = new Promise<void>(resolve => { release = resolve })
   try {
+    await f.page.route(/\/missions\/panel-page$/, async route => {
+      const input = route.request().postDataJSON()
+      if (input.source === "tasks" && input.task.offset === 350) await gate
+      return route.fallback()
+    })
+    const snapshot = async () => {
+      const count = (await rows(f.page)).length
+      if (count === 350 && !crossed) {
+        crossed = true
+        release()
+        await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 400)
+      }
+      return count // Keep the real nonterminal snapshot across final-page publication.
+    }
     const notice = attentionInfo(f.page), failure = f.page.locator(".mission-tree-read")
     await notice.waitFor()
-    for (let scroll = 0; (await rows(f.page)).length < value.tasks.length; scroll++) {
+    for (let scroll = 0, before = await snapshot(); before < value.tasks.length; before = await snapshot(), scroll++) {
       assert.ok(scroll < 8, "at most seven ordinary pages")
-      const before = (await rows(f.page)).length
       assert.ok(await f.page.locator(".mission-tree-more button").count() <= 1)
       assert.equal(await f.page.locator(".mission-tree-gap").count(), 0)
       await f.page.evaluate(() => {
@@ -305,6 +320,7 @@ test("scrolling loads all 400 tasks without gap controls and preserves independe
       await f.page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
     }
     assert.deepEqual(await rows(f.page), missionTaskOrder(value.tasks).map(task => task.key), "every task once, in order")
+    assert.ok(crossed, "the final real HTTP page published after a 350-row snapshot")
     assert.equal(await f.page.locator('.mission-tree-node[data-status="needs-input"]').count(), 300)
     assert.deepEqual(f.reads.map(query => new URLSearchParams(query).get("offset")), ["50", "100", "150", "200", "250", "300", "350"], "ordinary reads only")
     assert.equal(await notice.count(), 0, "no unseen attention tasks remain")
@@ -319,7 +335,7 @@ test("scrolling loads all 400 tasks without gap controls and preserves independe
     await failure.waitFor({ state: "detached" })
     assert.equal(await notice.count(), 0)
     assert.deepEqual(f.errors, [])
-  } finally { await f.page.context().close() }
+  } finally { release(); await f.page.context().close() }
 })
 
 test("ordinary windows never claim displayed attention tasks are unread when only ready tasks remain", async () => {

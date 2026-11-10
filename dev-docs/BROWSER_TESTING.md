@@ -93,6 +93,10 @@ synthetic provider.
   explicitly. Mutation collectors match the exact HTTP method and path. Hold the
   intended panel source independently of schedule reads, and await lifecycle
   feedback settlement before asserting its final status.
+- Scroll pagination uses one DOM snapshot for both its loop condition and progress
+  threshold, renewed after each iteration. The 400-task test holds the real final
+  HTTP page and publishes it across a captured 350-row snapshot, retaining the
+  ordered-row, paging and independent Retry assertions.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
