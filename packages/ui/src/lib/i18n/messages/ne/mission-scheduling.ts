@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "स्रोत खोज्नुहोस्",
+  "missions.scheduling.error.files": "मान्य सापेक्ष फाइल पथहरू प्रविष्ट गर्नुहोस्।",
   "missions.scheduling.startOnCreation": "स्वतः सुरु गर्नुहोस्",
   "missions.scheduling.source.now": "एकपटक, अहिले",
   "missions.settings.effectiveOrigin": "OpenCode कन्फिगरेसन फाइल:",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "बचत गरिएको समय क्षेत्र (IANA)",
   "missions.scheduling.chooseSource": "स्रोत छान्नुहोस्",
   "missions.scheduling.sourceMissing": "अनुपलब्ध स्रोत: {source}",
-  "missions.scheduling.sourcesUnavailable": "स्रोतहरू पढ्न सकिएन। मस्यौदा राख्नुहोस् र बचतअघि परियोजना पुनः लोड गर्नुहोस्।",
+  "missions.scheduling.sourcesUnavailable": "स्रोतहरू पढ्न सकिएन।",
   "missions.scheduling.files": "सापेक्ष फाइल पथहरू (हरेक पङ्क्तिमा एउटा)",
   "missions.scheduling.filesHint": "परियोजनाका बढीमा १२८ तोकिएका फाइल। पुनरावर्ती ढाँचा र लिङ्क गरिएका पथ अस्वीकार हुन्छन्; चलाउँदा पहुँच जाँचिन्छ।",
   "missions.scheduling.error.zone": "मान्य IANA समय क्षेत्र प्रविष्ट गर्नुहोस्।",

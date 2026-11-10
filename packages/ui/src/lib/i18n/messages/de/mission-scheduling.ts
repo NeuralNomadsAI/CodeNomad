@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "Quellen suchen",
+  "missions.scheduling.error.files": "Gültige relative Dateipfade eingeben.",
   "missions.scheduling.startOnCreation": "Automatisch starten",
   "missions.scheduling.source.now": "Einmal, jetzt",
   "missions.settings.effectiveOrigin": "OpenCode-Konfigurationsdatei:",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "Gespeicherte Zeitzone (IANA)",
   "missions.scheduling.chooseSource": "Quelle auswählen",
   "missions.scheduling.sourceMissing": "Nicht verfügbare Quelle: {source}",
-  "missions.scheduling.sourcesUnavailable": "Quellen konnten nicht gelesen werden. Behalten Sie den Entwurf und laden Sie das Projekt vor dem Speichern neu.",
+  "missions.scheduling.sourcesUnavailable": "Quellen konnten nicht gelesen werden.",
   "missions.scheduling.files": "Relative Dateipfade (einer pro Zeile)",
   "missions.scheduling.filesHint": "Bis zu 128 explizite Projektdateien. Rekursive Muster und verknüpfte Pfade werden abgelehnt; der Zugriff wird beim Start geprüft.",
   "missions.scheduling.error.zone": "Geben Sie eine gültige IANA-Zeitzone ein.",

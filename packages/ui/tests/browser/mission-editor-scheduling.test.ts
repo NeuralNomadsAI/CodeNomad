@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { openMissionProfiles } from "./mission-actions"
+import { selectMissionSource } from "./mission-actions"
 import { after, before, test } from "node:test"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
@@ -154,6 +155,355 @@ test("shared Create stores a paused two-time policy with exact profiles and send
     assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "cron", expression: "15 9 * * *", zone: "Europe/Paris" },
       { kind: "cron", expression: "45 17 * * *", zone: "Europe/Paris" }] })
     assert.equal(f.doc.state, "paused"); assert.equal(f.doc.firstPlayedAt, null); assert.deepEqual(f.doc.calendars, [])
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("source selection belongs to its criterion, loads in its popup and leaves no global conversation or paging controls", async () => {
+  const page = await browser.newPage({ viewport: { width: 620, height: 1000 } }), f = await setup(page)
+  const nativeReads: URL[] = []
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const request = new URL(route.request().url()); nativeReads.push(request)
+    return route.fulfill({ json: { data: request.searchParams.get("search") === "Later" || request.searchParams.has("cursor") ? [{ id: "ses_later", title: "Later conversation" }]
+      : Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })),
+      cursor: request.searchParams.get("search") === "Later" || request.searchParams.has("cursor") ? {} : { next: "next_conversations" } } })
+  })
+  let sourcePages = 0
+  await page.route("**/api/workspaces/fixture/missions/scheduled?*", route => {
+    sourcePages++
+    const after = new URL(route.request().url()).searchParams.get("after")
+    return route.fulfill({ json: { version: 1, projectID: "project", ...(after ? {} : { next: "source_page_2" }),
+      schedules: after ? [{ ...missionScheduleView(f.doc).document, id: "msn_source", kind: "one-time" }] : [] } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("React to the selected source")
+    await ready(page)
+    const kind = form(page).getByLabel("Criterion 1 type", { exact: true })
+    for (const value of ["daily", "hours", "weekly", "monthly", "cron"]) {
+      await kind.selectOption(value)
+      assert.equal(await form(page).locator(".mission-conversation-picker").count(), 0)
+      assert.equal(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).count(), 0)
+    }
+    await kind.selectOption("mission-completed")
+    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    assert.equal(await source.evaluate(element => Boolean(element.closest('[role="group"][aria-label="Criterion 1"]'))), true)
+    assert.equal(await form(page).getByRole("alert").count(), 0, "an empty new source is not a premature global error")
+    assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
+    assert.equal(await form(page).getByRole("button", { name: "Load more sources", exact: true }).count(), 0)
+    await selectMissionSource(page, 1, "msn_source")
+    await ready(page)
+    assert.equal(sourcePages, 2, "the open picker follows its empty filtered page, not a global button")
+    await kind.selectOption("conversation-message")
+    assert.equal(await source.getAttribute("data-source-id"), "", "changing kind clears the previous criterion's source")
+    await source.click()
+    await page.getByRole("listbox").getByRole("option").first().waitFor()
+    assert.ok(await page.getByRole("listbox").getByRole("option").count() < 40, "only the popup viewport is mounted")
+    const before = nativeReads.length
+    await page.evaluate(async () => {
+      const { destroyOpenCodeData } = await import("/src/stores/opencode-data.ts")
+      for (let index = 0; index < 5; index++) destroyOpenCodeData("fixture", `unrelated-${index}`)
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    })
+    assert.equal(nativeReads.length, before, "unrelated transcript retirement never clears or reloads the choices")
+    await page.getByRole("combobox", { name: "Search sources", exact: true }).fill("Later")
+    await page.getByRole("option", { name: "Later conversation", exact: true }).click()
+    assert.ok(nativeReads.some(request => request.searchParams.get("search") === "Later"), "conversation search stays native and project-scoped")
+    assert.equal(nativeReads.some(request => request.searchParams.has("cursor")), false, "search never scans every conversation page")
+    assert.equal(await source.getAttribute("data-source-id"), "ses_later")
+    await kind.selectOption("daily")
+    assert.equal(await source.count(), 0)
+    assert.equal(await page.getByRole("listbox").count(), 0, "changing criterion disposes its popup and search state")
+    assert.equal(await form(page).locator(".mission-conversation-picker").count(), 0)
+    await kind.selectOption("conversation-message")
+    assert.equal(await source.getAttribute("data-source-id"), "")
+    await selectMissionSource(page, 1, "ses_1")
+    await ready(page)
+    await capture(page, "conversation-source-in-criterion.png")
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "conversation-message", conversationID: "ses_1" }] })
+    assert.deepEqual(f.posts[0].configuration.watchedConversationIDs, [], "new-message context comes from the criterion, not an unrelated global source")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("conversation continuation and search failures retry their exact read inside the owning popup", async () => {
+  const page = await browser.newPage(), f = await setup(page), reads: URL[] = []
+  let pageFailed = true, searchFailed = true
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const request = new URL(route.request().url()); reads.push(request)
+    if (request.searchParams.has("cursor")) return pageFailed
+      ? route.fulfill({ status: 503, json: {} })
+      : route.fulfill({ json: { data: [{ id: "ses_tail", title: "Last conversation" }], cursor: {} } })
+    if (request.searchParams.get("search") === "Recover") return searchFailed
+      ? route.fulfill({ status: 503, json: {} })
+      : route.fulfill({ json: { data: [{ id: "ses_recovered", title: "Recovered conversation" }], cursor: {} } })
+    return route.fulfill({ json: { data: Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })), cursor: { next: "opaque_tail" } } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Recover only the source read")
+    await ready(page)
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
+    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await source.click()
+    await page.getByRole("listbox").getByRole("option").first().waitFor()
+    await page.getByRole("listbox").evaluate(element => { element.scrollTop = element.scrollHeight })
+    const popup = page.locator(".mission-source-popover"), retry = popup.getByRole("button", { name: "Try again", exact: true })
+    await retry.waitFor()
+    assert.equal(await popup.getByRole("alert").evaluate(element => {
+      const shown = getComputedStyle(element).color
+      element.style.color = "var(--status-error-fg)"
+      const expected = getComputedStyle(element).color
+      element.style.removeProperty("color")
+      return shown === expected
+    }), true, "the portalled read error uses the shared error ink in dark mode")
+    assert.equal(await form(page).getByRole("alert").count(), 0, "read failure belongs to the popup")
+    assert.ok(await page.getByRole("listbox").getByRole("option").count() > 0, "the loaded page survives a continuation failure")
+    await capture(page, "source-continuation-failed.png")
+    pageFailed = false
+    await retry.click()
+    await page.getByRole("option", { name: "Last conversation", exact: true }).click()
+    assert.equal(await source.getAttribute("data-source-id"), "ses_tail")
+    const continuations = reads.filter(request => request.searchParams.has("cursor"))
+    assert.equal(continuations.length, 2)
+    for (const request of continuations) assert.deepEqual([...request.searchParams], [["cursor", "opaque_tail"]])
+    await source.click()
+    await page.getByRole("combobox", { name: "Search sources", exact: true }).fill("Recover")
+    await retry.waitFor()
+    assert.match(await source.innerText(), /Last conversation/, "the chosen source stays named through search failure")
+    await capture(page, "source-search-failed.png")
+    searchFailed = false
+    const search = page.getByRole("combobox", { name: "Search sources", exact: true })
+    await search.press("Tab")
+    assert.equal(await retry.evaluate(element => element === document.activeElement), true, "Retry is reachable without closing the popup")
+    await retry.press("Shift+Tab")
+    assert.equal(await search.evaluate(element => element === document.activeElement), true)
+    await search.press("Tab"); await retry.press("Enter")
+    await page.getByRole("option", { name: "Recovered conversation", exact: true }).click()
+    assert.equal(reads.filter(request => request.searchParams.get("search") === "Recover").length, 2)
+    await ready(page)
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "conversation-message", conversationID: "ses_recovered" }] })
+    assert.deepEqual(f.errors, [])
+  } catch (error) {
+    console.error("Source recovery failure", reads.map(value => value.search), await page.locator(".mission-source-popover").innerText().catch(String),
+      await page.locator(".mission-source-popover input").inputValue().catch(String), f.errors)
+    throw error
+  } finally { await page.close() }
+})
+
+test("two conversation criteria keep independent selections across native searches, card moves and remount", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  const sessions = [{ id: "ses_alpha", title: "Alpha saved source" }, { id: "ses_beta", title: "Beta saved source" }]
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const request = new URL(route.request().url()), id = request.pathname.split("/").at(-1)
+    const saved = sessions.find(row => row.id === id)
+    return route.fulfill({ json: saved ? { data: { ...saved, projectID: "project", location: { directory: "/fixture" } } }
+      : { data: sessions.filter(row => row.title.startsWith(request.searchParams.get("search") || "not on first page")), cursor: {} } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Watch two independent conversations")
+    await ready(page)
+    const choose = async (number: number, query: string) => {
+      await form(page).getByLabel(`Criterion ${number} type`, { exact: true }).selectOption("conversation-message")
+      await form(page).getByRole("button", { name: `Criterion ${number} source`, exact: true }).click()
+      await page.getByRole("combobox", { name: "Search sources", exact: true }).fill(query)
+      await page.getByRole("option", { name: `${query} saved source`, exact: true }).click()
+    }
+    await choose(1, "Alpha")
+    await addCriterion(page); await choose(2, "Beta"); await ready(page)
+    const source = (number: number) => form(page).getByRole("button", { name: `Criterion ${number} source`, exact: true })
+    assert.match(await source(1).innerText(), /Alpha saved source/)
+    assert.match(await source(2).innerText(), /Beta saved source/)
+    await source(1).click()
+    await page.getByRole("combobox", { name: "Search sources", exact: true }).fill("Missing")
+    await page.getByRole("status").filter({ hasText: "No results found" }).waitFor()
+    assert.match(await source(2).innerText(), /Beta saved source/)
+    await capture(page, "source-search-empty-two-criteria.png")
+    await page.keyboard.press("Escape")
+    await form(page).getByRole("button", { name: "Move criterion 2", exact: true }).focus()
+    await page.keyboard.press("Alt+ArrowUp")
+    await page.evaluate(() => window.schedulingEditor.mount(false))
+    await page.evaluate(() => window.schedulingEditor.mount(true)); await ready(page)
+    assert.equal(await source(1).getAttribute("data-source-id"), "ses_beta")
+    assert.match(await source(1).innerText(), /Beta saved source/)
+    assert.equal(await source(2).getAttribute("data-source-id"), "ses_alpha")
+    assert.match(await source(2).innerText(), /Alpha saved source/)
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: sessions.toReversed().map(row => ({ kind: "conversation-message", conversationID: row.id })) })
+    assert.deepEqual(f.errors, [])
+  } catch (error) {
+    console.error("Two source failure", await page.locator(".mission-source-popover").innerText().catch(String),
+      await page.locator(".mission-source-popover input").inputValue().catch(String), f.errors)
+    throw error
+  } finally { await page.close() }
+})
+
+test("late source replies stay fenced after a type change or inactive editor, which closes its popup", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  let release!: () => void, started!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
+  await page.route("**/workspaces/fixture/instance/api/session**", async route => {
+    if (new URL(route.request().url()).searchParams.get("search") === "Late") { started(); await pending }
+    try { await route.fulfill({ json: { data: [{ id: "ses_late", title: "Late conversation" }], cursor: {} } }) } catch { /* cancelled native search */ }
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Keep the current criterion")
+    await ready(page)
+    const kind = form(page).getByLabel("Criterion 1 type", { exact: true })
+    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await kind.selectOption("conversation-message"); await source.click()
+    await page.getByRole("combobox", { name: "Search sources", exact: true }).fill("Late"); await reached
+    await page.evaluate(() => window.schedulingEditor.activate(false))
+    await page.getByRole("listbox").waitFor({ state: "detached" })
+    release()
+    assert.equal(await source.isDisabled(), true)
+    await page.evaluate(() => window.schedulingEditor.activate(true))
+    await kind.selectOption("files-changed")
+    await form(page).getByLabel("Criterion 1 file paths", { exact: true }).fill("src/kept.ts")
+    await ready(page)
+    assert.equal(await source.count(), 0)
+    assert.equal(await page.locator(".mission-source-popover").count(), 0)
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "files-changed", paths: ["src/kept.ts"] }] })
+    assert.deepEqual(f.errors, [])
+  } finally { release(); await page.close() }
+})
+
+for (const [locale, width] of [["en", 620], ["fr", 320], ["he", 320]] as const) test(`the source popup fits ${locale} at ${width}px with long conversation names`, async () => {
+  const page = await browser.newPage({ viewport: { width, height: 1000 } }), f = await setup(page, true, locale, locale === "en" ? "dark" : "light")
+  const title = locale === "fr" ? "Conversation de référence avec un titre très long pour vérifier le sélecteur dans un panneau étroit"
+    : locale === "he" ? "שיחת מקור עם כותרת ארוכה במיוחד לבדיקת הבחירה בחלון צר ובכיוון מימין לשמאל" : "Reference conversation with a deliberately long title for the source selector"
+  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: { data: [{ id: "ses_long", title }], cursor: {} } }))
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).locator("textarea").first().fill(title); await ready(page)
+    await form(page).locator(".mission-criterion select").first().selectOption("conversation-message")
+    const source = form(page).locator(".mission-source-select button")
+    await source.click()
+    await page.getByRole("listbox").getByRole("option").first().waitFor()
+    const box = (await page.locator(".mission-source-popover").boundingBox())!
+    assert.ok(box.x >= -1 && box.x + box.width <= width + 1 && box.y >= -1 && box.y + box.height <= 1001, JSON.stringify(box))
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await capture(page, `source-popup-${locale}-${width}.png`)
+    await page.getByRole("option", { name: title, exact: true }).click(); await ready(page)
+    assert.equal(await source.getAttribute("title"), title)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await capture(page, `source-selected-${locale}-${width}.png`)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("a stored off-page conversation resolves directly, rejects foreign metadata and retries only in its own picker", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  f.doc = { ...f.doc, configuration: { ...f.doc.configuration,
+    launch: { when: [{ kind: "conversation-message", conversationID: "ses_far" }] } } }
+  let pointReads = 0, foreign = true
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/ses_far")) {
+      pointReads++
+      return route.fulfill({ json: { data: { id: "ses_far", title: foreign ? "Foreign secret title" : "Saved conversation",
+        projectID: foreign ? "other-project" : "project", location: { directory: "/fixture" } } } })
+    }
+    return route.fulfill({ json: { data: [{ id: "ses_first", title: "First conversation" }], cursor: { next: "later" } } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.edit())
+    const source = form(page).getByRole("button", { name: "Criterion 1 source", exact: true })
+    await source.filter({ hasText: "Unavailable source" }).waitFor()
+    assert.equal(await form(page).getByText("Foreign secret title", { exact: true }).count(), 0)
+    assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
+    foreign = false
+    await source.click()
+    await page.locator(".mission-source-popover").getByRole("button", { name: "Try again", exact: true }).click()
+    await source.filter({ hasText: "Saved conversation" }).waitFor()
+    await ready(page)
+    assert.equal(pointReads, 2, "resolve the selected ID rather than traversing every source page")
+    await page.keyboard.press("Escape")
+    await source.click()
+    await page.getByRole("listbox").getByRole("option", { name: "Saved conversation", exact: true }).waitFor()
+    await page.keyboard.press("Escape")
+    await form(page).getByLabel("Notes", { exact: true }).fill("Keep the exact stored event")
+    await form(page).getByRole("button", { name: "Save", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, f.doc.configuration.launch)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("a saved Mission source outside the first page resolves through its workspace-bound point read", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  f.doc = { ...f.doc, configuration: { ...f.doc.configuration,
+    launch: { when: [{ kind: "mission-completed", missionID: "msn_far" }] } } }
+  let points = 0, pages = 0
+  await page.route("**/api/workspaces/fixture/missions/scheduled?*", route => {
+    pages++
+    return route.fulfill({ json: { version: 1, projectID: "project", schedules: [], next: "still_unread" } })
+  })
+  await page.route("**/api/workspaces/fixture/missions/msn_far/schedule*", route => {
+    points++
+    const result = missionScheduleView(f.doc)
+    return route.fulfill({ json: { ...result, document: { ...result.document, id: "msn_far", kind: "one-time",
+      configuration: { ...result.document!.configuration, title: "Saved Mission source" } } } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
+    assert.match(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).innerText(), /Saved Mission source/)
+    assert.equal(points, 1); assert.equal(pages, 1, "editing does not traverse unrelated source pages")
+    assert.equal(await form(page).getByRole("alert").count(), 0)
+    assert.deepEqual(f.posts, []); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("source keyboard navigation scrolls the real popup and selecting with Enter never submits the form", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json: {
+    data: Array.from({ length: 200 }, (_, index) => ({ id: `ses_${index}`, title: `Conversation ${index}` })), cursor: {} } }))
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Handle new messages")
+    await ready(page)
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("conversation-message")
+    await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).click()
+    await page.getByRole("listbox").getByRole("option").first().waitFor()
+    const search = page.getByRole("combobox", { name: "Search sources", exact: true })
+    await search.focus()
+    for (let index = 0; index < 24; index++) await page.keyboard.press("ArrowDown")
+    await page.waitForFunction(() => {
+      const field = document.querySelector<HTMLInputElement>('.mission-source-popover input[role="combobox"]')!
+      const option = document.getElementById(field.getAttribute("aria-activedescendant") ?? ""), list = document.querySelector('.mission-source-popover [role="listbox"]')!
+      if (!option) return false
+      const box = option.getBoundingClientRect(), port = list.getBoundingClientRect()
+      return list.scrollTop > 0 && box.top >= port.top - 1 && box.bottom <= port.bottom + 1
+    })
+    const id = await search.evaluate(field => document.getElementById(field.getAttribute("aria-activedescendant")!)!.getAttribute("data-source-id"))
+    await page.keyboard.press("Enter")
+    assert.equal(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).getAttribute("data-source-id"), id)
+    assert.equal(f.posts.length, 0)
+    assert.equal(await page.getByRole("listbox").count(), 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("editing instructions preserves stored context IDs without offering an unrelated global conversation control", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  f.doc = { ...f.doc, configuration: { ...f.doc.configuration, watchedConversationIDs: ["ses_recorded"] } }
+  await page.route("**/workspaces/fixture/instance/api/location**", route => route.fulfill({ json: { directory: "/fixture", project: { id: "project" } } }))
+  try {
+    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
+    assert.equal(await form(page).locator(".mission-conversation-picker").count(), 0)
+    await form(page).getByLabel("Notes", { exact: true }).fill("Keep stored sources intact")
+    await form(page).getByRole("button", { name: "Save", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.watchedConversationIDs, ["ses_recorded"])
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -373,7 +723,7 @@ for (const kind of ["create", "edit"] as const) test(`${kind} rejects impossible
   } finally { await page.close() }
 })
 
-test("the real editor selects all five explicit project sources per event row, pages on demand and avoids rereading sources while typing", async () => {
+test("the real editor selects all five explicit project sources in their own pickers and avoids rereading sources while typing", async () => {
   const page = await browser.newPage(), f = await setup(page)
   let schedulePages = 0
   await page.route("**/api/workspaces/fixture/missions/scheduled?*", route => {
@@ -391,17 +741,13 @@ test("the real editor selects all five explicit project sources per event row, p
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Check explicit sources")
     await ready(page)
-    const condition = form(page).getByLabel("Criterion 1 type", { exact: true }), source = form(page).getByLabel("Criterion 1 source", { exact: true })
+    const condition = form(page).getByLabel("Criterion 1 type", { exact: true })
     for (const [kind, id] of [["schedule-success", "msn_schedule"], ["mission-completed", "msn_once"],
       ["branch-commits", "refs/heads/not-checked-out"], ["conversation-message", "ses_reference"]]) {
       await condition.selectOption(kind)
-      if (kind === "schedule-success" || kind === "mission-completed") {
-        await form(page).getByRole("button", { name: "Load more sources", exact: true }).click()
-      }
-      await source.locator(`option[value="${id}"]`).waitFor({ state: "attached" })
-      await source.selectOption(id); await ready(page)
+      await selectMissionSource(page, 1, id); await ready(page)
     }
-    assert.equal(schedulePages, 4, "each schedule source reads one page plus one explicit continuation")
+    assert.equal(schedulePages, 4, "each open schedule source picker follows its own continuation")
     await condition.selectOption("files-changed")
     await form(page).getByLabel("Criterion 1 file paths", { exact: true }).fill("src/input.ts")
     await ready(page)
@@ -485,8 +831,7 @@ test("launch criteria journey: an event, a schedule, else, if, or, the approved 
   const type = (number: number) => form(page).getByLabel(`Criterion ${number} type`, { exact: true })
   const choose = async (number: number, kind: string, id: string) => {
     await type(number).selectOption(kind)
-    const source = form(page).getByLabel(`Criterion ${number} source`, { exact: true })
-    await source.locator(`option[value="${id}"]`).waitFor({ state: "attached" }); await source.selectOption(id)
+    await selectMissionSource(page, number, id)
   }
   const time = (number: number, value: string) => form(page).getByLabel(`Criterion ${number} time`, { exact: true }).fill(value)
   const shot = async (name: string) => { await ready(page); await page.mouse.move(0, 0); await capture(page, name) }
@@ -548,8 +893,7 @@ test("two schedules, then two events: both times launch only if one of the event
     await type(1).selectOption("daily"); await time(1, "09:00")
     await addCriterion(page); await time(2, "18:00")
     await addCriterion(page); await type(3).selectOption("branch-commits")
-    const source = form(page).getByLabel("Criterion 3 source", { exact: true })
-    await source.locator('option[value="refs/heads/main"]').waitFor({ state: "attached" }); await source.selectOption("refs/heads/main")
+    await selectMissionSource(page, 3, "refs/heads/main")
     await addCriterion(page); await type(4).selectOption("files-changed")
     await form(page).getByLabel("Criterion 4 file paths", { exact: true }).fill("package.json")
     assert.deepEqual(await form(page).locator(".mission-criterion-connector").allInnerTexts(), ["or", "if", "or"])
@@ -572,7 +916,7 @@ for (const locale of ["en", "fr"]) test(`a stored legacy frequency with a condit
     const label = (en: string, fr: string) => form(page).getByLabel(locale === "fr" ? fr : en, { exact: true })
     assert.equal(await label("Criterion 1 type", "Type du critère 1").inputValue(), "daily")
     assert.equal(await label("Criterion 2 time", "Heure du critère 2").inputValue(), "18:00")
-    assert.equal(await label("Criterion 3 source", "Source du critère 3").inputValue(), "refs/heads/main")
+    assert.equal(await label("Criterion 3 source", "Source du critère 3").getAttribute("data-source-id"), "refs/heads/main")
     assert.deepEqual(await form(page).locator(".mission-criterion-connector").allInnerTexts(), locale === "fr" ? ["ou", "si"] : ["or", "if"],
       "the schedules come first and the condition after them")
     await capture(page, locale === "fr" ? "09-legacy-reopened-fr.png" : "08-legacy-reopened-en.png")
