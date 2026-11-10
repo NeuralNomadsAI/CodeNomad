@@ -50,6 +50,8 @@ Desactivarlo solo retira esa tarea, ese LaunchAgent o ese servicio; un OpenCode 
 3. Revisa el estado del servicio en ejecución. Usa **Reiniciar servicio compartido** solo cuando quieras activar la instalación seleccionada para todos los clientes conectados.
 4. Para reiniciar el proceso sin instalar nada, expande **Solución de problemas**, elige **Reiniciar servicio OpenCode** y confirma.
 
+El reinicio sigue disponible durante una actualización del estado en segundo plano. Cada solicitud vuelve a comprobar el estado actual antes de modificar el servicio; una comprobación fallida bloquea el reinicio.
+
 | Acción | Ámbito y efecto | Recuperación segura |
 | --- | --- | --- |
 | Actualizar CLI | Cambia el ejecutable instalado compatible; no reinicia implícitamente el daemon en ejecución. | Comprueba las versiones instalada y en ejecución tras un fallo; reintenta explícitamente solo después de resolver el error. |

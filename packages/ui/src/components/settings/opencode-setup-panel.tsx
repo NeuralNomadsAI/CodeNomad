@@ -16,9 +16,12 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
   const [confirmPending, setConfirmPending] = createSignal(false)
   let disposed = false
   onCleanup(() => { disposed = true })
-  const disabled = () => busy() || checking() || restartPending() || confirmPending()
+  // Restart performs its own fresh admission read. A passive focus refresh must
+  // not disable the control between pointer-down and click.
+  const actionPending = () => busy() || restartPending() || confirmPending()
+  const disabled = () => actionPending() || checking()
   const restartForTroubleshooting = async () => {
-    if (disabled() || openCodeSetupCheckError() || !status()?.canRestart) return
+    if (actionPending() || openCodeSetupCheckError() || !status()?.canRestart) return
     const binary = serverSettings().opencodeBinary
     setRestartPending(true)
     try {
@@ -26,7 +29,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
         title: t("settings.opencode.setup.restartTroubleshooting"), variant: "warning",
         confirmLabel: t("settings.opencode.setup.restartTroubleshooting"), cancelLabel: t("alertDialog.actions.cancel"),
       })
-      if (!confirmed || disposed || binary !== serverSettings().opencodeBinary || busy() || checking()
+      if (!confirmed || disposed || binary !== serverSettings().opencodeBinary || busy()
         || openCodeSetupCheckError() || !status()?.canRestart) return
       await runOpenCodeSetup("restart", { resumeWorkspace: false })
     } finally {
@@ -104,7 +107,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           <Show when={isOpenCodeConnected() && canContinueOpenCodeSetup()}>
             <button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled()} onClick={() => void continueOpenCodeSetup()}>{t("settings.opencode.setup.continue")}</button>
           </Show>
-          <Show when={data().canRestart && (data().serviceState === "restart_required" || data().serviceState === "restart_available")}><button type="button" class="selector-button selector-button-primary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
+          <Show when={data().canRestart && (data().serviceState === "restart_required" || data().serviceState === "restart_available")}><button type="button" class="selector-button selector-button-primary w-auto" disabled={actionPending() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
         </div>
         <Show when={data().canUpgrade && (data().state === "missing" || data().needsSharedInstallation)}>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.sharedInstallDescription")}</p>
@@ -135,7 +138,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
         <details class="settings-disclosure">
           <summary>{t("settings.opencode.setup.troubleshooting")}</summary>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.restartDescription")}</p>
-          <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError() || !data().canRestart} onClick={() => void restartForTroubleshooting()}>{t("settings.opencode.setup.restartTroubleshooting")}</button></div>
+          <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={actionPending() || openCodeSetupCheckError() || !data().canRestart} onClick={() => void restartForTroubleshooting()}>{t("settings.opencode.setup.restartTroubleshooting")}</button></div>
           <Show when={data().canReload}>
             <p class="settings-toggle-caption">{t("settings.opencode.setup.reloadDescription")}</p>
             <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("reload")}>{t("settings.opencode.setup.reload")}</button></div>
