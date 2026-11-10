@@ -758,6 +758,8 @@ export interface RemoteServerProfile {
   name: string
   baseUrl: string
   skipTlsVerify: boolean
+  /** Reach `baseUrl` from this OpenSSH destination, through a forward the local backend owns. */
+  ssh?: { host: string }
   createdAt: string
   updatedAt: string
   lastConnectedAt?: string

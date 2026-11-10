@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "folderSelection.servers.dialog.sshHost": "Хост SSH (необязательно)",
+  "folderSelection.servers.dialog.sshHint": "Хост или псевдоним OpenSSH. Укажите адрес сервера с точки зрения этого хоста; требуются аутентификация по ключу и известный ключ хоста.",
   "folderSelection.language.ariaLabel": "Язык",
 
   "folderSelection.logoAlt": "Логотип CodeNomad",

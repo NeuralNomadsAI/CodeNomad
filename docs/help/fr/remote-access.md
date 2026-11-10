@@ -83,6 +83,8 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
+Avec le multi-backend expérimental activé, **Hôte SSH (facultatif)** enregistre un hôte ou alias OpenSSH pour le relais du backend. Les suggestions proviennent du fichier `~/.ssh/config` du compte exécutant le backend local. Saisissez l’adresse de CodeNomad vue depuis cet hôte (par exemple `https://127.0.0.1:9898`, avec son port réel), puis **Enregistrer**. Les profils SSH passent par le relais ; **Se connecter** ouvre des fenêtres directes et est désactivé pour ces profils. CodeNomad doit déjà y être installé et démarré. OpenSSH doit être disponible localement, avec une authentification par clé et une clé d’hôte vérifiée dans `known_hosts` ; l’authentification CodeNomad et les contrôles des certificats HTTPS s’appliquent toujours.
+
 1. Sur l’accueil de bureau, choisissez **Se connecter au serveur CodeNomad**. Le même bouton apparaît dans un onglet **Serveurs** vide et dans **Paramètres → Accès distant → Serveurs**.
 2. Dans **Se connecter à un serveur**, saisissez **Nom du serveur** et **URL du serveur** avec une origine HTTPS de confiance. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance.
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.

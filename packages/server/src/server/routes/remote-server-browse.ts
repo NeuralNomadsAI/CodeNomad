@@ -2,11 +2,15 @@ import type { FastifyInstance } from "fastify"
 import { guardLocalBackendCaller } from "../../codenomad-servers/local-caller"
 import { BrowseBody, ConnectBody, type RemoteServerBrowseManager } from "../../codenomad-servers/browse-manager"
 import { endpointErrorCode } from "../../codenomad-servers/client"
+import { listSshHosts } from "../../codenomad-servers/ssh"
 
 export function registerRemoteServerBrowseRoutes(app: FastifyInstance, deps: {
   manager: RemoteServerBrowseManager
   getSelfOrigins(): Set<string>
 }) {
+  app.get("/api/remote-servers/ssh-hosts", {
+    onRequest: async (request, reply) => { guardLocalBackendCaller(request, reply, deps.getSelfOrigins()) },
+  }, async () => ({ hosts: listSshHosts() }))
   // This guard is deliberately stricter than CORS and runs before body parsing or secret/network access.
   for (const action of ["browse", "connect", "forget"] as const) {
     app.post<{ Params: { id: string } }>(`/api/remote-servers/:id/${action}`, {

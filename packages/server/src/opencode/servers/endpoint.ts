@@ -1,8 +1,15 @@
 import { lookup } from "node:dns/promises"
 import { isIP } from "node:net"
 
-import { admitAddress, ExplicitEndpointError, normalizeExplicitOrigin } from "./origin"
-export { admitAddress, ExplicitEndpointError, normalizeExplicitOrigin, type EndpointErrorCode } from "./origin"
+import { ExplicitEndpointError, normalizeExplicitOrigin } from "./origin"
+export { ExplicitEndpointError, normalizeExplicitOrigin, type EndpointErrorCode } from "./origin"
+
+/** A saved profile chooses its destination; only the resolver's IP syntax is checked here. */
+export function admitAddress(address: string): { address: string; family: 4 | 6 } {
+  const family = isIP(address)
+  if (!family) throw new ExplicitEndpointError("dns")
+  return { address, family: family as 4 | 6 }
+}
 
 export type ResolveAddresses = (hostname: string) => Promise<readonly { address: string; family: number }[]>
 export const resolveAddresses: ResolveAddresses = hostname => lookup(hostname, { all: true, verbatim: true })

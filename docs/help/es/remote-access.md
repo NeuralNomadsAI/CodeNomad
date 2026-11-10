@@ -83,6 +83,8 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
+Con el multi-backend experimental activado, **Host SSH (opcional)** guarda un host o alias de OpenSSH para el relé del backend. Las sugerencias proceden del archivo `~/.ssh/config` de la cuenta del backend local. Introduzca la dirección de CodeNomad vista desde ese host (por ejemplo, `https://127.0.0.1:9898`, con su puerto real) y pulse **Guardar**. Los perfiles SSH usan el relé; **Conectar** abre ventanas directas y está desactivado para estos perfiles. CodeNomad debe estar instalado y ejecutándose allí. Se requieren OpenSSH local, autenticación por clave y una clave de host verificada en `known_hosts`; siguen aplicándose la autenticación de CodeNomad y la verificación de certificados HTTPS.
+
 1. En la página de inicio de escritorio, elige **Conectar servidor CodeNomad**. El mismo botón aparece en una pestaña **Servidores** vacía y en **Configuración → Acceso remoto → Servidores**.
 2. En **Conectar a un servidor**, introduce **Nombre del servidor** y **URL del servidor** usando un origen HTTPS de confianza. Deja sin marcar **Omitir la verificación TLS para certificados autofirmados.**; establece confianza en su lugar.
 3. Elige **Guardar** para crear un marcador o **Conectar** para guardarlo y abrirlo. Inicia sesión en ese servidor.
