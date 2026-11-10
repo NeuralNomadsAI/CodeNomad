@@ -9,7 +9,8 @@ export const mediaProbeTool = `{ name:'media_probe', description:'Fixture', inpu
 
 // Readers of stored rows must agree with native reads whichever representation
 // the runtime chose; the stored form is qualified from the database itself.
-export async function testSessionMediaBlobNative({ client, location, locationOptions, db, generate, revision }) {
+export async function testSessionMediaBlobNative({ client, location, locationOptions, db, generate, revision, ready }) {
+  await ready({ client, location, locationOptions })
   const session = await client.session.create({ location }, locationOptions)
   await generate(session.id)
   const rpc = async (method, input) => (await client.rpc.call({ rpcID: "codenomad.session-pruning", method, location,
