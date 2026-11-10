@@ -519,6 +519,8 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
       journalStarted.resolve(); await summaries.promise
       if (!route.request().failure()) await route.fallback()
     })
+    const capabilityRequest = page.waitForRequest(request => request.method() === "GET" && new URL(request.url()).pathname.endsWith("/missions/scheduled/capabilities"))
+    void capabilityRequest.catch(() => {})
     if (alreadyReading) {
       await page.evaluate(() => (window as any).missionFixture.refresh())
       await Promise.all([started, journalStarted.promise])
@@ -532,7 +534,7 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
     summaries.resolve()
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).and(page.locator(":enabled")).waitFor()
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).evaluate(element => (element as HTMLButtonElement).click())
-    await Promise.all([started, capability]).catch(async error => { throw new Error(`${error}\n${JSON.stringify({ requests: requests.slice(-20),
+    await Promise.all([started, capability, capabilityRequest]).catch(async error => { throw new Error(`${error}\n${JSON.stringify({ requests: requests.slice(-20),
       state: await page.evaluate(() => ({ status: (window as any).missionFixture.snapshot().status,
         refreshDisabled: (document.querySelector('[aria-label="Refresh mission map"]') as HTMLButtonElement)?.disabled })) })}`) })
     const passive = page.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/missions/scheduled"))
