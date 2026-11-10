@@ -39,6 +39,8 @@ Esto **no es conmutación durante una solicitud en curso**. No reintenta solicit
 
 ## Visibilidad de modelos, favoritos y Razonamiento {#models}
 
+Mientras se carga la lista de modelos, las conversaciones nuevas conservan el modelo configurado o guardado del agente, o su elección reciente. Revise **Modelo** antes de enviar; un modelo no disponible puede requerir una selección explícita cuando se cargue la lista.
+
 1. Elige **Gestionar modelos** junto a un proveedor de modelos.
 2. Busca por nombre/ID y cambia la visibilidad; **Mostrar todos** y **Ocultar todos** afectan a la lista del selector de ese proveedor. Arrastra sobre las casillas para cambiar varios modelos a la vez.
 3. En el selector **Modelo** de una conversación, usa **Agregar a favoritos** o **Quitar de favoritos**; **Mostrar todos los modelos** sale del filtrado de solo favoritos.

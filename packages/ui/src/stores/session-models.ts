@@ -35,10 +35,20 @@ function getRecentModelPreferenceForInstance(
 ): { providerId: string; modelId: string } | undefined {
   const recents = preferencesOf(instanceId).uiState().models.recents ?? []
   for (const item of recents) {
-    if (isModelValid(instanceId, item)) {
+    if (isDefaultModelAvailable(instanceId, item)) {
       return item
     }
   }
+}
+
+function isDefaultModelAvailable(
+  instanceId: string,
+  model?: { providerId: string; modelId: string } | null,
+): model is { providerId: string; modelId: string } {
+  // A cold catalog cannot invalidate an explicit choice. Native dispatch can
+  // reject an unavailable model without substituting a different provider.
+  return Boolean(model?.providerId && model.modelId)
+    && (!providers().has(instanceId) || isModelValid(instanceId, model))
 }
 
 async function getDefaultModel(
@@ -53,7 +63,7 @@ async function getDefaultModel(
 
   if (agentId) {
     const agent = instanceAgents.find((a) => a.id === agentId)
-    if (agent && agent.model && isModelValid(instanceId, agent.model)) {
+    if (agent && agent.model && isDefaultModelAvailable(instanceId, agent.model)) {
       return {
         providerId: agent.model.providerId,
         modelId: agent.model.modelId,
@@ -62,7 +72,7 @@ async function getDefaultModel(
 
     const stored = await getAgentModelPreference(instanceId, agentId)
     signal.throwIfAborted()
-    if (isModelValid(instanceId, stored)) {
+    if (isDefaultModelAvailable(instanceId, stored)) {
       return stored
     }
   }

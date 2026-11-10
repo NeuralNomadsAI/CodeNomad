@@ -39,6 +39,8 @@ Bu, **devam eden istek için otomatik geçiş değildir**. Başarısız istekler
 
 ## Model görünürlüğü, favoriler ve Düşünme {#models}
 
+Model listesi yüklenirken yeni konuşmalar, ajanın yapılandırılmış veya kaydedilmiş modelini ya da son seçiminizi korur. Göndermeden önce **Model** seçimini kontrol edin; liste yüklendikten sonra kullanılamayan bir model için açıkça seçim yapmanız gerekebilir.
+
 1. Model sağlayıcının yanında **Modelleri yönet** öğesini seçin.
 2. Ada/kimliğe göre arama yapın ve görünürlüğü değiştirin; **Tümünü göster** ve **Tümünü gizle**, söz konusu sağlayıcının seçici listesini etkiler. Birden fazla modeli tek seferde değiştirmek için onay kutularının üzerinde sürükleyin.
 3. Bir konuşmanın **Model** seçicisinde **Favorilere ekle** veya **Favorilerden kaldır** öğesini kullanın; **Tüm modelleri göster** yalnızca favorilere yönelik filtrelemeyi bırakır.
