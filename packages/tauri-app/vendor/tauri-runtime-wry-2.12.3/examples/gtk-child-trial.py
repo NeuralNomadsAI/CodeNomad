@@ -11,6 +11,7 @@ import http.server
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import threading
@@ -33,7 +34,10 @@ path = "{Path(__file__).with_name('gtk-child-layout.rs').resolve()}"
 gtk = "0.18"
 webkit2gtk = "2.0.2"
 wry = {{ path = "{root / 'wry-0.57.1'}" }}
+[patch.crates-io]
+glib = {{ path = "{root / 'glib-0.18.5'}" }}
 ''')
+    shutil.copyfile(root.parent / "Cargo.lock", manifest.parent / "Cargo.lock")
     target = Path(os.environ.get("CARGO_TARGET_DIR", str(Path(build.name) / "target")))
     subprocess.run(["cargo", "build", "--offline", "--manifest-path", str(manifest),
                     "--target-dir", str(target)], check=True)
