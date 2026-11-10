@@ -39,6 +39,8 @@ Ce n’est **pas un basculement en cours de requête**. Cela ne réessaie pas le
 
 ## Visibilité des modèles, favoris et Réflexion {#models}
 
+Pendant le chargement de la liste, les nouvelles conversations conservent le modèle configuré ou enregistré pour l’agent, ou votre choix récent. Vérifiez **Modèle** avant l’envoi ; un modèle indisponible peut nécessiter une sélection explicite une fois la liste chargée.
+
 1. Choisissez **Gérer les modèles** à côté d’un fournisseur de modèles.
 2. Recherchez par nom/ID et changez la visibilité ; **Tout afficher** et **Tout masquer** affectent sa liste de sélection. Faites glisser le pointeur sur les cases pour changer plusieurs modèles d'un coup.
 3. Dans le sélecteur **Modèle** d’une conversation, utilisez **Ajouter aux favoris** ou **Retirer des favoris** ; **Afficher tous les modèles** quitte le filtrage limité aux favoris.
