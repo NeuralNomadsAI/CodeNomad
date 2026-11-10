@@ -457,12 +457,15 @@ test("technical diagnostics expose carrier roles and pending cleanup read-only, 
 for (const alreadyReading of [false, true]) test(`a passive list refresh between pointer-down and pointer-up preserves the exact Start click (${alreadyReading ? "read already in flight" : "fresh read"})`, { timeout: 60_000 }, async () => {
   let releaseJournal!: () => void
   const journalGate = new Promise<void>(resolve => { releaseJournal = resolve })
-  const page = await browser.newPage(), f = await setup(page, { seed: true, journalGate })
+  const page = await browser.newPage()
   const requests: string[] = []
   page.on("request", request => { if (request.url().includes("/api/")) requests.push(request.url()) })
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
+  const summaries = deferred(), journalStarted = deferred(), capabilities = deferred()
+  let pointerDown = false
   try {
+    const f = await setup(page, { seed: true, journalGate })
     // The schedule and journal inventories load independently. A native click on
     // the global Refresh button is admitted only after its journal read finishes.
     await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "loading")
@@ -472,6 +475,28 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
     await select(page)
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).and(page.locator(":enabled")).waitFor()
     await button(page, "Start").click({ trial: true })
+    const revision = f.doc.revision, controls: Array<{ method: string; path: string; body: any }> = []
+    const authority: string[] = []
+    let authorityAtMutation: string[] = []
+    page.on("response", response => {
+      if (response.request().method() === "GET" && /\/msn_schedule\/schedule$|\/scheduled\/capabilities$/.test(new URL(response.url()).pathname))
+        authority.push(new URL(response.url()).pathname)
+    })
+    await page.route(/\/msn_schedule\/schedule(?:\?.*)?$/, async route => {
+      const request = route.request(), link = new URL(request.url())
+      if (request.method() === "POST") {
+        authorityAtMutation = [...authority]
+        controls.push({ method: request.method(), path: link.pathname, body: request.postDataJSON() })
+      }
+      await route.fallback()
+    })
+    await page.evaluate(() => {
+      const start = document.querySelector('.mission-unified-schedule [aria-label="Start"]')!
+      const refresh = document.querySelector('[aria-label="Refresh mission map"]')!
+      ;(window as any).pointerProbe = { start: [] as any[], refresh: [] as any[] }
+      for (const type of ["mousedown", "mouseup", "click"]) start.addEventListener(type, event => (window as any).pointerProbe.start.push([type, event.isTrusted]))
+      refresh.addEventListener("click", event => (window as any).pointerProbe.refresh.push(event.isTrusted))
+    })
     // Observe at interception: a passive invalidation may start either read
     // before the pointer or the Refresh click, and that click coalesces with it.
     let listStarted!: () => void, capabilityStarted!: () => void
@@ -484,31 +509,67 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
     })
     await page.route("**/missions/scheduled/capabilities*", async route => {
       capabilityStarted()
-      await gate
+      await capabilities.promise
       await route.fulfill({ json: { location: { directory: "fixture" }, api: { available: true }, enabled: true,
         origin: null, activation: { available: true, targets: [] } } })
     })
+    // Register last: the dataset adapter owns all other panel-page sources.
+    await page.route(/\/missions\/panel-page$/, async route => {
+      if (route.request().postDataJSON().source !== "summaries") return route.fallback()
+      journalStarted.resolve(); await summaries.promise
+      if (!route.request().failure()) await route.fallback()
+    })
     if (alreadyReading) {
       await page.evaluate(() => (window as any).missionFixture.refresh())
-      await started
+      await Promise.all([started, journalStarted.promise])
     }
     const box = (await button(page, "Start").boundingBox())!
     const heldButton = await button(page, "Start").elementHandle()
     const heldIcon = await button(page, "Start").locator("svg").elementHandle()
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down(); pointerDown = true
+    assert.equal(await button(page, "Start").evaluate(element => element === document.activeElement), true)
+    if (alreadyReading) assert.equal(await page.getByRole("button", { name: "Refresh mission map", exact: true }).isDisabled(), true)
+    summaries.resolve()
+    await page.getByRole("button", { name: "Refresh mission map", exact: true }).and(page.locator(":enabled")).waitFor()
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).evaluate(element => (element as HTMLButtonElement).click())
     await Promise.all([started, capability]).catch(async error => { throw new Error(`${error}\n${JSON.stringify({ requests: requests.slice(-20),
       state: await page.evaluate(() => ({ status: (window as any).missionFixture.snapshot().status,
         refreshDisabled: (document.querySelector('[aria-label="Refresh mission map"]') as HTMLButtonElement)?.disabled })) })}`) })
+    const passive = page.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/missions/scheduled"))
+    void passive.catch(() => {})
+    release(); await (await passive).finished()
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal(await button(page, "Start").isDisabled(), false, "display revalidation keeps controls stable; admission reads authority")
     assert.equal(await button(page, "Start").evaluate((element, held) => element === held, heldButton), true, "display revalidation preserves the pointer target")
     assert.equal(await button(page, "Start").locator("svg").evaluate((element, held) => element === held, heldIcon), true, "same-kind primary glyph retains its pointer target")
     assert.deepEqual(await button(page, "Start").boundingBox(), box, "display revalidation preserves pointer geometry")
-    await page.mouse.up(); release()
-    await button(page, "Pause").waitFor()
+    assert.equal(await heldIcon!.evaluate(element => element.isConnected), true)
+    assert.equal(await button(page, "Start").evaluate(element => element === document.activeElement), true)
+    assert.deepEqual(await page.evaluate(() => (window as any).pointerProbe), { start: [["mousedown", true]], refresh: [false] })
+    authority.length = 0
+    const published = page.waitForResponse(async response => response.request().method() === "GET"
+      && new URL(response.url()).pathname.endsWith("/missions/scheduled")
+      && (await response.json()).schedules.some((row: any) => row.id === f.doc.id && row.revision === revision + 1))
+    void published.catch(() => {})
+    const admittedDocument = page.waitForResponse(response => response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/msn_schedule/schedule"))
+    void admittedDocument.catch(() => {})
+    await page.mouse.up(); pointerDown = false
+    await (await admittedDocument).finished(); capabilities.resolve()
+    await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+    await (await published).finished()
+    assert.equal(controls.length, 1)
+    const documentAt = authorityAtMutation.indexOf("/api/workspaces/fixture/missions/msn_schedule/schedule")
+    assert.ok(documentAt >= 0 && authorityAtMutation.lastIndexOf("/api/workspaces/fixture/missions/scheduled/capabilities") > documentAt,
+      "the authoritative document and capability both respond before the one mutation")
+    assert.deepEqual(controls[0], { method: "POST", path: "/api/workspaces/fixture/missions/msn_schedule/schedule",
+      body: { action: "play", directory: "fixture", expectedRevision: revision, requestID: f.posts[0].requestID } })
+    assert.equal(typeof controls[0].body.requestID, "string"); assert.ok(controls[0].body.requestID.length > 0)
+    assert.equal(f.doc.revision, revision + 1)
+    assert.equal(await detail(page).getAttribute("aria-label"), "Inspect local changes")
+    assert.deepEqual((await page.evaluate(() => (window as any).pointerProbe)).start, [["mousedown", true], ["mouseup", true], ["click", true]])
     assert.deepEqual(f.posts.map(item => item.action), ["play"])
     assert.deepEqual(f.errors, [])
-  } finally { releaseJournal(); release(); await page.close() }
+  } finally { releaseJournal(); summaries.resolve(); capabilities.resolve(); release(); if (pointerDown) await page.mouse.up(); await page.close() }
 })
 
 test("document inventory pages only on demand and revalidates the loaded frontier without changing selection or focus", async () => {
