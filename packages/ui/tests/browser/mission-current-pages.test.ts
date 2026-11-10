@@ -186,6 +186,8 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
   let release!: () => void, entered!: () => void, heldID: string | undefined, heldOffset: number | undefined
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
   const errors: string[] = [], failures: Array<{ id?: string; url: string; error?: string }> = []
+  let marksEntered!: () => void, releaseMarks!: () => void, heldMarks: string | undefined
+  const marksStarted = new Promise<void>(resolve => { marksEntered = resolve }), marksGate = new Promise<void>(resolve => { releaseMarks = resolve })
   page.on("pageerror", error => errors.push(error.message))
   page.on("requestfailed", request => failures.push({ id: request.headers()["x-body-read"], url: request.url(), error: request.failure()?.errorText }))
   try {
@@ -216,7 +218,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
     })
     await page.route("**/api/**", async route => {
       const request = route.request(), path = new URL(request.url()).pathname
-      if (path === "/api/events") return route.continue({ url: eventsURL })
+      if (path === "/api/events") { await marksStarted; return route.continue({ url: eventsURL }) }
       if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
       if (path.endsWith("/current")) { const { projectCanonical: _canonical, location: _location, ...identity } = await f.read(); return route.fulfill({ json: identity }) }
       if (path.endsWith("/missions/panel-page")) {
@@ -245,6 +247,14 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
       return route.fulfill({ json: path.endsWith("/missions") ? { available: true, version: 1, projectID: "project", missions: [], summaries: [], generatedAt: 1, discardedEvents: 0 }
         : path.includes("/instance/") ? [] : {} })
     })
+    // Stream open cancels the initial marks read, whose selector uses missionOffset.
+    await page.route(/\/missions\/panel-page$/, async route => {
+      if (heldMarks || route.request().postDataJSON().source !== "marks") return route.fallback()
+      heldMarks = route.request().headers()["x-body-read"]
+      assert.ok(heldMarks)
+      marksEntered(); await marksGate
+      if (!route.request().failure()) return route.fallback()
+    })
     await page.goto(url + "?directory=" + encodeURIComponent(f.root))
     await selectMission(page, owner === "daily" ? "Daily contraction" : "Scheduled current")
     await page.evaluate(async ({ root, missionID, taskID, scheduleID, passageID, owner }) => {
@@ -267,19 +277,28 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
     assert.ok(immediately.abortedAt !== undefined && immediately.abortedAt <= contractedAt, "abort happens on contraction, before the real deadline")
     assert.equal(immediately.reason, "AbortError")
     assert.ok(failures.some(failure => failure.id === heldID))
+    assert.ok(heldMarks && failures.some(failure => failure.id === heldMarks), "the admitted marks read is really cancelled by stream open")
     for (const failure of failures) {
       const read = records.find((record: any) => record.id === failure.id)
-      assert.equal(failure.error, "net::ERR_ABORTED"); assert.equal(read?.reason, "AbortError")
+      assert.ok(read, "every failed request has its exact originating fetch record")
+      assert.equal(failure.error, "net::ERR_ABORTED"); assert.equal(read.reason, "AbortError")
+      assert.equal(read.abortedAtDispatch, false); assert.ok(read.abortedAt !== undefined)
       if (failure.id === heldID) {
         assert.deepEqual(read.body.source, source); assert.equal(read.body.body.field, "brief"); assert.equal(read.body.body.offset, heldOffset)
       } else {
-        assert.ok(failure.url.endsWith("/missions/panel-page")); assert.equal(read.body.window.offset, 0)
-        assert.ok(read.body.source === "summaries" && read.body.initial === true || read.body.source === "cleanups" && read.body.initial === undefined)
+        assert.ok(failure.url.endsWith("/missions/panel-page"))
+        if (read.body.source === "marks") assert.deepEqual(read.body, { source: "marks", missionOffset: 0 })
+        else {
+          assert.equal(read.body.window.offset, 0)
+          assert.ok(read.body.source === "summaries" && read.body.initial === true || read.body.source === "cleanups" && read.body.initial === undefined)
+        }
       }
     }
     await number.fill("2"); await number.press("Enter"); await section.getByText("SECOND_PAGE_MARKER", { exact: true }).waitFor()
     const extended = await page.evaluate(id => (window as any).__bodyReads.filter((read: any) => read.id !== id && read.body.body?.offset > 0), heldID)
     assert.ok(extended.some((read: any) => read.body.body.offset === heldOffset && read.abortedAtDispatch === false && read.at >= contractedAt + 30_000))
+    const resumed = extended.find((read: any) => read.body.body.offset === heldOffset && read.at >= contractedAt + 30_000)
+    assert.deepEqual(resumed.body, immediately.body, "fresh resume preserves the exact source, body digest, cursor and own offset")
     assert.equal(await section.getByRole("button", { name: "Try again", exact: true }).count(), 0); assert.deepEqual(errors, [])
-  } finally { release(); await page.context().close(); await f.dispose() }
+  } finally { marksEntered(); releaseMarks(); release(); await page.context().close(); await f.dispose() }
 })
