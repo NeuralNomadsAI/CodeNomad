@@ -99,8 +99,8 @@ interface WorkspaceManagerOptions {
     connection: import("./opencode-service").ServiceConnection,
     deadlineAt?: number,
   ) => Promise<boolean>
-  /** Bounded wait for bundled plugins to register for this backend (never rejects). */
-  desktopPluginsReady?: () => Promise<void>
+  /** Startup marker wait, or fresh observed registration for an authorized Location. */
+  desktopPluginsReady?: (target?: import("../opencode/desktop-plugin-lifecycle").DesktopPluginReadinessTarget) => Promise<void>
   shutdownTimeoutMs?: number
   launchSettlementTimeoutMs?: number
   launchTimeoutMs?: number
@@ -259,9 +259,15 @@ export class WorkspaceManager {
     return this.sharedService.client()
   }
 
-  /** Await before a bundled-plugin RPC: plugins register only after observing this backend's lease. */
-  desktopPluginsReady(): Promise<void> {
-    return this.options.desktopPluginsReady?.() ?? Promise.resolve()
+  /** Targeted callers supply captured connection and pre-authorized Location fences. */
+  desktopPluginsReady(target?: import("../opencode/desktop-plugin-lifecycle").DesktopPluginReadinessTarget): Promise<void> {
+    if (target) {
+      target.signal.throwIfAborted()
+      target.connection.assertCurrent()
+      target.assertCurrent()
+      if (!this.options.desktopPluginsReady) return Promise.reject(new Error("Pruning Location readiness unavailable"))
+    }
+    return this.options.desktopPluginsReady?.(target) ?? Promise.resolve()
   }
 
   async reserveWorktreeDeletion(directory: string): Promise<() => void> {

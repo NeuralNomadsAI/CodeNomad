@@ -14,6 +14,7 @@ import { type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
 import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
 import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
 import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
+import { ownReadiness } from "./desktop-plugin-readiness"
 
 export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "provider" | "runtime">>
 
@@ -112,6 +113,7 @@ export async function installDesktopPluginPresence(
   await assertBundlePath()
   assertCurrent()
   const lease = path.join(leases, `${randomUUID()}.lease`)
+  const readiness = ownReadiness(lease)
   let written = leaseContent()
   try {
     await writeLease(lease, written)
@@ -161,8 +163,10 @@ export async function installDesktopPluginPresence(
   return Object.assign(async () => {
     disposed = true
     clearInterval(timer)
+    await readiness.close()
+    await ready
     await pending
     await rm(lease, { force: true })
     await rm(readyMarker, { force: true })
-  }, { ready, sync: () => sync(false) })
+  }, { ready, sync: () => sync(false), prepare: readiness.prepare })
 }

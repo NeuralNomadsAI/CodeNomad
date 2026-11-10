@@ -32,12 +32,23 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `assets-store.ts`, `assets-gallery*.ts`, `assets-conversation.ts`: tool-file assets, the [image gallery](#image-gallery) and the [Images conversation](#images-conversation).
 - `history-ranked-service.ts`: the presence-owned Code Mode `codenomad.session_search` tool and versioned ranked-history RPC; ranking, scope and bounds are specified in [full-history queries](SESSION_HISTORY_QUERIES.md).
 - `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry. At load, before following presence, the entry also registers the Design agent and skills that backend leases request (`../design/register.ts`, contract in [OpenCode compatibility](OPENCODE_COMPATIBILITY.md#agent-conventions)).
+  The initial effect awaits registration reconciliation before native activation completes. Each successful presence registration acquires a fresh scope incarnation for the Location's `ctx.location.directory`. Targeted preparation observes that incarnation through a nonce-correlated ACK, a live owned backend lease and the scope's presence record. The wire format, quantitative bounds and cleanup ownership are specified in the compatibility contract above; `desktop-plugin-readiness.test.ts` exercises that protocol and the lifecycle seam.
   Closing the native plugin scope stops its follower and joins that follower's admitted readiness writes before releasing its observations. Other live followers retain their registrations and writes; backend shutdown removes its own lease while OpenCode continues independently.
 
 `pruning-lifecycle.ts` and `pruning-installation.ts` beside that directory own
 automatic provisioning and backend leases. The server build bundles the payload
 and its dependencies under `dist/plugins/session-pruning/`, copied by both desktop hosts.
 Provisioning and lease placement follow the `OPENCODE_COMPATIBILITY.md` Agent conventions.
+
+`WorkspaceManager.desktopPluginsReady(target)` exposes Location-local preparation
+for fixed pruning consumers. The caller authorizes the exact native directory
+before invoking it and supplies its captured connection, cancellation/budget and
+monotone authority/placement assertion. The five-second preparation budget covers
+catalogue activation and fresh presence proof. A result attests observed registration
+for this wait; callers retain adjacent authorization, cancellation, connection and
+deletion-fence checks and issue one useful RPC. The no-argument overload retains
+its startup-marker semantics for existing callers. Broker adoption is scoped to
+each fixed operation's own admission and execution fences.
 
 The UI offers individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
