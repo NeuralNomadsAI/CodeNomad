@@ -73,6 +73,8 @@ Eşleştirme bağlantıları tek kullanımlıktır ve kısa ömürlüdür; doğr
 
 ## Sağlayıcı, eklenti ve uzantı durumu {#providers-and-addons}
 
+**Tam zaman çizelgesi kullanılamıyor** ile birlikte `codenomad-session-pruning` eklentisi başarısız görünüyorsa OpenCode günlüğündeki yükleme hatasını inceleyin. Bu eklenti, tam geçmişte gezinmeyi ve bekleyen soru/izin kurtarmayı sağlar. Eklenti başarıyla yüklendikten sonra zaman çizelgesini yeniden deneyin; oturum verilerinizi koruyun.
+
 | Sorun | Kurtarma |
 | --- | --- |
 | Yanlış sağlayıcı hesabı/kota | Seçilen yerel hesabı ve **Kullanım** öğesini kontrol edin. Kota ekranı bir belirteç/maliyet toplamı değildir. Belirsiz bir hesap değişikliğinden sonra yenileyin; seçim o hizmetin diğer istemcilerini etkileyebilir. |

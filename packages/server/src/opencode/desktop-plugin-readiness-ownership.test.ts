@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { syncBuiltinESMExports } from "node:module"
 import { setTimeout as delay } from "node:timers/promises"
 import { createServer } from "node:http"
@@ -25,6 +25,7 @@ async function until(read: () => Promise<boolean>) {
   for (let i = 0; i < 200; i++) { if (await read()) return; await delay(5) }
   throw new Error("Fixture condition timed out")
 }
+const scopeNamespace = (root: string, location = root) => path.join(root, "readiness", createHash("sha256").update(location).digest("hex"))
 
 test("real exclusive request collision preserves foreign request and ACK through owner close", async t => {
   const f = await fixture(t), original = fs.open
@@ -168,16 +169,73 @@ test("response capacity 64 accepts the edge and refuses a whole new 65-response 
 
 test("inert scope namespace has a finite admission bound and preserves crash residues", async t => {
   const f = await fixture(t), residue: string[] = []
-  // One lease + 255 inert scopes fills the 256-entry namespace.
-  for (let i = 0; i < 255; i++) { const file = path.join(f.root, `${randomUUID()}.scope`); residue.push(file); await fs.writeFile(file, "crash residue") }
+  const namespace = scopeNamespace(f.root)
+  await fs.mkdir(namespace, { recursive: true })
+  for (let i = 0; i < 256; i++) { const file = path.join(namespace, `${randomUUID()}.claim`); residue.push(file); await fs.writeFile(file, "crash residue") }
   const blocked = registeredReadiness(f.root, f.root, () => {})
   await assert.rejects(blocked.reconcile([]), /namespace exceeds limit/); await blocked.close()
-  assert.equal((await fs.readdir(f.root)).length, 256)
+  assert.equal((await fs.readdir(namespace)).length, 256)
   assert.equal(await fs.readFile(residue[0], "utf8"), "crash residue")
   await fs.rm(residue.pop()!)
   const fresh = registeredReadiness(f.root, f.root, () => {})
-  await fresh.reconcile([]); assert.equal((await fs.readdir(f.root)).length, 256)
-  await fresh.close(); assert.equal((await fs.readdir(f.root)).length, 255)
+  await fresh.reconcile([]); assert.equal((await fs.readdir(namespace)).length, 256)
+  await fresh.close(); assert.equal((await fs.readdir(namespace)).length, 255)
+})
+
+test("historical backend presence entries cannot prevent a Location from registering readiness", async t => {
+  const f = await fixture(t)
+  for (let i = 0; i < 445; i++) {
+    const file = path.join(f.root, `${randomUUID()}.lease`)
+    await fs.writeFile(file, "")
+    await fs.utimes(file, new Date(0), new Date(0))
+  }
+  const scope = registeredReadiness(f.root, f.root, () => {})
+  t.after(() => scope.close())
+  await scope.reconcile([path.basename(f.lease)])
+  const marker = (await fs.readdir(f.root)).find(name => name.endsWith(".scope"))!
+  assert.equal(JSON.parse(await fs.readFile(path.join(f.root, marker), "utf8")).directory, f.root)
+  await scope.close()
+  assert.equal((await fs.readdir(f.root)).filter(name => name.endsWith(".lease")).length, 446)
+})
+
+test("a full registration namespace is isolated to its exact native Location", async t => {
+  const f = await fixture(t), other = path.join(f.root, "other")
+  const namespace = scopeNamespace(f.root, other)
+  await fs.mkdir(namespace, { recursive: true })
+  for (let i = 0; i < 256; i++) await fs.writeFile(path.join(namespace, `${randomUUID()}.claim`), "other Location")
+  const scope = registeredReadiness(f.root, f.root, () => {})
+  t.after(() => scope.close())
+  await scope.reconcile([])
+  assert.equal((await fs.readdir(scopeNamespace(f.root))).length, 1)
+  const blocked = registeredReadiness(f.root, other, () => {})
+  await assert.rejects(blocked.reconcile([]), /namespace exceeds limit/)
+  await blocked.close(); await scope.close()
+  assert.equal((await fs.readdir(namespace)).length, 256)
+  assert.equal((await fs.readdir(scopeNamespace(f.root))).length, 0)
+})
+
+test("registration reservation replacement survives scope close", async t => {
+  const f = await fixture(t), scope = registeredReadiness(f.root, f.root, () => {})
+  t.after(() => scope.close())
+  await scope.reconcile([])
+  const namespace = scopeNamespace(f.root)
+  const file = path.join(namespace, (await fs.readdir(namespace))[0])
+  await fs.rm(file); await fs.writeFile(file, "foreign reservation")
+  await scope.close()
+  assert.equal(await fs.readFile(file, "utf8"), "foreign reservation")
+})
+
+for (const level of ["parent", "Location"] as const) test(`readiness rejects a symbolic ${level} namespace without writing through it`, async t => {
+  const f = await fixture(t), target = path.join(f.root, "foreign")
+  await fs.mkdir(target)
+  const parent = path.join(f.root, "readiness")
+  if (level === "Location") await fs.mkdir(parent)
+  await fs.symlink(target, level === "parent" ? parent : scopeNamespace(f.root), "junction")
+  const scope = registeredReadiness(f.root, f.root, () => {})
+  await assert.rejects(scope.reconcile([]), /Invalid readiness directory/)
+  await scope.close()
+  assert.deepEqual(await fs.readdir(target), [])
+  assert.equal((await fs.readdir(f.root)).some(name => name.endsWith(".scope")), false)
 })
 
 test("scope admission rechecks concurrent namespace growth and cleans only its own new scope", async t => {
@@ -185,9 +243,9 @@ test("scope admission rechecks concurrent namespace growth and cleans only its o
   const scope = registeredReadiness(f.root, f.root, () => {})
   let marker = ""
   t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
-    if (String(args[0]).endsWith(".scope") && args[1] === "wx") {
+    if (String(args[0]).endsWith(".claim") && args[1] === "wx") {
       marker = String(args[0])
-      for (let i = 0; i < 255; i++) await fs.writeFile(path.join(f.root, `${randomUUID()}.scope`), "concurrent scope")
+      for (let i = 0; i < 256; i++) await fs.writeFile(path.join(scopeNamespace(f.root), `${randomUUID()}.claim`), "concurrent scope")
     }
     return original(...args)
   })
@@ -195,7 +253,8 @@ test("scope admission rechecks concurrent namespace growth and cleans only its o
   try {
     await assert.rejects(scope.reconcile([]), /exceeds limit/); await scope.close()
     assert.equal(await fs.stat(marker).catch(() => undefined), undefined)
-    assert.equal((await fs.readdir(f.root)).length, 256)
+    assert.equal((await fs.readdir(scopeNamespace(f.root))).length, 256)
+    assert.equal((await fs.readdir(f.root)).some(name => name.endsWith(".scope")), false)
   } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
 })
 
