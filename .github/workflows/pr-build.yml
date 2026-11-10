@@ -491,7 +491,6 @@ jobs:
           packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-goal-store.test.ts
-          packages/ui/src/stores/session-goal-activation.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-outline-persistence.test.ts
           packages/ui/src/stores/session-pagination.test.ts
@@ -604,6 +603,7 @@ jobs:
           packages/ui/src/stores/shell-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts
           packages/ui/src/stores/session-archive.test.ts
+          packages/ui/src/stores/session-goal-activation.test.ts
           packages/ui/src/stores/session-model-reconciliation.test.ts
           packages/ui/src/stores/session-pruning-events.test.ts
           packages/ui/src/stores/session-pruning-projection.test.ts
