@@ -12,7 +12,7 @@ interface RouteDeps {
   workspaceManager: WorkspaceManager
 }
 
-const InstanceDataSchema = z.object({
+export const InstanceDataSchema = z.object({
   messageHistory: z.array(z.string()).default([]),
   agentModelSelections: z.record(z.string(), ModelPreferenceSchema).default({}),
 })

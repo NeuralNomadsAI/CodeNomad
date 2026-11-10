@@ -1,4 +1,4 @@
-import type { OpenCodeConsoleUsage } from "../../api-types-provider-usage"
+import type { OpenCodeConsoleUsage, ProviderUsageUnavailableReason } from "../../api-types-provider-usage"
 import { BoundedResponseError, fetchBoundedJson } from "../bounded-fetch"
 import { openCodeConsoleCredential } from "../native-credentials"
 import { ProviderHttpError } from "../shared"
@@ -95,6 +95,14 @@ export async function readOpenCodeConsoleFreeRequests(auth: AuthFile, signal: Ab
     .reduce((sum, row) => integer(sum + row.requests), 0)
 }
 
+// Only stable codes survive; never retain upstream bodies or messages.
+export function openCodeConsoleError(error: unknown): ProviderUsageUnavailableReason {
+  return error instanceof ProviderHttpError
+    ? error.status === 401 ? "opencode-console-invalid-credential"
+      : error.status === 403 ? "opencode-console-access-denied" : "opencode-console-network-error"
+    : error instanceof BoundedResponseError ? "opencode-console-invalid-response" : "opencode-console-network-error"
+}
+
 export const openCodeConsole: UsageProvider = {
   id: "opencode-console",
   name: "OpenCode Console",
@@ -117,11 +125,7 @@ export const openCodeConsole: UsageProvider = {
         requests, models, budgets: { status: "unavailable", items: [] },
       } } }
     } catch (error) {
-      // Only stable codes and HTTP status survive; never retain upstream bodies.
-      return { ...base, unavailableReason: error instanceof ProviderHttpError
-        ? error.status === 401 ? "opencode-console-invalid-credential"
-          : error.status === 403 ? "opencode-console-access-denied" : "opencode-console-network-error"
-        : error instanceof BoundedResponseError ? "opencode-console-invalid-response" : "opencode-console-network-error",
+      return { ...base, unavailableReason: openCodeConsoleError(error),
         ...(error instanceof ProviderHttpError ? { status: error.status } : {}) }
     }
   },

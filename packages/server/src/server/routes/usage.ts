@@ -54,7 +54,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 15_000)
       const signal = controller.signal
-      // Google reads and optional free calibration share an entry-time deadline,
+      // Google and free-model Console reads share an entry-time deadline,
       // including credentials, leaving 3 seconds for publication revalidation.
       const quotaController = resolveUsageProvider(params.data.providerId)?.id === "google" ||
         isOpenCodeFreeModel(params.data.providerId, modelId) ? new AbortController() : null

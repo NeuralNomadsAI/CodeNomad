@@ -50,6 +50,8 @@ La désactivation retire seulement cette tâche, ce LaunchAgent ou ce service ; 
 3. Vérifiez l’état du service actif. Utilisez **Redémarrer le service partagé** seulement pour activer volontairement l’installation sélectionnée pour tous les clients connectés.
 4. Pour redémarrer le processus sans rien installer, développez **Dépannage** et choisissez **Redémarrer le service OpenCode**, puis confirmez.
 
+Le redémarrage reste accessible pendant une actualisation du statut en arrière-plan. Chaque demande vérifie de nouveau le statut avant de modifier le service ; un échec de vérification bloque le redémarrage.
+
 | Action | Portée et effet | Récupération sûre |
 | --- | --- | --- |
 | Mettre à jour la CLI | Change l’exécutable installé pris en charge ; ne redémarre pas implicitement le démon actif. | Vérifiez les versions installée et active après un échec ; réessayez explicitement après résolution de l’erreur seulement. |

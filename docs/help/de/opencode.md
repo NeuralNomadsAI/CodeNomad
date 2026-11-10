@@ -50,6 +50,8 @@ Ausschalten entfernt nur diese Aufgabe, diesen LaunchAgent oder Dienst; ein lauf
 3. Prüfen Sie den Status des laufenden Dienstes. Verwenden Sie **Gemeinsamen Dienst neu starten** nur, wenn Sie die ausgewählte Installation für jeden verbundenen Client aktivieren möchten.
 4. Für einen Prozessneustart ohne Installation klappen Sie **Fehlerbehebung** auf, wählen **OpenCode-Dienst neu starten** und bestätigen.
 
+Der Neustart bleibt während einer Statusaktualisierung im Hintergrund anklickbar. Jede Anforderung prüft den aktuellen Dienststatus erneut, bevor sie den Dienst ändert; eine fehlgeschlagene Prüfung blockiert den Neustart.
+
 | Aktion | Umfang und Wirkung | Sichere Wiederherstellung |
 | --- | --- | --- |
 | CLI aktualisieren | Ändert die unterstützte installierte Programmdatei; startet den laufenden Daemon nicht implizit neu. | Prüfen Sie nach Fehlern installierte und laufende Version; wiederholen Sie erst nach Fehlerbehebung ausdrücklich. |

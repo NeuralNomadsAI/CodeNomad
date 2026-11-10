@@ -18,9 +18,9 @@ function prepare() {
   let inFlight = 0, maxInFlight = 0, focusedWindow: object | null = null
   const owner = { visible: false, focused: false }
   const guest = {
-    id: 7, url: GUEST_URL, destroyed: false,
+    id: 7, url: GUEST_URL, destroyed: false, loading: false,
     on: (event: string, handler: () => void) => { handlers.set(event, handler) },
-    getURL: () => guest.url, isLoading: () => false, isDestroyed: () => guest.destroyed,
+    getURL: () => guest.url, isLoading: () => guest.loading, isDestroyed: () => guest.destroyed,
     capturePage: (rect: unknown, options: unknown) => {
       assert.equal(JSON.stringify([rect, options]), JSON.stringify([{ x: 0, y: 0, width: 1, height: 1 }, { stayHidden: true }]))
       inFlight++; maxInFlight = Math.max(maxInFlight, inFlight)
@@ -66,6 +66,8 @@ function prepare() {
   }
   return {
     owner, guest, captures, timers, advance, settle,
+    jump: (ms: number) => { now += ms },
+    replaceGuest: () => { attach!({}, { ...guest, id: 8 }) },
     setFocusedWindow: (value: object | null) => { focusedWindow = value },
     maxInFlight: () => maxInFlight,
     load: () => handlers.get("did-stop-loading")!(),
@@ -83,6 +85,40 @@ function prepare() {
 }
 
 const hidden = { visible: false, focused: false, focusedWindow: false }
+
+test("a stop-loading notification while still loading cannot start capture", async () => {
+  const fixture = prepare()
+  fixture.guest.loading = true
+  const outcome = await fixture.start()
+  assert.equal(fixture.captures.length, 0)
+  assert.equal(outcome.done, false)
+  fixture.guest.loading = false
+  fixture.load(); await fixture.settle()
+  fixture.captures[0].resolve({ isEmpty: () => false }); await fixture.settle()
+  assert.equal(outcome.value?.rendered, true)
+  assert.equal(fixture.timers.size, 0)
+})
+
+test("a successful capture after the budget is refused before expired timer callbacks run", async () => {
+  const fixture = prepare()
+  const outcome = await fixture.start()
+  fixture.jump(10_001)
+  fixture.captures[0].resolve({ isEmpty: () => false }); await fixture.settle()
+  assert.match(String(outcome.error?.message), /no rendered guest surface within 10000 ms/)
+  assert.equal(outcome.value, undefined)
+  assert.equal(fixture.timers.size, 0)
+})
+
+test("a capture of a same-URL guest replaced while capture is pending is refused", async () => {
+  const fixture = prepare()
+  const outcome = await fixture.start()
+  fixture.replaceGuest()
+  fixture.captures[0].resolve({ isEmpty: () => false }); await fixture.settle()
+  assert.match(String(outcome.error?.message), /the guest was replaced/)
+  assert.equal(outcome.value, undefined)
+  assert.equal(fixture.captures.length, 1)
+  assert.equal(fixture.timers.size, 0)
+})
 
 test("preparation retries only a pending surface, one capture at a time, until a non-empty capture", async () => {
   const fixture = prepare()

@@ -49,7 +49,7 @@
     "undici": "^6.29.1",
     "yaml": "^2.9.1",
     "yauzl": "^2.10.0",
-    "zod": "^3.23.8"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@codenomad/remote-tunnel": "file:../remote-tunnel",

@@ -71,9 +71,11 @@ app.whenReady().then(async () => {
     ready: async () => {
       const deadline = performance.now() + PREPARATION_MS
       await withinBudget(guestLoaded, deadline, "the guest did not load")
+      const target = guest
       const before = ownerState(window)
-      const captures = await awaitHiddenSurface(guest, window, process.env.CODENOMAD_TEST_GUEST_URL, deadline)
-      return { loaded: !guest.isLoading(), rendered: true, before, after: ownerState(window), captures }
+      const captures = await awaitHiddenSurface(target, window, process.env.CODENOMAD_TEST_GUEST_URL, deadline)
+      if (guest !== target) throw new Error("Preview preparation: the guest was replaced")
+      return { loaded: !target.isLoading(), rendered: true, before, after: ownerState(window), captures }
     },
   }
   const html = `<html><body style="margin:0"><webview src="${process.env.CODENOMAD_TEST_GUEST_URL}" style="width:850px;height:650px;display:flex"></webview></body></html>`

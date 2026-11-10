@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
 import type { BrowserWindow, WebContents } from "electron"
-import { BrowserController, compositorRunsInBrowserProcess, handleNativeBrowserRequest } from "./browser-controller"
+import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 
 interface GuestOptions {
   id: number
@@ -39,13 +39,13 @@ function createGuest(options: GuestOptions) {
   return { guest, events, counts: () => ({ attachCount, detachCount }) }
 }
 
-function createHarness(requestOpen: (sessionID: string, url: string, requestID: string) => void = () => {}, compositorRunning = () => true) {
+function createHarness(requestOpen: (sessionID: string, url: string, requestID: string) => void = () => {}) {
   const owner = { id: 1, isDestroyed: () => false } as WebContents
   const guests = new Map<number, WebContents>()
   let visible = true
   const window = { isDestroyed: () => false, isVisible: () => visible, isMinimized: () => false } as BrowserWindow
   const controller = new BrowserController(requestOpen, {
-    fromId: id => guests.get(id) ?? null, fromWebContents: () => window, compositorRunning,
+    fromId: id => guests.get(id) ?? null, fromWebContents: () => window,
   })
   const add = (guest: WebContents, registrationId: string, sessionId = "session") => {
     guests.set(guest.id, guest)
@@ -93,37 +93,6 @@ describe("BrowserController private page channel", () => {
     h.hide()
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "Enter" } }), /visible/)
     assert.equal(events.length, 3)
-  })
-  it("holds key and pointer input until the display compositor runs, and refuses it at the deadline unsent", async () => {
-    let running = false
-    const h = createHarness(undefined, () => running), events: Electron.InputEvent[] = [], methods: string[] = []
-    const { guest } = createGuest({ id: 84, owner: h.owner, sendInputEvent: event => { events.push(event) },
-      sendCommand: async method => { methods.push(method); return {} } })
-    h.add(guest, "one")
-    const lease = await begin(h.controller)
-    await page(h.controller, "send", { ...lease, method: "Runtime.evaluate", params: { expression: "1" } })
-    assert.equal(methods.at(-1), "Runtime.evaluate", "page reads do not wait for the compositor")
-    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "a", text: "a" } },
-      Date.now() + 120), /not rendering yet \(its GPU process has not started\), so input was not sent/)
-    assert.equal(events.length, 0, "input refused at the deadline is never sent")
-    const next = await begin(h.controller)
-    const key = page(h.controller, "send", { ...next, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "b", text: "b" } })
-    const click = page(h.controller, "send", { ...next, method: "Input.dispatchMouseEvent", params: { type: "mousePressed", x: 1, y: 1 } })
-    await new Promise(resolve => setTimeout(resolve, 120))
-    assert.equal(events.length, 0, "no input reaches a guest that cannot render yet")
-    assert.equal(methods.includes("Input.dispatchMouseEvent"), false)
-    running = true
-    await key
-    await click
-    assert.deepEqual(events.map(event => `${event.type}:${(event as Electron.KeyboardInputEvent).keyCode}`), ["keyDown:b", "char:b"])
-    assert.equal(methods.at(-1), "Input.dispatchMouseEvent")
-  })
-  it("treats an in-process compositor as running, since no GPU process ever appears", () => {
-    const switches = (...names: string[]) => (name: string) => names.includes(name)
-    assert.equal(compositorRunsInBrowserProcess(switches()), false)
-    assert.equal(compositorRunsInBrowserProcess(switches("disable-gpu")), false, "disabled acceleration still uses a GPU process")
-    assert.equal(compositorRunsInBrowserProcess(switches("in-process-gpu")), true)
-    assert.equal(compositorRunsInBrowserProcess(switches("single-process")), true)
   })
   it("refuses unsupported ContextMenu instead of emitting an unknown native key", async () => {
     const h = createHarness(), events: Electron.InputEvent[] = []

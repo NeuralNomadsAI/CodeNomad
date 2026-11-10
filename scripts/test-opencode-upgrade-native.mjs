@@ -11,6 +11,8 @@ import { installSharedOpenCode, npmExecutable } from "../packages/server/src/ope
 import { executeNpm, openCodeAllowScripts } from "../packages/server/src/opencode-update/npm-runtime.ts"
 import { fixtureRuntime } from "./opencode-fixture-runtime.mjs"
 import { RECOMMENDED_OPENCODE_VERSION } from "../packages/server/src/opencode/runtime-support.ts"
+import { HostOpenCodeService } from "../packages/server/src/workspaces/host-opencode-service.ts"
+import { runtimeIdentity } from "../packages/server/src/opencode/compatibility/runtime.ts"
 
 const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-native-upgrade-"))
 const selected = await fixtureRuntime(root)
@@ -71,6 +73,14 @@ try {
   result.installedVersion = (await run(binary, ["--version"])).stdout.trim()
   assert.equal(result.installedVersion.replace(/^opencode2? v?/, ""), RECOMMENDED_OPENCODE_VERSION)
   assert.deepEqual(result.after, result.before, "upgrade must not restart the service")
+  const lifecycle = new HostOpenCodeService({ binary }, {
+    execFile: (file, args) => run(file, args),
+    startFile: (file, args) => run(file, args),
+  })
+  const activated = runtimeIdentity(await lifecycle.restart())
+  result.activated = activated
+  assert.equal(activated.version, RECOMMENDED_OPENCODE_VERSION, "one restart must activate the installed version")
+  assert.notEqual(activated.pid, result.before.pid)
   result.success = true
 } finally {
   if (started) await run(bootstrap, ["service", "stop"])

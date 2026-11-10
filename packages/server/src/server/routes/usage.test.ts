@@ -16,7 +16,7 @@ import { readUsageCredentials } from "../../usage/native-credentials"
 function harness() {
   const expires = Date.now() + 3600000
   const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false,
-    stale: false, evicted: false, statsMissing: false, freeSteps: 42, statsQuery: undefined as URLSearchParams | undefined, statsGate: undefined as (() => Promise<void>) | undefined,
+    stale: false, evicted: false,
     daemonEnvironment: { HOME: "/home/dev" } as Record<string, string>, hostFiles: new Map<string, { path: string }>(),
     integrations: {} as Record<string, string>, settings: {} as Record<string, unknown>, providerMissing: false,
     providerDirectory: undefined as string | undefined, providerQuery: undefined as URLSearchParams | undefined, consoleConnected: true }
@@ -27,17 +27,7 @@ function harness() {
     const url = new URL(String(input)); state.nativeCalls.push(url.pathname)
     if (state.fail) throw new Error("secret-refresh Authorization secret-token")
     if (url.pathname === "/api/experimental/session/stats") {
-      state.statsQuery = url.searchParams
-      await state.statsGate?.()
-      if (state.statsMissing) return Response.json({}, { status: 404 })
-      const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
-      return Response.json({ data: { range: { from: Number(url.searchParams.get("from")), to: Number(url.searchParams.get("to")) },
-        sessions: 1, subagents: 0, prompts: 1, steps: 248, tokens, cost: 0, tools: { mode: "none" }, activeDays: 1, streak: 1, activity: [], models: [
-        { model: { providerID: "opencode", id: "big-pickle" }, steps: state.freeSteps, tokens, cost: 0 },
-        { model: { providerID: "opencode", id: "example-free" }, steps: 8, tokens, cost: 0 },
-        { model: { providerID: "opencode", id: "paid" }, steps: 99, tokens, cost: 0 },
-        { model: { providerID: "other", id: "example-free" }, steps: 99, tokens, cost: 0 },
-      ] } })
+      assert.fail("free quota must never read local stats")
     }
     if (url.pathname === "/api/session/missing") return Response.json({ _tag: "SessionNotFoundError", sessionID: "missing" }, { status: 404 })
     if (url.pathname.startsWith("/api/session/")) return Response.json({ data: { id: "session", location: { directory: state.directory } } })
@@ -82,39 +72,36 @@ function harness() {
 const url = "/api/usage/openai?instanceId=instance&sessionId=session&modelId=gpt-5"
 const freeUrl = "/api/usage/opencode?instanceId=instance&sessionId=session&modelId=big-pickle"
 
-test("free estimate uses service-wide daily stats after ownership and stays local without a Console connection", async () => {
+test("free quota requires Console login and validates ownership before credential access", async () => {
   const { app, state } = harness()
   state.consoleConnected = false
   try {
     state.directory = "/foreign"
     assert.equal((await app.inject(freeUrl)).statusCode, 403)
-    assert.equal(state.statsQuery, undefined)
+    assert.deepEqual(state.nativeCalls, ["/api/session/session"])
     state.directory = "/wsl/repo"
     const response = await app.inject(freeUrl)
     assert.equal(response.statusCode, 200, response.body)
-    assert.equal(response.json().estimated, true)
+    assert.equal(response.json().configured, false)
+    assert.equal(response.json().ok, false)
+    assert.equal(response.json().unavailableReason, "opencode-console-missing-credential")
     assert.equal(response.json().providerName, "OpenCode Console")
-    assert.equal(response.json().windows.daily.usedPercent, 25)
-    assert.equal(response.json().windows.daily.valueLabel, "50 / 200")
-    const query = state.statsQuery!
-    assert.equal(query.get("timezone"), "UTC")
-    assert.equal(query.get("tools"), "none")
-    assert.equal(Number(query.get("from")) % 86400000, 0)
-    assert.ok(Number(query.get("to")) - Number(query.get("from")) < 86400000)
-    assert.equal(query.has("project"), false)
-    assert.ok(state.nativeCalls.every(path => path.startsWith("/api/session/") ||
-      path === "/api/experimental/session/stats" || path === "/api/credential"))
+    assert.deepEqual(response.json().freeEstimate, { requests: null, reference: 800, exhausted: false })
+    assert.deepEqual(response.json().windows, {})
+    assert.ok(state.nativeCalls.every(path => path.startsWith("/api/session/") || path === "/api/credential"))
   } finally { await app.close() }
 })
 
-test("free estimates fence session movement and reconnect during the stats read", async () => {
+test("free quota fences session movement and reconnect during the Console read", async t => {
   for (const change of ["move", "reconnect"]) {
     const { app, state } = harness()
-    state.consoleConnected = false
     let started!: () => void, release!: () => void
     const entered = new Promise<void>(resolve => { started = resolve })
     const gate = new Promise<void>(resolve => { release = resolve })
-    state.statsGate = async () => { started(); await gate }
+    t.mock.method(globalThis, "fetch", async () => {
+      started(); await gate
+      return Response.json({ items: [], pageInfo: { page: 1, pageSize: 50, total: 0, pageCount: 0 } })
+    })
     try {
       const response = app.inject(freeUrl)
       await entered
@@ -126,26 +113,7 @@ test("free estimates fence session movement and reconnect during the stats read"
   }
 })
 
-test("missing stats or invalid step counts report unavailable rather than unused quota", async () => {
-  const { app, state } = harness()
-  state.consoleConnected = false
-  try {
-    state.statsMissing = true
-    const missing = await app.inject(freeUrl)
-    assert.equal(missing.statusCode, 200)
-    assert.equal(missing.json().ok, false)
-    assert.equal(missing.json().providerName, "OpenCode Console")
-    assert.equal(missing.json().freeEstimate.requests, null)
-    assert.deepEqual(missing.json().windows, {})
-    state.statsMissing = false; state.freeSteps = -1
-    const invalid = await app.inject(freeUrl)
-    assert.equal(invalid.statusCode, 200)
-    assert.equal(invalid.json().ok, false)
-    assert.equal(invalid.json().freeEstimate.requests, null)
-  } finally { await app.close() }
-})
-
-test("free exhaustion survives stats failure and appears on other free models without credentials", async () => {
+test("exhaustion evidence without Console credentials keeps counts unknown and the login action available", async () => {
   const { app, state, connection, exhaustion } = harness()
   state.consoleConnected = false
   try {
@@ -154,30 +122,30 @@ test("free exhaustion survives stats failure and appears on other free models wi
       data: { sessionID: "another-session", assistantMessageID: "m", model: { providerID: "opencode", id: "big-pickle" } } })
     exhaustion.observe(connection, { type: "session.step.failed", created: now,
       data: { sessionID: "another-session", assistantMessageID: "m", error: { type: "provider.quota" } } })
-    state.statsMissing = true
     const response = await app.inject(freeUrl.replace("big-pickle", "example-free"))
     assert.equal(response.statusCode, 200)
-    assert.equal(response.json().ok, true)
-    assert.deepEqual(response.json().freeEstimate, { requests: null, reference: 200, exhausted: true })
-    assert.equal(response.json().windows.daily.usedPercent, 100)
-    assert.equal(response.json().windows.daily.valueLabel, undefined)
+    assert.equal(response.json().ok, false)
+    assert.deepEqual(response.json().freeEstimate, { requests: null, reference: 800, exhausted: true })
+    assert.deepEqual(response.json().windows, {})
+    assert.equal(response.json().unavailableReason, "opencode-console-missing-credential")
     assert.equal(state.nativeCalls.includes("/api/credential"), true)
   } finally { await app.close() }
 })
 
-test("exact UTC midnight has zero elapsed usage without querying a future time", async t => {
+test("exact UTC midnight still reads the authoritative Console count", async t => {
   t.mock.method(Date, "now", () => Date.UTC(2026, 10, 3))
   const { app, state } = harness()
-  state.consoleConnected = false
+  t.mock.method(globalThis, "fetch", async () => Response.json({ items: [], pageInfo: { page: 1, pageSize: 50, total: 0, pageCount: 0 } }))
   try {
     const response = await app.inject(freeUrl)
     assert.equal(response.statusCode, 200, response.body)
     assert.equal(response.json().windows.daily.usedPercent, 0)
-    assert.equal(state.statsQuery, undefined)
+    assert.equal(response.json().windows.daily.valueLabel, "0 / 800")
+    assert.equal(state.nativeCalls.includes("/api/experimental/session/stats"), false)
   } finally { await app.close() }
 })
 
-test("connected free usage is calibrated by default without exposing the Console credential", async t => {
+test("connected free usage reads only Console counts without exposing the credential", async t => {
   const { app, state, logs } = harness()
   t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
     state.quotaCalls++
@@ -194,7 +162,8 @@ test("connected free usage is calibrated by default without exposing the Console
   try {
     const response = await app.inject(freeUrl)
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(response.json().freeEstimate, { requests: 80, reference: 200, exhausted: false })
+    assert.deepEqual(response.json().freeEstimate, { requests: 80, reference: 800, exhausted: false })
+    assert.equal(response.json().windows.daily.usedPercent, 10)
     assert.equal(response.json().estimated, true)
     assert.equal(state.quotaCalls, 1)
     assert.equal([response.body, ...logs].join("").includes("secret-console"), false)
@@ -203,7 +172,7 @@ test("connected free usage is calibrated by default without exposing the Console
 
 for (const stalled of ["credentials", "Console"] as const) {
   for (const boundary of ["unchanged", "move", "reconnect"] as const) {
-    test(`free calibration stalled at ${stalled} keeps local exhaustion and revalidates (${boundary})`, async t => {
+    test(`free Console read stalled at ${stalled} reports unknown and revalidates (${boundary})`, async t => {
       const { app, state, connection, exhaustion } = harness()
       const timeout = globalThis.setTimeout
       t.mock.method(globalThis, "setTimeout", (callback: (...args: any[]) => void, delay?: number, ...args: any[]) =>
@@ -233,8 +202,10 @@ for (const stalled of ["credentials", "Console"] as const) {
         const response = await pending
         assert.equal(response.statusCode, boundary === "unchanged" ? 200 : boundary === "move" ? 403 : 503)
         if (boundary === "unchanged") {
-          assert.deepEqual(response.json().freeEstimate, { requests: 50, reference: 200, exhausted: true })
-          assert.equal(response.json().windows.daily.usedPercent, 100)
+          assert.deepEqual(response.json().freeEstimate, { requests: null, reference: 800, exhausted: true })
+          assert.deepEqual(response.json().windows, {})
+          assert.equal(response.json().ok, false)
+          assert.equal(response.json().unavailableReason, "opencode-console-network-error")
           assert.equal(response.json().estimated, true)
         }
         assert.equal(calls, stalled === "credentials" ? 0 : 1)

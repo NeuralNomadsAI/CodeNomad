@@ -15,7 +15,7 @@ const directoryListSchema = z.union([directorySchema, z.array(directorySchema).m
 const querySchema = z.object({ directories: directoryListSchema, optionalDirectories: directoryListSchema.optional() }).strict()
 const permissionSchema = z.object({
   id: z.string(), sessionID: z.string(), action: z.string(), resources: z.array(z.string()),
-  save: z.array(z.string()).optional(), metadata: z.record(z.unknown()).optional(), message: z.string().optional(),
+  save: z.array(z.string()).optional(), metadata: z.record(z.string(), z.unknown()).optional(), message: z.string().optional(),
   source: z.object({ type: z.literal("tool"), messageID: z.string(), id: z.string() }).optional(),
 })
 const numeric = z.union([z.number(), z.enum(["Infinity", "-Infinity", "NaN"])])
@@ -37,7 +37,7 @@ const fieldSchema = z.discriminatedUnion("type", [
   field.extend({ type: z.literal("external"), url: z.string() }),
 ])
 const formSchema = z.object({
-  id: z.string(), sessionID: z.string(), title: z.string(), metadata: z.record(z.unknown()).optional(),
+  id: z.string(), sessionID: z.string(), title: z.string(), metadata: z.record(z.string(), z.unknown()).optional(),
   fields: z.array(fieldSchema).min(1),
 })
 // One backend-owned RPC; never exposed by the generic instance proxy.

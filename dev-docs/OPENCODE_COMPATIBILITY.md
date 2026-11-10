@@ -6,6 +6,12 @@ Status consumes `GET /api/experimental/job?kind=shell&status=running` through th
 
 ## Qualification policy
 
+Server, UI and the source pruning package use Zod 4 for application validation.
+Keep strict fields, collection bounds and native JSON Schema parity intact.
+Parsed input defaults use `prefault`; partial enum-keyed maps use `partialRecord`.
+Validation-admission regressions observe the actual route array parsers; qualify
+their observations with positive and disabled-guard controls.
+
 Qualify the pinned client/plugin dependencies (moved together) against the
 technical minimum and `@opencode/cli@latest` before publishing; CI records the
 resolved runtime. Review a release from its exact tags, published npm packages

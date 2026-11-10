@@ -4,6 +4,8 @@ import { z } from "zod"
 import type { InstanceData } from "../../api-types"
 import { EventBus } from "../../events/bus"
 import { createHttpServer } from "../http-server"
+import { recurrenceCreateSchema } from "../routes/mission-recurrence-create"
+import { InstanceDataSchema } from "../routes/storage"
 
 // Exercise the production routes and global authentication hook without listening
 // or connecting to OpenCode, disk storage or a desktop host.
@@ -48,9 +50,38 @@ const recurrence = { requestID: "bounded_request", instructions: "Review changes
   profiles: { coordinator: profile, roles: { specialist: profile } } }
 const invalid = Array(65_536).fill(0)
 
+function observeArrayParsing(t: TestContext, ...schemas: z.ZodArray[]) {
+  const parsing = t.mock.fn()
+  for (const schema of schemas) {
+    const run = schema._zod.run
+    t.mock.method(schema._zod, "run", (...args: Parameters<typeof run>) => { parsing(); return run(...args) })
+    schema.parse([])
+  }
+  assert.equal(parsing.mock.callCount(), schemas.length, "the observer sees each actual route array parser")
+  parsing.mock.resetCalls()
+  return parsing
+}
+
+test("bounded Zod collections reject excess entries before parsing their elements", () => {
+  let visits = 0
+  const element = z.unknown().transform(value => { visits++; return value })
+  element.parse(null)
+  assert.equal(visits, 1)
+  visits = 0
+  for (const [schema, input] of [
+    [z.array(element).max(2), [1, 2, 3]],
+    [z.set(element).max(2), new Set([1, 2, 3])],
+    [z.map(z.string(), element).max(2), new Map([["a", 1], ["b", 2], ["c", 3]])],
+  ] as const) {
+    const result = schema.safeParse(input)
+    assert.equal(result.success, false)
+    assert.equal(visits, 0, "oversized collections must not visit attacker-controlled elements")
+  }
+})
+
 test("recurrence rejects oversized and wrongly typed watches before Zod or workspace admission", async t => {
   const { app, post, state } = fixture(t)
-  const parsing = t.mock.method(z.ZodArray.prototype, "_parse")
+  const parsing = observeArrayParsing(t, recurrenceCreateSchema.shape.watchedConversationIDs)
   for (const watchedConversationIDs of [invalid, Array.from({ length: 33 }, (_, i) => `ses_${i}`), null, {}, [0], ["ses_ok", false]]) {
     const payload = { ...recurrence, watchedConversationIDs }
     assert.ok(Buffer.byteLength(JSON.stringify(payload)) < app.initialConfig.bodyLimit!)
@@ -85,7 +116,7 @@ test("recurrence keeps the 32-watch schema boundary, optional fields and bounded
 
 test("storage rejects invalid histories before Zod and returns bounded schema errors without effects", async t => {
   const { app, put, state } = fixture(t)
-  const parsing = t.mock.method(z.ZodArray.prototype, "_parse")
+  const parsing = observeArrayParsing(t, InstanceDataSchema.shape.messageHistory.unwrap())
   for (const messageHistory of [invalid, [false, "ok"], ["first", {}, "last"], null, "not an array", {}]) {
     assert.ok(Buffer.byteLength(JSON.stringify({ messageHistory })) < app.initialConfig.bodyLimit!)
     parsing.mock.resetCalls()
@@ -131,7 +162,7 @@ test("storage preserves string histories, defaults, arbitrary selection keys and
 
 test("global authentication and recurrence's human gate stay ahead of array validation", async t => {
   const { put, post, state } = fixture(t)
-  const parsing = t.mock.method(z.ZodArray.prototype, "_parse")
+  const parsing = observeArrayParsing(t, recurrenceCreateSchema.shape.watchedConversationIDs, InstanceDataSchema.shape.messageHistory.unwrap())
   assert.equal((await put({ messageHistory: invalid }, false)).statusCode, 401)
   assert.equal((await post({ ...recurrence, watchedConversationIDs: invalid }, false)).statusCode, 401)
   assert.equal(parsing.mock.callCount(), 0)

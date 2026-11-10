@@ -1,22 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { ServiceConnection } from "../workspaces/opencode-service"
-import { createOpenCodeFreeExhaustion } from "./opencode-free-exhaustion"
-import { calibrateOpenCodeFreeRequests, createOpenCodeFreeUsage } from "./opencode-free-usage"
+import { createOpenCodeFreeUsage } from "./opencode-free-usage"
 
 const day = Date.UTC(2026, 10, 6)
 const signal = () => AbortSignal.timeout(3000)
 function fixture() {
-  const state = { statsFail: false, credentials: 0, steps: 30, exhausted: false,
-    statsGate: undefined as (() => Promise<void>) | undefined, key: "synthetic-one" }
+  const state = { key: "synthetic-one", exhausted: false }
   const connection = { client: {
-    session: { stats: async () => {
-      await state.statsGate?.()
-      if (state.statsFail) throw new Error("synthetic stats failure")
-      return { models: [{ model: { providerID: "opencode", id: "big-pickle" }, steps: state.steps }] }
-    } },
-    credential: { list: async () => { state.credentials++; return [{ active: true, integrationID: "opencode",
-      value: { type: "key", key: state.key } }] } },
+    session: { stats: async () => { assert.fail("free quota must never read local stats") } },
+    credential: { list: async () => [{ active: true, integrationID: "opencode", value: { type: "key", key: state.key } }] },
   } } as unknown as ServiceConnection
   return { state, connection, exhaustion: { exhausted: () => state.exhausted } }
 }
@@ -25,125 +18,100 @@ const row = (model: string, requests: number, index = 0) => ({ provider: `vendor
   totalCacheWrite1hTokens: "0", totalCostMicroCents: "0" })
 const page = (requests: number) => ({ items: [row("big-pickle", requests)], pageInfo: { page: 1, pageSize: 50, total: 1, pageCount: 1 } })
 
-test("calibration takes the maximum, keeping zero and counts above the reference", () => {
-  for (const [local, console, expected] of [[30, 10, 30], [30, 80, 80], [30, 0, 30], [30, 250, 250],
-    [null, null, null], [30, null, 30], [null, 0, null]] as const) assert.equal(calibrateOpenCodeFreeRequests(local, console), expected)
-})
-
-test("explicit gate OFF never reads credentials or Console; stats failure preserves exhaustion and actual count", async t => {
+test("Console counts are authoritative, including zero and counts above 800", async t => {
   t.mock.method(Date, "now", () => day + 1000)
-  let consoleCalls = 0
-  t.mock.method(globalThis, "fetch", async () => { consoleCalls++; throw new Error("Console must not be called") })
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion, { consoleCalibration: false })
+  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
+  let count = 0
+  t.mock.method(globalThis, "fetch", async () => Response.json(page(count)))
   try {
-    let result = await usage.read(f.connection, "opencode", "big-pickle", signal())
-    assert.deepEqual(result.freeEstimate, { requests: 30, reference: 200, exhausted: false })
-    f.state.exhausted = true
-    assert.equal(usage.refreshExhaustion(f.connection, result).windows.daily.usedPercent, 100,
-      "a mark received after the read but before route publication stays visible")
-    result = await usage.read(f.connection, "opencode", "x-free", signal())
-    assert.equal(result.windows.daily.usedPercent, 100)
-    assert.equal(result.windows.daily.valueLabel, "30 / 200")
-    f.state.statsFail = true
-    result = await usage.read(f.connection, "opencode", "x-free", signal())
-    assert.deepEqual(result.freeEstimate, { requests: null, reference: 200, exhausted: true })
-    assert.equal(result.ok, true)
-    assert.equal(result.windows.daily.usedPercent, 100)
-    assert.equal(result.windows.daily.valueLabel, undefined)
-    f.state.exhausted = false
-    result = await usage.read(f.connection, "opencode", "x-free", signal())
-    assert.equal(result.ok, false)
-    assert.deepEqual(result.windows, {})
-    assert.equal(f.state.credentials, 0)
-    assert.equal(consoleCalls, 0)
+    for (count of [0, 30, 800, 950]) {
+      f.state.key = `synthetic-${count}`
+      const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.freeEstimate, { requests: count, reference: 800, exhausted: false })
+      assert.equal(result.windows.daily.valueLabel, `${count} / 800`)
+      assert.equal(result.windows.daily.usedPercent, Math.min(100, count / 800 * 100))
+      f.state.exhausted = true
+      const marked = usage.refreshExhaustion(f.connection, result)
+      assert.equal(marked.freeEstimate?.requests, count)
+      assert.equal(marked.windows.daily.usedPercent, 100)
+      f.state.exhausted = false
+    }
   } finally { usage.dispose() }
 })
 
-test("failure received during an in-flight stats read and before publication stays visible", async t => {
-  t.mock.method(Date, "now", () => day + 1000)
-  const f = fixture(), exhaustion = createOpenCodeFreeExhaustion(), usage = createOpenCodeFreeUsage(exhaustion, { consoleCalibration: false })
-  let entered!: () => void, release!: () => void
-  const started = new Promise<void>(resolve => { entered = resolve })
-  const gate = new Promise<void>(resolve => { release = resolve })
-  f.state.statsGate = async () => { entered(); await gate }
-  const read = usage.read(f.connection, "opencode", "big-pickle", signal())
-  await started
-  exhaustion.observe(f.connection, { type: "session.step.started", created: day + 1,
-    data: { sessionID: "s", assistantMessageID: "m", model: { providerID: "opencode", id: "x-free" } } })
-  exhaustion.observe(f.connection, { type: "session.step.failed", created: day + 2,
-    data: { sessionID: "s", assistantMessageID: "m", error: { type: "provider.quota" } } })
-  release()
-  const result = await read
-  assert.equal(result.freeEstimate?.exhausted, true)
-  assert.equal(result.windows.daily.usedPercent, 100)
-  assert.equal(usage.refreshExhaustion(f.connection, result).freeEstimate?.requests, 30)
-  usage.dispose()
-})
-
-test("default calibration cache is credential/day scoped, shares reads and never reuses yesterday's count", async t => {
-  let now = day + 86_400_000 - 1000, count = 250, calls = 0
+test("cache shares reads per credential/day, expires after 60 seconds and preserves Console zero at midnight", async t => {
+  let now = day + 1000, count = 250, calls = 0
   t.mock.method(Date, "now", () => now)
-  t.mock.method(globalThis, "fetch", async (input: unknown) => {
-    calls++; assert.equal(new URL(String(input)).searchParams.get("range"), "24h")
-    return Response.json(page(count))
-  })
+  t.mock.method(globalThis, "fetch", async () => { calls++; return Response.json(page(count)) })
   const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
   const read = () => usage.read(f.connection, "opencode", "big-pickle", signal())
   try {
     const [a, b] = await Promise.all([read(), read()])
     assert.equal(a.freeEstimate?.requests, 250); assert.equal(b.freeEstimate?.requests, 250)
-    assert.equal(a.windows.daily.usedPercent, 100); assert.equal(a.estimated, true); assert.equal(calls, 1)
-    now = day + 86_400_000
-    count = 0
-    assert.equal((await read()).freeEstimate?.requests, 0, "midnight starts a new cache and no stats query")
+    assert.equal(calls, 1)
+    now += 60_000; count = 400
+    assert.equal((await read()).freeEstimate?.requests, 400)
     assert.equal(calls, 2)
+    now = day + 86_400_000; count = 0
+    assert.equal((await read()).freeEstimate?.requests, 0)
+    assert.equal(calls, 3)
     now++
-    assert.equal((await read()).freeEstimate?.requests, 30)
+    assert.equal((await read()).freeEstimate?.requests, 0)
     f.state.key = "synthetic-two"; count = 80
     assert.equal((await read()).freeEstimate?.requests, 80)
-    assert.equal(calls, 3)
+    assert.equal(calls, 4)
   } finally { usage.dispose() }
 })
 
-test("default calibration retains local estimate/exhaustion on any Console page failure, never a partial count", async t => {
+test("any failed Console page discards the full count and the gauge, even with exhaustion", async t => {
   t.mock.method(Date, "now", () => day + 1000)
-  for (const invalid of [false, true]) {
+  for (const status of [401, 403, 500, 200]) {
     t.mock.method(globalThis, "fetch", async (input: unknown) => {
       const n = Number(new URL(String(input)).searchParams.get("page"))
-      if (n === 2) return invalid ? Response.json({ invalid: true }) : new Response("synthetic", { status: 403 })
+      if (n === 2) return status === 200 ? Response.json({ invalid: true }) : new Response("secret upstream body", { status })
       return Response.json({ items: Array.from({ length: 50 }, (_, i) => row(i === 0 ? "big-pickle" : `paid-${i}`, 100, i)),
         pageInfo: { page: 1, pageSize: 50, total: 51, pageCount: 2 } })
     })
     const f = fixture(); f.state.exhausted = true
     const usage = createOpenCodeFreeUsage(f.exhaustion)
-    const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
-    assert.equal(result.freeEstimate?.requests, 30)
-    assert.equal(result.freeEstimate?.exhausted, true)
-    assert.equal(result.windows.daily.valueLabel, "30 / 200")
-    usage.dispose()
+    try {
+      const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
+      assert.equal(result.freeEstimate?.requests, null)
+      assert.equal(result.freeEstimate?.exhausted, true)
+      assert.equal(result.ok, false)
+      assert.deepEqual(result.windows, {})
+      assert.equal(result.unavailableReason, status === 401 ? "opencode-console-invalid-credential" : status === 403
+        ? "opencode-console-access-denied" : status === 200 ? "opencode-console-invalid-response" : "opencode-console-network-error")
+      assert.equal(JSON.stringify(result).includes("secret"), false)
+    } finally { usage.dispose() }
   }
 })
 
-test("default calibration without a Console credential stays local and never calls Console", async t => {
+test("missing or expired Console login never fetches or fabricates a count", async t => {
   t.mock.method(Date, "now", () => day + 1000)
-  t.mock.method(globalThis, "fetch", async () => { assert.fail("Console must not be called without a credential") })
-  const f = fixture()
-  t.mock.method(f.connection.client.credential, "list", async () => [])
-  const usage = createOpenCodeFreeUsage(f.exhaustion)
-  try {
-    const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
-    assert.deepEqual(result.freeEstimate, { requests: 30, reference: 200, exhausted: false })
-    assert.equal(result.estimated, true)
-  } finally { usage.dispose() }
+  t.mock.method(globalThis, "fetch", async () => { assert.fail("Console must not be called") })
+  for (const expired of [false, true]) {
+    const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
+    t.mock.method(f.connection.client.credential, "list", async () => expired ? [{ active: true, integrationID: "opencode",
+      value: { type: "oauth", access: "secret", expires: day, metadata: { server: "https://opencode.ai/console", orgID: "org_fixture" } } }] : [])
+    try {
+      const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
+      assert.equal(result.configured, expired)
+      assert.equal(result.ok, false)
+      assert.equal(result.freeEstimate?.requests, null)
+      assert.deepEqual(result.windows, {})
+      assert.equal(result.unavailableReason, expired ? "opencode-console-invalid-credential" : "opencode-console-missing-credential")
+    } finally { usage.dispose() }
+  }
 })
 
-test("a calibration deadline preserves local usage without cancelling another caller's shared read", async t => {
+test("a caller's deadline reports unknown without cancelling another caller's shared read", async t => {
   t.mock.method(Date, "now", () => day + 1000)
   let entered!: () => void, release!: (response: Response) => void, calls = 0, transport: AbortSignal | undefined
   const started = new Promise<void>(resolve => { entered = resolve })
   t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
-    calls++; transport = init!.signal!
-    entered()
+    calls++; transport = init!.signal!; entered()
     return new Promise<Response>(resolve => { release = resolve })
   })
   const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion), deadline = new AbortController()
@@ -152,7 +120,9 @@ test("a calibration deadline preserves local usage without cancelling another ca
     await started
     const second = usage.read(f.connection, "opencode", "big-pickle", signal())
     deadline.abort()
-    assert.equal((await first).freeEstimate?.requests, 30)
+    const result = await first
+    assert.equal(result.freeEstimate?.requests, null)
+    assert.equal(result.unavailableReason, "opencode-console-network-error")
     assert.equal(transport?.aborted, false)
     release(Response.json(page(80)))
     assert.equal((await second).freeEstimate?.requests, 80)
@@ -160,7 +130,7 @@ test("a calibration deadline preserves local usage without cancelling another ca
   } finally { usage.dispose() }
 })
 
-test("gate ON sums every free model across sequential 24h pages using the Console parser bounds", async t => {
+test("sums only free models across sequential 24h pages", async t => {
   t.mock.method(Date, "now", () => day + 1000)
   const pages: number[] = []
   t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
@@ -172,27 +142,23 @@ test("gate ON sums every free model across sequential 24h pages using the Consol
     pages.push(n)
     return Response.json({ items: n === 1
       ? Array.from({ length: 50 }, (_, i) => row(i === 0 ? "big-pickle" : `paid-${i}`, 100, i))
-      : [row("example-free", 160)], pageInfo: { page: n, pageSize: 50, total: 51, pageCount: 2 } })
+      : [row("beam-free", 160), row("longcat-2.5-free", 40)], pageInfo: { page: n, pageSize: 50, total: 52, pageCount: 2 } })
   })
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion, { consoleCalibration: true })
+  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
   try {
-    assert.equal((await usage.read(f.connection, "opencode", "big-pickle", signal())).freeEstimate?.requests, 260)
+    assert.equal((await usage.read(f.connection, "opencode", "big-pickle", signal())).freeEstimate?.requests, 300)
     assert.deepEqual(pages, [1, 2])
   } finally { usage.dispose() }
 })
 
-test("cross-midnight in-flight reads cannot publish the previous UTC day's estimate or mark", async t => {
+test("cross-midnight reads discard yesterday's count before publication", async t => {
   let now = day + 86_400_000 - 1
   t.mock.method(Date, "now", () => now)
-  const f = fixture(), exhaustion = createOpenCodeFreeExhaustion(), usage = createOpenCodeFreeUsage(exhaustion, { consoleCalibration: true })
-  exhaustion.observe(f.connection, { type: "session.step.started", created: now - 2,
-    data: { sessionID: "s", assistantMessageID: "m", model: { providerID: "opencode", id: "big-pickle" } } })
-  exhaustion.observe(f.connection, { type: "session.step.failed", created: now - 1,
-    data: { sessionID: "s", assistantMessageID: "m", error: { type: "provider.quota" } } })
+  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
   t.mock.method(globalThis, "fetch", async () => { now++; return Response.json(page(250)) })
   try {
     const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
-    assert.deepEqual(result.freeEstimate, { requests: null, reference: 200, exhausted: false })
+    assert.deepEqual(result.freeEstimate, { requests: null, reference: 800, exhausted: false })
     assert.deepEqual(result.windows, {})
     assert.equal(result.ok, false)
     assert.equal((await usage.read(f.connection, "opencode", "big-pickle", signal())).freeEstimate?.requests, 250)
