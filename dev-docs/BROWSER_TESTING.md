@@ -48,6 +48,8 @@ edits are the developer's own signal to restart the run.
 
 The daemon serves the browser's implicit `GET /favicon.ico` as a small PNG.
 Other missing resources retain their HTTP errors and strict browser collectors.
+Its dependency optimizer scans `tests/browser/fixtures/*.tsx`, keeping dependency
+module URLs stable across the daemon's dynamically registered HTML routes.
 
 ## Logs, cleanup and platform limits
 
@@ -82,6 +84,7 @@ admitted Location before their first RPC, and surface failed setup immediately.
 
 ## Agent conventions
 
+- Fixture shutdown tracks Vite 7 optimizer disposal and pending requests across every server environment before deleting its owned cache. Qualify the optimized-load hook and native cleanup acknowledgements together when changing Vite.
 - A new browser test either borrows via `borrowFixture({ name, routes })` or
   joins `fixture-exemptions.ts` with a reason that matches reality (the
   checker's failure text is the review).
