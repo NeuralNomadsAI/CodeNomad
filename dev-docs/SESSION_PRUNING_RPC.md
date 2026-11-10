@@ -48,8 +48,34 @@ monotone authority/placement assertion. The five-second preparation budget cover
 catalogue activation and fresh presence proof. A result attests observed registration
 for this wait; callers retain adjacent authorization, cancellation, connection and
 deletion-fence checks and issue one useful RPC. The no-argument overload retains
-its startup-marker semantics for existing callers. Broker adoption is scoped to
-each fixed operation's own admission and execution fences.
+its startup-marker semantics for existing callers.
+
+The fixed brokers capture the published workspace record, native root Location,
+connection object and monotone deletion/display fences before preparation. Session
+descriptors supply session-scoped directories; history pages authorize their selected
+inventory directory, and ranked history prepares each queried directory on every
+continuation. Session and directory ownership are revalidated after preparation and
+after native IO. The navigation outline retains its `outlineLayout` to `outline`
+adaptation exclusively for `rpc.method_not_found`.
+
+Pruning, history, navigation and extension assets use a 15-second request budget;
+batch pruning uses 30 seconds. Preparation consumes the remaining budget, with its
+own five-second admission bound. API 4 retains its 19-second route budget and
+eight-second reads. Cancellation and connection assertions sit immediately beside
+the fixed dispatch. Native carrier guards share the pruning request's signal and
+current-placement assertion. Responses retain their connection/ownership fences.
+
+Extension assets and API 4 reauthorize the exact enabled package and permission
+after preparation and before publication. Images conversation resolution retains
+its entered deletion fence through the settlement of admitted IO and uses one
+connection throughout Location resolution, preparation, dispatch and Git exclusion.
+API 4 passes its captured outer connection and current grant into that resolver.
+
+Pending recovery prepares only its established, authorized execution-host bootstrap.
+Candidate ownership is admitted before preparation and revalidated afterward; the
+fixed snapshot keeps its loaded-only candidate semantics. Root identity, compaction
+admission, cancellation and connection are checked beside its single HTTP dispatch.
+The route preserves per-directory non-authoritative errors and retained queues.
 
 The UI offers individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique

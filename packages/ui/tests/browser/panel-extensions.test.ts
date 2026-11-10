@@ -20,6 +20,7 @@ import { fixtureArchive, fixtureManifest } from "../../../server/src/panel-exten
 import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/panel-extensions"
 import { createPanelExtensionCatalog, PANEL_EXTENSION_CATALOG_URL } from "../../../server/src/panel-extensions/catalog"
 import { registerPanelExtensionAssetRoutes } from "../../../server/src/server/routes/panel-extension-assets"
+import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { registerPanelExtensionWorkItemRoutes } from "../../../server/src/server/routes/panel-extension-work-items"
 import type { ForgeWorkItems } from "../../../server/src/forge/work-items"
 
@@ -46,7 +47,11 @@ before(async () => {
     return new Response(new Uint8Array(onlineArchive).buffer)
   }) as typeof fetch)
   registerPanelExtensionRoutes(app, { store, catalog, workspaceManager: { get: id => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined } })
-  registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
+  const assetWorkspace = { id: "first", path: "/first" }, assetLocation = { directory: "/first" }
+  registerPanelExtensionAssetRoutes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(), workspaceManager: {
+    get: id => id === "first" ? assetWorkspace as any : undefined,
+    getServiceLocation: () => assetLocation,
+    getWorktreeIdentityForPath: async () => "/first",
     desktopPluginsReady: async () => {},
     ownsLocation: async (id, location) => id === "first" && location.directory === "/first",
     // Asset reads are fenced to one current connection; this fixture's never changes.

@@ -229,6 +229,27 @@ warm or rebuild the single bootstrap root, and root eviction or a config rebuild
 constructs it again. Snapshots can go stale after leases release, so per-kind
 mutation fences and settlement tombstones stay essential.
 
+### Fixed pruning broker admission
+
+The session-pruning, session-history, ranked-history, navigation, Images
+conversation, extension assets, API 4 session reads and pending bootstrap brokers
+use targeted Location preparation. Workspace-record and root-Location identities,
+the captured connection and monotone display/deletion fences span the wait. Session
+descriptors establish session ownership before any activation-capable catalogue
+read. History prepares the selected page directory; ranked history prepares each
+queried directory, including continuations. Pending prepares only its established
+owned bootstrap and retains loaded-only candidates.
+
+Each broker revalidates ownership after preparation, checks the same connection
+and signal beside dispatch and fences publication after IO. Extension grants are
+checked for the exact package and permission before dispatch and publication. API 4
+passes its outer connection and grant check into Images resolution; the entered
+Images deletion fence covers admitted work through cancellation settlement and
+the subsequent Git exclusion. Request budgets include preparation: 15 seconds for
+ordinary reads/pruning, 30 seconds for batch pruning, and API 4's 19-second route
+with eight-second reads. Native carrier guards use the pruning request's lifetime.
+The fixed navigation method adaptation remains conditional on method absence.
+
 ## Agent conventions
 
 The bundled `codenomad.memory` plugin exposes `codenomad_memory` with `list`,
