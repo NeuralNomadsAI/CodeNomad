@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "ソースを検索",
+  "missions.scheduling.error.files": "有効な相対ファイルパスを入力してください。",
   "missions.scheduling.startOnCreation": "自動的に開始",
   "missions.scheduling.source.now": "1 回、今すぐ",
   "missions.settings.effectiveOrigin": "OpenCode 設定ファイル：",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "保存するタイムゾーン（IANA）",
   "missions.scheduling.chooseSource": "対象を選択",
   "missions.scheduling.sourceMissing": "利用できない対象: {source}",
-  "missions.scheduling.sourcesUnavailable": "対象を読み取れません。下書きを保持し、保存前にプロジェクトを再読み込みしてください。",
+  "missions.scheduling.sourcesUnavailable": "対象を読み取れません。",
   "missions.scheduling.files": "相対ファイルパス（1行に1件）",
   "missions.scheduling.filesHint": "プロジェクト内のファイルを最大128件指定します。再帰パターンやリンクされたパスは拒否されます。アクセスは再生時に確認します。",
   "missions.scheduling.error.zone": "有効な IANA タイムゾーンを入力してください。",

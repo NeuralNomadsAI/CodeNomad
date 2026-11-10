@@ -101,15 +101,15 @@ async function transition(page: Page, change: Transition) {
   }
   // The creation form replaces the list: leaving it is the newer view intent before browsing.
   if (await page.locator(".mission-control[data-creating]").count()) await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
-  if (change === "inactive" || change === "project") {
-    // A hidden panel performs no new reads. A new project cannot browse the old
-    // project's rows; an exact restored target can load independently of discovery.
+  if (change === "inactive" || change.startsWith("project")) {
+    // Project changes retire inventory, including ABA while summaries are held.
+    // Restore an exact target independently of discovery, without a click-intent fence.
     await page.evaluate(async () => {
       const { updateMissionProjectView } = await import("/src/stores/mission-view-state.ts")
       updateMissionProjectView("/fixture", { selected: "two" })
     })
     // (Its plan holds no task: the restored row is a leaf, its detail mounted and folded.)
-    if (change === "project") await page.locator('section.mission-detail[aria-label="Objective two"]').waitFor({ state: "attached" })
+    if (change.startsWith("project")) await page.locator('section.mission-detail[aria-label="Objective two"]').waitFor({ state: "attached" })
     return
   }
   await selectMission(page, "Objective two")

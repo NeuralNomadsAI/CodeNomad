@@ -14,6 +14,8 @@ import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
 import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
+import { collectColdFailure } from "./native-fixture-cold-diagnostics.mjs"
+import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: true, options: {
   "parent-ready": { type: "boolean" }, kinds: { type: "string", default: "at,in" }, "natural-every": { type: "boolean" },
@@ -94,7 +96,7 @@ async function journey(kind) {
   receipt.cases.push(result)
   const prefix = `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const registrationFile = path.join(env.XDG_STATE_HOME, "opencode/service.json"), children = [], releases = new Set()
-  let nativeErrorTail = ""
+  let nativeErrorLength = 0, nativeErrorTruncated = false, credentialsChild, qualificationError
   const maintenanceLog = path.join(root, "maintenance-events.jsonl")
   let ownedTechnical = []
   let controlTrace
@@ -224,9 +226,15 @@ async function journey(kind) {
   }
   const launch = async (cold = false) => {
     assert(!child || child.exitCode !== null || child.signalCode !== null, "Never run two service incarnations against this DB")
+    credentialsChild = undefined; nativeErrorLength = 0; nativeErrorTruncated = false
     child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     const current = { child, closed: new Promise(resolve => child.once("close", resolve)) }; children.push(current)
-    child.stdout.resume(); child.stderr.on("data", bytes => { nativeErrorTail = (nativeErrorTail + bytes.toString()).slice(-32000) })
+    child.stdout.resume(); child.stderr.on("data", bytes => {
+      // Retain only bounded diagnostic bookkeeping, never credential fragments.
+      nativeErrorLength += bytes.toString().length
+      nativeErrorTruncated ||= nativeErrorLength > 32000
+      nativeErrorLength = Math.min(nativeErrorLength, 32000)
+    })
     const publicInfo = await until(async () => {
       try { const info = readNativeScheduleIncarnation(registrationFile); return info.pid === child.pid ? info : false } catch { return false }
     }, 40000)
@@ -248,6 +256,7 @@ async function journey(kind) {
     client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
     const info = await client.server.info({ signal }); assert.equal(info.version, cliVersion); assert.equal(info.pid, child.pid)
+    if (endpoint.auth?.password) credentialsChild = child
     rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
   const stop = async () => {
@@ -653,38 +662,67 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     const deduped = snapshot(id); assert.equal(deduped.document.launchedCount, 1); assert.deepEqual(deduped.start, completedStarts)
     result.calls = calls; result.status = "passed"; result.stage = "completed"
   } catch (error) {
-    const redact = input => { let text = String(input ?? ""); for (const secret of secrets) text = text.replaceAll(secret, "<redacted>"); return text.slice(0, 64000) }
-    const detail = item => item && { name: redact(item.name), type: redact(item.type ?? item._tag), message: redact(item.message), stack: redact(item.stack) }
-    result.status = "failed"; result.error = redact(error?.message ?? "qualification-failed")
-    await save("failure-diagnostic", { stage: result.stage, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause), nativeErrorTail: redact(nativeErrorTail) })
-    if (result.documentID) try {
-      const state = snapshot(result.documentID, true)
-      state.maintenance = await maintenanceEvents().then(events => ({ count: events.length,
-        tail: events.filter(event => !event.sessionID || state.document.calendarOwner?.slots.some(slot => slot.sessionID === event.sessionID)).slice(-32) }),
+    result.status = "failed"
+    qualificationError = error
+    const failureAt = Date.now(), cold = result.stage === "natural-cold-first-admission"
+    let coldFailure, privateEvidenceAvailable = credentialsChild === child && !!child
+    if (cold) {
+      try {
+        const collected = await collectColdFailure({ status: result.status, stage: result.stage, failureAt,
+          root, registrationFile, databaseFile, documentID: result.documentID, prefix, secrets: [...secrets],
+          onSecrets: learned => { for (const secret of learned) secrets.add(secret); privateEvidenceAvailable = true },
+          child, expected: result.serviceStarts.at(-1), diagnostic: { stage: result.stage, nativeErrorTruncated,
+            error: { message: error?.message === "bounded-product-qualification-deadline" ? error.message : "private-text-omitted" } } })
+        coldFailure = collected?.evidence ?? { error: collected?.error ?? "cold-failure-diagnostic-unavailable" }
+        if (collected?.saveError) result.storageError = "diagnostic-save-unavailable"
+      } catch { coldFailure = { error: "cold-failure-diagnostic-unavailable" } }
+    }
+    const detail = item => item && "private-text-omitted"
+    result.status = "failed"; result.error = error?.message === "bounded-product-qualification-deadline" ? error.message : "private-text-omitted"
+    if (!cold) try {
+      const diagnostic = { stage: result.stage, failureAt, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause),
+        nativeErrorTail: "private-text-omitted", nativeErrorTruncated, coldFailure }
+      const json = JSON.stringify(diagnostic)
+      await save("failure-diagnostic", Buffer.byteLength(json) <= 512 * 1024 ? diagnostic : { stage: result.stage, failureAt, error: "failure-diagnostic-overflow" })
+    } catch { result.storageError = "diagnostic-save-unavailable" }
+    if (!cold && privateEvidenceAvailable && result.documentID) try {
+      const state = projectFailureSQL(snapshot(result.documentID, true))
+      state.maintenance = await maintenanceEvents().then(events => ({ count: events.length }),
       () => ({ error: "maintenance-events-unavailable" }))
-      const json = JSON.stringify(state, (_key, value) => typeof value === "string" ? redact(value) : value)
+      const json = JSON.stringify(state)
       await writeFile(path.join(root, "failure-sql.json"), Buffer.byteLength(json) <= 512 * 1024 ? json : '{"error":"failure-sql-bound"}')
-    } catch { /* Preserve the original failure. */ }
-    throw Error(`Native product qualification failed at ${result.stage ?? "setup"}: ${result.error}; private redacted diagnostic saved`)
+    } catch { result.storageError = "sql-save-unavailable" }
+    throw error
   }
   finally {
-    releaseBarrier("fixture-finally")
-    holdBusiness = false; for (const release of releases) release(); releases.clear()
-    try { await closeBackend() } finally {
+    let cleanupError
+    try {
+      releaseBarrier("fixture-finally")
+      holdBusiness = false; for (const release of releases) release(); releases.clear()
+      await closeBackend()
+    } catch (error) { cleanupError = error; result.cleanupError = "backend-cleanup-failed" }
+    try {
       const stopped = await Promise.allSettled(children.map(entry => entry.child.exitCode === null && entry.child.signalCode === null ? stopFixtureChild(entry.child, entry.closed) : entry.closed))
       provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
       barrier.closeAllConnections(); if (barrier.listening) await new Promise(resolve => barrier.close(resolve))
       result.calls = calls
-      result.allOwnedServicesStopped = stopped.every(entry => entry.status === "fulfilled"); await save("receipt", result)
+      result.allOwnedServicesStopped = stopped.every(entry => entry.status === "fulfilled")
       assert(result.allOwnedServicesStopped, "An owned native process failed cleanup")
-    }
+    } catch (error) { cleanupError ??= error; result.cleanupError = "owned-cleanup-failed" }
+    if (cleanupError) result.status = "failed"
+    try { await save("receipt", result) }
+    catch (error) { result.status = "failed"; result.storageError = "receipt-save-unavailable"; if (!qualificationError && !cleanupError) throw error }
+    if (!qualificationError && cleanupError) throw cleanupError
   }
 }
 
+let qualificationError
 try { for (const kind of kinds) await journey(kind); receipt.outcome = values["diagnose-stop"] || values["diagnose-product-stop"] ? "diagnostic-only" : "passed" }
-catch (error) { receipt.outcome = "failed"; throw error }
+catch (error) { qualificationError = error; receipt.outcome = "failed" }
 finally {
   for (const name of Object.keys(process.env)) if (!(name in originalEnvironment)) delete process.env[name]
   Object.assign(process.env, originalEnvironment)
-  await writeFile(path.join(scratch, "receipt.json"), JSON.stringify(receipt, null, 2))
+  try { await writeFile(path.join(scratch, "receipt.json"), JSON.stringify(receipt, null, 2)) }
+  catch (error) { qualificationError ??= error; receipt.outcome = "failed"; receipt.storageError = "receipt-save-unavailable" }
 }
+if (qualificationError) { console.error("Native product qualification failed; see receipt"); process.exitCode = 1 }

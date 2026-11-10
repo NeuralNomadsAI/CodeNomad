@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "Поиск источников",
+  "missions.scheduling.error.files": "Введите допустимые относительные пути к файлам.",
   "missions.scheduling.startOnCreation": "Запускать автоматически",
   "missions.scheduling.source.now": "Один раз, сейчас",
   "missions.settings.effectiveOrigin": "Файл конфигурации OpenCode:",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "Сохранённый часовой пояс (IANA)",
   "missions.scheduling.chooseSource": "Выбрать источник",
   "missions.scheduling.sourceMissing": "Источник недоступен: {source}",
-  "missions.scheduling.sourcesUnavailable": "Не удалось прочитать источники. Сохраните черновик и перезагрузите проект перед сохранением.",
+  "missions.scheduling.sourcesUnavailable": "Не удалось прочитать источники.",
   "missions.scheduling.files": "Относительные пути файлов (по одному на строку)",
   "missions.scheduling.filesHint": "До 128 явно указанных файлов проекта. Рекурсивные шаблоны и ссылки запрещены; доступ проверяется при запуске.",
   "missions.scheduling.error.zone": "Введите корректный часовой пояс IANA.",

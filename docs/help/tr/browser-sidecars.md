@@ -69,7 +69,9 @@ Kayıt, istemcilerin paylaştığı sunucu yapılandırmasıdır; hizmeti yükle
 
 Ulaşılamıyorsa arka uçtaki işlemi ve bağlantı noktasını kontrol edin. HTML yüklenir ancak asset/WebSockets başarısız olursa, aracın temel yolunu ve önek modunu kontrol edin. Yanlış bir kaydı amaçlanan ayarlarla yeniden oluşturun; Proxy hatasını geçici olarak çözmek için yukarı akışı herkese açık şekilde göstermeyin. SideCar uygulamaları, sunucu hesabının yetkisine sahip bir terminali veya dosyaları açığa çıkarabilir; kullanıcılarına ve yapılandırmalarına güvenin.
 
-SideCar, korumalı alana alınmış bir önizleme değil, CodeNomad'ın güvenilir bir uzantısıdır: sayfası CodeNomad'ın kendi kaynağıyla (origin) çalışır, bu nedenle betikleri oturum açmış erişiminizle CodeNomad'ı kullanabilir. Yalnızca koduna güvendiğiniz hizmetleri kaydedin. CodeNomad kendi oturum açma çerezlerini hizmete iletmez; hizmetin kendi çerezleri ise korunur. Uzaktan Kontrol, SideCar uygulama proxy trafiğini açığa çıkarmaz; [Uzaktan erişim](remote-access.md) ve [Uzaktan Kontrol](remote-control.md)'de açıklanan uygun doğrudan erişim yolunu kullanın.
+SideCar, korumalı alana alınmış bir önizleme değil, CodeNomad'ın güvenilir bir uzantısıdır: sayfası CodeNomad'ın kendi kaynağıyla (origin) çalışır, bu nedenle betikleri oturum açmış erişiminizle CodeNomad'ı kullanabilir. Yalnızca koduna güvendiğiniz hizmetleri kaydedin. CodeNomad kendi oturum açma çerezlerini hizmete iletmez; hizmetin kendi çerezleri ise korunur.
+
+SideCar içeriği (`/sidecars/`) ve SideCar WebSocket'leri, ana bilgisayarda loopback bağlantısı gerektirir. `/api/sidecars` üzerinden kayıt, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. Etkin önizleme içeriği (`/previews/`), geçerli bir yetenek belirteciyle doğrudan LAN erişiminde kullanılabilir; [Uzaktan Kontrol](remote-control.md#remote-surface) web önizlemeleri etkin oldukları sürece yetenek belirteçleriyle kullanılabilir kalır. Doğrudan erişim gereksinimleri için bkz. [Yükseltme](remote-access.md#upgrading).
 
 ## OpenVSCode Sunucu tarifi {#openvscode}
 

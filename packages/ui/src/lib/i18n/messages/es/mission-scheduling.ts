@@ -1,4 +1,6 @@
 export const missionSchedulingMessages = {
+  "missions.scheduling.searchSource": "Buscar fuentes",
+  "missions.scheduling.error.files": "Introduce rutas de archivo relativas válidas.",
   "missions.scheduling.startOnCreation": "Iniciar automáticamente",
   "missions.scheduling.source.now": "Una vez, ahora",
   "missions.settings.effectiveOrigin": "Archivo de configuración de OpenCode:",
@@ -129,7 +131,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.zone": "Zona horaria guardada (IANA)",
   "missions.scheduling.chooseSource": "Elegir una fuente",
   "missions.scheduling.sourceMissing": "Fuente no disponible: {source}",
-  "missions.scheduling.sourcesUnavailable": "No se pudieron leer las fuentes. Conserve el borrador y recargue el proyecto antes de guardar.",
+  "missions.scheduling.sourcesUnavailable": "No se pudieron leer las fuentes.",
   "missions.scheduling.files": "Rutas relativas de archivos (una por línea)",
   "missions.scheduling.filesHint": "Hasta 128 archivos explícitos del proyecto. Se rechazan patrones recursivos y rutas enlazadas; el acceso se verifica al iniciar.",
   "missions.scheduling.error.zone": "Introduzca una zona horaria IANA válida.",

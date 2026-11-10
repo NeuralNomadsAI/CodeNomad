@@ -59,6 +59,8 @@ HTTPS 首选端口 **9898**，HTTP 首选 **9899**。没有端口覆盖时，首
 
 ## 公共 CLI 参考 {#cli-reference}
 
+启动 Tauri 或 Electron 时，请参阅[桌面应用启动参数](desktop.md#desktop-cli)，其中包括 `--connect-server`、`--folder`、`--new-window` 和命令、快捷方式示例。下表适用于独立服务器可执行文件。
+
 标志覆盖对应环境变量。带值标志使用所示参数；开关不带值。HTTPS/HTTP 值不区分大小写，将 `1`、`true`、`yes`、`y` 和 `on` 识别为启用；为清晰起见请显式使用 `true`/`false`。界面自动更新识别 `1`、`true` 和 `yes`。
 
 **严格布尔环境变量**（`CLI_UNRESTRICTED_ROOT`、`CLI_UI_NO_UPDATE`、`CLI_LAUNCH`、`CODENOMAD_GENERATE_TOKEN` 和 `CODENOMAD_SKIP_AUTH`）在值为 `1`、`true`、`yes` 或 `on` 时启用相应开关，忽略大小写及两端空白。`0`、`false`、`no`、`off`、空值、仅含空白的值或未设置的变量均让开关保持关闭。任何其他值都会阻止服务器启动，即使指定了对应的 CLI 标志。CLI 标志可覆盖有效的关闭值并启用开关；否则使用下列 `false` 默认值。

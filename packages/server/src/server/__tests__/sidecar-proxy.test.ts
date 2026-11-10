@@ -43,6 +43,7 @@ async function startSideCarUpstream(options: UpstreamOptions = {}) {
   const requests: http.IncomingHttpHeaders[] = []
   const received: Array<{ method: string; url: string; body: string }> = []
   const connections = new Set<net.Socket>()
+  let connectionCount = 0
   const upstream = http.createServer((request, response) => {
     requests.push(request.headers)
     let body = ""
@@ -61,6 +62,7 @@ async function startSideCarUpstream(options: UpstreamOptions = {}) {
     })
   })
   upstream.on("connection", (socket) => {
+    connectionCount++
     connections.add(socket)
     socket.on("close", () => connections.delete(socket))
   })
@@ -80,15 +82,27 @@ async function startSideCarUpstream(options: UpstreamOptions = {}) {
       socket.write(header.slice(0, split))
       setImmediate(() => { if (!socket.destroyed) socket.write(header.slice(split)) })
     } else socket.write(header)
+    // ponytail: fixture exchanges one short text frame; use a WS library for larger/fragmented messages.
+    let bytes = Buffer.alloc(0)
+    socket.on("data", chunk => {
+      bytes = Buffer.concat([bytes, chunk])
+      if (bytes.length < 6) return
+      const length = bytes[1] & 127
+      if (bytes.length < 6 + length) return
+      const mask = bytes.subarray(2, 6)
+      const payload = Buffer.from(bytes.subarray(6, 6 + length).map((value, i) => value ^ mask[i % 4]))
+      socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]))
+      bytes = bytes.subarray(6 + length)
+    })
   })
   upstreams.push(upstream)
   upstreamSocketCleanups.push(() => { for (const socket of connections) socket.destroy() })
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve))
-  return { port: (upstream.address() as net.AddressInfo).port, upgrades, requests, received }
+  return { port: (upstream.address() as net.AddressInfo).port, upgrades, requests, received, connectionCount: () => connectionCount }
 }
 
 /** Raw WebSocket handshake, like a browser's; resolves once the status line and headers arrived. */
-function webSocketUpgrade(port: number, pathname: string, headers: Record<string, string>): Promise<{ status: number; head: string }> {
+function webSocketUpgrade(port: number, pathname: string, headers: Record<string, string>, exchange = false): Promise<{ status: number; head: string; echo?: string }> {
   return new Promise((resolve, reject) => {
     const socket = net.connect(port, "127.0.0.1", () => {
       const key = crypto.randomBytes(16).toString("base64")
@@ -106,21 +120,34 @@ function webSocketUpgrade(port: number, pathname: string, headers: Record<string
     })
     sockets.push(socket)
     socket.setTimeout(4000, () => { reject(new Error(`WebSocket handshake timed out: ${pathname}`)) })
+    let bytes = Buffer.alloc(0)
     let head = ""
     socket.on("data", (chunk) => {
-      head += chunk.toString("latin1")
-      const end = head.indexOf("\r\n\r\n")
-      if (end < 0) return
+      bytes = Buffer.concat([bytes, chunk])
+      if (!head) {
+        const end = bytes.indexOf("\r\n\r\n")
+        if (end < 0) return
+        head = bytes.toString("latin1", 0, end)
+        bytes = bytes.subarray(end + 4)
+        if (exchange && Number(head.split(" ")[1]) === 101) {
+          const payload = Buffer.from("sidecar-origin-check")
+          const mask = crypto.randomBytes(4)
+          socket.write(Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask,
+            Buffer.from(payload.map((value, i) => value ^ mask[i % 4]))]))
+        }
+      }
+      const status = Number(head.split(" ")[1])
+      if (exchange && status === 101 && (bytes.length < 2 || bytes.length < 2 + (bytes[1] & 127))) return
       // Abort like a browser tab close: a FIN would leave the proxied
       // connection half-open and the servers would never finish closing.
       socket.resetAndDestroy()
-      resolve({ status: Number(head.split(" ")[1]), head: head.slice(0, end) })
+      resolve({ status, head, ...(exchange && status === 101 ? { echo: bytes.subarray(2, 2 + (bytes[1] & 127)).toString() } : {}) })
     })
     socket.on("error", reject)
   })
 }
 
-async function startServer(options: UpstreamOptions & { cookieName?: string; prefixMode?: SideCar["prefixMode"] } = {}) {
+async function startServer(options: UpstreamOptions & { cookieName?: string; prefixMode?: SideCar["prefixMode"]; skipAuth?: boolean; allowedOrigins?: string[]; devServerUrl?: string } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-sidecar-proxy-"))
   const logger = pino({ level: "silent" })
   const authManager = new AuthManager({
@@ -129,8 +156,9 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     password: "test-password",
     generateToken: false,
     cookieName: options.cookieName,
+    dangerouslySkipAuth: options.skipAuth,
   }, logger)
-  const { port, upgrades, requests, received } = await startSideCarUpstream(options)
+  const { port, upgrades, requests, received, connectionCount } = await startSideCarUpstream(options)
   const sidecar: SideCar = {
     id: "fixture", kind: "port", name: "ttyd", port, insecure: true, prefixMode: options.prefixMode ?? "strip",
     status: "running", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -160,6 +188,7 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
     authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
     remoteControlManager: stub, uiStaticDir: directory,
+    allowedOrigins: options.allowedOrigins, uiDevServerUrl: options.devServerUrl,
   })
   apps.push(app)
   await app.listen({ host: "127.0.0.1", port: 0 })
@@ -168,6 +197,7 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
   const session = authManager.createSession("codenomad")
   return {
     app,
+    connectionCount,
     port: address.port,
     origin: `http://127.0.0.1:${address.port}`,
     cookie: `${authManager.getCookieName()}=${session.id}`,
@@ -199,6 +229,76 @@ it("SideCar WebSocket upgrades require the SameSite session cookie a same-origin
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
   }
 })
+
+it("non-local SideCar upgrades are refused even with a valid host session and spoofed forwarding headers", async () => {
+  const server = await startServer()
+  try {
+    // A deterministic transport peer, as app.inject's remoteAddress for HTTP.
+    server.app.server.prependListener("connection", socket => {
+      Object.defineProperty(socket, "remoteAddress", { value: "192.0.2.20" })
+    })
+    for (const origin of [server.origin, undefined]) {
+      const response = await webSocketUpgrade(server.port, "/sidecars/fixture/socket", {
+        Cookie: server.cookie, ...(origin ? { Origin: origin } : {}), "X-Forwarded-For": "127.0.0.1",
+      })
+      assert.equal(response.status, 404)
+      assert.equal(server.connectionCount(), 0)
+    }
+    assert.deepEqual(server.upgrades, [])
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+for (const skipAuth of [false, true]) {
+  it(`SideCar WS enforces the shared source policy before any upstream connection (skip auth: ${skipAuth})`, async () => {
+    const allowed = "https://ui.example.test:8443"
+    const development = "http://localhost:3000"
+    const server = await startServer({ skipAuth, allowedOrigins: [allowed], devServerUrl: development })
+    try {
+      const credentials: Record<string, string> = skipAuth ? {} : { cookie: server.cookie }
+      const foreign = "http://localhost:1"
+      const denied: Record<string, string>[] = [
+        { origin: foreign }, { origin: "null" }, { origin: "not-an-origin" },
+        { origin: `${server.origin}/path` }, { origin: `${allowed}, ${server.origin}` },
+        { origin: "" }, { referer: `${foreign}/page` }, { referer: "malformed" },
+        { origin: foreign, referer: `${server.origin}/page` },
+        { origin: foreign, "x-forwarded-host": `localhost:${server.port}`, "x-forwarded-proto": "http" },
+      ]
+      for (const headers of denied) {
+        for (const auth of skipAuth ? [{}] : [credentials, {}]) {
+          const before = server.connectionCount()
+          const response = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", { ...auth, ...headers }, true)
+          assert.equal(response.status, 403, JSON.stringify(headers))
+          assert.equal(server.connectionCount(), before, "refuse before even opening an upstream TCP connection")
+        }
+      }
+      const accepted: Record<string, string>[] = [
+        { origin: server.origin }, { origin: `http://localhost:${server.port}` }, { origin: allowed }, { origin: development },
+        {}, { referer: `${server.origin}/page` }, { referer: `${allowed}/page` },
+        { origin: server.origin, referer: `${foreign}/page` },
+      ]
+      for (const headers of accepted) {
+        const before = server.connectionCount()
+        const response = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", { ...credentials, ...headers }, true)
+        assert.equal(response.status, 101, JSON.stringify(headers))
+        assert.equal(response.echo, "sidecar-origin-check")
+        assert.equal(server.connectionCount(), before + 1)
+      }
+      if (!skipAuth) {
+        const anonymous: Record<string, string>[] = [{}, { origin: server.origin }, { origin: allowed }]
+        for (const headers of anonymous) {
+          const before = server.connectionCount()
+          assert.equal((await webSocketUpgrade(server.port, "/sidecars/fixture/ws", headers)).status, 401)
+          assert.equal(server.connectionCount(), before)
+        }
+        const logout = await server.app.inject({ method: "POST", url: "/api/auth/logout", headers: credentials })
+        assert.equal(logout.statusCode, 200)
+        const before = server.connectionCount()
+        assert.equal((await webSocketUpgrade(server.port, "/sidecars/fixture/ws", { ...credentials, origin: allowed })).status, 401)
+        assert.equal(server.connectionCount(), before)
+      }
+    } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+  })
+}
 
 for (const prefixMode of ["strip", "preserve"] as const) {
   for (const cookieName of ["codenomad_session", "custom_session"]) {

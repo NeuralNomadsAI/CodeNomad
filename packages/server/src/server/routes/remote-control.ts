@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { deviceCookie, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../../remote-control/gate"
-import { isRemoteRequest } from "../../remote-control/request-origin"
+import { isLocalRequest, isRemoteRequest } from "../../remote-control/request-origin"
 
 interface RouteDeps {
   manager: RemoteControlManager
@@ -18,7 +18,7 @@ let pairTemplate: string | null = null
 export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/remote-control/status", async (request) => {
     const status = deps.manager.status()
-    return isRemoteRequest(request) ? { ...status, manageable: false } : status
+    return !isLocalRequest(request) ? { ...status, manageable: false } : status
   })
 
   app.post("/api/remote-control/start", async (request, reply) => {
@@ -100,7 +100,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
 }
 
 function requireLocalControl(request: FastifyRequest, reply: FastifyReply): boolean {
-  if (isRemoteRequest(request)) {
+  if (!isLocalRequest(request)) {
     reply.code(403).send({ error: "Remote Control settings are available on the host only" })
     return false
   }

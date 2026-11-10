@@ -56,7 +56,7 @@ Einmal jetzt erhält seinen Zeitpunkt beim Start und bietet nur eine Gelegenheit
 
 ### Ereignisse und Kombinationen {#scheduling-conditions}
 
-Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Verfolgte Unterhaltungen liefern unabhängig vom Auslöser Kontext.
+Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Die Auswahl bietet eine Suche und lädt beim Scrollen weitere Quellen; bei Lesefehlern erscheint dort **Erneut versuchen**. Die für neue Nachrichten gewählte Unterhaltung liefert auch Kontext für den Durchlauf. Ein anderer Kriteriumstyp leert die Quelle. Gespeicherter Unterhaltungskontext bleibt beim Bearbeiten erhalten.
 
 **oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein. **sonst** macht nachfolgende Zeitpläne zum Rückfall: seit ihrem vorherigen Termin beziehungsweise ihrer Aktivierung darf oben kein Durchlauf gestartet sein. Ereignisse danach bedingen diesen Rückfall.
 

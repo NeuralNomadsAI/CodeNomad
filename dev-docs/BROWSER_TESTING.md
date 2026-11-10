@@ -2,7 +2,7 @@
 
 The browser suite lives in `packages/ui/tests/browser/`. Every test file
 borrows its fixture page from a runner-owned fixture daemon, or carries an
-exemption with its own server ÔÇö `packages/ui/tests/browser/fixture-exemptions.ts`
+exemption with its own server — `packages/ui/tests/browser/fixture-exemptions.ts`
 is the single map of who does which, and
 `fixture-wiring.test.ts` enforces the split (borrow-or-exempt, owned-cache
 and protected-shutdown rules for exempt servers, armed navigation budgets
@@ -11,7 +11,7 @@ for every Chromium launch).
 ## Commands
 
 - Local, tiered: `npm run test:browser --workspace @codenomad/ui` runs
-  `tests/browser/run.mjs` ÔÇö one file at a time in both tiers by default (the
+  `tests/browser/run.mjs` — one file at a time in both tiers by default (the
   Git fixtures rebuild one checkout-wide Monaco asset directory that is
   concurrently unsafe, and wide runs grow load-sensitive failures on slow
   machines), with the daemon serving the borrowed tier.
@@ -21,7 +21,7 @@ for every Chromium launch).
   from `packages/ui` (without `xvfb-run -a` on Windows and macOS). Without a
   runner the borrower process gets its own daemon child, which follows it.
 - CI: each matrix shard runs `node tests/browser/shard.mjs <index 1-based> 4`
-  ÔÇö one interleaved serial slice per runner, wall clock divided by four.
+  — one interleaved serial slice per runner, wall clock divided by four.
 
 ## The fixture daemon model
 
@@ -31,8 +31,8 @@ a child of the runner (run.mjs, shard.mjs): the endpoint and its secret are
 announced as one stdout line and handed to the test processes through the
 environment; `daemon.log` records the endpoint without its secret, and there
 is no discovery directory and no adoption across runs. The runner stops the
-daemon with an authenticated HTTP request when its slice ends ÔÇö portable, the
-daemon runs its own cleanup ÔÇö and fails the run when that cleanup fails or
+daemon with an authenticated HTTP request when its slice ends — portable, the
+daemon runs its own cleanup — and fails the run when that cleanup fails or
 has to be forced. The daemon also watches its owner's pid and cleans up after
 an owner that ended without stopping it (on Windows it is spawned detached,
 so the owner's exit does not end it first). Detached, it has no console, so
@@ -85,6 +85,9 @@ synthetic provider.
   checker's failure text is the review).
 - Fixture names must stay free of route fragments: borrowed URLs are
   namespaced `/<name><route>` and tests derive sibling URLs by substitution.
+- Fixtures exercising host-local actions serve valid `/api/meta` data with
+  `localRequest: true`; non-local, missing and failed metadata retain their
+  fail-closed coverage in `host-only-controls.test.ts`.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
@@ -93,6 +96,12 @@ synthetic provider.
   explicitly. Mutation collectors match the exact HTTP method and path. Hold the
   intended panel source independently of schedule reads, and await lifecycle
   feedback settlement before asserting its final status.
+  Project ABA cases with held inventory discovery restore an exact target through
+  view state and await its point-read detail, keeping the mutation's view fence
+  independent of later row-click intent.
+- Mission selection helpers retain `data-mission-key` and resolve row/chevron
+  Locators at each action across retitling and panel remounts. Wait for the row's
+  visibility before distinguishing a leaf from an expandable row; use native clicks.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
@@ -126,6 +135,12 @@ synthetic provider.
   so Virtua can finish its size estimate. After resizing, assert that the same row
   remains connected outside the viewport before dispatching activity, then retain
   its identity through scrolling and the fresh visible transition.
+- Mission task fixtures target `.mission-tree-node` independently of Virtua's item
+  wrapper. Reveal offscreen targets with `revealMissionTask` before focus/click
+  observation begins; continuation assertions track exact source reads rather than
+  mounted row counts. Scroll geometry is sampled after the virtual viewport settles.
+  Rail checks compare mounted icons with fresh bounds and unmounted icons with
+  independently measured SVG-local anchors; endpoint counts and tolerances stay explicit.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
   `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;

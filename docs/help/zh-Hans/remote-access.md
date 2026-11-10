@@ -52,6 +52,14 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 不要假定端口是 9898 或 9899：省略端口时，繁忙会回退。显式非零的 `--https-port`，或启用 HTTP 时的 `--http-port`，会固定端口，无法绑定则失败；`0` 请求操作系统分配。本次运行以打印的 **Local Connection URL**、**Remote Connection URL** 和刷新的**可访问地址**为准。参阅完整[服务器 CLI 参考](server.md)。
 
+## 升级 {#upgrading}
+
+升级后请重新登录。使用主机名别名、反向代理或单独托管的界面时，请在后端设置 `CODENOMAD_ALLOWED_ORIGINS`，列出可信的界面来源（协议、主机名和端口）。局域网原生客户端必须在修改请求中提供允许的 `Origin` 请求头。
+
+仅限主机的操作需要回环连接：SideCar 内容（`/sidecars/`）及 WebSocket、远程控制管理（`/api/remote-control/`）、插件桥接（`/api/opencode-plugin/`）、远程代理（`/api/remote-proxy/`）、已保存服务器管理（`/api/remote-servers/`）、密码更改和令牌初始化。即使通过局域网直接访问并已登录，这些操作也要求回环连接。持有有效能力令牌时，活动预览内容（`/previews/`）可通过局域网直接访问。
+
+`/api/sidecars` 注册 API 仍可供已认证的局域网直连客户端和已配对设备使用。远程控制网页预览在主机启用时，仍可通过其能力令牌访问。
+
 ## 配置可信 TLS {#tls}
 
 ### 提供自己的证书 {#custom-certificates}

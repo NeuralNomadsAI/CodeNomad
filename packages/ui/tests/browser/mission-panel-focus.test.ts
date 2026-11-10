@@ -4,7 +4,7 @@ import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
-import { missionGeneralAction, missionRows, selectMission } from "./mission-actions"
+import { missionGeneralAction, missionRows, revealMissionTask, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -45,7 +45,7 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
   try {
     await page.goto(url, { timeout: 60_000 })
     await missionRows(page).locator("button.mission-row-select").first().waitFor()
-    if (consumer === "tree") await selectMission(page, "Focus migration")
+    if (consumer === "tree") { await selectMission(page, "Focus migration"); await revealMissionTask(target(page, consumer)) }
     else {
       const requested = holdDepth ? page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/subagent-depth")) : undefined
       await missionGeneralAction(page, "Create mission").click()
@@ -173,6 +173,7 @@ for (const consumer of ["creation", "tree"] as const) {
       await f.page.evaluate(() => (window as any).missionHost.mount(true))
       await frames(f.page)
       assert.equal(await f.page.evaluate(() => (window as any).focusAudit.writes.length), 0, "the replacement view never revives the old focus target")
+      if (consumer === "tree") await revealMissionTask(target(f.page, consumer))
       await target(f.page, consumer).focus(); await frames(f.page)
       await f.page.evaluate(selector => {
         const state = (window as any).focusAudit

@@ -43,6 +43,21 @@ test("every listed event is read once by its own key; any change is enough withi
     "a policy without events reports no news; its schedules trigger on their own")
 })
 
+test("a conversation event owns its followed source without a separate global watch selection", async () => {
+  const doc = document("target", [{ kind: "conversation-message", conversationID: "ses_selected" }])
+  const reads: string[] = []
+  const source = { ...native, get: async ({ sessionID }: { sessionID: string }) => {
+    reads.push(sessionID)
+    return { id: sessionID, projectID: "project", location: { directory: "/project" } }
+  }, sourceBaseline: async () => null } as unknown as MissionNativeService
+  const snapshot = await prepareNativeDocumentSources(doc, source, new AbortController().signal, current)
+  assert.deepEqual(doc.configuration.watchedConversationIDs, [])
+  assert.deepEqual(reads, ["ses_selected"])
+  assert.equal(snapshot.checkpoints.length, 1)
+  assert.equal(snapshot.checkpoints[0].kind, "conversation-message")
+  assert.deepEqual(roles(snapshot), { triggers: false, conditions: false }, "first activation establishes the source baseline")
+})
+
 test("each changed event is reported by its own key, so a schedule group reads only its own conditions", async () => {
   const doc = document("grouped", [commits, { kind: "cron", expression: "0 9 * * *", zone: "UTC" }], [files])
   const reader = async (_doc: MissionDocument, condition: MissionCondition) => ({ checkpoint: { key: missionSourceKey(condition), kind: condition.kind,
