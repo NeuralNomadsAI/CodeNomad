@@ -84,6 +84,9 @@ synthetic provider.
   checker's failure text is the review).
 - Fixture names must stay free of route fragments: borrowed URLs are
   namespaced `/<name><route>` and tests derive sibling URLs by substitution.
+- Fixtures exercising host-local actions serve valid `/api/meta` data with
+  `localRequest: true`; non-local, missing and failed metadata retain their
+  fail-closed coverage in `host-only-controls.test.ts`.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
@@ -95,6 +98,9 @@ synthetic provider.
   Project ABA cases with held inventory discovery restore an exact target through
   view state and await its point-read detail, keeping the mutation's view fence
   independent of later row-click intent.
+- Mission selection helpers retain `data-mission-key` and resolve row/chevron
+  Locators at each action across retitling and panel remounts. Wait for the row's
+  visibility before distinguishing a leaf from an expandable row; use native clicks.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view

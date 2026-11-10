@@ -19,7 +19,7 @@ function preflight(target: string, origin: string, method: string): Promise<{ st
 }
 
 test("allowed cross-origin clients may preflight every method the API accepts", async (t) => {
-  const { local } = await startRemoteSurface(t)
+  const { local } = await startRemoteSurface(t, { allowedOrigins: ["http://localhost:3000"] })
   for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]) {
     const response = await preflight(local, "http://localhost:3000", method)
     assert.equal(response.status, 204, method)

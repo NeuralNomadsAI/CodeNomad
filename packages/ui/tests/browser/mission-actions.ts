@@ -87,11 +87,12 @@ export async function expandRow(select: Locator): Promise<"expanded" | "leaf"> {
 async function stableMissionRow(select: Locator): Promise<Locator> {
   const key = await select.locator("xpath=ancestor::*[@data-mission-key][1]").getAttribute("data-mission-key")
   if (!key) throw new Error("Mission row identity unavailable")
-  return missionRows(select.page()).locator(`[data-mission-key=${JSON.stringify(key)}]`)
+  return missionRows(select.page()).locator(`.mission-row[data-mission-key=${JSON.stringify(key)}]`)
 }
 
 /** `expandRow` on an identity-bound row locator, including across passive replacement. */
 async function expandRowElement(row: Locator): Promise<"expanded" | "leaf"> {
+  await row.waitFor({ state: "visible" })
   const chevron = row.locator(".session-item-expander")
   await chevron.waitFor({ state: "attached" })
   if ((await chevron.getAttribute("class"))?.includes("session-item-expander--spacer")) return "leaf"

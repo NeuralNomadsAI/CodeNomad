@@ -69,7 +69,9 @@
 
 不可达时，检查后端进程和端口。HTML 可加载但资源/WebSocket 失败时，检查工具基础路径和前缀模式。以目标设置重新创建错误注册；不要仅为绕过代理错误而公开上游。SideCar 应用可能以服务器账户权限提供终端或文件；请信任其用户和配置。
 
-SideCar 是 CodeNomad 的可信扩展，而不是沙箱预览：其页面以 CodeNomad 自身的源运行，因此其脚本可以凭借你的登录访问权限使用 CodeNomad。只注册你信任其代码的服务。CodeNomad 不会将自身的登录 cookie 转发给该服务，但会保留该服务自己的 cookie。远程控制不暴露 SideCar 应用代理流量；请使用[远程访问](remote-access.md)和[远程控制](remote-control.md)中描述的适当直接访问路径。
+SideCar 是 CodeNomad 的可信扩展，而不是沙箱预览：其页面以 CodeNomad 自身的源运行，因此其脚本可以凭借你的登录访问权限使用 CodeNomad。只注册你信任其代码的服务。CodeNomad 不会将自身的登录 cookie 转发给该服务，但会保留该服务自己的 cookie。
+
+SideCar 内容（`/sidecars/`）和 SideCar WebSocket 要求在主机上使用回环连接。通过 `/api/sidecars` 注册可供已配对设备和已认证的局域网直连客户端使用。持有有效能力令牌时，活动预览内容（`/previews/`）可通过局域网直接访问；[远程控制](remote-control.md#remote-surface)网页预览在启用时仍可通过其能力令牌访问。直接访问的要求请参阅[升级](remote-access.md#upgrading)。
 
 ## OpenVSCode Server 示例 {#openvscode}
 
