@@ -76,9 +76,12 @@ test("registry admits two real relayed backends and revalidates before reconnect
   origins.add(origin)
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
+  const abortWaits: Promise<unknown>[] = [], releases: Array<() => void> = []
   t.after(async () => {
     hold?.()
+    for (const release of releases) release()
     await browser.close()
+    await Promise.allSettled(abortWaits)
     manager.close()
     await server.close()
     app.server.closeAllConnections()
@@ -86,27 +89,89 @@ test("registry admits two real relayed backends and revalidates before reconnect
     await Promise.all([a.close(), b.close()])
     fs.rmSync(directory, { recursive: true, force: true })
   })
-  const page = await browser.newPage(), errors: string[] = [], failed: string[] = [], streamAborts: string[] = []
+  const errors: string[] = [], failed: string[] = [], streamAborts: string[] = []
   const expectedAborts = new Set<string>()
-  page.on("pageerror", error => errors.push(error.message))
-  page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
-  page.on("requestfailed", request => {
-    const match = /^\/api\/backends\/([ab])\/api\/events$/.exec(new URL(request.url()).pathname)
-    if (match && expectedAborts.delete(match[1]) && request.method() === "GET"
-      && request.resourceType() === "eventsource" && request.failure()?.errorText === "net::ERR_ABORTED") streamAborts.push(match[1])
-    else failed.push(request.url())
-  })
-  await page.goto(`${origin}/fixture`)
+  async function initializedPage(locale?: "de") {
+    const page = await browser.newPage({ locale: "fr-FR" })
+    page.on("pageerror", error => errors.push(error.message))
+    page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
+    page.on("requestfailed", request => {
+      const match = /^\/api\/backends\/([ab])\/api\/events$/.exec(new URL(request.url()).pathname)
+      if (match && expectedAborts.delete(match[1]) && request.method() === "GET"
+        && request.resourceType() === "eventsource" && request.failure()?.errorText === "net::ERR_ABORTED") streamAborts.push(match[1])
+      else failed.push(request.url())
+    })
+    let releasePrefs!: () => void, releaseMessages!: () => void
+    let prefsHeld!: () => void, messagesHeld!: () => void
+    const prefsGate = new Promise<void>(resolve => { releasePrefs = resolve })
+    const messagesGate = new Promise<void>(resolve => { releaseMessages = resolve })
+    const prefsRequest = new Promise<void>(resolve => { prefsHeld = resolve })
+    const messagesRequest = new Promise<void>(resolve => { messagesHeld = resolve })
+    releases.push(releasePrefs, releaseMessages)
+    await page.addInitScript(() => {
+      const observer = new MutationObserver(() => {
+        const tab = document.querySelector("[role=tab]")
+        if (tab && !(window as any).firstRegistryTab) (window as any).firstRegistryTab = tab.outerHTML
+      })
+      observer.observe(document, { subtree: true, childList: true })
+    })
+    await page.route("**/api/storage/config/ui", async route => {
+      assert.equal(route.request().method(), "GET")
+      prefsHeld(); await prefsGate
+      await route.fulfill({ json: locale ? { settings: { locale } } : {} })
+    })
+    await page.route(new RegExp(`/src/lib/i18n/messages/${locale ?? "fr"}(?:/index\\.ts)?(?:\\?.*)?$`), async route => {
+      messagesHeld(); await messagesGate
+      await route.continue()
+    })
+    await page.goto(`${origin}/fixture`)
+    async function assertUnrendered() {
+      assert.deepEqual(await page.evaluate(() => ({
+        ready: Boolean((window as any).registryFixture), first: (window as any).firstRegistryTab ?? null,
+        root: document.getElementById("root")!.innerHTML,
+      })), { ready: false, first: null, root: "" })
+    }
+    await prefsRequest; await assertUnrendered(); releasePrefs()
+    await messagesRequest; await assertUnrendered(); releaseMessages()
+    await page.waitForFunction(() => (window as any).registryFixture)
+    const label = locale === "de" ? "Instanz schließen" : "Fermer l'instance"
+    assert.equal(await page.locator(".tab-close").getAttribute("aria-label"), label)
+    assert.match(await page.evaluate(() => (window as any).firstRegistryTab), new RegExp(label))
+    return page
+  }
+  const page = await initializedPage()
+  const aborted = (id: "a" | "b") => {
+    const pending = page.waitForEvent("requestfailed", request => new URL(request.url()).pathname === `/api/backends/${id}/api/events`
+      && request.method() === "GET" && request.resourceType() === "eventsource" && request.failure()?.errorText === "net::ERR_ABORTED")
+    abortWaits.push(pending)
+    void pending.catch(() => {})
+    return pending
+  }
   await page.waitForFunction(() => (window as any).registryFixture)
   const tab = page.getByRole("tab"), before = await tab.evaluate(el => el.outerHTML)
-  await page.evaluate(async () => {
+  let releaseLocalMeta!: () => void, localMetaHeld!: () => void
+  const localMetaGate = new Promise<void>(resolve => { releaseLocalMeta = resolve })
+  const localMetaRequest = new Promise<void>(resolve => { localMetaHeld = resolve })
+  releases.push(releaseLocalMeta)
+  await page.route("**/api/meta", async route => {
+    localMetaHeld(); await localMetaGate
+    await route.continue()
+  })
+  const localReads = page.evaluate(async () => {
     await (window as any).registryFixture.localRead()
     await Promise.all(["a", "b"].map(id => (window as any).registryFixture.ensure(id)))
     await (window as any).registryFixture.localRead()
   })
+  await localMetaRequest
+  assert.equal(await tab.evaluate(el => el.outerHTML), before)
+  releaseLocalMeta(); await localReads
   assert.equal(a.state.requests.length + b.state.requests.length, 0)
   assert.deepEqual(local.filter(p => p === "GET /api/meta"), ["GET /api/meta", "GET /api/meta"])
   assert.equal(await tab.evaluate(el => el.outerHTML), before)
+  const german = await initializedPage("de")
+  assert.equal(local.some(route => /^(POST|PUT|PATCH|DELETE) \/api\/storage\//.test(route)), false)
+  await german.evaluate(() => (window as any).registryFixture.dispose())
+  await german.close()
   await page.evaluate(async () => {
     for (const id of ["a", "b"]) {
       const response = await fetch(`/api/backends/${id}/api/auth/login`, { method: "POST",
@@ -124,6 +189,7 @@ test("registry admits two real relayed backends and revalidates before reconnect
   assert.deepEqual((await page.evaluate(() => (window as any).registryFixture.snapshot())).frames.sort(), ["a~same", "b~same"])
   incompatible = true
   expectedAborts.add("b")
+  const bAborted = aborted("b")
   const meta = page.waitForRequest(request => new URL(request.url()).pathname === "/api/backends/b/api/meta")
   await page.evaluate(() => (window as any).registryFixture.restart("b"))
   await meta
@@ -135,8 +201,10 @@ test("registry admits two real relayed backends and revalidates before reconnect
   assert.deepEqual(state.ids.sort(), ["a", "local"])
   assert.equal(state.opens.length, 2)
   expectedAborts.add("a")
+  const aAborted = aborted("a")
   await page.evaluate(() => (window as any).registryFixture.dispose())
   await allStreamsClosed
+  await Promise.all([bAborted, aAborted])
   assert.deepEqual(closed.sort(), ["a", "b"])
   assert.deepEqual(errors, [])
   assert.deepEqual(failed, [])
