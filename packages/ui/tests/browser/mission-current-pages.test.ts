@@ -184,6 +184,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
 for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page back aborts its held continuation without a false error after real 31 seconds`, { timeout: 90_000 }, async t => {
   const f = await currentPassageFixture(owner), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   let release!: () => void, entered!: () => void, heldID: string | undefined, heldOffset: number | undefined
+  let heldEnvelope: unknown
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
   const errors: string[] = [], failures: Array<{ id?: string; url: string; error?: string }> = []
   let marksEntered!: () => void, releaseMarks!: () => void, heldMarks: string | undefined
@@ -231,6 +232,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
         const input = request.postDataJSON()
         assert.deepEqual(input.source, source)
         if (!heldID && input.body?.kind === "task" && input.body.field === "brief" && input.body.offset > 0) {
+          heldEnvelope = await f.page(input)
           heldID = request.headers()["x-body-read"]; heldOffset = input.body.offset; entered(); await gate
           if (failures.some(failure => failure.id === heldID)) return
         }
@@ -294,11 +296,27 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
         }
       }
     }
-    await number.fill("2"); await number.press("Enter"); await section.getByText("SECOND_PAGE_MARKER", { exact: true }).waitFor()
+    const resumedResponse = page.waitForResponse(response => response.request().method() === "POST"
+      && /\/current\/[^/]+\/page$/.test(new URL(response.url()).pathname)
+      && response.request().headers()["x-body-read"] !== heldID
+      && response.request().postDataJSON().body?.offset === heldOffset)
+    void resumedResponse.catch(() => {})
+    await number.fill("2"); await number.press("Enter")
+    const response = await resumedResponse
+    assert.equal(response.status(), 200); assert.equal(await response.finished(), null)
+    assert.deepEqual(await response.json(), heldEnvelope, "the real resumed HTTP envelope equals the original held transfer")
+    await section.getByText("SECOND_PAGE_MARKER", { exact: true }).waitFor()
     const extended = await page.evaluate(id => (window as any).__bodyReads.filter((read: any) => read.id !== id && read.body.body?.offset > 0), heldID)
     assert.ok(extended.some((read: any) => read.body.body.offset === heldOffset && read.abortedAtDispatch === false && read.at >= contractedAt + 30_000))
     const resumed = extended.find((read: any) => read.body.body.offset === heldOffset && read.at >= contractedAt + 30_000)
+    assert.equal(resumed.id, response.request().headers()["x-body-read"])
+    assert.notEqual(resumed.id, heldID); assert.equal(resumed.abortedAtDispatch, false)
     assert.deepEqual(resumed.body, immediately.body, "fresh resume preserves the exact source, body digest, cursor and own offset")
+    release()
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await number.inputValue(), "2")
+    assert.equal(await section.getByText("FIRST_PAGE_MARKER", { exact: true }).count(), 0)
+    await section.getByText("SECOND_PAGE_MARKER", { exact: true }).waitFor()
     assert.equal(await section.getByRole("button", { name: "Try again", exact: true }).count(), 0); assert.deepEqual(errors, [])
   } finally { marksEntered(); releaseMarks(); release(); await page.context().close(); await f.dispose() }
 })
