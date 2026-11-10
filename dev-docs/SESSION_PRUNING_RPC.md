@@ -291,6 +291,12 @@ the assertions finish. The separate native test creates its own DB/config/home,
 starts `serve --port 0` directly (never service discovery), supplies a local provider,
 and terminates only its own child. It retains its synthetic fixture/logs for inspection.
 An optional third argument tests an independently installed plugin package directory.
+The pruning driver awaits the exact `codenomad-session-pruning` active catalogue
+entry in each captured Location, with that client's location options and a 60-second
+abort deadline, before its first useful RPC and after daemon restart. The shared
+`scripts/native-pruning-ready.mjs` keeps missing/failed activation diagnostics and
+the driver's bounded polling checks. Presence withdrawal/reopening has its own
+explicit lifecycle assertions in the bundled run.
 
 ## Agent conventions
 

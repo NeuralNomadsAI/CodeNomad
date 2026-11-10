@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 
-export async function testSessionNavigationNative({ client, location, locationOptions, template }) {
+export async function testSessionNavigationNative({ client, location, locationOptions, template, ready }) {
+  await ready({ client, location, locationOptions })
   const seed = await client.session.create({ title: "Isolated long navigation fixture", location }, locationOptions)
   const exported = await client.session.export({ sessionID: seed.id })
   await client.session.remove({ sessionID: seed.id })
