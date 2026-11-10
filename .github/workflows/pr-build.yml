@@ -116,6 +116,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npm run build:pruning --workspace @neuralnomads/codenomad
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-pruning-location-ready-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/run-session-pruning-native.mjs $cli --ui
@@ -206,6 +208,8 @@ jobs:
           node scripts/test-design-activation-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-pruning-location-ready-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-archive-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -387,7 +391,7 @@ jobs:
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs .github/scripts/download-cache.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs scripts/native-pruning-ready.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs .github/scripts/download-cache.test.cjs
 
       - name: Test Electron client state
         env:

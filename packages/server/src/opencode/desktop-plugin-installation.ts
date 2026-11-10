@@ -153,15 +153,18 @@ export async function installDesktopPluginPresence(
   // follower in the daemon process has observed this lease while registered.
   // Bounded: an older plugin without markers only delays the first RPC.
   const readyMarker = `${lease}${PRESENCE_READY_SUFFIX}`
+  const readyStop = new AbortController()
   const ready = (async () => {
     for (const deadline = Date.now() + PRESENCE_READY_WAIT_MS; !disposed && Date.now() < deadline;) {
       if (await stat(readyMarker).then(() => true, () => false)) return true
-      await delay(PRESENCE_READY_POLL_MS, undefined, { ref: false })
+      await delay(PRESENCE_READY_POLL_MS, undefined, { ref: false, signal: readyStop.signal })
+        .catch(error => { if (!readyStop.signal.aborted) throw error })
     }
     return false
   })()
   return Object.assign(async () => {
     disposed = true
+    readyStop.abort()
     clearInterval(timer)
     await readiness.close()
     await ready

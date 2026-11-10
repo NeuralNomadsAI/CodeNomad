@@ -279,6 +279,7 @@ node --import tsx --test packages/server/src/server/routes/images-conversation.t
 node --import tsx --test tests/browser/images-conversation.test.ts  # from packages/ui
 node --import tsx --conditions=browser --test --test-force-exit packages/ui/src/stores/session-actions.test.ts packages/ui/src/stores/session-pruning-events.test.ts packages/ui/src/stores/session-pruning-projection.test.ts packages/ui/src/stores/opencode-data.test.ts
 node scripts/test-session-pruning-native.mjs C:/isolated-install/opencode2.exe
+node --import tsx scripts/test-pruning-location-ready-native.mjs C:/isolated-install/opencode2.exe
 node scripts/test-design-companion-native.mjs C:/isolated-install/opencode2.exe  # gallery end to end, scripted chat and image models
 node scripts/test-design-companion-native.mjs C:/isolated-install/opencode2.exe --ui C:/abs/neuralnomads.design-1.0.0.zip  # plus the Design panel, composer and transcript
 npm run typecheck --workspace @neuralnomads/codenomad

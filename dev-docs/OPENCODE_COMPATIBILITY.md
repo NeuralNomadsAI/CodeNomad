@@ -80,9 +80,12 @@ Location on every write. The instance proxy refuses plugin RPCs, so
 `GET /api/workspaces/:id/sessions/:sessionId/goal` (`server/routes/session-goal.ts`)
 is the read path: it reads the Session, checks its Location's ownership, calls the
 fixed method in that Location and returns only the displayed fields
-(`opencode/goal-contract.ts`). An `RpcError` of type `rpc.unavailable` or
-`rpc.method_not_found` answers `unsupported`; any other failure or unreadable state
-answers `unavailable`, and the line shows nothing for either. Pause, Resume and
+(`opencode/goal-contract.ts`). The captured connection's exact authorized Location
+awaits native `opencode.goal` activation through `plugin-activation.ts`, within the
+request deadline, then revalidates session placement before its single RPC. A native
+`rpc.method_not_found` answers `unsupported`; activation failure, registration loss,
+other failures or unreadable state answer `unavailable`. The line shows nothing for
+either. Pause, Resume and
 Clear run the native `goal` command with `pause`, `resume` or `clear` through the
 composer's command path (`executeCustomCommand`: session admission, instructions,
 profile environment at the proxy); a refused command (`No active goal to pause.`)

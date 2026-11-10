@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises"
 import { installDesktopPluginPresence, type DesktopPluginFeature, type DesktopPluginPaths } from "./desktop-plugin-installation"
 import type { ServiceConnection } from "../workspaces/opencode-service"
-import { setTimeout as delay } from "node:timers/promises"
 import { isReadinessDirectory, READINESS_WAIT_MS } from "./desktop-plugin-readiness"
+import { awaitNativePlugin } from "./plugin-activation"
 
 export interface DesktopPluginReadinessTarget {
   connection: ServiceConnection
@@ -148,21 +148,7 @@ export class DesktopPluginLifecycle {
       if (!installation || installation.closing || this.feature !== "session-pruning") throw new Error("Pruning presence unavailable for captured connection")
       const presence = await abortable(installation.pending, signal)
       check()
-      while (true) {
-        check()
-        // This call owns its transport. Cancellation must settle that transport
-        // before returning; only the shared installation uses an early waiter.
-        let catalogue
-        try { catalogue = await connection.client.plugin.list({ location }, { signal }) }
-        catch (error) { check(); throw error }
-        check()
-        if (catalogue.location.directory !== location.directory) throw new Error("Pruning catalogue Location changed")
-        const plugin = catalogue.data.find(plugin => plugin.id === "codenomad-session-pruning")
-        if (plugin?.state.status === "active") break
-        if (plugin?.state.status === "failed") throw new Error("Pruning plugin unavailable")
-        await delay(100, undefined, { signal })
-        check()
-      }
+      await awaitNativePlugin(connection.client, "codenomad-session-pruning", location, signal, check)
       check()
       await presence.prepare(location.directory, signal, check, deadlineAt)
       check()

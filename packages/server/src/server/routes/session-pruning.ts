@@ -34,7 +34,7 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: History
         const session = await client.session.get({ sessionID: input.data.sessionID }, { signal })
         current()
         const location = readLocationRef(session.location)
-        if (!await manager.ownsLocation(id, location, client, signal)) return reply.code(403).send({ error: "Session does not belong to workspace" })
+        if (!await manager.ownsLocation(id, location, client, { signal })) return reply.code(403).send({ error: "Session does not belong to workspace" })
         current()
         fences.push(deps.worktreeDeletionFence.captureDisplay([location.directory]))
         const identity = await manager.getWorktreeIdentityForPath(id, location.directory)
@@ -49,7 +49,7 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: History
           current()
           const latest = await client.session.get({ sessionID: input.data.sessionID }, { signal })
           current()
-          if (!sameLocation(location, readLocationRef(latest.location)) || !await manager.ownsLocation(id, latest.location, client, signal)) throw new Error("Session moved")
+          if (!sameLocation(location, readLocationRef(latest.location)) || !await manager.ownsLocation(id, latest.location, client, { signal })) throw new Error("Session moved")
           current()
           return latest
         }

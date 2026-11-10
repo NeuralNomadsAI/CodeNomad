@@ -44,7 +44,7 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
       current()
       const session = input.sessionID ? await client.session.get({ sessionID: input.sessionID }, { signal }) : undefined
       current()
-      if (session && !await manager.ownsLocation(request.params.id, session.location, client, signal)) return reply.code(403).send({ error: "Session does not belong to workspace" })
+      if (session && !await manager.ownsLocation(request.params.id, session.location, client, { signal })) return reply.code(403).send({ error: "Session does not belong to workspace" })
       current()
     // Only native/validated local worktrees supply query locations. A cursor
     // selects from this freshly authorized inventory; it never grants authority.
@@ -60,14 +60,14 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
       const directory = directories[index]
       if (!directory) return reply.code(404).send({ error: "History location not found" })
       current()
-      if (!await manager.ownsLocation(request.params.id, { directory }, client, signal)) return reply.code(403).send({ error: "History location does not belong to workspace" })
+      if (!await manager.ownsLocation(request.params.id, { directory }, client, { signal })) return reply.code(403).send({ error: "History location does not belong to workspace" })
       current()
       fences.push((await captureDisplayIdentities(deps.worktreeDeletionFence, manager, request.params.id, [directory]))!)
       current()
       const location = session ? readLocationRef(session.location) : directory === root.directory ? root
         : readLocationRef(await client.location.get({ location: { directory } }, { signal }))
       current()
-      if (location.directory !== directory || !await manager.ownsLocation(request.params.id, location, client, signal)) {
+      if (location.directory !== directory || !await manager.ownsLocation(request.params.id, location, client, { signal })) {
         return reply.code(403).send({ error: "History location does not belong to workspace" })
       }
       current()
@@ -78,7 +78,7 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
           current()
           if (!sameLocation(location, readLocationRef(latest.location))) throw new Error("Session moved")
         }
-        if (!await manager.ownsLocation(request.params.id, location, client, signal)) throw new Error("History ownership changed")
+        if (!await manager.ownsLocation(request.params.id, location, client, { signal })) throw new Error("History ownership changed")
         current()
       }
       await manager.desktopPluginsReady({ connection, location: { directory }, signal, deadlineAt, assertCurrent: current })
@@ -135,7 +135,7 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
       current()
       const session = await client.session.get({ sessionID: input.sessionID }, { signal })
       current()
-      if (!await manager.ownsLocation(id, session.location, client, signal)) return reply.code(403).send({ error: "Session does not belong to workspace" })
+      if (!await manager.ownsLocation(id, session.location, client, { signal })) return reply.code(403).send({ error: "Session does not belong to workspace" })
       current()
       const location = readLocationRef(session.location)
       fences.push(deps.worktreeDeletionFence.captureDisplay([location.directory]))
@@ -149,7 +149,7 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
         current()
         const latest = await client.session.get({ sessionID: input.sessionID }, { signal })
         current()
-        if (!sameLocation(location, readLocationRef(latest.location)) || !await manager.ownsLocation(id, latest.location, client, signal)) throw new Error("Session moved")
+        if (!sameLocation(location, readLocationRef(latest.location)) || !await manager.ownsLocation(id, latest.location, client, { signal })) throw new Error("Session moved")
         current()
         return latest
       }

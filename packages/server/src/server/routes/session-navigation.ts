@@ -41,7 +41,7 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Hist
         const session = await client.session.get({ sessionID: parsed.data.sessionID }, { signal })
         current()
         const location = readLocationRef(session.location)
-        if (!await manager.ownsLocation(id, location, client, signal)) return reply.code(403).send({ error: "Session does not belong to workspace" })
+        if (!await manager.ownsLocation(id, location, client, { signal })) return reply.code(403).send({ error: "Session does not belong to workspace" })
         current()
         fences.push((await captureDisplayIdentities(deps.worktreeDeletionFence, manager, id, [location.directory]))!)
         current()
@@ -50,7 +50,7 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Hist
           const latest = await client.session.get({ sessionID: parsed.data.sessionID }, { signal })
           current()
           if (!sameLocation(location, readLocationRef(latest.location)) || latest.projectID !== session.projectID
-            || JSON.stringify(latest.revert) !== JSON.stringify(session.revert) || !await manager.ownsLocation(id, latest.location, client, signal)) throw new NavigationConflict("Session changed")
+            || JSON.stringify(latest.revert) !== JSON.stringify(session.revert) || !await manager.ownsLocation(id, latest.location, client, { signal })) throw new NavigationConflict("Session changed")
           current()
         }
         await manager.desktopPluginsReady({ connection, location: { directory: location.directory }, signal, deadlineAt, assertCurrent: current })
