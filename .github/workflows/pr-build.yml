@@ -364,6 +364,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test dependency glob compatibility and cancellation
+        run: node --test scripts/test-runtime-globs.cjs
+
       - name: Restore the Electron download
         if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
         uses: ./.github/actions/download-cache

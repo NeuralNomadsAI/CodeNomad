@@ -35,6 +35,40 @@
   "devDependencies": {
     "baseline-browser-mapping": "^2.11.35"
   },
+  "overrides": {
+    "@opencode/util": {
+      "glob": "14.0.4",
+      "minimatch": "11.0.6"
+    },
+    "@npmcli/arborist": {
+      "minimatch": "11.0.6"
+    },
+    "@npmcli/map-workspaces": {
+      "glob": "14.0.4",
+      "minimatch": "11.0.6"
+    },
+    "@npmcli/package-json": {
+      "glob": "14.0.4"
+    },
+    "cacache": {
+      "glob": "14.0.4"
+    },
+    "@tufjs/models": {
+      "minimatch": "11.0.6"
+    },
+    "ignore-walk": {
+      "minimatch": "11.0.6"
+    },
+    "config-file-ts": {
+      "glob": "14.0.4"
+    },
+    "rimraf": {
+      "glob": "14.0.4"
+    },
+    "workbox-build": {
+      "glob": "14.0.4"
+    }
+  },
   "optionalDependencies": {
     "@rollup/rollup-darwin-arm64": "4.68.1",
     "@rollup/rollup-darwin-x64": "4.68.1",
