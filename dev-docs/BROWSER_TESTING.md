@@ -71,6 +71,9 @@ Native product fixtures (`scripts/test-*-native.mjs`) run an isolated OpenCode d
 an allowlisted environment (`fixtureEnvironment`) that every fixture-owned child also receives, and a loopback
 synthetic provider.
 
+Plugin-dependent native checks await the named plugin's active state in each newly
+admitted Location before their first RPC, and surface failed setup immediately.
+
 - Package installs go to a loopback fake npm registry, `scripts/fixtures/fake-npm-registry.mjs`, passed as the
   `registry` option (`npm_config_registry`); it serves what a test publishes and answers 404 for every other name.
 - The fake OpenCode integration, `scripts/fixtures/fake-integration/`, is an installable plugin package with the
