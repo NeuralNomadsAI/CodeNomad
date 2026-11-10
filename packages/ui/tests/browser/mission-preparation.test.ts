@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { openMissionProfiles } from "./mission-actions"
 import { before, after, test } from "node:test"
 import path from "node:path"
 import { mkdir } from "node:fs/promises"
@@ -83,16 +84,14 @@ async function edit(page: Page) {
   const form = page.locator("form.mission-editor")
   assert.equal(await form.getByLabel("Title", { exact: true }).isDisabled(), false)
   await form.getByLabel("Title", { exact: true }).fill("Browser edited preparation")
-  await form.locator("summary").filter({ hasText: /^Options$/ }).click()
   assert.equal(await form.getByLabel("Playbook", { exact: true }).isDisabled(), false)
   await form.getByLabel("Playbook", { exact: true }).selectOption("delivery")
   await form.locator(".mission-delegation select").selectOption("independent")
-  await form.locator("summary").filter({ hasText: /^Agents and models$/ }).click()
+  await openMissionProfiles(page)
   const agent = form.getByLabel("Coordinator · Agent", { exact: true })
   await agent.locator('option[value="coordinator"]').waitFor({ state: "attached" }); await agent.selectOption("coordinator")
   await form.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))
   await form.getByLabel("Coordinator · Thinking", { exact: true }).selectOption("precise")
-  await form.locator(".mission-scheduling > summary").click()
   assert.equal(await form.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true,
     await form.locator(".mission-scheduling").innerText())
   assert.doesNotMatch(await form.locator(".mission-scheduling").innerText(), /journal-owned launch/)
@@ -158,13 +157,11 @@ test("real owner: positive partial preparation enables only an explicit original
 
 async function convert(page: Page, target: "hourly" | "once") {
   const form = page.locator("form.mission-editor")
-  await form.locator(".mission-scheduling > summary").click()
   if (target === "once") {
     // A stored interval stays retained until an explicit replacement; criteria rows are removable.
     const replace = form.getByRole("button", { name: "Replace with a new scheduling policy", exact: true })
     await (await replace.count() ? replace : form.getByRole("button", { name: "Remove criterion 1", exact: true })).click()
   } else {
-    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("hours")
     await form.getByLabel("Criterion 1 hours", { exact: true }).selectOption("1")
   }
@@ -238,7 +235,7 @@ test("real conversion conflict preserves its unsent draft and reloads only by ex
     assert.equal(f.writes.length, 0); assert.equal((await f.read()).dormantJournal, null)
     await reload.click()
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
-    assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Concurrent authoritative text")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Concurrent authoritative text")
     assert.equal(calendar.calls.length, 0); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

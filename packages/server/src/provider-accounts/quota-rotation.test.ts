@@ -12,6 +12,7 @@ import { createSelectionAdapters } from "./adapters"
 import { quotaMarkTtl } from "./quota-marks"
 import { observeProviderQuotaFailures, quotaFailure } from "./quota-observer"
 import { definiteRejection, ProviderAccountsService } from "./service"
+import { createOpenCodeFreeExhaustion } from "../usage/opencode-free-exhaustion"
 
 const usage = (used: number): ProviderUsage => ({ windows: { "5h": { usedPercent: used, remainingPercent: 100 - used, windowSeconds: 18_000, resetAt: Date.now() + 3_600_000 } } })
 const goKey = (id: string, active = false): CredentialEntry => ({ id, integrationID: "opencode-go", label: id, active, value: { type: "key", key: `secret-${id}` } })
@@ -67,13 +68,14 @@ async function goFixture(options: { integrationID?: string; providerID?: string;
     },
   }), 50)
   const bus = new EventBus()
-  const stop = observeProviderQuotaFailures(bus, service)
+  const exhaustion = createOpenCodeFreeExhaustion()
+  const stop = observeProviderQuotaFailures(bus, service, exhaustion.observe)
   const emit = (event: Record<string, unknown>) => {
     nativeEventConnections.set(event, connection)
     bus.publish({ type: "instance.event", instanceId: "w", event } as never)
   }
   const activations = () => state.calls.filter(call => call.endsWith("/activate")).length
-  return { state, service, connection, emit, activations, integrationID,
+  return { state, service, connection, emit, activations, integrationID, exhaustion,
     send: () => service.beforeSend(connection, "ses_go", AbortSignal.timeout(3000), async directory => directory === "/project"),
     mark: (failedAt = Date.now(), limitName = "5 hour", watermark?: number) => service.markQuotaFailure(connection,
       { sessionID: "ses_go", failedAt, limitName, ...(watermark === undefined ? {} : { watermark }) }, AbortSignal.timeout(3000)),
@@ -97,6 +99,33 @@ test("Go rotates from an exhausted account to an unknown-but-unmarked candidate"
     assert.deepEqual(f.state.order, ["three", "one", "two"])
     assert.equal(f.activations(), 1)
     assert.deepEqual(f.state.reads, ["one", "two", "three"])
+  } finally { await f.close() }
+})
+
+test("free display marks with auto selection disabled and no credentials, without marking or activating accounts", async () => {
+  const f = await goFixture({ integrationID: "opencode", providerID: "opencode", entries: [] })
+  try {
+    const now = Date.now()
+    // Reused event IDs and two close failures exercise the independent free path
+    // before the rotation observer's global/event and per-session time dedupe.
+    f.emit({ id: "same", type: "session.step.started", created: now - 2, data: {
+      sessionID: "ses_go", assistantMessageID: "paid", model: { providerID: "opencode", id: "paid" } } })
+    f.emit({ id: "paid-failure", type: "session.step.failed", created: now - 1, data: {
+      sessionID: "ses_go", assistantMessageID: "paid", error: { type: "provider.quota" } } })
+    f.emit({ id: "same", type: "session.step.started", created: now - 1, data: {
+      sessionID: "ses_go", assistantMessageID: "free", model: { providerID: "opencode", id: "big-pickle" } } })
+    f.emit({ id: "same", type: "session.step.failed", created: now, data: {
+      sessionID: "ses_go", assistantMessageID: "free", error: { type: "provider.quota" } } })
+    assert.equal(f.exhaustion.exhausted(f.connection), true)
+    assert.equal(await f.mark(), false, "disabled policy cannot mark accounts")
+    await f.send()
+    assert.ok(f.state.calls.every(call => call.startsWith("GET /api/session/") || call.startsWith("GET /api/provider/")),
+      "ordinary rotation attribution may read the provider, but never credentials")
+    f.service.setEnabled(true, "opencode")
+    assert.equal(await f.mark(), false, "free opencode provider has no selection adapter")
+    await f.send()
+    assert.equal(f.activations(), 0)
+    assert.deepEqual(f.state.reads, [])
   } finally { await f.close() }
 })
 
@@ -189,7 +218,7 @@ test("Console sign-in rotates only the Go provider", async () => {
     f.service.setEnabled(true, "opencode")
     f.state.quota.one = usage(100)
     await f.send()
-    assert.equal(f.activations(), 0, "Zen pay-as-you-go is not a quota subscription")
+    assert.equal(f.activations(), 0, "Console pay-as-you-go is not a quota subscription")
     f.state.provider = "opencode-go"
     await f.send()
     assert.equal(f.state.order[0], "two")
@@ -219,10 +248,10 @@ test("definite client errors rule candidates out; transport, rate-limit and 5xx 
   try {
     f.service.setEnabled(true, "opencode-go")
     f.state.quota.one = usage(100)
-    // e.g. a Zen key without Go (402), a missing endpoint (404) or a malformed request (400).
+    // e.g. a Console key without Go (402), a missing endpoint (404) or a malformed request (400).
     Object.assign(f.state.quota, { two: 402, three: 404, four: 400 })
     await f.send()
-    assert.equal(f.activations(), 0, "never switch to a rejected account (or its Zen billing)")
+    assert.equal(f.activations(), 0, "never switch to a rejected account (or its Console billing)")
     for (const status of [408, 429, 503]) {
       f.state.quota.four = status
       f.state.order = ["one", "two", "three", "four"]

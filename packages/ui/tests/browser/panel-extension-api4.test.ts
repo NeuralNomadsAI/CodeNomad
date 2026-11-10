@@ -53,11 +53,13 @@ before(async () => {
       throw new Error(method)
     } },
   }
-  registerPanelExtensionRoutes(app, { store, workspaceManager: { get: id => id === instanceId ? { id, path: "/fixture" } as any : undefined } })
+  const workspace = { id: instanceId, path: "/fixture" }, location = { directory: "/fixture" }
+  registerPanelExtensionRoutes(app, { store, workspaceManager: { get: id => id === instanceId ? workspace as any : undefined } })
   registerPanelExtensionApi4Routes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(), excludeDesignFolder: async () => "excluded",
     imageSettings: { read: async () => ({ location: { directory: "/fixture" }, mediaStorage: null, generation: { global: false, effective: false, models: [] } }) },
-    workspaceManager: { get: (id: string) => id === instanceId ? { id, path: "/fixture" } as any : undefined,
-      getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any, getSharedServiceClient: async () => client,
+    workspaceManager: { get: (id: string) => id === instanceId ? workspace as any : undefined,
+       getServiceLocation: () => location,
+       getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any,
       ownsLocation: async (id: string, location: { directory: string }) => id === instanceId && location.directory === "/fixture",
       desktopPluginsReady: async () => {}, getWorktreeIdentityForPath: async () => "/fixture", getServiceWslDistro: () => undefined,
       getHostPathForServicePath: async (_id: string, value: string) => value } })

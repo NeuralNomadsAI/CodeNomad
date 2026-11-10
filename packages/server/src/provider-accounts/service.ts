@@ -253,7 +253,8 @@ export function definiteRejection(status: number) {
 
 // Past reset snapshots and empty/non-numeric usage are not availability evidence.
 export function quotaState(usage: ProviderUsage, now = Date.now()): "unknown" | "available" | "exhausted" {
-  const windows = Object.values(usage.windows).filter(window => window.windowSeconds !== null && window.windowSeconds > 0)
+  const windows = Object.entries(usage.windows).filter(([label, window]) =>
+    (window.windowSeconds !== null && window.windowSeconds > 0) || label === "monthly" || label === "monthly-code").map(([, window]) => window)
   if (!windows.length || windows.some(window => window.usedPercent === null || !Number.isFinite(window.usedPercent)
     || (window.resetAt !== null && window.resetAt <= now))) return "unknown"
   return windows.some(window => window.usedPercent! >= 100) ? "exhausted" : "available"

@@ -46,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projects, conversations, files and history | Backend's folders and native sessions | Connected server's folders and sessions | Host's authorized workspace surfaces |
 | Native Preferences and desktop windows | Available | Browser/remote settings stay in the client | Host-only desktop controls unavailable |
-| Session browser preview | Native in Electron and Windows Tauri; iframe on other Tauri platforms | Iframe where available | Iframe while the host allows web previews (the default) |
+| Session browser preview | Native in Electron and Tauri on Windows, macOS and Linux | Iframe where available | Iframe while the host allows web previews (the default) |
 | Native desktop/browser automation | Owned local windows/previews | Not a substitute for native desktop automation | Host-only automation endpoints unavailable |
 | Authentication | Local bootstrap or password session | Server password session | Paired-device credential |
 | PWA installation | Use the native app or a browser | Browser-dependent; secure context required | Browser-dependent; pairing still required |
@@ -89,8 +89,8 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 The Status panel exposes the active session's provider usage and native background Shells. Conversation status and child activity identify working, compacting and input-waiting sessions. Monitoring a background Shell is distinct from sending a composer Shell request or using a separately hosted terminal SideCar.
 
 1. Open **Status → Background Shells** for the selected conversation's Location (or the open workspace when no conversation is selected).
-2. Inspect command, shell, directory, status, PID and exit code where provided; choose **View output** for the available native output.
-3. To dispose of one, use **Stop and remove** while running, or **Remove** after exit, and confirm the target.
+2. Only running commands explicitly moved to the background are listed, one per row. Hover a row for the shell, directory and PID; use its **View output** icon for the native output. An OpenCode runtime without the background-job inventory API reports a loading error.
+3. Use the row’s **Stop and remove** icon and confirm the target.
 
 Removing a running Shell stops that process; closing its output window does not. Refresh/reconnect reads current native state rather than reconstructing missed output events.
 

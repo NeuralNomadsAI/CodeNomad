@@ -173,7 +173,7 @@ test("every locale names the row, puts its one-sentence tip behind the info icon
       await page.getByRole("switch", { name: messages["settings.loginStart.title"], exact: true }).waitFor()
       await page.waitForFunction(() => !(document.querySelector("#opencode-login-start input[role=switch]") as HTMLInputElement)?.disabled)
       assert.equal(await visibleText(page), messages["settings.loginStart.title"])
-      await row(page).getByRole("img", { name: messages["settings.loginStart.info"], exact: true }).waitFor()
+      await row(page).getByRole("link", { name: messages["settings.loginStart.info"], exact: true }).waitFor()
       if (locale === "fr") {
         await capture(page, "fr-off")
         await page.getByRole("switch").click()

@@ -32,7 +32,7 @@ type Options = { location: { directory: string }; signal?: AbortSignal; headers?
 const id = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
 const directory = z.string().min(1).max(4096).refine(value => !value.includes("\0"))
 const params = z.object({ id: z.string().min(1).max(200), missionID: id.optional(), requestID: id.optional() }).strict()
-const userConfiguration = missionConfigurationSchema.innerType().omit({ roots: true, profileID: true, executionHost: true })
+const userConfiguration = z.object(missionConfigurationSchema.shape).strict().omit({ roots: true, profileID: true, executionHost: true })
 const body = z.object({ requestID: id, expectedRevision: z.number().int().nonnegative().safe(), action: z.enum(missionScheduleActions),
   configuration: userConfiguration.optional(), deleteManagedSessions: z.boolean().optional(), retry: z.boolean().optional(), directory: directory.optional(),
 }).strict().refine(value => ["create", "configure"].includes(value.action) === !!value.configuration
@@ -166,7 +166,7 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
               },
               refresh: async () => {
                 check(owned)
-                if (!await manager.ownsLocation(selected.data.id, location, client, lifetime.signal)) throw new Error("Mission schedule Location changed")
+                if (!await manager.ownsLocation(selected.data.id, location, client, { signal: lifetime.signal })) throw new Error("Mission schedule Location changed")
                 const owner = await readRecurrenceHoldOwner(manager, selected.data.id, workspace, location.directory, client, lifetime.signal)
                 check(owned)
                 if (!owner) throw new Error("Mission schedule physical owner unavailable")

@@ -1,4 +1,5 @@
-import { createEffect, createSignal, createUniqueId, For, Show, on, onCleanup } from "solid-js"
+import { createEffect, createMemo, createSignal, createUniqueId, For, Show, on, onCleanup } from "solid-js"
+import { Bookmark } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { MAX_MISSION_MODELS, parseMissionModel, type UserMissionModel } from "../lib/mission-model-library"
 import { useConfig, preferencesOf } from "../stores/preferences"
@@ -9,6 +10,7 @@ import { parseInstanceKey } from "../lib/backend-identity"
 import { backendEvents } from "../lib/backend-events"
 import ActionOverflowMenu from "./action-overflow-menu"
 import { MissionBodyPending } from "./mission-reader-body"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 export type MissionModelBrief = Pick<UserMissionModel, "objective" | "notes" | "template" | "profiles" | "taskMode">
 
@@ -98,7 +100,7 @@ function createMissionModelActions(props: LibraryProps) {
     <Show when={reconciliationPending()}><p role="alert">{t("missions.defaults.reconciliationPending")}</p></Show>
     {/* An unreadable library already offers its own Reload beside the repair. */}
     <Show when={(failed() || reconciliationPending()) && !(config.isUiConfigLoaded() && !config.missionModelsValid())}>
-      <button type="button" class="window-text-button" aria-label={t("missions.models.reload")} title={t("missions.models.reload")}
+      <button type="button" class="window-action" aria-label={t("missions.models.reload")} title={t("missions.models.reload")}
         disabled={pending() || !active()} onClick={() => void reload()}>{t("missions.preferences.reload")}</button>
     </Show>
   </>
@@ -139,9 +141,18 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
   const { t } = useI18n(), config = useConfig(() => props.instanceId), actions = createMissionModelActions(props)
   const [selected, setSelected] = createSignal(props.value ?? ""), selectId = createUniqueId()
   const selection = () => config.preferences().missionModels.find(model => model.id === selected())
-  return <Show when={config.preferences().missionModels.length > 0 || config.isUiConfigLoaded() && !config.missionModelsValid()}>
+  const items = createMemo(() => [
+    { key: "remove", label: t("missions.models.remove"), disabled: actions.disabled() || !selection(), onSelect: async () => {
+      const model = selection()
+      if (model && await actions.remove(model)) setSelected("")
+    } },
+    { key: "reload", label: t("missions.models.reload"), disabled: actions.pending() || !(props.active?.() ?? true), onSelect: () => actions.reload() },
+  ])
+  return <>
     <section class="mission-brief-picker" aria-label={t("missions.models.title")}>
-      <label for={selectId} title={t("missions.models.hint")}>{t("missions.create.brief.start")}</label>
+      <label for={selectId}><Bookmark aria-hidden="true" />{t("missions.create.brief.start")}
+        <SettingsInfoTip text={t("missions.models.hint")} help={{ page: "missions", anchor: "saved-briefs" }} />
+      </label>
       <div class="mission-brief-picker-row">
           <select id={selectId} value={selected()} disabled={actions.disabled()} onChange={event => {
             const model = config.preferences().missionModels.find(item => item.id === event.currentTarget.value)
@@ -151,48 +162,73 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
             <option value="">{t("missions.create.brief.none")}</option>
             <For each={config.preferences().missionModels}>{model => <option value={model.id}>{model.name}</option>}</For>
           </select>
-          <ActionOverflowMenu label={t("missions.create.brief.more")} items={[
-            { key: "remove", label: t("missions.models.remove"), disabled: actions.disabled() || !selection(), onSelect: async () => {
-              const model = selection()
-              if (model && await actions.remove(model)) setSelected("")
-            } },
-            { key: "reload", label: t("missions.models.reload"), disabled: actions.pending() || !(props.active?.() ?? true), onSelect: () => actions.reload() },
-          ]} />
+          <ActionOverflowMenu label={t("missions.create.brief.more")} items={items()} />
       </div>
       <Show when={config.isUiConfigLoaded() && !config.missionModelsValid()}><p role="alert">{t("missions.models.invalid")}</p></Show>
       {actions.status()}
     </section>
-  </Show>
+  </>
 }
 
-/** A "Save as brief" button that asks for a name inline: the creation footer's
- * draft, or a selected Mission's recorded brief inputs (`initialName` prefills).
- * `onOpen` follows the name field, which shows `reading` while the draft is still read.
- * A window footer passes its own button template; elsewhere these are text commands. */
+/** The command that opens a brief's inline name field from elsewhere (a menu item). */
+export interface MissionBriefSaveTrigger {
+  /** Opens the name field; closing it gives focus back to `returnFocus()` (the menu's trigger, or a fallback). */
+  open: (returnFocus?: () => HTMLElement | undefined) => void; disabled: () => boolean
+}
+
+/** "Save as brief" asking for a name inline: the creation footer's draft, or a
+ * selected Mission's recorded brief inputs (`initialName` prefills). `onOpen` follows
+ * the name field, which shows `reading` while the draft is still read. With `trigger`
+ * the command lives elsewhere (the selected toolbar's overflow menu) and only the name
+  * field shows here; otherwise a labelled button opens it (a window
+ * footer passes its own template for the field's buttons). */
 export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string
-  onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined }) {
+  onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined
+  trigger?: (trigger: MissionBriefSaveTrigger) => void }) {
   const { t } = useI18n(), config = useConfig(() => props.instanceId), actions = createMissionModelActions(props)
-  const buttonClass = () => props.buttonClass ?? "window-text-button"
+  const buttonClass = () => props.buttonClass ?? "window-action"
   const [open, setOpen] = createSignal(false), [name, setName] = createSignal("")
   createEffect(() => props.onOpen?.(open()))
-  let input: HTMLInputElement | undefined
+  let input: HTMLInputElement | undefined, root!: HTMLDivElement
+  // Opened from a menu, the field gives focus back to that menu's trigger when it closes.
+  let returnTo: (() => HTMLElement | undefined) | undefined
+  const close = (hadFocus = root.contains(document.activeElement)) => {
+    // Unless the user has moved focus elsewhere meanwhile (a save is asynchronous and
+    // disables the focused control, dropping focus to the body).
+    const active = document.activeElement
+    const free = !active || active === document.body || root.contains(active)
+    setOpen(false)
+    const target = returnTo; returnTo = undefined
+    // Once the closing (and a save's preference update) has re-rendered the toolbar.
+    if (hadFocus && free && target) queueMicrotask(() => { const element = target(); if (element?.isConnected) element.focus({ preventScroll: true }) })
+  }
   const full = () => config.preferences().missionModels.length >= MAX_MISSION_MODELS
   const save = async () => {
     if (actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()) return
-    if (await actions.save(name(), props.draft())) { setName(""); setOpen(false) }
+    const hadFocus = root.contains(document.activeElement)
+    if (await actions.save(name(), props.draft())) { setName(""); close(hadFocus) }
   }
-  return <div class="mission-brief-save">
-    <Show when={open()} fallback={<button type="button" class={buttonClass()} disabled={actions.disabled() || full()}
-      onClick={() => { setName(props.initialName?.().slice(0, 80) ?? ""); setOpen(true); queueMicrotask(() => input?.select()) }}>{t("missions.create.brief.saveAs")}</button>}>
+  const begin = (fromMenu: boolean, returnFocus?: () => HTMLElement | undefined) => {
+    if (actions.disabled() || full()) return
+    returnTo = returnFocus
+    setName(props.initialName?.().slice(0, 80) ?? ""); setOpen(true)
+    // A closing menu returns focus to its trigger first: take it back on the next frames.
+    if (fromMenu) requestAnimationFrame(() => requestAnimationFrame(() => input?.select()))
+    else queueMicrotask(() => input?.select())
+  }
+  props.trigger?.({ open: returnFocus => begin(true, returnFocus), disabled: () => actions.disabled() || full() })
+  return <div ref={root} class="mission-brief-save">
+    <Show when={open()} fallback={props.trigger ? undefined : <button type="button" class={buttonClass()} disabled={actions.disabled() || full()}
+      onClick={() => begin(false)}>{t("missions.create.brief.saveAs")}</button>}>
       <input ref={input} aria-label={t("missions.models.name")} placeholder={t("missions.models.name")} value={name()} maxLength={80}
         disabled={actions.disabled()} onInput={event => setName(event.currentTarget.value)} onKeyDown={event => {
           // Enter names the brief; it never submits the creation form.
           if (event.key === "Enter") { event.preventDefault(); void save() }
-          else if (event.key === "Escape") { event.preventDefault(); setOpen(false) }
+          else if (event.key === "Escape") { event.preventDefault(); close() }
         }} />
       <button type="button" class={buttonClass()} disabled={actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()}
         onClick={() => void save()}>{t("missions.models.save")}</button>
-      <button type="button" class={buttonClass()} aria-label={t("missions.create.brief.cancel")} onClick={() => setOpen(false)}>{t("missions.control.cancel")}</button>
+      <button type="button" class={buttonClass()} aria-label={t("missions.create.brief.cancel")} onClick={() => close()}>{t("missions.control.cancel")}</button>
       <Show when={props.reading?.()}>{reading => <MissionBodyPending failed={reading().failed} changed={reading().changed} onRetry={() => reading().onRetry()} />}</Show>
     </Show>
     {actions.status()}

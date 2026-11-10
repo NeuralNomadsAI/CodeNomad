@@ -25,6 +25,12 @@ Erscheint kein Server, prüfen Sie aktive Location und native Konfiguration. Pr�
 
 ## Plugins global oder projektbezogen aktivieren {#plugins}
 
+Von CodeNomad verwaltete Plugins erscheinen außerhalb der gewöhnlichen Plugin-Liste und ihrer Aktivierungs-, Aktualisierungs- und Entfernungsaktionen. CodeNomad erkennt sie am validierten Installationseintrag und am Speicherort ihres inhaltsadressierten Codes; ein Drittanbieter-Plugin mit gleichem Namen oder gleicher ID behält seine gewöhnlichen Bedienelemente.
+
+Ist ein verwaltetes Plugin deaktiviert, schlägt sein Laden fehl oder bleibt das Laden unbestätigt, erscheint **CodeNomad-Plugins erfordern Aufmerksamkeit** oberhalb der Plugin-Liste. Öffnen Sie seine Schaltfläche **i** (**Details zu** diesem Plugin), um den verfügbaren Fehler und die Referenz im OpenCode-Protokoll zu sehen. Nur deaktivierte Plugins bieten **Erneut aktivieren**: Die Aktion ergänzt eine positive Aktivierungsregel für die exakte ID und erhält die deaktivierende Regel. Sie schreibt im Bereich **Global** oder **Projekt** der deaktivierenden Regel, sofern dieser beschreibbar ist, andernfalls in **Projekt**. OpenCode läuft weiter; die Warnung bleibt, bis native Ereignisse oder **Plugin-Steuerung aktualisieren** das Plugin als aktiv bestätigen.
+
+Die Warnung und ihre Details kennzeichnen den Konfigurationsursprung gegebenenfalls als **Geerbt / extern** oder **Virtuelle Konfiguration**. Eine separate Angabe **Projekt** bezeichnet das Ziel der erneuten Aktivierung, wenn es vom Ursprung der deaktivierenden Regel abweicht.
+
 1. [Fügen Sie das Plugin hinzu](#plugin-sources) oder deklarieren Sie es in der OpenCode-Konfiguration; öffnen Sie dann **Status → Plugins**.
 2. Zeigen Sie auf den Namen oder fokussieren Sie ihn, um Quelle, Laufzeitfehler und Konfigurationszieldetails zu prüfen.
 3. Schalten Sie **Global** oder **Projekt** bewusst um. Warten Sie den Schreibvorgang ab und verwenden Sie bei unklarem Zustand **Plugin-Steuerung aktualisieren**.

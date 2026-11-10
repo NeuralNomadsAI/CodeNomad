@@ -2,8 +2,6 @@
 
 A playbook is the working method a mission's coordinator follows: the steps, the roles it can give tasks, and the instructions each agent receives. This page describes each playbook, what CodeNomad itself enforces and what remains an instruction the model is asked to follow.
 
-To read a playbook's exact definition, open **Options** in the mission creation form, choose a **Playbook** and select **See details** under its description. The central reader shows its steps and roles; **Instructions the agents receive (English prompt text)** folds, for the selected **Task sessions** policy, the complete text the coordinator receives on every turn and each role's complete assignment message (with **Independent sessions**, also the context each turn of the task's session adds). Bracketed fields such as [objective] stand for each mission's own data; separate messages start or resume the mission and deliver task results. In those instructions, Exploration is called *Wayfinder Map*.
-
 ## Choose a playbook {#choose}
 
 | Playbook | Choose it when |
@@ -45,9 +43,9 @@ These are instructions. What an agent can actually do is decided by OpenCode's p
 
 ### Questions to you {#questions}
 
-Only the coordinator asks you questions. Tasks and their helpers return theirs to the conversation that launched them, with the options, evidence, consequences, reversibility and a recommendation, and keep working on what does not depend on the answer. The coordinator first settles what it can and groups the remaining questions into one form under **Needs you**; [Questions and decisions](missions.md#questions) explains what it asks and how decisions are labelled. Every coordinator, one-time or scheduled, and every task assignment carries this rule as an instruction; Exploration adds the decision checks [below](#wayfinder-checks).
+Only the coordinator asks you questions. Tasks and their helpers return theirs to the conversation that launched them, with the options, evidence, consequences, reversibility and a recommendation, and keep working on what does not depend on the answer. The coordinator first settles what it can and groups the remaining questions into one form, opened from the mission's red row; [Questions and decisions](missions.md#questions) explains what it asks and how decisions are labelled. Every coordinator, one-time or scheduled, and every task assignment carries this rule as an instruction; Exploration adds the decision checks [below](#wayfinder-checks).
 
-Answer in the interruption dock (**Answer** under **Needs you**): only that counts as your answer. A reply typed in the chat is an ordinary message.
+Answer in the interruption dock, opened by selecting the red mission or task: only that counts as your answer. A reply typed in the chat is an ordinary message.
 
 ### Briefings and the final report {#briefings}
 
@@ -125,7 +123,7 @@ When no failing reproduction can be built, the diagnostician reports what is mis
 - Only the six Debugging roles are accepted.
 - Order: an implementer must depend on a diagnosis, each reviewer on an implementation, the continuation on both reviews and the validator on the continuation. A step starts only once the step it depends on is complete.
 - The reviewers and the validator must run in new conversations; the continuation must continue the completed implementer's conversation.
-- Each completed role report must contain that role's structured report in its exact format (shown by **See details**), or it is refused. For example, the fix must state that the regression test was seen failing and passing, and the validation must list all four check kinds with none failed.
+- Each completed role report must contain that role's structured report in its required format, or it is refused. For example, the fix must state that the regression test was seen failing and passing, and the validation must list all four check kinds with none failed.
 - The mission finishes green only when the latest implementation has a completed diagnosis before it and two reviews, a continuation and a validation after it, all connected by dependencies and with valid structured reports.
 
 Instructions only: the quality of the diagnosis, the reviewers and the validator not editing files, and the truth of what a report claims. CodeNomad checks that the fix states the test went red then green, not that it ran it.
@@ -165,7 +163,7 @@ Workers never ask you; they return briefs and ready questions to the coordinator
 
 - **Decides itself** when the evidence suffices and the choice is cheap to reverse.
 - **Defers** a decision not needed yet: it retires the task and keeps the question in the notes as fog.
-- **Asks you**, grouping pending decisions into one form under **Needs you**.
+- **Asks you**, grouping pending decisions into one form, opened from the mission's red row.
 
 It never writes your answer itself or presents its own decision as yours. Where you read the outcome depends on **Task sessions**:
 
@@ -187,7 +185,7 @@ Instructions only: when a choice counts as cheap to reverse, the quality of brie
 You get a map: the destination, recorded decisions with who made them, research findings, prototypes, the fog that remains in the notes and a final report. A one-time coordinator can also prepare a follow-up mission that you start yourself. Pitfalls:
 
 - Exploration plans; it does not build the destination. Use another playbook, or the prepared follow-up, to implement.
-- Answer under **Needs you**, not in the chat: only an answer given in the interruption dock counts as yours.
+- Answer in the interruption dock opened from the red row, not in the chat: only an answer given in the interruption dock counts as yours.
 - With **Native subagents**, read the results labelled **Coordinator decision**; with **Independent sessions**, read the outcomes in the **Notes**. To change a decision, write to the coordinator from **Open conversation**.
 - A destination stated vaguely leaves most of the map in fog.
 
@@ -258,7 +256,7 @@ The coordinator compares exactly two different models. It records both attempts,
 
 ### What CodeNomad checks {#compare-checks}
 
-- At creation, **Model A** and **Model B** are required and must be different models; a different **Thinking** level alone is not a different model. Unless you choose one, the judge uses the coordinator's model, fixed at creation; the form warns when it matches A or B.
+- At creation, **Model A** and **Model B** are required and must be different models; a different **Thinking** level alone is not a different model. Unless you choose one, the judge uses the coordinator's model, fixed at creation.
 - Only the three Compare roles are accepted. Each run and the judge must start in a new conversation, a run cannot change its role's model, there is one live run per model, and both briefs must be byte-identical.
 - Only the judge may attach a structured report, and it must reference the completed A and B runs in that order, score each criterion once from 0 to 10 with at least one piece of evidence, and give one of the four verdicts.
 - The mission finishes only with completed A, B and judge tasks and a valid comparison.

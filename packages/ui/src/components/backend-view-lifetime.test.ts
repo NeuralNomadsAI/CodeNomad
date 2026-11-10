@@ -142,7 +142,7 @@ test("providers: an old quota response cannot publish or perform its coalesced f
   const backend = attachment(), response = deferred<any>(), published: unknown[] = []
   let reads = 0
   const { createProviderUsageState } = view("./session/provider-usage-state.ts", {})
-  const state = createProviderUsageState(() => { reads++; return response.promise }, (value: unknown) => published.push(value), () => backend.capture("i"))
+  const state = createProviderUsageState(() => { reads++; return response.promise }, (value: unknown) => published.push(value), Date.now, () => backend.capture("i"))
   state.select({ instanceId: "i", sessionId: "s", directory: "/repo", providerId: "p", modelId: "m" })
   const pending = state.refresh(); state.refresh()
   backend.revoke(); response.resolve({ account: "old" }); await pending

@@ -71,7 +71,7 @@ export function useReaderValues<T>(props: Omit<ReaderValueProps, "selector"> & {
 export function MissionBodyPending(props: { failed: boolean; changed?: boolean; onRetry: () => void; actionLabel?: string }) {
   const { t } = useI18n()
   return <p role="status">{t(props.changed ? "missions.control.reader.changed" : props.failed ? "missions.control.reader.unavailable" : "missions.control.loading")}
-    <Show when={props.failed || props.changed}>{" "}<button type="button" class="window-text-button"
+    <Show when={props.failed || props.changed}>{" "}<button type="button" class="window-action"
       onClick={() => props.onRetry()}>{t(props.actionLabel ?? "missions.control.retry")}</button></Show>
   </p>
 }

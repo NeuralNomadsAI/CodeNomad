@@ -165,8 +165,9 @@ export async function readMissionTaskPage(missionID: string, task: MissionTaskRe
 
 const panelEnvelope = z.object({ available: z.literal(true), version: z.literal(1), projectID: z.string().min(1).max(240),
   passage: missionCurrentSourceSchema.optional(),
-  source: z.enum(["summaries", "cleanups", "mission", "activity", "marks"]), missionID: z.string().optional(), field: z.string().optional(), part: z.enum(["receipts", "pending"]).optional(), text: z.literal(true).optional(),
+  source: z.enum(["summaries", "cleanups", "mission", "activity", "marks", "task-marks"]), missionID: z.string().optional(), field: z.string().optional(), part: z.enum(["receipts", "pending"]).optional(), text: z.literal(true).optional(),
   revision: count.optional(), header: z.literal(true).optional(), finishHighWater: count.optional(), phase: z.enum(["context", "observed"]).optional(), observedAt: z.number().finite().optional(),
+  taskMarksThrough: z.number().finite().nonnegative().optional(),
   discardedEvents: count, controlUnavailable: z.boolean(), notificationUnavailable: z.boolean(), cleanupUnavailable: z.boolean(),
   window: z.object({ order: digest, offset: count, end: count, total: count }).strict().optional(),
   page: z.object({ digest, total: count.max(50), pieces: z.array(z.object({ index: count.max(49), offset: count, characters: count, text: z.string().min(1) }).strict()).max(50), next: cursorSchema.optional() }).strict(),
@@ -186,7 +187,7 @@ export async function readMissionPanelWindow(selector: Exclude<MissionPanelPageR
   exchange(body: string): Promise<Response>; runTransfer<T>(read: () => Promise<T>): Promise<T>
 }): Promise<{ envelope: MissionPanelPage; values: unknown[] }> {
   selector = structuredClone(selector)
-  const maximum = selector.source === "summaries" || selector.source === "mission" && selector.text ? 256 * 1024 : selector.source === "mission" && selector.header ? 1024 * 1024
+  const maximum = selector.source === "summaries" || selector.source === "task-marks" || selector.source === "mission" && selector.text ? 256 * 1024 : selector.source === "mission" && selector.header ? 1024 * 1024
     : selector.source === "activity" || selector.source === "marks" ? 24 * 1024 * 1024 : TASK_WINDOW_CHARACTERS
   const deadline = Math.min(input.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS), timeout = AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout, budget = new MissionTaskWindowBudget(maximum)
@@ -216,13 +217,14 @@ export async function readMissionPanelWindow(selector: Exclude<MissionPanelPageR
     const own = parsed.data, range = own.window
     const selectedRange = "window" in selector ? selector.window : undefined
     if (JSON.stringify(own.passage) !== JSON.stringify(input.passage) || own.source !== selector.source || input.projectID && own.projectID !== input.projectID
-      || own.missionID !== (selector.source === "mission" || selector.source === "activity" ? selector.missionID : undefined)
+      || own.missionID !== (selector.source === "mission" || selector.source === "activity" || selector.source === "task-marks" ? selector.missionID : undefined)
       || own.field !== (selector.source === "mission" ? selector.field : undefined) || own.part !== (selector.source === "mission" ? selector.part : undefined) || own.text !== (selector.source === "mission" ? selector.text : undefined) || own.header !== (selector.source === "mission" ? selector.header : undefined)
-      || (selector.source === "mission" || selector.source === "activity" ? own.revision === undefined : own.revision !== undefined)
-      || (selector.source === "activity" || selector.source === "marks" ? own.phase !== "observed" || own.observedAt === undefined : own.phase !== undefined || own.observedAt !== undefined)
+      || (selector.source === "mission" || selector.source === "activity" || selector.source === "task-marks" ? own.revision === undefined : own.revision !== undefined)
+       || (selector.source === "activity" || selector.source === "marks" ? own.phase !== "observed" || own.observedAt === undefined : own.phase !== undefined || own.observedAt !== undefined)
+       || (selector.source === "task-marks" ? own.taskMarksThrough === undefined : own.taskMarksThrough !== undefined)
       || Boolean(selectedRange) !== Boolean(range) || range && (range.offset !== Math.min(selectedRange!.offset, range.total) || range.end !== Math.min(range.offset + (selector.source === "mission" && selector.text ? 1 : 50), range.total)
         || own.page.total !== range.end - range.offset || selectedRange!.order !== undefined && selectedRange!.order !== range.order)) throw new MissionTaskPageReadError("invalid")
-    if (first && (own.revision !== first.revision || own.window?.order !== first.window?.order)) throw new MissionTaskPageReadError("changed")
+    if (first && (own.revision !== first.revision || own.window?.order !== first.window?.order || own.taskMarksThrough !== first.taskMarksThrough)) throw new MissionTaskPageReadError("changed")
     if (first && (own.projectID !== first.projectID || own.page.digest !== first.page.digest || own.page.total !== first.page.total
       || JSON.stringify(own.window) !== JSON.stringify(first.window) || ["discardedEvents", "controlUnavailable", "notificationUnavailable", "cleanupUnavailable"].some(key => own[key as keyof typeof own] !== first![key as keyof typeof own]))) throw new MissionTaskPageReadError("invalid")
     if (own.discardedEvents || own.controlUnavailable || own.notificationUnavailable || own.cleanupUnavailable) throw new MissionTaskPageReadError("damaged")

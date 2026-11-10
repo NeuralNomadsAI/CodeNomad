@@ -3,7 +3,7 @@ import { it } from "node:test"
 
 import type { ServerMeta } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
-import { createServerMetaCache, getServerMeta } from "./server-meta"
+import { createServerMetaCache, getServerMeta, localRequest } from "./server-meta"
 
 it("allows a metadata retry after a failed request", async () => {
   const originalFetch = serverApi.fetchServerMeta
@@ -57,4 +57,25 @@ it("publishes refreshes only to the same attachment and rejects revoked metadata
   await assert.rejects(pending, { name: "AbortError" })
   assert.equal(cache.meta(second.signal), null)
   assert.equal(cache.meta(first.signal)?.previewsUnavailable, true)
+})
+
+it("remote metadata never grants host authority; local metadata refresh owns it", async () => {
+  const original = serverApi.fetchServerMeta
+  const meta = await getServerMeta()
+  let local = false
+  serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: local })
+  try {
+    await getServerMeta(true)
+    assert.equal(localRequest(), false)
+    const remote = createServerMetaCache({ fetchServerMeta: async () => ({ ...meta, localRequest: true }) })
+    await remote.getServerMeta()
+    assert.equal(remote.meta()?.localRequest, true)
+    assert.equal(localRequest(), false)
+    local = true
+    await getServerMeta(true)
+    assert.equal(localRequest(), true)
+    local = false
+    await getServerMeta(true)
+    assert.equal(localRequest(), false)
+  } finally { serverApi.fetchServerMeta = original }
 })

@@ -2,8 +2,6 @@
 
 Ein Playbook ist die Arbeitsmethode, der der Koordinator einer Mission folgt: die Schritte, die Rollen, die er Aufgaben geben kann, und die Anweisungen, die jeder Agent erhält. Diese Seite beschreibt jedes Playbook, was CodeNomad selbst durchsetzt und was eine Anweisung bleibt, der das Modell folgen soll.
 
-Um die genaue Definition eines Playbooks zu lesen, öffnen Sie im Formular zur Missionserstellung **Optionen**, wählen ein **Playbook** und wählen unter seiner Beschreibung **Details anzeigen**. Der zentrale Leser zeigt Schritte und Rollen; **Anweisungen, die die Agenten erhalten (englischer Prompt-Text)** klappt für die gewählte Einstellung **Aufgabensitzungen** den vollständigen Text ein, den der Koordinator in jeder Runde erhält, und die vollständige Zuweisungsnachricht jeder Rolle (mit **Unabhängige Sitzungen** auch den Kontext, den jede Runde der Aufgabensitzung hinzufügt). Felder in eckigen Klammern wie [objective] stehen für die eigenen Daten jeder Mission; eigene Nachrichten starten die Mission oder setzen sie fort und liefern Aufgabenergebnisse. In diesen Anweisungen heißt Erkundung *Wayfinder Map*.
-
 ## Ein Playbook wählen {#choose}
 
 | Playbook | Wählen Sie es, wenn |
@@ -45,9 +43,9 @@ Das sind Anweisungen. Was ein Agent tatsächlich tun kann, bestimmen die OpenCod
 
 ### Fragen an Sie {#questions}
 
-Nur der Koordinator stellt Ihnen Fragen. Aufgaben und ihre Helfer geben ihre an die Unterhaltung zurück, die sie gestartet hat, mit Optionen, Belegen, Folgen, Umkehrbarkeit und einer Empfehlung, und arbeiten an dem weiter, was nicht von der Antwort abhängt. Der Koordinator klärt zuerst, was er kann, und bündelt die übrigen Fragen in einem Formular unter **Braucht Sie**; [Fragen und Entscheidungen](missions.md#questions) erklärt, was er fragt und wie Entscheidungen bezeichnet werden. Jeder Koordinator, einmalig oder geplant, und jede Aufgabenzuweisung erhalten diese Regel als Anweisung; die Erkundung fügt die Entscheidungsprüfungen [weiter unten](#wayfinder-checks) hinzu.
+Nur der Koordinator stellt Ihnen Fragen. Aufgaben und ihre Helfer geben ihre an die Unterhaltung zurück, die sie gestartet hat, mit Optionen, Belegen, Folgen, Umkehrbarkeit und einer Empfehlung, und arbeiten an dem weiter, was nicht von der Antwort abhängt. Der Koordinator klärt zuerst, was er kann, und bündelt die übrigen Fragen in einem Formular, das sich über die rote Zeile der Mission öffnet; [Fragen und Entscheidungen](missions.md#questions) erklärt, was er fragt und wie Entscheidungen bezeichnet werden. Jeder Koordinator, einmalig oder geplant, und jede Aufgabenzuweisung erhalten diese Regel als Anweisung; die Erkundung fügt die Entscheidungsprüfungen [weiter unten](#wayfinder-checks) hinzu.
 
-Antworten Sie im Unterbrechungsdock (**Antworten** unter **Braucht Sie**): Nur das zählt als Ihre Antwort. Eine im Chat getippte Antwort ist eine gewöhnliche Nachricht.
+Antworten Sie im Unterbrechungsdock, das sich durch Auswahl der roten Mission oder Aufgabe öffnet: Nur das zählt als Ihre Antwort. Eine im Chat getippte Antwort ist eine gewöhnliche Nachricht.
 
 ### Lageberichte und Abschlussbericht {#briefings}
 
@@ -125,7 +123,7 @@ Lässt sich keine fehlschlagende Reproduktion bauen, meldet der Diagnostiker, wa
 - Nur die sechs Rollen der Fehlersuche werden akzeptiert.
 - Reihenfolge: Ein Implementierer muss von einer Diagnose abhängen, jeder Prüfer von einer Implementierung, die Fortsetzung von beiden Prüfungen und der Validator von der Fortsetzung. Ein Schritt startet erst, wenn der Schritt, von dem er abhängt, abgeschlossen ist.
 - Die Prüfer und der Validator müssen in neuen Unterhaltungen laufen; die Fortsetzung muss die Unterhaltung des abgeschlossenen Implementierers fortsetzen.
-- Jeder abgeschlossene Rollenbericht muss den strukturierten Bericht seiner Rolle im genauen Format enthalten (von **Details anzeigen** gezeigt), sonst wird er abgelehnt. Die Korrektur muss zum Beispiel angeben, dass der Regressionstest fehlschlagend und bestanden beobachtet wurde, und die Validierung muss alle vier Prüfarten ohne Fehlschlag auflisten.
+- Jeder abgeschlossene Rollenbericht muss den strukturierten Bericht seiner Rolle im erforderlichen Format enthalten, sonst wird er abgelehnt. Die Korrektur muss zum Beispiel angeben, dass der Regressionstest fehlschlagend und bestanden beobachtet wurde, und die Validierung muss alle vier Prüfarten ohne Fehlschlag auflisten.
 - Die Mission endet nur grün, wenn die neueste Implementierung eine abgeschlossene Diagnose vor sich und zwei Prüfungen, eine Fortsetzung und eine Validierung nach sich hat, alle durch Abhängigkeiten verbunden und mit gültigen strukturierten Berichten.
 
 Nur Anweisungen: die Qualität der Diagnose, dass Prüfer und Validator keine Dateien ändern, und die Wahrheit dessen, was ein Bericht behauptet. CodeNomad prüft, dass die Korrektur angibt, der Test sei von Rot zu Grün gewechselt, nicht, dass sie ihn ausgeführt hat.
@@ -165,7 +163,7 @@ Die Bearbeiter fragen Sie nie; sie geben Papiere und fertige Fragen an den Koord
 
 - **Er entscheidet selbst**, wenn die Belege genügen und die Wahl leicht umkehrbar ist.
 - **Er stellt zurück**, was noch nicht nötig ist: Er zieht die Aufgabe zurück und hält die Frage als Nebel in den Notizen.
-- **Er fragt Sie** und bündelt offene Entscheidungen in einem Formular unter **Braucht Sie**.
+- **Er fragt Sie** und bündelt offene Entscheidungen in einem Formular, das sich über die rote Zeile der Mission öffnet.
 
 Er schreibt Ihre Antwort nie selbst und gibt seine eigene Entscheidung nie als Ihre aus. Wo Sie das Ergebnis lesen, hängt von **Aufgabensitzungen** ab:
 
@@ -187,7 +185,7 @@ Nur Anweisungen: wann eine Wahl als leicht umkehrbar gilt, die Qualität von Pap
 Sie erhalten eine Karte: das Ziel, erfasste Entscheidungen mit ihrem Urheber, Rechercheergebnisse, Prototypen, den in den Notizen verbleibenden Nebel und einen Abschlussbericht. Ein Koordinator einer einmaligen Mission kann außerdem eine Folgemission vorbereiten, die Sie selbst starten. Fallstricke:
 
 - Erkundung plant; sie baut das Ziel nicht. Nutzen Sie zum Umsetzen ein anderes Playbook oder die vorbereitete Folgemission.
-- Antworten Sie unter **Braucht Sie**, nicht im Chat: Nur eine Antwort aus dem Unterbrechungsdock zählt als Ihre.
+- Antworten Sie im Unterbrechungsdock, das sich über die rote Zeile öffnet, nicht im Chat: Nur eine Antwort aus dem Unterbrechungsdock zählt als Ihre.
 - Lesen Sie mit **Native Unteragenten** die Ergebnisse mit der Bezeichnung **Entscheidung des Koordinators** und mit **Unabhängige Sitzungen** die Ergebnisse in den **Notizen**. Um eine Entscheidung zu ändern, schreiben Sie dem Koordinator über **Unterhaltung öffnen**.
 - Ein vage formuliertes Ziel lässt den größten Teil der Karte im Nebel.
 
@@ -258,7 +256,7 @@ Der Koordinator vergleicht genau zwei verschiedene Modelle. Er erfasst beide Ver
 
 ### Was CodeNomad prüft {#compare-checks}
 
-- Bei der Erstellung sind **Modell A** und **Modell B** erforderlich und müssen verschiedene Modelle sein; eine andere **Denken**-Stufe allein ist kein anderes Modell. Sofern Sie keinen wählen, verwendet der Gutachter das Modell des Koordinators, festgelegt bei der Erstellung; das Formular warnt, wenn es mit A oder B übereinstimmt.
+- Bei der Erstellung sind **Modell A** und **Modell B** erforderlich und müssen verschiedene Modelle sein; eine andere **Denken**-Stufe allein ist kein anderes Modell. Sofern Sie keinen wählen, verwendet der Gutachter das Modell des Koordinators, festgelegt bei der Erstellung.
 - Nur die drei Rollen von Zwei Modelle vergleichen werden akzeptiert. Jeder Lauf und der Gutachter müssen in einer neuen Unterhaltung starten, ein Lauf kann das Modell seiner Rolle nicht ändern, es gibt einen aktiven Lauf je Modell, und beide Aufträge müssen byteidentisch sein.
 - Nur der Gutachter darf einen strukturierten Bericht anhängen; er muss die abgeschlossenen Läufe A und B in dieser Reihenfolge nennen, jedes Kriterium einmal von 0 bis 10 mit mindestens einem Beleg bewerten und eines der vier Urteile geben.
 - Die Mission endet nur mit abgeschlossenen Aufgaben A, B und Gutachter und einem gültigen Vergleich.

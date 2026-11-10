@@ -83,7 +83,7 @@ for (const ingress of [false, true]) {
       ["POST", "/api/workspaces/creation/cancel"], ["POST", "/api/workspaces/w/creation/release"],
       ["POST", "/api/workspaces/temporary"], ["POST", "/api/workspaces/temporary/abandon"],
       ...["keep", "discard", "git-init", "images-conversation"].map(path => ["POST", `/api/workspaces/w/${path}`] as [string, string]),
-      ...["git-branches", "pending-requests", "files", "files/search", "files/preview", "files/content", "plugin-controls",
+      ...["background-shells", "git-branches", "pending-requests", "files", "files/search", "files/preview", "files/content", "plugin-controls",
         "integrations", "service-usage", "service-usage/owner", "service-usage/cache"]
         .map(path => ["GET", `/api/workspaces/w/${path}`] as [string, string]),
       ["PUT", "/api/workspaces/w/files/content"], ["PATCH", "/api/workspaces/w/plugin-controls"],
@@ -120,6 +120,9 @@ for (const ingress of [false, true]) {
       for (const method of ["GET", "POST"] as const) assert.equal((await app.inject({ method, url, headers })).statusCode, 404, `${method} ${url}`)
     }
     assert.equal((await app.inject({ method: "DELETE", url: "/api/meta", headers })).statusCode, 404)
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const)
+      assert.equal((await app.inject({ method, url: "/api/workspaces/w/background-shells", headers })).statusCode, 404)
+    assert.equal((await app.inject({ method: "GET", url: "/api/workspaces/w/background-shells/unreviewed", headers })).statusCode, 404)
     assert.equal((await app.inject({ method: "POST", url: "/api/unreviewed", headers: { ...headers, "sec-fetch-mode": "cors" } })).statusCode, 403)
     assert.equal((await app.inject({ method: "DELETE", url: "/api/workspaces/w", headers: { ...headers, referer: "" } })).statusCode, 403)
     assert.equal((await app.inject({ method: "DELETE", url: "/api/workspaces/w", headers: { ...headers, origin } })).statusCode, 200)

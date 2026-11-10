@@ -2,6 +2,8 @@ import type { JSX } from "solid-js"
 
 import type { RightPanelModule } from "./registry"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
+import { SettingsInfoTip } from "../../../settings/settings-info-tip"
+import { tGlobal } from "../../../../lib/i18n"
 
 interface CoreRightPanelRenderers {
   renderFilesTab: () => JSX.Element
@@ -34,7 +36,7 @@ export function createCoreRightPanelModule(renderers: CoreRightPanelRenderers): 
       {
         id: "status",
         labelKey: "instanceShell.rightPanel.tabs.status",
-        order: 30,
+        order: 10,
         alwaysVisible: true,
         render: renderers.renderStatusTab,
       },
@@ -60,7 +62,8 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
     statusSections: CORE_STATUS_SECTION_ITEMS.map((section) => {
       const render = sectionRenderers[section.id]
       if (!render) throw new Error(`Missing core right panel section renderer: ${section.id}`)
-      return { ...section, render, renderSummary: section.id === "tokens" ? renderers.renderTokensSummary : undefined }
+      return { ...section, render, renderStatus: section.id === "tokens" ? renderers.renderTokensSummary : undefined,
+        renderInfo: () => <SettingsInfoTip text={tGlobal(section.tooltipKey)} help={section.help} /> }
     }),
   }
 }

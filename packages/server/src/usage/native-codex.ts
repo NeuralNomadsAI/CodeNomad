@@ -29,6 +29,7 @@ export function createNativeCodexUsage() {
       supported: true, configured: true, ok: Boolean(snapshot), windows: snapshot?.usage.windows ?? {},
       fetchedAt: snapshot?.fetchedAt ?? Date.now(),
       ...(unavailableReason ? { unavailableReason } : {}),
+      ...(unavailableReason === "openai-token-sharing-unsupported" ? { unavailableAction: "chatgpt-usage" as const } : {}),
     })
     const location = { directory: scope.directory }
     const key = JSON.stringify([scope.instanceId, scope.sessionId, scope.directory, scope.providerId])

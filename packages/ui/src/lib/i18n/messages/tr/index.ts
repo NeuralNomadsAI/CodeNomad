@@ -22,6 +22,7 @@ import { remoteAccessMessages } from "./remoteAccess"
 import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
 import { settingsMessages } from "./settings"
+import { agentMemoryMessages } from "./agent-memory"
 import { openCodeLoginStartMessages } from "./opencode-login-start"
 import { missionSchedulingMessages } from "./mission-scheduling"
 import { timeMessages } from "./time"
@@ -49,6 +50,7 @@ export const trMessages = mergeMessageParts(
   remoteControlMessages,
   sessionMessages,
   settingsMessages,
+  agentMemoryMessages,
   pluginSourceMessages,
   integrationMessages,
   openCodeLoginStartMessages,

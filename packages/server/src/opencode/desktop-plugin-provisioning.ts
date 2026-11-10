@@ -10,7 +10,7 @@ interface DesktopPluginProvisioning<Paths> {
 }
 
 const CONSEQUENCE = "Until this succeeds, CodeNomad cannot list questions and permissions that were already waiting, "
-  + "and Missions and automation are unavailable. Each new OpenCode connection retries; identical failures are logged once."
+  + "and Missions, automation and agent memory are unavailable. Each new OpenCode connection retries; identical failures are logged once."
 
 // Leases (`<uuid>.lease`) and temporary copies (`<name>.<uuid>.tmp`) get fresh UUIDs on
 // every attempt; a UUID anywhere else, such as a directory name, is a stable destination.

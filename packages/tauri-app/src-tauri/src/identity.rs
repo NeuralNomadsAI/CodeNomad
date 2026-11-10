@@ -3,7 +3,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 pub(crate) const STABLE_IDENTIFIER: &str = "ai.neuralnomads.codenomad.client";
-pub(crate) const LOCAL_WINDOW_PREFIX: &str = "local-";
+mod local_window;
+pub(crate) use local_window::{local_window_id, local_window_label};
 const DEFAULT_CONFIG: &str = "~/.config/codenomad/config.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,24 +17,6 @@ pub(crate) struct IdentityScope {
     pub(crate) identifier: String,
     pub(crate) client_state_directory: Option<PathBuf>,
     pub(crate) webview_data_directory: PathBuf,
-}
-
-pub(crate) fn local_window_label(window_id: &str) -> Result<String, String> {
-    let uuid =
-        uuid::Uuid::parse_str(window_id).map_err(|_| "Invalid local window UUID".to_string())?;
-    let normalized = uuid.to_string();
-    if normalized != window_id {
-        return Err("Local window UUID must be lowercase".to_string());
-    }
-    Ok(format!("{LOCAL_WINDOW_PREFIX}{normalized}"))
-}
-
-pub(crate) fn local_window_id(label: &str) -> Result<String, String> {
-    let id = label
-        .strip_prefix(LOCAL_WINDOW_PREFIX)
-        .ok_or_else(|| "Native operation is limited to local windows".to_string())?;
-    local_window_label(id)?;
-    Ok(id.to_string())
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -117,10 +100,18 @@ fn resolve_config_input(value: &str, cwd: &Path, home: &Path) -> PathBuf {
 
 /** Keep the caller's original filename for backend config/legacy migration,
  * but remove dependence on the backend process's different working directory. */
-pub(crate) fn resolve_selected_config(raw: Option<&str>, cwd: &Path, home: &Path) -> Option<String> {
+pub(crate) fn resolve_selected_config(
+    raw: Option<&str>,
+    cwd: &Path,
+    home: &Path,
+) -> Option<String> {
     raw.map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| resolve_config_input(value, cwd, home).to_string_lossy().into_owned())
+        .map(|value| {
+            resolve_config_input(value, cwd, home)
+                .to_string_lossy()
+                .into_owned()
+        })
 }
 
 pub(crate) fn normalize_config_identity(raw: Option<&str>, cwd: &Path, home: &Path) -> String {
@@ -282,13 +273,25 @@ mod tests {
         for extension in ["json", "yaml"] {
             let raw = format!("alternate/../selected/custom.{extension}");
             let selected = resolve_selected_config(Some(&raw), &cwd, &home).unwrap();
-            assert_eq!(PathBuf::from(&selected), cwd.join("selected").join(format!("custom.{extension}")));
+            assert_eq!(
+                PathBuf::from(&selected),
+                cwd.join("selected").join(format!("custom.{extension}"))
+            );
             if extension == "json" {
                 assert_ne!(selected, normalize_config_identity(Some(&raw), &cwd, &home));
             }
             assert_eq!(
-                resolve_selected_config(Some(&format!("~/selected/custom.{extension}")), &cwd, &home),
-                Some(home.join("selected").join(format!("custom.{extension}")).to_string_lossy().into_owned())
+                resolve_selected_config(
+                    Some(&format!("~/selected/custom.{extension}")),
+                    &cwd,
+                    &home
+                ),
+                Some(
+                    home.join("selected")
+                        .join(format!("custom.{extension}"))
+                        .to_string_lossy()
+                        .into_owned()
+                )
             );
         }
         assert_eq!(resolve_selected_config(None, &cwd, &home), None);

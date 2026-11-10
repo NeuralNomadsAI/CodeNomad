@@ -6,8 +6,10 @@ Acceptance status: `MISSIONS_RECURRING_QUALIFICATION.md`.
 ## Unified native schedules
 
 Unified documents store a launch policy (`missions/launch-policy.ts`): one ordered
-list `{ when }` of criteria, each a schedule (one cron with its IANA zone) or one of
-the five events below. An empty list is a one-time Mission launched at Play. Native
+list `{ when }` of criteria, each a schedule (`{ kind: "now" }` once at Play, or
+one cron with its IANA zone) or one of the five events below. A sole `now` criterion
+and an empty list use one-time journal admission at Play, with native-default profiles
+available. Mixed lists use native calendars and their frozen explicit profiles. Native
 schedule rows own future dates and civil-time behavior; Missions owns admission,
 non-overlap, frozen inputs, launch counts and settlement.
 
@@ -63,6 +65,23 @@ only, with `armedAt` at or before every known slot of its calendar, `lastDueAt` 
 after its reserved slot and at or before the slot being prepared, and `deferred.scheduleIDs`
 naming current principal calendars.
 
+In a mixed list, `now` owns one native `at` principal, with its absolute due instant
+frozen at Play plus one millisecond. That native clock tick gives an **else** fallback
+a nonempty period from arming to its sole slot. `[event, now]` has a once-now fallback
+and keeps checking its leading event for future launches; `[now, event]` evaluates
+that event only at the one-shot slot. An unmet condition consumes that slot, so a sole
+conditional one-shot can finish with zero launches. Adjacent `now` and cron criteria
+share their schedule group's **or** and conditions.
+
+Creation stays paused. Pause/Resume, exact Play replay, restarts and Run now preserve
+the frozen one-shot instant and processed slot. A timing edit that keeps `now` retains
+that instant and its consumed-slot proof even when native calendars are replaced.
+Adding `now` to an armed mixed policy freezes a new one-shot at the edit plus one
+millisecond. Run now keeps its own explicit request/passage identity and ordinary
+non-overlap and fallback-period rules. Native row completion and consumed high-water
+allow ordinary cleanup after the final one-shot; recurring and event principals
+continue on their own slots.
+
 The codec requires unique schedules and unique events, at most 16 criteria, eight
 events and eight principal calendars. Criteria have no end date.
 
@@ -107,7 +126,8 @@ an explicit replacement.
 
 Scheduling labels use focusable **i** tips for secondary explanations, available
 on hover, keyboard focus and touch. The editor's **Launch when** list adds cards
-with **Add a criterion**; each card's native select groups schedule shortcuts (every
+with **Add a criterion**; once now is selected in the initial card and adding a card
+keeps it in place. Each card's native select groups schedule shortcuts (once now, every
 N hours with N in 1, 2, 3, 4, 6, 8 or 12, every day, selected weekdays, day of each month,
 advanced cron) and the five events; a new daily card takes the first free hour from
 09:00. Shortcuts write a cron; recognized crons decode back to their shortcut
@@ -116,15 +136,12 @@ and unedited cards keep their stored spelling. Cards reorder by dragging their g
 region announces the new position and focus stays on the grip. The connector to the
 card above sits in a fixed-height line above each card, small and secondary, and
 follows the projected order while dragging, so nothing reflows. The form shows no
-slot preview and no end date; it refuses a calendar without a future slot. The saved
+slot preview and no end date; it refuses a cron calendar without a future slot. The saved
 zone defaults to the system zone; its field appears only when the draft's zone
 differs (a schedule saved elsewhere, an invalid zone) and then stays for that editor,
 so typing never hides it; a reopened schedule keeps its stored zone. **Launch when**
-has a single **i** (`settings-info-link.tsx`, opened by click, Enter or Space) whose
-two sentences explain **if** and **else** and that the Mission runs only while
-OpenCode runs, ending with a link to the OpenCode login-start row
-(`#opencode-login-start` anchor, labelled by that setting's own title key); Missions
-never reads or changes that setting. The list summarizes each criterion in order,
+has a single focusable **i** that opens the localized `missions#native-scheduling`
+help section. The list summarizes each criterion in order,
 prefixed after the first with its connector; the detail shows a stored legacy end
 date, and source checks only with events. The info tip beside the **Technical
 details** disclosure explains technical activity and costs.
@@ -321,7 +338,9 @@ mutation takes the document exclusion before the existing journal writer. Native
 permissions, original message identities and whole-family H11 settlement apply.
 Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
 local title/compaction hooks and authoritative ordinary-input guards.
-Ordinary sidebar browsing/search and both Mission conversation-source pickers
+Context classification and recovery follow the schedule transport's
+[native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
+Ordinary sidebar browsing/search and Mission criterion conversation-source pickers
 exclude this namespace through the shared carrier-identity predicate; native
 observations remain available to ownership and reconciliation readers.
 Technical turns keep native model-selection events/statistics while making zero

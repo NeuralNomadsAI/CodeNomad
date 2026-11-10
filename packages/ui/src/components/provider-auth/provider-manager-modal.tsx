@@ -885,7 +885,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                               }}
                             >{t("settings.providers.actions.manageModels")}</button>
                           </div>
-                          <Show when={client() && (provider().credentialIds.length > 0 || provider().source === "env")}>
+                          <Show when={client() && (provider().connections.length > 0 || provider().canConnect)}>
                             <ProviderAccounts instanceId={props.instanceId} integrationId={providerId} client={client()!}
                               initialConnections={provider().connections}
                               onAdd={provider().canConnect ? () => {

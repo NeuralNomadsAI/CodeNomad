@@ -146,7 +146,7 @@ Exact request receipts remain point reads through `scheduleRead`.
 | Schedule HTTP contract | `experimental.schedule.create/list/get/pause/resume/delete`, `{data:Info}`, session-filtered list, delete 204 | `opencode/native-schedule-capability.ts` recognizes the consumed request/response shapes read-only. Read `experimental.schedules` independently from the highest-priority whole native block. Never create probe schedules. |
 | Plugin Session facade | get/create/prompt/synthetic/interrupt/context | Prefer facade methods when they expose the required operation. Preserve exact session/message IDs and fixed profiles at admission. Use bounded point/page reads for source coverage. |
 | Session/AISDK hooks | prompt/context/title/compaction/language | Context admission requires the exact durable user message and schedule correlation. Title/compaction/language carry only local technical work. Treat metadata as correlation within service privileges. |
-| Native context message classification | Exact `session_message` point reads of IDs referenced by the current model context; synthetic `metadata.notice:"restart"` | Classification and deterministic wake proofs share 128 reads/1 MiB per invocation; SQL caps each body at 256 KiB and the remaining budget before transfer. Schedule-bearing or deterministic wake IDs retain strict validation; notice prose supplies no authority. |
+| Native context message classification | Context message IDs select native carrier records | [Read bounds and authority](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds). |
 
 The HTTP create payload accepts optional `when` and condition keys `if`/`until`.
 Missions supplies its validated timing and fixed prompt; source conditions stay in
@@ -191,8 +191,8 @@ create takes tagged `when` and `action:{type:"prompt",prompt}`; HTTP create take
 the public `when` input and `prompt`. Core list/get/pause/remove require explicit
 flag/session/mapping checks at the caller. Bound adoption to the exact carrier.
 
-Semantic qualification covers deterministic `msg_<scheduleID>_<run>` and metadata
-propagation, native missed-slot/phase rules, durable turn ordering, local cached
+Semantic qualification covers deterministic `msg_<scheduleID>_<run>`, context ID
+preservation and prompt/stored-message schedule metadata, native missed-slot/phase rules, durable turn ordering, local cached
 language/title/compaction, and continuation concurrent with schedule recovery.
 Keep a pending passage uncertain while its terminal correlation or family
 coverage is incomplete. Tests of method presence and typechecks accompany these
@@ -300,6 +300,14 @@ bounds edit reads native phase before retirement, chooses its next strictly futu
 slot, and derives the replacement anchor as that slot minus the interval. A timing
 change may anchor Every at the validated edit. Native recorded due times remain
 authoritative for future slots and late-wake eligibility.
+
+A mixed criteria list's `{ kind: "now" }` projects to native `at`, frozen at Play
+plus one millisecond with its creation anchor at Play. The document's `oneShotAt`
+holds that instant through replay and restart. An unchanged `now` keeps its instant
+through timing edits, and `calendarForSlot` carries its processed `lastDueAt` to
+replacement calendars; `missionLaunches` consumes that one-shot decision once.
+A sole `now` criterion uses the same empty execution model as the criteria-free
+immediate policy, retaining its stored shape and ordinary journal first-Play proof.
 
 `nativeScheduleOwnerControlReceipt` reads the exact retained human operation,
 including Check aliases, across automatic reconciliation. Receipts retain the

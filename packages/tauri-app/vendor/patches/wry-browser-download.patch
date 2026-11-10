@@ -1,0 +1,59 @@
+diff --git a/src/wkwebview/class/wry_navigation_delegate.rs b/src/wkwebview/class/wry_navigation_delegate.rs
+index be40aa62f..9a5c54c21 100644
+--- a/src/wkwebview/class/wry_navigation_delegate.rs
++++ b/src/wkwebview/class/wry_navigation_delegate.rs
+@@ -19,7 +19,7 @@ use objc2_web_kit::WKWebView;
+ use crate::{
+   PageLoadEvent, WryWebView, url_from_webview,
+   wkwebview::{
+-    download::{navigation_download_action, navigation_download_response},
++    download::{attach_download_delegate, navigation_download_action, navigation_download_response},
+     navigation::{
+       did_commit_navigation, did_finish_navigation, navigation_policy, navigation_policy_response,
+       web_content_process_did_terminate,
+@@ -46,6 +46,15 @@ define_class!(
+
+   unsafe impl NSObjectProtocol for WryNavigationDelegate {}
+
++  impl WryNavigationDelegate {
++    // WKNavigationDelegatePrivate.h: native Download Image bypasses navigation policies.
++    #[cfg(target_os = "macos")]
++    #[unsafe(method(_webView:contextMenuDidCreateDownload:))]
++    fn context_menu_download(&self, _webview: &WKWebView, download: &WKDownload) {
++      attach_download_delegate(self, download);
++    }
++  }
++
+   unsafe impl WKNavigationDelegate for WryNavigationDelegate {
+     #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
+     fn navigation_policy(
+diff --git a/src/wkwebview/download.rs b/src/wkwebview/download.rs
+index 6b94501a0..917ec4487 100644
+--- a/src/wkwebview/download.rs
++++ b/src/wkwebview/download.rs
+@@ -20,12 +20,7 @@ pub(crate) fn navigation_download_action(
+   _action: &WKNavigationAction,
+   download: &WKDownload,
+ ) {
+-  unsafe {
+-    if let Some(delegate) = &this.ivars().download_delegate {
+-      let proto_delegate = ProtocolObject::from_ref(&**delegate);
+-      download.setDelegate(Some(proto_delegate));
+-    }
+-  }
++  attach_download_delegate(this, download);
+ }
+
+ // Download response handler
+@@ -35,6 +30,11 @@ pub(crate) fn navigation_download_response(
+   _response: &WKNavigationResponse,
+   download: &WKDownload,
+ ) {
++  attach_download_delegate(this, download);
++}
++
++// Navigation and native context-menu downloads share the same destination policy.
++pub(crate) fn attach_download_delegate(this: &WryNavigationDelegate, download: &WKDownload) {
+   unsafe {
+     if let Some(delegate) = &this.ivars().download_delegate {
+       let proto_delegate = ProtocolObject::from_ref(&**delegate);

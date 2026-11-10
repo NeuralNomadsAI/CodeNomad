@@ -1234,7 +1234,7 @@ impl CliProcessManager {
             #[cfg(not(windows))]
             let mut c = Command::new(&cmd.program);
             #[cfg(not(windows))]
-            c.args(&cmd.args);
+            c.args(&cmd.args).stdin(Stdio::piped());
             #[cfg(target_os = "linux")]
             if shell_env.is_none() {
                 crate::appimage_environment::use_host_environment(&mut c);
@@ -1252,8 +1252,16 @@ impl CliProcessManager {
             // comes after Unix shell_env's env_clear, and the Windows launcher
             // inherits it before it starts Node.
             configure_backend_profile(&mut c, &manager.channel, &manager.config_identity, manager.original_config.as_deref());
-            #[cfg(windows)]
+            c.env(
+                "CODENOMAD_TAURI_WEBKIT",
+                if cfg!(any(target_os = "macos", target_os = "linux")) {
+                    "1"
+                } else {
+                    "0"
+                },
+            );
             c.env("CODENOMAD_NATIVE_PARENT", "1");
+            c.env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", if cfg!(any(windows, target_os = "macos", target_os = "linux")) { "1" } else { "0" });
             configure_spawn(&mut c);
             if let Some(ref cwd) = cwd {
                 c.current_dir(cwd);
@@ -1491,24 +1499,19 @@ impl CliProcessManager {
                             && line.starts_with(crate::native_request::REQUEST_PREFIX)
                         {
                             if let Some(request) = crate::native_request::parse(line) {
-                                let now = SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .map(|duration| duration.as_millis() as u64)
-                                    .unwrap_or(u64::MAX);
-                                let result = if now >= request.deadline {
-                                    Err("Native request expired before execution".to_string())
-                                } else {
+                                let current = manager.clone();
+                                let fence = crate::native_request::RequestFence::new(request.deadline, move || current.is_current_generation(generation));
+                                if let Some(response) = crate::native_request::dispatch(request, fence, |request, fence| {
                                     crate::handle_native_request(
                                         app,
                                         &request.method,
-                                        request.params,
+                                        request.params.clone(),
                                         request.deadline,
+                                        fence,
                                     )
-                                };
-                                manager.write_native_response(
-                                    generation,
-                                    &crate::native_request::response(&request.id, result),
-                                );
+                                }) {
+                                    manager.write_native_response(generation, &response);
+                                }
                             }
                             continue;
                         }

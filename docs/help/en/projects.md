@@ -58,7 +58,7 @@ Discard refuses while a conversation is running or the folder is open in another
 2. Select an existing discovered worktree, or choose **+ Create worktree**.
 3. For creation, enter **Name** and choose **Create and use worktree**.
 
-CodeNomad discovers worktrees through OpenCode and verifies that they belong to the opened repository. A new branch name starts at the selected checkout's HEAD. An existing branch name uses that branch's current revision; Git can refuse a branch already checked out elsewhere. Worktrees use the default `.codenomad/worktrees` location. Uncommitted changes remain in the original checkout; creation does not copy them into the new worktree.
+CodeNomad discovers worktrees through OpenCode and verifies that they belong to the opened repository. When the project is a folder inside a repository, only worktrees that contain that folder are listed. Creating a worktree from such a folder requires Git to track it. A new branch name starts at the selected checkout's HEAD. An existing branch name uses that branch's current revision; Git can refuse a branch already checked out elsewhere. Worktrees use the default `.codenomad/worktrees` location. Uncommitted changes remain in the original checkout; creation does not copy them into the new worktree.
 
 The composer selector moves the parent conversation and its recursive descendants as a verified family. A subsession cannot independently change this selector. Active sessions block the operation: let the family finish or stop its execution first. Wait for a move to settle before requesting another; on error, inspect the refreshed conversation/worktree state before retrying.
 

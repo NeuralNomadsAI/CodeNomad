@@ -42,12 +42,12 @@ export function MissionPlaybookReader(props: { instanceId: string; playbook: Mis
 
   return <div class="mission-playbook-reader">
     <p>{t(`missions.control.template.${props.playbook}.description`)}</p>
-    <p><button type="button" class="window-text-button" onClick={() => void openGuide()}>{t("missions.playbook.guide")}</button></p>
+    <p><button type="button" class="window-action" onClick={() => void openGuide()}>{t("missions.playbook.guide")}</button></p>
     <Show when={helpFailed()}><p role="alert">{t("missions.playbook.guideFailed", { url: guideUrl() })}</p></Show>
     <Show when={!shown() && !failed()}><p role="status">{t("missions.playbook.loading")}</p></Show>
     <Show when={failed() && !shown()}>
       <p role="alert" class="mission-playbook-failure">{t("missions.playbook.unavailable")}{" "}
-        <button type="button" class="window-text-button" onClick={() => setAttempt(value => value + 1)}>{t("missionsPanel.reader.retry")}</button></p>
+        <button type="button" class="window-action" onClick={() => setAttempt(value => value + 1)}>{t("missionsPanel.reader.retry")}</button></p>
     </Show>
     <Show when={playbook()}>{value => <>
       <p class="mission-playbook-note">{t("missions.playbook.english")}</p>

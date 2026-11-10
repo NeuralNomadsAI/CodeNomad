@@ -126,12 +126,17 @@
   white-space: nowrap;
 }
 
-.window-action:hover {
+.window-action:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--surface-interactive-hover);
   color: var(--text-primary);
 }
 
-/* Borderless inline text command (open a reader, request an update, name a brief). */
+.window-action:is(:disabled, [aria-disabled="true"]) {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+/* Borderless inline text link (an end-of-list "Load more", a guide). */
 .window-text-button {
   display: inline-flex;
   align-items: center;

@@ -10,6 +10,7 @@ import { sessions, setSessions, setActiveSession, setProviders } from "../../../
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { getOpenCodeMessageRevision } from "../../../src/stores/opencode-data"
+import { serverApi } from "../../../src/lib/api-client"
 import "../../../src/index.css"
 
 // Real SessionView, real native SSE dispatcher, real reducer and projection:
@@ -22,6 +23,7 @@ let sequence = 1000, messageLists = 0, projections = 0
 ;(window as any).__nativePage = [] as any[]
 const [selected, select] = createSignal(sessionId)
 const [visible, show] = createSignal(true)
+serverApi.fetchSessionOutline = async () => ({ status: "outline", entries: [], checkpoints: [], total: 0, cursor: null })
 const client: any = {
   session: {
     active: async () => ({}), inbox: { list: async () => [] },

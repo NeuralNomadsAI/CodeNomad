@@ -8,13 +8,15 @@ import { createServer } from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { installSharedOpenCode, npmExecutable } from "../packages/server/src/opencode-update/shared-installation.ts"
-import { bundledNpm } from "../packages/server/src/opencode-update/npm-runtime.ts"
+import { executeNpm, openCodeAllowScripts } from "../packages/server/src/opencode-update/npm-runtime.ts"
+import { fixtureRuntime } from "./opencode-fixture-runtime.mjs"
 import { RECOMMENDED_OPENCODE_VERSION } from "../packages/server/src/opencode/runtime-support.ts"
+import { HostOpenCodeService } from "../packages/server/src/workspaces/host-opencode-service.ts"
+import { runtimeIdentity } from "../packages/server/src/opencode/compatibility/runtime.ts"
 
 const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-native-upgrade-"))
-const node = process.env.CODENOMAD_FIXTURE_NODE || process.execPath
-const npm = bundledNpm(node)
-assert.ok(npm, "npm must be bundled beside the selected Node")
+const selected = await fixtureRuntime(root)
+const { node, npm } = selected
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   !/^(OPENCODE_|CODENOMAD_|CLI_|XDG_|npm_|PATH$|NODE_|ELECTRON_|WEBVIEW2_)/i.test(key)))
 Object.assign(env, {
@@ -24,7 +26,7 @@ Object.assign(env, {
   OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_CONFIG_CONTENT: "{}",
   npm_config_prefix: path.join(root, "npm prefix"), npm_config_cache: path.join(root, "npm-cache"),
   npm_config_userconfig: path.join(root, "npmrc"),
-  PATH: process.platform === "win32" ? `${path.dirname(node)};${process.env.SystemRoot}/System32` : `${path.dirname(node)}:/usr/bin:/bin`,
+  ...selected.env, PATH: selected.path,
 })
 for (const key of ["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG_DIR"]) {
   await mkdir(env[key], { recursive: true })
@@ -50,8 +52,10 @@ const result = { root, port }
 try {
   // Seed the historical native-upgrade boundary using npm in this fixture's
   // private prefix. Production installation correctly refuses pre-minimum targets.
-  await run(node, [npm, "install", "--global", "--prefix", env.npm_config_prefix,
-    "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org", "@opencode/cli@2.0.15"])
+  // Like production, allow exactly this package's postinstall (npm 12+ blocks it).
+  await executeNpm(node, [npm, "install", "--global", "--prefix", env.npm_config_prefix,
+    "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org", `--allow-scripts=${openCodeAllowScripts("2.0.15")}`,
+    "@opencode/cli@2.0.15"], env, process.platform, env.npm_config_prefix)
   // Keep an independent controller so cleanup still works after failed replacement.
   await copyFile(binary, bootstrap)
   await run(bootstrap, ["service", "set", "port", String(port)])
@@ -69,6 +73,14 @@ try {
   result.installedVersion = (await run(binary, ["--version"])).stdout.trim()
   assert.equal(result.installedVersion.replace(/^opencode2? v?/, ""), RECOMMENDED_OPENCODE_VERSION)
   assert.deepEqual(result.after, result.before, "upgrade must not restart the service")
+  const lifecycle = new HostOpenCodeService({ binary }, {
+    execFile: (file, args) => run(file, args),
+    startFile: (file, args) => run(file, args),
+  })
+  const activated = runtimeIdentity(await lifecycle.restart())
+  result.activated = activated
+  assert.equal(activated.version, RECOMMENDED_OPENCODE_VERSION, "one restart must activate the installed version")
+  assert.notEqual(activated.pid, result.before.pid)
   result.success = true
 } finally {
   if (started) await run(bootstrap, ["service", "stop"])

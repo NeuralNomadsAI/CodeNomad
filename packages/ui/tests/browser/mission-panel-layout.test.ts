@@ -9,8 +9,8 @@ import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { captureMissionView } from "./mission-view-capture"
 import { missionContentFixture } from "./mission-content-fixture"
-import { inlineMissionEntry, missionDetail, missionEntryStatus, missionGeneralAction, missionPicker, selectMission,
-  selectedMissionTitle } from "./mission-actions"
+import { inlineMissionEntry, missionDetail, missionEntryStatus, missionGeneralAction, missionMenuItemState, missionPicker, missionRows,
+  missionRow, missionToolbar, selectMission, selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -97,9 +97,9 @@ async function open(page: Page, missions: MissionMap[], schedules: RecurrenceSch
   })
 }
 const detail = missionDetail
-const inlineEntries = (page: Page) => missionPicker(page).locator(".mission-picker-inline button.mission-picker-option")
+const inlineEntries = (page: Page) => missionRows(page).locator("button.mission-row-select")
 /** The selected item's icon toolbar as [label, disabled] pairs, in order. */
-const toolbar = (page: Page) => detail(page).locator(".mission-action-bar button").evaluateAll(buttons =>
+const toolbar = (page: Page) => missionToolbar(page).locator("button").evaluateAll(buttons =>
   buttons.map(button => [button.getAttribute("aria-label"), (button as HTMLButtonElement).disabled]))
 
 test("the list is a list: one-line titled entries, nothing below until a selection, creation on one screen", async () => {
@@ -113,8 +113,8 @@ test("the list is a list: one-line titled entries, nothing below until a selecti
     assert.equal(await detail(page).count(), 0, "no selection, no detail")
     assert.equal(await selectedMissionTitle(page).count(), 0, "nothing is selected by default")
     for (const entry of await inlineEntries(page).all()) {
-      assert.deepEqual(await entry.evaluate(el => [...el.children].map(child => child.className)), ["mission-picker-mark", "mission-picker-title", "sr-only"])
-      const [row, title, line] = await entry.evaluate(el => { const title = el.querySelector(".mission-picker-title")!
+      assert.deepEqual(await entry.evaluate(el => [...el.children].map(child => child.getAttribute("class")!.split(" ")[0])), ["lucide", "session-item-title", "sr-only"])
+      const [row, title, line] = await entry.evaluate(el => { const title = el.querySelector(".session-item-title")!
         return [el.getBoundingClientRect().height, title.getBoundingClientRect().height, parseFloat(getComputedStyle(title).lineHeight)] })
       assert.ok(title <= line + 0.5 && row <= 32, "exactly one short line, even for long titles")
     }
@@ -130,28 +130,31 @@ test("the list is a list: one-line titled entries, nothing below until a selecti
   } finally { await page.close() }
 })
 
-test("one-time selected: Needs you, icon toolbar, Summary eye and the dependency tree as the single task view", async () => {
+test("one-time selected: red task questions, icon toolbar, Summary eye and the dependency tree as the single task view", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 1000 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try {
     await open(page, [active, finished])
     await selectMission(page, /^Migrate the storage layer/)
-    assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is a separate section below the picker")
-    assert.equal(await detail(page).locator(".mission-needs").count(), 0, "Needs you appears only for an open request")
+    assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")
+    const schema = detail(page).locator('.mission-tree-node[data-task-key="schema"] .mission-tree-task')
+    // Its actor's "form" activity state alone (possibly an uncorrelated global request)
+    // keeps the task's reader: only a correlated request makes it open a question.
+    assert.equal(await schema.getAttribute("aria-description"), null)
     await page.evaluate(async () => {
       const path = "/src/stores/forms.ts", { replaceFormQueue } = await import(path)
       replaceFormQueue("fixture", [{ id: "form-1", sessionID: "ses_worker", title: "Which index strategy should the migration keep?", fields: [{}], location: { directory: "fixture" } }])
     })
-    const need = detail(page).locator(".mission-needs-item")
-    await need.waitFor()
-    assert.equal(await need.count(), 1)
-    assert.equal(await need.locator(".mission-needs-title").innerText(), "Which index strategy should the migration keep?")
-    assert.match(await need.locator(".mission-needs-title").getAttribute("title") ?? "", /Question from Schema reviewer/)
-    assert.equal(await need.getByRole("button", { name: "Answer", exact: true }).count(), 1)
-    assert.equal(await detail(page).locator(".mission-overview-toggle").getAttribute("aria-label"), "Summary")
+    // The worker's open question is its task's: the chevron carries it, the flag stays the mission's own.
+    const row = missionRow(page, /^Migrate the storage layer/)
+    await row.locator('.session-item-expander[data-child-activity="permission"]').waitFor()
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0)
+    assert.equal(await schema.getAttribute("aria-description"), "Opens its question", "the correlated request makes the task open it")
+    assert.equal(await page.locator(".mission-control").getByText("Which index strategy should the migration keep?").count(), 0, "questions open in the dock, never in the panel")
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-label"), "Summary")
     // The tree merges status into the dependency graph.
-    const states = await detail(page).locator(".mission-tree li").evaluateAll(items => items.map(item => [(item as HTMLElement).dataset.taskKey, (item as HTMLElement).dataset.state]))
+    const states = await detail(page).locator(".mission-tree .mission-tree-node").evaluateAll(items => items.map(item => [(item as HTMLElement).dataset.taskKey, (item as HTMLElement).dataset.state]))
     assert.deepEqual(states, [["read", "done"], ["legacy", "failed"], ["bench", "active"], ["schema", "input"], ["write", "blocked"], ["cleanup", "waiting"]])
     assert.equal(await detail(page).locator(".mission-graph path[data-to='cleanup']").count(), 2)
     assert.equal(await detail(page).locator(".mission-tree-mark svg").count(), 6, "every node shows a status icon")
@@ -161,19 +164,19 @@ test("one-time selected: Needs you, icon toolbar, Summary eye and the dependency
       return copy.textContent ?? ""
     })
     assert.doesNotMatch(visibleText, /Done|Completed|Waiting|Blocked|tasks done|%|engine is wired/, "no visible status words, counts or prose")
-    assert.equal(await detail(page).locator('li[data-task-key="schema"] .sr-only').textContent(), "Awaiting your input", "status words remain available to assistive technology")
+    assert.equal(await detail(page).locator('.mission-tree-node[data-task-key="schema"] .sr-only').textContent(), "Awaiting your input", "status words remain available to assistive technology")
     assert.equal(await page.locator(".mission-control").locator("textarea, form").count(), 0, "no coordinator field")
     assert.deepEqual(await page.locator(".mission-control .mission-disclosure").evaluateAll(items => items.map(item => item.className)),
-      ["mission-tree mission-disclosure"], "the task tree is the only disclosure: no More")
-    assert.equal(await page.locator(".mission-control").getByRole("button", { name: "More actions", exact: true }).count(), 0, "no overflow menu")
+      [], "the tasks are the mission's children: no disclosure, no More")
+    assert.equal((await missionMenuItemState(page, "edit")).enabled, true, "Edit lives in the overflow menu")
     assert.deepEqual(await toolbar(page), [["Pause mission", false], ["Stop mission permanently", false], ["Summary", false],
-      ["Open conversation", false], ["Edit selected mission", false], ["Delete selected mission…", false]])
-    assert.equal(await detail(page).locator(".mission-action-request").innerText(), "Request an update")
+      ["Open conversation", false], ["Delete selected mission…", false], ["More actions", false]])
+    assert.equal((await missionMenuItemState(page, "request")).label, "Request an update")
     await captureMissionView(page, "one-time-selected")
     // Overview opens the briefing centrally; its eye highlights the exact target.
-    await detail(page).locator(".mission-overview-toggle").click()
+    await missionToolbar(page).locator(".mission-overview-toggle").click()
     await page.locator(".mission-reader").getByText(/The new engine is wired/).waitFor()
-    assert.equal(await detail(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
     await page.locator(".mission-reader details.mission-report-technical > summary", { hasText: "Plan changes" }).waitFor()
     assert.deepEqual(errors, [])
   } finally { await page.close() }
@@ -186,24 +189,28 @@ test("finished one-time Mission: titled entry, disabled inapplicable actions, pr
   try {
     await open(page, [finished, audit])
     await (await inlineMissionEntry(page, /^Prepare the 2\.4/)).waitFor()
-    assert.equal(await inlineEntries(page).first().locator(".mission-picker-title").innerText(), "Prepare the 2.4 release notes for the desktop and web apps")
+    assert.equal(await inlineEntries(page).first().locator(".session-item-title").innerText(), "Prepare the 2.4 release notes for the desktop and web apps")
     await selectMission(page, /^Prepare the 2\.4/)
     assert.equal(await selectedMissionTitle(page).innerText(), "Prepare the 2.4 release notes for the desktop and web apps")
     // Inapplicable actions stay in place, disabled: no primary, Stop or Edit for a finished Mission.
     assert.deepEqual(await toolbar(page), [["Start", true], ["Stop mission permanently", true], ["Summary", false],
-      ["Open conversation", false], ["Edit selected mission", true], ["Delete selected mission…", false]])
-    assert.equal(await detail(page).locator(".mission-action-request").count(), 0, "no update request for a finished Mission")
+      ["Open conversation", false], ["Delete selected mission…", false], ["More actions", false]])
+    // The menu still applies: a finished Mission can be saved as a brief; its other actions stay disabled.
+    for (const [key, enabled] of [["request", false], ["interrupt", false], ["save-brief", true], ["edit", false]] as const)
+      assert.equal((await missionMenuItemState(page, key)).enabled, enabled, key)
     const tree = detail(page).locator(".mission-tree")
-    assert.equal(await tree.locator("li[data-state='done']").count(), 8)
+    assert.equal(await tree.locator(".mission-tree-node[data-state='done']").count(), 8)
     assert.equal(await detail(page).locator("p, .mission-result").count(), 0, "no result prose in the panel")
     assert.doesNotMatch(await page.locator(".mission-control").innerText(), /ses_|task-t0|Release notes are drafted/)
     await captureMissionView(page, "finished-one-time")
-    await detail(page).locator(".mission-overview-toggle").click()
+    await missionToolbar(page).locator(".mission-overview-toggle").click()
     await page.locator(".mission-reader").getByText(/^Release notes are drafted/).waitFor()
+    // While the eye is pressed, the reader follows the selection: a selected task shows its own.
     await tree.locator(".mission-tree-task").first().click()
-    assert.equal(await page.locator(".mission-reader .window-title").innerText(), "Collect merged changes")
-    assert.equal(await tree.locator(".mission-tree-task").first().getAttribute("aria-pressed"), "true")
-    assert.equal(await detail(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "false")
+    await page.locator(".mission-reader .window-title").getByText("Collect merged changes", { exact: true }).waitFor()
+    assert.equal(await tree.locator(".mission-tree-task").first().getAttribute("aria-current"), "true")
+    assert.equal(await selectedMissionTitle(page).count(), 0, "the task, not its Mission row, is the selection")
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true", "the eye shows the task's open reader")
     const taskReader = page.locator(".mission-task-reader")
     await taskReader.getByText("Done", { exact: true }).waitFor()
     assert.doesNotMatch(await taskReader.innerText(), /No result recorded|Unblocks|Blocks /)
@@ -224,14 +231,14 @@ test("recurring selected: Daily entry, Next in the schedule zone, current tree s
     assert.match(await missionEntryStatus(page, "Daily source review"), /^Daily · Running · Next: (today|tomorrow) 8:15 AM \(UTC\)( · |$)/)
     await selectMission(page, "Daily source review")
     assert.deepEqual(await toolbar(page), [["Pause schedule Daily source review", false], ["Stop schedule Daily source review", false],
-      ["Run Daily source review now", false], ["Summary", false], ["Open conversation", true], ["Edit selected mission", true], ["Delete selected mission…", true]])
+      ["Run Daily source review now", false], ["Summary", false], ["Open conversation", true], ["Delete selected mission…", true], ["More actions", true]])
     assert.doesNotMatch(await detail(page).innerText(), /Next:/, "the entry alone says when the next run is")
     assert.deepEqual((await detail(page).locator(".mission-past-run").allInnerTexts()).map(text => text.replace(/^.* · /, "")), ["Ended without a report", "Completed"])
     assert.doesNotMatch(await page.locator(".mission-control").innerText(), /\(archived\)|pas_|msn_|Last run/)
     await captureMissionView(page, "recurring-selected")
 
     // Schedule reader: rule, latest run (its archive fails plainly with Retry), every run, identifiers folded.
-    await detail(page).locator(".mission-overview-toggle").click()
+    await missionToolbar(page).locator(".mission-overview-toggle").click()
     const reader = page.locator(".mission-reader")
     await reader.getByText("The result of this run couldn't be loaded.", { exact: false }).waitFor()
     await reader.getByRole("button", { name: "Retry", exact: true }).waitFor()

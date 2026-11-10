@@ -9,7 +9,7 @@ Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt geda
 ## Unterhaltungen finden und navigieren {#navigate-conversations}
 
 1. Wählen Sie eine Zeile unter **Sitzungen** oder verwenden Sie **Neue Sitzung**, um eine übergeordnete Unterhaltung zu beginnen.
-2. Klicken Sie auf den Pfeil einer übergeordneten Sitzung, um deren Untersitzungen auf- oder einzuklappen und ihre Abzeichen beizubehalten. Ein eingeklappter Pfeil zeigt den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet, wird komprimiert oder ist inaktiv; seine zugängliche Beschriftung zählt sie.
+2. Klicken Sie auf den Pfeil einer übergeordneten Sitzung, um deren Untersitzungen auf- oder einzuklappen und ihre Abzeichen beizubehalten. Ob auf- oder eingeklappt, zeigt der Pfeil den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet, wird komprimiert oder ist inaktiv; seine zugängliche Beschriftung zählt sie. Klicken Sie ihn mit der rechten Maustaste an und wählen Sie **Als gelesen markieren**, um die Abzeichen **Bereit** und **Unterbrochen** der Unterhaltung und aller Untersitzungen auf einmal zu entfernen.
 3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein. Ziehen Sie in Suchergebnissen über die Kontrollkästchen der Zeilen, um mehrere Unterhaltungen auf einmal aus- oder abzuwählen.
 4. Verwenden Sie **Zurück** und **Vorwärts** in der Seitenleiste, um zuvor angezeigte Unterhaltungen erneut aufzurufen.
 
@@ -18,6 +18,12 @@ Klicken Sie auf **Bereit** oder **Unterbrochen** (**Ausblenden**), um das Abzeic
 Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Einträge mit eigener Identität und eigenem Worktree jeder Unterhaltung. Unter **Einstellungen → Allgemein** ist **Untersitzungen automatisch aufklappen** standardmäßig aktiviert. Eine sichtbare eingeklappte Zeile öffnet die Pfade zu ihren aktiven Untersitzungen, wenn ihr Pfeil zu Arbeit, Komprimierung oder Eingabe erforderlich wechselt und sie ausgewählt ist oder zur Nachkommenschaft der ausgewählten Unterhaltung gehört. Diese Regel gilt auf jeder Ebene. Eine bereits aktive Zeile bleibt beim Hereinscrollen bis zu einem neuen Zustandswechsel geschlossen. Deaktivieren Sie die Option, damit Aktivität keine Zweige öffnet; manuelles Aufklappen und ausdrückliche Navigation bleiben verfügbar. Geöffnete Zweige, auch automatisch geöffnete, werden zur Wiederherstellung gespeichert.
 
 Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die Reihenfolge der Liste. Er bleibt im Arbeitsspeicher, überspringt nicht verfügbare/gelöschte Unterhaltungen und wird nach einem Neustart nicht wiederhergestellt. Die Auswahl einer neuen Unterhaltung nach dem Zurückgehen ersetzt den Vorwärtspfad. **Vorherige Sitzung** / **Nächste Sitzung** in der Palette durchlaufen stattdessen die sichtbare Liste.
+
+## Archivieren und wiederherstellen {#archive}
+
+Wählen Sie **Sitzung archivieren** in den Zeilenaktionen, um den Verlauf zu behalten und den inaktiven Zweig aus der normalen Ansicht auszublenden. Die ausgewählte Unterhaltung sowie laufende Arbeit und offene Fragen bleiben erreichbar. Archivieren beendet keine Arbeit, löscht keine Nachrichten und ändert nicht die eigenen Archivkennzeichen der Untersitzungen.
+
+Öffnen Sie die Sitzungssuche und wählen Sie **Archivierte Sitzungen** oder **Alle Sitzungen**. Die Zeilen zeigen **Archiviert** und bieten **Sitzung wiederherstellen**. Aktivieren Sie Untersitzungen, um Kinder auch unter archivierten Eltern unabhängig zu finden. **Nicht archivierte Sitzungen** filtert nach dem eigenen Kennzeichen jeder Unterhaltung. Stellen Sie einen archivierten Vorfahren wieder her, um seinen inaktiven Zweig wieder normal anzuzeigen. Aktualisieren Sie bei unbestätigter Aktion die Liste vor einem erneuten Versuch.
 
 ## Agent, Modell und Denkaufwand wählen {#agent-model-thinking}
 

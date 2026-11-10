@@ -67,13 +67,13 @@ const scheduleCriterion = z.object({ kind: z.literal("cron"), expression: z.stri
 /** One ordered list read as groups (`missionCriteriaStructure`): leading events trigger,
  * leading schedules trigger at their slots, events after schedules are their "if"
  * conditions, and schedules after events are an "else" fallback of everything above.
- * An empty list launches once at Play. */
+ * An empty list or sole now launches once through journal admission at Play. */
 export const missionCriteriaLaunchPolicySchema = z.object({
-  when: z.array(z.union([scheduleCriterion, missionConditionSchema])).max(MISSION_CALENDAR_LIMIT * 2),
+  when: z.array(z.union([z.object({ kind: z.literal("now") }).strict(), scheduleCriterion, missionConditionSchema])).max(MISSION_CALENDAR_LIMIT * 2),
 }).strict().superRefine((policy, context) => {
-  const schedules = policy.when.filter(item => item.kind === "cron"), events = policy.when.filter(item => item.kind !== "cron")
+  const schedules = policy.when.filter(item => item.kind === "cron" || item.kind === "now"), events = policy.when.filter(item => item.kind !== "cron" && item.kind !== "now")
   const { roles } = missionCriteriaStructure(policy.when)
-  const triggerEvents = policy.when.filter((item, index) => item.kind !== "cron" && roles[index] === "trigger")
+  const triggerEvents = policy.when.filter((item, index) => item.kind !== "cron" && item.kind !== "now" && roles[index] === "trigger")
   const unique = (items: unknown[]) => new Set(items.map(item => canonicalAuthority(item))).size === items.length
   const principals = schedules.length + (triggerEvents.length ? 1 : 0)
   if (!unique(schedules) || !unique(events) || events.length > MISSION_CALENDAR_LIMIT || principals > MISSION_CALENDAR_LIMIT)

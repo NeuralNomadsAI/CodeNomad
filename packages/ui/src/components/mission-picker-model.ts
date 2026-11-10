@@ -5,11 +5,6 @@
  * anything else is idle. Outcomes themselves are status text. */
 export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "idle"
 
-/** Most urgent first; like a collapsed session parent's chevron (`session-child-activity.ts`),
- * which leaves interrupted children on their own rows. */
-export const MISSION_PICKER_ATTENTION = ["permission", "working", "done"] as const
-export type MissionPickerAttention = (typeof MISSION_PICKER_ATTENTION)[number]
-
 export interface MissionPickerEntry {
   /** `mission:<id>` or `schedule:<id>`. */
   key: string
@@ -17,41 +12,24 @@ export interface MissionPickerEntry {
   /** Full localized state for tooltips and screen readers. */
   status: string
   mark: MissionMark
+  /** The most urgent state of a Mission's tasks, carried by its chevron like a
+   * session's children: a task asks for an answer, works, or finished unseen. */
+  childActivity?: "permission" | "working" | "idle"
+  /** A Mission whose plan holds no task: like a session without children, no chevron. */
+  leaf?: boolean
 }
 
-type Translate = (key: string, params?: Record<string, string>) => string
-export type MissionPickerAttentionCounts = Record<MissionPickerAttention, number>
-
-const attentionOf = (mark: MissionMark): MissionPickerAttention | undefined =>
-  (MISSION_PICKER_ATTENTION as readonly string[]).includes(mark) ? mark as MissionPickerAttention : undefined
-
-/** Attention among the entries other than the selected one. */
-export function missionPickerAttention(entries: readonly MissionPickerEntry[], selectedKey?: string): {
-  kind?: MissionPickerAttention; counts: MissionPickerAttentionCounts
-} {
-  const counts: MissionPickerAttentionCounts = { permission: 0, working: 0, done: 0 }
-  for (const entry of entries) {
-    const attention = attentionOf(entry.mark)
-    if (entry.key !== selectedKey && attention) counts[attention]++
-  }
-  return { kind: MISSION_PICKER_ATTENTION.find(kind => counts[kind] > 0), counts }
-}
-
-/** Counted states, e.g. "1 waiting, 2 running". */
-export function missionPickerAttentionLabel(t: Translate, counts: MissionPickerAttentionCounts): string {
-  return MISSION_PICKER_ATTENTION.filter(kind => counts[kind] > 0)
-    .map(kind => t(`missionsPanel.attention.${kind}.${counts[kind] === 1 ? "one" : "other"}`, { count: String(counts[kind]) }))
-    .join(", ")
-}
-
-/** A one-time Mission's state from native requests and observed actor activity.
+/** A one-time Mission's own state from native requests and observed actor activity:
+ * red only for the questions its flag carries (`openRequests`, each one it can
+ * open); observed actor states, the coordinator's included, cover whole families
+ * and never redden it. Its tasks' questions belong to its chevron.
  * A failed mission can be resumed unless the user stopped it since, so it reads
  * as interrupted; a completed one is green until seen. */
 export function missionMark(mission: { status: string; runState?: string }, input: {
   openRequests: number; actorStates?: readonly string[]; coordinatorState?: string; seen: boolean
 }): MissionMark {
   const states = input.actorStates ?? []
-  if (input.openRequests > 0 || states.some(state => state === "permission" || state === "form")) return "permission"
+  if (input.openRequests > 0) return "permission"
   const run = mission.runState ?? "running"
   if (mission.status === "failed") return run === "running" ? "interrupted" : "idle"
   if (mission.status === "completed") return input.seen ? "idle" : "done"

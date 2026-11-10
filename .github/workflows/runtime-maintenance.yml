@@ -22,6 +22,14 @@ jobs:
       pin: ${{ steps.runtime.outputs.pin }}
       target: ${{ steps.runtime.outputs.target }}
       node-update: ${{ steps.runtime.outputs.node-update }}
+      npm-pin: ${{ steps.runtime.outputs.npm-pin }}
+      npm-target: ${{ steps.runtime.outputs.npm-target }}
+      npm-update: ${{ steps.runtime.outputs.npm-update }}
+      npm-engine: ${{ steps.runtime.outputs.npm-engine }}
+      electron: ${{ steps.runtime.outputs.electron }}
+      electron-node: ${{ steps.runtime.outputs.electron-node }}
+      npm-audit: ${{ steps.runtime.outputs.npm-audit }}
+      npm-pinned-audit: ${{ steps.runtime.outputs.npm-pinned-audit }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -33,7 +41,7 @@ jobs:
           package-manager-cache: false
       - name: Test maintenance policy
         run: node --test .github/scripts/runtime-maintenance.test.cjs
-      - name: Check Node LTS and audit the bundled npm release
+      - name: Check Node LTS and npm, and audit the bundled and latest npm
         id: runtime
         run: npm run check:runtime
       - name: Retain the npm advisory report for manual assessment
@@ -46,7 +54,7 @@ jobs:
 
   propose:
     needs: check
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.check.outputs.node-update == 'true'
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.check.outputs.node-update == 'true' || needs.check.outputs.npm-update == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -58,6 +66,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Propose a reviewed Node LTS update
+        if: needs.check.outputs.node-update == 'true'
         uses: actions/github-script@v9.0.0
         env:
           NODE_PIN: ${{ needs.check.outputs.pin }}
@@ -66,3 +75,22 @@ jobs:
           script: |
             const { proposeNodeUpdate } = require('./.github/scripts/runtime-maintenance.cjs');
             await proposeNodeUpdate({ github, context, core, pin: process.env.NODE_PIN, target: process.env.NODE_TARGET });
+      - name: Propose a reviewed npm update
+        if: needs.check.outputs.npm-update == 'true'
+        uses: actions/github-script@v9.0.0
+        env:
+          NODE_PIN: ${{ needs.check.outputs.pin }}
+          NPM_PIN: ${{ needs.check.outputs.npm-pin }}
+          NPM_TARGET: ${{ needs.check.outputs.npm-target }}
+          NPM_ENGINE: ${{ needs.check.outputs.npm-engine }}
+          ELECTRON: ${{ needs.check.outputs.electron }}
+          ELECTRON_NODE: ${{ needs.check.outputs.electron-node }}
+          NPM_AUDIT: ${{ needs.check.outputs.npm-audit }}
+          NPM_PINNED_AUDIT: ${{ needs.check.outputs.npm-pinned-audit }}
+        with:
+          script: |
+            const { proposeNpmUpdate } = require('./.github/scripts/runtime-maintenance.cjs');
+            const env = process.env;
+            await proposeNpmUpdate({ github, context, core, pin: env.NPM_PIN, target: env.NPM_TARGET, engine: env.NPM_ENGINE,
+              nodePin: env.NODE_PIN, electron: env.ELECTRON, electronNode: env.ELECTRON_NODE,
+              audit: env.NPM_AUDIT, pinnedAudit: env.NPM_PINNED_AUDIT });

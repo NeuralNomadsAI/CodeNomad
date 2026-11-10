@@ -35,7 +35,10 @@ function Fixture() {
   const [mounted, mount] = createSignal(true)
   const mission = () => missionStore.state(instanceId).missions[0]
   const show = (itemId: string) => updateMissionProjectView(scope, { reader: { missionId: "mission", kind: "task", itemId } })
-  const reading = (task: MissionTask) => { const reader = missionProjectView(scope).reader; return reader?.kind === "task" && reader.itemId === task.id }
+  // As in the panel, a row selects its task, and an open reader follows the selection.
+  const selected = (task: MissionTask) => { const key = missionProjectView(scope).selectedTask; return key?.missionId === "mission" && key.taskId === task.id }
+  const select = (task: MissionTask) => updateMissionProjectView(scope, { selectedTask: { missionId: "mission", taskId: task.id },
+    ...(missionProjectView(scope).reader ? { reader: { missionId: "mission", kind: "task" as const, itemId: task.id } } : {}) })
   ;(window as any).taskReader = {
     show, refresh: () => missionStore.refresh(instanceId),
     mount,
@@ -61,7 +64,7 @@ function Fixture() {
     </main>
     <aside class="mission-control" style={{ overflow: "auto" }}><Show when={mission()}>{value =>
       <MissionTaskTree mission={value()} instanceId={instanceId} activity={missionStore.state(instanceId).activity?.missions[0]?.actors}
-        reading={reading} onRead={task => show(task.id)} onRecoveryAdmitted={() => missionStore.refresh(instanceId)}
+        selected={selected} onSelect={select}
         conversation={task => missionTaskConversation(value(), task, missionStore.state(instanceId).activity?.missions[0]?.family, undefined,
           [...value().actors, ...missionStore.observations(instanceId, value().id).flatMap(page => page.context.actors)])}
         onOpenConversation={id => { (window as any).openedConversations = [...(window as any).openedConversations ?? [], id] }} />

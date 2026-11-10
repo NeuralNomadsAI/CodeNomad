@@ -9,7 +9,7 @@ CodeNomad connects to a shared OpenCode service on the execution host. Selecting
 3. Use **Check status and updates**. If OpenCode is missing, choose **Install and start OpenCode**; review the host and installation scope first.
 4. If setup offers **Connect and continue**, use it after resolving the reported problem.
 
-Installation uses bundled Node/npm for a standard user installation shared with other clients. **Install for the user and configure PATH** changes that user's terminal setup; open a new terminal afterward. A browser connects to the CodeNomad server: its file picker and executable selection concern that server, not the browsing device.
+Installation uses the Node runtime the CodeNomad server runs on and its npm (on desktop, Electron's integrated Node or Tauri's bundled Node) for a standard user installation shared with other clients. **Install for the user and configure PATH** changes that user's terminal setup; open a new terminal afterward. A browser connects to the CodeNomad server: its file picker and executable selection concern that server, not the browsing device.
 
 When an older OpenCode comes first on PATH, the offered action depends on how it was installed. For OpenCode 1.x installed with npm, **Replace OpenCode {version} with OpenCode 2** asks for confirmation, removes that npm package and installs OpenCode 2 in the same npm folder; the OpenCode data folder is kept, and OpenCode 2 imports 1.x conversations itself. An older or unusable OpenCode installed another way (winget, Homebrew, manual) is never modified: **Install OpenCode 2 for CodeNomad** installs OpenCode 2 in the user npm folder beside it, and CodeNomad then uses that copy. If that older command itself sits in the user npm folder (for example a link in `~/.local/bin`), or that folder cannot be written, setup explains why instead of offering the action: move or rename the command, or fix the folder's permissions, then choose **Check status and updates**. A terminal's `opencode` command may still start the older version. An explicitly selected custom executable is never replaced.
 
@@ -20,7 +20,7 @@ The installed executable and the running service can have different versions. Co
 | Classification | Current requirement | Meaning |
 | --- | --- | --- |
 | Minimum | OpenCode **2.2.3** | The image generation tool used by the **Images** settings and the Design extension, alongside correct JavaScript job ordering in Code Mode and the native replay and compaction format; conversations saved by earlier versions stay readable after updating. |
-| Recommended | OpenCode **2.2.5** | Qualified target, distinct from the technical minimum. |
+| Recommended | OpenCode **2.2.6** | Qualified target, distinct from the technical minimum. |
 | Unverified | A newer or custom version not fully validated | Not rejected merely for being untested; the connected service's actual API contracts are checked. |
 
 The connected service must expose the required session, permission, Form, inbox and session-environment contracts. Native Mission scheduling also checks the schedule APIs, plugin/provider bundle and effective `experimental.schedules` setting. Availability follows those consumed capabilities, including on compatible future versions. If setup reports an unsupported running service, select/install a supported CLI and use the explicit shared-service restart when ready.
@@ -49,6 +49,8 @@ Turning it off removes only that task, LaunchAgent or service; a running OpenCod
 2. To replace installed CLI files, choose **Update to OpenCode {version}** when offered. Wait for completion.
 3. Review the running-service status. Use **Restart shared service** only when you intend to activate the selected installation for every connected client.
 4. For a process restart without installing anything, expand **Troubleshooting** and choose **Restart OpenCode service**, then confirm.
+
+Restart remains clickable during a background status refresh. Each request checks the current service status again before changing the service; a failed check blocks the restart.
 
 | Action | Scope and effect | Safe recovery |
 | --- | --- | --- |

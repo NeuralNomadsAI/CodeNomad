@@ -307,6 +307,7 @@ export const instanceMessages = {
   "instanceShell.worktree.create.placeholder": "worktree-name",
   "instanceShell.worktree.create.success": "Worktree {slug} सिर्जना गरियो",
   "instanceShell.worktree.create.error": "Worktree सिर्जना गर्न असफल भयो",
+  "instanceShell.worktree.create.nestedFolderUnavailable": "यो शाखामा Git ले खोलिएको फोल्डर ट्र्याक गर्दैन, त्यसैले नयाँ worktree मा यो हुने छैन।",
   "instanceShell.worktree.openInFileManager.action": "फाइल प्रबन्धकमा खोल्नुहोस्",
   "instanceShell.worktree.openInFileManager.error": "फाइल प्रबन्धकमा worktree खोल्न सकिएन",
   "instanceShell.worktree.delete.action": "Worktree मेटाउनुहोस्",

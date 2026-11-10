@@ -128,7 +128,7 @@ globalThis.__asideFailure = {
   async cache() {
     const cache = await createFixtureCache(); caches.push(cache.cacheDir); events.push('cache-created')
     return { cacheDir: cache.cacheDir, async dispose() {
-      if (server?.httpServer?.listening || server?._pendingRequests.size) throw new Error('unsafe cache deletion')
+      if (server?.httpServer?.listening || Object.values(server?.environments ?? {}).some(environment => environment._pendingRequests.size)) throw new Error('unsafe cache deletion')
       events.push('dispose-start'); await cache.dispose(); events.push('dispose-complete'); write()
     } }
   },

@@ -35,9 +35,9 @@ test("source projections use the document transaction graph and reject changed m
   const prefix = factory(); prefix.message("source", message.id, nativePassageMessageDigest(Schema.decodeUnknownSync(SessionMessage.Info)(message)))
   const family = factory(); family.family("source")
   const assistant = { type: "assistant", id: "msg_assistant", time: { created: 1001, completed: 1002 }, agent: "worker",
-    model: { providerID: "fixture", id: "fixture" }, content: [{ type: "text", text: "split source" }],
+    model: { providerID: "fixture", id: "fixture" }, content: [{ type: "text", text: "split source" }, { type: "text", text: "inline tail" }],
     cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop" }
-  db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(assistant.id, 0, "assistant", JSON.stringify({ ...assistant, content: [] }), "source")
+  db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(assistant.id, 0, "assistant", JSON.stringify({ ...assistant, content: assistant.content.slice(1) }), "source")
   db.prepare("INSERT INTO session_part VALUES(?,?,?,?,?)").run(assistant.id, "source", 0, "text", JSON.stringify(assistant.content[0]))
   const split = factory(); split.message("source", assistant.id, nativePassageMessageDigest(Schema.decodeUnknownSync(SessionMessage.Info)(assistant)))
   assert.equal(split.current(), true)

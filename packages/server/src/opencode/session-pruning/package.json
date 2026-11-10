@@ -5,8 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./index.ts",
-    "./rpc": "./contract.ts",
-    "./tui": "./tui.ts"
+    "./rpc": "./contract.ts"
   },
   "files": [
     "index.ts", "claim-fence.ts", "contract.ts", "database-path.ts", "location.ts", "planner.ts", "plugin.ts",
@@ -19,11 +18,11 @@
     "assets-gallery-contract.ts", "assets-gallery-proof.ts", "assets-gallery.ts", "assets-conversation.ts",
     "history-database.ts", "navigation-contract.ts", "navigation-store.ts",
     "navigation-scope.ts", "outline-index.ts", "outline-layout.ts", "outline-preview.ts",
-    "transaction.ts", "tui.ts", "tui-reload.ts"
+    "transaction.ts", "message-storage.ts", "native-assistant-content.ts"
   ],
   "dependencies": {
     "@opencode/plugin": "2.2.3",
     "@opencode/schema": "2.2.3",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   }
 }

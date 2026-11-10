@@ -61,7 +61,8 @@ describe("forge remotes", () => {
     assert.deepEqual(parseRemoteUrl("ssh://git@codeberg.org:2222/forgejo/forgejo"), { host: "codeberg.org", path: "forgejo/forgejo" })
     assert.deepEqual(parseRemoteUrl("https://user:secret@git.example.com/team/app/"), { host: "git.example.com", path: "team/app" })
     for (const url of ["C:/repos/app", "C:\\repos\\app", "/srv/git/app.git", "file:///srv/app", "https://github.com/only-owner", "git@host:../escape/x", "",
-      "git@localhost#ignored:team/app", "git@host?x:team/app", "git@host\\evil:team/app", "https://host/team/app%3Fq", "https://ho_st/team/app"]) {
+      "git@localhost#ignored:team/app", "git@host?x:team/app", "git@host\\evil:team/app", "https://host/team/app%3Fq", "https://ho_st/team/app",
+      "https://dev.azure.com/Org/My%20Project/_git/Repo", "https://host/team/r%C3%A9po", "https://host/team/My Project"]) {
       assert.equal(parseRemoteUrl(url), undefined, url)
     }
   })

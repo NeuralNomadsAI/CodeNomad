@@ -9,7 +9,7 @@ Los encabezados de razonamiento y de herramientas muestran cuánto duró cada pa
 ## Buscar y recorrer conversaciones {#navigate-conversations}
 
 1. Selecciona una fila en **Sesiones** o usa **Nueva sesión** para iniciar una conversación padre.
-2. Haz clic en el chevrón de una conversación padre para expandir o contraer sus subsesiones conservando sus insignias. Un chevrón contraído muestra el estado más urgente de sus descendientes: necesitan entrada, están trabajando, compactando o inactivos; su etiqueta accesible los cuenta.
+2. Haz clic en el chevrón de una conversación padre para expandir o contraer sus subsesiones conservando sus insignias. Expandido o contraído, el chevrón muestra el estado más urgente de sus descendientes: necesitan entrada, están trabajando, compactando o inactivos; su etiqueta accesible los cuenta. Haz clic derecho en él y elige **Marcar como leído** para borrar de una vez las insignias **Inactiva** e **Interrumpido** de la conversación y de todas sus subsesiones.
 3. Usa **Buscar sesiones…**, **Sesiones principales** / **Subsesiones**, el filtro de worktree y la ordenación por **Actividad**, **Nombre** o **Worktree** para acotar la lista. En los resultados de búsqueda, arrastra sobre las casillas de las filas para seleccionar o deseleccionar varias conversaciones a la vez.
 4. Usa **Atrás** y **Adelante** en la barra lateral para volver a conversaciones que hayas mostrado.
 
@@ -18,6 +18,12 @@ Haz clic en una insignia **Inactiva** o **Interrumpido** (**Descartar**) para re
 La exploración normal es jerárquica; los resultados de búsqueda/filtro son entradas planas con la identidad y el worktree propios de cada conversación. En **Ajustes → General**, **Expandir subsesiones automáticamente** está activado por defecto. Una fila visible y contraída abre las rutas a sus subsesiones activas cuando su flecha pasa a trabajar, compactar o esperar una respuesta, si está seleccionada o desciende de la conversación seleccionada. La regla se aplica a cualquier profundidad. Desplazarse hasta una fila ya activa la deja cerrada hasta una nueva transición. Desactiva la opción para que la actividad no abra ramas; la expansión manual y la navegación explícita siguen disponibles. Las ramas abiertas, incluidas las abiertas automáticamente, se guardan para restaurarlas.
 
 Atrás/Adelante es un historial de visitas por pestaña de proyecto y ventana, no el orden de la lista. Se conserva en memoria, omite conversaciones no disponibles/eliminadas y no se restaura tras reiniciar. Seleccionar una conversación nueva después de retroceder reemplaza la ruta hacia delante. En cambio, **Sesión anterior** / **Siguiente sesión** en la paleta recorren cíclicamente la lista visible.
+
+## Archivar y restaurar {#archive}
+
+Elige **Archivar sesión** en las acciones de una fila para conservar su historial y ocultar su rama inactiva de la navegación normal. La conversación seleccionada y las que tienen trabajo en curso o preguntas pendientes siguen accesibles. Archivar no detiene el trabajo, no elimina mensajes ni cambia el estado de archivo propio de las subsesiones.
+
+Abre la búsqueda de sesiones y elige **Sesiones archivadas** o **Todas las sesiones**. Las filas muestran **Archivada** y ofrecen **Restaurar sesión**. Activa las subsesiones para encontrar hijos de forma independiente, incluso bajo un padre archivado. **Sesiones sin archivar** filtra por el estado propio de cada conversación. Restaura un antecesor archivado para volver a mostrar su rama inactiva en la navegación normal. Si una acción no se confirma, actualiza la lista antes de reintentar.
 
 ## Elegir Agente, Modelo y Razonamiento {#agent-model-thinking}
 

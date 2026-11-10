@@ -48,7 +48,7 @@ function getOrCreateStoredValue(key: string, storage: Storage): string {
   return next
 }
 
-function generateUUID(): string {
+export function generateUUID(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID()
   }

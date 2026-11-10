@@ -99,11 +99,24 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
+      - name: Restore the Electron downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
+
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
+      - name: Verify the Electron downloads for electron-builder
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        run: node .github/scripts/download-cache.cjs link electron
+
       - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
 
-      - name: Verify bundled Node resource (Electron macOS)
-        run: node scripts/verify-bundled-node.cjs packages/electron-app/release/mac/CodeNomad.app/Contents/Resources@darwin-x64 packages/electron-app/release/mac-arm64/CodeNomad.app/Contents/Resources@darwin-arm64
+      - name: Verify bundled npm resource (Electron macOS)
+        run: node scripts/verify-bundled-node.cjs --npm-only packages/electron-app/release/mac/CodeNomad.app/Contents/Resources@darwin-x64 packages/electron-app/release/mac-arm64/CodeNomad.app/Contents/Resources@darwin-arm64
 
       - name: Ad-hoc sign Electron macOS app bundles (seal resources)
         shell: bash
@@ -267,11 +280,24 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
+      - name: Restore the Electron downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
+
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
+      - name: Verify the Electron downloads for electron-builder
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        run: node .github/scripts/download-cache.cjs link electron
+
       - name: Build Windows binaries (Electron)
         run: npm run build:win --workspace @neuralnomads/codenomad-electron-app
 
-      - name: Verify bundled Node resource (Electron Windows)
-        run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@win32-x64
+      - name: Verify bundled npm resource (Electron Windows)
+        run: node scripts/verify-bundled-node.cjs --npm-only packages/electron-app/electron/resources@win32-x64
 
       # Runs on unsigned builds too, so PR builds prove that the packaging step
       # gives CodeNomad.exe the same product version as the Tauri binaries.
@@ -359,11 +385,24 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
+      - name: Restore the Electron downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
+
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
+      - name: Verify the Electron downloads for electron-builder
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        run: node .github/scripts/download-cache.cjs link electron
+
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
 
-      - name: Verify bundled Node resource (Electron Linux)
-        run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@linux-x64
+      - name: Verify bundled npm resource (Electron Linux)
+        run: node scripts/verify-bundled-node.cjs --npm-only packages/electron-app/electron/resources@linux-x64
 
       # The deb installs as root, so its post-install script can give Chromium's
       # sandbox helper the root ownership and 4755 mode a user archive cannot.
@@ -462,11 +501,17 @@ jobs:
           resources_dir="$(dirname "$binary")/resources"
           node scripts/smoke-packaged-resources.cjs \
             --resources "$resources_dir" \
-            --target linux-x64
+            --target linux-x64 --electron "$binary"
 
           app_asar="$resources_dir/app.asar"
           if [ ! -f "$app_asar" ]; then
             echo "Electron deb does not contain resources/app.asar" >&2
+            exit 1
+          fi
+          # Electron addresses Linux dock badges (LauncherEntry) to its desktopName.
+          desktop_name=$(node -e "process.stdout.write(JSON.parse(require('@electron/asar').extractFile(process.argv[1], 'package.json')).desktopName ?? '')" "$app_asar")
+          if [ "$desktop_name" != "CodeNomad.desktop" ]; then
+            echo "Electron desktopName '$desktop_name' must name the deb's CodeNomad.desktop" >&2
             exit 1
           fi
           node - "$app_asar" <<'NODE'
@@ -607,6 +652,12 @@ jobs:
       - name: Setup Rust (Tauri)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
         run: npm version ${VERSION} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
@@ -705,6 +756,12 @@ jobs:
 
       - name: Setup Rust (Tauri)
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
 
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
@@ -813,6 +870,19 @@ jobs:
       - name: Setup Rust (Tauri)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+
+      - name: Restore Tauri bundler downloads
+        id: tauri-tools
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: tauri
+
       - name: Set workspace versions
         if: ${{ inputs.set_versions && inputs.version != '' }}
         run: npm version ${{ env.VERSION }} --workspaces --include-workspace-root --no-git-tag-version --allow-same-version
@@ -887,6 +957,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: npm exec -- tauri bundle --bundles nsis --no-binary-patching --config src-tauri/tauri.prebuilt.conf.json
+
+      # The bundler has no download-only command: the nightly dev build (Develop
+      # Pre-Release) keeps the tools it fetched; every other run only restores them.
+      - name: Save Tauri bundler downloads
+        if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/dev' && steps.tauri-tools.outputs.key != '' && steps.tauri-tools.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          key: ${{ steps.tauri-tools.outputs.key }}
+          path: ${{ steps.tauri-tools.outputs.path }}
 
       - name: Package Tauri artifacts (Windows)
         if: ${{ inputs.upload || inputs.upload_actions_artifacts || steps.signing.outputs.enabled == 'true' }}
@@ -1026,6 +1105,26 @@ jobs:
       - name: Setup Rust (Tauri)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+
+      - name: Restore Tauri bundler downloads
+        id: tauri-tools
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: tauri
+
+      # Sets LDAI_RUNTIME_FILE when the restored runtime matches the published digest.
+      - name: Restore the AppImage runtime
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: appimage-runtime
+
       - name: Install Linux build dependencies (Tauri)
         run: |
           sudo apt-get update
@@ -1075,6 +1174,14 @@ jobs:
           # linuxdeploy's own excludelist leaves part of the display stack in.
           LINUXDEPLOY_EXCLUDED_LIBRARIES: ${{ env.APPIMAGE_HOST_LIBRARIES }}
         run: npm exec -- tauri build --bundles appimage --verbose --config src-tauri/tauri.prebuilt.conf.json
+
+      # As on Windows: only the nightly dev build keeps the bundler's tools.
+      - name: Save Tauri bundler downloads
+        if: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/dev' && steps.tauri-tools.outputs.key != '' && steps.tauri-tools.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          key: ${{ steps.tauri-tools.outputs.key }}
+          path: ${{ steps.tauri-tools.outputs.path }}
 
       - name: Package and verify Tauri AppImage
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}

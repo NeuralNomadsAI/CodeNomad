@@ -3,20 +3,21 @@ import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 import { GOAL_RPC_ID, goalStateSchema, type SessionGoalResponse } from "../../opencode/goal-contract"
+import { awaitNativePlugin } from "../../opencode/plugin-activation"
+import { sameLocation } from "../../opencode/compatibility/location"
 
 export interface SessionGoalRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation">
+  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation" | "get" | "getServiceLocation">
 }
 
 const sessionIdSchema = z.string().min(4).max(512).regex(/^ses[A-Za-z0-9_-]*$/)
 const outputSchema = goalStateSchema.nullable()
 const READ_TIMEOUT_MS = 8_000
 
-// The native SDK throws a declared RPC error with its body's fields: a runtime
-// without the goal plugin has no registration (or no such method).
+// Method absence is definitive only after the exact plugin is active.
 function isUnsupported(error: unknown): boolean {
   const body = error as { _tag?: unknown; type?: unknown } | null
-  return body?._tag === "RpcError" && (body.type === "rpc.unavailable" || body.type === "rpc.method_not_found")
+  return body?._tag === "RpcError" && body.type === "rpc.method_not_found"
 }
 
 /**
@@ -36,21 +37,43 @@ export function registerSessionGoalRoute(app: FastifyInstance, deps: SessionGoal
     reply.raw.once("close", abort)
     try {
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(READ_TIMEOUT_MS)])
-      const client = await manager.getSharedServiceClient()
+      const workspace = manager.get(request.params.id), base = manager.getServiceLocation(request.params.id)
+      if (!workspace || !base) return reply.code(403).send({ error: "Session does not belong to workspace" })
+      const connection = await manager.getSharedServiceConnection(request.params.id)
+      if (!connection) return { status: "unavailable" }
+      const client = connection.client
+      const current = () => {
+        signal.throwIfAborted(); connection.assertCurrent()
+        if (manager.get(request.params.id) !== workspace || manager.getServiceLocation(request.params.id) !== base) throw new Error("Goal owner changed")
+      }
+      current()
       const session = await client.session.get({ sessionID }, { signal }).catch(() => undefined)
+      current()
       if (!session) return reply.code(404).send({ error: "Session not found" })
       const location = readLocationRef(session.location)
-      if (!await manager.ownsLocation(request.params.id, location, client, signal)) return reply.code(403).send({ error: "Session does not belong to workspace" })
+      if (!await manager.ownsLocation(request.params.id, location, client, { signal })) return reply.code(403).send({ error: "Session does not belong to workspace" })
       let result: SessionGoalResponse
       try {
+        const revalidate = async () => {
+          current()
+          const latest = await client.session.get({ sessionID }, { signal })
+          current()
+          if (!sameLocation(location, readLocationRef(latest.location)) || latest.projectID !== session.projectID
+            || !await manager.ownsLocation(request.params.id, latest.location, client, { signal })) throw new Error("Goal session moved")
+          current()
+        }
+        await awaitNativePlugin(client, GOAL_RPC_ID, { directory: location.directory }, signal, current)
+        await revalidate()
         const response = await client.rpc.call({ rpcID: GOAL_RPC_ID, method: "get", input: { sessionID }, location: { directory: location.directory } },
           { ...locationRequestOptions(location), signal })
+        await revalidate()
         const output = outputSchema.safeParse(response.output)
         result = output.success ? { status: "goal", goal: output.data } : { status: "unavailable" }
       } catch (error) {
         result = isUnsupported(error) ? { status: "unsupported" } : { status: "unavailable" }
       }
       return result
-    } finally { reply.raw.removeListener("close", abort) }
+    } catch { return { status: "unavailable" } }
+    finally { reply.raw.removeListener("close", abort) }
   })
 }

@@ -101,7 +101,7 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
   let rejectCancel!: (error: Error) => void, starts = 0, cancels = 0, released = false
   const cancellation = new Promise<void>((_, reject) => { rejectCancel = reject })
   const keepAlive = setTimeout(() => {}, 3000) // native AbortSignal timers are unref'ed in Node
-  const deadline = performance.now() + 200
+  const lifetime = AbortSignal.timeout(200)
   const dispatched: Array<{ at: number; aborted: boolean }> = []
   globalThis.fetch = async (_input, init) => {
     starts++
@@ -111,21 +111,23 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
       cancel() { cancels++; return cancellation },
     }), { status: mode === "http-error" ? 503 : 200 })
   }
-  const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionTasks("fixture", map.id, { offset: 0 }, { ...scope, deadline }))
-  let markerStarted = false, startedAfterDeadline = false, startedWhileDeferred = false
+  const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionTasks("fixture", map.id, { offset: 0 }, { ...scope, signal: lifetime }))
+  let markerStarted = false, startedAfterTimeout = false, startedWhileDeferred = false
   const marker = backgroundReads.run(AbortSignal.timeout(1000), async () => {
-    markerStarted = true; startedAfterDeadline = performance.now() >= deadline; startedWhileDeferred = !released
+    markerStarted = true; startedAfterTimeout = lifetime.aborted; startedWhileDeferred = !released
   }).then(() => true, () => false)
   try {
     const outcomes = await Promise.allSettled(calls)
     assert.equal(await marker, true, "unrelated queued work starts without resolving the deferred cancels")
-    t.diagnostic(JSON.stringify({ deadline, dispatched, starts, cancels }))
-    assert.ok(starts >= 2 && starts <= 3)
+    t.diagnostic(JSON.stringify({ dispatched, starts, cancels }))
+    assert.equal(starts, 2)
     assert.equal(cancels, starts)
-    assert.ok(dispatched.every(read => !read.aborted && read.at < deadline), "native timer rounding never permits a transfer after its original deadline")
-    assert.deepEqual({ markerStarted, startedAfterDeadline, startedWhileDeferred },
-      { markerStarted: true, startedAfterDeadline: true, startedWhileDeferred: true })
+    // The synchronous admission guard precedes fetch; this later sample can cross the deadline.
+    assert.ok(dispatched.every(read => !read.aborted), "an already-aborted transfer is never dispatched")
+    assert.deepEqual({ markerStarted, startedAfterTimeout, startedWhileDeferred },
+      { markerStarted: true, startedAfterTimeout: true, startedWhileDeferred: true })
     assert.ok(outcomes.every(value => value.status === "rejected"), "no stale row is published")
+    assert.equal(outcomes[2].status === "rejected" && outcomes[2].reason.name, "TimeoutError")
     for (const outcome of outcomes.slice(0, 2)) {
       assert.equal(outcome.status === "rejected" && outcome.reason.reason, mode === "oversize" ? "invalid" : "unavailable", "cleanup preserves the original failure")
     }
@@ -135,6 +137,73 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
     await backgroundReads.run(new AbortController().signal, async () => {})
     clearTimeout(keepAlive); globalThis.fetch = original
   }
+})
+
+for (const mode of ["expired", "cancelled", "expired-at-exchange"] as const) test(`queued task admission refuses ${mode} before fetch`, async t => {
+  const { serverApi } = await import("../../src/lib/api-client")
+  const { backgroundReads } = await import("../../src/lib/background-read-queue")
+  const originalFetch = globalThis.fetch, originalRun = backgroundReads.run, clock = Object.getOwnPropertyDescriptor(performance, "now")
+  const run = originalRun.bind(backgroundReads)
+  let now = 0, starts = 0, occupied = 0, resumed = false, currentChecks = 0, queuedSignal: AbortSignal | undefined
+  let release!: () => void, entered!: () => void, pending: Promise<unknown> | undefined
+  const gate = new Promise<void>(resolve => { release = resolve }), ready = new Promise<void>(resolve => { entered = resolve })
+  const held = [0, 1].map(() => run(new AbortController().signal, async () => {
+    if (++occupied === 2) entered()
+    await gate
+  }))
+  t.after(async () => {
+    release()
+    try { await Promise.allSettled([...held, ...(pending ? [pending] : [])]) }
+    finally {
+      globalThis.fetch = originalFetch; backgroundReads.run = originalRun
+      if (clock) Object.defineProperty(performance, "now", clock); else Reflect.deleteProperty(performance, "now")
+    }
+  })
+  await ready
+  Object.defineProperty(performance, "now", { configurable: true, value: () => now })
+  backgroundReads.run = (signal, read, priority) => { queuedSignal = signal; return run(signal, read, priority) }
+  globalThis.fetch = async (_url, init) => { starts++; return response(answer(JSON.parse(init!.body as string))) }
+  const controller = new AbortController(), deadline = 10_000
+  pending = serverApi.fetchMissionTasks("fixture", map.id, { offset: 150 }, { ...scope, signal: controller.signal, deadline,
+    current: () => {
+      // First check after the queue is the transfer's; the second precedes the final API guard.
+      if (resumed && ++currentChecks === 2 && mode === "expired-at-exchange") now = deadline
+      return true
+    } })
+  const rejected = assert.rejects(pending, { name: mode === "cancelled" ? "AbortError" : "TimeoutError" })
+  if (mode === "expired") now = deadline
+  if (mode === "cancelled") controller.abort()
+  resumed = true; release()
+  await rejected; await Promise.all(held)
+  assert.ok(queuedSignal)
+  assert.equal(queuedSignal.aborted, mode === "cancelled", "monotonic expiry is refused while the native timeout signal is still live")
+  assert.equal(starts, 0, "refused admission never invokes fetch")
+})
+
+test("a valid task response delivered at the deadline cannot publish or launch its continuation", async t => {
+  const { serverApi } = await import("../../src/lib/api-client")
+  const original = globalThis.fetch, clock = Object.getOwnPropertyDescriptor(performance, "now")
+  let now = 0, starts = 0, entered!: () => void, deliver!: (value: Response) => void, pending: Promise<unknown> | undefined
+  const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<Response>(resolve => { deliver = resolve })
+  t.after(async () => {
+    deliver(new Response(null, { status: 503 }))
+    try { if (pending) await Promise.allSettled([pending]) }
+    finally {
+      globalThis.fetch = original
+      if (clock) Object.defineProperty(performance, "now", clock); else Reflect.deleteProperty(performance, "now")
+    }
+  })
+  Object.defineProperty(performance, "now", { configurable: true, value: () => now })
+  globalThis.fetch = async () => { starts++; entered(); return gate }
+  const deadline = 10_000
+  pending = serverApi.fetchMissionTasks("fixture", map.id, { offset: 50 }, { ...scope, deadline })
+  const rejected = assert.rejects(pending, { name: "TimeoutError" })
+  await ready
+  const first = answer({ source: "tasks", task: { missionID: map.id, offset: 50 } })
+  assert.ok(first.available && first.page.next, "the valid response requires a continuation")
+  now = deadline; deliver(response(first))
+  await rejected
+  assert.equal(starts, 1, "expiry prevents the next transfer and a successful result")
 })
 
 test("correctly hashed wrong selectors, inconsistent counters, foreign reports and invalid nested rows are refused", async t => {

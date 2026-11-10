@@ -122,7 +122,8 @@ export class NativeMissionDocumentStore {
         || doc.configurationGeneration < previous.configurationGeneration || doc.timeGeneration < previous.timeGeneration
         || previous.everCreatedTask && !doc.everCreatedTask || previous.deletion && canonicalAuthority(doc.deletion) !== canonicalAuthority(previous.deletion)
          || previous.oneTime && (!doc.oneTime || doc.oneTime.creationRequestID !== previous.oneTime.creationRequestID
-           || doc.oneTime.creationDigest !== previous.oneTime.creationDigest || canonicalAuthority(doc.oneTime.location) !== canonicalAuthority(previous.oneTime.location))
+            || doc.oneTime.creationDigest !== previous.oneTime.creationDigest || canonicalAuthority(doc.oneTime.location) !== canonicalAuthority(previous.oneTime.location)
+            || canonicalAuthority(doc.oneTime.creationDefaults ?? null) !== canonicalAuthority(previous.oneTime.creationDefaults ?? null))
          || previous.oneTime?.firstPlay?.acknowledgement && canonicalAuthority(previous.oneTime.firstPlay.acknowledgement, MISSION_DOCUMENT_MAX_BYTES)
           !== canonicalAuthority(doc.oneTime?.firstPlay?.acknowledgement ?? null, MISSION_DOCUMENT_MAX_BYTES)
          || previous.oneTime?.firstPlay && previous.oneTime.firstPlay.inputText !== doc.oneTime?.firstPlay?.inputText
