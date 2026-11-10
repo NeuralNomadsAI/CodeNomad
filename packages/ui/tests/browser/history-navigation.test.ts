@@ -1263,6 +1263,38 @@ test("keyboard scrolling owns the timeline without paging the transcript", async
   } finally { await f.close() }
 })
 
+for (const mac of [false, true]) test(`the prompt menu jumps between user messages without changing the draft (${mac ? "macOS" : "Windows/Linux"})`, async () => {
+  const f = await fixture(true, false, false, false, false, { mac })
+  try {
+    await clickTimeline(f.page, 1300); await assertPassageAtTop(f.page, 1300)
+    const composer = f.page.locator("textarea.prompt-input").first(), draft = "Keep this unsent draft"
+    await composer.fill(draft)
+    const open = () => f.page.locator(".prompt-actions-menu").getByRole("button", { name: "More actions", exact: true }).click()
+    await open()
+    const previous = f.page.getByRole("menuitem", { name: "Previous User Message", exact: true })
+    const next = f.page.getByRole("menuitem", { name: "Next User Message", exact: true })
+    assert.equal(await previous.getAttribute("title"), mac ? "⌘+⌥+↑" : "Alt+↑")
+    assert.equal(await next.getAttribute("title"), mac ? "⌘+⌥+↓" : "Alt+↓")
+    const captures = process.env.CODENOMAD_PROMPT_MENU_CAPTURE_DIR
+    if (captures) { await mkdir(captures, { recursive: true }); await f.page.screenshot({ path: path.join(captures, `prompt-navigation-${mac ? "mac" : "desktop"}.png`) }) }
+    await previous.click(); await assertPassageAtTop(f.page, 1295)
+    assert.ok(f.windows.some(target => target.messageID === navigationMessageId(1295)), "the menu loads the bounded historical destination")
+    await open(); await next.click(); await assertPassageAtTop(f.page, 1300)
+    await f.page.evaluate(async () => {
+      const { updatePreferences } = await import("/src/stores/preferences.tsx" as string)
+      await updatePreferences({ hotkeyOverrides: { "user-message-prev": [{ key: "F8" }], "user-message-next": [] } })
+    })
+    await open()
+    assert.equal(await previous.getAttribute("title"), "F8", "the menu follows configured bindings")
+    assert.equal(await next.getAttribute("title"), null, "an unbound command has no fabricated shortcut hint")
+    assert.equal(await next.isDisabled(), false, "disabling a shortcut leaves the menu command available")
+    await previous.focus(); await f.page.keyboard.press("Enter"); await assertPassageAtTop(f.page, 1295)
+    assert.equal(await composer.inputValue(), draft)
+    assert.deepEqual(await f.page.evaluate(() => (window as any).fixture.prompts()), [], "navigation sends nothing")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 test("Alt+Up/Down jump between user messages across history windows, from the conversation and the composer", async () => {
   const f = await fixture(true)
   try {
