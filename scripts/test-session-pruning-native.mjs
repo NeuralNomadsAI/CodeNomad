@@ -293,6 +293,12 @@ try {
   await mkdir(historyDirectory)
   execFileSync("git", ["init", historyDirectory], { stdio: "pipe" })
   const historyLocation = { directory: historyDirectory }
+  await until(async () => {
+    const { data } = await client.plugin.list({ location: historyLocation }, locationRequestOptions(historyLocation))
+    const plugin = data.find(plugin => plugin.id === "codenomad-session-pruning")
+    if (plugin?.state.status === "failed") throw new Error(plugin.state.error)
+    return plugin?.state.status === "active"
+  })
   await testSessionHistoryNative({ client, location: historyLocation, locationOptions: locationRequestOptions(historyLocation), template: target })
   const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
   await testSessionNavigationNative({ client, location, locationOptions, template: target })
