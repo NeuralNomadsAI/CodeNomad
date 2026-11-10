@@ -79,6 +79,9 @@ fixture stops it. Never point the fixture at the shared daemon, its registration
 configuration or database, or at a user's Missions, and never add installers,
 pattern kills or pushes.
 
+Initial provisioning and owned-service restarts await the retained Missions
+plugin's active state for the project before observing its recurrence RPCs.
+
 The fixture drives the production recurrence create, control and Run now routes,
 WorkspaceManager ownership and deletion fences, the automation bridge with HMAC
 verification and the InterruptionDock human-answer proxy route.

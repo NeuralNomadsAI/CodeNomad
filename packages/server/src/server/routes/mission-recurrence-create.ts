@@ -25,7 +25,7 @@ import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
-const schema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
+export const recurrenceCreateSchema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
   instructions: z.string().trim().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
   // New schedules share the Mission title rule; stored schedules keep the
   // historical 120-character bound in recurrenceConfigSchema.
@@ -56,7 +56,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
     const auth = deps.auth, human = auth && recurrenceHumanSession(request, { auth, remoteDevices: deps.remoteDevices })
     if (!auth || !human || !deps.bridgeToken) return reply.code(401).send({ error: "Human authentication required" })
     const watched = (request.body as { watchedConversationIDs?: unknown } | undefined)?.watchedConversationIDs
-    // Zod's array max still parses every item; enforce the existing ceiling first.
+    // Enforce the watch ceiling and element kinds before schema evaluation.
     if (!Array.isArray(watched) || watched.length > 32 || !watched.every(id => typeof id === "string")) {
       return reply.code(400).send({ error: "Invalid recurrence creation request" })
     }
@@ -66,7 +66,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
     let dispatched = false
     const unavailable = (error: string) => reply.code(503).send({ error, code: "creation-unavailable" })
     try {
-      const parsed = schema.safeParse(request.body)
+      const parsed = recurrenceCreateSchema.safeParse(request.body)
       if (!parsed.success || !z.string().min(1).max(200).safeParse(request.params.id).success) {
         return reply.code(400).send({ error: "Invalid recurrence creation request" })
       }

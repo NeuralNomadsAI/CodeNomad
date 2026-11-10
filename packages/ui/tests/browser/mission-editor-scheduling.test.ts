@@ -699,6 +699,7 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     assert.equal(f.posts.length, 1)
     f.proof = false
     await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).and(page.locator(":enabled")).waitFor()
     assert.deepEqual(await page.evaluate(() => window.schedulingEditor.held()), held)
     f.proof = true
     await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).click()
