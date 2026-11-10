@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import ts from "typescript"
-import { createEffect, createMemo, createRoot, createSignal, mapArray, onCleanup, untrack } from "solid-js"
+import { createEffect, createMemo, createRoot, createSignal, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Run production consumer bodies/effects, with transport and view owners injected.
 // Local and remote transports are deliberately distinct: reverting a consumer to
@@ -28,7 +28,7 @@ function deferred() {
   return { promise, resolve }
 }
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
-const solid = { createEffect, createMemo, createSignal, mapArray, onCleanup, untrack }
+const solid = { createEffect, createMemo, createSignal, mapArray, on, onCleanup, untrack }
 const id = "remote~same"
 function fixture(api: Record<string, any>) {
   let controller = new AbortController()
@@ -101,9 +101,15 @@ test("cleanup remote preflight cannot delete after detachment", async () => {
   assert.equal(deletes, 0); assert.equal(refreshes, 0)
 })
 
+// These routing cases opt out of automatic start; either unexpected opt-in or continuation fails.
+const editorStart = { startOnCreation: () => false, captureStart: (requested: boolean) => {
+  if (requested) throw new Error("Unexpected automatic start opt-in")
+  return async () => { throw new Error("Unexpected automatic start continuation") }
+} }
+
 test("editor creation dispatch is remote; stale completion preserves the current view", async () => {
   const read = deferred(), env = fixture({ createMission: () => read.promise }), action = {}
-  const run = production("./mission-editor.tsx", "save", { ...env, kind: "create", action, lastPayload: "", requestId: "r",
+  const run = production("./mission-editor.tsx", "save", { ...env, ...editorStart, kind: "create", action, lastPayload: "", requestId: "r",
     props: { instanceId: id, action, onSaved: () => assert.fail("stale editor publication") },
     locked: () => false, isActive: () => true, setFieldError: () => {}, structuralLocked: () => true,
     immediateCreationFollowed: () => false, mode: () => "once", schedule: { unified: false },
@@ -144,9 +150,15 @@ for (const kind of ["schedule-success", "mission-completed", "branch-commits"] a
   test(`editor source ${kind} uses remote API and rejects late source rows`, async () => {
     const read = deferred(), env = fixture({ fetchMissionSchedules: () => read.promise, fetchLocalGitBranches: () => read.promise })
     let dispose!: () => void
-    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, getOpenCodeInstanceGeneration: () => 1 })
+    const timers = new Map<number, () => void>()
+    let timerId = 0
+    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, getOpenCodeInstanceGeneration: () => 1,
+      setTimeout: (callback: () => void) => { const key = ++timerId; timers.set(key, callback); return key },
+      clearTimeout: (key: number) => timers.delete(key),
+    })
     const reader = createRoot(close => { dispose = close; return create({ instanceId: id, projectID: "p", directory: () => "/repo",
-      kinds: () => [kind], active: () => true, captureView: () => () => true }) })
+      kinds: () => [kind], selected: () => [], active: () => true, captureView: () => () => true }) })
+    for (const [key, timer] of timers) { timers.delete(key); timer() }
     reader.loading(); assert.equal(env.owners.length, 1)
     env.revoke(); read.resolve({ projectID: "p", schedules: [{ id: "source", kind: "schedule", configuration: { title: "source" } }], branches: ["refs/heads/dev"] })
     await flush(); assert.deepEqual(reader.sources(), {}); dispose()
@@ -347,7 +359,7 @@ test("schedule retry preparation reads the original receipt then dispatches the 
 
 function editorScope(api: Record<string, any>, kind: "edit" | "delete") {
   const env = fixture(api), action = {}, saved: any[] = [], errors: string[] = []
-  const scope: Record<string, any> = { ...env, kind, action, original: { id: "m", revision: 1 }, lastPayload: "", requestId: "r",
+  const scope: Record<string, any> = { ...env, ...editorStart, kind, action, original: { id: "m", revision: 1 }, lastPayload: "", requestId: "r",
     props: { instanceId: id, directory: "/repo", action, onSaved: (...args: any[]) => saved.push(args) }, saved, errors,
     locked: () => false, isActive: () => true, structuralLocked: () => true, textLocked: () => false,
     immediateCreationFollowed: () => false, mode: () => "once", captureView: () => env.captureBackendOperation(id).current,
