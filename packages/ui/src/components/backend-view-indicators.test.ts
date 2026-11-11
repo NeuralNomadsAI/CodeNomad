@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import ts from "typescript"
+import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 import { createEffect, createMemo, createRoot, createSignal, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Execute production AST, including the actual finally/cleanup branches. Imports
@@ -163,7 +164,7 @@ for (const outcome of ["success", "failure", "cancellation"] as const) {
   test(`editor source retained view: ${outcome}, hidden cancellation then active B`, async () => {
     const backend = attachment(), requests: ReturnType<typeof deferred>[] = []
     const [active, setActive] = createSignal(true)
-    const client = {}, scope = { ...solid, ...backend, getOpenCodeInstanceGeneration: () => 1,
+    const client = {}, scope = { ...solid, ...backend, isMissionGithubKind, getOpenCodeInstanceGeneration: () => 1,
       getRootClient: () => client, serverApi: { fetchMissionScheduleSourcePage: () => {} } }
     // Branch sources avoid loading unrelated native session/cursor adapters.
     Object.assign(scope.serverApi, { fetchLocalGitBranches: () => { const request = deferred(); requests.push(request); return request.promise } })
@@ -226,6 +227,7 @@ for (const kind of ["create", "edit", "delete"] as const) {
       let pending = false, dispatched = 0, errors = 0
       const dispatch = () => { dispatched++; return request.promise }
       const scope = { kind, action, original: { id: "m", revision: 1 }, lastPayload: "", requestId: "r",
+        coordinatorReady: method("./mission-editor.tsx", "coordinatorReady", { coordinatorSessionID: () => undefined }),
         props: { instanceId: "i", directory: "/repo", action, onSaved: () => { throw new Error("stale publication") } },
         locked: () => pending, isActive: () => true, setFieldError: () => {}, structuralLocked: () => true,
         immediateCreationFollowed: () => false, mode: () => "immediate", textLocked: () => false,
