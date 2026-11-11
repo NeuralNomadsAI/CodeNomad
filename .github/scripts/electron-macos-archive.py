@@ -150,6 +150,7 @@ def validate(path, outer=False):
                 resolved.append(bit)
                 current = "/".join(resolved)
                 require(resolved[0] == "CodeNomad.app", "link outside app")
+                require(aliases.get(key(current), current) == current, "macOS link prefix alias")
                 if current in links:
                     require(current not in seen, "link cycle")
                     seen.add(current)
