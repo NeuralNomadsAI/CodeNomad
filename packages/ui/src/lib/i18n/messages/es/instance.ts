@@ -307,6 +307,7 @@ export const instanceMessages = {
   "instanceShell.worktree.create.placeholder": "nombre-worktree",
   "instanceShell.worktree.create.success": "Worktree {slug} creado",
   "instanceShell.worktree.create.error": "No se pudo crear el worktree",
+  "instanceShell.worktree.create.nestedFolderUnavailable": "Git no sigue la carpeta abierta en esta rama, así que un nuevo worktree no la contendría.",
   "instanceShell.worktree.openInFileManager.action": "Abrir en el administrador de archivos",
   "instanceShell.worktree.openInFileManager.error": "No se pudo abrir el worktree en el administrador de archivos",
   "instanceShell.worktree.delete.action": "Eliminar worktree",

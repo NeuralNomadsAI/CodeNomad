@@ -6,7 +6,7 @@
 2. Bir bölüm seçin. Yerel Electron ve Tauri pencereleri bir yerel Tercihler penceresini açar veya odaklar; tarayıcı ve uzak görünümler yerleşik ayarlar ekranını kullanır.
 3. Ayrılmadan önce ayarın kapsamını ve herhangi bir **Kaydet** eylemini kontrol edin.
 
-Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses, özel palet renkleri ve Yapılandırma Dosyaları açık bir **Kaydet** eylemini korur. Kaydetmenin başarısız olması değişikliğin uygulandığını doğrulamaz; yeniden denemeden önce ilgili bölümü yeniden açın veya yenileyin. Açıklamalar, ayar başlığının yanındaki **i** simgesinin arkasındadır: üzerine gelin veya odaklanın ya da dokunmatik ekranda dokunun. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
+Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses, özel palet renkleri ve Yapılandırma Dosyaları açık bir **Kaydet** eylemini korur. Kaydetmenin başarısız olması değişikliğin uygulandığını doğrulamaz; yeniden denemeden önce ilgili bölümü yeniden açın veya yenileyin. Kısa açıklama için ayar başlığının yanındaki **i** simgesinin üzerine gelin veya odaklanın. Yardım bağlantısı varsa tıklamak, Enter'a basmak veya dokunmak ilgili bölümü arayüz dilinde sistem tarayıcısında ya da ayrı bir sekmede açar. Yalnızca ipucu içeren simgeler dokunulduğunda açıklamayı gösterir. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
 
 | Durum | Neyi yönetir |
 | --- | --- |
@@ -30,7 +30,37 @@ Kullanıcı arayüzü, bir konuşmayı yeniden başlatmadan güncellenir. İbran
 
 Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen paleti sıfırlayın. Paletler arasında geçiş yapmak, kaydedilmemiş renk düzenlemelerini iptal etmenizi isteyebilir; bir konuşma taslağını atmaz.
 
+## Bilgisayarı uyanık tutma {#keep-computer-awake}
+
+**Ayarlar → Genel** bölümündeki **CodeNomad çalışırken bilgisayarı uyanık tut** seçeneği varsayılan olarak kapalıdır. Hiçbir oturum çalışmasa bile yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önlemek için açın; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar. Başlığın yanındaki **i**, bu davranışı açıklar. Seçenek yalnızca masaüstü uygulamasının yerel pencerelerinde ve Tercihler penceresinde görünür; tarayıcı ve uzak görünümlerde gizlidir.
+
+## Kalıcı ajan belleği {#agent-memory}
+
+Bellek arızasında gönderim devam eder. CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir. İddiaları güncel dosya ve komutlarla doğrulamaya devam edin.
+
+**Tercihler → Genel → Bellek** yolunu açın (tarayıcıda **Ayarlar → Genel**). Bellek varsayılan olarak kapalıdır. Ajanın yararlı bilgileri ve tercihleri konuşmalar arasında saklaması için etkinleştirin. Anahtar bağlı CodeNomad yapılandırması için geçerlidir; kapatmak kayıtları ve geçmişlerini korur.
+
+- **Hakkınızda**: bu yapılandırmayı kullanan projeler arasında paylaşılan en fazla 60 kayıt.
+- **Proje**: en fazla 200 kayıt. Bu arayüz Tercihler’de seçilen projeyi, gömülü Ayarlar ise ana pencerenin etkin projesini kullanır. Ajanın `codenomad_memory` aracı ve oturum talimatları o oturumun klasörünü kullanır. Sunucu depoyu normalleştirilmiş Git uzak adresiyle, bu yoksa yerel depo yoluyla tanımlar; worktree’ler bu belleği paylaşır. Bu kapsamı seçmek için bir proje açın.
+
+Alt oturumlar dahil her oturum kayıt kurallarını ve sınırlı bir başlık ve tür listesini alır (talimat bloğu en fazla yaklaşık 8.000 karakterdir). Ajana işlem yapmadan önce ilgili kayıtları `codenomad_memory` ile okuması, iddiaları güncel dosya ve komutlarla doğrulaması ve kaydettiklerini belirtmesi söylenir. Boş bellek de kayıt kurallarını alır. Okunamayan kapsamlar kullanılamaz olarak dışarıda bırakılır. OpenCode isteğe bağlı oturum talimatı yeteneğine sahip değilse entegrasyon sessizce devre dışı kalır ve seçiminizi korur.
+
+1. Kapsamı ve kaydı seçin. **Yeni** ve **Değiştirildi**, bu tarayıcı veya masaüstü görünümünde kapsamın son başarılı incelemesinden sonraki değişiklikleri gösterir; geçerli ziyaret boyunca görünür kalırlar.
+2. **Başlık**, **Tür** (**Bilgi**, **Tercih** veya **Referans**) ve **Metin** alanlarını düzenleyip **Kaydet** seçeneğini kullanın. Başlık 60, metin 2.000 karakterle sınırlıdır. **İptal** kayıtlı içeriği geri getirir. Kayıt başka yerde değiştiyse **Yeniden yükle** ile inceleyip sonra kaydedin.
+3. Kaldırmak için kaydın işlem menüsünü açıp **Unut** işlemini onaylayın. Kayıt etkin bellekten çıkar; yerel Git eski metin dahil geçmişi korur. Unutmak ajanın kullanımını sonlandırır, güvenli veri silme değildir.
+4. Bellek doluysa yeniden denemeden önce kayıtları birleştirin veya unutun. Eşleşen başlıklar ya da büyük ölçüde örtüşen metinler mevcut bir kaydı değiştirir; Git önceki metni saklar.
+
+**İnceleme gerekli**, korumaları aşabilecek veya kimlik bilgilerini açığa çıkarabilecek şüpheli talimatları işaretler. Bu kayıtlar burada düzenlenebilir, sınıra dahil edilir ve ajanın başlık listesinden ve okumalarından çıkarılır. Her okumada kontrol edilirler; içeriği düzeltip kaydedin veya **Unut** seçeneğini kullanın. Hatalı biçimli veya okunamayan bellek boş liste yerine hata gösterir; yeniden denemeden önce nedeni giderin.
+
+**Düzenle**, onaydan sonra seçilen kapsamı doğrulayıp birleştirmek için Tercihler’de gösterilen projede yeni bir konuşma açar. Doğrulanamayan kayıtları ve dış referansları korur ve değişiklikleri bildirir. Açık bir proje ve en az bir işaretlenmemiş kaydı bulunan etkin, okunabilir ve yazılabilir bellek gerektirir. Başlatma doğrulanamazsa yeniden denemeden önce projenin konuşmalarını kontrol edin.
+
+Belleği ajan yönetir. Zaten `.claude/…/MEMORY.md` gibi başka bir yerde bellek tutuyorsa ona bir **Referans** kaydeder; dış bellek dosyaları kendi yönetimlerinde kalır. CodeNomad yapılandırma klasöründeki `memory/global/` veya `memory/projects/<id>/` altında kayıt başına bir Markdown dosyası saklar; her kaydetme veya silme yerel Git commit’i oluşturur. Depolama yalnızca yereldir, uzak eşitleme yapılmaz. Yapılandırma ve profil sınırları için [Masaüstü pencereleri ve verileri](desktop.md) bölümüne bakın.
+
 ## Paneller ve Durum bölümleri {#panels-status}
+
+**Durum** varsayılan olarak ilk sıradadır; kaydedilmiş sekme sırası önceliklidir. Sekme kullanılabilir kalır. **Sağ paneli özelleştir** içindeki oku, bölümlerin kendisini gizlemeden bölüm onay kutularının listesini daraltır veya genişletir.
+
+**Tokenlar** mesajlarla aynı metrik etiketlerini kullanır. Daraltıldığında girdi, çıktı ve maliyet başlık satırında kalır; genişletildiğinde düşünme de aynı satıra eklenir ve etiketler gerektiğinde alt satırlara geçer. Alt oturumları içeren toplamlar aşağıda gösterilir.
 
 Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyin. İşaretçi kenarın dışına çıksa bile sürükleme boyunca tutamaç vurgulanır ve işaretçi yakalama korunur. Bitirmek için bırakın.
 
@@ -48,7 +78,7 @@ Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı ona
 
 1. Konuşma dökümü ayrıntısı varsayılanlarını seçmek için **Sohbet** öğesini açın. Ön ayarlar **Hiçbir şey**, **Minimal**, **Dengeli** ve **Her şey**'dir; bireysel değişiklikler **Özel** öğesini üretir.
 2. Düşünme, tanılama, araç girdileri, tokenlar, sistem mesajları ve her araç türü için her satırın **Varsayılan durum** ayarını (**Gizli**, **Daraltılmış** veya **Genişletilmiş**) belirleyin ya da bu seçimleri paylaşan, konuşmanın **Mesaj içeriği** açılır penceresini kullanın.
-3. **Genel** bölümünde gerektiği gibi **Mesaj zaman çizelgesini göster**, **Araç çağrısı diff'lerini böl** ve **Gönderilen istemleri kuyruğa al** (oturum çalışırken gönderilen istemleri yönlendirmek yerine kuyruğa alır) seçeneklerini işaretleyin.
+3. **Genel** bölümünde gerektiği gibi **Mesaj zaman çizelgesini göster**, **İlk/en son mesaj oklarını zaman çizelgesinin altına yerleştir**, **Araç çağrısı diff'lerini böl** ve **Gönderilen istemleri kuyruğa al** (oturum çalışırken gönderilen istemleri yönlendirmek yerine kuyruğa alır) seçeneklerini işaretleyin.
 4. Yeniden boyutlandırma kontrolünü kullanarak ileti düzenleyicisini yeniden boyutlandırın; uzun taslaklar alanın içinde kayar.
 
 Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, sıkıştırma ve sistem bağlamı için aynı sırayla bir işaretçi bulunur. İşaretçiler **Mesaj içeriği** ayarlarını izler: orada bir araç türünü, akıl yürütmeyi veya sistem mesajlarını gizlemek, bekleyen izni olan araç dışında bunların işaretçilerini de gizler; **Hiçbir şey** tüm araç işaretçilerini gizler. Görünürlük ve genişletme ayarları yalnızca sunumu değiştirir. Saklanan araçları/akıl yürütmeyi kaldırmaz veya model bağlamını sıkıştırmaz. Yıkıcı işlemler için bkz. [Geçmiş ve temizleme](history.md).

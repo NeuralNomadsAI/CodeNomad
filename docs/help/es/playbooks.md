@@ -2,8 +2,6 @@
 
 Un guion es el método de trabajo que sigue el coordinador de una misión: los pasos, los roles que puede asignar a las tareas y las instrucciones que recibe cada agente. Esta página describe cada guion, lo que CodeNomad impone por sí mismo y lo que sigue siendo una instrucción que se pide al modelo que siga.
 
-Para leer la definición exacta de un guion, abre **Opciones** en el formulario de creación de misiones, elige un **Guion** y selecciona **Ver detalles** bajo su descripción. El lector central muestra sus pasos y roles; **Instrucciones que reciben los agentes (texto del prompt en inglés)** pliega, para la política de **Sesiones de tareas** elegida, el texto completo que recibe el coordinador en cada turno y el mensaje de asignación completo de cada rol (con **Sesiones independientes**, también el contexto que añade cada turno de la sesión de la tarea). Los campos entre corchetes, como [objective], representan los datos propios de cada misión; mensajes aparte inician o reanudan la misión y entregan los resultados de las tareas. En esas instrucciones, Exploración se llama *Wayfinder Map*.
-
 ## Elegir un guion {#choose}
 
 | Guion | Elígelo cuando |
@@ -45,9 +43,9 @@ Son instrucciones. Lo que un agente puede hacer realmente lo deciden los permiso
 
 ### Preguntas que se te hacen {#questions}
 
-Solo el coordinador te hace preguntas. Las tareas y sus auxiliares devuelven las suyas a la conversación que las lanzó, con las opciones, las evidencias, las consecuencias, la reversibilidad y una recomendación, y siguen con el trabajo que no depende de la respuesta. El coordinador resuelve primero lo que puede y agrupa las preguntas restantes en un solo formulario en **Te necesita**; [Preguntas y decisiones](missions.md#questions) explica qué pregunta y cómo se etiquetan las decisiones. Cada coordinador, puntual o programado, y cada asignación de tarea reciben esta regla como instrucción; Exploración añade las comprobaciones de decisiones [más abajo](#wayfinder-checks).
+Solo el coordinador te hace preguntas. Las tareas y sus auxiliares devuelven las suyas a la conversación que las lanzó, con las opciones, las evidencias, las consecuencias, la reversibilidad y una recomendación, y siguen con el trabajo que no depende de la respuesta. El coordinador resuelve primero lo que puede y agrupa las preguntas restantes en un solo formulario, que se abre desde la fila roja de la misión; [Preguntas y decisiones](missions.md#questions) explica qué pregunta y cómo se etiquetan las decisiones. Cada coordinador, puntual o programado, y cada asignación de tarea reciben esta regla como instrucción; Exploración añade las comprobaciones de decisiones [más abajo](#wayfinder-checks).
 
-Responde en el panel de interrupciones (**Responder** en **Te necesita**): solo eso cuenta como tu respuesta. Una respuesta escrita en el chat es un mensaje normal.
+Responde en el panel de interrupciones, que se abre al seleccionar la misión o la tarea en rojo: solo eso cuenta como tu respuesta. Una respuesta escrita en el chat es un mensaje normal.
 
 ### Informes de situación e informe final {#briefings}
 
@@ -125,7 +123,7 @@ Cuando no se puede construir una reproducción que falle, el diagnosticador info
 - Solo se aceptan los seis roles de Depuración.
 - Orden: un implementador debe depender de un diagnóstico, cada revisor de una implementación, la continuación de ambas revisiones y el validador de la continuación. Un paso solo empieza cuando ha terminado el paso del que depende.
 - Los revisores y el validador deben ejecutarse en conversaciones nuevas; la continuación debe continuar la conversación del implementador completado.
-- Cada informe de rol completado debe contener el informe estructurado de su rol en su formato exacto (mostrado por **Ver detalles**), o se rechaza. Por ejemplo, la corrección debe indicar que la prueba de regresión se vio fallar y pasar, y la validación debe listar los cuatro tipos de comprobación sin ninguno fallido.
+- Cada informe de rol completado debe contener el informe estructurado de su rol en el formato requerido, o se rechaza. Por ejemplo, la corrección debe indicar que la prueba de regresión se vio fallar y pasar, y la validación debe listar los cuatro tipos de comprobación sin ninguno fallido.
 - La misión solo termina en verde si la implementación más reciente tiene un diagnóstico completado antes y dos revisiones, una continuación y una validación después, todos conectados por dependencias y con informes estructurados válidos.
 
 Solo instrucciones: la calidad del diagnóstico, que los revisores y el validador no editen archivos y la veracidad de lo que afirma un informe. CodeNomad comprueba que la corrección declara que la prueba pasó de rojo a verde, no que la ejecutara.
@@ -165,7 +163,7 @@ Los responsables nunca te preguntan; devuelven informes y preguntas listas al co
 
 - **Decide él mismo** cuando la evidencia basta y la elección es fácil de revertir.
 - **Aplaza** una decisión que aún no hace falta: retira la tarea y conserva la pregunta en las notas como niebla.
-- **Te pregunta**, agrupando las decisiones pendientes en un solo formulario en **Te necesita**.
+- **Te pregunta**, agrupando las decisiones pendientes en un solo formulario, que se abre desde la fila roja de la misión.
 
 Nunca escribe tu respuesta por sí mismo ni presenta su propia decisión como tuya. Dónde lees el resultado depende de **Sesiones de tareas**:
 
@@ -187,7 +185,7 @@ Solo instrucciones: cuándo una elección se considera fácil de revertir, la ca
 Obtienes un mapa: el destino, decisiones registradas con quién las tomó, hallazgos de investigación, prototipos, la niebla que queda en las notas y un informe final. Un coordinador de misión única también puede preparar una misión de seguimiento que inicias tú. Errores frecuentes:
 
 - Exploración planifica; no construye el destino. Usa otro guion, o la misión de seguimiento preparada, para implementar.
-- Responde en **Te necesita**, no en el chat: solo una respuesta dada en el panel de interrupciones cuenta como tuya.
+- Responde en el panel de interrupciones que se abre desde la fila roja, no en el chat: solo una respuesta dada en el panel de interrupciones cuenta como tuya.
 - Con **Subagentes nativos**, lee los resultados con la etiqueta **Decisión del coordinador**; con **Sesiones independientes**, lee los resultados en las **Notas**. Para cambiar una decisión, escribe al coordinador desde **Abrir conversación**.
 - Un destino formulado de forma vaga deja la mayor parte del mapa en la niebla.
 
@@ -258,7 +256,7 @@ El coordinador compara exactamente dos modelos distintos. Registra ambos intento
 
 ### Lo que CodeNomad comprueba {#compare-checks}
 
-- Al crear la misión, **Modelo A** y **Modelo B** son obligatorios y deben ser modelos distintos; un nivel de **Razonamiento** diferente por sí solo no es un modelo distinto. Salvo que elijas uno, el juez usa el modelo del coordinador, fijado al crear la misión; el formulario avisa cuando coincide con A o B.
+- Al crear la misión, **Modelo A** y **Modelo B** son obligatorios y deben ser modelos distintos; un nivel de **Razonamiento** diferente por sí solo no es un modelo distinto. Salvo que elijas uno, el juez usa el modelo del coordinador, fijado al crear la misión.
 - Solo se aceptan los tres roles de Comparar dos modelos. Cada ejecución y el juez deben empezar en una conversación nueva, una ejecución no puede cambiar el modelo de su rol, hay una sola ejecución activa por modelo y ambos encargos deben ser idénticos byte a byte.
 - Solo el juez puede adjuntar un informe estructurado, que debe referirse a las ejecuciones A y B completadas en ese orden, puntuar cada criterio una vez de 0 a 10 con al menos una evidencia y dar uno de los cuatro veredictos.
 - La misión solo termina con las tareas A, B y del juez completadas y una comparación válida.

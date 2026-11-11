@@ -51,7 +51,7 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
           || recurrenceHumanSession(request, deps)?.sessionId !== session.sessionId) throw new Error("Control read changed")
       }
       const location = { directory }, signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(10_000)])
-      if (!heldRead && !await lifetime.wait(deps.manager.ownsLocation(id, location, connection.client, signal))) return reply.code(403).send({ error: "Foreign Location" })
+      if (!heldRead && !await lifetime.wait(deps.manager.ownsLocation(id, location, connection.client, { signal }))) return reply.code(403).send({ error: "Foreign Location" })
       current()
       // Only an exact permit this backend holds may carry its own expired proof time.
       const read = { ...input.data, ...(heldRead || replacedRead ? recurrenceHoldProofHint(deps.fence, id, input.data) : {}) }
@@ -59,7 +59,7 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
         location, ...locationRequestOptions(location), signal,
       }))
       current()
-      if (!heldRead && !await lifetime.wait(deps.manager.ownsLocation(id, location, connection.client, signal))) throw new Error("Location changed")
+      if (!heldRead && !await lifetime.wait(deps.manager.ownsLocation(id, location, connection.client, { signal }))) throw new Error("Location changed")
       current()
       const result = recurrenceControlStatusSchema.parse(raw)
       if (result.scheduleID !== input.data.scheduleID || result.requestID !== input.data.requestID

@@ -871,7 +871,12 @@ fn process_start_identity(pid: u32) -> Option<String> {
 
 #[cfg(any(target_os = "macos", windows))]
 fn command_value(command: &str, args: &[&str]) -> Option<String> {
+    // Cold startup and both attempts share the existing total lookup budget.
+    let deadline = Instant::now() + Duration::from_secs(10);
     for _ in 0..2 {
+        if Instant::now() >= deadline {
+            break;
+        }
         let mut command = Command::new(command);
         command
             .args(args)
@@ -885,7 +890,6 @@ fn command_value(command: &str, args: &[&str]) -> Option<String> {
         let Ok(mut child) = command.spawn() else {
             continue;
         };
-        let deadline = Instant::now() + Duration::from_secs(5);
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break Some(status),
@@ -958,6 +962,11 @@ mod tests {
         let script =
             manifest.join("../../electron-app/electron/main/client-state-cross-host-child.ts");
         let mut command = Command::new("node");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
         command
             .current_dir(manifest.join("../../.."))
             .args(["--import", "tsx"])
@@ -985,9 +994,10 @@ mod tests {
             .read_line(&mut line)
             .unwrap();
         assert!(!line.is_empty());
-        serde_json::from_str::<serde_json::Value>(&line).unwrap()["acquired"]
-            .as_bool()
-            .unwrap()
+        let result: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let acquired = result["acquired"].as_bool().unwrap();
+        if !acquired { eprintln!("Node election result: {result}"); }
+        acquired
     }
 
     fn stop_node(mut child: std::process::Child) {

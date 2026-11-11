@@ -4,7 +4,8 @@ import test from "node:test"
 import { Context, Effect } from "effect"
 import { acquireNativePassageObservation, qualifyNativePassageStorage } from "./native-passage-observation"
 import { passageFixture } from "./native-passage-test-fixture"
-import { observeNativePassageSettlement } from "./native-recurrence-settlement"
+import { observeNativePassageSettlement, observePassageFamilySettlement } from "./native-recurrence-settlement"
+import type { CoordinatorBaseline } from "../../missions/mission-coordinator-baseline"
 import { RECURRENCE_STORAGE_PREFIX } from "../../missions/recurrence-contract"
 import { stableToken } from "../../missions/journal"
 
@@ -101,8 +102,68 @@ async function idleFamily(finish?: "completed") {
   const native = await Effect.runPromise(acquireNativePassageObservation().pipe(Effect.provide(graph)))
   const observe = async () => (await observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
     native, directory: f.root, current: () => true, signal: new AbortController().signal }))?.result
-  return { f, db, idle, coordinator, child, observe, dispose: async () => { db.close(); await f.dispose() } }
+  return { f, db, idle, coordinator, child, observe, native, dispose: async () => { db.close(); await f.dispose() } }
 }
+
+test("adoption checkpoints separate old/pruned children, inherited running work, new helpers and continued children without clocks", async () => {
+  const t = await idleFamily()
+  try {
+    t.db.exec("ALTER TABLE session_v2 ADD COLUMN time_updated INTEGER NOT NULL DEFAULT 10")
+    t.db.exec("ALTER TABLE session_v2 ADD COLUMN metadata TEXT; CREATE TABLE event_sequence(aggregate_id TEXT PRIMARY KEY,seq INTEGER)")
+    t.db.prepare("INSERT INTO event_sequence VALUES(?,10)").run(t.child)
+    const mission = (await t.f.passage.journal.snapshot()).missions[0]
+    const owner = { passageID: "passage", missionID: mission.id, coordinatorSessionID: t.coordinator }
+    const stamp = (id: string, messageID: string, sequence = 11) => {
+      t.db.prepare("UPDATE session_v2 SET metadata=? WHERE id=?").run(JSON.stringify({ "codenomad.passage-input": { ...owner, messageID } }), id)
+      t.db.prepare("INSERT INTO event_sequence VALUES(?,?) ON CONFLICT(aggregate_id) DO UPDATE SET seq=excluded.seq").run(id, sequence)
+    }
+    t.idle("old_child_failed", t.child, "failed")
+    const row = t.db.prepare("SELECT seq FROM session_message WHERE id='old_child_failed'").get()!
+    const baseline: CoordinatorBaseline = [[t.child, Number(row.seq), "old_child_failed", null, 10]]
+    const observe = () => observePassageFamilySettlement({ native: t.native, projectID: "project", mission,
+      coordinatorSessionID: t.coordinator, messageID: t.f.passage.messageID, directory: t.f.root, current: () => true,
+      signal: new AbortController().signal, reusedCoordinator: true, coordinatorBaseline: baseline, coordinatorOwner: owner })
+    t.idle("root_done", t.coordinator, "succeeded")
+    assert.equal((await observe())?.outcome, "ended-without-report", "old failure is historical")
+    t.db.exec("DELETE FROM session_message WHERE id='msg_child_input'")
+    assert.equal((await observe())?.outcome, "ended-without-report", "pruned old input keeps its qualified native boundary")
+    t.db.prepare("INSERT INTO session_v2(id,parent_id,project_id,directory) VALUES('new_child',?,'project',?)").run(t.coordinator, t.f.root)
+    assert.equal(await observe(), undefined, "new unbound child without input/terminal stays unknown")
+    t.db.exec("INSERT INTO session_message(id,session_id,type,data) VALUES('new_input','new_child','user','{}')")
+    stamp("new_child", "new_input")
+    t.idle("new_failed", "new_child", "failed")
+    assert.equal((await observe())?.outcome, "failed", "new ordinary child failure is attributed")
+    t.db.exec("DELETE FROM session_message WHERE session_id='new_child'; DELETE FROM session_v2 WHERE id='new_child'")
+    t.db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('continuation',?,'user','{}')").run(t.child)
+    stamp(t.child, "continuation")
+    assert.equal(await observe(), undefined, "old child continuation requires its new terminal")
+    t.idle("continued_done", t.child, "succeeded")
+    assert.equal((await observe())?.outcome, "ended-without-report", "old failures stay before the continuation anchor")
+    t.db.exec("DELETE FROM session_message WHERE id='continuation'")
+    assert.equal(await observe(), undefined, "a pruned continuation cannot fall back to the old terminal")
+    t.idle("retained_failure", t.child, "failed")
+    t.db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('later_input',?,'user','{}')").run(t.child)
+    t.idle("later_done", t.child, "succeeded")
+    assert.equal(await observe(), undefined, "later retained input cannot substitute for the pruned first owned input")
+    t.db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('inherited_input',?,'user','{}')").run(t.child)
+    const latest = t.db.prepare("SELECT seq FROM session_message WHERE id='inherited_input'").get()!
+    baseline[0] = [t.child, Number(latest.seq), "inherited_input", "inherited_input", 12]
+    stamp(t.child, "inherited_input", 12)
+    t.idle("inherited_done", t.child, "succeeded")
+    assert.equal((await observe())?.outcome, "ended-without-report", "already running work completes under its captured input")
+    t.idle("inherited_failure", t.child, "failed")
+    t.db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('inherited_later',?,'user','{}')").run(t.child)
+    t.idle("inherited_later_done", t.child, "succeeded")
+    assert.equal((await observe())?.outcome, "failed", "a newer successful input cannot hide a failure in inherited owned work")
+    t.db.exec("DELETE FROM session_message WHERE id='inherited_input'")
+    await assert.rejects(observe(), /boundary unavailable/, "a lost inherited anchor remains unknown")
+    baseline[0] = [t.child, Number(row.seq), "old_child_failed", null, 10]
+    t.db.prepare("DELETE FROM session_message WHERE session_id=? AND seq>?").run(t.child, row.seq)
+    t.db.prepare("UPDATE session_v2 SET metadata=NULL WHERE id=?").run(t.child)
+    assert.equal(t.db.prepare("SELECT time_updated FROM session_v2 WHERE id=?").get(t.child)!.time_updated, 10)
+    assert.equal(await observe(), undefined, "equal recency timestamps cannot hide admitted and removed work beyond the durable sequence")
+  } finally { await t.dispose() }
+})
 
 test("a native failed turn without a final report archives failed, read from the idle projection", async () => {
   const t = await idleFamily()

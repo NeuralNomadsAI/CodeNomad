@@ -13,6 +13,8 @@ import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import pino from "pino"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildState, observeFixtureReload } from "./native-fixture-diagnostics.mjs"
+import { performance } from "node:perf_hooks"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute isolated CLI executable")
@@ -65,6 +67,7 @@ let child, stopped, manager, plugin, removeBridge, output = "", failure, held, h
 const diagnosticReads = []
 const gates = [], failedGates = [], failures = []
 const receipt = { status: "running", cli, cliVersion: version, nodeVersion: process.version, artifacts: root, gates, failedGates, failures }
+const reloadDiagnostics = {}
 let previousFailures = 0
 const gate = name => {
   if (failures.length > previousFailures) { failedGates.push(name); console.error(`FAIL ${name}`) }
@@ -144,7 +147,7 @@ try {
   await mkdir(fixturePlugin)
   // Test-only RPC drives the actual registered tool executors without relying on LLM decisions.
   await writeFile(path.join(fixturePlugin, "index.ts"), `import { Plugin, Rpc } from '@opencode/plugin/effect'
-  import { Effect } from 'effect'
+  import { Cause, Effect } from 'effect'
   export default Plugin.define({ id: 'missions.fixture', effect: Effect.fn(function*(ctx) {
     yield* ctx.session.hook('http.request', event => Effect.sync(() => {
       event.request.headers.set('x-fixture-kind', event.kind)
@@ -155,7 +158,8 @@ try {
       const tool = (yield* ctx.tool.list()).find(tool => tool.id === 'mission_' + input.tool)
       if (!tool) throw new Error('Mission tool unavailable')
       const result = yield* tool.execute(input.input, { sessionID: input.sessionID, agent: 'build', messageID: 'msg_fixture',
-        id: input.callID, progress: () => Effect.void, signal })
+        id: input.callID, progress: () => Effect.void, signal }).pipe(Effect.catchCause(cause =>
+          Effect.succeed({ content: JSON.stringify({ fixtureToolError: Cause.pretty(cause) }) })))
       return result.content
     }), panelShape: input => Effect.succeed(input) })
   }) })`)
@@ -179,8 +183,12 @@ try {
   receipt.runtime = { version: info.version, pid: info.pid, url }
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   let variables = { MISSION_FIXTURE: "first" }
+  let preferenceReads = 0, uiPreferences = {}
+  const settings = { getOwner: () => ({ environmentVariables: variables }),
+    getRawConfigOwner: owner => { assert.equal(owner, "ui"); preferenceReads++; return structuredClone(uiPreferences) },
+    readEnvironmentForAdmission: async () => ({ ...variables }) }
   manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
-    settings: { getOwner: () => ({ environmentVariables: variables }), readEnvironmentForAdmission: async () => ({ ...variables }) },
+    settings,
     binaryResolver: { resolveDefault: () => ({ path: cli, label: "Isolated missions" }) },
     hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }),
   })
@@ -220,7 +228,7 @@ try {
   const worktreeDeletionFence = new WorktreeDeletionFence()
   registerMissionRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence, auth })
   registerAutomationPluginRoute(bridge, { workspaceManager: manager, worktreeDeletionFence,
-    authManager: auth, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
+    authManager: auth, settings, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
   await bridge.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${bridge.server.address().port}/api/opencode-plugin/automation`
   removeBridge = await publishAutomationBridge(registration)
@@ -271,11 +279,78 @@ try {
   // Mission tools return compact readouts; checks below read the resulting map from the native snapshot.
   const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) => {
     const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
+    if (typeof result.fixtureToolError === "string") throw new Error(result.fixtureToolError)
     if (result.missionID === undefined) return result
     const { missions } = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-    return { ...result, mission: missions.find(mission => mission.id === result.missionID) }
+    const mission = missions.find(mission => mission.id === result.missionID)
+    if (mission) delete mission.creationDefaults
+    return { ...result, mission }
+  }
+  stage = "nonempty owning-backend creation preferences"
+  {
+    const caller = await client.session.create({ location, title: "Private preference preflight", agent: "build",
+      model: { providerID: "fixture", id: "fixture" } })
+    const profiles = { coordinator: { agent: "build", model: { providerID: "fixture", id: "fixture" } },
+      roles: { specialist: { agent: "reviewer", model: { providerID: "fixture", id: "selected", variant: "careful" } } } }
+    const preferred = { template: "all", profiles, taskMode: "independent" }
+    uiPreferences = { settings: { missionProfileDefaults: [{ ...preferred, profiles: { ...profiles, coordinator: { agent: "reviewer" } } }] } }
+    const before = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+    const { DatabaseSync } = await import("node:sqlite")
+    const database = new DatabaseSync(process.env.OPENCODE_DB, { readOnly: true })
+    try {
+      database.exec("PRAGMA busy_timeout = 10000")
+      const rows = () => database.prepare("SELECT key, value FROM kv WHERE key LIKE ? ORDER BY key").all("%codenomad-missions/%")
+      const retained = rows(), reads = preferenceReads, turns = requests.length
+      await assert.rejects(invoke("inspect", { start: { objective: "Refuse coordinator mismatch", template: "custom" } },
+        caller.id, "preferences-mismatch"), /Coordinator differs from the profile selected by Missions preferences\. Pass profiles\.coordinator \(for example \{\}\) to override that preference\./)
+      assert.ok(preferenceReads > reads, "The mismatch was resolved against nonempty owner preferences")
+      const after = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+      assert.deepEqual({ ...after, generatedAt: before.generatedAt }, before)
+      assert.deepEqual(rows(), retained, "Coordinator mismatch writes no creation event, document or retained intent")
+      assert.equal(requests.length, turns, "Coordinator mismatch admits no provider turn")
+    } finally { database.close() }
+    uiPreferences = { settings: { missionProfileDefaults: [preferred] } }
+    const start = { objective: "Persist owning-backend preferences", template: "custom" }
+    const selected = await invoke("inspect", { start }, caller.id, "preferences-create")
+    const origins = { coordinator: "preference", roles: { specialist: "preference" }, taskMode: "preference" }
+    const selection = { profiles, taskMode: "independent", origins }
+    assert.deepEqual(selected.selection, selection)
+    assert.equal("creationDefaults" in selected.mission, false)
+    await play(selected.mission)
+    const prepared = await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
+      caller.id, "preferences-prepare")
+    assert.deepEqual(prepared.selection, selection)
+    assert.equal("creationDefaults" in prepared.mission, false)
+    const saved = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+    for (const result of [selected, prepared]) {
+      const mission = saved.missions.find(mission => mission.id === result.mission.id)
+      assert.deepEqual(mission.profiles, profiles)
+      assert.equal(mission.taskMode, "independent")
+      assert.deepEqual(mission.creationDefaults, { request: {}, ...selection })
+      assert.deepEqual(mission.creationDefaults.origins, origins)
+      assert.equal([mission.creationDefaults.origins.coordinator, ...Object.values(mission.creationDefaults.origins.roles),
+        mission.creationDefaults.origins.taskMode].filter(origin => origin === "preference").length, 3)
+    }
+    uiPreferences = {}
+    const reads = preferenceReads
+    assert.deepEqual((await invoke("inspect", { start }, caller.id, "preferences-create")).selection, selection)
+    assert.deepEqual((await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
+      caller.id, "preferences-prepare")).selection, selection)
+    assert.equal(preferenceReads, reads, "Saved provenance and choices replay without consulting changed preferences")
+    const finished = await invoke("report", { missionID: selected.mission.id, outcome: "completed", summary: "Preferences verified", final: true },
+      caller.id, "preferences-finish")
+    assert.equal(finished.mission.status, "completed")
+    for (const mission of [prepared.mission, finished.mission]) {
+      const deletion = { missionID: mission.id, requestID: `preferences-delete-${mission.id}`, expectedRevision: mission.revision }
+      assertDocumentDeletion(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), deletion, mission.objective)
+    }
+    assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.length, before.missions.length)
+    gate("nonempty owner preferences: coordinator mismatch has no effects, both creation paths persist profiles/policy/provenance and replay frozen choices")
   }
   const inspected = await invoke("inspect", { catalog: true, start: { objective: "Native integration", template: "custom" } })
+  assert.equal(inspected.selection.preferences, undefined, "The owning fixture backend supplied readable preferences")
+  assert.ok(preferenceReads > 0, "Agent creation exercised the owning backend's raw UI reader")
+  assert.equal(inspected.selection.origins.coordinator, "opencode-default")
   assert(inspected.catalog.agents.some(agent => agent.id === "reviewer"))
   assert(inspected.catalog.models.some(model => model.id === "selected" && model.variants.includes("careful")))
   gate("native catalog and configured variant discovery")
@@ -915,6 +990,8 @@ try {
   const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const journalEntries = (database, range) => database.prepare("SELECT COUNT(*) AS count FROM kv WHERE substr(key, 1, ?) = ?").get(range.length, range).count
   let journalRange
+  const seedStarted = performance.now()
+  reloadDiagnostics.seed = { startedAt: new Date().toISOString() }
   const seeding = new DatabaseSync(process.env.OPENCODE_DB)
   try {
     seeding.exec("PRAGMA busy_timeout = 10000")
@@ -933,8 +1010,16 @@ try {
     }
     seeding.exec("COMMIT")
     assert.ok(journalEntries(seeding, journalRange) > 2_000, "The project holds more than one mission's bound")
-  } finally { seeding.close() }
-  await client.location.reload({ signal: AbortSignal.timeout(20_000) })
+  } finally {
+    seeding.close()
+    Object.assign(reloadDiagnostics.seed, { finishedAt: new Date().toISOString(), durationMs: performance.now() - seedStarted })
+  }
+  const reload = observeFixtureReload(url)
+  reloadDiagnostics.reload = reload.diagnostics
+  let reloadError
+  try { await client.location.reload({ signal: AbortSignal.timeout(20_000) }) }
+  catch (error) { reloadError = error; throw error }
+  finally { reload.stop(reloadError) }
   await until(async () => { try { return Boolean(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })) } catch { return false } })
   const live = (await createPrepared({ requestID: "native-history-live", objective: "Live beside history", template: "custom" })).mission
   const liveCoordinator = live.coordinatorSessionId
@@ -1057,6 +1142,11 @@ try {
   console.error(`Fixture failed during ${stage} at ${root}: ${output.slice(-8000)}`)
   throw error
 } finally {
+  receipt.beforeCleanup = reloadDiagnostics.beforeCleanup = fixtureChildState(child)
+  await writeFile(path.join(root, "reload-diagnostics.json"), JSON.stringify(reloadDiagnostics, null, 2)).catch(() => {
+    console.error("Could not write private reload diagnostics")
+    process.exitCode ||= 1
+  })
   held?.()
   await Promise.allSettled(diagnosticReads)
   await removeBridge?.()

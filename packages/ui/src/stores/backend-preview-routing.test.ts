@@ -185,7 +185,10 @@ test("App host-native browser-open consumer excludes colliding remote owners and
       activeAppTab: () => ({ kind: "instance", instance: remote }),
       fetchSessions: async (id: string) => { fetched.push(id); sessions.set(id, [{ id: "collision" }]) },
       claimNativeBrowserOpen: async (id: string) => { claimed.push(id); return true },
-      releaseNativeBrowserOpen: async () => {}, openSessionPreview: async (...args: unknown[]) => { opened.push(args) },
+      releaseNativeBrowserOpen: async () => {}, openSessionPreview: async (...args: unknown[]) => {
+        opened.push(args.slice(0, 4))
+        assert.equal(await (args[4] as () => Promise<boolean>)(), true)
+      },
       setShowFolderSelection: () => {}, selectInstanceTab: (id: string) => selected.push(id),
       setActiveSessionFromList: () => {}, log: { warn: () => {} },
     }
@@ -195,7 +198,7 @@ test("App host-native browser-open consumer excludes colliding remote owners and
       assert.deepEqual(opened, []); assert.deepEqual(claimed, []); assert.deepEqual(selected, [])
     } else {
       assert.deepEqual(opened, [["collision", "http://localhost:3000/app", "/same", "same"]])
-      assert.deepEqual(claimed, ["host-request"]); assert.deepEqual(selected, ["same"])
+      assert.deepEqual(claimed, ["host-request", "host-request"]); assert.deepEqual(selected, ["same"])
     }
     assert.deepEqual(fetched, scenario === "hydrate" ? ["same"] : [])
   }

@@ -3,10 +3,14 @@ import { createSortable, transformStyle } from "@thisbeyond/solid-dnd"
 import { GripVertical, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { MissionSourceSelect } from "./mission-source-select"
+import { isMissionGithubKind, type MissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 import { isMissionEventKind, missionEventKinds, missionHourSteps, missionScheduleShortcuts, type MissionConditionKind,
   type MissionCriterionDraft, type MissionCriterionKind } from "./mission-scheduling-data"
 
-type SelectedSource = Exclude<MissionConditionKind, "files-changed">
+export type SelectedSource = Exclude<MissionConditionKind, "files-changed" | MissionGithubKind> | "coordinator-session"
+export type MissionSourcePage = { next(): string | undefined; loading(): boolean; failed(): boolean; lookupFailed?(): boolean
+  more(): void; retry(): void; search?(query: string): void }
 /** Lists come from the owning authorized project. Absence is an unavailable read. */
 export type MissionSchedulingSourceLists = Partial<Record<SelectedSource, readonly { id: string; label: string }[]>>
 
@@ -14,7 +18,7 @@ export type MissionSchedulingSourceLists = Partial<Record<SelectedSource, readon
  * `connector` to the card above (or / if / else) sits in the gap above it and moves with
  * it. The grip drags it (a sortable of the surrounding SortableProvider) or moves it with Alt+↑/↓. */
 export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; number: number; sources: MissionSchedulingSourceLists
-  connector?: string; sortable: boolean
+  connector?: string; sortable: boolean; disabled?: boolean; paging?: (kind: SelectedSource, value?: string) => MissionSourcePage | undefined; errorText?: string
   onChange: (row: MissionCriterionDraft) => void; onRemove: () => void; onMove: (delta: -1 | 1) => void; errorID?: string }) {
   const { t, locale } = useI18n(), connectorID = createUniqueId(), sortable = createSortable(props.row.id)
   const patch = (change: Partial<MissionCriterionDraft>) => props.onChange({ ...props.row, ...change })
@@ -40,9 +44,9 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
           event.preventDefault(); props.onMove(event.key === "ArrowUp" ? -1 : 1)
         }}><GripVertical class="h-4 w-4" aria-hidden="true" /></button>
       <select aria-label={label("missions.scheduling.criterionKind")} value={kind()}
-        onChange={event => patch({ kind: event.currentTarget.value as MissionCriterionKind, source: "" })}>
+        onChange={event => patch({ kind: event.currentTarget.value as MissionCriterionKind, source: "", author: undefined })}>
         <optgroup label={t("missions.scheduling.group.schedule")}>
-          <For each={missionScheduleShortcuts}>{value => <option value={value}>{t(`missions.scheduling.shortcut.${value}`)}</option>}</For>
+          <For each={missionScheduleShortcuts}>{value => <option value={value}>{t(value === "now" ? "missions.scheduling.source.now" : `missions.scheduling.shortcut.${value}`)}</option>}</For>
         </optgroup>
         <optgroup label={t("missions.scheduling.group.event")}>
           <For each={missionEventKinds}>{value => <option value={value}>{t(`missions.scheduling.condition.${value}`)}</option>}</For>
@@ -78,16 +82,21 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
     <Show when={kind() === "files-changed"}><label><span>{t("missions.scheduling.files")}<SettingsInfoTip text={t("missions.scheduling.filesHint")} /></span>
       <textarea aria-label={label("missions.scheduling.criterionFiles")} rows={3} {...invalid()} value={props.row.files} maxLength={64 * 1024}
         onInput={event => patch({ files: event.currentTarget.value })} /></label></Show>
-    <Show when={isMissionEventKind(kind()) && kind() !== "files-changed"}>
-      <select aria-label={label("missions.scheduling.criterionSource")} {...invalid()} value={props.row.source}
-        onChange={event => patch({ source: event.currentTarget.value })}>
-        <option value="" selected={!props.row.source}>{t(choices() ? "missions.scheduling.chooseSource" : "missions.scheduling.sourcesUnavailable")}</option>
-        <Show when={props.row.source && !choices()?.some(item => item.id === props.row.source)}>
-          <option value={props.row.source} selected disabled>{t("missions.scheduling.sourceMissing", { source: props.row.source })}</option>
-        </Show>
-        <For each={choices()}>{item => <option value={item.id} selected={props.row.source === item.id}>{item.label}</option>}</For>
-      </select>
+    <Show when={isMissionGithubKind(kind())}>
+      <label><span>{t(kind() === "github-notification" ? "missions.scheduling.github.repositoryOptional" : "missions.scheduling.github.repository")}</span>
+        <input aria-label={label("missions.scheduling.criterionSource")} value={props.row.source} maxLength={140} dir="ltr" {...invalid()}
+          placeholder={t("missions.scheduling.github.repositoryExample")} onInput={event => patch({ source: event.currentTarget.value })} /></label>
+      <Show when={kind() === "github-pull-request" || kind() === "github-issue"}>
+        <label><span>{t("missions.scheduling.github.author")}</span>
+          <input aria-label={label("missions.scheduling.github.author")} value={props.row.author ?? ""} maxLength={100} dir="ltr" {...invalid()}
+            onInput={event => patch({ author: event.currentTarget.value })} /></label>
+      </Show>
     </Show>
+    <Show when={isMissionEventKind(kind()) && kind() !== "files-changed" && !isMissionGithubKind(kind()) ? kind() as SelectedSource : undefined} keyed>{sourceKind =>
+      <MissionSourceSelect label={label("missions.scheduling.criterionSource")} value={props.row.source} choices={choices()}
+        disabled={props.disabled} errorID={props.errorID} paging={props.paging?.(sourceKind, props.row.source)} onChange={source => patch({ source })} />
+    }</Show>
+    <Show when={props.errorText}><p id={props.errorID} class="mission-create-field-error" role="alert">{props.errorText}</p></Show>
   </div>
   </div>
 }

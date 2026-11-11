@@ -7,6 +7,7 @@ import { fixtureEventStream } from "./fixture-event-stream"
 import { preparationFixture, scheduledPreparation } from "../../../server/src/missions/mission-preparation-test-fixture"
 import { readMissionSchedulePage } from "../../../server/src/missions/mission-schedule-list"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
+import { readMissionPanelObservation } from "../../../server/src/missions/mission-panel-observation"
 
 let browser: Browser, url: string, events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
@@ -23,7 +24,8 @@ for (const restored of ["selectedScheduled", "selected"] as const) test(`passive
   await f.control.configurePreparation({ ...f.request, configuration }, f.native, () => true)
   for (let index = 0; index < 8; index++) await f.store.create(`aaa_${index}`, {
     ...configuration, title: `Other Mission ${index}` }, Date.now(), () => true)
-  const page = await browser.newPage(), errors: string[] = [], reads: URL[] = [], writes: string[] = []
+  // Keep automatic end-of-list demand separate from this restored-selection journey.
+  const page = await browser.newPage({ viewport: { width: 1280, height: 240 } }), errors: string[] = [], reads: URL[] = [], writes: string[] = []
   page.on("pageerror", error => errors.push(error.message)); page.setDefaultTimeout(15000)
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
@@ -32,7 +34,18 @@ for (const restored of ["selectedScheduled", "selected"] as const) test(`passive
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { locale: "en" } } }))
   await page.route("**/api/workspaces/fixture/missions**", async route => {
     const request = route.request(), link = new URL(request.url()), pathname = link.pathname
-    if (pathname.endsWith("/panel-page")) return route.fulfill({ json: await f.control.panelPage(request.postDataJSON()) })
+    if (pathname.endsWith("/panel-page")) {
+      const input = request.postDataJSON()
+      const json = input.source === "marks" || input.source === "activity"
+        ? await readMissionPanelObservation(input, {
+          projectID: "project", read: value => f.control.panelPage(value), current: () => true,
+          observe: async context => ({ generatedAt: 1, missions: context.missions.map(mission => ({
+            missionId: mission.id, actors: mission.actors.map(actor => ({ sessionId: actor.sessionId, state: "unknown" as const })),
+            family: { state: "unknown" as const, members: [] },
+          })) }),
+        }) : await f.control.panelPage(input)
+      return route.fulfill({ json })
+    }
     if (request.method() !== "GET") { writes.push(pathname); return route.fulfill({ status: 405, json: {} }) }
     reads.push(link)
     if (pathname.endsWith("/capabilities")) return route.fulfill({ json: { api: { available: true }, enabled: true,
@@ -53,13 +66,14 @@ for (const restored of ["selectedScheduled", "selected"] as const) test(`passive
       ;(window as any).missionFixture.connectCatalog()
       ;(await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { [restored]: id })
     }, { id: f.mission.id, restored })
+    // A restored selection is not expanded (only its chevron expands a row): its detail is attached, folded.
     const schedule = page.locator(".mission-unified-schedule")
-    await schedule.waitFor()
+    await schedule.waitFor({ state: "attached" })
     // Another window converts the same paused preparation; this window only receives invalidations.
     let doc = await f.read()
     await f.control.configurePreparation({ ...f.request, requestID: "external_immediate", expectedRevision: doc.revision }, f.native, () => true)
     await page.evaluate(() => (window as any).missionFixture.refresh())
-    await page.locator(".mission-detail:not(.mission-unified-schedule)").waitFor()
+    await page.locator(".mission-detail:not(.mission-unified-schedule)").waitFor({ state: "attached" })
     await schedule.waitFor({ state: "detached" })
     const selection = () => page.evaluate(async () => {
       const view = (await import("/src/stores/mission-view-state.ts")).missionProjectView("fixture")
@@ -73,12 +87,18 @@ for (const restored of ["selectedScheduled", "selected"] as const) test(`passive
     doc = await f.read()
     await f.control.configurePreparation({ ...f.request, requestID: "external_calendar", expectedRevision: doc.revision, configuration }, f.native, () => true)
     await page.evaluate(() => (window as any).missionFixture.mount(true))
-    await schedule.waitFor()
+    await schedule.waitFor({ state: "attached" })
     assert.deepEqual(await selection(), { selected: undefined, scheduled: f.mission.id })
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
-    await schedule.waitFor()
+    await schedule.waitFor({ state: "attached" })
     assert.deepEqual(await selection(), { selected: undefined, scheduled: f.mission.id })
+    await page.waitForFunction(async () => {
+      const { missionStore } = await import("/src/stores/missions.ts" as string), marks = missionStore.progress("fixture", "marks")
+      return marks.total !== undefined && !marks.loading && !marks.failure
+    })
+    const end = await page.locator(".mission-list-paging").boundingBox()
+    assert.ok(end && end.y > 360, "the paging sentinel stays outside the viewport and its preload margin")
     assert.ok(reads.some(read => read.pathname.endsWith(`/${f.mission.id}/schedule`)), "the selected off-page document is point-read")
     assert.equal(reads.some(read => read.searchParams.has("after")), false, "selection never loads other document pages")
     assert.deepEqual(writes, []); assert.equal(f.admissions.length, 0); assert.deepEqual(errors, [])

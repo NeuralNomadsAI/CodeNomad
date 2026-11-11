@@ -42,7 +42,7 @@ Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa,
 ## OpenCode çalışma zamanı ve WSL {#opencode-runtime}
 
 1. **Preferences → OpenCode** öğesini açın ve **OpenCode sürümü** kartını (kurulu sürüm ve çalışan hizmet durumu), ardından **OpenCode Binary** altındaki seçili yürütülebilir dosyayı kontrol edin.
-2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.2.3**; önerilen/doğrulanan sürüm: **2.2.5**.
+2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.2.3**; önerilen/doğrulanan sürüm: **2.2.7**.
 3. Kurulu CLI, çalışan hizmetten farklıysa, paylaşılan hizmetin yeniden başlatılıp başlatılmayacağına açıkça karar verin.
 
 **OpenCode hizmetini yeniden başlat**, **Sorun giderme** altında mevcuttur ve onay gerektirir. Bağlı her istemcideki aktif çalışmayı kesintiye uğratır ancak oturum geçmişini korur. Yapılandırmanın yeniden yüklenmesi ayrı bir eylemdir: süreci korur ancak yüklenen Konumları yeniden oluşturur ve bekleyen soruları/izinleri iptal eder. Zararsız bir yenileme de değildir.
@@ -72,6 +72,8 @@ Kimlik doğrulama kurtarıldıktan sonra, yanıtı belirsiz olan bir değişikli
 Eşleştirme bağlantıları tek kullanımlıktır ve kısa ömürlüdür; doğrudan erişim şifresi onun yerine geçmez. İptal edilen veya etkinliğin sona erdiği cihaz kimlik bilgilerinin yeniden eşleştirilmesi gerekir. Son masaüstü penceresinin kapatılması, arka ucunu ve dolayısıyla Uzaktan Kontrolü durdurur; Etkinleştirilmiş bir hizmet, bir sonraki uygulama açılışında devam eder. Kullanılamayan yalnızca ana bilgisayar yüzeyleri ve iptal için [Uzaktan Kontrol](remote-control.md) bölümüne bakın.
 
 ## Sağlayıcı, eklenti ve uzantı durumu {#providers-and-addons}
+
+**Tam zaman çizelgesi kullanılamıyor** ile birlikte `codenomad-session-pruning` eklentisi başarısız görünüyorsa OpenCode günlüğündeki yükleme hatasını inceleyin. Bu eklenti, tam geçmişte gezinmeyi ve bekleyen soru/izin kurtarmayı sağlar. Eklenti başarıyla yüklendikten sonra zaman çizelgesini yeniden deneyin; oturum verilerinizi koruyun.
 
 | Sorun | Kurtarma |
 | --- | --- |

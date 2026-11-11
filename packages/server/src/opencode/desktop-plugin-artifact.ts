@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { constants, type BigIntStats } from "node:fs"
 import { lstat, open, rename, rm, rmdir, writeFile } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
+import { parseWslUncPath } from "../workspaces/spawn"
 
 // Waits before each verify-and-publish pass (about 3 s in all). Concurrent installers of
 // the same bytes converge within the first passes; the later ones outlast short Windows
@@ -36,10 +37,13 @@ async function openBundle(plugin: string) {
 
 async function matchesIdentity(plugin: string, named: BigIntStats, identity: BundleIdentity): Promise<boolean> {
   if (!singleFile(named) || identity.ino === 0n || named.ino !== identity.ino) return false
-  if (process.platform === "win32" && identity.dev === 0n) return false
-  if (named.dev === identity.dev) return true
-  // Some Windows/libuv path stats omit the volume while fstat supplies it. Keep
-  // device verification: independently open the name and compare both handle IDs.
+  // WSL's reserved UNC redirector reports zero on both handles and pathnames.
+  // Keep that exception inside this namespace and verify an independent handle below.
+  if (process.platform === "win32" && identity.dev === 0n
+    && (named.dev !== 0n || !plugin.startsWith("\\\\") || !parseWslUncPath(plugin))) return false
+  if (named.dev === identity.dev && !(process.platform === "win32" && identity.dev === 0n)) return true
+  // Independently open the name and compare both handle IDs when pathname stats
+  // omit the volume. Both handles must agree, including WSL's scoped zero device.
   if (process.platform !== "win32" || named.dev !== 0n) return false
   const probe = await openBundle(plugin)
   if (!probe) return false
@@ -78,6 +82,29 @@ async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string, 
 
 /** Test-only scheduling seam: runs after a directory link was observed, before it is removed. */
 export const bundleRepairSchedule: { beforeLinkRemoval?: (plugin: string) => Promise<void> } = {}
+
+/** Bounded, existing-only read with the same single-file identity rules as publication. */
+export async function readDesktopPluginFile(file: string, maximumBytes: number): Promise<Buffer | undefined> {
+  const named = await lstatOrUndefined(file)
+  if (!singleFile(named) || named.size > BigInt(maximumBytes)) return undefined
+  const handle = await openBundle(file)
+  if (!handle) return undefined
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (!singleFile(before) || before.size !== named.size || !await matchesIdentity(file, named, before)) return undefined
+    const bytes = Buffer.alloc(Number(before.size))
+    for (let offset = 0; offset < bytes.length;) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+      if (!bytesRead) return undefined
+      offset += bytesRead
+    }
+    if ((await handle.read(Buffer.alloc(1), 0, 1, bytes.length)).bytesRead) return undefined
+    const after = await handle.stat({ bigint: true }), current = await lstatOrUndefined(file)
+    if (!singleFile(current) || after.size !== before.size || after.mtimeNs !== before.mtimeNs
+      || after.ctimeNs !== before.ctimeNs || !await matchesIdentity(file, current, before)) return undefined
+    return bytes
+  } finally { await handle.close() }
+}
 
 /**
  * Renames a complete private copy over `plugin`, replacing the name itself, never a
@@ -149,7 +176,8 @@ export async function installDesktopPluginArtifact(plugin: string, bundle: Uint8
   return async () => {
     const named = await lstat(plugin, { bigint: true })
     if (singleFile(named) && named.size === BigInt(bundle.byteLength)
-      && named.dev === identity!.dev && named.ino === identity!.ino) return
+      && named.dev === identity!.dev && named.ino === identity!.ino
+      && !(process.platform === "win32" && identity!.dev === 0n)) return
     // Another installer may have published the same bytes meanwhile.
     identity = await verify()
     if (!identity) throw new Error(`Managed plugin bundle changed while it was being installed (${reason}): ${plugin}`)

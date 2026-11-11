@@ -36,6 +36,8 @@ If a check is busy, wait for the other window's operation. For download, validat
 
 ## Update a standalone server {#standalone-update}
 
+The 1.1 interface requires CodeNomad server **1.1.0 or later** for its Missions APIs. Servers on 1.0.x retain their cached or bundled interface instead of downloading the incompatible interface.
+
 1. Identify how you launched CodeNomad and save any work that depends on that backend.
 2. Stop that CodeNomad server process using its normal process/service control.
 3. Update the same package installation, then restart with the intended configuration and flags.
@@ -54,6 +56,6 @@ An already-running process does not acquire new code just because npm installed 
 
 Updating CodeNomad is not updating the selected OpenCode CLI. Updating that CLI is not restarting the running shared daemon. Reloading native configuration is another explicit operation with its own effects on loaded Locations and requests.
 
-Desktop Node/npm resources are shipped with the application; an application release delivers their updates. This does not replace your system Node/npm, Electron's internal runtime, the platform webview or the independently managed OpenCode service.
+Desktop runtimes update with the application: Electron uses its integrated Node, Tauri bundles Node, and both include npm. System Node/npm, the platform webview and the OpenCode service are managed independently.
 
 Use **Settings → OpenCode** for runtime selection, installation/update and explicit service controls. Check [OpenCode setup](opencode.md) before restarting or reloading, especially when other windows/users or Missions share the daemon. Never repeat an uncertain prompt or mutation simply because an update/reconnect finished.

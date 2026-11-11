@@ -5,6 +5,7 @@ import { ChevronDown, Copy, FolderOpen, Loader2, Trash2 } from "lucide-solid"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import { showToastNotification } from "../lib/notifications"
 import {
   createWorktree,
@@ -175,7 +176,9 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
         ;(target ?? listbox).focus({ preventScroll: true })
       })
     }
-    const mapped: WorktreeOption[] = list.map((wt) => ({
+    // A checkout lacking the opened folder stays listed only while selected.
+    const selectable = list.filter((wt) => !wt.nestedFolderMissing || wt.slug === currentSlug())
+    const mapped: WorktreeOption[] = selectable.map((wt) => ({
       kind: "worktree",
       key: wt.slug,
       slug: wt.slug,
@@ -582,7 +585,9 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                         if (!operation.current()) return
                         log.warn("Failed to create worktree", error)
                         showToastNotification({ category: "files",
-                          message: error instanceof Error ? error.message : t("instanceShell.worktree.create.error"),
+                          message: error instanceof HttpResponseError && error.code === "nested_folder_unavailable"
+                            ? t("instanceShell.worktree.create.nestedFolderUnavailable")
+                            : error instanceof Error ? error.message : t("instanceShell.worktree.create.error"),
                           variant: "error",
                         })
                       })

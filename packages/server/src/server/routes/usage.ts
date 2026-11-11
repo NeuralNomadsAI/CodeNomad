@@ -1,13 +1,15 @@
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import type { ProviderUsageResponse } from "../../api-types"
 import { readLocationRef } from "../../opencode/compatibility/location"
 import { createNativeCodexUsage } from "../../usage/native-codex"
 import { claudeCodeAuthEntry, claudeCodeCredential, type ClaudeCodeHost } from "../../usage/claude-credential"
 import { readUsageCredentials } from "../../usage/native-credentials"
+import { readUsageProviderSettings } from "../../usage/native-settings"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
-import { estimateOpenCodeFreeUsage, isOpenCodeFreeModel, openCodeFreeWindow } from "../../usage/opencode-free-estimate"
-import type { ServiceConnection } from "../../workspaces/opencode-service"
+import { isOpenCodeFreeModel } from "../../usage/opencode-free-estimate"
+import type { OpenCodeFreeUsage } from "../../usage/opencode-free-usage"
 
 const UsageParamsSchema = z.object({ providerId: z.string().trim().min(1) })
 const UsageQuerySchema = z.object({
@@ -16,6 +18,7 @@ const UsageQuerySchema = z.object({
 }).strict()
 
 export interface UsageRouteDeps {
+  freeUsage: OpenCodeFreeUsage
   workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation"
     | "getSessionEnvironment" | "getServiceWslDistro" | "getHostPathForServicePath">
 }
@@ -36,6 +39,7 @@ async function claudeCodeHost(manager: UsageRouteDeps["workspaceManager"], insta
 
 export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) {
   const nativeCodexUsage = createNativeCodexUsage()
+  const freeUsage = deps.freeUsage
   app.get<{ Params: { providerId: string }; Querystring: z.infer<typeof UsageQuerySchema> }>(
     "/api/usage/:providerId",
     async (request, reply) => {
@@ -50,6 +54,13 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 15_000)
       const signal = controller.signal
+      // Google and free-model Console reads share an entry-time deadline,
+      // including credentials, leaving 3 seconds for publication revalidation.
+      const quotaController = resolveUsageProvider(params.data.providerId)?.id === "google" ||
+        isOpenCodeFreeModel(params.data.providerId, modelId) ? new AbortController() : null
+      const quotaTimeout = quotaController ? setTimeout(() => quotaController.abort(), 12_000) : undefined
+      const quotaSignal = quotaController ? AbortSignal.any([signal, quotaController.signal]) : signal
+      let consoleTimeout: ((publicationSignal: AbortSignal) => Promise<unknown>) | undefined
       try {
         return await boundedRead(async () => {
           const connection = await manager.getSharedServiceConnection(instanceId)
@@ -68,22 +79,20 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           connection.assertCurrent()
           const free = isOpenCodeFreeModel(params.data.providerId, modelId)
           const provider = free ? null : resolveUsageProvider(params.data.providerId)
-          const native = free ? await openCodeFreeUsage(connection, params.data.providerId, modelId, signal)
+          const native = free ? await freeUsage.read(connection, params.data.providerId, modelId, signal, quotaSignal)
             : !provider || provider.id === "codex"
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
             : null
           const auth = !native && provider ? await readUsageCredentials(connection, signal) : {}
+          const settings = !native && provider && provider.id !== "google" && provider.id !== "opencode-console"
+            ? await readUsageProviderSettings(connection, params.data.providerId, location.directory, signal) : undefined
           signal.throwIfAborted()
           if (provider?.id === "opencode-go") {
-            // Go quota follows the session provider's own login (a Go key or the
-            // Console sign-in), and only for the Go provider: pay-as-you-go Zen
-            // sessions keep the env-cookie behaviour and never send Console
-            // credentials to the Go usage endpoint.
-            const integrationID = await connection.client.provider.get({ providerID: params.data.providerId, location: { directory: location.directory } }, { signal })
-              .then(info => info.location.directory === location.directory && info.data.id === params.data.providerId
-                && (info.data.id === "opencode-go" || info.data.canonical === "opencode-go")
-                ? info.data.integrationID ?? info.data.id : undefined, () => undefined)
+            // Go quota follows the Go session provider's own native login.
+            const info = settings?.provider
+            const integrationID = info && (info.id === "opencode-go" || info.canonical === "opencode-go")
+              ? info.integrationID ?? info.id : undefined
             for (const alias of ["opencode-go", "opencode"]) if (alias !== integrationID) delete auth[alias]
             signal.throwIfAborted()
           }
@@ -93,38 +102,50 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             auth["claude-code"] = claudeCodeAuthEntry(await claudeCodeCredential(await claudeCodeHost(manager, instanceId, signal), signal))
             signal.throwIfAborted()
           }
-          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth })
-          // Session movement, workspace eviction and reconnect fence publication too.
-          const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
-          const currentLocation = readLocationRef(current.location)
-          connection.assertCurrent()
-          signal.throwIfAborted()
-          const stillOwned = manager.get(instanceId) === workspace && currentLocation.directory === location.directory
-            && currentLocation.workspaceID === undefined && await manager.ownsLocation(instanceId, currentLocation, connection.client)
-          signal.throwIfAborted()
-          if (!stillOwned) {
-            return reply.code(403).send({ error: "Session does not belong to workspace" })
+          const publish = async (usage: ProviderUsageResponse, signal: AbortSignal) => {
+            // Session movement, workspace eviction and reconnect fence publication too.
+            const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
+            const currentLocation = readLocationRef(current.location)
+            connection.assertCurrent()
+            signal.throwIfAborted()
+            const stillOwned = manager.get(instanceId) === workspace && currentLocation.directory === location.directory
+              && currentLocation.workspaceID === undefined && await manager.ownsLocation(instanceId, currentLocation, connection.client)
+            signal.throwIfAborted()
+            if (!stillOwned) {
+              return reply.code(403).send({ error: "Session does not belong to workspace" })
+            }
+            signal.throwIfAborted()
+            connection.assertCurrent()
+            return free ? freeUsage.refreshExhaustion(connection, usage) : usage
           }
-          signal.throwIfAborted()
-          connection.assertCurrent()
-          return usage
+          if (provider?.id === "opencode-console") consoleTimeout = publicationSignal => publish({
+            requestedProviderId: params.data.providerId, providerId: provider.id, providerName: provider.name, modelId,
+            supported: true, configured: true, ok: false, windows: {}, fetchedAt: Date.now(),
+            unavailableReason: "opencode-console-network-error",
+          }, publicationSignal)
+          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth,
+            context: { ...settings?.context, signal: quotaSignal } })
+          consoleTimeout = undefined
+          return publish(usage, signal)
         }, signal)
       } catch (error) {
+        if (consoleTimeout && (signal.aborted || error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name))) {
+          // Only the caller's wait ended. Keep the shared read alive and give
+          // publication its own bounded ownership revalidation before reporting it.
+          const publicationSignal = AbortSignal.timeout(15_000)
+          try { return await boundedRead(() => consoleTimeout!(publicationSignal), publicationSignal) }
+          catch (publicationError) { error = publicationError }
+        }
         // Do not serialize/log SDK errors: credential exports and request bodies
         // are server-only, and arbitrary upstream errors can contain secrets.
         const missing = error && typeof error === "object" && "_tag" in error && error._tag === "SessionNotFoundError"
         return reply.code(missing ? 404 : 503).send({ error: missing ? "Session not found" : "Provider usage unavailable" })
       } finally {
+        clearTimeout(quotaTimeout)
         clearTimeout(timeout)
       }
     },
   )
-}
-
-async function openCodeFreeUsage(connection: ServiceConnection, providerId: string, modelId: string | undefined, signal: AbortSignal) {
-  const now = Date.now(), { from, to } = openCodeFreeWindow(now)
-  const stats = to === from ? { models: [] } : await connection.client.session.stats({ from, to, timezone: "UTC", tools: "none" }, { signal })
-  return estimateOpenCodeFreeUsage(stats, providerId, modelId, now)
 }
 
 async function boundedRead<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {

@@ -454,8 +454,9 @@ fails unless the probe detects both.
 
 The macOS (WKWebView) and Linux (WebKitGTK) runs are manual, on the macOS and
 Ubuntu test VMs, after each change to the frame document, bridge, panel iframe or
-desktop hosts. Each host needs a checkout of the change with `npm ci` (Electron's
-binary included), Node 22, Rust's `cargo` on `PATH` and Tauri 2's platform
+desktop hosts. Each host needs a checkout of the change with `npm ci` and
+`npx --no install-electron` (Electron's binary), the Node release pinned in
+`.node-version`, Rust's `cargo` on `PATH` and Tauri 2's platform
 prerequisites (Xcode Command Line Tools; WebKitGTK 4.1 and libsoup 3 development
 packages). Both webviews need the desktop session of a logged-in user:
 

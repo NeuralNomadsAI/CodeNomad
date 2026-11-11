@@ -9,7 +9,7 @@ Akıl yürütme ve araç başlıkları her adımın ne kadar sürdüğünü gös
 ## Konuşmaları bulma ve gezinme {#navigate-conversations}
 
 1. **Session'lar** altında satır seçin veya üst konuşma başlatmak için **Yeni session** eylemini kullanın.
-2. Üst konuşmanın okuna tıklayarak alt oturumlarını rozetlerini koruyarak genişletin veya daraltın. Kapalı ok, alt konuşmalarının en acil durumunu gösterir: girdi bekliyor, çalışıyor, sıkıştırılıyor veya boşta; erişilebilir etiketi bunları sayar.
+2. Üst konuşmanın okuna tıklayarak alt oturumlarını rozetlerini koruyarak genişletin veya daraltın. Açık ya da kapalı, ok alt konuşmalarının en acil durumunu gösterir: girdi bekliyor, çalışıyor, sıkıştırılıyor veya boşta; erişilebilir etiketi bunları sayar. Oka sağ tıklayıp **Okundu olarak işaretle** öğesini seçerek konuşmanın ve tüm alt oturumlarının **Boşta** ve **Kesildi** rozetlerini tek seferde temizleyin.
 3. Listeyi daraltmak için **Session ara…**, **Ana oturumlar** / **Alt oturumlar**, çalışma ağacı filtresini ve **Etkinlik**, **Ad** veya **Çalışma ağacı** sıralamasını kullanın. Arama sonuçlarında, birden fazla konuşmayı tek seferde seçmek veya seçimini kaldırmak için satırların onay kutularının üzerinde sürükleyin.
 4. Görüntülediğiniz konuşmaları yeniden ziyaret etmek için kenar çubuğundaki **Geri** ve **İleri** öğesini kullanın.
 
@@ -18,6 +18,12 @@ Konuşmayı açmadan gördüğünüzü belirtmek için **Boşta** veya **Kesildi
 Normal gezinme hiyerarşiktir; arama/filtre sonuçları her konuşmanın kendi kimliği ve çalışma ağacıyla düz listelenir. **Ayarlar → Genel** içindeki **Alt oturumları otomatik genişlet** varsayılan olarak açıktır. Görünen kapalı bir satır seçiliyse veya seçili konuşmanın altındaysa, oku çalışıyor, sıkıştırılıyor veya girdi bekleniyor durumuna geçtiğinde etkin alt oturumlarına giden yollar açılır. Aynı kural her derinlikte geçerlidir. Zaten etkin bir satırı kaydırarak görünür yapmak, yeni bir durum değişikliğine kadar onu kapalı bırakır. Etkinliğin dalları açmasını önlemek için seçeneği kapatın; elle genişletme ve açık gezinme kullanılabilir kalır. Otomatik açılanlar dahil açık dallar geri yüklemek üzere kaydedilir.
 
 Geri/İleri, liste sırası değil, proje sekmesi başına, pencere başına ziyaret geçmişidir. Bellekte tutulur, kullanılamayan/silinmiş konuşmalar atlanır ve yeniden başlatıldıktan sonra geri yüklenmez. Geri döndükten sonra yeni bir görüşme seçmek ileri yolun yerini alır. Paletin **Önceki Session** / **Sonraki Session**'si bunun yerine görünür listeyi döndürür.
+
+## Arşivleme ve geri yükleme {#archive}
+
+Geçmişi koruyup etkin olmayan dalı normal listeden gizlemek için satır eylemlerinden **Oturumu arşivle** seçeneğini kullanın. Seçili konuşma, çalışan işler ve yanıt bekleyen soruları olan konuşmalar erişilebilir kalır. Arşivleme işi durdurmaz, mesajları silmez ve alt oturumların kendi arşiv durumlarını değiştirmez.
+
+Oturum aramasını açıp **Arşivlenmiş oturumlar** veya **Tüm oturumlar** seçeneğini kullanın. Satırlar **Arşivlendi** olarak işaretlenir ve **Oturumu geri yükle** eylemini sunar. Arşivlenmiş üst oturumların altındakiler dahil çocukları bağımsız bulmak için alt oturumları etkinleştirin. **Arşivlenmemiş oturumlar**, her konuşmanın kendi durumuna göre filtreler. Etkin olmayan dalı normal listeye döndürmek için arşivlenmiş üst oturumu geri yükleyin. Eylem doğrulanmazsa yeniden denemeden önce listeyi yenileyin.
 
 ## Ajan, Model ve Düşünme seçimi {#agent-model-thinking}
 

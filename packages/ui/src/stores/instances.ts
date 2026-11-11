@@ -811,7 +811,7 @@ function getPendingRequestLocations(instanceId: string, rootDirectory?: string, 
   return buildV2RequestLocations(rootDirectory, [
     getActiveCatalogLocation(instanceId),
     ...getPendingWorktreeLocations(instanceId),
-    ...(includeInventory ? getWorktrees(instanceId) : []),
+    ...(includeInventory ? getWorktrees(instanceId).filter(worktree => !worktree.nestedFolderMissing) : []),
     ...Array.from(instanceSessions?.values() ?? [])
       .filter((session) => includeHistorical || session.status !== "idle" || session.pendingPermission || session.pendingForm)
       .map((session) => session.location),

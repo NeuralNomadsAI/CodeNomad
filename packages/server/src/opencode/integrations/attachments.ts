@@ -156,7 +156,7 @@ export class IntegrationAttachments {
     context.signal.throwIfAborted()
     context.connection.assertCurrent()
     if (context.location.workspaceID !== undefined || !await this.deps.workspaceManager.ownsLocation(
-      context.workspaceId, context.location, context.connection.client, context.signal,
+      context.workspaceId, context.location, context.connection.client, { signal: context.signal },
     )) throw new IntegrationAttachmentError("forbidden")
     context.signal.throwIfAborted()
     context.connection.assertCurrent()

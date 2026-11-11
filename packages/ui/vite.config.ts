@@ -83,7 +83,8 @@ export default defineConfig({
         // Preserve server-side auth redirects (e.g., /login) instead of serving cached index.html.
         navigateFallback: null,
         // Only precache static assets (avoid caching HTML documents / routes).
-        globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json,webmanifest}"],
+        // VitePWA adds the web manifest separately.
+        globPatterns: ["**/*.{js,css,png,jpg,jpeg,svg,webp,ico,woff,woff2,ttf,eot,json}"],
         // Monaco assets can be large; cache them at runtime instead.
         globIgnores: [
           "**/*.html",
@@ -128,6 +129,7 @@ export default defineConfig({
     port: 3000,
   },
   build: {
+    target: ["es2020", "edge88", "firefox78", "chrome87", "safari14"],
     outDir: "dist",
     sourcemap: true,
     rollupOptions: {

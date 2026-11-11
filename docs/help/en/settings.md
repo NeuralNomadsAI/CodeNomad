@@ -6,7 +6,7 @@
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 
-Most choices apply immediately, including Mission preferences, which save each change as you make it. Speech, custom palette colors and Config Files keep an explicit **Save**. A failed save is not confirmation that the change took effect; reopen or refresh the relevant section before retrying. Explanations sit behind the **i** beside a setting's title: hover or focus it, or tap it on a touch screen. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
+Most choices apply immediately, including Mission preferences, which save each change as you make it. Speech, custom palette colors and Config Files keep an explicit **Save**. A failed save is not confirmation that the change took effect; reopen or refresh the relevant section before retrying. Hover or focus the **i** beside a setting's title for a short explanation. When it links to help, click, press Enter or tap to open the relevant section in your interface language, in the system browser or a separate browser tab. Tooltip-only icons show their explanation on tap. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
 
 | State | What it controls |
 | --- | --- |
@@ -30,7 +30,37 @@ The UI updates without restarting a conversation. Hebrew uses right-to-left layo
 
 If colors become hard to read, select a built-in palette or reset the edited one. Switching palettes can ask you to discard unsaved color edits; it does not discard a conversation draft.
 
+## Keep the computer awake {#keep-computer-awake}
+
+In **Settings → General**, **Keep the computer awake while CodeNomad is running** is off by default. Turn it on to prevent system sleep while a local CodeNomad window is open (including minimized), even when no session is working; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working. The **i** beside the title explains this behavior. This option appears only in local desktop-app windows and Preferences; it is hidden in browser and remote views.
+
+## Persistent agent memory {#agent-memory}
+
+Sending continues during a memory outage. CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh. Keep verifying memory claims against current files and commands.
+
+Open **Preferences → General → Memory** (or **Settings → General** in a browser). Memory is off by default. Enable it to let the agent keep useful facts and preferences across conversations. The switch applies to the connected CodeNomad configuration; disabling it retains saved entries and their history.
+
+- **About you**: up to 60 entries shared across projects using this configuration.
+- **Project**: up to 200 entries. This interface uses the project selected in Preferences, or the main window's active project in embedded Settings. The agent's `codenomad_memory` tool and session instructions use that session's directory. The server identifies the repository by its normalized Git remote address, falling back to its local repository path; worktrees share this memory. Open a project to select this scope.
+
+Each session, including subsessions, receives recording rules and a bounded list of titles and types (the instruction block is at most about 8,000 characters). The agent is instructed to read relevant entries with `codenomad_memory` before acting, verify claims against current files and commands, and acknowledge saves. Even an empty memory carries the recording rules. Unreadable scopes are omitted as unavailable. When OpenCode lacks the optional session-instructions capability, memory integration stays silently inactive and keeps your saved choice.
+
+1. Select a scope and an entry. **New** and **Modified** mark changes since this browser or desktop view last successfully consulted that scope; they stay visible during the current visit.
+2. Edit **Title**, **Type** (**Fact**, **Preference** or **Reference**) and **Text**, then **Save**. Titles allow 60 characters and text 2,000. **Cancel** restores the selected entry's saved content. If another writer changed it, use **Reload** and review before saving again.
+3. To remove an entry, open its action menu and confirm **Forget**. It leaves active memory; local Git retains its history, including the old text. Treat forgetting as removal from agent use, not secure erasure.
+4. If memory is full, merge or forget entries before retrying. Matching titles or strongly overlapping text replace an existing entry while Git keeps its previous text.
+
+**Needs review** marks suspected instructions that could bypass safeguards or expose credentials. Such entries remain editable here, count toward the limit and are excluded from agent titles and reads. Checks run on every read; correct the content and save, or **Forget** it. A malformed or unreadable memory shows an error rather than an empty list; repair the cause before retrying.
+
+**Tidy up** asks for confirmation, then opens a new conversation in the project shown in Preferences to verify and merge the selected scope. It preserves unverifiable entries and external references and reports its changes. It requires an open project and enabled, readable, writable memory with at least one unflagged entry. If startup cannot be confirmed, inspect the project's conversations before trying again.
+
+Memory is agent-maintained. An agent already keeping memory elsewhere, such as `.claude/…/MEMORY.md`, records a **Reference** to it; external memory files stay under their own management. CodeNomad stores one Markdown file per entry under its configuration directory's `memory/global/` or `memory/projects/<id>/`, with a local Git commit for each saved change or deletion. Storage is local-only, without remote synchronization. See [Desktop windows and data](desktop.md) for configuration and profile boundaries.
+
 ## Panels and Status sections {#panels-status}
+
+**Status** comes first by default; a saved tab order takes precedence. It stays available. In **Customize right panel**, its chevron folds or unfolds the list of section checkboxes without hiding the sections themselves.
+
+**Tokens** uses the same metric chips as messages. Collapsed, input, output and cost stay on the header line; expanded, reasoning joins them there and the chips wrap as needed. Totals including subsessions appear below.
 
 Drag a docked panel's inner edge to resize it. The handle stays highlighted and retains the pointer throughout the drag, including when the pointer moves beyond its edge. Release to finish.
 
@@ -48,7 +78,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 
 1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.
 2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**) for thinking, diagnostics, tool inputs, tokens, system messages and each tool type, or use the conversation's **Message content** popup, which shares these choices.
-3. In **General**, check **Show the message timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
+3. In **General**, check **Show the message timeline**, **Put the first/latest message arrows under the timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.
 
 The timeline has one marker for each reply, thinking block, tool, compaction and system context shown in the conversation, in the same order. Its markers follow **Message content**: hiding a tool type, thinking or system messages there also hides their markers, except a tool with a pending permission, and **Nothing** hides every tool marker. Visibility and expansion settings only change presentation. They do not remove stored tools/reasoning or compact the model context. See [History and cleanup](history.md) for destructive operations.

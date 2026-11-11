@@ -16,6 +16,9 @@ permissions:
   actions: read
   contents: read
 
+# The selected ref may be any branch: it restores dev's caches but never writes them.
+cache-mode: read
+
 jobs:
   build:
     uses: ./.github/workflows/build-and-upload.yml

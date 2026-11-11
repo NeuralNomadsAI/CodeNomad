@@ -83,6 +83,7 @@ async function panel(maps: MissionMap[], answer: (include: string[], read: numbe
 }
 const choose = (page: Page, id: string) => page.evaluate(async id =>
   (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { selected: id }), id)
+// Selected through the view state, a row stays folded: its loaded detail is mounted, not shown.
 const shownDetail = (page: Page, title: string) => page.locator(`section.mission-detail[aria-label="${title}"]`)
 
 test("a failed selected-map read stays parked until an explicit retry; a successful one costs one follow-up", async () => {
@@ -106,7 +107,7 @@ test("a failed selected-map read stays parked until an explicit retry; a success
   const loading = await panel(closed)
   try {
     await choose(loading.page, "closed")
-    await shownDetail(loading.page, "Objective closed").waitFor()
+    await shownDetail(loading.page, "Objective closed").waitFor({ state: "attached" })
     await loading.page.waitForTimeout(500)
     assert.deepEqual(loading.includes, [[], ["closed"]], "a loaded map needs no further read")
   } finally { await loading.page.close() }
@@ -122,7 +123,7 @@ test("an obsolete include response never unmounts the current selection's loaded
   })
   try {
     await choose(page, "A")
-    await shownDetail(page, "Objective A").waitFor()
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     race = true
     await choose(page, "B")
     while (!heldB) await page.waitForTimeout(10)
@@ -156,7 +157,7 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
   const fixtureCall = (method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
   try {
     await choose(page, "A")
-    await shownDetail(page, "Objective A").waitFor()
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     race = true
     await choose(page, "B")
     while (!heldB) await page.waitForTimeout(10)
@@ -172,7 +173,7 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
     await fixtureCall("active", true)
     while (includes.length <= admitted) await page.waitForTimeout(10)
     assert.deepEqual(includes[admitted], ["A"])
-    await shownDetail(page, "Objective A").waitFor()
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     // A central reader is demand of its own, with the panel hidden.
     await fixtureCall("active", false)
     race = false
@@ -184,12 +185,14 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
   } finally { releaseB(); await page.close() }
 })
 
-const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-picker-mark").getAttribute("data-mark")
+const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-row-flag").getAttribute("data-mark")
 
 test("closed missions list as rows with their marks and open their full map only when selected", async () => {
   const { page, errors, requests } = await open()
   try {
     await (await inlineMissionEntry(page, "Objective stopped")).waitFor()
+    // Summary rows publish before their separate native activity observation.
+    await page.locator('[data-mission-key="mission:open"] .mission-row-flag[data-mark="working"]').waitFor()
     assert.deepEqual(await Promise.all(["Objective open", "Objective failed", "Objective done", "Objective stopped"].map(title => mark(page, title))),
       ["working", "interrupted", "idle", "idle"], "rows alone carry every closed mark")
     assert.equal(requests[0]?.get("panelSource"), "summaries", "discovery starts with a bounded summary window")
@@ -197,11 +200,12 @@ test("closed missions list as rows with their marks and open their full map only
     await selectMission(page, "Objective failed")
     assert.deepEqual([requests.at(-1)?.get("include"), requests.at(-1)?.get("panelHeader")], ["failed", "true"])
     await missionToolbarAction(page, "Recover interrupted mission").waitFor()
-    await missionDetail(page).locator('.mission-tree li[data-task-key="work"]').waitFor()
+    await missionDetail(page).locator('.mission-tree .mission-tree-node[data-task-key="work"]').waitFor()
     // The included closed map serves the readers: its overview, then its task.
-    await missionDetail(page).locator(".mission-overview-toggle").first().click()
+    await page.locator(".mission-picker-selection-actions .mission-overview-toggle").click()
     await page.locator(".mission-reader").getByText("Stopped short of the release").waitFor()
-    await missionDetail(page).locator('.mission-tree li[data-task-key="work"] > button.mission-tree-task').click()
+    // With the eye pressed, the reader follows the selected task.
+    await missionDetail(page).locator('.mission-tree .mission-tree-node[data-task-key="work"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByText("Result of failed").waitFor()
 
     // Refreshes keep the held rows (omitted, same version) and re-read the selection.
@@ -211,7 +215,7 @@ test("closed missions list as rows with their marks and open their full map only
     await refreshed
     assert.ok(requests.length > reads)
     assert.equal(requests.at(-1)?.get("include"), "failed")
-    assert.equal(await page.locator(".mission-picker-inline button.mission-picker-option").count(), 4)
+    assert.equal(await page.locator(".mission-rows button.mission-row-select").count(), 4)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

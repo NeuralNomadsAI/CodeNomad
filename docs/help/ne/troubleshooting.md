@@ -42,7 +42,7 @@ owned worktree वा conversation placement verify गर्न नसके �
 ## OpenCode runtime र WSL {#opencode-runtime}
 
 1. **प्राथमिकताहरू → OpenCode** खोली **OpenCode संस्करण** card (installed version र running service status), त्यसपछि **OpenCode बाइनरी** अन्तर्गतको selected executable जाँच्नुहोस्।
-2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.2.3**; recommended/qualified संस्करण: **2.2.5**।
+2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.2.3**; recommended/qualified संस्करण: **2.2.7**।
 3. installed CLI running service भन्दा फरक भए shared service restart गर्ने कि स्पष्ट निर्णय गर्नुहोस्।
 
 **OpenCode सेवा पुनः सुरु गर्नुहोस्** **समस्या समाधान** अन्तर्गत उपलब्ध छ र पुष्टि चाहिन्छ। हरेक connected client को सक्रिय काम interrupt गर्छ, तर session history राख्छ। configuration reload छुट्टै हो: process राख्छ तर loaded Location पुनर्निर्माण र pending question/permission रद्द गर्छ। कुनै हानिरहित refresh होइन।
@@ -72,6 +72,8 @@ authentication recovery पछि अनिश्चित reply भएको mu
 pairing link single-use र छोटो आयुका हुन्; direct-access password विकल्प होइन। revoked वा inactivity-expired device credential लाई re-pair चाहिन्छ। अन्तिम desktop window बन्द हुँदा backend र Remote Control रोकिन्छ; enabled service अर्को app launch मा फर्किन्छ। host-only अनुपलब्ध सतह र revocation का लागि [Remote Control](remote-control.md) हेर्नुहोस्।
 
 ## provider, plugin र extension अवस्था {#providers-and-addons}
+
+**पूरा टाइमलाइन उपलब्ध छैन** सँगै `codenomad-session-pruning` plugin असफल भएको देखिए OpenCode लगमा यसको लोड त्रुटि हेर्नुहोस्। यस plugin ले पूरा इतिहास नेभिगेसन र बाँकी प्रश्न तथा अनुमति पुनर्स्थापना दिन्छ। plugin सफलतापूर्वक लोड भएपछि टाइमलाइन फेरि प्रयास गर्नुहोस्; आफ्नो सत्र डेटा सुरक्षित राख्नुहोस्।
 
 | समस्या | पुनःप्राप्ति |
 | --- | --- |

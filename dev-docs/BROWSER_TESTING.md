@@ -48,6 +48,8 @@ edits are the developer's own signal to restart the run.
 
 The daemon serves the browser's implicit `GET /favicon.ico` as a small PNG.
 Other missing resources retain their HTTP errors and strict browser collectors.
+Its dependency optimizer scans `tests/browser/fixtures/*.tsx`, keeping dependency
+module URLs stable across the daemon's dynamically registered HTML routes.
 
 ## Logs, cleanup and platform limits
 
@@ -69,6 +71,9 @@ Native product fixtures (`scripts/test-*-native.mjs`) run an isolated OpenCode d
 an allowlisted environment (`fixtureEnvironment`) that every fixture-owned child also receives, and a loopback
 synthetic provider.
 
+Plugin-dependent native checks await the named plugin's active state in each newly
+admitted Location before their first RPC, and surface failed setup immediately.
+
 - Package installs go to a loopback fake npm registry, `scripts/fixtures/fake-npm-registry.mjs`, passed as the
   `registry` option (`npm_config_registry`); it serves what a test publishes and answers 404 for every other name.
 - The fake OpenCode integration, `scripts/fixtures/fake-integration/`, is an installable plugin package with the
@@ -80,11 +85,15 @@ synthetic provider.
 ## Agent conventions
 
 - History keyboard scenarios await publication of both exact store keys; a controller-held remote response verifies the absence of premature gestures and the actual keydown recipient.
+- Fixture shutdown tracks Vite 7 optimizer disposal and pending requests across every server environment before deleting its owned cache. Qualify the optimized-load hook and native cleanup acknowledgements together when changing Vite.
 - A new browser test either borrows via `borrowFixture({ name, routes })` or
   joins `fixture-exemptions.ts` with a reason that matches reality (the
   checker's failure text is the review).
 - Fixture names must stay free of route fragments: borrowed URLs are
   namespaced `/<name><route>` and tests derive sibling URLs by substitution.
+- Fixtures exercising host-local actions serve valid `/api/meta` data with
+  `localRequest: true`; non-local, missing and failed metadata retain their
+  fail-closed coverage in `host-only-controls.test.ts`.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
@@ -93,10 +102,16 @@ synthetic provider.
   explicitly. Mutation collectors match the exact HTTP method and path. Hold the
   intended panel source independently of schedule reads, and await lifecycle
   feedback settlement before asserting its final status.
-- Scroll pagination uses one DOM snapshot for both its loop condition and progress
-  threshold, renewed after each iteration. The 400-task test holds the real final
-  HTTP page and publishes it across a captured 350-row snapshot, retaining the
-  ordered-row, paging and independent Retry assertions.
+  Project ABA cases with held inventory discovery restore an exact target through
+  view state and await its point-read detail, keeping the mutation's view fence
+  independent of later row-click intent.
+- Mission selection helpers retain `data-mission-key` and resolve row/chevron
+  Locators at each action across retitling and panel remounts. Wait for the row's
+  visibility before distinguishing a leaf from an expandable row; use native clicks.
+- Scroll pagination uses one loaded-task snapshot for both its loop condition and
+  progress threshold, renewed after each iteration. The 400-task test holds the real
+  final HTTP page and publishes it across a captured 350-row snapshot, retaining
+  the ordered-row, paging and independent Retry assertions.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
@@ -109,6 +124,8 @@ synthetic provider.
   `text/event-stream`, including when native frames enter through the real
   dispatcher directly. Keep network-failure collectors strict for failed streams
   and unrelated cancelled requests.
+- Projection-only fixtures provide a valid empty outline through the API adapter
+  before mounting and reject outline HTTP reads.
 - Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
   panel-extension list cancellations below the registered backend transport,
   preserving the client's object identity (each operation creates its own API): the exact request identity, its owning
@@ -134,6 +151,12 @@ synthetic provider.
   so Virtua can finish its size estimate. After resizing, assert that the same row
   remains connected outside the viewport before dispatching activity, then retain
   its identity through scrolling and the fresh visible transition.
+- Mission task fixtures target `.mission-tree-node` independently of Virtua's item
+  wrapper. Reveal offscreen targets with `revealMissionTask` before focus/click
+  observation begins; continuation assertions track exact source reads rather than
+  mounted row counts. Scroll geometry is sampled after the virtual viewport settles.
+  Rail checks compare mounted icons with fresh bounds and unmounted icons with
+  independently measured SVG-local anchors; endpoint counts and tolerances stay explicit.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
   `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;

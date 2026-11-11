@@ -3,8 +3,10 @@ import { useMissionPanelStore } from "./mission-panel-scope"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
-/** Explicit continuation of exactly one directory, field or observation window. */
-export function MissionPanelPaging(props: { instanceId: string; lane: string; search?: boolean }) {
+/** Explicit continuation of exactly one directory, field or observation window.
+ * `actionsOnly` (a selected Mission's activity windows, under its row) shows the row,
+ * with its info, only while it offers Load more or Retry: never a lone info icon. */
+export function MissionPanelPaging(props: { instanceId: string; lane: string; search?: boolean; actionsOnly?: boolean }) {
   const missionStore = useMissionPanelStore()
   const { t } = useI18n(), state = () => missionStore.progress(props.instanceId, props.lane)
   const unknown = () => props.lane.startsWith("activity:") && missionStore.observations(props.instanceId, props.lane.slice(9)).some(page => page.coverage !== "observed" || page.requests.state !== "observed")
@@ -12,6 +14,7 @@ export function MissionPanelPaging(props: { instanceId: string; lane: string; se
   // refresh cycles. Only actual read results, never loading, introduce the row.
   const visible = createMemo<{ key: string; shown: boolean }>(previous => {
     const key = JSON.stringify([props.instanceId, props.lane])
+    if (props.actionsOnly) return { key, shown: Boolean(state().more || state().failure) }
     return { key, shown: Boolean(state().more || state().failure || unknown() || previous?.key === key && previous.shown) }
   })
   const info = () => [
@@ -22,7 +25,7 @@ export function MissionPanelPaging(props: { instanceId: string; lane: string; se
   return <Show when={visible().shown}><div class="mission-panel-paging" data-lane={props.lane}>
     <Show when={info()}>{text => <SettingsInfoTip text={text()} />}</Show>
     <Show when={state().failure}><p role="status">{t(state().failure === "changed" ? "missionsPanel.pages.changed" : "missionsPanel.pages.failed")}</p>
-      <button type="button" class="window-text-button" disabled={state().loading} onClick={() => void missionStore.more(props.instanceId, props.lane, true)}>{t("missions.control.retry")}</button>
+      <button type="button" class="window-action" disabled={state().loading} onClick={() => void missionStore.more(props.instanceId, props.lane, true)}>{t("missions.control.retry")}</button>
     </Show>
     <Show when={!state().failure && state().more}>
       <button type="button" class="window-text-button" disabled={state().loading} onClick={() => void missionStore.more(props.instanceId, props.lane)}>

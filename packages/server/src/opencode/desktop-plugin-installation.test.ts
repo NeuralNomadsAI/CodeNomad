@@ -12,7 +12,7 @@ import { bundleRepairSchedule } from "./desktop-plugin-artifact"
 import { DesktopPluginLifecycle } from "./desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./desktop-plugin-paths"
 
-for (const feature of ["automation", "session-pruning", "missions"] as const) for (const retire of [true, false])
+for (const feature of ["automation", "session-pruning", "missions", "memory"] as const) for (const retire of [true, false])
 test(`${feature} shim publication after an awaited payload recheck ${retire ? "rejects a retired" : "accepts an unchanged"} connection`, async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-plugin-publish-fence-"))
   const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
@@ -219,7 +219,7 @@ test("WSL preserves existing outside-root native storage with a drive-backed con
   const config = path.join(root, "config"), oldData = path.join(root, "old-data"), data = path.join(root, "new-data")
   const disposals: Array<() => Promise<void>> = []
   t.after(async () => { await Promise.all(disposals.map(dispose => dispose())); await rm(root, { recursive: true, force: true }) })
-  for (const feature of ["automation", "session-pruning"] as const) {
+  for (const feature of ["automation", "session-pruning", "memory"] as const) {
     disposals.push(await installDesktopPluginPresence(feature, Buffer.from("old"), {
       config, data: oldData, nativeData: "/linux/old-data",
     }))
@@ -246,7 +246,7 @@ test("WSL canonical storage inside config migrates without modifying older lease
   const config = path.join(root, "config"), oldData = path.join(config, "watched"), data = path.join(root, "outside")
   const disposals: Array<() => Promise<void>> = []
   t.after(async () => { await Promise.all(disposals.map(dispose => dispose())); await rm(root, { recursive: true, force: true }) })
-  for (const feature of ["automation", "session-pruning"] as const) {
+  for (const feature of ["automation", "session-pruning", "memory"] as const) {
     // The old spelling appears outside config, but distro realpath resolves it
     // into the watched directory. Host containment must use that resolved path.
     disposals.push(await installDesktopPluginPresence(feature, Buffer.from("old"), {

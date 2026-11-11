@@ -42,7 +42,7 @@ Si no puede verificarse un worktree propio o la ubicación de una conversación,
 ## Entorno de ejecución OpenCode y WSL {#opencode-runtime}
 
 1. Abre **Preferencias → OpenCode** y comprueba la tarjeta **Versión de OpenCode** (versión instalada y estado del servicio en ejecución) y después el ejecutable seleccionado en **Binario de OpenCode**.
-2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.2.3**; versión recomendada/verificada: **2.2.5**.
+2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.2.3**; versión recomendada/verificada: **2.2.7**.
 3. Si la CLI instalada difiere del servicio en ejecución, decide explícitamente si reiniciar el servicio compartido.
 
 **Reiniciar servicio OpenCode** está disponible en **Solución de problemas** y requiere confirmación. Interrumpe el trabajo activo de todos los clientes conectados, pero conserva el historial de sesiones. Recargar la configuración es una acción separada: mantiene el proceso, pero reconstruye las Locations cargadas y cancela preguntas/permisos pendientes. Ninguna es una actualización inofensiva.
@@ -72,6 +72,8 @@ Después de recuperar la autenticación, inspecciona el estado antes de reintent
 Los enlaces de emparejamiento son de un solo uso y corta duración; la contraseña de acceso directo no los sustituye. Las credenciales de dispositivo revocadas o caducadas por inactividad requieren emparejar de nuevo. Cerrar la última ventana de escritorio detiene su backend y, por tanto, Control remoto; un servicio activado se reanuda en el siguiente inicio de la aplicación. Consulta [Control remoto](remote-control.md) para las superficies exclusivas del anfitrión no disponibles y la revocación.
 
 ## Estado de proveedores, plugins y extensiones {#providers-and-addons}
+
+Si **Cronología completa no disponible** aparece junto a un fallo del plugin `codenomad-session-pruning`, consulta su error de carga en el registro de OpenCode. Este plugin proporciona la navegación por todo el historial y la recuperación de preguntas y permisos pendientes. Reintenta la cronología cuando el plugin se haya cargado correctamente; conserva los datos de tus sesiones.
 
 | Problema | Recuperación |
 | --- | --- |

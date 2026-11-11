@@ -7,7 +7,7 @@
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist: expose each new upstream API only after review.
 - Proxy authorization and forwarding share one acquired connection. A stale generation must be rejected at actual HTTP dispatch, including after asynchronous body preparation; late streams cannot invalidate a replacement connection.
-- The technical minimum is 2.2.3 for the `experimental_image_generate` image tool contract (upstream #60258: tool, permission action, job type and notice `metadata.source` share that name; on unless `experimental.image_generate` is `false`), alongside Code Mode's JavaScript job ordering and the `native` replay and `metadata.keepID` compaction shapes consumed by the pinned client reducer; the recommendation, 2.2.5, is a separate constant. Plugins use host-owned Effect/public SDK modules through the shared native build settings. Unknown version labels, prereleases and future majors undergo bounded authenticated API recognition, including session environment support. Native `session.inbox.enqueued` has its own shape: its timestamp lives in event metadata, unlike an HTTP inbox record.
+- The technical minimum is 2.2.3 for the `experimental_image_generate` image tool contract (upstream #60258: tool, permission action, job type and notice `metadata.source` share that name; on unless `experimental.image_generate` is `false`), alongside Code Mode's JavaScript job ordering and the `native` replay and `metadata.keepID` compaction shapes consumed by the pinned client reducer; the recommendation, 2.2.7, is a separate constant. Plugins use host-owned Effect/public SDK modules through the shared native build settings. Unknown version labels, prereleases and future majors undergo bounded authenticated API recognition, including session environment support. Native `session.inbox.enqueued` has its own shape: its timestamp lives in event metadata, unlike an HTTP inbox record.
 - Never retry a write using another contract after a 400/404/transport failure. Keep the setup/recovery path distinct from functional transport and never replay prompts.
 
 ## Location Is Authority
@@ -31,7 +31,7 @@
 | Concern | Owner |
 |---|---|
 | Session/message/Shell/instructions | OpenCode native API; session Shell remains separate from background Shell and PTY management |
-| Background Shell list/metadata/output/remove | Location-scoped OpenCode native API through CodeNomad ownership checks; Status UI refreshes on Shell events/reconnect |
+| Background Shell list/metadata/output/remove | Native running background-job IDs joined to Location-scoped Shell records; tool-session ownership for output/removal. Visible Status refreshes on Shell events, tool completion and reconnect. |
 | Interactive PTYs | Separate native `pty.*` API |
 | Service status/start/password | CodeNomad adapter using the selected host or WSL CLI; only the explicit setup restart may stop/start the shared daemon |
 | Workspace and directory authorization | CodeNomad |

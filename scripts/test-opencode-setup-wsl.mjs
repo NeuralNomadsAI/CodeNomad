@@ -59,7 +59,7 @@ const environment = {
   OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugins: [`${root}/probe-plugin`] }),
   OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
 }
-let reloadProvider, reloadSafety, lifecycle, shared, automation, pruning, configWatcher
+let reloadProvider, reloadSafety, lifecycle, shared, automation, pruning, memory, configWatcher
 let started = false
 const evidence = { root, mounted, mode, port }
 async function until(predicate, message) {
@@ -144,6 +144,7 @@ shared = new OpenCodeSharedService({ headers: Service.headers, makeClient: optio
 }) })
 automation = new DesktopPluginLifecycle("automation")
 pruning = new DesktopPluginLifecycle("session-pruning")
+memory = new DesktopPluginLifecycle("memory")
   assert.equal(await lifecycle.discover(Math.min(deadlineAt, Date.now() + 15_000)), undefined, "Fresh fixture must never discover an existing service")
   started = true
   const endpoint = await startOrRestart()
@@ -172,7 +173,7 @@ pruning = new DesktopPluginLifecycle("session-pruning")
     reloadSafety = await prepareReloadSafety({ client, root, unc, provider: reloadProvider })
     evidence.reloadSafety = { before: reloadSafety.before }
   }
-  await prepareDesktopPluginPresence(paths, assertCurrent, { automation, pruning })
+  await prepareDesktopPluginPresence(paths, assertCurrent, { automation, pruning, memory })
   await delay(1_500)
   evidence.beforeExplicitReload = (await client.plugin.list({ location })).data
     .filter(plugin => plugin.id.startsWith("codenomad"))
@@ -185,7 +186,7 @@ pruning = new DesktopPluginLifecycle("session-pruning")
     const plugins = (await client.plugin.list({ location }, request)).data
     evidence.plugins = plugins.filter(plugin => plugin.id.startsWith("codenomad") || plugin.id === "wsl-fixture-probe")
       .map(plugin => ({ id: plugin.id, status: plugin.state.status }))
-    return ["codenomad.automation", "codenomad-session-pruning"].every(id => plugins.some(plugin => plugin.id === id && plugin.state.status === "active"))
+    return ["codenomad.automation", "codenomad-session-pruning", "codenomad.memory"].every(id => plugins.some(plugin => plugin.id === id && plugin.state.status === "active"))
   }, "Late plugin discovery after native reload failed")
   const changes = []
   const watcher = mode === "native" ? undefined : watch(path.dirname(configFile), { recursive: true }, (event, filename) => changes.push({ event, filename }))
@@ -200,11 +201,11 @@ pruning = new DesktopPluginLifecycle("session-pruning")
   }
   await delay(2_500)
   const setupBefore = await readFile(unc(`${root}/plugin-setup.log`), "utf8")
-  const leasePaths = (await Promise.all(["automation", "session-pruning"].map(async feature => {
+  const leasePaths = (await Promise.all(["automation", "session-pruning", "memory"].map(async feature => {
     const directory = path.join(paths.data, feature, "presence")
     return (await readdir(directory)).filter(name => name.endsWith(".lease")).map(name => path.join(directory, name))
   }))).flat()
-  assert.equal(leasePaths.length, 2)
+  assert.equal(leasePaths.length, 3)
   const leaseBefore = await Promise.all(leasePaths.map(async file => (await stat(file)).mtimeMs))
   changes.length = 0
   try {
@@ -266,7 +267,7 @@ try {
   const cleanupDeadline = Date.now() + 20_000
   const cleanups = [
     ["reload observer", () => reloadSafety?.dispose()], ["local provider", () => reloadProvider?.stop()],
-    ["automation presence", () => automation?.stop()], ["pruning presence", () => pruning?.stop()],
+    ["automation presence", () => automation?.stop()], ["pruning presence", () => pruning?.stop()], ["memory presence", () => memory?.stop()],
     ["native client", () => shared?.shutdown()],
     ["isolated daemon", () => started ? wsl(`${quote(wrapper)} service stop`, true) : undefined],
   ]

@@ -23,6 +23,8 @@ import type { NativeCreateInput, NativeDocumentPassageCommand } from "./native-s
 import { registerNativeScheduleProvider } from "./native-schedule-provider-registration"
 import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
+import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
+import { missionScheduleAvailableActions } from "../../missions/mission-schedule-display"
 
 const current = () => true as const, at = Date.parse("2026-10-01T00:00:00Z")
 
@@ -40,13 +42,14 @@ test("real SQLite factory fences broken initial/business capabilities but observ
   const providerScope = await Effect.runPromise(Scope.make())
   const db = new DatabaseSync(":memory:")
   db.exec(`CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT NOT NULL,time_created INTEGER NOT NULL,time_updated INTEGER NOT NULL);
-    CREATE TABLE session_v2(id TEXT PRIMARY KEY,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
+    CREATE TABLE session_v2(id TEXT PRIMARY KEY,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER,metadata TEXT);
     CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,seq INTEGER,type TEXT,data TEXT);
     CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
     CREATE TABLE session_inbox(id TEXT PRIMARY KEY,session_id TEXT);`)
   const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const nativeKey = (key: string) => namespace + key
   let transaction = false, sends = 0, environments = 0, enabled = true, disableAtEnvironment = false
+  let failRelease = false, loseReleaseACK = false, releaseWrites = 0
   const directory = path.resolve("scheduled-passage-runtime-isolated-unit")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
   const sessions = new Map<string, Session.Info>(), messages = new Map<string, typeof SessionMessage.Info.Type>(), active = new Set<string>()
@@ -83,7 +86,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       const session = Schema.decodeUnknownSync(Session.Info)({ ...input, projectID: "project", cost: 0,
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: at, updated: at } })
       sessions.set(input.id, session)
-      db.prepare("INSERT INTO session_v2(id,project_id,directory) VALUES(?,?,?)").run(input.id, "project", directory)
+      db.prepare("INSERT INTO session_v2(id,project_id,directory,metadata) VALUES(?,?,?,?)").run(input.id, "project", directory, JSON.stringify(input.metadata ?? null))
       return session
     }),
     inbox: () => Effect.succeed([]),
@@ -106,8 +109,8 @@ test("real SQLite factory fences broken initial/business capabilities but observ
   const tag = (key: string) => Context.Service<never, unknown>(key)
   const client = Object.assign(() => {}, { unsafe: (sql: string, params: readonly unknown[]) => ({
     withoutTransform: Effect.sync(() => {
-      if (transaction) assert.match(sql, /^(SELECT value FROM kv|INSERT INTO kv|UPDATE kv)/)
-      return db.prepare(sql).all(...params as [])
+      if (transaction) assert.match(sql, /^(SELECT |WITH RECURSIVE |INSERT INTO kv|UPDATE kv)/)
+      return db.prepare(sql).all(...params as []).map(row => ({ ...row }))
     }),
   }) })
   const database = { db: { $client: client, transaction: (callback: () => Effect.Effect<unknown, unknown>) => Effect.gen(function* () {
@@ -126,7 +129,16 @@ test("real SQLite factory fences broken initial/business capabilities but observ
   graph = Context.add(graph, tag("@opencode/Schedule"), { get: (id: string) => Effect.sync(() => infos.get(id)), enabled: () => Effect.sync(() => enabled) })
   const transforms: Array<(editor: ProviderEditor) => void> = []
   let records = new Map<string, ProviderRecord>()
-  const ctx = { storage: stored, location, provider: {
+  const updateMetadata = (id: string, metadata: Record<string, unknown>) => {
+    Object.assign(sessions.get(id)!, { metadata })
+    db.prepare("UPDATE session_v2 SET metadata=? WHERE id=?").run(JSON.stringify(metadata), id)
+  }
+  const ctx = { storage: stored, location, session: { update: ({ sessionID, metadata }: { sessionID: string; metadata: Record<string, unknown> }) => Effect.sync(() => {
+    assert.equal(transaction, false)
+    if (failRelease) throw Error("Fixture update unavailable")
+    updateMetadata(sessionID, metadata); releaseWrites++
+    if (loseReleaseACK) { loseReleaseACK = false; throw Error("Lost release ACK") }
+  }) }, provider: {
     transform: (callback: (editor: ProviderEditor) => void) => Effect.sync(() => { transforms.push(callback); return { dispose: Effect.void } }),
     get: ({ providerID }: { providerID: string }) => Effect.sync(() => {
       records = new Map()
@@ -244,7 +256,55 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: "review" })), "settled")
     doc = await owner.read("review") as MissionDocument
     assert.equal(doc.pending, null); assert.equal(doc.history[0].outcome, "completed"); assert.equal(sends, 1)
+    await t.test("unconfirmed coordinator cleanup survives history eviction and an idle Check reconciles its exact native ACK", async () => {
+      let releaseDoc = await owner!.create("cleanup_retention", { ...configuration, coordinatorSessionID: "ses_retiring" }, at, current)
+      releaseDoc = await owner!.change(releaseDoc.id, releaseDoc.revision, current, next => {
+        changes.play(next, "play_cleanup", at, [])
+        changes.synchronized(next, "play_cleanup", calendars)
+        changes.reserve(next, { kind: "manual", requestID: "first_cleanup" }, at + 1, [])
+        next.pending!.coordinatorBaseline = [["ses_retiring", -1, null, null, 0]]
+        changes.admitted(next, next.pending!.id, at + 2)
+      })
+      const first = releaseDoc.pending!, marker = { version: 1, missionID: first.missionID, kind: "coordinator", role: "coordinator",
+        document: { missionID: releaseDoc.id, passageID: first.id, coordinatorReused: true } }
+      await Effect.runPromise(native.create({ id: "ses_retiring", title: "Preserved conversation", location: { directory },
+        metadata: { unrelated: "preserve", "codenomad.mission": marker }, agent: "worker", model: { providerID: "unit", id: "model" } }))
+      releaseDoc = await owner!.change(releaseDoc.id, releaseDoc.revision, current,
+        next => changes.settle(next, first.id, "completed", at + 3, false, { revision: 1, familyDigest: "a".repeat(64) }))
+      for (let index = 1; index <= 35; index++) releaseDoc = await owner!.change(releaseDoc.id, releaseDoc.revision, current, next => {
+        next.configuration.coordinatorSessionID = "ses_other_root"
+        changes.reserve(next, { kind: "manual", requestID: `later_cleanup_${index}` }, at + index * 10, [])
+        next.pending!.coordinatorBaseline = [["ses_other_root", -1, null, null, 0]]
+        changes.admitted(next, next.pending!.id, at + index * 10 + 1)
+        changes.settle(next, next.pending!.id, "completed", at + index * 10 + 2, false, { revision: 1, familyDigest: "b".repeat(64) })
+        next.coordinatorReleases = next.coordinatorReleases.filter(item => item.coordinatorSessionID !== "ses_other_root")
+      })
+      assert.equal(releaseDoc.history.length, 30)
+      assert.ok(!releaseDoc.history.some(item => item.id === first.id))
+      assert.deepEqual(releaseDoc.coordinatorReleases, [{ id: first.id, missionID: first.missionID, coordinatorSessionID: first.coordinatorSessionID }])
+      assert.equal(scheduledPassageOwner(releaseDoc, releaseDoc, "ses_retiring", marker), undefined, "retained cleanup identity proves inactive ownership after history eviction")
+      assert.ok(missionScheduleAvailableActions(releaseDoc).includes("check"), "retained cleanup offers Check with no pending passage")
+      failRelease = true
+      assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: releaseDoc.id })), "idle")
+      assert.equal((await owner!.read(releaseDoc.id) as MissionDocument).coordinatorReleases.length, 1)
+      failRelease = false; loseReleaseACK = true
+      assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: releaseDoc.id })), "idle")
+      releaseDoc = await owner!.read(releaseDoc.id) as MissionDocument
+      assert.equal(releaseDoc.coordinatorReleases.length, 0)
+      assert.equal(sessions.get("ses_retiring")!.metadata?.unrelated, "preserve")
+      assert.equal(sessions.get("ses_retiring")!.metadata?.["codenomad.mission"], undefined)
+      const writes = releaseWrites, replacement = { missionID: "newer_assignment" }
+      updateMetadata("ses_retiring", { unrelated: "preserve", "codenomad.mission": replacement })
+      releaseDoc = await owner!.change(releaseDoc.id, releaseDoc.revision, current,
+        next => { next.coordinatorReleases.push({ id: first.id, missionID: first.missionID, coordinatorSessionID: first.coordinatorSessionID }) })
+      assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: releaseDoc.id })), "idle")
+      assert.equal(releaseWrites, writes, "cleanup never overwrites a newer marker")
+      assert.deepEqual(sessions.get("ses_retiring")!.metadata?.["codenomad.mission"], replacement)
+      assert.equal((await owner!.read(releaseDoc.id) as MissionDocument).coordinatorReleases.length, 0)
+      assert.equal(sends, 1, "idle Check never starts another passage")
+    })
     await t.test("never-played scheduled object converts to immediate with one original admission, frozen profiles and no Schedule/provider", async () => {
+      const beforeSessions = sessions.size
       const original = await owner!.create("conversion", configuration, at, current)
       let converted = await owner!.change(original.id, original.revision, current, next => changes.configure(next,
         { ...next.configuration, launch: { ...next.configuration.launch, timing: { kind: "immediate" } } }, at + 1000))
@@ -283,7 +343,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       assert.equal(converted.history[0].origin.kind, "immediate"); assert.equal(converted.history[0].messageID, originalPending.messageID)
       await assert.rejects(immediate(runtime => runtime.runNow({ ...entry, missionID: converted.id,
         requestID: "second_immediate", expectedRevision: converted.revision })))
-      assert.equal(sends, 2); assert.equal(sessions.size, descriptors.length + 2)
+      assert.equal(sends, 2); assert.equal(sessions.size, beforeSessions + 1)
     })
   } finally { await Effect.runPromise(Scope.close(providerScope, Exit.void)); db.close() }
 })

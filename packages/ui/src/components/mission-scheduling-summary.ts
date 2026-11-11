@@ -2,6 +2,7 @@ import type { MissionCondition, MissionLaunchPolicy } from "../../../server/src/
 import { missionCriteriaStructure, missionLaunchModel, type MissionLaunchSchedule } from "../../../server/src/missions/mission-launch-kind"
 import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
 import { isMissionEventKind } from "./mission-scheduling-data"
+import { isMissionGithubCondition } from "../../../server/src/missions/mission-github-condition"
 
 type Translate = (key: string, params?: Record<string, string>) => string
 
@@ -15,9 +16,10 @@ export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translat
     ? new Intl.NumberFormat(locale, { style: "unit", unit: "minute", unitDisplay: "long" }).format(ms / 60_000)
     : `${ms / 60_000} ${t("missions.scheduling.minutes")}`
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" })
-  const cronRows = draft.criteria.filter(item => !isMissionEventKind(item.kind))
+   const cronRows = draft.criteria.filter(item => item.kind !== "now" && !isMissionEventKind(item.kind))
   let cronIndex = 0
   const schedule = (item: MissionLaunchSchedule) => {
+    if (item.kind === "now") return t("missions.scheduling.source.now")
     if (item.kind === "at") return `${t("missions.scheduling.frequency.at")} · ${date(oneShotAt ?? item.at, item.zone)} · ${item.zone}`
     if (item.kind === "in") return `${t("missions.scheduling.frequency.in")} · ${minutes(item.delayMs)}`
     if (item.kind === "every") return `${t("missions.scheduling.frequency.every")} · ${minutes(item.intervalMs)}`
@@ -32,14 +34,16 @@ export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translat
     }
   }
   const event = (item: MissionCondition) => {
+    if (isMissionGithubCondition(item)) return [t(`missions.scheduling.condition.${item.kind}`), item.repository,
+      "author" in item && item.author ? `@${item.author}` : undefined].filter(Boolean).join(" · ")
     const reference = item.kind === "files-changed" ? item.paths.join(", ") : item.kind === "branch-commits" ? item.ref.slice("refs/heads/".length)
       : item.kind === "conversation-message" ? item.conversationID : item.missionID
     return `${t(`missions.scheduling.condition.${item.kind}`)} · ${reference}`
   }
   const items: (MissionLaunchSchedule | MissionCondition)[] = "when" in policy ? policy.when : [...model.schedules, ...model.events]
-  const { connectors } = missionCriteriaStructure(items, kind => ["cron", "every", "at", "in"].includes(kind))
+  const { connectors } = missionCriteriaStructure(items, kind => ["now", "cron", "every", "at", "in"].includes(kind))
   return items.map((item, index) => {
-    const line = item.kind === "cron" || item.kind === "every" || item.kind === "at" || item.kind === "in" ? schedule(item) : event(item)
+    const line = item.kind === "now" || item.kind === "cron" || item.kind === "every" || item.kind === "at" || item.kind === "in" ? schedule(item) : event(item)
     return index === 0 ? line : `${t(`missions.scheduling.connector.${connectors[index - 1]}`)} · ${line}`
   })
 }

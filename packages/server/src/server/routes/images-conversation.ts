@@ -7,9 +7,10 @@ import { locationRequestOptions, readLocationRef } from "../../opencode/compatib
 import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { imagesConversationInputSchema, imagesConversationResultSchema, type ImagesConversationInput } from "../../opencode/session-pruning/assets-gallery-contract"
 import type { GitExclusion, ImagesConversationResponse } from "./images-conversation-contract"
+import type { ServiceConnection } from "../../workspaces/opencode-service"
 
 export interface ImagesConversationRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "desktopPluginsReady"
+  workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath" | "desktopPluginsReady"
     | "getServiceWslDistro" | "getHostPathForServicePath">
   worktreeDeletionFence: WorktreeDeletionFence
   excludeDesignFolder?: typeof excludeDesignFolder
@@ -30,63 +31,73 @@ export type ImagesConversationRefusal = "denied" | "deleting"
  * `.codenomad/design/` through the execution host's Git; `lookup` writes nothing.
  */
 export async function resolveImagesConversationAt(deps: ImagesConversationRouteDeps, workspaceId: string, directory: string,
-  input: ImagesConversationInput, options: { rpcTimeoutMs?: number; signal?: AbortSignal } = {},
+  input: ImagesConversationInput, options: { rpcTimeoutMs?: number; signal?: AbortSignal; connection?: ServiceConnection; authorize?: () => Promise<void> } = {},
 ): Promise<ImagesConversationResponse | ImagesConversationRefusal> {
   const exclude = deps.excludeDesignFolder ?? excludeDesignFolder
   const manager = deps.workspaceManager
+  const workspace = manager.get(workspaceId), base = manager.getServiceLocation(workspaceId)
+  const deadlineAt = Date.now() + (options.rpcTimeoutMs ?? 15_000)
+  const signal = AbortSignal.any([AbortSignal.timeout(options.rpcTimeoutMs ?? 15_000), ...(options.signal ? [options.signal] : [])])
+  const fences = [deps.worktreeDeletionFence.captureDisplay([directory, ...(base ? [base.directory] : [])])]
   // Authorize the caller's directory before any OpenCode request: reading a
   // Location boots its services (configuration discovery, plugins).
-  if (!await manager.ownsLocation(workspaceId, { directory }, undefined, options.signal)) return "denied"
+  if (!await manager.ownsLocation(workspaceId, { directory }, undefined, { signal })) return "denied"
   const identity = await manager.getWorktreeIdentityForPath(workspaceId, directory)
   if (!identity) return "denied"
   const release = deps.worktreeDeletionFence.enter([identity])
   if (!release) return "deleting"
-  // An aborted caller unwinds at once, releasing the deletion fence even while a read still waits.
-  try { return await untilAborted(options.signal, admitted()) } finally { release() }
+  fences.push(deps.worktreeDeletionFence.captureDisplay([identity]))
+  // Keep custody of admitted work and the deletion fence through cancellation settlement.
+  try { return await admitted() } finally { release() }
 
   async function admitted(): Promise<ImagesConversationResponse | ImagesConversationRefusal> {
-    const client = await manager.getSharedServiceClient()
-    // Await plugin registration before reading the authorized Location.
-    await manager.desktopPluginsReady()
-    options.signal?.throwIfAborted()
+    const connection = options.connection ?? await manager.getSharedServiceConnection(workspaceId)
+    if (!connection || !workspace || !base) return unavailable
+    const client = connection.client
+    const current = () => {
+      signal.throwIfAborted(); connection.assertCurrent()
+      if (manager.get(workspaceId) !== workspace || manager.getServiceLocation(workspaceId) !== base || fences.some(check => !check())) throw new Error("Images placement changed")
+    }
+    const revalidate = async () => {
+      current()
+      if (!await manager.ownsLocation(workspaceId, { directory }, client, { signal })) throw new Error("Images ownership changed")
+      current()
+      await options.authorize?.()
+      current()
+    }
+    await revalidate()
     const read = AbortSignal.timeout(READ_TIMEOUT_MS)
-    const location = await client.location.get({ location: { directory } }, { signal: options.signal ? AbortSignal.any([read, options.signal]) : read })
+    const location = await client.location.get({ location: { directory } }, { signal: AbortSignal.any([read, signal]) })
       .then(readLocationRef, () => undefined)
-    options.signal?.throwIfAborted()
-    if (!location || location.directory !== directory || !await manager.ownsLocation(workspaceId, location, client, options.signal)) return "denied"
+    current()
+    if (!location || location.directory !== directory || !await manager.ownsLocation(workspaceId, location, client, { signal })) return "denied"
     let result: ImagesConversationResponse
     try {
-      const timeout = AbortSignal.timeout(options.rpcTimeoutMs ?? 15_000)
+      await manager.desktopPluginsReady({ connection, location: { directory }, signal, deadlineAt, assertCurrent: current })
+      await revalidate()
+      current()
       const response = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method: "imagesConversation", input, location: { directory } },
-        { ...locationRequestOptions(location), signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout })
+        { ...locationRequestOptions(location), signal })
+      await revalidate()
       const output = imagesConversationResultSchema.safeParse(response.output)
       if (!output.success) return unavailable
       result = output.data
     } catch {
-      options.signal?.throwIfAborted()
+      signal.throwIfAborted()
       // Missing method, older plugin or timeout: no fallback and nothing created here.
       return unavailable
     }
     if (result.status !== "found" || input.mode === "lookup") return result
-    options.signal?.throwIfAborted()
+    await revalidate()
+    current()
     const gitExclusion: GitExclusion = await exclude({
       directory, distro: manager.getServiceWslDistro(workspaceId),
       toHost: servicePath => manager.getHostPathForServicePath(workspaceId, servicePath),
     })
+    await revalidate()
+    current()
     return { ...result, gitExclusion }
   }
-}
-
-/** `work`, or a rejection as soon as `signal` aborts (without a signal, `work` itself). */
-function untilAborted<T>(signal: AbortSignal | undefined, work: Promise<T>): Promise<T> {
-  if (!signal) return work
-  work.catch(() => {})
-  if (signal.aborted) return Promise.reject(signal.reason)
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason)
-    signal.addEventListener("abort", abort, { once: true })
-    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
-  })
 }
 
 export function registerImagesConversationRoute(app: FastifyInstance, deps: ImagesConversationRouteDeps): void {
@@ -94,7 +105,13 @@ export function registerImagesConversationRoute(app: FastifyInstance, deps: Imag
     const parsed = requestSchema.safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Images conversation request" })
     const { directory, ...input } = parsed.data
-    const result = await resolveImagesConversationAt(deps, request.params.id, directory, input)
+    const abandoned = new AbortController()
+    const abort = () => { if (!reply.raw.writableEnded) abandoned.abort() }
+    reply.raw.once("close", abort)
+    let result
+    try { result = await resolveImagesConversationAt(deps, request.params.id, directory, input, { signal: abandoned.signal }) }
+    catch { return unavailable }
+    finally { reply.raw.removeListener("close", abort) }
     if (result === "denied") return reply.code(403).send({ error: "Location does not belong to workspace" })
     if (result === "deleting") return reply.code(409).send({ error: "Worktree deletion is in progress" })
     return result

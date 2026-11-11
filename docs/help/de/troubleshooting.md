@@ -42,7 +42,7 @@ Lässt sich ein zugehöriger Worktree oder Unterhaltungsort nicht überprüfen, 
 ## OpenCode-Laufzeit und WSL {#opencode-runtime}
 
 1. Öffnen Sie **Einstellungen → OpenCode** und prüfen Sie die Karte **OpenCode-Version** (installierte Version und Status des laufenden Dienstes), dann die gewählte Programmdatei unter **OpenCode-Binärdatei**.
-2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.2.3**; empfohlene/qualifizierte Version: **2.2.5**.
+2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.2.3**; empfohlene/qualifizierte Version: **2.2.7**.
 3. Weicht die installierte CLI vom laufenden Dienst ab, entscheiden Sie ausdrücklich über einen Neustart des gemeinsamen Dienstes.
 
 **OpenCode-Dienst neu starten** ist unter **Fehlerbehebung** verfügbar und benötigt Bestätigung. Es unterbricht aktive Arbeit in jedem verbundenen Client, behält aber Sitzungsverlauf. Konfigurationsneuladen ist separat: Es behält den Prozess, erstellt aber geladene Locations neu und storniert offene Fragen/Berechtigungen. Beides ist keine harmlose Aktualisierung.
@@ -72,6 +72,8 @@ Prüfen Sie nach Authentifizierungswiederherstellung den Zustand vor manueller W
 Kopplungslinks sind einmalig und kurzlebig; das Direktzugriffspasswort ersetzt sie nicht. Widerrufene oder wegen Inaktivität abgelaufene Gerätezugangsdaten benötigen erneute Kopplung. Das Schließen des letzten Desktop-Fensters stoppt dessen Backend und damit die Fernsteuerung; ein aktivierter Dienst setzt beim nächsten App-Start fort. Nur auf dem Host verfügbare Oberflächen und Widerruf erläutert [Fernsteuerung](remote-control.md).
 
 ## Anbieter-, Plugin- und Erweiterungszustand {#providers-and-addons}
+
+Wenn **Vollständige Zeitleiste nicht verfügbar** zusammen mit einem fehlgeschlagenen `codenomad-session-pruning`-Plugin erscheint, prüfen Sie dessen Ladefehler im OpenCode-Protokoll. Das Plugin stellt die vollständige Verlaufsnavigation und die Wiederherstellung ausstehender Fragen und Berechtigungen bereit. Versuchen Sie die Zeitleiste nach erfolgreichem Laden erneut; behalten Sie Ihre Sitzungsdaten.
 
 | Problem | Wiederherstellung |
 | --- | --- |

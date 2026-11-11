@@ -7,7 +7,7 @@ import { Session } from "@opencode/schema/session"
 import { z } from "zod"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { missionBusinessCall, missionBusinessMethods, missionBusinessResult, type MissionBusinessControl, type MissionBusinessMethod } from "../../missions/business-control"
-import { parseMissionDocument } from "../../missions/mission-document"
+import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 import { requiresMissionCalendar } from "../../missions/launch-policy"
 import type { NativeDocumentBusiness } from "./desktop-plugin"
 import type { nativeInvocation } from "./native-invocation"
@@ -72,11 +72,11 @@ async function source(ctx: Plugin.Context, sessionID: string, run: Run, current:
     return session
   })
   if (!owned || !root) return undefined
-  const marker = root.metadata?.["codenomad.mission"] as { missionID?: unknown; document?: { missionID?: unknown; passageID?: unknown } } | undefined
+  const marker = root.metadata?.["codenomad.mission"] as { missionID?: unknown; document?: { missionID?: unknown; passageID?: unknown; coordinatorReused?: unknown } } | undefined
   if (typeof marker?.document?.missionID !== "string") throw new Error("Business document marker unavailable")
-  const doc = parseMissionDocument(await run(ctx.storage.get(nativeScheduleDocumentKey(ctx, marker.document.missionID))), {
-    id: marker.document.missionID, projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical,
-  })
+  const stored = await run(ctx.storage.get(nativeScheduleDocumentKey(ctx, marker.document.missionID)))
+  const doc = scheduledPassageOwner(stored, { projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical }, root.id, marker)
+  if (!doc) return undefined
   current()
   if (!doc.pending || doc.pending.id !== marker.document.passageID || doc.pending.missionID !== marker.missionID) return undefined
   if (!doc.calendarOwner || !doc.pending.configuration.roots.some(root => root.directory === ctx.location.directory)) throw new Error("Business installation unavailable")

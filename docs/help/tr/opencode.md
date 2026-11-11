@@ -9,7 +9,7 @@ CodeNomad, yürütme ana bilgisayarındaki paylaşılan bir OpenCode hizmetine b
 3. **Durumu ve güncellemeleri denetle** öğesini kullanın. OpenCode eksikse **OpenCode'u kur ve başlat** öğesini seçin; önce ana bilgisayarı ve kurulum kapsamını inceleyin.
 4. Kurulum **Bağlan ve devam et** sunuyorsa, bildirilen sorunu çözdükten sonra bunu kullanın.
 
-Kurulum, diğer istemcilerle paylaşılan standart bir kullanıcı kurulumu için paketlenmiş Node/npm'yi kullanır. **Kullanıcı için kur ve PATH'i yapılandır** bu kullanıcının terminal kurulumunu değiştirir; daha sonra yeni bir terminal açın. Bir tarayıcı CodeNomad sunucusuna bağlanır: dosya seçicisi ve yürütülebilir seçimi, tarama cihazını değil, söz konusu sunucuyu ilgilendirir.
+Kurulum, diğer istemcilerle paylaşılan standart bir kullanıcı kurulumu için CodeNomad sunucusunun çalıştığı Node çalışma zamanını ve onun npm'ini (masaüstünde Electron'un yerleşik Node'u veya Tauri'nin paketlediği Node) kullanır. **Kullanıcı için kur ve PATH'i yapılandır** bu kullanıcının terminal kurulumunu değiştirir; daha sonra yeni bir terminal açın. Bir tarayıcı CodeNomad sunucusuna bağlanır: dosya seçicisi ve yürütülebilir seçimi, tarama cihazını değil, söz konusu sunucuyu ilgilendirir.
 
 PATH üzerinde önce eski bir OpenCode geliyorsa, sunulan eylem nasıl kurulduğuna bağlıdır. npm ile kurulmuş OpenCode 1.x için **OpenCode {version} sürümünü OpenCode 2 ile değiştir** onay ister, o npm paketini kaldırır ve OpenCode 2'yi aynı npm klasörüne kurar; OpenCode veri klasörü korunur ve OpenCode 2, 1.x konuşmalarını kendisi içe aktarır. Başka bir yolla (winget, Homebrew, elle) kurulmuş eski veya kullanılamayan bir OpenCode asla değiştirilmez: **CodeNomad için OpenCode 2 kur**, OpenCode 2'yi onun yanına, kullanıcı npm klasörüne kurar ve CodeNomad bundan sonra bu kopyayı kullanır. Bu eski komutun kendisi kullanıcı npm klasöründeyse (örneğin `~/.local/bin` içindeki bir bağlantı) ya da bu klasör yazılabilir değilse, kurulum eylemi sunmak yerine nedenini açıklar: komutu taşıyın veya yeniden adlandırın ya da klasör izinlerini düzeltin, ardından **Durumu ve güncellemeleri denetle** seçeneğini seçin. Bir terminaldeki `opencode` komutu yine eski sürümü başlatabilir. Açıkça seçilmiş özel bir yürütülebilir dosya asla değiştirilmez.
 
@@ -20,7 +20,7 @@ Yüklü yürütülebilir dosya ve çalışan hizmetin farklı sürümleri olabil
 | Sınıflandırma | Mevcut gereksinim | Anlamı |
 | --- | --- | --- |
 | Asgari | OpenCode **2.2.3** | **Görseller** ayarlarının ve Design uzantısının kullandığı görsel oluşturma aracı, Code Mode içindeki JavaScript görevlerinin doğru yürütme sırası ve yerel yeniden oynatma ve sıkıştırma biçimi; önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
-| Önerilen | OpenCode **2.2.5** | Teknik alt sınırdan farklı, doğrulanan hedef. |
+| Önerilen | OpenCode **2.2.7** | Teknik alt sınırdan farklı, doğrulanan hedef. |
 | Doğrulanmamış | Tam olarak doğrulanmamış daha yeni veya özel bir sürüm | Yalnızca denenmemiş olduğu için reddedilmez; bağlı hizmetin gerçek API sözleşmeleri kontrol edilir. |
 
 Bağlı hizmet gerekli oturum, izin, Form, gelen kutusu ve oturum ortamı sözleşmelerini sunmalıdır. Yerel Görev zamanlaması ayrıca zamanlama API'lerini, eklenti/sağlayıcı paketini ve etkin `experimental.schedules` ayarını denetler. Kullanılabilirlik, uyumlu gelecek sürümler dahil, kullanılan bu yeteneklere bağlıdır. Kurulum desteklenmeyen bir çalışan hizmet bildirirse desteklenen bir CLI seçin/yükleyin ve hazır olduğunuzda paylaşılan hizmeti açıkça yeniden başlatın.
@@ -49,6 +49,8 @@ Kapatmak yalnızca o görevi, LaunchAgent'ı veya hizmeti kaldırır; çalışan
 2. Yüklü CLI dosyalarını değiştirmek için teklif edildiğinde **OpenCode {version} sürümüne güncelle** öğesini seçin. Tamamlanmasını bekleyin.
 3. Çalışan hizmet durumunu gözden geçirin. **Paylaşılan hizmeti yeniden başlat** öğesini yalnızca seçilen kurulumu bağlı her istemci için etkinleştirmek istediğinizde kullanın.
 4. Hiçbir şey yüklemeden işlemi yeniden başlatmak için **Sorun giderme** öğesini genişletin ve **OpenCode hizmetini yeniden başlat** öğesini seçip onaylayın.
+
+Arka planda durum yenilenirken yeniden başlatma tıklanabilir kalır. Her istek, hizmeti değiştirmeden önce güncel durumu yeniden denetler; denetim başarısız olursa yeniden başlatma engellenir.
 
 | Eylem | Kapsam ve etki | Güvenli kurtarma |
 | --- | --- | --- |

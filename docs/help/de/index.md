@@ -46,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projekte, Unterhaltungen, Dateien und Verlauf | Ordner und native Sitzungen des Backends | Ordner und Sitzungen des verbundenen Servers | Autorisierte Arbeitsbereichsoberflächen des Hosts |
 | Native Einstellungen und Desktop-Fenster | Verfügbar | Browser-/Remote-Einstellungen bleiben im Client | Nur auf dem Host verfügbare Desktop-Steuerung nicht verfügbar |
-| Browser-Vorschau der Sitzung | Nativ in Electron und Windows-Tauri; iframe auf anderen Tauri-Plattformen | iframe, soweit verfügbar | iframe, solange der Host Web-Vorschauen erlaubt (Standard) |
+| Browser-Vorschau der Sitzung | Nativ in Electron und Tauri unter Windows, macOS und Linux | iframe, soweit verfügbar | iframe, solange der Host Web-Vorschauen erlaubt (Standard) |
 | Native Desktop-/Browser-Automatisierung | Zugeordnete lokale Fenster/Vorschauen | Kein Ersatz für native Desktop-Automatisierung | Nur auf dem Host verfügbare Automatisierungs-Endpunkte nicht verfügbar |
 | Authentifizierung | Lokale Ersteinrichtung oder Passwortsitzung | Server-Passwortsitzung | Zugangsdaten des gekoppelten Geräts |
 | PWA-Installation | Native App oder Browser verwenden | Browserabhängig; sicherer Kontext erforderlich | Browserabhängig; Kopplung weiterhin erforderlich |
@@ -89,8 +89,8 @@ Das Arbeitsbereichs-Stammverzeichnis begrenzt, welche Ordner CodeNomad öffnet; 
 Das Status-Panel zeigt die Anbieternutzung und nativen Hintergrund-Shells der aktiven Sitzung. Unterhaltungsstatus und Unteraktivität kennzeichnen arbeitende, komprimierende und auf Eingaben wartende Sitzungen. Eine Hintergrund-Shell zu beobachten ist etwas anderes, als im Eingabefeld eine Shell-Anfrage zu senden oder einen separat gehosteten Terminal-SideCar zu verwenden.
 
 1. Öffnen Sie **Status → Hintergrund-Shells** für die Location der ausgewählten Unterhaltung (oder den geöffneten Arbeitsbereich, wenn keine Unterhaltung ausgewählt ist).
-2. Prüfen Sie Befehl, Shell, Verzeichnis, Status, PID und Exit-Code, soweit vorhanden; wählen Sie **Ausgabe anzeigen** für die verfügbare native Ausgabe.
-3. Zum Entfernen verwenden Sie während der Ausführung **Stoppen und entfernen** oder nach dem Ende **Entfernen** und bestätigen das Ziel.
+2. Nur laufende, ausdrücklich in den Hintergrund verschobene Befehle werden angezeigt, einer pro Zeile. Beim Darüberfahren erscheinen Shell, Verzeichnis und PID; das Symbol **Ausgabe anzeigen** öffnet die native Ausgabe. Ohne OpenCodes API für Hintergrundaufgaben erscheint ein Ladefehler.
+3. Verwenden Sie das Symbol **Stoppen und entfernen** der Zeile und bestätigen Sie das Ziel.
 
 Das Entfernen einer laufenden Shell beendet diesen Prozess; das Schließen ihres Ausgabefensters nicht. Aktualisieren/Wiederverbinden liest den aktuellen nativen Zustand, statt verpasste Ausgabeereignisse zu rekonstruieren.
 

@@ -18,7 +18,7 @@ import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { sessionListRestored } from "../stores/session-list-restoration"
 import { missionIncludesSession } from "./mission-attention-model"
 import { missionTaskConversation } from "./mission-task-navigation"
-import { demandMissionTaskSessions, missionDerivedSessionIncludes, missionDerivedTaskSession } from "../stores/mission-task-sessions"
+import { missionDerivedSessionIncludes, missionDerivedTaskSession, useMissionTaskSessionDemand } from "../stores/mission-task-sessions"
 import { missionReports, missionReportIsPrevious, missionTaskReport, missionProgress } from "./mission-progress-model"
 import { missionMarkdownPage } from "../lib/mission-markdown-pages"
 import { missionBriefed, missionBriefingFreshness } from "./mission-briefing-model"
@@ -27,6 +27,8 @@ import { MissionPassageSectionContent, type MissionPassageSection } from "./miss
 
 import { useMissionRecurrence } from "../stores/mission-recurrence"
 import { MissionRecurrenceReader } from "./mission-recurrence-reader"
+import { useMissionSchedules } from "../stores/mission-schedules"
+import { describeMissionCriteria } from "./mission-scheduling-summary"
 import type { MissionMarkdownPage } from "../lib/mission-markdown-pages"
 import { MissionReaderNumber } from "./mission-reader-number"
 import { MissionOverviewDetails } from "./mission-overview-details"
@@ -133,7 +135,7 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
               onCommit={next => { if (props.pagination) props.pagination.onPage(next - 1); else setPage(next - 1); article?.scrollIntoView({ block: "nearest" }) }} />
           </Show>
         </label></Show>
-        <button type="button" class="window-text-button" onClick={() => void copy()}>{t("markdown.copy")}</button>
+        <button type="button" class="window-action" onClick={() => void copy()}>{t("markdown.copy")}</button>
         <span role="status">{copyStatus()}</span>
       </div>
     </Show>
@@ -185,10 +187,15 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   }
   const recurrenceProjectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? missionStore.state(props.instanceId).projectID
   const recurrenceState = useMissionRecurrence({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
-    directory: () => instances().get(props.instanceId)?.folder ?? "", active: () => target()?.kind === "recurrence"
+    directory: () => instances().get(props.instanceId)?.folder ?? "", active: () => target()?.kind === "recurrence" && target()?.scheduleOwner !== "scheduled"
       && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID() })
   const recurrence = () => target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
     ? recurrenceState.snapshot()?.schedules.find(schedule => schedule.id === target()?.missionId) : undefined
+  const scheduledState = useMissionSchedules({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
+    directory: () => props.scope, refresh: () => 0, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"
+      && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID(), selected: () => target()?.missionId })
+  const scheduled = () => target()?.scheduleOwner === "scheduled" && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
+    ? scheduledState.rows().find(row => row.id === target()?.missionId) : undefined
   const task = () => mission()?.tasks.find(task => task.id === target()?.itemId)
   const reports = createMemo(() => { const value = mission(); return value ? missionReports(value) : [] })
   const report = () => reports().find(report => report.id === target()?.itemId)
@@ -287,7 +294,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   }
   const playbook = () => target()?.kind === "playbook" ? target()!.missionId as MissionTemplateId : undefined
   const title = () => playbook() ? t("missions.playbook.title", { name: t(`missions.control.template.${playbook()}`) })
-    : target()?.kind === "recurrence" ? recurrence()?.title ?? t("missions.recurrence.reader", { id: target()?.missionId ?? "" })
+    : target()?.kind === "recurrence" ? scheduled()?.configuration.title ?? recurrence()?.title ?? t("missions.recurrence.reader", { id: target()?.missionId ?? "" })
     : target()?.kind === "task" ? task()?.title : target()?.kind === "report"
     ? mission()?.tasks.find(task => task.key === report()?.taskKey)?.title ?? report()?.taskKey
     : t(target()?.kind === "change" ? "missions.control.history.title"
@@ -305,7 +312,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       ? missionTaskConversation(value, currentTask, activity()?.missions.find(item => item.missionId === value.id)?.family,
         missionDerivedTaskSession(props.instanceId, value, currentTask.key), [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) : undefined
   }
-  createEffect(() => { const value = mission(); if (value && target()?.kind === "task") demandMissionTaskSessions(props.instanceId, value) })
+  // An open task reader's conversation link; released when it closes or reads something else.
+  useMissionTaskSessionDemand({ instanceId: () => props.instanceId, mission: () => target()?.kind === "task" ? mission() : undefined,
+    active: () => true, pulse: () => undefined })
   const openActor = async (sessionId: string) => {
     const operation = captureBackendOperation(props.instanceId)
     const current = captureNavigation(), intent = ++navigationIntent
@@ -481,7 +490,16 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       <Show when={mission() && "panelCollections" in mission()!}><MissionPanelPaging instanceId={props.instanceId} lane={`activity:${mission()!.id}`} /></Show>
       <Show when={navigationError()}><p role="alert">{t("sessionList.reload.error")}</p></Show>
       <Show when={target()?.recurrence && currentPassage.error()}><p role="status">{t(passage() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-      <Show when={target()?.kind === "recurrence"}>
+      <Show when={target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"}>
+        <Show when={scheduledState.loading() && !scheduled()}><p role="status">{t("missions.control.loading")}</p></Show>
+        <Show when={scheduledState.error() || scheduledState.selectionError()}><p role="status">{t("missions.scheduleList.readFailed")}</p></Show>
+        <Show when={scheduled()}>{doc => <>
+          <p><bdi>{describeMissionCriteria(doc().configuration.launch, t, locale(), doc().oneShotAt).join("; ")}</bdi></p>
+          <h3>{t("missions.control.objective")}</h3><p>{doc().configuration.objective}</p>
+          <Show when={doc().configuration.notes}><h3>{t("missions.control.notes")}</h3><p>{doc().configuration.notes}</p></Show>
+        </>}</Show>
+      </Show>
+      <Show when={target()?.kind === "recurrence" && target()?.scheduleOwner !== "scheduled"}>
         <Show when={recurrenceState.loading() && !recurrenceState.snapshot()}><p role="status">{t("missions.control.loading")}</p></Show>
         <Show when={recurrenceState.error()}><p role="status">{t(recurrenceState.stale() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
         <Show when={recurrence()} fallback={<p>{t("missions.control.reader.missing")}</p>}>{schedule =>
@@ -515,7 +533,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
             <Show when={section().taskKeys?.length}><div class="mission-briefing-sources"><For each={section().taskKeys}>{key => {
               // A source a compact map's page does not hold is read by key when opened.
               const source = () => mission()?.tasks.find(task => task.key === key)
-               return <Show when={source() || taskPage()}><button type="button" class="window-text-button"
+               return <Show when={source() || taskPage()}><button type="button" class="window-action mission-reader-link"
                  onClick={() => void openMissionTask(props.instanceId, props.scope, mission, key, target()?.recurrence, missionStore)}>
                 {source()?.title ?? key}
               </button></Show>

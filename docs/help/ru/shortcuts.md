@@ -37,7 +37,7 @@
 | Вкладка сессии 1–9 | От `Mod+Shift+1` до `Mod+Shift+9` |
 | Информация об экземпляре | `Mod+Shift+L` |
 | Поиск по истории сессии | `Mod+F` |
-| Предыдущее / следующее сообщение пользователя | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) или `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
+| **Предыдущее сообщение пользователя** / **Следующее сообщение пользователя**, также в меню **Больше действий** поля ввода | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) или `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Следующий / предыдущий результат (фокус в поиске) | `Enter` / `Shift+Enter` |
 | Фокус на запрос / очистить запрос | `Mod+P` / `Mod+K` |
 | Открыть выбор модели / агента | `Mod+Shift+M` / `Mod+Shift+A` |

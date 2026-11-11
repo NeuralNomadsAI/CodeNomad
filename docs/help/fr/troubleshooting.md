@@ -42,7 +42,7 @@ Si un worktree détenu ou l’emplacement d’une conversation ne peut être vé
 ## Environnement OpenCode et WSL {#opencode-runtime}
 
 1. Ouvrez **Préférences → OpenCode** et vérifiez la carte **Version d’OpenCode** (version installée et état du service actif), puis l’exécutable sélectionné sous **Binaire OpenCode**.
-2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.2.3** ; version recommandée/qualifiée : **2.2.5**.
+2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.2.3** ; version recommandée/qualifiée : **2.2.7**.
 3. Si la CLI installée diffère du service actif, décidez explicitement s’il faut redémarrer le service partagé.
 
 **Redémarrer le service OpenCode** est disponible sous **Dépannage** et exige confirmation. Cela interrompt le travail actif de tous les clients connectés mais conserve l’historique. Le rechargement de configuration est distinct : il garde le processus mais reconstruit les Locations chargées et annule les questions/autorisations en attente. Aucun n’est une actualisation anodine.
@@ -72,6 +72,8 @@ Après récupération de l’authentification, inspectez l’état avant de rée
 Les liens d’appairage sont à usage unique et de courte durée ; le mot de passe d’accès direct ne les remplace pas. Les identifiants d’appareil révoqués ou expirés par inactivité nécessitent un réappairage. Fermer la dernière fenêtre de bureau arrête son backend et donc le Contrôle à distance ; un service activé reprend au prochain lancement de l’application. Voir [Contrôle à distance](remote-control.md) pour les surfaces réservées à l’hôte indisponibles et la révocation.
 
 ## État des fournisseurs, plugins et extensions {#providers-and-addons}
+
+Si **Timeline complète indisponible** accompagne un échec du plugin `codenomad-session-pruning`, consultez son erreur de chargement dans le journal OpenCode. Ce plugin assure la navigation dans l’historique complet et la récupération des questions et permissions en attente. Réessayez la timeline après son chargement réussi ; conservez vos données de session.
 
 | Problème | Récupération |
 | --- | --- |

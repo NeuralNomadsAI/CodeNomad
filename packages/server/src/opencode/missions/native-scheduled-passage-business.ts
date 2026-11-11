@@ -13,6 +13,7 @@ import { readAutonomousMissionEnvironment } from "./autonomous-environment"
 import { documentPassageBusinessAllowed, type ScheduledPassageAuthority } from "./native-scheduled-passage-authority"
 import type { NativePassageObservation } from "./native-passage-observation"
 import type { MissionNativeService } from "./native-service-adapter"
+import type { NativeSourceFence } from "./native-source-fence"
 
 export type NativeScheduledPassageContext = {
   document: MissionDocument; locked: NativeMissionDocumentStore; storage: MissionStorage; native: MissionNativeService
@@ -22,6 +23,8 @@ export type NativeScheduledPassageContext = {
   environment?: typeof readAutonomousMissionEnvironment
   lifecycle?: MissionInputTransport["lifecycle"]
   qualifyBusiness?(): Promise<void>
+  adoptCoordinator?(metadata: Record<string, unknown>, current: () => true): Promise<void>
+  settlementFence?(): Pick<NativeSourceFence, "family" | "current">
 }
 const marker = (metadata: unknown): Record<string, unknown> => {
   if (!metadata || typeof metadata !== "object" || !("codenomad.mission" in metadata)) throw new Error("Document passage metadata unavailable")
@@ -29,7 +32,8 @@ const marker = (metadata: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Document passage metadata unavailable")
   return value as Record<string, unknown>
 }
-export const scheduledPassageMarker = (doc: MissionDocument) => ({ missionID: doc.id, passageID: doc.pending!.id })
+export const scheduledPassageMarker = (doc: MissionDocument) => ({ missionID: doc.id, passageID: doc.pending!.id,
+  ...(doc.pending!.coordinatorReused ? { coordinatorReused: true } : {}) })
 
 /** Reconstructed per invocation, including after restart/backend closure. It never
  * retains a borrowed Core service graph in a cross-invocation cache. */

@@ -29,7 +29,7 @@ test("time-capped scans cover the newest rows, not the oldest prefix", async t =
     const statement = prepare(sql)
     if (sql.includes("AS mask")) {
       const iterate = statement.iterate.bind(statement)
-      statement.iterate = function* (...params) {
+      statement.iterate = function* (...params): Generator<any, undefined> {
         let n = 0
         for (const row of Reflect.apply(iterate, statement, params)) {
           if (++n === 10) now = 1501

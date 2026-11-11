@@ -105,16 +105,18 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await page.locator(".mission-tree").waitFor()
     assert.equal(selections.some(input => input.body), false, "initial tracking never requests prose or full passage bodies")
     assert.equal(await page.locator(".mission-tree-gap").count(), 0)
-    assert.equal(await page.locator(".mission-tree-more button").count(), 1)
-    const initialRows = await page.locator(".mission-tree-node").count()
+    assert.equal(await page.locator(".mission-tree-more button").count(), 0, "ordinary continuation needs no button")
+    const continued = page.waitForResponse(response => response.request().method() === "POST"
+      && response.request().postDataJSON()?.selector?.source === "tasks" && response.request().postDataJSON()?.selector?.task?.offset > 0)
     await page.locator(".mission-tree-more").scrollIntoViewIfNeeded()
-    await page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, initialRows)
+    assert.equal((await continued).status(), 200, "scrolling reads the next task window independently of mounted row count")
     assert.ok(selections.some(input => input.selector.source === "tasks" && input.selector.task.offset > 0
       && input.selector.task.missionID === map.id && input.source.owner === owner && input.source.missionID === map.id), "scroll continuation retains the exact passage owner")
-    await page.evaluate(async ({ root, missionID, scheduleID, passageID, owner, taskID }) => {
+    const openTaskReader = () => page.evaluate(async ({ root, missionID, scheduleID, passageID, owner, taskID }) => {
       (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "task", itemId: taskID,
         recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
     }, { root: f.root, missionID: map.id, scheduleID: f.scheduleID, passageID: f.passage.passageID, owner, taskID: map.tasks.at(-1)!.id })
+    await openTaskReader()
     await page.locator(".mission-task-reader").waitFor()
     await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ }).click()
     await page.locator(".mission-reader").getByText(/Exact brief/).first().waitFor()
@@ -134,12 +136,27 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     assert.equal(await page.locator(".mission-control").getByText(/^Activity and requests cover|^Read in this traversal/).count(), 0)
     await screenshot("during")
     releaseActivity()
-    await page.locator(".mission-control").getByText("Off-page current question", { exact: true }).waitFor().catch(async error => {
+    // The off-page actor's question reaches the selected row's flag; the panel never lists it.
+    await page.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor().catch(async error => {
       throw new Error(`${error}\n${JSON.stringify({ activityRows, errors, selectors: selections.map(input => input.selector) })}\n${(await page.locator(".mission-control").innerText()).slice(0, 1000)}`)
     })
     assert.ok(selections.some(input => input.selector.source === "activity" && input.selector.actorOffset === 160))
     await screenshot("after")
-    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "permission")
+    assert.equal(await page.locator(".mission-control").getByText("Off-page current question", { exact: true }).count(), 0)
+    // Selecting the red row opens the off-page question's conversation, for either schedule
+    // type: the guarded navigation reads exactly that native session (this fixture serves none).
+    const opened = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/session/ses_current_179"))
+    await page.locator(".mission-row-select[aria-current=true]").click()
+    await opened
+    // Eye mode follows the selected row back to its overview; wait for that
+    // reader's intended body demand before measuring unrelated invalidation.
+    await page.locator(".mission-overview-details").waitFor()
+    await page.locator(".mission-reader").getByText(map.objective, { exact: true }).waitFor()
+    // Root notes are unrelated to the task reader, but are visible overview
+    // content. Restore the exact task demand before checking cache retention.
+    await openTaskReader()
+    await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ }).click()
+    await page.locator(".mission-reader").getByText(/Exact brief/).first().waitFor()
     const taskReads = selections.filter(input => input.selector.source === "tasks").length, bodyReads = selections.filter(input => input.body).length
     await f.control.update({ missionID: map.id, requestID: "notes-only", expectedRevision: map.revision, objective: map.objective, notes: "Unrelated root notes" })
     const refreshed = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.selector?.header === true)
@@ -176,6 +193,9 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     assert.deepEqual(await f.page({ source, selector: headerSelector }), beforeFields, "field reads never enlarge the selected header")
     assert.ok(selections.every(input => ["mission", "tasks", "activity"].includes(input.selector.source)
       && (input.selector.source !== "mission" || input.selector.header || input.selector.field)), "no full-map or project fallback")
+    // The refreshed passage left its earlier activity windows superseded (unknown):
+    // their retained request is no longer evidence, so the row stops asking.
+    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") !== "permission")
     assert.ok(sizes.every(size => size <= 65536)); assert.deepEqual(writes, []); assert.deepEqual(errors, [])
     t.diagnostic(JSON.stringify({ owner, tasks: map.tasks.length, initialBodies: 0, transfers: selections.length, largestBody: Math.max(...sizes), ...f.metrics() }))
   } finally { releaseActivity?.(); await page.context().close(); await app.close(); await f.dispose() }

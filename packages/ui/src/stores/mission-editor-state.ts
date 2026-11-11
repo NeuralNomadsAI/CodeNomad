@@ -14,7 +14,10 @@ export interface MissionEditorDraft {
   objective: string; notes: string; template: MissionPanelMap["template"]; profiles?: MissionProfiles; customProfiles: boolean
   taskMode?: MissionTaskMode; customTaskMode: boolean; defaults: MissionProfileDefault[]; defaultsReady: boolean
   selectedModel?: Pick<UserMissionModel, "id" | "name">; optionsOpen: boolean; profileDetailsOpen: boolean
+  startOnCreation?: boolean
+  coordinatorSessionID?: string
   requestId: string; lastPayload: string; deleteManagedSessions: boolean; deleteAttempted: boolean
+  deleteAutoSubmitted?: boolean; deleteError?: string
 }
 
 export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; scheduleID?: string; draft?: Readonly<MissionEditorDraft> }

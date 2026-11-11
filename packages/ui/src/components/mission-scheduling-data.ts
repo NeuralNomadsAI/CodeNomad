@@ -2,10 +2,11 @@ import { Cron } from "effect"
 import type { MissionCondition, MissionCriteriaLaunchPolicy, MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { previewMissionCalendars } from "../../../server/src/missions/mission-calendar-preview"
 import { missionCriteriaStructure, type MissionCriterionConnector } from "../../../server/src/missions/mission-launch-kind"
+import { missionGithubKinds, isMissionGithubKind, missionGithubConditionSchema } from "../../../server/src/missions/mission-github-condition"
 
 /** Schedule shortcuts write a cron; advanced cron is written directly. */
-export const missionScheduleShortcuts = ["hours", "daily", "weekly", "monthly", "cron"] as const
-export const missionEventKinds = ["branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed"] as const
+export const missionScheduleShortcuts = ["now", "hours", "daily", "weekly", "monthly", "cron"] as const
+export const missionEventKinds = ["branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed", ...missionGithubKinds] as const
 export type MissionConditionKind = MissionCondition["kind"]
 export type MissionCriterionKind = typeof missionScheduleShortcuts[number] | MissionConditionKind
 export const MISSION_CRITERIA_LIMIT = 16
@@ -13,7 +14,7 @@ export const MISSION_CRITERIA_LIMIT = 16
 export const missionHourSteps = [1, 2, 3, 4, 6, 8, 12] as const
 export interface MissionCriterionDraft {
   id: string; kind: MissionCriterionKind
-  hours: string; time: string; days: number[]; monthDay: string; expression: string; source: string; files: string
+  hours: string; time: string; days: number[]; monthDay: string; expression: string; source: string; files: string; author?: string
 }
 export interface MissionSchedulingFields { criteria: MissionCriterionDraft[]; zone: string }
 type Criterion = MissionCriteriaLaunchPolicy["when"][number]
@@ -37,7 +38,7 @@ export function newMissionCriterion(kind: MissionCriterionKind = "daily", existi
     expression: "0 9 * * *", source: "", files: "" }
 }
 export function newMissionSchedulingDraft(zone = Intl.DateTimeFormat().resolvedOptions().timeZone): MissionSchedulingDraft {
-  return { criteria: [], zone }
+  return { criteria: [newMissionCriterion("now")], zone }
 }
 export class MissionSchedulingError extends Error {
   constructor(readonly field: "zone" | "hours" | "time" | "days" | "monthDay" | "cron" | "empty" | "source" | "count" | "duplicate" | "retained",
@@ -69,6 +70,12 @@ export function missionCriterionCron(row: MissionCriterionDraft, index = 0): str
 }
 function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKind }, index: number, directory?: string): MissionCondition {
   const source = row.source.trim()
+  if (isMissionGithubKind(row.kind)) {
+    const parsed = missionGithubConditionSchema.safeParse({ kind: row.kind, ...(source ? { repository: source } : {}),
+      ...((row.kind === "github-issue" || row.kind === "github-pull-request") && row.author?.trim() ? { author: row.author.trim() } : {}) })
+    if (!parsed.success) return fail("source", index)
+    return parsed.data
+  }
   switch (row.kind) {
     case "schedule-success": case "mission-completed":
       if (!/^[A-Za-z0-9_-]{3,100}$/.test(source)) return fail("source", index)
@@ -88,6 +95,7 @@ function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKin
       return { kind: row.kind, paths: paths.sort() }
     }
   }
+  return fail("source", index)
 }
 
 /** UI validation only; the native configuration codec and source ownership remain authoritative. */
@@ -101,7 +109,7 @@ export function missionSchedulingPolicy(draft: MissionSchedulingDraft, directory
   }
   if (unchanged) return structuredClone(stored!.policy)
   const zone = draft.zone.trim()
-  const scheduled = draft.criteria.some(row => !isMissionEventKind(row.kind))
+   const scheduled = draft.criteria.some(row => row.kind !== "now" && !isMissionEventKind(row.kind))
   if (scheduled) {
     try { new Intl.DateTimeFormat("en", { timeZone: zone }) } catch { return fail("zone") }
     if (!zone) return fail("zone")
@@ -111,6 +119,7 @@ export function missionSchedulingPolicy(draft: MissionSchedulingDraft, directory
     if (initial && sameJSON(initial, row) && stored!.exact[row.id] && (isMissionEventKind(row.kind) || zone === stored!.initial.zone))
       return structuredClone(stored!.exact[row.id])
     if (isMissionEventKind(row.kind)) return eventCriterion(row as MissionCriterionDraft & { kind: MissionConditionKind }, index, directory)
+    if (row.kind === "now") return { kind: "now" }
     const expression = missionCriterionCron(row, index)
     try { if (Cron.parseUnsafe(expression, zone).seconds.size !== 1) return fail("cron", index) }
     catch { return fail("cron", index) }
@@ -120,9 +129,9 @@ export function missionSchedulingPolicy(draft: MissionSchedulingDraft, directory
       now, 1).length) return fail("empty", index)
     return { kind: "cron", expression, zone }
   })
-  const { roles } = missionCriteriaStructure(when), schedules = when.filter(item => item.kind === "cron"), events = when.filter(item => item.kind !== "cron")
+  const { roles } = missionCriteriaStructure(when), schedules = when.filter(item => item.kind === "cron" || item.kind === "now"), events = when.filter(item => item.kind !== "cron" && item.kind !== "now")
   if (!unique(schedules) || !unique(events)) return fail("duplicate")
-  const eventCheck = when.some((item, index) => item.kind !== "cron" && roles[index] === "trigger")
+  const eventCheck = when.some((item, index) => item.kind !== "cron" && item.kind !== "now" && roles[index] === "trigger")
   if (events.length > 8 || schedules.length + (eventCheck ? 1 : 0) > 8) return fail("count")
   return { when }
 }

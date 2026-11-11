@@ -15,7 +15,7 @@ const PreferencesSchema = z
   promptSubmitOnEnter: z.boolean().default(false),
   lastUsedBinary: z.string().optional(),
   locale: z.string().optional(),
-  environmentVariables: z.record(z.string()).default({}),
+  environmentVariables: z.record(z.string(), z.string()).default({}),
   modelRecents: z.array(ModelPreferenceSchema).default([]),
   modelFavorites: z.array(ModelPreferenceSchema).default([]),
   modelThinkingSelections: z.record(z.string(), z.string()).default({}),
@@ -53,7 +53,7 @@ const OpenCodeBinarySchema = z.object({
 
 const ConfigFileSchema = z
   .object({
-    preferences: PreferencesSchema.default({}),
+    preferences: PreferencesSchema.prefault({}),
     recentFolders: z.array(RecentFolderSchema).default([]),
     opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
     theme: z.enum(["light", "dark", "system"]).optional(),
@@ -64,7 +64,7 @@ const ConfigFileSchema = z
 // On-disk config.yaml only stores stable configuration (not volatile state like recent folders).
 const ConfigYamlSchema = z
   .object({
-    preferences: PreferencesSchema.default({}),
+    preferences: PreferencesSchema.prefault({}),
     opencodeBinaries: z.array(OpenCodeBinarySchema).default([]),
     theme: z.enum(["light", "dark", "system"]).optional(),
   })

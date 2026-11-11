@@ -162,7 +162,7 @@ for (const failure of [false, true]) for (const replacement of [false, true]) {
     let detach = backendEvents.attach(backendId, source)
     t.after(() => detach())
     const requests: ReturnType<typeof deferred<any[]>>[] = []
-    const api = { list: () => { const gate = deferred<any[]>(); requests.push(gate); return gate.promise },
+    const api = { list: async () => { const gate = deferred<any[]>(); requests.push(gate); return { data: await gate.promise } },
       remove: async () => {}, output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }) }
     const store = createShellStore(() => api, id => captureBackendOperation(id).signal)
     const first = store.load(instanceId, "/repo"); await tick()

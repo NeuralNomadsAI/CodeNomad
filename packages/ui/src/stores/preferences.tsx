@@ -119,6 +119,8 @@ export interface UiSettings {
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
+  /** First/latest controls in the corner under a shown timeline instead of floating over the transcript. */
+  scrollControlsInTimelineCorner: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
   hotkeyOverrides: HotkeyOverrides
@@ -139,6 +141,9 @@ export interface UiSettings {
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
   autoExpandActiveSubsessions: boolean
+  keepComputerAwake: boolean
+  /** Deleting a Mission also deletes the task conversations created for it. */
+  missionDeleteSessions: boolean
   focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
   missionProfileDefaults: MissionProfileDefault[]
@@ -238,6 +243,7 @@ const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
+  scrollControlsInTimelineCorner: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},
@@ -256,6 +262,8 @@ const defaultUiSettings: UiSettings = {
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: true,
   autoExpandActiveSubsessions: true,
+  keepComputerAwake: false,
+  missionDeleteSessions: false,
   focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
   missionProfileDefaults: [],
@@ -351,6 +359,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
+    scrollControlsInTimelineCorner: sanitized.scrollControlsInTimelineCorner ?? defaultUiSettings.scrollControlsInTimelineCorner,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
     hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),
@@ -386,6 +395,8 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoExpandActiveSubsessions: typeof sanitized.autoExpandActiveSubsessions === "boolean"
       ? sanitized.autoExpandActiveSubsessions : defaultUiSettings.autoExpandActiveSubsessions,
     focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
+    keepComputerAwake: sanitized.keepComputerAwake === true,
+    missionDeleteSessions: sanitized.missionDeleteSessions === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     missionProfileDefaults: normalizeMissionDefaults(sanitized.missionProfileDefaults),
     missionModels: normalizeMissionModels(sanitized.missionModels),
