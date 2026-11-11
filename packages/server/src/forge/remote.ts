@@ -67,12 +67,24 @@ function parseGitRemoteUrl(url: string, forIdentity: boolean): ForgeRemote | und
  * The repository to contribute to: `upstream` when the checkout is a fork,
  * otherwise `origin`, otherwise the first remote with a forge URL.
  */
-export async function readForgeRemote(directory: string): Promise<ForgeRemote | undefined> {
-  const names = (await runGitProcess(directory, ["remote"], { priority: "foreground", timeout: 10_000 }).catch(() => ""))
+export async function readForgeRemote(directory: string, signal?: AbortSignal): Promise<ForgeRemote | undefined> {
+  const expires = performance.now() + 10_000
+  const cleared = Object.fromEntries(Object.keys(process.env).filter(key => key.toUpperCase().startsWith("GIT_")).map(key => [key, undefined]))
+  const read = async (args: string[]) => {
+    signal?.throwIfAborted()
+    const timeout = Math.floor(expires - performance.now())
+    if (timeout <= 0) throw new Error("Forge remote discovery timeout")
+    const output = await runGitProcess(directory, args, { priority: "foreground", timeout,
+      env: { ...cleared, GIT_NO_LAZY_FETCH: "1", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" } }).catch(() => "")
+    signal?.throwIfAborted()
+    if (performance.now() >= expires) throw new Error("Forge remote discovery timeout")
+    return output
+  }
+  const names = (await read(["remote"]))
     .split(/\r?\n/).map(name => name.trim()).filter(Boolean)
   const ordered = [...["upstream", "origin"].filter(name => names.includes(name)), ...names.filter(name => name !== "upstream" && name !== "origin")]
   for (const name of ordered) {
-    const url = await runGitProcess(directory, ["remote", "get-url", name], { priority: "foreground", timeout: 10_000 }).catch(() => "")
+    const url = await read(["remote", "get-url", name])
     const remote = parseRemoteUrl(url)
     if (remote) return remote
   }

@@ -4,6 +4,7 @@ import { Plus } from "lucide-solid"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
 import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import type { MissionRepositoryDiscovery } from "./mission-editor-repository"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { MissionSchedulingCriterion, type MissionSchedulingSourceLists, type MissionSourcePage, type SelectedSource } from "./mission-scheduling-sources"
@@ -15,6 +16,7 @@ export type MissionSchedulingLock = "uncertain" | "passage" | "launched-once" | 
 /** Shared controlled scheduling fields. This component performs no reads or mutations. */
 export function MissionScheduling(props: {
   draft: MissionSchedulingDraft; directory?: string; sources: MissionSchedulingSourceLists
+  repository?: MissionRepositoryDiscovery
   paging?: (kind: SelectedSource, value?: string) => MissionSourcePage | undefined
   capability: "available" | "activatable" | "missing" | "loading"
   active?: () => boolean
@@ -35,7 +37,7 @@ export function MissionScheduling(props: {
       const policy = missionSchedulingPolicy(props.draft, props.directory), calendar = requiresMissionCalendar(policy)
       if (props.capability === "loading" && calendar) return {}
       if (unavailable() && calendar) return { error: "capability" }
-      const missing = criteria().findIndex(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && !isMissionGithubKind(row.kind)
+      const missing = criteria().findIndex(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && row.kind !== "repository-activity" && !isMissionGithubKind(row.kind)
         && !props.sources[row.kind]?.some(item => item.id === row.source))
       if (missing >= 0) return props.paging?.(criteria()[missing].kind as SelectedSource, criteria()[missing].source)?.loading() ? {} : { error: "source", index: missing }
       return { policy }
@@ -117,7 +119,7 @@ export function MissionScheduling(props: {
             <SortableProvider ids={ids()}>
               <For each={ids()}>{(id, index) => {
                 const row = () => criteria().find(item => item.id === id)!
-                return <MissionSchedulingCriterion row={row()} number={index() + 1} sources={props.sources} errorID={rowError(index())}
+                return <MissionSchedulingCriterion row={row()} number={index() + 1} sources={props.sources} repository={props.repository} errorID={rowError(index())}
                   errorText={rowError(index()) ? errorText() : undefined} paging={props.paging} disabled={locked()}
                   sortable={criteria().length > 1} connector={connectorOf(id)}
                   onChange={value => patchCriteria(criteria().map(item => item.id === id ? value : item))}

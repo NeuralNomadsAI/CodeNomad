@@ -65,6 +65,8 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
       if ("author" in event && event.author) row.author = event.author
     }
     switch (event.kind) {
+      case "repository-activity": row.repository = { provider: event.provider, host: event.host, repository: event.repository };
+        row.event = event.event; row.author = event.author; break
       case "schedule-success": case "mission-completed": row.source = event.missionID; break
       case "conversation-message": row.source = event.conversationID; break
       case "branch-commits": row.source = event.ref; if (event.directory !== directory) reason ??= "source"; break

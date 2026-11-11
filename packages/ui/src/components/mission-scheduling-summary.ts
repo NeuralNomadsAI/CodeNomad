@@ -34,6 +34,8 @@ export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translat
     }
   }
   const event = (item: MissionCondition) => {
+    if (item.kind === "repository-activity") return [t(`missions.scheduling.repository.${item.provider === "gitlab" ? "merge" : "pull"}.${item.event}`),
+      `${item.host}/${item.repository}`, item.author ? `@${item.author}` : undefined].filter(Boolean).join(" · ")
     if (isMissionGithubCondition(item)) return [t(`missions.scheduling.condition.${item.kind}`), item.repository,
       "author" in item && item.author ? `@${item.author}` : undefined].filter(Boolean).join(" · ")
     const reference = item.kind === "files-changed" ? item.paths.join(", ") : item.kind === "branch-commits" ? item.ref.slice("refs/heads/".length)

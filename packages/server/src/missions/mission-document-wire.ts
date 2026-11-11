@@ -4,6 +4,9 @@ const text = { type: "string" } as const
 const calendar = { type: "object", properties: { expression: text, zone: text }, required: ["expression", "zone"], additionalProperties: false } as const
 const cron = { ...calendar, properties: { ...calendar.properties, kind: { const: "cron" } }, required: ["kind", ...calendar.required] } as const
 const events = [
+  { type: "object", properties: { kind: { const: "repository-activity" }, provider: { enum: ["github", "gitlab", "gitea"] }, host: text,
+    repository: text, event: { enum: ["pull-request-created", "pull-request-merged", "issue-created"] }, author: text },
+    required: ["kind", "provider", "host", "repository", "event"], additionalProperties: false },
   ...["schedule-success", "mission-completed"].map(kind => ({ type: "object", properties: { kind: { const: kind }, missionID: text }, required: ["kind", "missionID"], additionalProperties: false })),
   { type: "object", properties: { kind: { const: "branch-commits" }, directory: text, ref: text }, required: ["kind", "directory", "ref"], additionalProperties: false },
   { type: "object", properties: { kind: { const: "conversation-message" }, conversationID: text }, required: ["kind", "conversationID"], additionalProperties: false },

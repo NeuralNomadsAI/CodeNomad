@@ -40,6 +40,8 @@ import { createMissionCreationStart } from "./mission-creation-start"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { MissionSourceSelect } from "./mission-source-select"
 import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { createMissionEditorRepository } from "./mission-editor-repository"
+import { isRepositoryCriterion } from "./mission-scheduling-data"
 
 export type { MissionEditorAction }
 type FieldError = { field: "objective" | "profiles" | "followed" | "coordinator"; message: string }
@@ -207,9 +209,11 @@ export function MissionEditor(props: {
     target: action.scheduleID ?? original?.id, directory: schedule.directory,
     kinds: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
       ...(coordinatorSessionID() !== undefined && mode() === "recurring" ? ["coordinator-session" as const] : [])],
-    selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && !isMissionGithubKind(row.kind) && row.source
+    selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && row.kind !== "repository-activity" && !isMissionGithubKind(row.kind) && row.source
       ? [{ kind: row.kind, id: row.source }] : []), ...(coordinatorSessionID() ? [{ kind: "coordinator-session" as const, id: coordinatorSessionID()! }] : [])],
     active: isActive, captureView })
+  const repository = createMissionEditorRepository({ instanceId: props.instanceId, directory: schedule.directory, captureView,
+    active: () => isActive() && schedule.scheduling().criteria.some(row => isRepositoryCriterion(row.kind)) })
   const watchedIDs = watched
   const needsSourceLocation = createMemo(() => mode() === "recurring" && watchedIDs().length > 0)
   const sourceIdentity = createMemo(() => JSON.stringify([identity(), props.directory, getOpenCodeInstanceGeneration(props.instanceId)]))
@@ -503,7 +507,7 @@ export function MissionEditor(props: {
       <input type="checkbox" checked={startOnCreation()} disabled={structuralLocked()}
         onChange={event => setStartOnCreation(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
     </label></Show>
-    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} paging={sourceChoices.reader} active={isActive}
+    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} repository={repository()} paging={sourceChoices.reader} active={isActive}
       capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
     <Show when={mode() === "recurring" || coordinatorSessionID() !== undefined}>
       <section class="mission-create-group">
