@@ -64,6 +64,15 @@
   version the server runtime reports; npm itself only warns. `npm-lifecycle.test.ts` and the Electron step
   of the PR OpenCode compatibility matrix run real npm lifecycle scripts through
   the development Electron executable on Windows, Linux and macOS.
+- When Actions artifacts are enabled, the binary workflow requires a `macos-26`
+  ARM smoke of the macOS Intel producer's immutable artifact ID and digest in the same run
+  and attempt. The checkout matches the producer's actual source SHA. The CI
+  archive helper validates the outer ZIP and the ARM bundle before native ditto
+  extraction, preserves framework links and verifies codesign. It requires native
+  ARM host, executable slice and running Electron process, then runs the existing
+  packaged-resources smoke with the extracted executable and resources, private
+  configuration and a positive environment. Runtime expectations use the source
+  pin files and the packaged Electron runtime; every executable check must pass.
 - Dependabot covers every dependency of the Cargo workspace `packages/tauri-app`
   and of the npm workspaces (root lockfile), plus the Cloudflare deployment worker
   (`packages/cloudflare`, separate lockfile), against the default branch
