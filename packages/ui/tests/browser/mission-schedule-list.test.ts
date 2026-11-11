@@ -498,8 +498,7 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
       }
       await route.fallback()
     })
-    await page.evaluate(() => {
-      const start = document.querySelector('.mission-unified-schedule [aria-label="Start"]')!
+    await button(page, "Start").evaluate(start => {
       const refresh = document.querySelector('[aria-label="Refresh mission map"]')!
       ;(window as any).pointerProbe = { start: [] as any[], refresh: [] as any[] }
       for (const type of ["mousedown", "mouseup", "click"]) start.addEventListener(type, event => (window as any).pointerProbe.start.push([type, event.isTrusted]))
