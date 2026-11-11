@@ -55,9 +55,10 @@ test("the stored list keeps the card order; the connectors between cards come fr
     "events after schedules are conditions and need no check of their own")
 })
 
-test("all five events map to the native source contract and reject unsafe sources with their row index", () => {
+test("all events map to the native source contract and reject unsafe sources with their row index", () => {
   const sources = { "schedule-success": "msn_source", "mission-completed": "msn_source", "branch-commits": "refs/heads/dev",
-    "conversation-message": "ses_source", "files-changed": "" }
+    "conversation-message": "ses_source", "files-changed": "", "github-notification": "", "github-security-alert": "acme/repo",
+    "github-pull-request": "acme/repo", "github-issue": "acme/repo" }
   for (const kind of missionEventKinds) {
     const policy = missionSchedulingPolicy(draft([row(kind, { source: sources[kind], files: "src/a.ts\nsrc/b.ts" })]), "/project")
     assert.deepEqual(missionLaunchPolicySchema.parse(policy), policy)
@@ -74,4 +75,12 @@ test("invalid fields stay invalid and an impossible calendar is refused", () => 
     { kind: "hours", hours: "24" }, { kind: "hours", hours: "1.5" }, { kind: "daily", time: "25:00" }] as const)
     assert.throws(() => missionSchedulingPolicy(draft([row(patch.kind, patch as Partial<MissionCriterionDraft>)])), MissionSchedulingError, JSON.stringify(patch))
   assert.throws(() => missionSchedulingPolicy(draft([row("daily"), row("cron", { expression: "0 9 30 2 *" })])), field("empty", 1))
+})
+
+test("GitHub criteria retain exact repository and optional author filters", () => {
+  assert.deepEqual(missionSchedulingPolicy(draft([row("github-pull-request", { source: "Acme/Repo", author: "@Alice" })])),
+    { when: [{ kind: "github-pull-request", repository: "acme/repo", author: "alice" }] })
+  assert.deepEqual(missionSchedulingPolicy(draft([row("github-notification")])), { when: [{ kind: "github-notification" }] })
+  assert.throws(() => missionSchedulingPolicy(draft([row("github-issue", { source: "../repo" })])), field("source", 0))
+  assert.throws(() => missionSchedulingPolicy(draft([row("github-pull-request", { source: "acme/repo", author: "alice OR bob" })])), field("source", 0))
 })

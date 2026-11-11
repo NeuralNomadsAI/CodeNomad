@@ -28,6 +28,7 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "diagnose-stop": { type: "boolean" },
   "diagnose-product-stop": { type: "boolean" },
   "convert-preparation": { type: "boolean" },
+  "existing-coordinator": { type: "boolean" },
 } })
 assert(values["parent-ready"], "Explicit product qualification requires --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
@@ -297,14 +298,17 @@ async function journey(kind) {
   }
   const create = async (label, timing, maxLaunches = 1) => {
     const selected = { agent: "fixture-worker", model: { providerID: "fixture", id: "fixture" } }
+    const existing = values["existing-coordinator"] ? await client.session.create({ location: { directory: project },
+      title: `Existing ${label}`, agent: "build", model: { providerID: "fixture", id: "fixture" }, metadata: { unrelated: "preserve" } }) : undefined
     const configuration = {
       title: `Native ${label}`, objective: "Use the actual mission_report tool to finalize this owned fixture passage. No helpers or other effects.",
       template: "custom", taskMode: "native", profiles: { coordinator: selected, roles: { specialist: selected } }, watchedConversationIDs: [],
       launch: { timing, condition: null, ends: { at: null, afterMs: null, maxLaunches } },
+      ...(existing ? { coordinatorSessionID: existing.id } : {}),
     }
     let response
     if (values["convert-preparation"]) {
-      const { launch: _launch, watchedConversationIDs: _watched, ...fields } = configuration
+      const { launch: _launch, watchedConversationIDs: _watched, coordinatorSessionID: _coordinator, ...fields } = configuration
       const original = await http("", { ...fields, requestId: `create_${label}_${randomUUID().replaceAll("-", "")}`, directory: project })
       const before = snapshot(original.mission.id)
       assert(before.document.oneTime && before.document.firstPlayedAt === null && before.schedules.length === 0)
@@ -319,6 +323,7 @@ async function journey(kind) {
       result.conversions ??= []; result.conversions.push({ id: original.mission.id, before, converted })
     } else response = await http("/scheduled", { requestID: `create_${label}_${randomUUID().replaceAll("-", "")}`, expectedRevision: 0, action: "create", configuration })
     assert.equal(response.document.state, "paused"); assert.equal(response.document.launchedCount, 0)
+    if (existing) { result.existingCoordinators ??= []; result.existingCoordinators.push({ missionID: response.document.id, id: existing.id, title: existing.title }) }
     return response.document.id
   }
   const activate = async id => {
@@ -555,6 +560,16 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     })
     assert.equal(positive.sessions.length, 1); assert.equal(positive.sessions[0].id, positive.document.pending.coordinatorSessionID)
     assert.equal(positive.start[0].id, positive.document.pending.messageID)
+    if (values["existing-coordinator"]) {
+      const existing = result.existingCoordinators.find(item => item.missionID === id)
+      assert.equal(positive.document.pending.coordinatorSessionID, existing.id)
+      assert.equal(positive.document.pending.coordinatorReused, true)
+      assert(positive.document.pending.coordinatorBaseline.some(row => row[0] === existing.id))
+      const adopted = readSQL(db => db.prepare("SELECT title,metadata,agent FROM session_v2 WHERE id=?").get(existing.id))
+      assert.equal(adopted.title, existing.title); assert.equal(JSON.parse(adopted.metadata).unrelated, "preserve")
+      assert.equal(adopted.agent, "fixture-worker")
+      result.existingCoordinatorAdopted = true
+    }
     if (values["convert-preparation"]) {
       assert.deepEqual(positive.document.pending.configuration.launch.timing, timing)
       assert.equal(positive.document.pending.configurationGeneration, armed.document.configurationGeneration)

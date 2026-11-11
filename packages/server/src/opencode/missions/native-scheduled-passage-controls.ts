@@ -19,6 +19,7 @@ export async function controlNativeScheduledPassage(input: NativeScheduledPassag
   const mission = snapshot.missions[0]
   if (!mission) {
     if (pending.admittedAt !== null) return { pending: true }
+    if (pending.coordinatorReused && !pending.admissionAttempted) return { pending: false }
     // Positive root/family absence, never inferred from an absent journal alone.
     if (await input.observation.exists(pending.coordinatorSessionID)
       || (await input.observation.children(pending.coordinatorSessionID)).length

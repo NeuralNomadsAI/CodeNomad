@@ -96,6 +96,10 @@ family; the internal bridge accepts only fixed business-control methods and ENV
 preparation, with each mutation entering `executeBusiness` under document exclusion.
 Human lifecycle controls use their separate authenticated control path.
 
+`abortableNativeEffect` races a scoped cancellation signal against a native operation,
+interrupts its Effect and joins finalizers before the invocation retires. Scheduled
+actor controls and explicit coordinator adoption share this boundary.
+
 Native test drivers register Effect RPC handlers and yield registered tool
 executors inside the receiving invocation. Promise setup adapters retain their
 activation context, so tools requiring native services need the receiving Effect
@@ -168,6 +172,7 @@ documents without imposing a runtime version list.
 | `@opencode/storage/Database` | db.$client.unsafe(sql,params).withoutTransform → Effect rows; db.transaction(callback,{behavior:"immediate"}) | `native-recurrence-storage.ts`, `native-passage-observation.ts`: current graph, actual SQL client/transaction, safe row types and synchronous query guard. Preserve the driver's transaction Context when composing effects. Asynchronous-only reads cannot implement the synchronous admission fence. |
 | KV/CAS SQL | kv(key,value,time_created,time_updated); plugin namespace is plugin ID encoded as padded UTF-16 hex | `native-recurrence-storage.ts`: exact project key/bytes/revision, immediate transaction, conditional update and readback. Publish invalidation after commit; an invalidation failure preserves the committed result. |
 | Family SQL | session_v2 placement/parent/time_suspended, session_inbox, session_message id/type/seq/content/idle | `native-passage-observation.ts`: family ≤4096, exact message/inbox presence and nonnegative counts. Anchor the original input in durable seq order and require a later terminal idle as the latest projection. Count failures only between that input and terminal, then recheck family, claims and requests. Missing anchor/terminal or any remaining claim keeps uncertainty. |
+| Adopted-family sequence | event_sequence(aggregate_id,seq), keyed by native session ID | `native-source-fence.ts` and `native-passage-observation.ts`: bounded baseline rows and safe integer sequences. The aggregate watermark survives retained-message removal; a changed/regressed/missing watermark prevents an unchanged-history conclusion. Qualification uses isolated native input, continuation and retention operations. |
 | Durable background delivery | kv keys in `job.background/`; JSON recovery kind and session/parent/child IDs | Same reader: ≤1024 records, IDs/kind only. A completed child with an undelivered native result still blocks its family. Unknown shape, table/column or coverage refuses settlement. |
 | `@opencode/Form` | list/get/state/reply Effects; public Form.Info/State result codecs | `native-passage-observation.ts`, `native-human-answer.ts`: ≤1024 requests, exact native IDs, confirmed durable UI-answer mark and invocation lifetime. Sessionless requests conservatively prevent quiescence. |
 | `@opencode/Permission`, `@opencode/Shell` | list Effects returning public Request/Info arrays | `native-passage-observation.ts`: ≤1024 each; unknown request ownership or running uncorrelated Shell blocks settlement. |
@@ -371,6 +376,18 @@ rereads run under document exclusion after the target read and immediately befor
 publication. A failed revalidation invalidates the proof. External filesystem
 writers can race the final reread and SQLite commit.
 
+GitHub reads share the included `gh api` transport: fixed `github.com`, credential-free
+checkpoint data, 4 MiB child-output bound, cancellation and hidden console windows.
+`mission-github-source.ts` narrows each collection to four 50-item pages and one ten-second
+budget. It validates repository URLs, descending timestamps, unique IDs, account binding
+and exact source keys. Dependabot continuation accepts only a bounded opaque `after`
+token; the next request reconstructs the fixed endpoint and filters. Notifications are
+read with `all=true`; their read status is preserved. First Play freezes a server-date
+baseline with timestamp-tie IDs. Historical events stay frozen across later collection
+changes; revalidation reads account identity under the same deadline. Frozen input
+validates the selected repository and optional author before serializing event summaries
+within the existing launch envelope.
+
 `native-source-fence.ts` pins bounded exact document/journal/message/family SQL
 projections before observation, then checks them synchronously at target CAS.
 Family proofs include the existence and full native bytes of each correlation
@@ -439,6 +456,51 @@ of the product preparation route:
 `scripts/test-mission-schedule-activation-native.mjs`.
 
 ### Scheduled passage invocation
+
+Explicit existing coordinators use `native-scheduled-coordinator.ts`: public
+`switchAgent`, `switchModel` and `update` Effects, lazy construction followed by
+capability qualification and the synchronous initial-entry fence. Observation uses
+its separate read guard. Cancellation interrupts and joins each native Effect;
+acknowledgement loss reconciles exact readback. Root/project/Location and ordinary
+conversation kind are checked before mutation. Metadata update merges the freshly read
+object while preserving title and permissions.
+
+`coordinatorBaseline` is a single immutable native-family checkpoint in the pending
+document, published with the existing source-fence/CAS boundary before adoption. Each
+tuple retains session ID, last message sequence/ID, an inherited in-flight input and the
+durable native aggregate sequence. Baseline and document byte ceilings refuse an oversized capture.
+`native-scheduled-child-input.ts` records the passage's first actual child prompt ID in
+the child's `codenomad.passage-input` metadata before admission, under a separate per-child
+exclusion and native placement fences. It uses the trusted root/document marker; model
+prompt content supplies no owner identity. Native invocation cancellation joins the
+metadata operation before releasing its graph. Later prompts preserve that same entry.
+New and continued children require the exact recorded entry; inherited running children
+keep their captured input and all failures after the baseline. Positive active/queued
+descendants propagate inherited work to idle ancestors, and the shared bounded native
+background projection identifies sessions awaiting subagent, shell or image delivery.
+Such sessions retain their existing input (or exact queued input for an empty conversation),
+so native synthetic notices qualify without inventing a prompt-hook invocation. A positively unchanged
+quiet history and aggregate sequence remain historical. Missing baseline boundaries, new inputs or terminals
+retain uncertainty. Source fences pin family membership, original and continuation
+inputs, latest terminals, claims/inboxes, failure counts and aggregate watermarks through the
+archive transaction. Archives omit the baseline and retain the isolated journal
+revision/family digest. `native-scheduled-passage-owner.ts` shares exact pending,
+archive and validated tombstone routing between the native runtime and business bridge.
+Archive cleanup clears the exact retired root marker, with a synchronous placement/metadata
+fence preserving a later assignment. `coordinatorReleases` saves the exact unresolved
+identity in that archive CAS and retains it independently of history eviction. It proves
+inactive routing while pending cleanup. An idle Check retries it; positive native readback,
+absence or replacement is fenced into the document CAS that retires the obligation.
+The existing document byte bound limits this cleanup state.
+Deletion completion and authoritative compaction both retain the full document while
+release obligations remain. The child prompt hook shares validated pending/archive/
+tombstone classification, so preserved descendants retain ordinary conversation use.
+
+Native seam qualification: `node scripts/test-native-mission-coordinator-reuse.mjs
+<absolute-isolated-cli>` exercises public adoption, preserved native work/permissions,
+profile switching, lost original ACK recovery and two isolated admitted/settled passages.
+Its calendar mappings are fixture-owned; the scheduled-product driver qualifies actual
+calendar activation, wake ownership and full lifecycle separately.
 
 `native-scheduled-passage-runtime.ts` acquires the document store, native service,
 whole-family observation and calendar coverage inside each receiving invocation.

@@ -52,6 +52,8 @@ If creation's acknowledgement is lost, reading its receipt leaves Start manual. 
 
 ### Criteria {#native-scheduling}
 
+The subagent-depth information identifies its effective source under **OpenCode configuration file:**.
+
 The first criterion is **Once, now**. **Add a criterion** adds another; choose its type, remove it with ×, or reorder cards by their grip. Alt+Up/Down moves a focused grip.
 
 Schedules include Once, now, Every N hours, Every day, Selected weekdays, Day of each month and Advanced (cron). Civil schedules use the saved time zone. **Saved time zone (IANA)** appears when it differs from the system zone. Months without the chosen day are skipped.
@@ -59,6 +61,10 @@ Schedules include Once, now, Every N hours, Every day, Selected weekdays, Day of
 **Once, now** takes its instant at Start, rather than when the form opens. It offers one opportunity, which a condition can consume without launching. Choose a repeating schedule for later opportunities. Scheduling runs while its OpenCode service and execution host are available.
 
 ### Events and combinations {#scheduling-conditions}
+
+GitHub events cover notifications for the signed-in account, new Dependabot alerts, new pull requests and new issues on **github.com**. Enter **GitHub repository** as `owner/repository`; notifications may leave it empty to cover all repositories. Pull requests and issues accept an optional **Author**, including bots such as `dependabot[bot]`. Notifications include new activity on existing threads and leave their read status unchanged; alerts include items fixed or dismissed between checks.
+
+These checks use GitHub CLI (`gh`) signed in on the OpenCode execution host, including when CodeNomad is closed. Its account needs repository access, [notification access](https://docs.github.com/en/rest/activity/notifications), and [Dependabot alert read access](https://docs.github.com/en/rest/dependabot/alerts) for the chosen events. First Start establishes the reference; earlier items remain outside the trigger window. Checks read at most four pages of 50 items within ten seconds; missing access, rate limits and an over-capacity window leave the source unavailable. Observed event summaries are included in the passage's input.
 
 An event can follow another schedule's success, a completed one-time Mission, commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Browsing without a search loads more as you scroll; a failed read offers **Try again** there. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
 
@@ -69,6 +75,8 @@ An event can follow another schedule's success, a completed one-time Mission, co
 Events at the beginning can launch a passage on each new occurrence; trigger events are checked every 15 minutes. First Start establishes the source reference. A successful passage advances it; failed work keeps it. Missing or unreadable sources block with an explanation. Passages do not overlap.
 
 ### Counts and history {#scheduling-limits}
+
+**Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**; a missing selected conversation requires your intervention.
 
 Select a schedule to read its state, next wake or check, launched and successful passage counts, and **Past runs**. The history retains 30 results; lifetime counts remain. **Run now** counts as a launched passage once admitted.
 

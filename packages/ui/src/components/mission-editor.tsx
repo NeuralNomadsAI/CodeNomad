@@ -38,9 +38,11 @@ import { createMissionEditorSources } from "./mission-editor-sources"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
 import { createMissionCreationStart } from "./mission-creation-start"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { MissionSourceSelect } from "./mission-source-select"
+import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 
 export type { MissionEditorAction }
-type FieldError = { field: "objective" | "profiles" | "followed"; message: string }
+type FieldError = { field: "objective" | "profiles" | "followed" | "coordinator"; message: string }
 
 export function MissionEditor(props: {
   instanceId: string; directory?: string; viewDirectory?: string; projectID?: string; action: MissionEditorAction
@@ -79,6 +81,8 @@ export function MissionEditor(props: {
   const draft = scheduleHold?.draft ?? (held || recurrenceHold ? undefined : action.draft)
   const [titleOverride, setTitleOverride] = createSignal<string | undefined>(recurrenceHold?.title ?? held?.title ?? draft?.titleOverride ?? original?.title)
   const [watched, setWatched] = createSignal<string[]>(recurrenceHold?.watchedConversationIDs ?? draft?.watched ?? [])
+  const [coordinatorSessionID, setCoordinatorSessionID] = createSignal<string | undefined>(draft?.coordinatorSessionID
+    ?? draft?.scheduleDocument?.configuration.coordinatorSessionID)
   // An edit starts from the objective and notes of exactly the map it opened (its CAS
   // revision): content reads count only when their digests are that map's descriptors.
   const prefill = kind === "edit" && original !== undefined && !original.document && !action.scheduleID && !draft
@@ -170,6 +174,7 @@ export function MissionEditor(props: {
     onLoad: config => {
       setTitleOverride(config.title); setObjective(config.objective); setNotes(config.notes ?? ""); setTemplate(config.template)
       setProfiles(copyMissionProfiles(config.profiles)); setTaskMode(config.taskMode); setWatched(config.watchedConversationIDs)
+      setCoordinatorSessionID(config.coordinatorSessionID)
       setCustomProfiles(true); setCustomTaskMode(true)
     }, captureDraft: () => captureDraft(), onSaved: (mission, scheduleID) => props.onSaved(mission, scheduleID) })
   createEffect(() => props.onReading?.(schedule.revalidating() || profilesReading() || sourceChoices.loading()))
@@ -200,9 +205,10 @@ export function MissionEditor(props: {
   const [policyReady, setPolicyReady] = createSignal(false)
   const sourceChoices = createMissionEditorSources({ instanceId: props.instanceId, projectID: props.projectID,
     target: action.scheduleID ?? original?.id, directory: schedule.directory,
-    kinds: () => schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
-    selected: () => schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && row.source
-      ? [{ kind: row.kind, id: row.source }] : []),
+    kinds: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
+      ...(coordinatorSessionID() !== undefined && mode() === "recurring" ? ["coordinator-session" as const] : [])],
+    selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && !isMissionGithubKind(row.kind) && row.source
+      ? [{ kind: row.kind, id: row.source }] : []), ...(coordinatorSessionID() ? [{ kind: "coordinator-session" as const, id: coordinatorSessionID()! }] : [])],
     active: isActive, captureView })
   const watchedIDs = watched
   const needsSourceLocation = createMemo(() => mode() === "recurring" && watchedIDs().length > 0)
@@ -229,6 +235,10 @@ export function MissionEditor(props: {
     onCleanup(() => { alive = false; controller.abort() })
   }))
   const sourceLocationReady = () => !needsSourceLocation() || sourceLocation()?.key === sourceIdentity()
+  const coordinatorReady = () => coordinatorSessionID() === undefined || mode() === "recurring"
+    && !watchedIDs().includes(coordinatorSessionID()!)
+    && !schedule.scheduling().criteria.some(row => row.kind === "conversation-message" && row.source === coordinatorSessionID())
+    && !!sourceChoices.sources()["coordinator-session"]?.some(row => row.id === coordinatorSessionID())
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
     roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
   let requestId = held?.requestId ?? recurrenceHold?.requestID ?? draft?.requestId ?? crypto.randomUUID(), lastPayload = draft?.lastPayload ?? ""
@@ -239,6 +249,7 @@ export function MissionEditor(props: {
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
     defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: true, profileDetailsOpen: profilesFold?.open ?? profilesOpen(),
     requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(), startOnCreation: startOnCreation(),
+    ...(coordinatorSessionID() !== undefined ? { coordinatorSessionID: coordinatorSessionID() } : {}),
     deleteAutoSubmitted: kind === "delete" && !autoSubmit(), deleteError: kind === "delete" ? error() : undefined,
     scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(),
     previousDraft: schedule.previousDraft(), journalMission: schedule.journal() })
@@ -266,6 +277,7 @@ export function MissionEditor(props: {
     setFieldError(undefined)
     if (kind !== "delete" && !structuralLocked() && compareError()) return
     if (immediateCreationFollowed()) return
+    if (!coordinatorReady()) { fail("coordinator", t("missions.scheduling.coordinatorUnavailable")); return }
     const scheduledWrite = kind === "create" && mode() === "recurring" || kind === "edit" && schedule.unified
       && (schedule.document()?.kind === "schedule" || journalPreparation())
     if (scheduledWrite) {
@@ -293,7 +305,8 @@ export function MissionEditor(props: {
       const { roots: _roots, profileID: _profile, executionHost: _host, ...stored } = schedule.document()?.configuration ?? {} as NonNullable<ReturnType<typeof schedule.document>>["configuration"]
       const payload = structuralLocked() ? { ...stored, objective: objective().trim(), notes: notes() }
         : { title: submittedTitle(), objective: objective().trim(), notes: notes(), template: template(),
-        watchedConversationIDs: ids, profiles: selected, taskMode: taskMode() ?? "native", launch: policy()! }
+        watchedConversationIDs: ids, profiles: selected, taskMode: taskMode() ?? "native", launch: policy()!,
+        ...(coordinatorSessionID() ? { coordinatorSessionID: coordinatorSessionID() } : {}) }
       const serialized = JSON.stringify(payload)
       if (lastPayload && lastPayload !== serialized) requestId = crypto.randomUUID()
       lastPayload = serialized
@@ -492,6 +505,24 @@ export function MissionEditor(props: {
     </label></Show>
     <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} paging={sourceChoices.reader} active={isActive}
       capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
+    <Show when={mode() === "recurring" || coordinatorSessionID() !== undefined}>
+      <section class="mission-create-group">
+        <label class="mission-create-field"><span>{t("missions.scheduling.coordinatorMode")}<SettingsInfoTip text={t("missions.scheduling.coordinatorHint")} /></span>
+          <select aria-label={t("missions.scheduling.coordinatorMode")} value={coordinatorSessionID() === undefined ? "new" : "existing"}
+            disabled={structuralLocked()} onChange={event => setCoordinatorSessionID(event.currentTarget.value === "new" ? undefined : "")}>
+            <option value="new">{t("missions.scheduling.coordinatorNew")}</option>
+            <option value="existing" disabled={mode() !== "recurring"}>{t("missions.scheduling.coordinatorExisting")}</option>
+          </select>
+        </label>
+        <Show when={coordinatorSessionID() !== undefined}>
+          <MissionSourceSelect label={t("missions.scheduling.coordinatorSelect")} value={coordinatorSessionID() ?? ""}
+            choices={sourceChoices.sources()["coordinator-session"]} disabled={structuralLocked() || mode() !== "recurring"}
+            paging={sourceChoices.reader("coordinator-session", coordinatorSessionID())} onChange={setCoordinatorSessionID} />
+          <Show when={mode() !== "recurring"}><p role="alert">{t("missions.scheduling.coordinatorRequiresSchedule")}</p></Show>
+        </Show>
+        <Show when={errorFor("coordinator")}><p role="alert">{errorFor("coordinator")}</p></Show>
+      </section>
+    </Show>
     {inlineError("followed", ids.followedError)}
     <Show when={needsSourceLocation() && sourceLocationFailed() && !errorFor("followed")}>
       <p role="alert">{t("missions.recurrence.sourceLocationUnavailable")}</p>
@@ -513,6 +544,7 @@ export function MissionEditor(props: {
   </>
 
   const createDisabled = () => locked() || !isActive() || !objective().trim() || Boolean(compareError()) || !policyReady()
+    || !coordinatorReady()
     || immediateCreationFollowed()
     || mode() === "recurring" && (!sourceLocationReady() || !sourceInputBudget().sufficient)
   // In the panel, creation's body scrolls above a fixed footer unless the panel is too short (mission-create.css).
