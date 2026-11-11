@@ -21,7 +21,7 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum runtime **2.2.3**, recommended **2.2.6** (`runtime-support.ts`), with
+Minimum runtime **2.2.3**, recommended **2.2.7** (`runtime-support.ts`), with
 **2.2.3** client/schema/plugin pins. The minimum carries the image tool contract of
 upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
 the Images gallery, the Design agent and skills and the Images settings: one
