@@ -59,10 +59,13 @@
     "ignore-walk": {
       "minimatch": "11.0.6"
     },
-    "config-file-ts": {
-      "glob": "14.0.4"
+    "@electron/universal": {
+      "minimatch@^9.0.3": "11.0.6"
     },
-    "rimraf": {
+    "app-builder-lib": {
+      "minimatch@^10.2.5": "11.0.6"
+    },
+    "rimraf@>=5": {
       "glob": "14.0.4"
     },
     "workbox-build": {

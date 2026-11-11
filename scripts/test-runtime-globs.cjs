@@ -206,16 +206,14 @@ test('rimraf cancellation stops its glob walk before deleting any matches', asyn
   assert.equal(fs.readFileSync(sentinel, 'utf8'), 'keep')
 })
 
-test('config-file-ts recompilation checks use glob.sync', () => {
-  const config = load('config-file-ts')
-  const file = write('config/value.ts', 'export default { value: 42 }')
-  const out = path.join(fixture, 'compiled')
-  const previous = process.cwd()
-  try {
-    process.chdir(path.dirname(file))
-    assert.deepEqual(config.loadTsConfig(file, out), { value: 42 })
-    assert.deepEqual(config.loadTsConfig(file, out), { value: 42 })
-  } finally { process.chdir(previous) }
+test('app-builder-lib reads TypeScript configuration through jiti', async () => {
+  const config = load('app-builder-lib/out/util/config/load.js')
+  const file = write('config/electron-builder.ts', 'const value: number = 42; export default { extraMetadata: { value } }')
+  const request = { projectDir: path.dirname(file), configFilename: 'electron-builder', packageKey: 'build' }
+  const result = await config.loadConfig(request)
+  assert.deepEqual(result.result, { extraMetadata: { value: 42 } })
+  assert.equal(result.configFile, file)
+  assert.deepEqual((await config.getConfig(request, file)).result, result.result)
 })
 
 test('workbox getManifest uses real globSync/hash/ignore behavior', async () => {
@@ -240,4 +238,41 @@ test('@electron/asar retains glob 7 callbacks and callable minimatch 3', async (
   await asar.createPackageWithOptions(path.join(fixture, 'asar-source'), archive, { unpack: '*.txt' })
   assert.deepEqual(asar.listPackage(archive), [path.sep + 'file with spaces.txt'])
   assert.equal(asar.extractFile(archive, 'file with spaces.txt').toString(), 'fixture')
+})
+
+test('app-builder-lib FileMatcher filters and copies real files with its own minimatch', async () => {
+  const { FileMatcher, copyFiles } = load('app-builder-lib/out/fileMatcher.js')
+  const { hasMagic } = load('app-builder-lib/out/util/filter.js')
+  const src = path.dirname(write('builder-files/plain.txt', 'plain'))
+  for (const p of ['data/.hidden.json', 'data/nested/file.txt', 'data/nested/drop.map', 'data/nested/keep.map', 'node_modules/x/test.js']) write('builder-files/' + p, p)
+  const dest = path.join(fixture, 'builder-copy')
+  const matcher = new FileMatcher(src, dest, value => value, ['**/*', '!**/*.map', 'data/nested/keep.map'])
+  await copyFiles([matcher], null, false)
+  for (const p of ['plain.txt', 'data/.hidden.json', 'data/nested/file.txt', 'data/nested/keep.map']) assert.equal(fs.existsSync(path.join(dest, p)), true, p)
+  for (const p of ['data/nested/drop.map', 'node_modules']) assert.equal(fs.existsSync(path.join(dest, p)), false, p)
+  const literal = new FileMatcher(src, dest, value => value, ['data'])
+  const parsed = []
+  literal.computeParsedPatterns(parsed)
+  assert.equal(parsed.length, 2, 'literal directory gets the recursive descendant pattern')
+  assert.equal(hasMagic(parsed[0]), false)
+  assert.equal(hasMagic(parsed[1]), true)
+  const brace = new FileMatcher(src, dest, value => value, ['data/**/*.{txt,json}'])
+  const bracePatterns = []
+  brace.computeParsedPatterns(bracePatterns)
+  assert.equal(hasMagic(bracePatterns[0]), true)
+  for (const p of ['data', 'data/nested', 'data/.hidden.json', 'data/nested/file.txt']) assert.equal(brace.createFilter()(path.join(src, p), fs.statSync(path.join(src, p))), true, p)
+  assert.equal(brace.createFilter()(path.join(src, 'data/nested/drop.map'), fs.statSync(path.join(src, 'data/nested/drop.map'))), false)
+})
+
+test('temp retains rimraf 2 callback/sync cleanup and glob 7', async () => {
+  const temp = load('temp').track()
+  const first = temp.mkdirSync({ dir: fixture, prefix: 'legacy-sync-' })
+  fs.writeFileSync(path.join(first, 'file.txt'), 'remove')
+  temp.cleanupSync()
+  assert.equal(fs.existsSync(first), false)
+  const second = await new Promise((resolve, reject) => temp.mkdir({ dir: fixture, prefix: 'legacy-async-' }, (error, directory) => error ? reject(error) : resolve(directory)))
+  fs.writeFileSync(path.join(second, 'file.txt'), 'remove')
+  await new Promise((resolve, reject) => temp.cleanup(error => error ? reject(error) : resolve()))
+  assert.equal(fs.existsSync(second), false)
+  temp.track(false)
 })
