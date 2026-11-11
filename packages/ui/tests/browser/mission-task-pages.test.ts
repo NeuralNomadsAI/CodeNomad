@@ -545,17 +545,22 @@ test("two thousand cached tasks keep a bounded rendered viewport and reuse pages
 
 test("scrolling loads all 400 tasks without gap controls and preserves independent failed-window Retry", async () => {
   const value = blockages(4), f = await open(value)
-  let release!: () => void, crossed = false
-  const gate = new Promise<void>(resolve => { release = resolve })
+  let release!: () => void, entered!: () => void, crossed = false
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
   try {
     await f.page.route(/\/missions\/panel-page$/, async route => {
       const input = route.request().postDataJSON()
-      if (input.source === "tasks" && input.task.offset === 350) await gate
+      if (input.source === "tasks" && input.task.offset === 350) { entered(); await gate }
       return route.fallback()
     })
     const snapshot = async () => {
       const count = (await rows(f.page)).length
       if (count === 350 && !crossed) {
+        await f.page.evaluate(() => {
+          const scroller = document.querySelector(".mission-tree")!.closest<HTMLElement>(".mission-control")!
+          scroller.scrollTop = scroller.scrollHeight
+        })
+        await started
         crossed = true
         release()
         await f.page.waitForFunction(() => (window as any).missionFixture.snapshot().missions[0].tasks.length === 400)
@@ -591,7 +596,7 @@ test("scrolling loads all 400 tasks without gap controls and preserves independe
     await failure.waitFor({ state: "detached" })
     assert.equal(await notice.count(), 0)
     assert.deepEqual(f.errors, [])
-  } finally { release(); await f.page.context().close() }
+  } finally { entered(); release(); await f.page.context().close() }
 })
 
 test("ordinary windows never claim displayed attention tasks are unread when only ready tasks remain", async () => {
