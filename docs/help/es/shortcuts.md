@@ -35,7 +35,7 @@ Si el guardado falla, conserva disponible el atajo anterior y reintenta tras com
 | Cerrar sesión | `Mod+Shift+W` |
 | Sesión anterior / siguiente | `Mod+Shift+[` / `Mod+Shift+]` |
 | Pestaña de sesión 1–9 | `Mod+Shift+1` a `Mod+Shift+9` |
-| Info de la instancia | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | Buscar en el historial de sesión | `Mod+F` |
 | **Mensaje de usuario anterior** / **Siguiente mensaje de usuario**, también en **Más acciones** del cuadro de entrada | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) o `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Resultado de búsqueda siguiente / anterior (búsqueda enfocada) | `Enter` / `Shift+Enter` |

@@ -12,7 +12,10 @@ const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex")
 const workflow = (name) => yaml.parse(fs.readFileSync(path.join(__dirname, "../workflows", name), "utf8"), { strict: true, uniqueKeys: true })
 const packageLock = JSON.stringify({ packages: {
   "node_modules/electron": { version: "45.2.3" },
-  "node_modules/app-builder-bin": { version: "4.0.0" },
+  "node_modules/app-builder-bin": {
+    version: "4.0.0", resolved: "https://registry.npmjs.org/app-builder-bin/-/app-builder-bin-4.0.0.tgz",
+    integrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+  },
   "node_modules/@tauri-apps/cli": { version: "2.12.4" },
 } })
 const crate = (name, version, checksum, source = "registry+https://github.com/rust-lang/crates.io-index") =>
@@ -37,6 +40,72 @@ test("Electron caches are keyed by the locked Electron and app-builder versions 
   assert.deepEqual(electronTargets(mac), ["darwin-x64", "darwin-arm64"], "the Intel build packages both architectures")
   assert.deepEqual(electronTargets({ platform: "darwin", arch: "arm64" }), ["darwin-arm64"])
   assert.deepEqual(electronTargets(windows), ["win32-x64"])
+})
+
+test("Electron cache resolves the real workspace lock", () => {
+  const realPackageLock = fs.readFileSync(path.join(__dirname, "../../package-lock.json"), "utf8")
+  const { packages } = JSON.parse(realPackageLock)
+  const bin = packages["packages/electron-app/node_modules/app-builder-bin"]
+  assert.ok(bin, "the real workspace entry is the regression oracle")
+  assert.equal(packages["node_modules/app-builder-bin"], undefined)
+  for (const host of [linux, windows, mac]) {
+    assert.deepEqual(spec("electron", host, { packageLock: realPackageLock }), {
+      key: `electron-${host.platform}-${host.arch}-${packages["node_modules/electron"].version}-app-builder-bin-${bin.version}`,
+      paths: spec("electron", host, { packageLock }).paths,
+    })
+  }
+})
+
+test("Electron cache refuses absent or unrelated app-builder-bin owners", () => {
+  for (const unrelated of [null, "packages/other/node_modules/app-builder-bin", "packages/electron-app/other/node_modules/app-builder-bin"]) {
+    const lock = JSON.parse(packageLock)
+    const bin = lock.packages["node_modules/app-builder-bin"]
+    delete lock.packages["node_modules/app-builder-bin"]
+    if (unrelated) lock.packages[unrelated] = bin
+    assert.throws(() => spec("electron", linux, { packageLock: JSON.stringify(lock) }), /app-builder-bin/)
+  }
+})
+
+test("Electron cache validates every present app-builder-bin identity", () => {
+  const valid = JSON.parse(packageLock).packages["node_modules/app-builder-bin"]
+  const malformed = [null, false, 4, "4.0.0", [],
+    ...[undefined, "", 4, "^4.0.0", "4.0", "04.0.0", "4.0.0\n", "4.0.0-01"].map(version => ({ ...valid, version })),
+    ...[undefined, "", 4, "not a URL", "http://example.com/bin.tgz", "https:example.com/bin.tgz", "https://", "https://example.com/a b"].map(resolved => ({ ...valid, resolved })),
+    ...[undefined, "", 4, "sha256-abc", "sha512-abc", `sha512-${"A".repeat(85)}B==`].map(integrity => ({ ...valid, integrity })),
+  ]
+  for (const owner of ["node_modules/app-builder-bin", "packages/electron-app/node_modules/app-builder-bin"]) {
+    for (const entry of malformed) {
+      for (const withValidOther of [false, true]) {
+        const lock = JSON.parse(packageLock)
+        delete lock.packages["node_modules/app-builder-bin"]
+        if (withValidOther) lock.packages[owner === "node_modules/app-builder-bin" ? "packages/electron-app/node_modules/app-builder-bin" : "node_modules/app-builder-bin"] = valid
+        lock.packages[owner] = entry
+        assert.throws(() => spec("electron", linux, { packageLock: JSON.stringify(lock) }), /app-builder-bin/, JSON.stringify({ owner, entry, withValidOther }))
+      }
+    }
+  }
+})
+
+test("Electron cache refuses conflicts in each app-builder-bin identity field", () => {
+  for (const patch of [
+    { version: "4.2.0" },
+    { resolved: "https://example.com/app-builder-bin.tgz" },
+    { integrity: `sha512-${Buffer.alloc(64, 1).toString("base64")}` },
+  ]) {
+    const lock = JSON.parse(packageLock)
+    lock.packages["packages/electron-app/node_modules/app-builder-bin"] = { ...lock.packages["node_modules/app-builder-bin"], ...patch }
+    assert.throws(() => spec("electron", linux, { packageLock: JSON.stringify(lock) }), /app-builder-bin/)
+  }
+})
+
+test("Electron cache accepts identical app-builder-bin copies independently of key order", () => {
+  const lock = JSON.parse(packageLock)
+  lock.packages["packages/electron-app/node_modules/app-builder-bin"] = { ...lock.packages["node_modules/app-builder-bin"] }
+  for (const packages of [lock.packages, Object.fromEntries(Object.entries(lock.packages).reverse())]) {
+    for (const host of [linux, windows, mac]) {
+      assert.deepEqual(spec("electron", host, { packageLock: JSON.stringify({ packages }) }), spec("electron", host, { packageLock }))
+    }
+  }
 })
 
 test("Cargo caches only download directories, keyed by the lockfile whatever its line endings", () => {

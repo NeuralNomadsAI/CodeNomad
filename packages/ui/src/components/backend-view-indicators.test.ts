@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import ts from "typescript"
 import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
-import { createEffect, createMemo, createRoot, createSignal, mapArray, on, onCleanup, untrack } from "solid-js"
+import { createEffect, createMemo, createRoot, createSignal, createUniqueId, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Execute production AST, including the actual finally/cleanup branches. Imports
 // and JSX are outside these indicator tests; request and view owners are explicit.
@@ -64,7 +64,7 @@ function attachment() {
     replace: () => { controller.abort(); controller = new AbortController(); setSignal(controller.signal) },
   }
 }
-const solid = { createEffect, createMemo, createSignal, mapArray, on, onCleanup, untrack }
+const solid = { createEffect, createMemo, createSignal, createUniqueId, mapArray, on, onCleanup, untrack }
 
 for (const outcome of ["success", "failure", "cancellation"] as const) {
   for (const successor of [false, true]) {

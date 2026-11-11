@@ -4,6 +4,8 @@ Shared renderer rules for dialogs, utility windows, icon toggles, surfaces and s
 
 ## Agent conventions
 
+- Read-only diagnostic output uses `components/output-window.tsx`, sharing `DismissibleWindow`'s non-modal focus, Escape, outside-interaction and drag geometry. OpenCode logs and background-shell output supply their own bounded reads/rendering inside its shared header, actions, body and close button. Opening an output window preserves the underlying controls and conversation. Put source-specific retrieval outside this frame; render plain log bytes as text, and ANSI output only through the existing ANSI renderer.
+
 - One-way acknowledgement targets opt into the same sweep listener with `toggleSweepClear(element)` and a shared `toggleSweepGroup`. They always contribute the on state and clear through their own click when crossed. Regular toggles retain their own click and checked/pressed-state handling.
 - Authentication recovery uses `lib/auth-recovery.ts` and `components/auth-recovery-dialog.tsx`: confirm CodeNomad auth status before showing an expired-login form, reconnect in place to preserve drafts, and never replay failed mutations. Its shared window styles live in `styles/components/auth-recovery.css`.
 - Confirmation dialogs (`components/alert-dialog.tsx`) keep Kobalte's initial focus on Cancel, so Enter never confirms by reflex, while the confirm button stays the filled primary action. Alert-dialog buttons show the accent focus ring on any `:focus` (`styles/components/alert-dialog.css`), including the initial focus of a mouse-opened dialog, so the ring marks the button Enter acts on. Prompts focus their input, where Enter submits. Covered by `tests/browser/alert-dialog.test.ts`.

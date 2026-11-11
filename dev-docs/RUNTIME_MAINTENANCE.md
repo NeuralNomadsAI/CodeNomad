@@ -166,6 +166,12 @@
   7-day eviction of unused caches. Jobs restore through
   `.github/actions/download-cache` before the tool that downloads; on a miss the
   tool downloads as usual.
+- The Electron cache reads app-builder-bin from its Electron workspace entry or
+  the hoisted root entry in `package-lock.json`. Each present entry must carry an
+  exact version, an HTTPS resolution and a valid SHA-512 integrity value. Two
+  entries must agree on all three fields; absent, malformed or conflicting
+  identities fail cache resolution. `node --test .github/scripts/download-cache.test.cjs`
+  exercises the repository lock, both placements and identity refusals.
 - Restored files are checked as fresh downloads are: `install-electron` checks
   its zip against the package's `checksums.json`, and the binary builds give
   electron-builder only zips matching it; `.crate` files that do not match
