@@ -524,6 +524,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "codenomad-glib-variant-str-regression"
+version = "0.1.0"
+dependencies = [
+ "glib",
+]
+
+[[package]]
 name = "codenomad-macos-window-fixture"
 version = "0.1.0"
 dependencies = [
@@ -1604,8 +1611,6 @@ dependencies = [
 [[package]]
 name = "glib"
 version = "0.18.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5"
 dependencies = [
  "bitflags 2.11.0",
  "futures-channel",
