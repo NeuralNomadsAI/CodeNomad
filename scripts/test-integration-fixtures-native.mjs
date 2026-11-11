@@ -42,10 +42,15 @@ try {
       assert(read.ok, `${rpcID}.${method} answers within the contract`)
       return read.value
     }
-    let status
-    for (const deadline = Date.now() + 90_000; !status; await delay(250)) {
-      status = await call("neuralnomads.fixture", "status").catch(error => { if (Date.now() > deadline) throw error })
+    const waitForStatus = async directory => {
+      for (const deadline = Date.now() + 90_000; ; await delay(250)) {
+        const status = await call("neuralnomads.fixture", "status", {}, directory).catch(error => {
+          if (error instanceof assert.AssertionError || Date.now() > deadline) throw error
+        })
+        if (status) return status
+      }
     }
+    let status = await waitForStatus(root)
     assert.deepEqual(status.integration, { id: "fixture", version: "0.1.0", family: "native", spec: 0 })
     assert.deepEqual(status.host, { state: "absent", expectedRange: "^0.1.0", action: "install" })
     assert.equal(status.connection.state, "none")
@@ -58,6 +63,8 @@ try {
       const info = await (await fetch(`${connection.endpoint.url}/api/info`, { headers: {
         authorization: `Basic ${Buffer.from(`opencode:${connection.endpoint.auth.password}`).toString("base64")}` } })).json()
       await writeFixtureServiceRegistration(env, { url: connection.endpoint.url, pid: info.pid, version: info.version, password: connection.endpoint.auth.password })
+      const configStatus = await waitForStatus(env.OPENCODE_CONFIG_DIR)
+      assert.deepEqual(configStatus.integration, { id: "fixture", version: "0.1.0", family: "native", spec: 0 })
       const daemon = new URL(connection.endpoint.url)
       // Asynchronous: the fake host answering the plugin's hello lives in this process.
       const runHost = async action => {
