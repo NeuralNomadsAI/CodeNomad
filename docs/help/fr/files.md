@@ -19,6 +19,8 @@ Les dossiers développés le restent lors des changements de mode. Les listes/st
 
 Les actions de ligne incluent **Copier le chemin** et, lorsque le client peut ouvrir les chemins du backend, des actions de gestionnaire de fichiers/éditeur/terminal comme **Ouvrir avec l'application par défaut**, **Afficher dans le dossier**, **Ouvrir dans le gestionnaire de fichiers** et **Ouvrir un terminal ici**. Les actions peuvent passer dans **Plus d'actions pour {name}** si l’espace manque ; le nom du fichier ou dossier remplace `{name}`. Un navigateur distant ne peut pas supposer qu’un chemin serveur est local à l’appareil ; voir [Contrôle à distance](remote-control.md).
 
+Les fichiers `.mmd` du Workspace s’ouvrent en diagramme. **Afficher la source** permet de modifier le texte et **Afficher le diagramme** prévisualise le brouillon ; l’enregistrement reste explicite. Les mêmes [formats et limites Mermaid](conversations.md#mermaid) s’appliquent.
+
 ## Modifier le source et enregistrer sans risque {#edit-save}
 
 1. Ouvrez un fichier texte du Workspace avec son œil.

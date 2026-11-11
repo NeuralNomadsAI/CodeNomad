@@ -6,6 +6,10 @@ Mesajlar Markdown, kod, farklar ve desteklenen araç sonucu görüntülerini iş
 
 Akıl yürütme ve araç başlıkları her adımın ne kadar sürdüğünü gösterir; süre, adım çalışırken canlı olarak sayılır ve bir saniyenin altındaki süreler gösterilmez. **Mesaj içeriği** içinde **Tokenlar** gösterildiğinde (**Her şey** hazır ayarı bunu gösterir), her ajan mesajı son metninden sonra tek bir token ve maliyet satırıyla biter. Bu satır, yüklenmiş konuşma dökümü içinde mesajı ve **Bu yanıttan araçları ve akıl yürütmeyi kaldır** eyleminin kapsadığı araçları ve akıl yürütmeyi içeren mesajları toplar; akıl yürütme ve önbellek sayıları için satırı genişletin. Yalnızca araç çalıştıran adımların kendi satırı yoktur.
 
+## Mermaid diyagramları {#mermaid}
+
+`mermaid` ve `mmd` kod blokları akış tamamlandıktan sonra Mermaid Tiny ile çizilir. Kod başlığında **Kaynağı göster** / **Diyagramı göster** kullanın; Kopyala kaynak metni korur. Tiny; zihin haritaları, mimari diyagramlar ve KaTeX içermez. Geçersiz, desteklenmeyen veya çok büyük diyagramların kaynağı hata ile gösterilir. Çizim yereldir, ağ erişimi yoktur; sınır 50.000 karakter ve 500 kenardır.
+
 ## Konuşmaları bulma ve gezinme {#navigate-conversations}
 
 1. **Session'lar** altında satır seçin veya üst konuşma başlatmak için **Yeni session** eylemini kullanın.

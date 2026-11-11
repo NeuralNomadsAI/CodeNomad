@@ -19,6 +19,8 @@ Genişletilmiş klasörler mod değişikliklerinden etkilenmez. Listeleme/durum/
 
 Satır eylemleri arasında **Yolu kopyala** ve istemcinin arka uç yollarının açılmasını desteklediği durumlarda **Varsayılan uygulamayla aç**, **Klasörde göster**, **Dosya yöneticisinde aç** ve **Burada terminal aç** gibi dosya yöneticisi/düzenleyici/terminal eylemleri bulunur. Alan sınırlı olduğunda eylemler **{name} için daha fazla eylem** öğesine taşınabilir; dosya veya klasör adı `{name}`'nin yerine geçer. Uzak bir tarayıcı, sunucu yolunun yerel aygıt yolu olduğunu varsayamaz; bkz. [Uzaktan Kontrol](remote-control.md).
 
+Workspace `.mmd` dosyaları diyagram olarak açılır. Düzenlemek için **Kaynağı göster**, geçerli taslağı önizlemek için **Diyagramı göster** kullanın; Kaydet açık bir işlem olarak kalır. Aynı [Mermaid biçimleri ve sınırları](conversations.md#mermaid) geçerlidir.
+
 ## Kaynağı düzenleyin ve güvenle kaydedin {#edit-save}
 
 1. Çalışma Alanındaki bir metin dosyasını göz simgesiyle açın.

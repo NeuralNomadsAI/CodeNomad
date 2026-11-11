@@ -6,6 +6,10 @@ Messages render Markdown, code, diffs and supported tool-result images. Text cop
 
 Reasoning and tool headers show how long each step took, counting live while it runs; durations under one second are not shown. When **Tokens** is shown in **Message content** (the **Everything** preset shows it), each agent message ends with one token and cost line after its final text. That line adds up the message and the messages holding the tools and reasoning that its **Remove tools and reasoning from this response** action covers, within the loaded transcript; expand it for reasoning and cache counts. Steps that only ran tools have no line of their own.
 
+## Mermaid diagrams {#mermaid}
+
+Fenced `mermaid` and `mmd` blocks render with Mermaid Tiny after streaming finishes. Use **Show source** / **Show diagram** in the code header; Copy keeps the source text. Tiny excludes mindmaps, architecture diagrams and KaTeX. Invalid, unsupported or oversized diagrams keep their source with an error. Rendering is local and network-disabled, with a 50,000-character and 500-edge limit.
+
 ## Find and navigate conversations {#navigate-conversations}
 
 1. Select a row under **Sessions**, or use **New session** to start a parent conversation.

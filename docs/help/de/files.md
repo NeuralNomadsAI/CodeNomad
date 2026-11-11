@@ -19,6 +19,8 @@ Aufgeklappte Ordner bleiben bei Moduswechseln erhalten. Listen/Status/Verlauf ve
 
 Zeilenaktionen umfassen **Pfad kopieren** und, soweit der Client Backend-Pfade öffnen kann, Dateimanager-/Editor-/Terminal-Aktionen wie **Mit Standardanwendung öffnen**, **Im Ordner anzeigen**, **Im Dateimanager öffnen** und **Terminal hier öffnen**. Bei wenig Platz können Aktionen unter **Weitere Aktionen für {name}** erscheinen; der Datei- oder Ordnername ersetzt `{name}`. Ein Remote-Browser darf einen Serverpfad nicht als lokalen Gerätepfad voraussetzen; siehe [Fernsteuerung](remote-control.md).
 
+Workspace-Dateien mit `.mmd` öffnen sich als Diagramm. Mit **Quelltext anzeigen** bearbeiten Sie den Text, mit **Diagramm anzeigen** sehen Sie den aktuellen Entwurf; Speichern bleibt ausdrücklich erforderlich. Es gelten dieselben [Mermaid-Formate und Grenzen](conversations.md#mermaid).
+
 ## Quelltext bearbeiten und sicher speichern {#edit-save}
 
 1. Öffnen Sie eine Textdatei im Arbeitsbereich mit ihrer Augenaktion.
