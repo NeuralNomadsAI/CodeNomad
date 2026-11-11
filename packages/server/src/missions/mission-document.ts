@@ -6,6 +6,8 @@ import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { missionCalendarOwnerSchema } from "./mission-calendar-owner-state"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
 import { missionCreationDefaultsSchema } from "./creation-defaults"
+import { missionGithubKinds } from "./mission-github-condition"
+import { coordinatorBaselineSchema } from "./mission-coordinator-baseline"
 import {
   documentCounter, documentID, documentTimestamp, nativeDocumentID, missionConfigurationSchema,
   missionLaunchLimit, missionLaunchModel, missionSlotEndsAt, requiresMissionCalendar, MISSION_DOCUMENT_MAX_BYTES,
@@ -44,7 +46,7 @@ const oneTime = z.object({ creationRequestID: requestID, creationDigest: digest,
     messageID: nativeDocumentID, requestedAt: documentTimestamp, admittedAt: documentTimestamp.nullable(),
     acknowledgement: firstPlayAcknowledgement.nullable(), inputText: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT).optional() }).strict().nullable(),
 }).strict()
-const checkpoint = z.object({ key: digest, kind: z.enum(["schedule-success", "mission-completed", "branch-commits", "conversation-message", "files-changed"]),
+const checkpoint = z.object({ key: digest, kind: z.enum(["schedule-success", "mission-completed", "branch-commits", "conversation-message", "files-changed", ...missionGithubKinds]),
   placementDigest: digest, value: z.unknown().transform((value, context) => {
     try { return JSON.parse(canonicalAuthority(value, 32 * 1024)) as import("./model").MissionJsonValue }
     catch { context.addIssue({ code: "custom", message: "Invalid source checkpoint" }); return z.NEVER }
@@ -79,6 +81,8 @@ const origin = z.union([
 const deferred = z.object({ afterPassageID: documentID, dueAt: documentTimestamp,
   scheduleIDs: z.array(nativeDocumentID).min(1).max(8).refine(ids => new Set(ids).size === ids.length) }).strict()
 const pending = z.object({ id: documentID, missionID: documentID, coordinatorSessionID: nativeDocumentID, messageID: nativeDocumentID,
+  coordinatorReused: z.literal(true).optional(),
+  coordinatorBaseline: coordinatorBaselineSchema.optional(),
   configurationGeneration: generation, timeGeneration: generation, createdAt: documentTimestamp, dueAt: documentTimestamp,
   origin, configuration: missionConfigurationSchema, checkpoints, admittedAt: documentTimestamp.nullable(),
   manualAllowed: z.boolean().optional().default(false),
@@ -88,7 +92,8 @@ const pending = z.object({ id: documentID, missionID: documentID, coordinatorSes
   launchedBy: z.array(nativeDocumentID).min(1).max(8).refine(ids => new Set(ids).size === ids.length).optional(),
 }).strict()
 export type MissionDocumentPending = z.infer<typeof pending>
-const receipt = pending.omit({ configuration: true, checkpoints: true }).extend({ configurationDigest: digest,
+const receipt = pending.omit({ configuration: true, checkpoints: true, coordinatorBaseline: true }).extend({ configurationDigest: digest,
+  settlementProof: z.object({ revision: documentCounter, familyDigest: digest }).strict().optional(),
   settledAt: documentTimestamp, outcome: z.enum(["completed", "failed", "ended-without-report"]), reason: z.literal("not-started").optional(),
 }).strict()
 const document = z.object({ version: z.literal(1), id: documentID, projectID: nativeDocumentID,
@@ -118,6 +123,8 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
     retiredCalendars: z.array(calendar).max(9) }).strict().nullable(),
   deletion: missionDocumentDeletionIdentitySchema.extend({ requestedAt: documentTimestamp }).strict().nullable(),
   checkpoints, pending: pending.nullable(), history: z.array(receipt).max(MISSION_DOCUMENT_HISTORY_LIMIT),
+  coordinatorReleases: z.array(z.object({ id: documentID, missionID: documentID, coordinatorSessionID: nativeDocumentID }).strict())
+    .refine(items => new Set(items.map(item => item.id)).size === items.length).default([]),
 }).strict()
 export type MissionDocument = z.infer<typeof document>
 export type MissionSourceCheckpoint = z.infer<typeof checkpoint>
@@ -190,7 +197,7 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
       || passage.createdAt < doc.createdAt || passage.dueAt > passage.createdAt
       || passage.id !== missionDocumentPassageID(doc, passage.configurationGeneration, passage.origin)
       || passage.missionID !== `msn_${stableToken(`${doc.projectID}\0${passage.id}`, 24)}`
-      || passage.coordinatorSessionID !== missionCoordinatorSessionID(passage.missionID, passage.createdAt)
+      || !passage.coordinatorReused && passage.coordinatorSessionID !== missionCoordinatorSessionID(passage.missionID, passage.createdAt)
       || passage.messageID !== `msg_${stableToken(`${passage.id}\0start`, 40)}`
       || passage.dueAt !== (passage.origin.kind === "wake" ? Math.max(...passage.origin.wakes.map(wake => wake.dueAt))
         : passage.origin.kind === "deferred" ? passage.origin.dueAt : passage.createdAt)
@@ -199,6 +206,7 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
       || passage.launchedBy && (passage.origin.kind !== "wake" || !("when" in doc.configuration.launch)
         || passage.launchedBy.some(id => passage.origin.kind !== "wake" || !passage.origin.wakes.some(wake => wake.scheduleID === id)))) fail()
     if ("settledAt" in passage) {
+      if (passage.coordinatorReused && passage.admittedAt !== null && !passage.settlementProof) fail()
       if (passage.settledAt < Math.max(previousSettledAt, passage.createdAt, passage.admittedAt ?? 0)
         || (passage.reason === "not-started") !== (passage.admittedAt === null)
         || passage.reason === "not-started" && passage.outcome !== "failed") fail()
@@ -207,6 +215,10 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   }
   if (doc.pending) {
     const active = doc.pending
+    if (active.coordinatorBaseline && (!active.coordinatorReused || !active.coordinatorBaseline.some(row => row[0] === active.coordinatorSessionID))
+      || active.coordinatorReused && (active.admissionAttempted || active.admittedAt !== null) && !active.coordinatorBaseline) fail()
+    if (active.coordinatorReused !== (active.configuration.coordinatorSessionID ? true : undefined)
+      || active.configuration.coordinatorSessionID && active.coordinatorSessionID !== active.configuration.coordinatorSessionID) fail()
     if (active.createdAt < previousSettledAt || active.configurationGeneration !== doc.configurationGeneration
       || active.timeGeneration !== doc.timeGeneration || doc.firstPlayedAt === null
       || active.manualAllowed && active.origin.kind !== "manual") fail()

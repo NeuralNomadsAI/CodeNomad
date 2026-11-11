@@ -52,6 +52,8 @@ Si l’accusé de création est perdu, lire le reçu laisse le démarrage manuel
 
 ### Critères {#native-scheduling}
 
+Les informations de profondeur des sous-agents indiquent leur source effective sous **Fichier de configuration OpenCode :**.
+
 Le premier critère est **Une fois, maintenant**. **Ajouter un critère** en ajoute un autre ; choisissez son type, retirez-le avec × ou réordonnez les cartes par leur poignée. Alt+Haut/Bas déplace la poignée ayant le focus.
 
 Les horaires proposent Une fois, maintenant, Toutes les N heures, Tous les jours, Jours de semaine choisis, Jour de chaque mois et Avancé (cron). Ils suivent le fuseau enregistré. **Fuseau enregistré (IANA)** apparaît lorsqu’il diffère de celui du système. Les mois sans le jour choisi sont ignorés.
@@ -59,6 +61,10 @@ Les horaires proposent Une fois, maintenant, Toutes les N heures, Tous les jours
 **Une fois, maintenant** prend son instant au démarrage, pas à l’ouverture du formulaire. Il offre une seule occasion, qu’une condition peut consommer sans lancement. Choisissez une récurrence pour des occasions ultérieures. La programmation fonctionne tant que son service OpenCode et son hôte d’exécution sont disponibles.
 
 ### Événements et combinaisons {#scheduling-conditions}
+
+Les événements GitHub couvrent les notifications du compte connecté, les nouvelles alertes Dependabot, les nouvelles pull requests et les nouvelles issues sur **github.com**. Saisissez le **Dépôt GitHub** sous la forme `owner/repository` ; les notifications peuvent laisser ce champ vide pour tous les dépôts. Pull requests et issues acceptent un **Auteur (facultatif)**, y compris `dependabot[bot]`. Les notifications incluent les nouvelles activités de fils existants et conservent leur état de lecture ; les alertes incluent celles corrigées ou ignorées entre deux contrôles.
+
+Ces contrôles utilisent GitHub CLI (`gh`) connecté sur l’hôte d’exécution OpenCode, même avec CodeNomad fermé. Le compte doit pouvoir accéder au dépôt, aux [notifications](https://docs.github.com/en/rest/activity/notifications) et aux [alertes Dependabot en lecture](https://docs.github.com/en/rest/dependabot/alerts), selon les événements choisis. Le premier démarrage fixe la référence ; les éléments antérieurs restent hors de la fenêtre de déclenchement. Chaque contrôle lit au plus quatre pages de 50 éléments en dix secondes ; accès manquant, limite API ou fenêtre trop volumineuse rendent la source indisponible. Les résumés observés sont transmis au passage.
 
 Un événement peut suivre la réussite d’un autre programme, une Mission ponctuelle terminée, des commits sur une branche locale, de nouveaux messages ou des changements de fichiers explicites. Choisissez la source dans ce critère. Sans recherche, le sélecteur charge la suite au défilement ; en cas d’échec, **Réessayer** apparaît au même endroit. La recherche ignore les majuscules et minuscules, y compris pour les lettres accentuées. Pendant une recherche, utilisez **Charger d’autres sources** dans le sélecteur pour poursuivre, même si la page contient déjà des résultats. La conversation choisie pour les nouveaux messages fournit aussi du contexte au passage. Changer le type de critère efface sa source. La modification conserve le contexte de conversation déjà enregistré.
 
@@ -69,6 +75,8 @@ Un événement peut suivre la réussite d’un autre programme, une Mission ponc
 Les événements en tête peuvent lancer un passage à chaque nouvelle occurrence ; ils sont vérifiés toutes les 15 minutes. Le premier démarrage fixe la référence des sources. Un passage réussi la fait avancer ; un échec la conserve. Une source absente ou illisible bloque avec une explication. Les passages ne se chevauchent pas.
 
 ### Compteurs et historique {#scheduling-limits}
+
+**Session du coordinateur** utilise par défaut une **Nouvelle session** à chaque passage. Avec un horaire ou événement, **Session existante** permet de choisir une conversation racine du projet et de la même Location d’exécution. Chaque passage y continue avec l’agent et le modèle configurés, en conservant le transcript, le titre et les permissions. Les contrôles de la mission affectent aussi les travaux qui s’y trouvent. Chaque passage garde son résultat et son journal dans les **Exécutions passées** ; une conversation choisie disparue demande votre intervention.
 
 Sélectionnez un programme pour lire son état, le prochain réveil ou contrôle, les nombres de passages lancés et réussis et les **Exécutions passées**. L’historique conserve 30 résultats ; les compteurs cumulés restent. **Lancer maintenant** compte comme passage lancé une fois admis.
 

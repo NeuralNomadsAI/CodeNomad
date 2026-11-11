@@ -48,11 +48,17 @@ Si se pierde la confirmación, leer el recibo deja el inicio manual. Conserva la
 
 ### Criterios {#native-scheduling}
 
+La información de profundidad de subagentes identifica su origen efectivo en **Archivo de configuración de OpenCode:**.
+
 El primer criterio es **Una vez, ahora**. **Añadir un criterio** agrega otro. Elige su tipo, elimina con × o reordena por el asa; Alt+Arriba/Abajo mueve el asa enfocada.
 
 Hay una vez ahora, cada N horas, diario, días de semana, día del mes y cron. Se usa la zona guardada; su campo aparece si difiere de la del sistema. Los meses sin el día elegido se omiten. Una vez ahora fija su instante al iniciar y ofrece una sola oportunidad, que una condición puede consumir sin lanzar. Se necesitan OpenCode y el equipo de ejecución disponibles.
 
 ### Eventos y combinaciones {#scheduling-conditions}
+
+Los eventos de GitHub cubren notificaciones de la cuenta conectada, nuevas alertas de Dependabot, pull requests e issues en **github.com**. Introduce el **Repositorio de GitHub** como `owner/repository`; en notificaciones puedes dejarlo vacío para todos los repositorios. Pull requests e issues admiten un **Autor (opcional)**, incluidos bots como `dependabot[bot]`. Las notificaciones incluyen nueva actividad de hilos existentes y conservan su estado de lectura; las alertas incluyen las corregidas o descartadas entre comprobaciones.
+
+Se usa GitHub CLI (`gh`) conectado en el host de ejecución de OpenCode, incluso con CodeNomad cerrado. La cuenta necesita acceso al repositorio, a las [notificaciones](https://docs.github.com/en/rest/activity/notifications) y a la [lectura de alertas Dependabot](https://docs.github.com/en/rest/dependabot/alerts), según los eventos elegidos. El primer inicio fija la referencia; los elementos anteriores quedan fuera de la ventana. Se leen como máximo cuatro páginas de 50 elementos en diez segundos. La falta de permisos, los límites de API y una ventana demasiado grande dejan la fuente no disponible. Los resúmenes observados se incluyen en la entrada del pase.
 
 Los eventos siguen el éxito de otra programación o Misión, commits locales, mensajes nuevos o archivos explícitos del proyecto. Elige la fuente dentro del criterio. Sin búsqueda, el selector carga más fuentes al desplazarte; si la lectura falla, ofrece **Intentar de nuevo** allí. La búsqueda ignora mayúsculas y minúsculas, también en letras acentuadas. Durante una búsqueda, usa **Cargar más fuentes** en el selector para continuar, aunque la página ya tenga coincidencias. La conversación elegida para mensajes nuevos también aporta contexto a la ejecución. Cambiar el tipo de criterio borra su fuente. La edición conserva el contexto de conversación guardado.
 
@@ -61,6 +67,8 @@ Los eventos siguen el éxito de otra programación o Misión, commits locales, m
 Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la referencia; el éxito la avanza y el fallo la conserva. Fuentes ilegibles bloquean con explicación. Las pasadas no se solapan.
 
 ### Contadores e historial {#scheduling-limits}
+
+**Sesión del coordinador** usa por defecto una **Nueva sesión** por pase. Con un horario o evento, **Sesión existente** permite elegir una conversación raíz del proyecto y de la misma Location de ejecución. Cada pase continúa allí con el agente y modelo configurados, conservando historial, título y permisos. Los controles de la misión también afectan al trabajo existente allí. Cada pase mantiene su propio resultado y diario en el historial; una conversación elegida que desaparezca requiere tu intervención.
 
 La programación seleccionada muestra estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 

@@ -240,7 +240,8 @@ export const missionDocumentChanges = {
     const proof = missionCheckpointsSchema.parse(checkpoints)
     baseline(doc.configuration, proof)
     const id = missionDocumentPassageID(doc, doc.configurationGeneration, origin), missionID = `msn_${stableToken(`${doc.projectID}\0${id}`, 24)}`
-    doc.pending = { id, missionID, coordinatorSessionID: missionCoordinatorSessionID(missionID, now),
+    doc.pending = { id, missionID, coordinatorSessionID: doc.configuration.coordinatorSessionID ?? missionCoordinatorSessionID(missionID, now),
+      ...(doc.configuration.coordinatorSessionID ? { coordinatorReused: true as const } : {}),
       messageID: `msg_${stableToken(`${id}\0start`, 40)}`, origin, configurationGeneration: doc.configurationGeneration,
       timeGeneration: doc.timeGeneration, createdAt: now, dueAt, configuration: structuredClone(doc.configuration), checkpoints: proof, admittedAt: null, manualAllowed: false, admissionAttempted: false,
       ...(origin.kind === "wake" && launchedBy?.length ? { launchedBy: [...launchedBy].sort() } : {}) }
@@ -258,12 +259,15 @@ export const missionDocumentChanges = {
     if (!doc.pending || doc.pending.missionID !== missionID || doc.pending.admittedAt === null) throw new Error("Mission passage mismatch")
     doc.everCreatedTask = true
   },
-  settle(doc: MissionDocument, passageID: string, outcome: "completed" | "failed" | "ended-without-report", now: number, notStarted = false) {
+  settle(doc: MissionDocument, passageID: string, outcome: "completed" | "failed" | "ended-without-report", now: number, notStarted = false,
+    settlementProof?: { revision: number; familyDigest: string }) {
     const pending = exactPending(doc, passageID)
     if (notStarted !== (pending.admittedAt === null) || notStarted && outcome !== "failed") throw new Error("Mission settlement lacks admission proof")
-    const { configuration, checkpoints, ...reference } = pending
+    const { configuration, checkpoints, coordinatorBaseline: _baseline, ...reference } = pending
+    if (pending.coordinatorReused && !doc.coordinatorReleases.some(item => item.id === pending.id))
+      doc.coordinatorReleases.push({ id: pending.id, missionID: pending.missionID, coordinatorSessionID: pending.coordinatorSessionID })
     doc.history.push({ ...reference, configurationDigest: stableToken(canonicalAuthority(configuration), 64),
-      settledAt: now, outcome, ...(notStarted ? { reason: "not-started" as const } : {}) })
+      settledAt: now, outcome, ...(notStarted ? { reason: "not-started" as const } : {}), ...(settlementProof ? { settlementProof } : {}) })
     doc.history = doc.history.slice(-30)
     doc.settledCount++
     if (outcome === "completed") {

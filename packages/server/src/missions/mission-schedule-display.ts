@@ -25,7 +25,7 @@ export function unobservedMissionSchedule(doc: MissionDocument): MissionSchedule
 export function missionScheduleAvailableActions(doc: MissionDocument) {
   const actions: ("play" | "pause" | "resume" | "stop" | "check" | "run-now" | "configure" | "delete")[] = []
   if (doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) return actions
-  if (doc.calendarOwner || doc.pending || doc.synchronization) actions.push("check")
+  if (doc.calendarOwner || doc.pending || doc.synchronization || doc.coordinatorReleases.length) actions.push("check")
   if (doc.deletion) return actions
   actions.push("delete")
   if (doc.state !== "stopped") actions.push("stop")

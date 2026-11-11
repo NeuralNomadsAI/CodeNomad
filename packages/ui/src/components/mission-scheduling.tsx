@@ -3,6 +3,7 @@ import { DragDropProvider, DragDropSensors, SortableProvider, closestCenter, typ
 import { Plus } from "lucide-solid"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
+import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { MissionSchedulingCriterion, type MissionSchedulingSourceLists, type MissionSourcePage, type SelectedSource } from "./mission-scheduling-sources"
@@ -34,7 +35,7 @@ export function MissionScheduling(props: {
       const policy = missionSchedulingPolicy(props.draft, props.directory), calendar = requiresMissionCalendar(policy)
       if (props.capability === "loading" && calendar) return {}
       if (unavailable() && calendar) return { error: "capability" }
-      const missing = criteria().findIndex(row => isMissionEventKind(row.kind) && row.kind !== "files-changed"
+      const missing = criteria().findIndex(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && !isMissionGithubKind(row.kind)
         && !props.sources[row.kind]?.some(item => item.id === row.source))
       if (missing >= 0) return props.paging?.(criteria()[missing].kind as SelectedSource, criteria()[missing].source)?.loading() ? {} : { error: "source", index: missing }
       return { policy }

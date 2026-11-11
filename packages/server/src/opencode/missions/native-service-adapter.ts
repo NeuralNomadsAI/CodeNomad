@@ -11,6 +11,7 @@ import { canonicalAuthority, rejectAuthority } from "../../missions/authority-pr
 import { matchesExecution } from "../../missions/execution"
 import { RECURRENCE_SOURCE_REFERENCE_RESERVE } from "../../missions/recurrence-read-budget"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
+import { acquireNativeSourceFence } from "./native-source-fence"
 import type { AutonomousMissionCommand } from "./autonomous-contract"
 
 // Same existing private graph lookup as session-pruning/pending-snapshot.ts.
@@ -81,6 +82,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
     }
     return true as const
   }
+  const mutationFences = beforeMutation ? yield* acquireNativeSourceFence(assertCurrent) : undefined
   const run = <A>(operation: () => NativeEffect, decode: Schema.Codec<A, unknown>,
     options: { signal?: AbortSignal } | undefined, current: () => true, expected?: NativeRootPlacement, mutation = false) => {
     const pinned = expected && structuredClone(expected)
@@ -90,6 +92,8 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       const session = pinned ? yield* Schema.decodeUnknownEffect(Schema.toType(Session.Info))(yield* service.get(pinned.id)) : undefined
       const prepared = yield* Effect.sync(operation)
       if (!Effect.isEffect(prepared)) rejectAuthority("effect-unavailable")
+      const fence = pinned && mutation ? mutationFences?.() : undefined
+      if (pinned) fence?.selectedSession(pinned)
       if (mutation && beforeMutation) {
         const qualification = beforeMutation()
         if (!Effect.isEffect(qualification)) rejectAuthority("effect-unavailable")
@@ -100,6 +104,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       // before the native Effect, with no intervening asynchronous codec read.
       const result = yield* Effect.suspend(() => {
         options?.signal?.throwIfAborted(); assertCurrent()
+        fence?.current()
         if (pinned && (!session || session.id !== pinned.id || session.parentID !== pinned.parentID
           || session.projectID !== pinned.projectID || session.location.directory !== pinned.location.directory
           || session.location.workspaceID !== pinned.location.workspaceID

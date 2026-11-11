@@ -228,6 +228,54 @@ test("source selection belongs to its criterion, loads in its popup and leaves n
   } finally { await page.close() }
 })
 
+test("an explicitly selected existing root survives remount, refresh and save alongside GitHub filters", async () => {
+  const page = await browser.newPage({ viewport: { width: 620, height: 1100 } }), f = await setup(page), reads: URL[] = []
+  const root = { id: "ses_existing", title: "Existing work", projectID: "project", location: { directory: "/fixture" } }
+  await page.route("**/workspaces/fixture/instance/api/session**", route => {
+    const request = new URL(route.request().url()); reads.push(request)
+    return route.fulfill({ json: request.pathname.endsWith("/ses_existing") ? { data: root } : { data: [
+      { ...root, id: "ses_child", title: "Child", parentID: "ses_parent" },
+      { ...root, id: "ses_foreign", title: "Foreign", location: { directory: "/other" } }, root,
+    ], cursor: {} } })
+  })
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Handle GitHub changes here")
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("github-pull-request")
+    await form(page).getByLabel("Criterion 1 source", { exact: true }).fill("Acme/Repo")
+    await form(page).getByLabel("Author (optional)", { exact: true }).fill("@alice")
+    await form(page).getByLabel("Coordinator session", { exact: true }).selectOption("existing")
+    const picker = form(page).getByRole("button", { name: "Existing conversation", exact: true })
+    await picker.click()
+    await page.getByRole("option", { name: "Existing work", exact: true }).waitFor()
+    assert.equal(await page.getByRole("option", { name: "Child", exact: true }).count(), 0)
+    assert.equal(await page.getByRole("option", { name: "Foreign", exact: true }).count(), 0)
+    await page.getByRole("option", { name: "Existing work", exact: true }).click()
+    await ready(page)
+    assert.ok(reads.some(request => request.searchParams.get("parentID") === "null"), "root-only native discovery")
+    await page.evaluate(() => window.schedulingEditor.mount(false))
+    await form(page).waitFor({ state: "detached" })
+    await page.evaluate(() => window.schedulingEditor.mount(true))
+    await ready(page)
+    assert.equal(await picker.getAttribute("data-source-id"), root.id)
+    assert.equal(await form(page).getByLabel("Author (optional)", { exact: true }).inputValue(), "@alice")
+    await page.evaluate(() => window.schedulingEditor.activate(false))
+    await page.evaluate(() => window.schedulingEditor.activate(true))
+    await ready(page)
+    assert.equal(await picker.getAttribute("data-source-id"), root.id)
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.equal(f.posts.length, 1)
+    assert.equal(f.posts[0].configuration.coordinatorSessionID, root.id)
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "github-pull-request", repository: "acme/repo", author: "alice" }] })
+    await page.evaluate(() => window.schedulingEditor.edit())
+    await ready(page)
+    assert.equal(await picker.getAttribute("data-source-id"), root.id)
+    assert.equal(await form(page).getByLabel("Author (optional)", { exact: true }).inputValue(), "alice")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
 test("conversation continuation and search failures retry their exact read inside the owning popup", async () => {
   const page = await browser.newPage(), f = await setup(page), reads: URL[] = []
   let pageFailed = true, searchFailed = true

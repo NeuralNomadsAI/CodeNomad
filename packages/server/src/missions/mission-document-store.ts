@@ -49,7 +49,7 @@ export class NativeMissionDocumentStore {
         revision: 0, configurationGeneration: 1, timeGeneration: 1, createdAt: now,
         configuration: missionConfigurationSchema.parse(configuration), state: "paused", firstPlayedAt: null,
         oneShotAt: null, slotEndsAt: null, launchedCount: 0, settledCount: 0, successfulCount: 0, checks: { count: 0, since: now }, lastSuccessfulPassageID: null, everCreatedTask: false, blocked: null,
-        calendars: [], synchronization: null, deletion: null, checkpoints: [], pending: null, history: [], oneTime, scheduleActivation: null, calendarOwner: null, fanIn: null,
+        calendars: [], synchronization: null, deletion: null, checkpoints: [], pending: null, history: [], coordinatorReleases: [], oneTime, scheduleActivation: null, calendarOwner: null, fanIn: null,
         ...(creation === undefined ? {} : { creation }) }
       return this.publish(doc, null, current)
     })
@@ -118,7 +118,9 @@ export class NativeMissionDocumentStore {
          || doc.successfulCount === previous.successfulCount && doc.lastSuccessfulPassageID !== previous.lastSuccessfulPassageID
          || previous.checks && (!doc.checks || doc.checks.since !== previous.checks.since || doc.checks.count < previous.checks.count)
          || previous.pending?.admissionAttempted && doc.pending?.id === previous.pending.id && doc.pending.admissionAttempted !== true
-         || previous.pending && doc.pending?.id === previous.pending.id && doc.pending.manualExpectedRevision !== previous.pending.manualExpectedRevision
+          || previous.pending && doc.pending?.id === previous.pending.id && doc.pending.manualExpectedRevision !== previous.pending.manualExpectedRevision
+          || previous.pending?.coordinatorBaseline && doc.pending?.id === previous.pending.id
+            && canonicalAuthority(previous.pending.coordinatorBaseline, MISSION_DOCUMENT_MAX_BYTES) !== canonicalAuthority(doc.pending.coordinatorBaseline ?? null, MISSION_DOCUMENT_MAX_BYTES)
         || doc.configurationGeneration < previous.configurationGeneration || doc.timeGeneration < previous.timeGeneration
         || previous.everCreatedTask && !doc.everCreatedTask || previous.deletion && canonicalAuthority(doc.deletion) !== canonicalAuthority(previous.deletion)
          || previous.oneTime && (!doc.oneTime || doc.oneTime.creationRequestID !== previous.oneTime.creationRequestID
@@ -157,7 +159,7 @@ export class NativeMissionDocumentStore {
       if (existing && "deletedAt" in existing && existing.revision === expectedRevision + 1) return existing
       const doc = await this.required(id)
       if (doc.revision !== expectedRevision || !doc.deletion || doc.state !== "stopped"
-        || doc.pending || doc.synchronization || doc.calendars.length || doc.blocked === "unknown" || doc.preparation?.pending || doc.calendarOwner?.operation.textEdit
+         || doc.pending || doc.synchronization || doc.calendars.length || doc.coordinatorReleases.length || doc.blocked === "unknown" || doc.preparation?.pending || doc.calendarOwner?.operation.textEdit
         || doc.dormantJournal && !doc.dormantJournal.deleted
         || doc.oneTime?.firstPlay && doc.oneTime.firstPlay.admittedAt === null
         || doc.scheduleActivation?.targets.some(target => target.attempted && !target.acknowledged)) throw new Error("Mission deletion reconciliation pending")

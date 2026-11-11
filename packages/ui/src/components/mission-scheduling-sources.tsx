@@ -4,10 +4,11 @@ import { GripVertical, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { MissionSourceSelect } from "./mission-source-select"
+import { isMissionGithubKind, type MissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 import { isMissionEventKind, missionEventKinds, missionHourSteps, missionScheduleShortcuts, type MissionConditionKind,
   type MissionCriterionDraft, type MissionCriterionKind } from "./mission-scheduling-data"
 
-export type SelectedSource = Exclude<MissionConditionKind, "files-changed">
+export type SelectedSource = Exclude<MissionConditionKind, "files-changed" | MissionGithubKind> | "coordinator-session"
 export type MissionSourcePage = { next(): string | undefined; loading(): boolean; failed(): boolean; lookupFailed?(): boolean
   more(): void; retry(): void; search?(query: string): void }
 /** Lists come from the owning authorized project. Absence is an unavailable read. */
@@ -43,7 +44,7 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
           event.preventDefault(); props.onMove(event.key === "ArrowUp" ? -1 : 1)
         }}><GripVertical class="h-4 w-4" aria-hidden="true" /></button>
       <select aria-label={label("missions.scheduling.criterionKind")} value={kind()}
-        onChange={event => patch({ kind: event.currentTarget.value as MissionCriterionKind, source: "" })}>
+        onChange={event => patch({ kind: event.currentTarget.value as MissionCriterionKind, source: "", author: undefined })}>
         <optgroup label={t("missions.scheduling.group.schedule")}>
           <For each={missionScheduleShortcuts}>{value => <option value={value}>{t(value === "now" ? "missions.scheduling.source.now" : `missions.scheduling.shortcut.${value}`)}</option>}</For>
         </optgroup>
@@ -81,7 +82,17 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
     <Show when={kind() === "files-changed"}><label><span>{t("missions.scheduling.files")}<SettingsInfoTip text={t("missions.scheduling.filesHint")} /></span>
       <textarea aria-label={label("missions.scheduling.criterionFiles")} rows={3} {...invalid()} value={props.row.files} maxLength={64 * 1024}
         onInput={event => patch({ files: event.currentTarget.value })} /></label></Show>
-    <Show when={isMissionEventKind(kind()) && kind() !== "files-changed" ? kind() as SelectedSource : undefined} keyed>{sourceKind =>
+    <Show when={isMissionGithubKind(kind())}>
+      <label><span>{t(kind() === "github-notification" ? "missions.scheduling.github.repositoryOptional" : "missions.scheduling.github.repository")}</span>
+        <input aria-label={label("missions.scheduling.criterionSource")} value={props.row.source} maxLength={140} dir="ltr" {...invalid()}
+          placeholder={t("missions.scheduling.github.repositoryExample")} onInput={event => patch({ source: event.currentTarget.value })} /></label>
+      <Show when={kind() === "github-pull-request" || kind() === "github-issue"}>
+        <label><span>{t("missions.scheduling.github.author")}</span>
+          <input aria-label={label("missions.scheduling.github.author")} value={props.row.author ?? ""} maxLength={100} dir="ltr" {...invalid()}
+            onInput={event => patch({ author: event.currentTarget.value })} /></label>
+      </Show>
+    </Show>
+    <Show when={isMissionEventKind(kind()) && kind() !== "files-changed" && !isMissionGithubKind(kind()) ? kind() as SelectedSource : undefined} keyed>{sourceKind =>
       <MissionSourceSelect label={label("missions.scheduling.criterionSource")} value={props.row.source} choices={choices()}
         disabled={props.disabled} errorID={props.errorID} paging={props.paging?.(sourceKind, props.row.source)} onChange={source => patch({ source })} />
     }</Show>
