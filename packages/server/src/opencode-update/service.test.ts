@@ -495,7 +495,7 @@ test("beta version comparison remains numeric", () => {
 })
 
 test("the native contract floor admits current and newer runtimes without a tested-version allowlist", async () => {
-  for (const version of ["2.2.3", "2.2.4", "2.2.5", "2.2.6", "2.3.0", "3.0.0"]) {
+  for (const version of ["2.2.3", "2.2.4", "2.2.5", "2.2.6", "2.2.7", "2.3.0", "3.0.0"]) {
     const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const service = new OpenCodeUpdateService(deps({
@@ -509,7 +509,7 @@ test("the native contract floor admits current and newer runtimes without a test
     assert.equal(status.serviceState, "ready")
     assert.equal(status.versionAssessment, version === recommended ? "tested" : "untested", "only the current recommendation is release-qualified")
     assert.equal(status.incompatibilityReason, undefined)
-    assert.equal(status.canUpgrade, ["2.2.3", "2.2.4", "2.2.5"].includes(version), "offer an optional upgrade below the latest release; never downgrade current or newer runtimes")
+    assert.equal(status.canUpgrade, ["2.2.3", "2.2.4", "2.2.5", "2.2.6"].includes(version), "offer an optional upgrade below the latest release; never downgrade current or newer runtimes")
     assert.equal(status.canRestart, false)
   }
 })

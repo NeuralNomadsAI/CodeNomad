@@ -20,7 +20,7 @@ Yüklü yürütülebilir dosya ve çalışan hizmetin farklı sürümleri olabil
 | Sınıflandırma | Mevcut gereksinim | Anlamı |
 | --- | --- | --- |
 | Asgari | OpenCode **2.2.3** | **Görseller** ayarlarının ve Design uzantısının kullandığı görsel oluşturma aracı, Code Mode içindeki JavaScript görevlerinin doğru yürütme sırası ve yerel yeniden oynatma ve sıkıştırma biçimi; önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
-| Önerilen | OpenCode **2.2.6** | Teknik alt sınırdan farklı, doğrulanan hedef. |
+| Önerilen | OpenCode **2.2.7** | Teknik alt sınırdan farklı, doğrulanan hedef. |
 | Doğrulanmamış | Tam olarak doğrulanmamış daha yeni veya özel bir sürüm | Yalnızca denenmemiş olduğu için reddedilmez; bağlı hizmetin gerçek API sözleşmeleri kontrol edilir. |
 
 Bağlı hizmet gerekli oturum, izin, Form, gelen kutusu ve oturum ortamı sözleşmelerini sunmalıdır. Yerel Görev zamanlaması ayrıca zamanlama API'lerini, eklenti/sağlayıcı paketini ve etkin `experimental.schedules` ayarını denetler. Kullanılabilirlik, uyumlu gelecek sürümler dahil, kullanılan bu yeteneklere bağlıdır. Kurulum desteklenmeyen bir çalışan hizmet bildirirse desteklenen bir CLI seçin/yükleyin ve hazır olduğunuzda paylaşılan hizmeti açıkça yeniden başlatın.
