@@ -1,5 +1,8 @@
 const assert = require('node:assert/strict')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
 const { test } = require('node:test')
+const { parse } = require('yaml')
 const { commentPRArtifacts } = require('./comment-pr-artifacts.cjs')
 
 function fixture() {
@@ -72,4 +75,57 @@ test('GitHub API errors remain real helper failures', async () => {
   const f = fixture(); f.github.paginate = async () => { throw new Error('API unavailable') }
   // An unavailable client must not be converted into a successful announcement.
   await assert.rejects(f.execute, /API unavailable/)
+})
+
+test('trusted artifact commenter grants PR write while retaining its workflow_run boundary', () => {
+  const workflow = parse(readFileSync(join(__dirname, '../workflows/comment-pr-artifacts.yml'), 'utf8'))
+  assert.deepEqual(workflow.permissions, { actions: 'read', contents: 'read', issues: 'read', 'pull-requests': 'write' })
+  assert.deepEqual(workflow.on, { workflow_run: { workflows: ['PR Build Validation'], types: ['completed'] } })
+  const job = workflow.jobs.comment
+  assert.equal(job.permissions, undefined)
+  assert.equal(job.if, "${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}")
+  assert.equal(job.steps.length, 2)
+  assert.equal(job.steps[0].with.ref, '${{ github.event.repository.default_branch }}')
+  assert.equal(job.steps[0].with['persist-credentials'], false)
+  assert.equal(job.steps[1].with['github-token'], '${{ secrets.GITHUB_TOKEN }}')
+  assert.match(job.steps[1].with.script, /await commentPRArtifacts\(/)
+  assert(!job.steps.some(step => step['continue-on-error'] || step.run))
+})
+
+test('producer payload association selects PR 1457 without refetching the commenter workflow run', async () => {
+  const f = fixture()
+  f.run.id = 42919116620
+  f.run.pull_requests = [{ number: 1457 }]
+  await f.execute()
+  assert.equal(f.writes[0].issue_number, 1457)
+  assert.match(f.writes[0].body, /actions\/runs\/42919116620/)
+  assert(!f.calls.some(call => call.commit_sha))
+})
+
+test('missing producer association resolves PR 1457 from its head commit', async () => {
+  const f = fixture()
+  f.run.id = 42919116620
+  f.run.head_sha = f.pr.head.sha = '5d44475d725ce3595ff989f691c12a03aeffc624'
+  f.run.pull_requests = []
+  const paginate = f.github.paginate
+  f.github.paginate = async (method, input) => input.commit_sha ? [{ number: 1457 }] : paginate(method, input)
+  await f.execute()
+  assert.equal(f.writes[0].issue_number, 1457)
+  assert.match(f.writes[0].body, /actions\/runs\/42919116620/)
+})
+
+test('403 comment writes reject without logging a successful announcement or retrying', async () => {
+  for (const update of [false, true]) {
+    const f = fixture()
+    if (update) f.comments.push({ id: 2, user: { login: 'github-actions[bot]' }, body: '<!-- codenomad-pr-artifacts -->' })
+    const forbidden = Object.assign(new Error('Resource not accessible by integration'), { status: 403 })
+    let attempts = 0
+    f.github.rest.issues[update ? 'updateComment' : 'createComment'] = async () => { attempts++; throw forbidden }
+    const messages = []
+    await assert.rejects(() => commentPRArtifacts({ github: f.github,
+      context: { repo: { owner: 'owner', repo: 'repo' }, payload: { workflow_run: f.run } },
+      core: { info: message => messages.push(message) } }), error => error === forbidden)
+    assert.equal(attempts, 1)
+    assert.deepEqual(messages, [])
+  }
 })
