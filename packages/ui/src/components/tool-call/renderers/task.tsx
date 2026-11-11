@@ -215,7 +215,12 @@ export const taskRenderer: ToolRenderer = {
         return id ? sessions().get(instanceId)?.get(id) : undefined
       },
       shouldLoad: () => !childSessionLoaded(),
+      // Activation transitions authorize an authoritative read: a load error
+      // latched mid-stream must not dead-lock the transcript until a manual
+      // retry. The forced read is bounded by binding transitions, not a loop.
+      forceLoad: true,
       loadMessages: (childInstanceId, id, options) => loadMessages(childInstanceId, id, {
+        force: options?.force,
         signal: options?.signal,
         registerInvalidation: options?.registerInvalidation,
       }),
