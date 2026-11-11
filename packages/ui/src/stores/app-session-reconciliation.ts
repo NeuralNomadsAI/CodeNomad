@@ -68,7 +68,6 @@ export function resolveRestoredSessionSelection(
     return current?.id ?? null
   }
   const parentSessionId = rootId(requestedParentSessionId)
-  if (requestedActiveSessionId === "info") return { parentSessionId, activeSessionId: "info" }
   const active = requestedActiveSessionId ? sessions.get(requestedActiveSessionId) : undefined
   const activeParentId = rootId(active?.id)
   if (active && activeParentId && (!parentSessionId || parentSessionId === activeParentId)) {

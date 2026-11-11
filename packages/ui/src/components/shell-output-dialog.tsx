@@ -1,12 +1,11 @@
-import { Dialog } from "@kobalte/core/dialog"
-import { Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { Show, createEffect, createSignal, createUniqueId, onCleanup } from "solid-js"
 import type { ShellInfo } from "@opencode/client"
 
 import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { useI18n } from "../lib/i18n"
 import { appendShellOutput } from "../stores/shell-store"
 import { shellStore } from "../stores/shells"
-import WindowCloseButton from "./window-close-button"
+import { OutputWindow } from "./output-window"
 
 interface ShellOutputDialogProps {
   open: boolean
@@ -19,6 +18,7 @@ interface ShellOutputDialogProps {
 
 export function ShellOutputDialog(props: ShellOutputDialogProps) {
   const { t } = useI18n()
+  const id = `shell-output-${createUniqueId()}`
   const [output, setOutput] = createSignal("")
   const [outputHtml, setOutputHtml] = createSignal("")
   const [ansiEnabled, setAnsiEnabled] = createSignal(false)
@@ -81,19 +81,8 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
   })
 
   return (
-    <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()} modal>
-      <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <Dialog.Content role="dialog" class="modal-surface flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
-            <div class="window-header">
-              <div class="min-w-0 flex-1">
-                <Dialog.Title class="window-title">{t("backgroundProcessOutputDialog.title")}</Dialog.Title>
-                <span class="block truncate text-xs text-secondary" title={props.shell?.command}>{props.shell?.command}</span>
-              </div>
-              <WindowCloseButton label={t("backgroundProcessOutputDialog.actions.close")} onClose={props.onClose} />
-            </div>
-            <div class="window-body">
+    <OutputWindow id={id} open={props.open} title={t("backgroundProcessOutputDialog.title")}
+      subtitle={props.shell?.command} onClose={props.onClose}>
               <Show when={loading()}><p class="text-xs text-secondary">{t("backgroundProcessOutputDialog.loading")}</p></Show>
               <Show when={truncated()}><p class="mb-2 text-xs text-secondary">{t("backgroundProcessOutputDialog.truncatedNotice")}</p></Show>
               <Show when={!loading()}>
@@ -103,10 +92,6 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
                   <pre class="border border-base bg-surface-inset p-4 font-mono text-xs text-primary whitespace-pre-wrap break-all" innerHTML={outputHtml()} />
                 </Show>
               </Show>
-            </div>
-          </Dialog.Content>
-        </div>
-      </Dialog.Portal>
-    </Dialog>
+    </OutputWindow>
   )
 }

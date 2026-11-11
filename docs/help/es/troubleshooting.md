@@ -98,7 +98,7 @@ Para limpieza cancelada o parcial, lee su progreso/comprobantes antes de iniciar
 
 ## Registros y diagnósticos seguros {#diagnostics}
 
-1. Abre **Info de la instancia** para inspeccionar su estado; **Mostrar registros del servidor** expone la salida disponible.
+1. Abre **Configuración → OpenCode → Ver registros de OpenCode**. Se lee el archivo global `opencode.log` del host de ejecución seleccionado, localizado mediante `opencode debug paths log`. La ventana móvil y no modal permite seguir usando el resto de la interfaz. Muestra como máximo los últimos 128 KiB; **Actualizar** vuelve a leer el archivo. Los registros se mantienen separados de los mensajes y las solicitudes al modelo.
 2. En **Preferencias → OpenCode**, elige la **Verbosidad de logs** prevista solo cuando necesites más detalle. Para registros de CodeNomad independiente, usa las [opciones de registro de la CLI del servidor](server.md).
 3. Abre **Configuración → Info → Diagnósticos** y usa **Informar de un error**, **Copiar al portapapeles** o **Descargar .txt**.
 

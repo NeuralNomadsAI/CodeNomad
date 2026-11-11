@@ -35,7 +35,7 @@ Schlägt Speichern fehl, behalten Sie das alte Kürzel verfügbar und prüfen Si
 | Sitzung schließen | `Mod+Shift+W` |
 | Vorherige / nächste Sitzung | `Mod+Shift+[` / `Mod+Shift+]` |
 | Sitzungs-Tab 1–9 | `Mod+Shift+1` bis `Mod+Shift+9` |
-| Instanz-Info | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | Sitzungsverlauf durchsuchen | `Mod+F` |
 | **Vorherige Benutzernachricht** / **Nächste Benutzernachricht**, auch im Eingabemenü **Weitere Aktionen** | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) oder `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Nächstes / vorheriges Suchergebnis (Suche fokussiert) | `Enter` / `Shift+Enter` |

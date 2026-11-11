@@ -30,6 +30,24 @@ Play of a Mission without launch criteria follows its own admission path.
 
 ## Setup and recovery
 
+### Global log snapshots
+
+`GET /api/opencode/logs` resolves the configured OpenCode executable server-side,
+runs its read-only `debug paths log` command, and reads the fixed `opencode.log`
+file on that execution host. WSL paths use the existing native-to-host translator.
+The route accepts no path or executable selectors, returns `Cache-Control: no-store`,
+and fences an executable change while reading. A snapshot contains at most the
+last 128 KiB, aligned after the first partial line, with an explicit truncation
+flag. Missing files and discovery/read failures return fixed error codes.
+
+Settings → OpenCode opens the snapshot on demand in the common floating output
+window; Refresh requests a new snapshot. Logs may contain private data. Native
+`experimental.session.stats` provides aggregates and `experimental.session.log`
+provides durable session events; diagnostic log-file access uses the selected
+CLI's documented global log directory.
+
+### Setup surfaces
+
 Startup recovery and Preferences share `OpenCodeSetupPanel` and its store, but
 missing installations, known incompatibility and optional updates expose
 different actions; installed/running/minimum/recommended versions and the

@@ -35,7 +35,7 @@ save असफल भए पुरानो shortcut उपलब्ध रा�
 | सत्र बन्द | `Mod+Shift+W` |
 | अघिल्लो / अर्को सत्र | `Mod+Shift+[` / `Mod+Shift+]` |
 | सत्र ट्याब 1–9 | `Mod+Shift+1` देखि `Mod+Shift+9` |
-| instance जानकारी | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | सत्र इतिहास खोज | `Mod+F` |
 | **अघिल्लो प्रयोगकर्ता सन्देश** / **अर्को प्रयोगकर्ता सन्देश**, प्रम्प्टको **थप कार्यहरू** मेनुमा पनि उपलब्ध | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) वा `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | अर्को / अघिल्लो खोज नतिजा (खोज focus मा) | `Enter` / `Shift+Enter` |
