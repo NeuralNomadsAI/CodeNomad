@@ -98,7 +98,7 @@ Bekleyen istek kurtarma işlemi tamamlanmadıysa CodeNomad, eksik kapsamı boş 
 
 ## Günlükler ve güvenli tanılama {#diagnostics}
 
-1. Durumunu incelemek için **Instance Bilgisi** öğesini açın; **Sunucu log'larını göster** mevcut çıktıyı ortaya çıkarır.
+1. **Ayarlar → OpenCode → OpenCode loglarını görüntüle** yolunu açın. Seçilen yürütme sunucusunun genel `opencode.log` dosyası `opencode debug paths log` ile bulunur. Taşınabilir, modal olmayan pencere, arayüzün geri kalanını kullanmanıza izin verir. En fazla son 128 KiB gösterilir; **Yenile** dosyayı tekrar okur. Loglar mesajlardan ve model isteklerinden ayrı kalır.
 2. **Preferences → OpenCode** bölümünde amaçlanan **Varsayılan log seviyesi** öğesini yalnızca daha fazla ayrıntıya ihtiyaç duyulduğunda seçin. Bağımsız CodeNomad günlük kaydı için [sunucu CLI günlük kaydı seçenekleri](server.md)'yi kullanın.
 3. **Ayarlar → Bilgi → Tanılama** öğesini açın ve **Hata bildir**, **Panoya kopyala** veya **.txt indir** öğesini kullanın.
 

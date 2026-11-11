@@ -285,7 +285,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/directory-browser-dialog.tsx` | C | initialize/loadDirectory/navigateTo/path submit/open/create folder; directory cache | Local filesystem API client; openingGeneration/open guard and per-directory request identity; dispatched folder creation retained. |
 | `components/new-instance-dialogs.tsx` | C+IPC | clone repository; browse destination; clone completion → open | Local clone API/client and submitted destination; native picker; workspace-open callback ownership. |
 | `components/opencode-binary-selector.tsx` | C+IPC | validateBinary/debounce; native browse; validate-and-add/custom submit | Local server binary probe/client and validation request/view state; native filesystem picker. |
-| `components/instance-info.tsx` | C | handleReloadConfiguration | Local setup/configuration client; delegated setup flow. |
+| `components/settings/opencode-logs-action.tsx` | C+V | explicit host log snapshot opening/refresh | Host settings client; view AbortController fences publication and aborts on close, executable change, refresh and disposal. |
 | `components/instance-service-status.tsx` | A+C | toggleMcpServer connect/disconnect | captureBackendOperation/current and captured SDK client; sent MCP mutation retained. |
 | `components/instance/instance-shell2.tsx` | A+C | draft agent/model defaults; draft session create/activate; first prompt/command/shell; preview open; server metadata; elapsed UI timers | captureBackendOperation plus current instance/draft and creation promise identity; first sent action retains client; metadata uses client cache; DOM timers separate. |
 | `components/history-message-preview.tsx` | A | preview session/message reads; open search match | captureBackendOperation plus controller, client/native generation and view-current predicate. |
@@ -431,6 +431,7 @@ Remote media blobs admit only PNG, JPEG, GIF, WebP, AVIF, BMP and ICO bytes veri
 | Server metadata/auth/remote connection | fetchServerMeta, fetchAuthStatus, setServerPassword, probeRemoteServer, createRemoteProxySession, deleteRemoteProxySession | C; auth/login/connection attempt owns probes and handoff |
 | Remote Control | fetchRemoteControlStatus, startRemoteControl, stopRemoteControl, createRemoteControlPairing, setRemoteControlPreviews, fetchRemoteControlDevices, revokeRemoteControlDevice | C; local administration client |
 | Local runtime/bootstrap | validateBinary, fetchOpenCodeUpdateStatus, getOpenCodeLoginStart, setOpenCodeLoginStart, updateOpenCode, startOpenCode, reloadOpenCodeConfiguration | C; setup/client generation |
+| Host log snapshot | fetchOpenCodeLogs | S; explicit host settings reader owns cancellation and publication |
 | Speech client services | fetchSpeechCapabilities, transcribeAudio, synthesizeSpeech | C for capabilities/transcribe/buffered synthesis |
 | Streaming synthesis | synthesizeSpeechStream | S; playback passes its AbortSignal |
 | SideCars/previews/Yolo | fetchSidecars, createSidecar, updateSidecar, deleteSidecar, createPreview, deletePreview, getYoloState, toggleYolo | C; resource token/session/client ownership |

@@ -10,6 +10,7 @@ import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/clien
 import type { ServerContractMeta } from "./meta-contract"
 export type { MemoryScope, MemoryEntryType, MemoryContent, MemoryEntryHeader, MemoryEntry, MemoryErrorCode, MemoryOperation, MemoryContext, MemorySettings, MemoryVersionedEntry, MemoryUIEntry, MemoryListEntry, MemoryUIListResult, MemoryResult, MemoryApiError } from "./memory/contract"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
+export type { OpenCodeLogsResponse } from "./opencode/logs"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"

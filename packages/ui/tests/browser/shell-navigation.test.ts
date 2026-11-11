@@ -264,8 +264,8 @@ test("session history navigates like a browser without recording its own moves",
     await page.locator('.session-sidebar [data-session-id="gamma"]').waitFor()
     assert.equal(await back(page).isDisabled(), true, "a single visited session has no history")
     assert.equal(await forward(page).isDisabled(), true)
-    // The header buttons replace the old close arrow at the same position.
-    assert.equal(await page.locator(".session-sidebar-header-actions button").last().getAttribute("aria-label"), "Forward")
+    assert.deepEqual(await page.locator(".session-sidebar-header-actions button").evaluateAll(buttons =>
+      buttons.map(button => button.getAttribute("aria-label"))), ["Back", "Forward", "New session", "Search sessions"])
     // History wording, distinct from the palette's "Previous/Next Session" list cycling.
     assert.equal(await back(page).getAttribute("title"), "Back to the previous conversation")
     assert.equal(await forward(page).getAttribute("title"), "Forward to the next conversation")
@@ -291,10 +291,8 @@ test("session history navigates like a browser without recording its own moves",
     await forward(page).click(); await waitSelected(page, "session")
     await back(page).click(); await waitSelected(page, "alpha")
 
-    // Info and the no-session draft are not entries; Back returns to the shown conversation.
-    await page.getByRole("button", { name: "Instance Info", exact: true }).click(); await waitSelected(page, "info")
-    assert.equal(await back(page).isEnabled(), true)
-    await back(page).click(); await waitSelected(page, "alpha")
+    // The no-session draft stays outside the conversation history.
+    assert.equal(await page.getByRole("button", { name: "Instance Info", exact: true }).count(), 0)
     await page.evaluate(() => (window as any).fixture.selectSession(null)); await waitSelected(page, null)
     await back(page).click(); await waitSelected(page, "alpha")
     assert.equal(await forward(page).isEnabled(), true)
@@ -368,7 +366,7 @@ test("dismissing a floating panel by clicking outside leaves focus on the clicke
     await page.evaluate(() => { document.getElementById("outside")!.style.cssText += ";position:fixed;bottom:8px;right:8px;z-index:100000" })
     await toggle(page, "left").click()
     await waitDrawers(page, "floating", "closed")
-    await page.locator(".session-floating-drawer .session-sidebar-header button").first().focus()
+    await page.locator(".session-floating-drawer .session-sidebar-header button:enabled").first().focus()
     await page.locator("#outside").click()
     await waitDrawers(page, "closed", "closed")
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
@@ -382,7 +380,7 @@ for (const side of ["left", "right"] as const) test(`the ${side} panel closed fo
   const { page, errors } = await open(context)
   try {
     await waitDrawers(page, "pinned", "pinned")
-    await page.locator(side === "left" ? ".session-sidebar-header button" : ".right-panel-tab-bar button").first().focus()
+    await page.locator(side === "left" ? ".session-sidebar-header button:enabled" : ".right-panel-tab-bar button").first().focus()
     await page.setViewportSize({ width: 390, height: 900 })
     await waitDrawers(page, "closed", "closed")
     await page.waitForFunction(side => document.activeElement?.closest(`.shell-panel-toggle--${side}`) !== null, side)
@@ -426,7 +424,7 @@ test("panels that lose their docked room close instead of covering the conversat
   } finally { await context.close() }
 })
 
-test("touch session list header keeps all five actions at the minimum docked width", async () => {
+test("touch session list header keeps all four actions at the minimum docked width", async () => {
   // A touch tablet in landscape docks both panels; coarse pointers use compact targets.
   const context = await browser.newContext({ viewport: { width: 1366, height: 1024 }, hasTouch: true, isMobile: true })
   const { page, errors } = await open(context)
@@ -450,7 +448,7 @@ test("touch session list header keeps all five actions at the minimum docked wid
     await page.waitForFunction(() => document.querySelector(".session-sidebar-container")!.getBoundingClientRect().width <= 221)
     assert.deepEqual(await unreachableHeaderActions(page), [])
     assert.deepEqual(await page.locator(".session-sidebar-header-actions button").evaluateAll(buttons =>
-      buttons.map(button => Math.round(button.getBoundingClientRect().width))), [32, 32, 32, 32, 32])
+      buttons.map(button => Math.round(button.getBoundingClientRect().width))), [32, 32, 32, 32])
     assert.deepEqual(await overlaps(page), [])
     await forward(page).tap(); await waitSelected(page, "beta")
     assert.deepEqual(errors, [])
