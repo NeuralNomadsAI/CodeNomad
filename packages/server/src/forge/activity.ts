@@ -26,8 +26,10 @@ export function forgeActivityPath(condition: MissionRepositoryCondition, page: n
     if (condition.author) query.set("creator", condition.author)
   } else if (provider === "gitlab") {
     endpoint = `projects/${encodeURIComponent(repository)}/${issue ? "issues" : "merge_requests"}`
-    query.set("scope", "all"); query.set("per_page", String(ACTIVITY_PAGE_SIZE)); query.set("order_by", "updated_at"); query.set("sort", "desc")
-    if (since) query.set("updated_after", since)
+    const merged = event === "pull-request-merged"
+    query.set("scope", "all"); query.set("per_page", String(ACTIVITY_PAGE_SIZE)); query.set("order_by", merged ? "merged_at" : "updated_at"); query.set("sort", "desc")
+    if (merged) query.set("state", "merged")
+    if (since) query.set(merged ? "merged_after" : "updated_after", since)
     if (condition.author) query.set("author_username", condition.author)
   } else {
     endpoint = `repos/${repository}/${issue ? "issues" : "pulls"}`
@@ -51,8 +53,9 @@ export function forgeActivityPage(response: ForgeResponse, condition: MissionRep
     if (url.toLowerCase() !== forgeWebUrl(provider, host, repository, pull ? "pullRequest" : "issue", number).toLowerCase())
       throw new Error("Foreign forge activity URL")
     const at = event === "pull-request-merged" ? mergedAt : item.created_at
-    if (item.updated_at < item.created_at || at && at > item.updated_at) throw new Error("Invalid forge activity time")
-    return { id: String(number), at: at ?? item.created_at, updatedAt: item.updated_at, repository, title: item.title, url,
+    // GitLab updates and merges have independent clocks; coverage follows the requested ordering field.
+    const orderAt = provider === "gitlab" && event === "pull-request-merged" ? timestamp.parse(mergedAt) : item.updated_at
+    return { id: String(number), at: at ?? item.created_at, orderAt, repository, title: item.title, url,
       ...(author ? { author } : {}), matches: (issue !== pull) && (event !== "pull-request-merged" || !!mergedAt)
         && (!condition.author || author?.toLowerCase() === condition.author) }
   })

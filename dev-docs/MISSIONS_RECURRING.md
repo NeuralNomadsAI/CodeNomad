@@ -375,12 +375,16 @@ Stored GitHub and branch criteria keep their exact policy and source keys on unc
 public access and request budget. `forge/activity.ts` reads all-state updated windows
 for GitHub issues/PRs, GitLab issues/MRs and Gitea issues/PRs. Creation and merge times
 select occurrences, with a normalized optional author. GitLab nested groups are encoded
-as one project path. Gitea issue windows exhaust their unordered pagination; sorted
+as one project path. GitLab merge windows query `state=merged`, `merged_after` and
+`order_by=merged_at`; their coverage follows merge timestamps independently of updates.
+Gitea issue windows exhaust their unordered pagination; sorted
 windows stop below the reference. All windows refuse incomplete coverage beyond four
 50-item pages and ten seconds. Server Date and timestamp-tie IDs form each checkpoint;
 repository, account and execution directory bind its placement. Revalidation checks
 the fresh remote and account before publication. Summaries are frozen as untrusted
 passage input and consumed only after success.
+Inputs with only GitHub forge criteria keep their exact GitHub heading; configurations
+containing repository-activity criteria use the repository heading.
 
 GitHub account events and stored GitHub criteria use `mission-github-condition.ts` and `mission-github-source.ts` with the
 existing `forge/transport.ts` read-only `gh` adapter. The CLI must be signed in on the

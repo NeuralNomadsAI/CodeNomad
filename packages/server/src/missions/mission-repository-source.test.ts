@@ -57,15 +57,36 @@ for (const provider of ["github", "gitlab", "gitea"] as const) for (const event 
     assert.equal(read.checkpoint.key, missionSourceKey(f.condition))
     assert.deepEqual(missionLaunchPolicySchema.parse({ when: [f.condition] }), { when: [f.condition] })
     const request = new URL(f.requests.find(value => value !== "user")!, "https://fixture/")
-    assert.equal(request.searchParams.get("state"), "all")
+    assert.equal(request.searchParams.get("state"), provider === "gitlab" && event === "pull-request-merged" ? "merged" : "all")
     if (provider === "gitlab") { assert.match(request.pathname, /group%2Fsub%2Fproject/); assert.equal(request.searchParams.get("scope"), "all") }
   })
 
 test("merged requests are keyed by merge time, not creation or later comments", async () => {
   const f = fixture("gitlab", "pull-request-merged"), baseline = await f.read()
   f.date(LATER)
-  f.pages(() => ({ rows: [f.row(4, BEFORE, "alice", false, LATER), f.row(3, BEFORE, "alice", true, LATER), f.row(2, LATER)] }))
+  f.pages(() => ({ rows: [f.row(2, LATER), f.row(3, BEFORE, "alice", true, LATER)] }))
   assert.deepEqual(events(await f.read(baseline.checkpoint)).map(row => row.id), ["2"])
+})
+
+test("GitLab merge windows use merge time across pages even when updates precede merges or change order", async () => {
+  const f = fixture("gitlab", "pull-request-merged"), baseline = await f.read()
+  f.date("2026-11-11T16:00:00.000Z")
+  const mergedAt = "2026-11-11T15:21:03.414Z", updatedAt = "2026-11-11T15:21:00.567Z"
+  // Timestamp pair observed on gitlab-org/gitlab!269974.
+  f.pages(page => ({ rows: page === 1 ? [f.row(269974, mergedAt, "alice", true, updatedAt)]
+    : [f.row(2, "2026-11-11T12:30:00.000Z", "alice", true, BEFORE)],
+    headers: [["x-next-page", page === 1 ? "2" : ""]] }))
+  const read = await f.read(baseline.checkpoint)
+  assert.deepEqual(events(read).map(row => row.id), ["2", "269974"])
+  for (const path of f.requests.filter(path => path.includes("merged_after="))) {
+    const query = new URL(path, "https://fixture/").searchParams
+    assert.equal(query.get("order_by"), "merged_at"); assert.equal(query.get("state"), "merged")
+    assert.equal(query.has("updated_after"), false)
+    assert.equal(query.get("merged_after"), "2026-11-11T10:59:59.000Z")
+  }
+  assert.equal(f.requests.filter(path => path.includes("merged_after=")).length, 2)
+  f.pages(() => ({ rows: [f.row(1, BEFORE), f.row(2, LATER)] }))
+  await assert.rejects(f.read(baseline.checkpoint), /capacity/, "ignored merge ordering leaves coverage unavailable")
 })
 
 test("complete pages, short capped pages, and unordered Gitea issues keep the whole window", async () => {

@@ -50,18 +50,18 @@ export async function readMissionRepositorySource(input: MissionRepositoryCondit
     }
     const { rows, more, ordered } = forgeActivityPage(response, condition, found.size)
     for (const row of rows) {
-      if (found.has(row.id) || ordered && preceding && row.updatedAt > preceding) return unavailable()
-      preceding = row.updatedAt; found.set(row.id, row)
+      if (found.has(row.id) || ordered && preceding && row.orderAt > preceding) return unavailable()
+      preceding = row.orderAt; found.set(row.id, row)
     }
     if (more && !rows.length) return unavailable()
-    if (!more || ordered && rows.at(-1)!.updatedAt < (old?.at ?? baseline)) break
+    if (!more || ordered && rows.at(-1)!.orderAt < (old?.at ?? baseline)) break
     // ponytail: four REST pages; a cursor/webhook reader is needed above 200 unconsumed updates.
     if (page === MAX_PAGES) return unavailable()
   }
   const all = [...found.values()].filter(row => row.matches && row.at <= baseline!)
   const events = old ? all.filter(row => row.at > old.at || row.at === old.at && !old.ids.includes(row.id)) : []
   const value = cursor.parse({ at: baseline, ids: [...new Set([...(old && old.at === baseline ? old.ids : []), ...all.filter(row => row.at === baseline).map(row => row.id)])].sort(),
-    events: events.map(({ updatedAt: _updated, matches: _matches, ...row }) => row).sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id)) })
+    events: events.map(({ orderAt: _order, matches: _matches, ...row }) => row).sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id)) })
   const revalidate = async () => {
     try { const next = await open(); if (await account(next) !== viewer) return unavailable(); current() }
     catch (error) { valid = false; throw error }
