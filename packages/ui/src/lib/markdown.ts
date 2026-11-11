@@ -6,6 +6,7 @@ import { tGlobal } from "./i18n"
 import type { Highlighter } from "shiki/bundle/full"
 import { decodeHtmlEntities, escapeHtml } from "./text-render-utils"
 import { isFileUrl, localImagePath } from "./markdown-local-images"
+import type { MermaidCodeBlock } from "../types/message"
 
 const log = getLogger("actions")
 
@@ -17,6 +18,8 @@ let highlightSuppressed = false
 let escapeRawHtmlEnabled = false
 let literalRawHtmlEnabled = false
 let defaultCodeBlockWrapEnabled = true
+let collectMermaid: ((block: MermaidCodeBlock) => void) | undefined
+let mermaidFences: boolean[] = []
 let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
@@ -543,6 +546,12 @@ function setupRenderer(isDark: boolean) {
     const wrapLabel = escapeHtml(tGlobal(defaultWrapEnabled ? "markdown.codeBlock.wrap.disable" : "markdown.codeBlock.wrap.enable"))
     const wrapActiveClass = defaultWrapEnabled ? " active" : ""
     const wrapPressed = defaultWrapEnabled ? "true" : "false"
+    let mermaidAttribute = ""
+    if (collectMermaid && /^(mermaid|mmd)(?:\s|$)/i.test(resolvedLang)) {
+      const token = Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16)).join("-")
+      collectMermaid({ token, code: encodedCode, complete: mermaidFences.shift() ?? false })
+      mermaidAttribute = ` data-mermaid-token="${token}"`
+    }
 
     const header = `
  <div class="code-block-header">
@@ -568,7 +577,7 @@ function setupRenderer(isDark: boolean) {
   </div>
   `.trim()
 
-    const renderCodeBlock = (body: string) => `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}" data-code-block-key="${codeBlockKey}" data-wrap-lines="${defaultWrapEnabled ? "true" : "false"}">${header}${body}</div>`
+    const renderCodeBlock = (body: string) => `<div class="markdown-code-block" data-language="${escapedLang}" data-code="${encodedCode}" data-code-block-key="${codeBlockKey}" data-wrap-lines="${defaultWrapEnabled ? "true" : "false"}"${mermaidAttribute}>${header}${body}</div>`
 
     if (highlightSuppressed) {
       return renderCodeBlock(`<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre>`)
@@ -661,6 +670,8 @@ export async function renderMarkdown(
     escapeRawHtml?: boolean
     literalRawHtml?: boolean
     defaultCodeBlockWrap?: boolean
+    onMermaid?: (block: MermaidCodeBlock) => void
+    truncated?: boolean
   },
 ): Promise<string> {
   if (!isInitialized) {
@@ -683,6 +694,9 @@ export async function renderMarkdown(
   const previousEscapeRawHtml = escapeRawHtmlEnabled
   const previousLiteralRawHtml = literalRawHtmlEnabled
   const previousDefaultCodeBlockWrap = defaultCodeBlockWrapEnabled
+  const previousCollector = collectMermaid, previousFences = mermaidFences
+  collectMermaid = options?.onMermaid
+  mermaidFences = []
   highlightSuppressed = suppressHighlight
   escapeRawHtmlEnabled = escapeRawHtml
   literalRawHtmlEnabled = literalRawHtml
@@ -691,13 +705,21 @@ export async function renderMarkdown(
   try {
     // Proceed to parse immediately - highlighting will be available on next render
     resetCodeBlockRenderState()
-    return marked.parse(decoded) as Promise<string>
+    return marked.parse(decoded, { walkTokens: token => {
+      if (token.type !== "code" || !/^(mermaid|mmd)(?:\s|$)/i.test(token.lang ?? "")) return
+      const opening = token.raw.match(/^ {0,3}(`{3,}|~{3,})[^\n]*\n/)
+      const fence = opening?.[1]
+      const last = token.raw.trimEnd().split("\n").at(-1) ?? ""
+      const lineComplete = !options?.truncated || /\n[ \t\r]*$/.test(token.raw)
+      mermaidFences.push(Boolean(lineComplete && fence && new RegExp(`^ {0,3}${fence[0]}{${fence.length},}[ \\t]*$`).test(last)))
+    } }) as Promise<string>
   } finally {
     resetCodeBlockRenderState()
     highlightSuppressed = previousSuppressed
     escapeRawHtmlEnabled = previousEscapeRawHtml
     literalRawHtmlEnabled = previousLiteralRawHtml
     defaultCodeBlockWrapEnabled = previousDefaultCodeBlockWrap
+    collectMermaid = previousCollector; mermaidFences = previousFences
   }
 }
 

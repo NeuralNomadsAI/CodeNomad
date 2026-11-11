@@ -6,6 +6,10 @@ Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de 
 
 Los encabezados de razonamiento y de herramientas muestran cuánto duró cada paso, con un contador en vivo mientras se ejecuta; no se muestran duraciones inferiores a un segundo. Cuando **Tokens** se muestra en **Contenido de los mensajes** (el preajuste **Todo** lo muestra), cada mensaje del agente termina con una línea de tokens y coste después de su texto final. Esa línea suma el mensaje y los mensajes que contienen las herramientas y el razonamiento que cubre su acción **Eliminar herramientas y razonamientos de esta respuesta**, dentro de la transcripción cargada; despliégala para ver los recuentos de razonamiento y de caché. Los pasos que solo ejecutaron herramientas no tienen línea propia.
 
+## Diagramas Mermaid {#mermaid}
+
+Los bloques `mermaid` y `mmd` se representan con Mermaid Tiny al terminar la transmisión. Usa **Mostrar código fuente** / **Mostrar diagrama** en la cabecera del código; Copiar conserva el texto fuente. Tiny excluye mapas mentales, diagramas de arquitectura y KaTeX. Los diagramas inválidos, no compatibles o demasiado grandes conservan su código con un error. El renderizado es local, sin red, con un límite de 50.000 caracteres y 500 aristas.
+
 ## Buscar y recorrer conversaciones {#navigate-conversations}
 
 1. Selecciona una fila en **Sesiones** o usa **Nueva sesión** para iniciar una conversación padre.

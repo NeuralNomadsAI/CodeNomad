@@ -6,6 +6,10 @@ Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeuge
 
 Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt gedauert hat, und zählen live mit, solange er läuft; Dauern unter einer Sekunde werden nicht angezeigt. Wenn **Tokens** in **Nachrichteninhalt** angezeigt wird (die Voreinstellung **Alles** zeigt sie), endet jede Agentennachricht nach ihrem letzten Text mit einer Token- und Kostenzeile. Diese Zeile summiert die Nachricht und die Nachrichten mit den Werkzeugen und Denkprozessen, die ihre Aktion **Tools und Denkprozesse aus dieser Antwort entfernen** abdeckt, innerhalb des geladenen Verlaufs; klappen Sie sie für Denk- und Cache-Zähler auf. Schritte, die nur Werkzeuge ausgeführt haben, haben keine eigene Zeile.
 
+## Mermaid-Diagramme {#mermaid}
+
+Codeblöcke mit `mermaid` oder `mmd` werden nach Ende der Übertragung mit Mermaid Tiny dargestellt. **Quelltext anzeigen** / **Diagramm anzeigen** im Codekopf wechselt die Ansicht; Kopieren übernimmt den Quelltext. Tiny enthält keine Mindmaps, Architekturdiagramme oder KaTeX. Ungültige, nicht unterstützte oder zu große Diagramme behalten den Quelltext mit einer Fehlermeldung. Die lokale Darstellung ohne Netzwerk ist auf 50.000 Zeichen und 500 Kanten begrenzt.
+
 ## Unterhaltungen finden und navigieren {#navigate-conversations}
 
 1. Wählen Sie eine Zeile unter **Sitzungen** oder verwenden Sie **Neue Sitzung**, um eine übergeordnete Unterhaltung zu beginnen.

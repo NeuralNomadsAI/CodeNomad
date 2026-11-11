@@ -1,4 +1,8 @@
 export const markdownMessages = {
+  "markdown.mermaid.diagram": "Mermaid 図",
+  "markdown.mermaid.preview": "図を表示",
+  "markdown.mermaid.source": "ソースを表示",
+  "markdown.mermaid.failed": "図を表示できません。ソースと Mermaid Tiny の対応形式を確認してください。",
   "markdown.codeBlock.copy.label": "コピー",
   "markdown.codeBlock.copy.copied": "コピーしました!",
   "markdown.codeBlock.copy.failed": "失敗",
