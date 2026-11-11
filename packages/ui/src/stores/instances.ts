@@ -62,6 +62,7 @@ import {
   setTranscriptProjectionGates,
   takeTranscriptProjection,
 } from "./opencode-projection-frame"
+import { isSessionTranscriptVisible } from "./session-transcript-visibility"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -2292,7 +2293,10 @@ const publishSynchronousPage = (
 const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publication"]> = ({ instanceId, sessionId, data, events }) => {
   const sessionEvents = events.filter((event) => event.type.startsWith("session."))
   if (!sessionEvents.length) return
-  if (activeSessionId().get(instanceId) !== sessionId) {
+  // A visible child transcript (its task renderer is mounted) watches this
+  // page exactly like the active session; only unseen sessions fall back to
+  // invalidate-on-stream so their next activation reads authoritatively.
+  if (activeSessionId().get(instanceId) !== sessionId && !isSessionTranscriptVisible(instanceId, sessionId)) {
     if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
     return
   }
@@ -2321,6 +2325,7 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
   const invalidateInactiveMessages = () => {
     if (sessionId && event.type.startsWith("session.")
       && activeSessionId().get(instanceId) !== sessionId
+      && !isSessionTranscriptVisible(instanceId, sessionId)
       && messagesLoaded().get(instanceId)?.has(sessionId)) {
       invalidateSessionMessageLoad(instanceId, sessionId)
     }
@@ -2331,7 +2336,7 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       return
     }
     if (sessionId && (force || event.type.startsWith("session.")) && (
-      activeSessionId().get(instanceId) === sessionId
+      (activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId))
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
     )) {
       if (force || isSettlementEvent(event.type)) {
@@ -2413,7 +2418,10 @@ sseManager.onInvalidation = handleInstanceInvalidation
 // The frame coalescer re-checks the gates a projection was admitted under when
 // its frame runs; a selection change flushes pending pages first (session-state).
 setTranscriptProjectionGates({
-  isActiveSession: (instanceId, sessionId) => activeSessionId().get(instanceId) === sessionId,
+  // Watched transcripts: the active session's own view plus any child session
+  // whose task renderer is mounted (visible) — both admit frame projections.
+  isActiveSession: (instanceId, sessionId) =>
+    activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId),
   isLatestMessageWindow: (instanceId, sessionId) =>
     isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId)),
   invalidateInactiveLoadedSession: (instanceId, sessionId) => {
