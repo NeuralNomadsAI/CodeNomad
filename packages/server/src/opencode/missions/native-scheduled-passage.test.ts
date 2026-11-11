@@ -263,7 +263,7 @@ test("a validated deleted owner leaves preserved child prompts ordinary while ma
     hook: (_name: string, callback: typeof hook) => Effect.sync(() => { hook = callback; return { dispose: Effect.void } }),
     update: () => Effect.die("Inactive child ownership must never mutate"),
   } } as unknown as Plugin.Context
-  await Effect.runPromise(registerScheduledChildInput(ctx))
+  await Effect.runPromise(Effect.scoped(registerScheduledChildInput(ctx)))
   await Effect.runPromise(hook({ sessionID: "ses_old_child" }))
   stored = { deletedAt: 1 }
   await assert.rejects(Effect.runPromise(hook({ sessionID: "ses_old_child" })))
