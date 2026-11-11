@@ -144,7 +144,7 @@ test("unrelated child text keeps mounted task steps, disclosure, scroller and co
   const output = tool.locator(".tool-call-markdown")
   await withFixtureMiddleDrag(page, output, await fixtureGesturePoint(output, { x: 30, y: 60 }), async () => {
     await output.evaluate(element => { (window as any).originalScroller = element; element.scrollTop = 240 })
-    await page.evaluate(() => { (window as any).fixture.hold(); (window as any).fixture.reset(); (window as any).fixture.delta() })
+    await page.evaluate(() => { (window as any).fixture.hold(); (window as any).fixture.reset(); (window as any).fixture.delta(); (window as any).fixture.invalidate() })
     await page.waitForFunction(() => (window as any).fixture.snapshot().held > 0)
     assert.equal(await tool.evaluate(element => element === (window as any).originalStep), true, "pending display refresh must retain mounted steps")
     await page.evaluate(() => (window as any).fixture.release())
