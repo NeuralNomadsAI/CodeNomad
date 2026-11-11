@@ -2,8 +2,10 @@
 // resolves. A dependency update past a vendored version leaves the patch unused
 // and silently builds the unpatched registry crate instead.
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import path from "node:path"
+import { spawnSync } from "node:child_process"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
 
@@ -49,6 +51,18 @@ test("an update past the vendored version is detected", () => {
   const lock = '\n[[package]]\nname = "tao"\nversion = "9.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'
   assert.deepEqual(lockedPackages(lock, "tao"), [{ name: "tao", version: "9.0.0", source: "registry+https://github.com/rust-lang/crates.io-index" }])
   assert.deepEqual(patchedCrates('[patch.crates-io]\ntao = { path = "vendor/tao-1.0.0" }\n'), [{ name: "tao", dir: "vendor/tao-1.0.0" }])
+})
+
+test("GLib string variant iterators preserve borrowed strings in optimized builds", { skip: process.platform !== "linux" }, () => {
+  const target = mkdtempSync(path.join(tmpdir(), "codenomad-glib-regression-"))
+  try {
+    const result = spawnSync("cargo", ["test", "--release", "--locked", "--jobs", "1", "--target-dir", target,
+      "-p", "codenomad-glib-variant-str-regression"], { cwd: workspace, encoding: "utf8", windowsHide: true, timeout: 120_000 })
+    assert.ifError(result.error)
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
 })
 
 test("preview runtime fence separates app IPC, scripts and protocols from browser globals", () => {

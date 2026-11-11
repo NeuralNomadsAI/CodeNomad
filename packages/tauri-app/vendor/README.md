@@ -91,6 +91,36 @@ For each vendored crate:
    in `patches/`, regenerating the patch against the new crate.
 3. Run the regressions named in its section, including the negative controls.
 
+## GLib variant string iteration
+
+`glib-0.18.5/` is the complete published MIT crate, including its license,
+selected through `[patch.crates-io]` for the GTK/WebKitGTK bindings resolved in
+`Cargo.lock`.
+
+- Crate: https://static.crates.io/crates/glib/glib-0.18.5.crate
+- SHA-256: `233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5`
+- Local change: `patches/glib-variant-str-iter.patch`, the two-line correction in
+  [gtk-rs-core#1343](https://github.com/gtk-rs/gtk-rs-core/pull/1343) for
+  [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429.html)
+  ([GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g)).
+
+`VariantStrIter::impl_get` passes a mutable pointer out-argument to
+`g_variant_get_child`, preserving the pointer written by GLib under optimization.
+The crate keeps its published name and version. Version-based advisory checks
+classify `0.18.5` within the affected range; GitHub alert tracking remains separate
+from qualification of the source backport.
+
+On Linux, `node --test scripts/vendored-patches.test.mjs` runs the workspace's
+`tests/glib-variant-str` regression against the resolved crate in release mode,
+with one Cargo job and a fresh temporary build directory. It checks forward,
+reverse, indexed and mixed iteration, empty/Unicode strings, exhaustion, borrowed
+string lifetime and rejection of a non-string-array variant. The shared vendor
+check also requires a unique path-resolved glib in the lockfile.
+
+Keep this override until the resolved GTK/WebKitGTK dependency family uses a
+published corrected glib. Requalify the Linux build and both GTK backends when
+changing that family.
+
 ## Tao Windows runtime handle lifetime
 
 `tao-0.37.2/` is the published Apache-2.0 crate (license included).
