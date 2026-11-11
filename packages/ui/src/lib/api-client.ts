@@ -687,6 +687,9 @@ export const serverApi = {
   fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
     return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
   },
+  fetchOpenCodeLogs(signal?: AbortSignal): Promise<import("../../../server/src/api-types").OpenCodeLogsResponse> {
+    return request("/api/opencode/logs", { signal })
+  },
   getOpenCodeLoginStart(): Promise<import("../../../server/src/api-types").LoginStartResponse> {
     return request("/api/opencode/login-start")
   },

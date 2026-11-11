@@ -10,7 +10,7 @@ import { createCommandRegistry, resolveResolvable, type Command } from "../comma
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import type { ClientPart, MessageInfo } from "../../types/message"
-import { getSessions, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
+import { getSessions, getVisibleSessionIds, setActiveSessionFromList } from "../../stores/sessions"
 import { showAlertDialog, showConfirmDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
@@ -248,14 +248,13 @@ export function useCommands(options: UseCommandsOptions) {
 
     commandRegistry.register({
       id: "switch-to-info",
-      label: () => tGlobal("commands.instanceInfo.label"),
-      description: () => tGlobal("commands.instanceInfo.description"),
+      label: () => tGlobal("settings.opencode.logs.title"),
+      description: () => tGlobal("settings.opencode.logs.info"),
       category: "Instance",
       keywords: () => splitKeywords("commands.instanceInfo.keywords"),
       shortcutId: "switch-to-info",
       action: () => {
-        const instance = activeInstance()
-        if (instance) setActiveSession(instance.id, "info")
+        void openSettings("opencode")
       },
     })
 

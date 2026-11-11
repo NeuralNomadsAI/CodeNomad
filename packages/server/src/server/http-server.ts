@@ -37,6 +37,8 @@ import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerPendingRequestRoutes } from "./routes/pending-requests"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
+import { registerOpenCodeLogsRoutes } from "./routes/opencode-logs"
+import { BinaryResolver } from "../settings/binaries"
 import { registerRemoteControlRoutes } from "./routes/remote-control"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
@@ -376,6 +378,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, loginStart),
     logger: apiLogger,
   })
+  const logBinaryResolver = new BinaryResolver(deps.settings)
+  registerOpenCodeLogsRoutes(app, { resolveBinary: () => deps.workspaceManager.resolveBinaryPath(logBinaryResolver.resolveDefault().path) })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   const remotePreviewsAllowed = () => deps.remoteControlManager.previewsAllowed()

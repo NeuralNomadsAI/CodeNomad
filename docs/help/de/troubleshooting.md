@@ -98,7 +98,7 @@ Lesen Sie bei abgebrochener/teilweiser Bereinigung Fortschritt/Belege vor weiter
 
 ## Logs und sichere Diagnosen {#diagnostics}
 
-1. Öffnen Sie **Instanz-Info** zur Statusprüfung; **Server-Protokolle anzeigen** zeigt verfügbare Ausgabe.
+1. Öffnen Sie **Einstellungen → OpenCode → OpenCode-Protokolle anzeigen**. Die globale Datei `opencode.log` des ausgewählten Ausführungshosts wird mit `opencode debug paths log` ermittelt. Das verschiebbare, nicht modale Fenster lässt die übrige Oberfläche bedienbar. Es zeigt höchstens die letzten 128 KiB; **Aktualisieren** liest die Datei erneut. Protokolle bleiben getrennt von Nachrichten und Modellanfragen.
 2. Wählen Sie unter **Einstellungen → OpenCode** nur bei Bedarf an mehr Details den vorgesehenen **Standard-Log-Level**. Für eigenständiges CodeNomad-Logging verwenden Sie die [Logging-Optionen der Server-CLI](server.md).
 3. Öffnen Sie **Einstellungen → Info → Diagnose** und verwenden Sie **Fehler melden**, **In Zwischenablage kopieren** oder **.txt herunterladen**.
 

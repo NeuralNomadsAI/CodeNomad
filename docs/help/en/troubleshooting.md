@@ -98,7 +98,7 @@ For cancelled or partial cleanup, read its progress/receipts before starting ano
 
 ## Logs and safe diagnostics {#diagnostics}
 
-1. Open **Instance Info** to inspect its status; **Show server logs** exposes the available output.
+1. Open **Settings → OpenCode → View OpenCode logs**. This reads the selected execution host’s global `opencode.log`, located with `opencode debug paths log`. The movable, non-modal window leaves the rest of the interface usable. It shows at most the last 128 KiB; **Refresh** rereads the file. Logs stay separate from messages and model requests.
 2. In **Preferences → OpenCode**, choose the intended **Default log level** only when more detail is needed. For standalone CodeNomad logging, use the [server CLI logging options](server.md).
 3. Open **Settings → Info → Diagnostics** and use **Report a bug**, **Copy to clipboard** or **Download .txt**.
 

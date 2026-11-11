@@ -35,7 +35,7 @@
 | סגירת סשן | `Mod+Shift+W` |
 | סשן קודם / הבא | `Mod+Shift+[` / `Mod+Shift+]` |
 | לשונית סשן 1–9 | `Mod+Shift+1` עד `Mod+Shift+9` |
-| מידע על מופע | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | חיפוש בהיסטוריית סשן | `Mod+F` |
 | **הודעת משתמש קודמת** / **הודעת משתמש הבאה**, גם בתפריט **פעולות נוספות** של שדה הקלט | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) או `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | תוצאת חיפוש הבאה / קודמת (כשהחיפוש ממוקד) | `Enter` / `Shift+Enter` |
