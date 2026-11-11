@@ -1,13 +1,15 @@
 [workspace]
-members = ["src-tauri", "tests/windows-input", "tests/windows-runner-refcount", "tests/macos-window", "tests/panel-extension", "tests/webkit-capabilities"]
+members = ["src-tauri", "tests/windows-input", "tests/windows-runner-refcount", "tests/macos-window", "tests/panel-extension", "tests/webkit-capabilities", "tests/glib-variant-str"]
 default-members = ["src-tauri"]
 resolver = "2"
 
 # Tao: Windows runner reference count correction for the Tauri runtime we ship
 # (tauri#15408). Updater: installer handoff only after a successful launch.
-# Re-qualify both on every Tauri update; see vendor/README.md for provenance.
+# GLib: mutable variant out-pointer correction for the GTK binding family.
+# Re-qualify these overrides on every Tauri update; see vendor/README.md.
 [patch.crates-io]
 tao = { path = "vendor/tao-0.37.2" }
 tauri-plugin-updater = { path = "vendor/tauri-plugin-updater-2.14.1" }
 tauri-runtime-wry = { path = "vendor/tauri-runtime-wry-2.12.3" }
 wry = { path = "vendor/wry-0.57.1" }
+glib = { path = "vendor/glib-0.18.5" }
