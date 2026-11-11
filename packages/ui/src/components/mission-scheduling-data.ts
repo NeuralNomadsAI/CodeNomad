@@ -2,10 +2,11 @@ import { Cron } from "effect"
 import type { MissionCondition, MissionCriteriaLaunchPolicy, MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { previewMissionCalendars } from "../../../server/src/missions/mission-calendar-preview"
 import { missionCriteriaStructure, type MissionCriterionConnector } from "../../../server/src/missions/mission-launch-kind"
+import { missionGithubKinds, isMissionGithubKind, missionGithubConditionSchema } from "../../../server/src/missions/mission-github-condition"
 
 /** Schedule shortcuts write a cron; advanced cron is written directly. */
 export const missionScheduleShortcuts = ["now", "hours", "daily", "weekly", "monthly", "cron"] as const
-export const missionEventKinds = ["branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed"] as const
+export const missionEventKinds = ["branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed", ...missionGithubKinds] as const
 export type MissionConditionKind = MissionCondition["kind"]
 export type MissionCriterionKind = typeof missionScheduleShortcuts[number] | MissionConditionKind
 export const MISSION_CRITERIA_LIMIT = 16
@@ -13,7 +14,7 @@ export const MISSION_CRITERIA_LIMIT = 16
 export const missionHourSteps = [1, 2, 3, 4, 6, 8, 12] as const
 export interface MissionCriterionDraft {
   id: string; kind: MissionCriterionKind
-  hours: string; time: string; days: number[]; monthDay: string; expression: string; source: string; files: string
+  hours: string; time: string; days: number[]; monthDay: string; expression: string; source: string; files: string; author?: string
 }
 export interface MissionSchedulingFields { criteria: MissionCriterionDraft[]; zone: string }
 type Criterion = MissionCriteriaLaunchPolicy["when"][number]
@@ -69,6 +70,12 @@ export function missionCriterionCron(row: MissionCriterionDraft, index = 0): str
 }
 function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKind }, index: number, directory?: string): MissionCondition {
   const source = row.source.trim()
+  if (isMissionGithubKind(row.kind)) {
+    const parsed = missionGithubConditionSchema.safeParse({ kind: row.kind, ...(source ? { repository: source } : {}),
+      ...((row.kind === "github-issue" || row.kind === "github-pull-request") && row.author?.trim() ? { author: row.author.trim() } : {}) })
+    if (!parsed.success) return fail("source", index)
+    return parsed.data
+  }
   switch (row.kind) {
     case "schedule-success": case "mission-completed":
       if (!/^[A-Za-z0-9_-]{3,100}$/.test(source)) return fail("source", index)
@@ -88,6 +95,7 @@ function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKin
       return { kind: row.kind, paths: paths.sort() }
     }
   }
+  return fail("source", index)
 }
 
 /** UI validation only; the native configuration codec and source ownership remain authoritative. */

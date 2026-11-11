@@ -8,6 +8,7 @@ import type { MissionConditionKind } from "./mission-scheduling-data"
 import type { MissionSchedulingSourceLists } from "./mission-scheduling-sources"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import { backgroundReads } from "../lib/background-read-queue"
+import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 
 type Kind = keyof MissionSchedulingSourceLists
 
@@ -27,11 +28,11 @@ function conversationTitleQuery(query: string): string {
 
 /** Bounded source pages per selected event kind. Open source pickers own continuation. */
 export function createMissionEditorSources(props: { instanceId: string; projectID?: string; target?: string
-  directory: () => string | undefined; kinds: () => readonly MissionConditionKind[]; active: () => boolean
+  directory: () => string | undefined; kinds: () => readonly (MissionConditionKind | "coordinator-session")[]; active: () => boolean
   selected: () => readonly { kind: Kind; id: string }[]
   captureView: () => (() => boolean) }) {
   const [sources, setSources] = createSignal<MissionSchedulingSourceLists>({})
-  const kinds = createMemo(() => [...new Set(props.kinds().filter((kind): kind is Kind => kind !== "files-changed"))].sort(),
+  const kinds = createMemo(() => [...new Set(props.kinds().filter((kind): kind is Kind => kind !== "files-changed" && !isMissionGithubKind(kind)))].sort(),
     [] as Kind[], { equals: (a, b) => a.join() === b.join() })
   const forget = (kind: Kind) => setSources(previous => { const { [kind]: _removed, ...rest } = previous; return rest })
   const readers = mapArray(kinds, kind => {
@@ -59,11 +60,11 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
       void Promise.allSettled(ids.map(id => backgroundReads.run(signal, async () => {
         if (!/^[A-Za-z0-9_.:-]{1,240}$/.test(id)) throw new Error("Invalid source")
         if (id === props.target) throw new Error("Source cycle")
-        if (kind === "conversation-message") {
+        if (kind === "conversation-message" || kind === "coordinator-session") {
           const source = await getRootClient(props.instanceId).session.get({ sessionID: id }, { signal })
           if (source.id !== id || props.projectID && source.projectID !== props.projectID
             || normalizeSessionDirectory(source.location.directory) !== normalizeSessionDirectory(directory)
-            || isReservedMissionScheduleSessionID(id)) throw new Error("Foreign source")
+            || isReservedMissionScheduleSessionID(id) || kind === "coordinator-session" && source.parentID) throw new Error("Foreign source")
           return { id, label: source.title || id }
         }
         const read = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, id, { directory }, signal), { document } = read
@@ -104,11 +105,14 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
       setLoading(true); setFailed(false)
       const read = async () => {
         signal.throwIfAborted()
-        if (kind === "conversation-message") {
+        if (kind === "conversation-message" || kind === "coordinator-session") {
           const page = await getRootClient(props.instanceId).session.list(buildProjectSessionListOptions(after ? { cursor: after }
-            : { directory, search: conversationTitleQuery(query), order: "desc" }), { signal })
+            : { directory, search: conversationTitleQuery(query), order: "desc", ...(kind === "coordinator-session" ? { parentID: null } : {}) }), { signal })
           if (page.data.length > 200) throw new Error("Oversized source page")
-          return { rows: page.data.filter(row => !isReservedMissionScheduleSessionID(row.id)).map(row => ({ id: row.id, label: row.title || row.id })), next: page.cursor?.next }
+          return { rows: page.data.filter(row => !isReservedMissionScheduleSessionID(row.id) && (kind !== "coordinator-session"
+            || !row.parentID && (!props.projectID || row.projectID === props.projectID)
+              && normalizeSessionDirectory(row.location.directory) === normalizeSessionDirectory(directory)))
+            .map(row => ({ id: row.id, label: row.title || row.id })), next: page.cursor?.next }
         }
         if (kind === "branch-commits") {
           const page = await backendOf(props.instanceId).api.fetchLocalGitBranches(props.instanceId, directory, signal)
@@ -128,12 +132,12 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
           ? [...previous[kind] ?? [], ...page.rows.filter(row => !previous[kind]?.some(old => old.id === row.id))] : page.rows })))
         setNext(page.next ?? undefined)
       }).catch(() => { if (current()) setFailed(true) })
-        .finally(() => { if (current()) setLoading(false) }) }, kind === "conversation-message" && query ? 200 : 0)
+       .finally(() => { if (current()) setLoading(false) }) }, (kind === "conversation-message" || kind === "coordinator-session") && query ? 200 : 0)
       onCleanup(() => { clearTimeout(timer); controller.abort() })
     }))
     onCleanup(() => forget(kind))
     return { kind, next, pins, pinLoading, pinFailed, loading, failed, more: () => { if (next() && !loading() && !failed()) setCursor(next()) },
-      retry: () => setRefresh(value => value + 1), search: kind === "conversation-message" ? (value: string) => setSearch(value.trim()) : undefined }
+      retry: () => setRefresh(value => value + 1), search: kind === "conversation-message" || kind === "coordinator-session" ? (value: string) => setSearch(value.trim()) : undefined }
   })
   const choices = createMemo(() => {
     const result = { ...sources() }

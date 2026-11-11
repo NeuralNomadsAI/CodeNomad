@@ -8,6 +8,9 @@ const events = [
   { type: "object", properties: { kind: { const: "branch-commits" }, directory: text, ref: text }, required: ["kind", "directory", "ref"], additionalProperties: false },
   { type: "object", properties: { kind: { const: "conversation-message" }, conversationID: text }, required: ["kind", "conversationID"], additionalProperties: false },
   { type: "object", properties: { kind: { const: "files-changed" }, paths: { type: "array", maxItems: 128, items: text } }, required: ["kind", "paths"], additionalProperties: false },
+  { type: "object", properties: { kind: { const: "github-notification" }, repository: text }, required: ["kind"], additionalProperties: false },
+  { type: "object", properties: { kind: { const: "github-security-alert" }, repository: text }, required: ["kind", "repository"], additionalProperties: false },
+  ...["github-pull-request", "github-issue"].map(kind => ({ type: "object", properties: { kind: { const: kind }, repository: text, author: text }, required: ["kind", "repository"], additionalProperties: false })),
 ] as const
 /** One ordered criteria list (roles by position); the strict domain codec checks counts and uniqueness. */
 const criteriaLaunchPolicyWire = { type: "object", properties: {

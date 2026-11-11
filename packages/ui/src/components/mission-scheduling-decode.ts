@@ -1,6 +1,7 @@
 import { Cron } from "effect"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
+import { isMissionGithubCondition } from "../../../server/src/missions/mission-github-condition"
 import { missionHourSteps, newMissionCriterion, newMissionSchedulingDraft, type MissionCriterionDraft,
   type MissionSchedulingDraft } from "./mission-scheduling-data"
 
@@ -59,6 +60,10 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
     }
     if (item.kind === "every" || item.kind === "at" || item.kind === "in") continue
     const event = item, row = newMissionCriterion(event.kind)
+    if (isMissionGithubCondition(event)) {
+      row.source = event.repository ?? ""
+      if ("author" in event && event.author) row.author = event.author
+    }
     switch (event.kind) {
       case "schedule-success": case "mission-completed": row.source = event.missionID; break
       case "conversation-message": row.source = event.conversationID; break

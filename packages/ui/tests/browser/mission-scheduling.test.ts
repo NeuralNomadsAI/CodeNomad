@@ -87,7 +87,7 @@ test("the first criterion defaults to once; Add appends a daily card; connectors
     await page.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
     await label(page, "Criterion 1 type").selectOption("daily")
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
-    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 11)
+    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 15)
     assert.equal(await roleOf(page, 1).count(), 0, "Launch when titles the first card")
     assert.equal(await handle(page, 1).isDisabled(), true, "a single card has nothing to reorder")
     assert.equal(await schedule.locator("time, ol, input[type=datetime-local], [aria-pressed]").count(), 0, "no preview, end date or role switch")
@@ -236,6 +236,28 @@ test("each event row reads its own sources; an unavailable source keeps the draf
     assert.equal(await label(page, "Criterion 4 source").getAttribute("data-source-id"), "ses_followed")
     assert.match(await label(page, "Criterion 1 source").innerText(), /Unavailable source/)
     assert.equal(await policy(page), undefined)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("GitHub criteria accept repository and author text without requesting a local source catalogue", async () => {
+  const { page, errors } = await setup(), sourceReads: string[] = []
+  page.on("request", request => { if (/git-branches|\/api\/session|missions\/scheduled/.test(request.url())) sourceReads.push(request.url()) })
+  try {
+    await label(page, "Criterion 1 type").selectOption("github-pull-request")
+    await label(page, "Criterion 1 source").fill("Acme/Repo")
+    await page.getByLabel("Author (optional)", { exact: true }).fill("@dependabot[bot]")
+    assert.deepEqual(await policy(page), { when: [{ kind: "github-pull-request", repository: "acme/repo", author: "dependabot[bot]" }] })
+    await page.getByLabel("Author (optional)", { exact: true }).fill("alice OR bob")
+    assert.equal(await policy(page), undefined)
+    await label(page, "Criterion 1 type").selectOption("github-notification")
+    assert.equal(await page.getByLabel("Author (optional)", { exact: true }).count(), 0)
+    assert.deepEqual(await policy(page), { when: [{ kind: "github-notification" }] })
+    await label(page, "Criterion 1 type").selectOption("github-security-alert")
+    assert.equal(await policy(page), undefined)
+    await label(page, "Criterion 1 source").fill("acme/repo")
+    assert.deepEqual(await policy(page), { when: [{ kind: "github-security-alert", repository: "acme/repo" }] })
+    assert.deepEqual(sourceReads, [])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

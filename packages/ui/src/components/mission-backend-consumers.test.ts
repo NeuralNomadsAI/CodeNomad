@@ -2,6 +2,11 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import ts from "typescript"
+import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
+import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
+import { backgroundReads } from "../lib/background-read-queue"
+import { recurrenceStartText } from "../../../server/src/missions/lifecycle-input"
 import { createEffect, createMemo, createRoot, createSignal, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Run production consumer bodies/effects, with transport and view owners injected.
@@ -30,7 +35,7 @@ function deferred() {
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 const solid = { createEffect, createMemo, createSignal, mapArray, on, onCleanup, untrack }
 const id = "remote~same"
-function fixture(api: Record<string, any>) {
+function fixture(api: Record<string, any>, id = "remote~same") {
   let controller = new AbortController()
   const [signal, setSignal] = createSignal(controller.signal)
   const owners: string[] = [], localCalls: string[] = []
@@ -105,7 +110,7 @@ test("cleanup remote preflight cannot delete after detachment", async () => {
 const editorStart = { startOnCreation: () => false, captureStart: (requested: boolean) => {
   if (requested) throw new Error("Unexpected automatic start opt-in")
   return async () => { throw new Error("Unexpected automatic start continuation") }
-} }
+}, coordinatorReady: production("./mission-editor.tsx", "coordinatorReady", { coordinatorSessionID: () => undefined }) }
 
 test("editor creation dispatch is remote; stale completion preserves the current view", async () => {
   const read = deferred(), env = fixture({ createMission: () => read.promise }), action = {}
@@ -152,7 +157,7 @@ for (const kind of ["schedule-success", "mission-completed", "branch-commits"] a
     let dispose!: () => void
     const timers = new Map<number, () => void>()
     let timerId = 0
-    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, getOpenCodeInstanceGeneration: () => 1,
+    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionGithubKind, getOpenCodeInstanceGeneration: () => 1,
       setTimeout: (callback: () => void) => { const key = ++timerId; timers.set(key, callback); return key },
       clearTimeout: (key: number) => timers.delete(key),
     })
@@ -164,6 +169,71 @@ for (const kind of ["schedule-success", "mission-completed", "branch-commits"] a
     await flush(); assert.deepEqual(reader.sources(), {}); dispose()
   })
 }
+
+test("coordinator sources keep same-ID roots on A/B, filter foreign rows and reject revoked publication", async () => {
+  for (const owner of ["A~same", "B~same"]) {
+    const env = fixture({}, owner), reads: any[] = [], pending = deferred(), pins: string[] = [], timers = new Map<number, () => void>()
+    let timerID = 0
+    const row = (id: string, extra = {}) => ({ id, title: `${owner}:${id}`, projectID: "p", location: { directory: "/repo" }, ...extra })
+    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionGithubKind,
+      isReservedMissionScheduleSessionID, buildProjectSessionListOptions, normalizeSessionDirectory, backgroundReads,
+      conversationTitleQuery: production("./mission-editor-sources.ts", "conversationTitleQuery", {}),
+      getOpenCodeInstanceGeneration: () => 1, setTimeout: (callback: () => void) => { const key = ++timerID; timers.set(key, callback); return key }, clearTimeout: (key: number) => timers.delete(key),
+      getRootClient: (id: string) => { assert.equal(id, owner); return { session: {
+        list: async (options: any, request: any) => { reads.push({ options, signal: request.signal }); return reads.length === 1
+          ? { data: [row("ses_same"), row("ses_child", { parentID: "ses_parent" }), row("ses_foreign", { projectID: "other" }),
+            row("ses_elsewhere", { location: { directory: "/other" } }), row("ses_cn_schedule_carrier")], cursor: { next: "page2" } }
+          : pending.promise },
+        get: async ({ sessionID }: any) => { pins.push(sessionID); throw new Error("Missing chosen root") },
+      } } },
+    })
+    let dispose!: () => void
+    const reader = createRoot(close => { dispose = close; return create({ instanceId: owner, projectID: "p", directory: () => "/repo",
+      kinds: () => ["coordinator-session"], selected: () => [{ kind: "coordinator-session", id: "ses_missing" }],
+      active: () => true, captureView: () => env.captureBackendOperation(owner).current }) })
+    for (const [key, timer] of timers) { timers.delete(key); timer() }
+    await flush()
+    assert.deepEqual(reader.sources()["coordinator-session"], [{ id: "ses_same", label: `${owner}:ses_same` }])
+    assert.deepEqual(reads[0].options, { directory: "/repo", parentID: null, order: "desc", limit: 200 })
+    assert.deepEqual(pins, ["ses_missing"])
+    assert.equal(reader.reader("coordinator-session", "ses_missing").lookupFailed(), true)
+    reader.reader("coordinator-session").more()
+    for (const [key, timer] of timers) { timers.delete(key); timer() }
+    assert.deepEqual(reads[1].options, { cursor: "page2" })
+    env.revoke(); assert.equal(reads[1].signal.aborted, true)
+    pending.resolve({ data: [row("ses_late")], cursor: {} }); await flush()
+    assert.deepEqual(reader.sources()["coordinator-session"], [{ id: "ses_same", label: `${owner}:ses_same` }])
+    assert.deepEqual(env.localCalls, []); dispose()
+  }
+})
+
+test("editor GitHub and coordinator payload reaches only its owning schedule consumer", async () => {
+  for (const owner of ["A~same", "B~same"]) {
+    const writes: any[] = [], scope = scheduleScope({})
+    const env = fixture({ saveMissionSchedule: async (...args: any[]) => { writes.push(args); return { document: scope.doc } } }, owner), action = {}, coordinatorSessionID = () => "ses_same"
+    Object.assign(scope, env, { unified: false }); scope.props.instanceId = owner
+    const schedule = { unified: false, document: () => undefined, save: production("./mission-editor-schedule.ts", "save", scope) }
+    const policy = () => ({ when: [{ kind: "github-issue", repository: "acme/repo", author: "alice" }] })
+    const run = production("./mission-editor.tsx", "save", { ...env, ...editorStart, kind: "create", action, lastPayload: "", requestId: "r",
+      props: { instanceId: owner, action }, locked: () => false, isActive: () => true, setFieldError: () => {},
+      structuralLocked: () => false, compareError: () => undefined, immediateCreationFollowed: () => false, mode: () => "recurring",
+      coordinatorSessionID, coordinatorReady: production("./mission-editor.tsx", "coordinatorReady", { coordinatorSessionID, mode: () => "recurring",
+        watchedIDs: () => [], schedule: { scheduling: () => ({ criteria: [{ kind: "github-issue" }] }) },
+        sourceChoices: { sources: () => ({ "coordinator-session": [{ id: "ses_same" }] }) } }),
+      schedule, textLocked: () => false, policy, policyReady: () => true, recurrenceStartText,
+      objective: () => "objective", notes: () => "notes", template: () => "custom", taskMode: () => "native",
+      uncertainRecurrence: () => undefined, missionCreationHold: () => undefined, identity: () => owner,
+      copyMissionProfiles: (value: any) => structuredClone(value), effectiveProfiles: () => ({ coordinator: { agent: "worker", model: { providerID: "p", id: "m" } }, roles: {} }),
+      missionProfileRoles: { custom: [] }, watchedIDs: () => [], sourceLocationReady: () => true, sourceInputBudget: () => ({ sufficient: true }),
+      submittedTitle: () => "title", captureView: () => env.captureBackendOperation(owner).current, setPending: () => {}, setError: () => {},
+    })
+    await run({ preventDefault() {} })
+    assert.equal(writes.length, 1); assert.equal(writes[0][0], owner)
+    assert.equal(writes[0][1].configuration.coordinatorSessionID, "ses_same")
+    assert.deepEqual(writes[0][1].configuration.launch, policy())
+    assert.deepEqual(env.localCalls, [])
+  }
+})
 
 test("daily recurrence controls route remotely and reject stale view effects", async () => {
   const read = deferred(), env = fixture({ controlMissionRecurrence: () => read.promise })

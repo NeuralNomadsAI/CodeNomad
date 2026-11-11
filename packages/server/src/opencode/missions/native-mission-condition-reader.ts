@@ -6,6 +6,8 @@ import { MISSION_DOCUMENT_PREFIX, missionSourceKey, type MissionDocument, type M
 import type { NativeMissionDocumentStore } from "../../missions/mission-document-store"
 import { isolatedMissionPassageJournal } from "../../missions/mission-document-passage-storage"
 import { readMissionLocalSource } from "../../missions/mission-local-sources"
+import { readMissionGithubSource } from "../../missions/mission-github-source"
+import { isMissionGithubCondition } from "../../missions/mission-github-condition"
 import { stableToken } from "../../missions/receipt-identity"
 import { missionLaunchesRepeatedly, missionLaunchModel, requiresMissionCalendar, type MissionCondition } from "../../missions/launch-policy"
 import type { MissionMap } from "../../missions/model"
@@ -56,6 +58,12 @@ export function createMissionConditionReader(input: {
     const current = (): true => { input.signal.throwIfAborted(); for (const guard of guards) guard(); return true }
     await assertMissionSourceAcyclic(doc, input.store, id => fence.document(sourceKey(doc, id)))
     const previous = doc.checkpoints.find(item => item.key === missionSourceKey(condition))
+    if (isMissionGithubCondition(condition)) {
+      if (!doc.configuration.roots.some(item => item.directory === input.native.location.directory)) return unavailable()
+      const read = await readMissionGithubSource(condition, input.native.location.directory, previous, input.signal)
+      guards.push(read.current); current()
+      return { ...read, current }
+    }
     if (condition.kind === "branch-commits" || condition.kind === "files-changed") {
       const root = condition.kind === "branch-commits" ? condition.directory : input.native.location.directory
       if (!doc.configuration.roots.some(item => item.directory === root)) return unavailable()
@@ -115,6 +123,13 @@ export function createMissionConditionReader(input: {
       const view = await scoped.journal.missionView(receipt.missionID)
       if (view.discardedEvents || view.controlUnavailable || view.notificationUnavailable || !view.mission
         || view.mission.coordinatorSessionId !== receipt.coordinatorSessionID) return unavailable()
+      if (receipt.coordinatorReused) {
+        if (!receipt.settlementProof || receipt.settlementProof.revision !== view.mission.revision
+          || receipt.outcome !== "completed" || view.mission.status !== "completed"
+          || !view.events.some(event => event.type === "mission.created" && event.requestID === receipt.id)) return unavailable()
+        return { passageID: receipt.id, missionID: receipt.missionID, outcome: "completed" as const,
+          messageID: receipt.messageID, ...receipt.settlementProof }
+      }
       const proof = await observe(view.mission, receipt.messageID)
       return proof && { passageID: receipt.id, missionID: receipt.missionID, ...proof }
     }

@@ -6,6 +6,8 @@ import { compareModelError, missionProfileRoles, missionProfilesInputSchema, val
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
 import { missionCriteriaStructure, missionLaunchModel, requiresMissionCalendar } from "./mission-launch-kind"
+import { missionGithubConditions } from "./mission-github-condition"
+import { isReservedMissionScheduleSessionID } from "./mission-schedule-carrier-identity"
 export { missionCriteriaStructure, type MissionCriterionConnector, type MissionCriterionRole, type MissionSchedulePlan, requiresMissionCalendar, missionLaunchLimit, missionLaunchModel, missionEventPrincipal, missionEventPrincipalSlot, missionPrincipalCount,
   missionLaunchesRepeatedly, type MissionLaunchModel, type MissionLaunchSchedule } from "./mission-launch-kind"
 export { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
@@ -52,6 +54,7 @@ export const missionConditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("conversation-message"), conversationID: nativeDocumentID }).strict(),
   z.object({ kind: z.literal("files-changed"), paths: z.array(relativePath).min(1).max(128)
     .refine(paths => new Set(paths).size === paths.length).transform(paths => [...paths].sort()) }).strict(),
+  ...missionGithubConditions,
 ])
 /** Stored documents written before launch criteria; read exactly, never rewritten. */
 export const missionLegacyLaunchPolicySchema = z.object({ timing: missionTimingSchema, condition: missionConditionSchema.nullable(),
@@ -94,13 +97,16 @@ export const missionConfigurationSchema = z.object({
   profileID: nativeDocumentID.nullable(), executionHost: nativeDocumentID.nullable(),
   roots: z.array(authorityRootSchema).min(1).max(32).refine(roots => new Set(roots.map(item => item.directory)).size === roots.length),
   watchedConversationIDs: z.array(nativeDocumentID).max(64).refine(ids => new Set(ids).size === ids.length),
+  coordinatorSessionID: nativeDocumentID.refine(id => !isReservedMissionScheduleSessionID(id)).optional(),
   launch: missionLaunchPolicySchema,
 }).strict().refine(config => {
   try {
     canonicalAuthority(config, MISSION_CONFIGURATION_MAX_BYTES)
     validateMissionProfiles(config.template, config.profiles)
     if (config.template === "compare" && compareModelError(config.profiles)) return false
-    if (!requiresMissionCalendar(config.launch)) return true
+    if (!requiresMissionCalendar(config.launch)) return config.coordinatorSessionID === undefined
+    if (config.coordinatorSessionID && (config.watchedConversationIDs.includes(config.coordinatorSessionID)
+      || missionLaunchModel(config.launch).events.some(item => item.kind === "conversation-message" && item.conversationID === config.coordinatorSessionID))) return false
     const profiles = config.profiles
     return !!config.profileID && !!config.executionHost && !!profiles?.coordinator && missionProfileRoles[config.template].every(role => !!profiles.roles?.[role])
       && [profiles.coordinator, ...Object.values(profiles.roles ?? {})].every(selection =>

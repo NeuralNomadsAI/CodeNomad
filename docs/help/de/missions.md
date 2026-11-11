@@ -48,6 +48,8 @@ Bei verlorener Bestätigung bleibt der Start nach Lesen der Quittung manuell. Be
 
 ### Kriterien {#native-scheduling}
 
+Die Informationen zur Unteragententiefe nennen die wirksame Quelle unter **OpenCode-Konfigurationsdatei:**.
+
 Erstes Kriterium ist **Einmal, jetzt**. **Kriterium hinzufügen** ergänzt ein weiteres. Wählen Sie den Typ, entfernen Sie eine Karte mit × oder verschieben Sie sie am Griff; Alt+Auf/Ab bewegt den fokussierten Griff.
 
 Verfügbar sind einmal jetzt, alle N Stunden, täglich, ausgewählte Wochentage, Monatstag und Cron. Es gilt die gespeicherte Zeitzone; das Zonenfeld erscheint bei Abweichung vom System. Monate ohne den gewählten Tag werden übersprungen.
@@ -56,6 +58,10 @@ Einmal jetzt erhält seinen Zeitpunkt beim Start und bietet nur eine Gelegenheit
 
 ### Ereignisse und Kombinationen {#scheduling-conditions}
 
+GitHub-Ereignisse erfassen Benachrichtigungen des angemeldeten Kontos, neue Dependabot-Warnungen, Pull-Requests und Issues auf **github.com**. Geben Sie das **GitHub-Repository** als `owner/repository` an; bei Benachrichtigungen umfasst ein leeres Feld alle Repositorys. Pull-Requests und Issues erlauben einen optionalen **Autor**, auch Bots wie `dependabot[bot]`. Benachrichtigungen erfassen neue Thread-Aktivität und behalten ihren Lesestatus; Warnungen umfassen auch zwischen Prüfungen behobene oder verworfene Einträge.
+
+Die Prüfung verwendet GitHub CLI (`gh`) mit Anmeldung auf dem OpenCode-Ausführungshost, auch bei geschlossenem CodeNomad. Das Konto benötigt Repository-Zugriff sowie je nach Ereignis [Benachrichtigungszugriff](https://docs.github.com/en/rest/activity/notifications) und [Lesezugriff auf Dependabot-Warnungen](https://docs.github.com/en/rest/dependabot/alerts). Der erste Start setzt die Referenz; ältere Einträge liegen außerhalb des Auslösefensters. Höchstens vier Seiten mit je 50 Einträgen werden innerhalb von zehn Sekunden gelesen. Fehlende Rechte, API-Limits und zu große Fenster machen die Quelle unverfügbar. Beobachtete Zusammenfassungen gehen in die Eingabe des Durchlaufs ein.
+
 Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Ohne Suche lädt die Auswahl beim Scrollen weitere Quellen; bei Lesefehlern erscheint dort **Erneut versuchen**. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Die für neue Nachrichten gewählte Unterhaltung liefert auch Kontext für den Durchlauf. Ein anderer Kriteriumstyp leert die Quelle. Gespeicherter Unterhaltungskontext bleibt beim Bearbeiten erhalten.
 
 **oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein. **sonst** macht nachfolgende Zeitpläne zum Rückfall: seit ihrem vorherigen Termin beziehungsweise ihrer Aktivierung darf oben kein Durchlauf gestartet sein. Ereignisse danach bedingen diesen Rückfall.
@@ -63,6 +69,8 @@ Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Co
 Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die Referenz, Erfolg schreibt sie fort, Fehlschlag erhält sie. Unlesbare Quellen blockieren mit Erklärung. Durchläufe überlappen nicht.
 
 ### Zähler und Verlauf {#scheduling-limits}
+
+**Koordinator-Sitzung** verwendet standardmäßig für jeden Durchlauf eine **Neue Sitzung**. Mit einem Zeitplan oder Ereignis können Sie unter **Vorhandene Sitzung** eine Stamm-Unterhaltung dieses Projekts und derselben Ausführungs-Location wählen. Jeder Durchlauf setzt sie mit dem konfigurierten Agenten und Modell fort; Verlauf, Titel und Berechtigungen bleiben erhalten. Missionssteuerungen betreffen auch vorhandene Arbeit darin. Jeder Durchlauf behält sein eigenes Ergebnis und Journal im Verlauf; eine verschwundene ausgewählte Unterhaltung erfordert Ihren Eingriff.
 
 Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfung, gestartete/erfolgreiche Durchläufe und frühere Ergebnisse. Der Verlauf hält 30 Ergebnisse; Gesamtzähler bleiben. Ein zugelassenes **Jetzt ausführen** zählt mit. Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 

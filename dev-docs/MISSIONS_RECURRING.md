@@ -7,7 +7,7 @@ Acceptance status: `MISSIONS_RECURRING_QUALIFICATION.md`.
 
 Unified documents store a launch policy (`missions/launch-policy.ts`): one ordered
 list `{ when }` of criteria, each a schedule (`{ kind: "now" }` once at Play, or
-one cron with its IANA zone) or one of the five events below. A sole `now` criterion
+one cron with its IANA zone) or one of the events below. A sole `now` criterion
 and an empty list use one-time journal admission at Play, with native-default profiles
 available. Mixed lists use native calendars and their frozen explicit profiles. Native
 schedule rows own future dates and civil-time behavior; Missions owns admission,
@@ -129,7 +129,7 @@ on hover, keyboard focus and touch. The editor's **Launch when** list adds cards
 with **Add a criterion**; once now is selected in the initial card and adding a card
 keeps it in place. Each card's native select groups schedule shortcuts (once now, every
 N hours with N in 1, 2, 3, 4, 6, 8 or 12, every day, selected weekdays, day of each month,
-advanced cron) and the five events; a new daily card takes the first free hour from
+advanced cron) and the supported events; a new daily card takes the first free hour from
 09:00. Shortcuts write a cron; recognized crons decode back to their shortcut
 and unedited cards keep their stored spelling. Cards reorder by dragging their grip
 (`@thisbeyond/solid-dnd`, as for tabs) or with Alt+Up/Down on the focused grip; a live
@@ -161,7 +161,7 @@ refused admissions count zero, and uncertain admission keeps its reservation unt
 reconciliation. A legacy passage limit counts the same way. Counts and first-Play
 origins survive edits, restarts and the thirty-result history window.
 
-The five events and their consumption rules are below. H9 editing
+The event sources and their consumption rules are below. H9 editing
 follows the [shared editor table](MISSIONS.md#user-journey-regression-checks): full
 eligible preparation before admission, future configuration between recurring
 passages, objective/notes during admitted work and read-only uncertain state.
@@ -169,6 +169,49 @@ Template changes require that no task has ever been created. Reopen preserves th
 loaded draft; explicit conflict reload retains a comparison, and receipt reads
 keep the original request/revision. Configuration and temporal generations remain
 separate; unchanged timing and end groups preserve phase and absolute limits.
+
+### Explicit coordinator conversation
+
+Calendar-backed configuration accepts optional `coordinatorSessionID`. The editor's
+**Coordinator session** defaults to a fresh root per passage; **Existing session** selects
+an ordinary root in the same project and execution Location using native paged discovery
+and owned point reads. Drafts and retained configure/create payloads keep this selection.
+A pure immediate policy requires the new-session choice. The selected root is excluded
+from its own followed-context/event sources and technical carriers are ineligible.
+
+Each reservation retains its distinct passage, execution Mission and original message
+IDs and isolated journal, with `coordinatorReused` identifying the explicit selection.
+Adoption applies the frozen agent/model through public native switches and merges only
+the Missions metadata key. Existing transcript, title, permissions and unrelated metadata
+remain. The user's choice authorizes ordinary Mission controls over that conversation
+and its work, including Stop cancellation of existing queued user/synthetic inputs.
+Never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
+A missing chosen root stays missing; attempted admission retains its original proof rules.
+
+Before adoption, one immutable `coordinatorBaseline` checkpoint captures the bounded
+native family and its per-session message high-water, boundary, in-flight input and durable
+aggregate sequence under document CAS and native-state fencing. Existing quiet histories
+are separated from new descendants and later child inputs. A native prompt hook records
+the first actual child-input identity in `codenomad.passage-input` metadata for that passage;
+later inputs retain it through pruning and restarts. Inherited running work keeps its actual
+captured input and failures after the ownership boundary. Idle ancestors of inherited
+active/queued work, and sessions awaiting identified background notices, retain their
+existing input too. Missing/pruned new correlation
+remains unknown. Whole-family activity,
+claims, queues, requests, tools and background deliveries still prevent settlement.
+The pending checkpoint is released at archive, which retains the journal revision/family
+digest as `settlementProof`. Native source fences cover archive publication. Success-source
+reads use that archived proof and isolated completed journal, so later work in the same
+conversation leaves earlier results stable. Exact archive/deletion ownership releases
+the root to ordinary routing; missing or mismatched owner evidence stays unavailable.
+After archive, scoped cleanup clears only that exact old Missions marker. A changed
+marker is preserved. `coordinatorReleases` retains unconfirmed exact release identities
+independently of the thirty-result window, under the document byte bound. Those records
+also prove inactive ownership for ordinary routing. Check retries their cleanup with no
+pending passage; positive readback, absence or a replacement marker retires the record
+under its native-state fence.
+Deletion retains its original pending request until these obligations are confirmed.
+Preserved descendants use the same validated inactive-owner classification as their root.
 
 ### Restart recovery
 
@@ -296,10 +339,11 @@ Both display routes revalidate workspace, connection, physical checkout and requ
 lifetime after asynchronous work. Missing methods or capabilities return an
 explicit unavailable response. UI reads use the shared secondary HTTP budget.
 
-Five explicit events share the native source preparation boundary:
+Explicit events share the native source preparation boundary:
 another schedule's successful passage, a completed one-time Mission, commits on
 a local branch, stable new messages in a followed conversation, and an explicit
-file set. One reader call per event key (`native-mission-condition-reader.ts`)
+file set; GitHub account notifications, Dependabot alerts, new pull requests and new issues.
+One reader call per event key (`native-mission-condition-reader.ts`)
 reads the listed events; within a group, any change is enough. Trigger events are
 checked every 15 minutes; conditions are read at the slots that need them. Mission-source edges are checked
 for cycles depth-first across every listed event. First Play establishes their baseline,
@@ -317,6 +361,22 @@ ten-second budget with their final pre-publication revalidation. Exact native
 input/terminal bytes remain fenced synchronously inside the document CAS.
 Bounds, transaction fences and qualification are in the native contracts' event
 source readers section.
+
+GitHub events use `mission-github-condition.ts` and `mission-github-source.ts` with the
+existing `forge/transport.ts` read-only `gh` adapter. The CLI must be signed in on the
+OpenCode host. `github.com` is the fixed authority; account ID and execution directory
+bind each checkpoint. Notifications optionally select a repository; the other kinds
+require `owner/repository`. Pull requests and issues accept a normalized optional author,
+including `@` input and bot logins. The issues collection uses `state=all`, creation order
+and `creator`, then distinguishes pull requests from issues locally. Notifications use
+`all=true` and update timestamps; alerts use creation order with opaque `after` cursors
+from pagination links and include all states. Requests keep their own endpoint and filters.
+First Play uses the server Date as baseline; timestamp ties retain observed IDs. Each
+observation is bounded to four 50-item pages, ten seconds and the checkpoint/input bounds.
+Missing credentials/access, rate limits, malformed pages and incomplete windows remain
+unavailable. Captured historical summaries enter the frozen input as untrusted data;
+pre-publication revalidation checks the same signed-in account. Successful settlement
+consumes only that frozen checkpoint.
 
 The native calendar owner records create intents and reverse carrier ownership
 before native effects. It acknowledges the reconciliation calendar before arming

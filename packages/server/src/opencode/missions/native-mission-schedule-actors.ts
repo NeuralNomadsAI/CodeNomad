@@ -20,6 +20,8 @@ import { readAutonomousMissionEnvironment } from "./autonomous-environment"
 import { nativeScheduleDocumentKey, type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import { nativeScheduleIncarnationGuard, readNativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import type { MissionNativeRunner } from "./native-service-adapter"
+import { scheduledPassageMarker } from "./native-scheduled-passage-business"
+import { abortableNativeEffect } from "./native-invocation"
 
 type Lifecycle = NonNullable<MissionInputTransport["lifecycle"]>
 type ActorCalendarControl = { requestID: string; expectedRevision: number; action: "play" | "resume" | "pause" | "stop" | "delete"; pending: boolean }
@@ -88,12 +90,7 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
     // Effect races interrupt and join the losing fiber/finalizers before returning.
     const invoke = <A>(effect: Effect.Effect<A, unknown>, callSignal?: AbortSignal) => {
       const combined = callSignal ? AbortSignal.any([signal, callSignal]) : signal
-      return run(Effect.raceFirst(Effect.suspend(() => { combined.throwIfAborted(); return effect }), Effect.callback<never, Error>(resume => {
-        const abort = () => resume(Effect.fail(new Error("Scheduled actor invocation cancelled")))
-        combined.addEventListener("abort", abort, { once: true })
-        if (combined.aborted) abort()
-        return Effect.sync(() => combined.removeEventListener("abort", abort))
-      })))
+      return run(abortableNativeEffect(effect, combined))
     }
     const storageFor = (callSignal?: AbortSignal): MissionStorage => ({
       get: key => invoke(Effect.suspend(() => { live(); return ctx.storage.get(key) }), callSignal) as ReturnType<MissionStorage["get"]>,
@@ -122,7 +119,7 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
       }
       const doc = await readDocument(), pending = doc.pending
       if (!pending || pending.missionID !== input.missionID || pending.coordinatorSessionID !== coordinatorID
-        || !isDeepStrictEqual(marker(coordinator)?.document, { missionID: doc.id, passageID: pending.id })
+        || !isDeepStrictEqual(marker(coordinator)?.document, scheduledPassageMarker(doc))
         || marker(coordinator)?.missionID !== pending.missionID || !doc.calendarOwner
         || !isDeepStrictEqual(doc.calendarOwner.installation, manifest)) throw new Error("Scheduled actor pending differs")
       const passage = missionDocumentPassage(storage, doc, live), before = await passage.journal.snapshot()
@@ -175,7 +172,7 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
           || marker(session)?.version !== 1 || marker(session)?.missionID !== mission.id
           || marker(session)?.kind !== (id === coordinatorID ? "coordinator" : "actor")
           || !actor.roles.includes(String(marker(session)?.role))
-          || !isDeepStrictEqual(marker(session)?.document, { missionID: doc.id, passageID: pending.id })) throw new Error("Scheduled actor profile differs")
+          || !isDeepStrictEqual(marker(session)?.document, scheduledPassageMarker(doc))) throw new Error("Scheduled actor profile differs")
         return session
       }
       const ackIdentity = { missionID: mission.id, operationID: operation.id, sessionID: target.sessionID, action }
@@ -188,13 +185,15 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
       await checkOperation(); await root(coordinatorID)
       // The existing MissionControl writer serializes ordinary and isolated maps.
       // Read shared memberships under that writer before touching a root.
-      const ordinary = await new MissionJournal(storage, doc.projectID, doc.projectCanonical).snapshot()
-      if (ordinary.discardedEvents || ordinary.controlUnavailable) throw new Error("Scheduled actor membership unknown")
-      if (ordinary.missions.some(other => other.id !== mission.id && other.status === "active"
-        && other.actors.some(actor => actor.sessionId === target.sessionID))) {
-        if (action !== "stop") throw new Error("Scheduled actor root reused")
-        await checkOperation()
-        return reply({ ...ackIdentity, disposition: "target-reused" })
+      if (!(pending.coordinatorReused && target.sessionID === coordinatorID)) {
+        const ordinary = await new MissionJournal(storage, doc.projectID, doc.projectCanonical).snapshot()
+        if (ordinary.discardedEvents || ordinary.controlUnavailable) throw new Error("Scheduled actor membership unknown")
+        if (ordinary.missions.some(other => other.id !== mission.id && other.status === "active"
+          && other.actors.some(actor => actor.sessionId === target.sessionID))) {
+          if (action !== "stop") throw new Error("Scheduled actor root reused")
+          await checkOperation()
+          return reply({ ...ackIdentity, disposition: "target-reused" })
+        }
       }
       let selected: SessionInfo
       try { selected = await root(target.sessionID) } catch (error) {
@@ -262,7 +261,8 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
         const admission = Schema.encodeSync(SessionInbox.Synthetic)(nativeAdmission)
         return reply({ ...ackIdentity, disposition: "start-admitted", admission })
       }
-      const observed = await interruptNativeMissionActor({ client, root: selected, action, missionID: mission.id, signal, current: live, checkpoint })
+      const observed = await interruptNativeMissionActor({ client, root: selected, action, missionID: mission.id, signal, current: live, checkpoint,
+        drainRootInputs: pending.coordinatorReused && target.sessionID === coordinatorID })
       await checkpoint()
       return reply({ ...ackIdentity, disposition: "interrupt-observed", ...observed })
     } catch { throw new Error("Scheduled actor lifecycle unconfirmed") }

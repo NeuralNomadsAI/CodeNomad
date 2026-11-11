@@ -48,11 +48,17 @@ Oluşturma onayı kaybolursa makbuzu okumak otomatik başlatmaz. Doğrulanmamı�
 
 ### Ölçütler {#native-scheduling}
 
+Alt ajan derinliği bilgileri etkin kaynağı **OpenCode yapılandırma dosyası:** altında gösterir.
+
 İlk ölçüt **Bir kez, şimdi** olur. **Ölçüt ekle** bir tane daha ekler. Türünü seçin, × ile kaldırın, tutamacıyla sıralayın; odaklı tutamaçta Alt+Yukarı/Aşağı kullanabilirsiniz.
 
 Bir kez şimdi, N saatte bir, günlük, haftanın günleri, ayın günü ve cron seçenekleri vardır. Kayıtlı saat dilimi kullanılır; sistemden farklıysa dilim alanı görünür. Seçilen günün bulunmadığı ay atlanır. Bir kez şimdi, zamanı Başlat'ta alır; koşul bu tek fırsatı çalıştırmadan tüketebilir. OpenCode hizmeti ve yürütme makinesi kullanılabilir olmalıdır.
 
 ### Olaylar ve birleşimler {#scheduling-conditions}
+
+GitHub olayları **github.com** üzerindeki bağlı hesabın bildirimlerini, yeni Dependabot uyarılarını, pull request ve issue kayıtlarını kapsar. **GitHub deposu** alanını `owner/repository` biçiminde girin; bildirimlerde boş alan tüm depoları kapsar. Pull request ve issue için `dependabot[bot]` gibi botlar dahil isteğe bağlı **Yazar** belirtilebilir. Bildirimler mevcut konulardaki yeni etkinliği de içerir ve okunma durumunu korur; uyarılar iki kontrol arasında düzeltilen veya kapatılan kayıtları da içerir.
+
+Kontroller, CodeNomad kapalıyken de OpenCode yürütme makinesinde oturum açmış GitHub CLI (`gh`) kullanır. Seçilen olaylara göre hesabın depoya, [bildirimlere](https://docs.github.com/en/rest/activity/notifications) ve [Dependabot uyarılarını okumaya](https://docs.github.com/en/rest/dependabot/alerts) erişimi gerekir. İlk başlatma referansı belirler; önceki kayıtlar tetikleme penceresinin dışında kalır. On saniyede en fazla 50 kayıtlık dört sayfa okunur. Eksik izin, API sınırı veya büyük pencere kaynağı kullanılamaz bırakır. Gözlemlenen olay özetleri geçişin girdisine eklenir.
 
 Olaylar; başka programın/Görevin başarısını, yerel commitleri, yeni mesajları veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Arama yokken kaydırdıkça devamı yüklenir; okuma başarısız olursa aynı yerde **Tekrar dene** görünür. Arama, aksanlı harfler dâhil büyük ve küçük harfleri ayırt etmez. Arama sırasında sayfada eşleşme olsa bile seçicide **Daha fazla kaynak yükle** ile devam edin. Yeni mesajlar için seçilen konuşma geçişe bağlam da sağlar. Ölçüt türünü değiştirmek kaynağını temizler. Düzenleme, kayıtlı konuşma bağlamını korur.
 
@@ -61,6 +67,8 @@ Olaylar; başka programın/Görevin başarısını, yerel commitleri, yeni mesaj
 Baştaki tetikleyiciler 15 dakikada bir kontrol edilir. İlk Başlat referansı kurar; başarı ilerletir, başarısızlık korur. Okunamayan kaynak açıklamayla engeller. Geçişler çakışmaz.
 
 ### Sayaçlar ve geçmiş {#scheduling-limits}
+
+**Koordinatör oturumu** her geçiş için varsayılan olarak **Yeni oturum** kullanır. Zamanlama veya olay varsa **Mevcut oturum** ile bu projenin aynı yürütme Location’ındaki kök konuşması seçilir. Her geçiş, konuşma geçmişini, başlığı ve izinleri koruyarak yapılandırılmış ajan ve modelle orada sürer. Görev kontrolleri mevcut işleri de etkiler. Her geçişin sonucu ve günlüğü geçmişte ayrı tutulur; seçilen konuşma kaybolursa müdahaleniz gerekir.
 
 Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı geçişleri ve geçmişi gösterir. Son 30 sonuç saklanır; toplam sayaçlar korunur. Kabul edilen **Şimdi çalıştır** sayılır. Gösterilemeyen kayıtlı kural, açıkça değiştirilene kadar korunur; düzenlemeden önce bitiş ve sınırları inceleyin.
 
