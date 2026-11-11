@@ -7,6 +7,7 @@ import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
 import { missionCriteriaStructure, missionLaunchModel, requiresMissionCalendar } from "./mission-launch-kind"
 import { missionGithubConditions } from "./mission-github-condition"
+import { missionRepositoryConditionSchema } from "./mission-repository-condition"
 import { isReservedMissionScheduleSessionID } from "./mission-schedule-carrier-identity"
 export { missionCriteriaStructure, type MissionCriterionConnector, type MissionCriterionRole, type MissionSchedulePlan, requiresMissionCalendar, missionLaunchLimit, missionLaunchModel, missionEventPrincipal, missionEventPrincipalSlot, missionPrincipalCount,
   missionLaunchesRepeatedly, type MissionLaunchModel, type MissionLaunchSchedule } from "./mission-launch-kind"
@@ -55,6 +56,7 @@ export const missionConditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("files-changed"), paths: z.array(relativePath).min(1).max(128)
     .refine(paths => new Set(paths).size === paths.length).transform(paths => [...paths].sort()) }).strict(),
   ...missionGithubConditions,
+  missionRepositoryConditionSchema,
 ])
 /** Stored documents written before launch criteria; read exactly, never rewritten. */
 export const missionLegacyLaunchPolicySchema = z.object({ timing: missionTimingSchema, condition: missionConditionSchema.nullable(),

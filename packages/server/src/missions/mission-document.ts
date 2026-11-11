@@ -46,7 +46,7 @@ const oneTime = z.object({ creationRequestID: requestID, creationDigest: digest,
     messageID: nativeDocumentID, requestedAt: documentTimestamp, admittedAt: documentTimestamp.nullable(),
     acknowledgement: firstPlayAcknowledgement.nullable(), inputText: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT).optional() }).strict().nullable(),
 }).strict()
-const checkpoint = z.object({ key: digest, kind: z.enum(["schedule-success", "mission-completed", "branch-commits", "conversation-message", "files-changed", ...missionGithubKinds]),
+const checkpoint = z.object({ key: digest, kind: z.enum(["schedule-success", "mission-completed", "branch-commits", "conversation-message", "files-changed", "repository-activity", ...missionGithubKinds]),
   placementDigest: digest, value: z.unknown().transform((value, context) => {
     try { return JSON.parse(canonicalAuthority(value, 32 * 1024)) as import("./model").MissionJsonValue }
     catch { context.addIssue({ code: "custom", message: "Invalid source checkpoint" }); return z.NEVER }

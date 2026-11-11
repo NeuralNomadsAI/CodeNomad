@@ -17,6 +17,8 @@
 .mission-scheduling-label { display: inline-flex; align-items: center; gap: var(--space-xs); }
 .mission-criterion { display: flex; flex-direction: column; padding: var(--space-sm); border: 1px solid var(--border-base); background: var(--surface-canvas); min-inline-size: 0; }
 .mission-criterion > label { margin-block: var(--space-xs) 0; }
+.mission-repository-identity > span { flex: none; }
+.mission-repository-identity > output { flex: 1; min-inline-size: 0; }
 .mission-criterion-head { display: flex; align-items: center; gap: var(--space-sm); }
 .mission-criterion-head > select { flex: 1; }
 .mission-criterion-head > button { flex: none; }

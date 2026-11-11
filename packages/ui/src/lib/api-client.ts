@@ -319,6 +319,11 @@ export const serverApi = {
     return request(`/api/workspaces/${encodeURIComponent(id)}/git-branches?${new URLSearchParams({ directory })}`, { signal })
   },
 
+  fetchRepositorySource(id: string, directory: string, signal?: AbortSignal): Promise<{ status: "ok";
+    repository: import("../../../server/src/missions/mission-repository-condition").MissionRepositoryIdentity } | { status: "unavailable"; reason: string }> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/repository-source?${new URLSearchParams({ directory })}`, { signal })
+  },
+
   createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
     return request<{ slug: string; directory: string; branch?: string }>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`, {
       method: "POST",

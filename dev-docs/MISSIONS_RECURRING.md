@@ -342,7 +342,8 @@ explicit unavailable response. UI reads use the shared secondary HTTP budget.
 Explicit events share the native source preparation boundary:
 another schedule's successful passage, a completed one-time Mission, commits on
 a local branch, stable new messages in a followed conversation, and an explicit
-file set; GitHub account notifications, Dependabot alerts, new pull requests and new issues.
+file set; repository pull/merge request creation and merging, issue creation, GitHub account
+notifications and Dependabot alerts.
 One reader call per event key (`native-mission-condition-reader.ts`)
 reads the listed events; within a group, any change is enough. Trigger events are
 checked every 15 minutes; conditions are read at the slots that need them. Mission-source edges are checked
@@ -362,7 +363,30 @@ input/terminal bytes remain fenced synchronously inside the document CAS.
 Bounds, transaction fences and qualification are in the native contracts' event
 source readers section.
 
-GitHub events use `mission-github-condition.ts` and `mission-github-source.ts` with the
+The editor groups Git branch commits and forge events in **Repository activity**. Its
+single **Event** select groups Git and the detected forge with native optgroups;
+event-specific fields stay in that card. `mission-editor-repository.ts` demands the
+owned `repository-source` read only while such a card is shown. Detection never rewrites
+a draft: selecting a forge event pins its provider, authority and repository path.
+Stored GitHub and branch criteria keep their exact policy and source keys on unchanged saves.
+
+`mission-repository-source.ts` reads `repository-activity` through Contribute's
+`ForgeWorkItems.openRepository`: shared remote selection, CLI discovery, anonymous
+public access and request budget. `forge/activity.ts` reads all-state updated windows
+for GitHub issues/PRs, GitLab issues/MRs and Gitea issues/PRs. Creation and merge times
+select occurrences, with a normalized optional author. GitLab nested groups are encoded
+as one project path. GitLab merge windows query `state=merged`, `merged_after` and
+`order_by=merged_at`; their coverage follows merge timestamps independently of updates.
+Gitea issue windows exhaust their unordered pagination; sorted
+windows stop below the reference. All windows refuse incomplete coverage beyond four
+50-item pages and ten seconds. Server Date and timestamp-tie IDs form each checkpoint;
+repository, account and execution directory bind its placement. Revalidation checks
+the fresh remote and account before publication. Summaries are frozen as untrusted
+passage input and consumed only after success.
+Inputs with only GitHub forge criteria keep their exact GitHub heading; configurations
+containing repository-activity criteria use the repository heading.
+
+GitHub account events and stored GitHub criteria use `mission-github-condition.ts` and `mission-github-source.ts` with the
 existing `forge/transport.ts` read-only `gh` adapter. The CLI must be signed in on the
 OpenCode host. `github.com` is the fixed authority; account ID and execution directory
 bind each checkpoint. Notifications optionally select a repository; the other kinds

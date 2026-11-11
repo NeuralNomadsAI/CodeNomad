@@ -87,7 +87,7 @@ test("the first criterion defaults to once; Add appends a daily card; connectors
     await page.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
     await label(page, "Criterion 1 type").selectOption("daily")
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
-    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 15)
+    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 11)
     assert.equal(await roleOf(page, 1).count(), 0, "Launch when titles the first card")
     assert.equal(await handle(page, 1).isDisabled(), true, "a single card has nothing to reorder")
     assert.equal(await schedule.locator("time, ol, input[type=datetime-local], [aria-pressed]").count(), 0, "no preview, end date or role switch")
@@ -244,20 +244,38 @@ test("GitHub criteria accept repository and author text without requesting a loc
   const { page, errors } = await setup(), sourceReads: string[] = []
   page.on("request", request => { if (/git-branches|\/api\/session|missions\/scheduled/.test(request.url())) sourceReads.push(request.url()) })
   try {
-    await label(page, "Criterion 1 type").selectOption("github-pull-request")
-    await label(page, "Criterion 1 source").fill("Acme/Repo")
+    await label(page, "Criterion 1 type").selectOption("repository-activity")
+    await label(page, "Criterion 1 event").selectOption("pull-request-created")
     await page.getByLabel("Author (optional)", { exact: true }).fill("@dependabot[bot]")
-    assert.deepEqual(await policy(page), { when: [{ kind: "github-pull-request", repository: "acme/repo", author: "dependabot[bot]" }] })
+    assert.deepEqual(await policy(page), { when: [{ kind: "repository-activity", provider: "github", host: "github.com", event: "pull-request-created",
+      repository: "acme/repo", author: "dependabot[bot]" }] })
     await page.getByLabel("Author (optional)", { exact: true }).fill("alice OR bob")
     assert.equal(await policy(page), undefined)
-    await label(page, "Criterion 1 type").selectOption("github-notification")
+    await page.getByRole("alert").filter({ hasText: "Enter a valid author." }).waitFor()
+    await label(page, "Criterion 1 event").selectOption("github-notification")
     assert.equal(await page.getByLabel("Author (optional)", { exact: true }).count(), 0)
-    assert.deepEqual(await policy(page), { when: [{ kind: "github-notification" }] })
-    await label(page, "Criterion 1 type").selectOption("github-security-alert")
-    assert.equal(await policy(page), undefined)
-    await label(page, "Criterion 1 source").fill("acme/repo")
+    assert.deepEqual(await policy(page), { when: [{ kind: "github-notification", repository: "acme/repo" }] })
+    await label(page, "Criterion 1 event").selectOption("github-security-alert")
     assert.deepEqual(await policy(page), { when: [{ kind: "github-security-alert", repository: "acme/repo" }] })
     assert.deepEqual(sourceReads, [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const locale of ["fr", "he"]) test(`repository activity fits at 320px with a long pinned path (${locale})`, async () => {
+  const { page, errors } = await setup(`?locale=${locale}&theme=light`)
+  try {
+    await page.setViewportSize({ width: 320, height: 800 })
+    await rows(page, [["repository-activity", { repository: { provider: "gitlab", host: "forge.example:8443",
+      repository: "group/subgroup/a-very-long-repository-name-without-spaces" }, event: "pull-request-merged", author: "alice" }]])
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    const field = page.locator(".mission-criterion").getByRole("textbox")
+    await field.fill("bob"); assert.equal((await policy(page)).when[0].author, "bob")
+    assert.equal(await page.locator(".mission-criterion select").count(), 2)
+    assert.equal(await page.locator(".mission-repository-identity > span").evaluate(element => {
+      const range = document.createRange(); range.selectNodeContents(element); return range.getClientRects().length
+    }), 1, "the repository label stays on one line while the path wraps")
+    await page.screenshot({ path: path.join(captures, `repository-${locale}-320.png`), fullPage: true })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -392,7 +410,7 @@ test("stored policies reopen in order, legacy frequency + condition reads as a s
     await handle(page, 2).focus(); await page.keyboard.press("Alt+ArrowUp")
     assert.deepEqual(await policy(page), { when: [legacy.condition, legacy.timing] }, "an edit saves criteria without the end date")
     await load({ timing: { kind: "immediate" }, condition: legacy.condition, ends: { maxLaunches: null, afterMs: null, at: null } })
-    assert.equal(await label(page, "Criterion 1 type").inputValue(), "branch-commits", "a condition alone reads as the trigger")
+    assert.equal(await label(page, "Criterion 1 type").inputValue(), "repository-activity", "a condition alone reads as the trigger")
     const retired = { timing: { kind: "every", intervalMs: 5_400_000 }, condition: null, ends: { maxLaunches: 3, at: null, afterMs: null } }
     await load(retired)
     assert.deepEqual(await policy(page), retired)

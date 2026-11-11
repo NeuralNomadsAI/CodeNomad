@@ -3,10 +3,12 @@ import type { MissionCondition, MissionCriteriaLaunchPolicy, MissionLaunchPolicy
 import { previewMissionCalendars } from "../../../server/src/missions/mission-calendar-preview"
 import { missionCriteriaStructure, type MissionCriterionConnector } from "../../../server/src/missions/mission-launch-kind"
 import { missionGithubKinds, isMissionGithubKind, missionGithubConditionSchema } from "../../../server/src/missions/mission-github-condition"
+import { missionRepositoryConditionSchema, type MissionRepositoryCondition, type MissionRepositoryIdentity } from "../../../server/src/missions/mission-repository-condition"
 
 /** Schedule shortcuts write a cron; advanced cron is written directly. */
 export const missionScheduleShortcuts = ["now", "hours", "daily", "weekly", "monthly", "cron"] as const
-export const missionEventKinds = ["branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed", ...missionGithubKinds] as const
+export const missionEventKinds = ["branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed", "repository-activity", ...missionGithubKinds] as const
+export const isRepositoryCriterion = (kind: string) => kind === "branch-commits" || kind === "repository-activity" || isMissionGithubKind(kind)
 export type MissionConditionKind = MissionCondition["kind"]
 export type MissionCriterionKind = typeof missionScheduleShortcuts[number] | MissionConditionKind
 export const MISSION_CRITERIA_LIMIT = 16
@@ -15,6 +17,7 @@ export const missionHourSteps = [1, 2, 3, 4, 6, 8, 12] as const
 export interface MissionCriterionDraft {
   id: string; kind: MissionCriterionKind
   hours: string; time: string; days: number[]; monthDay: string; expression: string; source: string; files: string; author?: string
+  repository?: MissionRepositoryIdentity; event?: MissionRepositoryCondition["event"]
 }
 export interface MissionSchedulingFields { criteria: MissionCriterionDraft[]; zone: string }
 type Criterion = MissionCriteriaLaunchPolicy["when"][number]
@@ -41,7 +44,7 @@ export function newMissionSchedulingDraft(zone = Intl.DateTimeFormat().resolvedO
   return { criteria: [newMissionCriterion("now")], zone }
 }
 export class MissionSchedulingError extends Error {
-  constructor(readonly field: "zone" | "hours" | "time" | "days" | "monthDay" | "cron" | "empty" | "source" | "count" | "duplicate" | "retained",
+  constructor(readonly field: "zone" | "hours" | "time" | "days" | "monthDay" | "cron" | "empty" | "source" | "author" | "count" | "duplicate" | "retained",
     readonly index?: number) { super(field) }
 }
 const fail = (field: MissionSchedulingError["field"], index?: number): never => { throw new MissionSchedulingError(field, index) }
@@ -70,10 +73,16 @@ export function missionCriterionCron(row: MissionCriterionDraft, index = 0): str
 }
 function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKind }, index: number, directory?: string): MissionCondition {
   const source = row.source.trim()
+  if (row.kind === "repository-activity") {
+    const parsed = missionRepositoryConditionSchema.safeParse({ kind: row.kind, ...row.repository, event: row.event,
+      ...(row.author?.trim() ? { author: row.author.trim() } : {}) })
+    if (!parsed.success) return fail(parsed.error.issues.some(issue => issue.path[0] === "author") ? "author" : "source", index)
+    return parsed.data
+  }
   if (isMissionGithubKind(row.kind)) {
     const parsed = missionGithubConditionSchema.safeParse({ kind: row.kind, ...(source ? { repository: source } : {}),
       ...((row.kind === "github-issue" || row.kind === "github-pull-request") && row.author?.trim() ? { author: row.author.trim() } : {}) })
-    if (!parsed.success) return fail("source", index)
+    if (!parsed.success) return fail(parsed.error.issues.some(issue => issue.path[0] === "author") ? "author" : "source", index)
     return parsed.data
   }
   switch (row.kind) {
