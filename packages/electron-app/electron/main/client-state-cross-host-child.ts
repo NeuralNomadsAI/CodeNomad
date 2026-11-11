@@ -3,12 +3,39 @@ import { CrossHostRegistration, createCrossHostOwner } from "./client-state-cros
 import { getProcessStartIdentity } from "./client-state-process-identity"
 import { isPidAlive } from "./client-state-process"
 import { ClientStateManager } from "./client-state"
-import { spawnSync } from "node:child_process"
+import childProcess from "node:child_process"
+import { syncBuiltinESMExports } from "node:module"
 
 const [directory, startPath, readyPath, mode, userDataPath, participantReadyPath, participantContinuePath, legacyTauriDataPath, operation, payload] = process.argv.slice(2)
 if (!directory || !startPath) throw new Error("Expected election directory and start path")
 if (readyPath) writeFileSync(readyPath, "")
 while (!existsSync(startPath)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+
+const identityProbes: Record<string, unknown>[] = []
+const originalSpawnSync = childProcess.spawnSync
+if (process.platform === "win32") {
+  childProcess.spawnSync = ((...args: Parameters<typeof originalSpawnSync>) => {
+    if (args[0] !== "powershell.exe" || args[1]?.[3] !== `(Get-Process -Id ${process.pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`
+      || identityProbes.length >= 2) return originalSpawnSync(...args)
+    const started = performance.now()
+    let result: ReturnType<typeof originalSpawnSync> | undefined, failure: unknown
+    try { return result = originalSpawnSync(...args) }
+    catch (error) { failure = error; throw error }
+    finally {
+      const error = failure ?? result?.error
+      identityProbes.push({
+        status: result?.status ?? null, signal: result?.signal ?? null,
+        error: error === undefined ? undefined : {
+          code: (error as NodeJS.ErrnoException).code?.slice(0, 1000),
+          message: (error instanceof Error ? error.message : String(error)).slice(0, 1000),
+        },
+        timeout: args[2]?.timeout, elapsedMs: performance.now() - started,
+        stdout: result?.stdout?.toString().slice(0, 1000) ?? "", stderr: result?.stderr?.toString().slice(0, 1000) ?? "",
+      })
+    }
+  }) as typeof originalSpawnSync
+  syncBuiltinESMExports()
+}
 
 const manager = mode === "full" && userDataPath
   ? new ClientStateManager(userDataPath, undefined, {
@@ -33,18 +60,16 @@ const registration = owner && CrossHostRegistration.register(directory, owner, t
   onOwnerPrepared: mode === "owner-crash" ? () => process.exit(91) : undefined,
   onOwnerRetired: mode === "retire-crash" ? () => process.exit(91) : undefined,
 })
+childProcess.spawnSync = originalSpawnSync
+syncBuiltinESMExports()
 if (manager?.isPrimary && operation === "save") {
   await manager.setRestoreEnabled(true)
   await manager.saveClientState(JSON.parse(payload))
 }
 const acquired = manager?.isPrimary ?? Boolean(registration?.isPrimary)
-const identityProbe = !acquired && !owner?.processStartIdentity && process.platform === "win32"
-  ? spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${process.pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`],
-    { encoding: "utf8", windowsHide: true, timeout: 10000 }) : undefined
 process.stdout.write(`${JSON.stringify({
   acquired,
-  diagnostics: identityProbe && { status: identityProbe.status, error: identityProbe.error?.message,
-    stdout: identityProbe.stdout?.slice(0, 1000), stderr: identityProbe.stderr?.slice(0, 1000) },
+  diagnostics: !acquired && identityProbes.length ? identityProbes : undefined,
   state: operation === "load" ? manager?.loadClientState() : undefined,
 })}\n`)
 process.stdin.resume()

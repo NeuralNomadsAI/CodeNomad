@@ -962,6 +962,11 @@ mod tests {
         let script =
             manifest.join("../../electron-app/electron/main/client-state-cross-host-child.ts");
         let mut command = Command::new("node");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
         command
             .current_dir(manifest.join("../../.."))
             .args(["--import", "tsx"])
