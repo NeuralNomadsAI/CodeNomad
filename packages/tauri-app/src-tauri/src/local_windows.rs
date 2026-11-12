@@ -19,6 +19,10 @@ const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = '
 /// any navigation can be gated on proxy/PAC resolution. See `boot_splash.js`.
 const BOOT_SPLASH_SCRIPT: &str = include_str!("boot_splash.js");
 
+/// The interactive loading page owning every non-backend CLI state (starting,
+/// stopped, failed — where it displays the published error).
+const LOADING_PAGE_URL: &str = "tauri://localhost/loading.html";
+
 /// The first document a local webview shows. `about:blank` is created without
 /// network activity — on Windows even `tauri.localhost` and loopback requests
 /// wait for proxy/PAC resolution — so the webview paints the boot splash at
@@ -35,6 +39,17 @@ fn local_window_initialization_script(id: &str) -> String {
         "{LOCAL_WINDOW_CONTEXT_SCRIPT} window.__CODENOMAD_WINDOW_ID__ = {};{BOOT_SPLASH_SCRIPT}",
         serde_json::to_string(id).unwrap()
     )
+}
+
+/// Where a freshly built local window navigates once its splash is up: the
+/// ready backend when there is one, otherwise the loading page. A window
+/// created while the CLI is starting, stopped, or failed would otherwise sit
+/// on the static splash forever — nothing later navigates it — and a published
+/// error would never be displayed.
+fn local_window_initial_destination(backend_target: Option<&str>) -> String {
+    backend_target
+        .map(|target| target.to_string())
+        .unwrap_or_else(|| LOADING_PAGE_URL.to_string())
 }
 
 #[derive(Clone, Debug)]
@@ -728,12 +743,13 @@ fn build_local_window(
         let _ = window.destroy();
         return Err(error);
     }
-    if let Some(target) = app.state::<LocalWindows>().backend_target() {
+    let backend_target = app.state::<LocalWindows>().backend_target();
+    if let Some(target) = &backend_target {
         let cookie = app
             .state::<crate::AppState>()
             .manager
             .ready_local_access()
-            .and_then(|access| access.session_cookie_for(&target));
+            .and_then(|access| access.session_cookie_for(target));
         if let Some(cookie) = cookie {
             if let Err(error) = window.set_cookie(cookie) {
                 eprintln!(
@@ -741,8 +757,9 @@ fn build_local_window(
                 );
             }
         }
-        navigate_window(app, &record.label, &target, NavigationKind::Cli);
     }
+    let destination = local_window_initial_destination(backend_target.as_deref());
+    navigate_window(app, &record.label, &destination, NavigationKind::Cli);
     Ok(record)
 }
 
@@ -956,12 +973,7 @@ pub(crate) fn navigate_window(app: &AppHandle, label: &str, target: &str, kind: 
 pub(crate) fn show_loading_all(app: &AppHandle) {
     app.state::<LocalWindows>().set_backend_target(None);
     for record in app.state::<LocalWindows>().records() {
-        navigate_window(
-            app,
-            &record.label,
-            "tauri://localhost/loading.html",
-            NavigationKind::Cli,
-        );
+        navigate_window(app, &record.label, LOADING_PAGE_URL, NavigationKind::Cli);
     }
 }
 
