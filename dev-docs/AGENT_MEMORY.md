@@ -241,8 +241,18 @@ without carrying entry content, titles, IDs or directory information.
 
 ## Bundled native tool
 
-`opencode/memory/desktop-plugin.ts` supplies `codenomad_memory` while a backend
-presence lease is live. Its four actions require `scope`; `read` takes `query`
+`opencode/memory/desktop-plugin.ts` supplies `codenomad_memory` while a live
+backend presence lease requests memory. `opencode/memory/preference.ts` writes
+`server.memoryEnabled` into every memory lease of the backend
+(`{"version":1,"memory":true}`, or an empty lease) at startup and on each
+`storage.configChanged` for the `server` or `*` owner; an unreadable or invalid
+preference requests nothing. The plugin registers its tool transform
+conditionally, reads the request through `observeMemoryRequest` at each presence
+interval and calls `ctx.tool.reload()` only when it changes, so running sessions
+gain or lose the tool within seconds. The prompt hook stays registered with
+presence, so disabling memory still removes stale `codenomad.memory`
+instructions. A runtime without `ctx.tool.reload` keeps the tool registered and
+execution rejects disabled use. Its four actions require `scope`; `read` takes `query`
 (exact ID or title), `save` takes `title`, `type`, `text`, and an explicit edit
 additionally takes `id` and `revision`; `delete` requires `id` and `revision`
 from a fresh read. The plugin derives provenance from `tool.sessionID` and

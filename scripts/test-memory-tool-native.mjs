@@ -20,6 +20,8 @@ import { MemoryService } from "../packages/server/src/memory/service.ts"
 import { MemoryStore, encodeMemoryEntry } from "../packages/server/src/memory/store.ts"
 import { SettingsService } from "../packages/server/src/settings/service.ts"
 import { resolveConfigLocation } from "../packages/server/src/config/location.ts"
+import { EventBus } from "../packages/server/src/events/bus.ts"
+import { followMemoryPreference } from "../packages/server/src/opencode/memory/preference.ts"
 
 const cli = process.argv[2]
 assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
@@ -68,7 +70,8 @@ const provider = createServer(async (request, response) => {
 const bridge = Fastify()
 const registration = createAutomationBridgeRegistration("http://127.0.0.1")
 const store = new MemoryStore(path.join(root, "codenomad"))
-const settings = new SettingsService(resolveConfigLocation(path.join(root, "codenomad", "config.yaml")), undefined, pino({ level: "silent" }))
+const events = new EventBus()
+const settings = new SettingsService(resolveConfigLocation(path.join(root, "codenomad", "config.yaml")), events, pino({ level: "silent" }))
 const manager = {
   get: id => id === "owner" ? { id, path: project } : undefined,
   list: () => [{ id: "owner", path: project }],
@@ -125,7 +128,13 @@ try {
   const address = await bridge.listen({ host: "127.0.0.1", port: 0 })
   removeBridge = await publishAutomationBridge({ ...registration, url: `${address}${AUTOMATION_BRIDGE_PATH}` })
   const paths = await resolveDesktopPluginPaths({ endpoint, client, fetch: boundedFetch, assertCurrent() {} }, { kind: "host", platform: process.platform, binary: cli })
-  const openPresence = async () => { const lifecycle = new DesktopPluginLifecycle("memory"); await lifecycle.start(paths); return lifecycle }
+  // As the backend does: every memory lease carries the current preference.
+  const openPresence = async () => {
+    const lifecycle = new DesktopPluginLifecycle("memory"), unfollow = followMemoryPreference(settings, events, lifecycle)
+    await lifecycle.start(paths)
+    return { stop: async () => { unfollow(); await lifecycle.stop() } }
+  }
+  const toolVisible = async () => { await sample(); return observedTools.includes("codenomad_memory") }
   async function sample(input) {
     const session = await client.session.create({ location })
     invoke = input
@@ -147,11 +156,12 @@ try {
   assert(!observedTools.includes("codenomad_memory"), "Tool absent before backend presence")
   first = await openPresence()
   await until(async () => (await client.plugin.list({ location })).data.some(plugin => plugin.id === "codenomad.memory" && plugin.state.status === "active"), "memory plugin active")
-  await until(async () => { await sample(); return observedTools.includes("codenomad_memory") }, "memory registration")
-  const disabled = await call({ action: "save", title: "Editor", type: "preference", text: "Use Vim." })
-  assert.equal(disabled.state.status, "error", disabled.wire)
-  assert.match(disabled.wire, /Memory is disabled/)
+  // Disabled by default: the plugin and its prompt hook are active, the tool is not model-visible.
+  await delay(2_500)
+  assert(!await toolVisible(), "Disabled memory exposes no model-visible tool")
   await memory.setEnabled(true)
+  await until(toolVisible, "enabled memory registration")
+  console.log("PASS disabled memory registers no model-visible tool; enabling it registers the tool without a restart")
   const saved = await call({ action: "save", title: "Editor", type: "preference", text: "Use Vim." })
   const ack = success(saved)
   const read = success(await call({ action: "read", query: ack.id })).entry
@@ -190,7 +200,9 @@ try {
   const disabledEntries = await client.session.instructions.entry.list({ sessionID: parent.id })
   assert(!disabledEntries.some(entry => entry.key === "codenomad.memory"))
   assert(disabledEntries.some(entry => entry.key === "other-owner"))
+  await until(async () => !await toolVisible(), "disabled memory withdrawal")
   await memory.setEnabled(true)
+  await until(toolVisible, "re-enabled memory registration")
   await client.session.prompt({ sessionID: parent.id, text: "MEMORY_ENABLED_REFRESH" })
   await client.session.wait({ sessionID: parent.id }, { signal: AbortSignal.timeout(30_000) })
   assert((await client.session.instructions.entry.list({ sessionID: parent.id })).some(entry => entry.key === "codenomad.memory"))
@@ -253,7 +265,7 @@ try {
   first = await openPresence()
   await until(async () => { await sample(); return observedTools.includes("codenomad_memory") }, "presence reopening")
   assert.match(await readFile(path.join(config, "plugins", "codenomad-memory.ts"), "utf8"), /[a-f0-9]{64}\.mjs/)
-  console.log(`PASS ${info.version}: exact native tool, model-driven list/read/save/delete, native session provenance, both scopes, disabled/full errors, safe projections, shipped native-child instructions, one uncertain write dispatch, standalone bridge and presence withdrawal/reopening`)
+  console.log(`PASS ${info.version}: exact native tool, model-driven list/read/save/delete, native session provenance, both scopes, preference-following registration, full errors, safe projections, shipped native-child instructions, one uncertain write dispatch, standalone bridge and presence withdrawal/reopening`)
 } finally {
   await first?.stop(); await second?.stop(); await removeBridge?.()
   if (child) await stopFixtureChild(child, stopped)
