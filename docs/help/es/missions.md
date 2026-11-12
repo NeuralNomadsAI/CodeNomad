@@ -4,6 +4,8 @@ Una Misión reúne un objetivo, una conversación del coordinador, tareas y resu
 
 ## Crear una Misión {#create}
 
+Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.
+
 **Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Los grupos siguen este orden.
 
 ### Configuración {#saved-briefs}

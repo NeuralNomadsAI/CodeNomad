@@ -7,6 +7,7 @@ import { useAssetsChannel } from "./assets-channel"
 import { useWorkItemsChannel } from "./work-items-channel"
 import { useApi4Channel, type Api4Host } from "./api4-channel"
 import { resolveCssColor } from "../../lib/css-color"
+import { generateUUID } from "../../lib/client-identity"
 
 export function ExtensionPanel(props: {
   entry: PanelExtensionSummary; instanceId: string; active: boolean; context: PanelExtensionContext; host: Api4Host
@@ -21,7 +22,7 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   const [failed, setFailed] = createSignal(false)
   let frame: HTMLIFrameElement | undefined, port: MessagePort | undefined, disposed = false, initialized = false
   let authenticated = false
-  const handshake = crypto.randomUUID()
+  const handshake = generateUUID()
   const controller = new AbortController()
   const send = (value: unknown) => { if (!disposed && authenticated) port?.postMessage(value) }
   const authority = { instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest, send }

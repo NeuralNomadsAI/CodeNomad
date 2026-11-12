@@ -4,6 +4,8 @@ Une Mission rassemble un objectif, une conversation de coordination, des tâches
 
 ## Créer une Mission {#create}
 
+Les connexions distantes utilisent le même formulaire et les mêmes commandes. Préférez HTTPS pour protéger les échanges réseau.
+
 Choisissez **Créer une mission**. Le formulaire remplace l’arbre jusqu’à la création ou l’annulation. Ses groupes suivent l’ordre ci-dessous.
 
 ### Configuration {#saved-briefs}

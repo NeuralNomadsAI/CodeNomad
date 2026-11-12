@@ -52,8 +52,10 @@ export function generateUUID(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID()
   }
+  const bytes = crypto.getRandomValues(new Uint8Array(31))
+  let index = 0
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
-    const random = (Math.random() * 16) | 0
+    const random = bytes[index++]! & 15
     const value = char === "x" ? random : (random & 0x3) | 0x8
     return value.toString(16)
   })

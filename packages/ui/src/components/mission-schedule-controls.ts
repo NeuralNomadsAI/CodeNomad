@@ -1,4 +1,5 @@
 import { batch, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { generateUUID } from "../lib/client-identity"
 import { unifiedScheduleHolds as holds, unifiedScheduleHold, changedUnifiedScheduleHolds as bump,
   type UnifiedMissionSchedule, type UnifiedScheduleAction as Action, type UnifiedScheduleHold as Hold } from "../stores/mission-schedules"
 import { serverApi } from "../lib/api-client"
@@ -141,7 +142,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
             { variant: "warning", confirmLabel: label(action), cancelLabel: t("missions.simple.cancel") })
           if (!confirmed || !current() || props.document().revision !== original.revision) return
           if (holds.size >= 128 && !holds.has(key)) { setFeedback("missions.scheduleList.capacity"); return }
-          const activation: Hold = { phase: "activation", action, requestID: crypto.randomUUID(), expectedRevision: revision, partial: false, document: original }
+          const activation: Hold = { phase: "activation", action, requestID: generateUUID(), expectedRevision: revision, partial: false, document: original }
           holds.set(key, activation); dispatched = activation; bump()
           const value = await serverApi.missionScheduleSettings(props.instanceId, original.id,
             { requestID: activation.requestID, expectedDocumentRevision: revision }, true)
@@ -154,7 +155,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
         }
       }
       if (!current() || holds.size >= 128 && !holds.has(key)) return
-      const request: Hold = { phase: "control", action, requestID: crypto.randomUUID(), expectedRevision: revision, partial: false,
+      const request: Hold = { phase: "control", action, requestID: generateUUID(), expectedRevision: revision, partial: false,
         document: original, ...(previous ? { original: previous } : {}), minimumRevision: holds.get(key)?.minimumRevision }
       // Check is the sole permitted successor of a positively read partial intent.
       // It reconciles that original; its own ACK cannot release the original hold.

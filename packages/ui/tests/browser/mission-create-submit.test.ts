@@ -119,6 +119,26 @@ async function answerCreates(page: Page, answer: (route: import("playwright").Ro
 }
 const UNCONFIRMED = "native creation result is unconfirmed"
 
+test("Mission creation works without the secure-context-only randomUUID API", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  const fixture = await setup(page)
+  await page.addInitScript(() => Object.defineProperty(crypto, "randomUUID", { value: undefined }))
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Create through the HTTP remote connection")
+    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    assert.equal(await form.getByRole("button", { name: /^Remove criterion \d+$/ }).count(), 2)
+    await form.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
+    await submitReady(page)
+    await assertSingleCreate(form)
+    assert.equal(fixture.creates.length, 1)
+    assert.match(fixture.creates[0]!.requestId as string, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
 test("an opted-in one-time Create retains its draft choice across remount and sends one Start after the direct ACK", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page), controls: Record<string, any>[] = []
   await page.route("**/api/workspaces/fixture/missions/msn_created/control", route => {
