@@ -318,6 +318,18 @@ fn local_window_initialization_script_appends_the_boot_splash() {
 }
 
 #[test]
+fn loading_page_url_stays_navigable_on_every_host() {
+    // Wry's WebView2 load_url forwards the URL unchanged and only
+    // construction-time URLs get the custom-protocol mapping, so a runtime
+    // navigation needs the mapped http form on Windows (verified natively in
+    // review); WebKit hosts keep the custom scheme.
+    #[cfg(target_os = "windows")]
+    assert_eq!(LOADING_PAGE_URL, "http://tauri.localhost/loading.html");
+    #[cfg(not(target_os = "windows"))]
+    assert_eq!(LOADING_PAGE_URL, "tauri://localhost/loading.html");
+}
+
+#[test]
 fn window_created_after_error_publication_opens_the_loading_page() {
     // A published failure routes every window through show_loading_all(),
     // which clears the backend target. A window built afterwards navigates

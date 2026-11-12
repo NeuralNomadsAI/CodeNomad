@@ -20,7 +20,14 @@ const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = '
 const BOOT_SPLASH_SCRIPT: &str = include_str!("boot_splash.js");
 
 /// The interactive loading page owning every non-backend CLI state (starting,
-/// stopped, failed — where it displays the published error).
+/// stopped, failed — where it displays the published error). Wry maps custom
+/// protocol URLs only when constructing a webview; a runtime navigation on
+/// Windows must use the mapped `http://tauri.localhost` form or WebView2
+/// rejects the scheme and never leaves the current document. WebKit hosts
+/// keep the custom scheme.
+#[cfg(target_os = "windows")]
+const LOADING_PAGE_URL: &str = "http://tauri.localhost/loading.html";
+#[cfg(not(target_os = "windows"))]
 const LOADING_PAGE_URL: &str = "tauri://localhost/loading.html";
 
 /// The first document a local webview shows. `about:blank` is created without
