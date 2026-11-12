@@ -47,8 +47,15 @@ prior dispatch of the exact identity, returns false, including after a reload.
 Release that exclusion before awaiting HTTP RPC. A claim
 that outlives cancellation must retain its intent. Persisted intents are reconciled
 through exact status reads; `unknown`, expiry or another occurrence must never
-authorize a mutation resend. A pre-dispatch refusal describes only the current
-attempt; preserve earlier uncertainty for that identity.
+authorize a mutation resend. The one replay is an abandoned claim: status reports
+`abandoned` when the exact claim is unsettled, its run is still above the calendar
+high-water, and its receiver has ended. A receiver of another incarnation fails its
+incarnation guard before every CAS; one of this process registers its own Promise
+for its whole lifetime (`native-mission-schedule-wake-flight.ts`, shared across bundle
+reloads) and also fails once its signed preflight expires. Such a dispatch consumed
+nothing, so the caller re-claims that same identity (`retry`), rechecking abandonment
+under the Mission exclusion, and dispatches it with a fresh preflight. A pre-dispatch
+refusal describes only the current attempt; preserve earlier uncertainty for that identity.
 
 One process-wide lane per Mission spans bundle incarnations. The whole operation
 has an eight-second deadline and an AbortSignal passed to RPC. Read-only discovery
@@ -163,7 +170,11 @@ The runtime closes after the committed technical CAS; a calendar replacement own
 closes before discarding retiring mappings. A closure receipt survives temporal
 replacement and lets the next generation use the single slot. Missing/pruned proof,
 an unreserved uncertain run, a lost dispatch acknowledgement or an elapsed deadline
-keep an unclosed claim held. Read-only status remains mutation-free.
+keep an unclosed claim held until its receiver is proven ended. Every carrier context
+turn first reconciles an unsettled claim on another occurrence through that exact
+original (a status read, then the abandoned replay), so a slow source read that
+outlives the eight-second deadline delays the schedule by one wake instead of holding
+every later principal and auxiliary wake. Read-only status remains mutation-free.
 During incomplete arm/replacement, the current auxiliary has its own durable
 partial mapping. A lost auxiliary-create ACK uses read-only exact native-row
 preflight against its verified current intent; the optional trusted claim

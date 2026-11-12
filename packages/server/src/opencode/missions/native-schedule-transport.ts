@@ -23,7 +23,8 @@ type Request = {
 type Mutation = Request & {
   /** Durable CAS, under the same Mission exclusion as controls: persist the exact
    * dispatch intent before true. Any unresolved dispatch in this Mission, or any
-   * prior dispatch of this exact identity, must return false.
+   * prior dispatch of this exact identity, must return false, except an exact
+   * claim that a status read proved abandoned (`reply.abandoned`).
    * Release the business exclusion before returning; RPC acquires it separately. */
   claim: (incarnation: NativeScheduleIncarnation) => Promise<boolean>
 }
@@ -131,12 +132,13 @@ export function createNativeScheduleTransport(overrides: Partial<Dependencies> =
           || !["applied", "pending", "rejected", "unknown"].includes(reply.state)
           || reply.messagePresent !== undefined && typeof reply.messagePresent !== "boolean"
           || reply.ready !== undefined && typeof reply.ready !== "boolean"
+          || reply.abandoned !== undefined && typeof reply.abandoned !== "boolean"
           || reply.preflight !== undefined && (!Number.isSafeInteger(reply.preflight.cutoff) || reply.preflight.cutoff < 0
             || !Number.isSafeInteger(reply.preflight.issuedAt) || reply.preflight.issuedAt < 0
             || !/^[a-f0-9]{64}$/.test(reply.preflight.signature))) throw new Error("schedule-rpc-reply")
         return { state: "received", reply: { key: reply.key, state: reply.state,
           ...(reply.messagePresent === undefined ? {} : { messagePresent: reply.messagePresent }),
-          ...(reply.ready === undefined ? {} : { ready: reply.ready }), ...(reply.preflight ? { preflight: { ...reply.preflight } } : {}) } }
+          ...(reply.ready === undefined ? {} : { ready: reply.ready }), ...(reply.abandoned ? { abandoned: true } : {}), ...(reply.preflight ? { preflight: { ...reply.preflight } } : {}) } }
       } catch { return failure(signal.aborted ? "deadline" : "unavailable") }
     })()
     // A timed-out discovery remains a read, and keeps its lane until it actually ends.
