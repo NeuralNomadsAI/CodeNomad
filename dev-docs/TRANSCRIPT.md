@@ -4,6 +4,15 @@ Message content visibility and presets, token lines, tool renderers, native sess
 
 ## Agent conventions
 
+- Deferred media producers emit a reference only when the canonical server parser
+  admits its encoded identities, positions and complete path. Refused or unencodable
+  references retain the original URI. Media reads pin the published workspace
+  occurrence and service connection across session, message and physical ownership
+  revalidation, including undo and digest checks. One 30-second budget covers the
+  whole request; the decompressed native response envelope is bounded to 16 MiB
+  before parsing, and embedded URIs to 8 MiB before decoding. Responses contain only
+  signature-verified passive raster bytes; client close suppresses further writes.
+
 - Partial live projections preserve omitted resident message runs beside their preceding shared row, with leading history before the snapshot and pending optimistic sends at the tail. Shared rows follow the incoming native order. HTTP pages can contain later steps whose events are still in transit; message IDs and wall-clock timestamps remain identity/display data rather than transcript sort keys.
 
 - The message-content popup and Chat settings share `components/transcript-visibility.ts` and the semantic icons from `components/message-content-icons.ts`; tool presentation metadata lives independently of renderers in `components/tool-call/tool-presentation.ts`. Popup styles live in `styles/components/transcript-filters.css`. Popup rows show a requested state at once and keep it until the save carrying it settles. Each save re-renders the transcript, so a drag sweep (`dev-docs/UI_CONVENTIONS.md`) saves its rows once, on release (`afterSweep`). Saves run in order, each built from the preferences the previous one returned; a batch of rows is sealed as it joins the queue, so a later click never jumps ahead of a preset change nor rides along with a sweep still held.
