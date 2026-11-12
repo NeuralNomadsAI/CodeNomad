@@ -1,4 +1,5 @@
 import { Cron } from "effect"
+import { generateUUID } from "../lib/client-identity"
 import type { MissionCondition, MissionCriteriaLaunchPolicy, MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { previewMissionCalendars } from "../../../server/src/missions/mission-calendar-preview"
 import { missionCriteriaStructure, type MissionCriterionConnector } from "../../../server/src/missions/mission-launch-kind"
@@ -37,7 +38,7 @@ export function newMissionCriterion(kind: MissionCriterionKind = "daily", existi
   // A new daily row takes the first free hour from 09:00, so adding twice is never a duplicate.
   const taken = new Set(existing.filter(row => row.kind === "daily").map(row => row.time))
   const hour = Array.from({ length: 24 }, (_, offset) => (9 + offset) % 24).find(value => !taken.has(`${String(value).padStart(2, "0")}:00`)) ?? 9
-  return { id: crypto.randomUUID(), kind, hours: "6", time: `${String(hour).padStart(2, "0")}:00`, days: [1, 2, 3, 4, 5], monthDay: "1",
+  return { id: generateUUID(), kind, hours: "6", time: `${String(hour).padStart(2, "0")}:00`, days: [1, 2, 3, 4, 5], monthDay: "1",
     expression: "0 9 * * *", source: "", files: "" }
 }
 export function newMissionSchedulingDraft(zone = Intl.DateTimeFormat().resolvedOptions().timeZone): MissionSchedulingDraft {

@@ -1,4 +1,5 @@
 import type { RecurrenceControlRequest, RecurrenceControlStatus } from "../../../server/src/missions/recurrence-control-contract"
+import { generateUUID } from "./client-identity"
 import { recurrenceControlStateMatches } from "../../../server/src/missions/recurrence-control-state"
 import type { recurrenceNotDispatchedCode as NotDispatchedCode } from "../../../server/src/missions/recurrence-control-contract"
 import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -8,7 +9,7 @@ export type RecurrenceAction = RecurrenceControlRequest["action"]
 export type RecurrenceControlIntent = RecurrenceControlRequest & { directory?: string; retry?: boolean }
 export type { RecurrenceControlStatus }
 export function createRecurrenceControlIntent(scheduleID: string, expectedRevision: number, action: RecurrenceAction, directory?: string): RecurrenceControlIntent {
-  return { scheduleID, requestID: crypto.randomUUID(), expectedRevision, action, ...(directory ? { directory } : {}) }
+  return { scheduleID, requestID: generateUUID(), expectedRevision, action, ...(directory ? { directory } : {}) }
 }
 export function recurrenceControlStatusInput(intent: RecurrenceControlIntent) {
   const { scheduleID: _scheduleID, retry: _retry, ...input } = intent

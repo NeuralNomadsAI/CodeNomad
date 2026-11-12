@@ -4,6 +4,8 @@ Eine Mission verbindet ein Ziel, eine Koordinator-Unterhaltung, Aufgaben und Erg
 
 ## Eine Mission erstellen {#create}
 
+Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Verwenden Sie vorzugsweise HTTPS, um den Netzwerkverkehr zu schützen.
+
 **Mission erstellen** öffnet das Formular anstelle des Baums. Die Gruppen folgen dieser Reihenfolge.
 
 ### Konfiguration {#saved-briefs}
