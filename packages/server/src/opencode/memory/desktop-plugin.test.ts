@@ -7,6 +7,7 @@ import test from "node:test"
 import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "../automation-plugin"
 import { desktopPlugin } from "./desktop-plugin"
+import { memoryLeaseContent } from "./activation"
 
 type Definition = {
   name: string
@@ -15,13 +16,28 @@ type Definition = {
   execute(input: unknown, tool: { sessionID: string; signal: AbortSignal }): Promise<{ content: string }>
 }
 
-async function fixture(t: test.TestContext) {
+async function until(predicate: () => boolean, label: string) {
+  for (const deadline = Date.now() + 10_000; !predicate();) {
+    assert(Date.now() < deadline, label)
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+}
+
+async function fixture(t: test.TestContext, { enabled = true } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-memory-plugin-"))
   const previous = Object.fromEntries(["LOCALAPPDATA", "XDG_RUNTIME_DIR", "WSL_DISTRO_NAME"].map(key => [key, process.env[key]]))
   process.env.LOCALAPPDATA = root
   process.env.XDG_RUNTIME_DIR = root
   delete process.env.WSL_DISTRO_NAME
-  const app = Fastify({ forceCloseConnections: true }), calls: Array<{ sessionID: string; command: unknown }> = [], definitions: Definition[] = []
+  const app = Fastify({ forceCloseConnections: true }), calls: Array<{ sessionID: string; command: unknown }> = []
+  // The registered transform, replayed like the native registry on every read.
+  let transform: ((editor: { add(definition: Definition): void }) => void) | undefined
+  let reloads = 0
+  const definitions = () => {
+    const added: Definition[] = []
+    transform?.({ add: definition => { added.push(definition) } })
+    return added
+  }
   let response: { status: number; body: object } | "lost" = { status: 200, body: { result: { entries: [] } } }
   let probes = 0, disposed = 0
   let context: unknown = { supported: true, value: "MEMORY TITLES" }, hook: ((event: { sessionID: string }) => Promise<void>) | undefined
@@ -54,7 +70,8 @@ async function fixture(t: test.TestContext) {
   const remove = await publishAutomationBridge({ ...registration, url: `${url}${AUTOMATION_BRIDGE_PATH}` })
   const presence = path.join(root, "presence")
   await mkdir(presence)
-  await writeFile(path.join(presence, `${randomUUID()}.lease`), "")
+  const lease = path.join(presence, `${randomUUID()}.lease`)
+  await writeFile(lease, memoryLeaseContent(enabled))
   const plugin = desktopPlugin(presence)
   const cleanup = await plugin.setup!({ session: {
     hook: async (kind: string, callback: typeof hook) => { assert.equal(kind, "prompt"); hook = callback; return { dispose() { hookDisposed++ } } },
@@ -62,24 +79,30 @@ async function fixture(t: test.TestContext) {
       put: async (input: unknown) => { instructions.push(input); await beforeInstruction("put"); if (instructionStatus !== 204) throw new Error("503") },
       remove: async (input: unknown) => { instructions.push(input); await beforeInstruction("remove"); if (instructionStatus !== 204) throw new Error("503") },
     } },
-  }, tool: { transform: async (callback: (editor: { add(definition: Definition): void }) => void) => {
-    callback({ add: definition => { definitions.push(definition) } })
-    return { dispose: async () => { disposed++ } }
-  } } } as never) as () => Promise<void>
+  }, tool: {
+    transform: async (callback: typeof transform) => {
+      transform = callback
+      return { dispose: async () => { disposed++; transform = undefined } }
+    },
+    reload: async () => { reloads++ },
+  } } as never) as () => Promise<void>
   t.after(async () => {
     await cleanup(); await remove(); await app.close()
     for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
     await rm(root, { recursive: true, force: true })
   })
   assert.equal(plugin.id, "codenomad.memory")
-  assert.equal(definitions.length, 1)
-  const tool = definitions[0]!
-  assert.equal(tool.name, "memory")
-  assert.deepEqual(tool.options, { namespace: "codenomad", codemode: false })
-  assert.equal(tool.input.additionalProperties, false)
-  assert.equal("sessionId" in tool.input.properties, false)
-  assert.equal("sessionID" in tool.input.properties, false)
+  assert.equal(definitions().length, enabled ? 1 : 0)
+  const tool = definitions()[0]!
+  if (enabled) {
+    assert.equal(tool.name, "memory")
+    assert.deepEqual(tool.options, { namespace: "codenomad", codemode: false })
+    assert.equal(tool.input.additionalProperties, false)
+    assert.equal("sessionId" in tool.input.properties, false)
+    assert.equal("sessionID" in tool.input.properties, false)
+  }
   return { tool, calls, setResponse(value: typeof response) { response = value }, cleanup,
+    definitions, reloads: () => reloads, request: (value: boolean) => writeFile(lease, memoryLeaseContent(value)),
     instructions, contexts, setContext(value: unknown) { context = value }, prompt: (sessionID: string) => hook!({ sessionID }), hookDisposed: () => hookDisposed,
     setOwned(value: boolean) { owned = value },
     setInstructionStatus(value: number) { instructionStatus = value },
@@ -111,6 +134,25 @@ test("native memory tools route every action using only the execution session an
     await assert.rejects(f.execute(input), /Invalid memory input/)
   }
   assert.equal(f.probes(), before, "invalid or forged input never reaches discovery")
+  await f.cleanup()
+  assert.equal(f.disposed(), 1)
+})
+
+test("the native tool follows the backend's memory request while the prompt hook keeps clearing stale instructions", async t => {
+  const f = await fixture(t, { enabled: false })
+  assert.equal(f.definitions().length, 0, "disabled memory registers no model-visible tool")
+  f.setContext({ supported: true, value: null })
+  await f.prompt("ses_disabled")
+  assert.deepEqual(f.instructions, [{ sessionID: "ses_disabled", key: "codenomad.memory" }], "the prompt hook still removes stale memory instructions")
+  await f.request(true)
+  await until(() => f.definitions().length === 1, "enabling memory registers the tool")
+  assert.equal(f.definitions()[0]!.name, "memory")
+  const reloads = f.reloads()
+  assert.ok(reloads >= 1, "the change reaches the native registry through a reload")
+  await new Promise(resolve => setTimeout(resolve, 2_500))
+  assert.equal(f.reloads(), reloads, "an unchanged request never reloads")
+  await f.request(false)
+  await until(() => f.definitions().length === 0, "disabling memory withdraws the tool")
   await f.cleanup()
   assert.equal(f.disposed(), 1)
 })

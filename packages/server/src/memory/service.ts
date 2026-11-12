@@ -21,6 +21,13 @@ const reviewed = (entry: MemoryEntry) => {
   return { ...versioned(entry), flagged: result.flagged, ...(result.flagged ? { warning: "suspected_injection" as const } : {}) }
 }
 
+/** The sole agent-memory preference; absence means disabled. Throws when unreadable or invalid. */
+export function readMemoryEnabled(settings: Pick<SettingsService, "getRawConfigOwner">): boolean {
+  const value = settings.getRawConfigOwner("server").memoryEnabled
+  if (value !== undefined && typeof value !== "boolean") throw new Error("Invalid preference")
+  return value === true
+}
+
 export class MemoryService {
   constructor(private readonly store: MemoryStore,
     private readonly settings: Pick<SettingsService, "getRawConfigOwner" | "mergePatchOwner">,
@@ -29,11 +36,8 @@ export class MemoryService {
     private readonly projectIdentity = resolveMemoryProjectIdentity) {}
 
   getSettings(): MemorySettings {
-    try {
-      const value = this.settings.getRawConfigOwner("server").memoryEnabled
-      if (value !== undefined && typeof value !== "boolean") throw new Error("Invalid preference")
-      return { enabled: value === true }
-    } catch { throw new MemoryError("unreadable", "Memory preference is unavailable") }
+    try { return { enabled: readMemoryEnabled(this.settings) } }
+    catch { throw new MemoryError("unreadable", "Memory preference is unavailable") }
   }
 
   /** All HTTP config writers share the repository lock with memory mutations. */
