@@ -113,7 +113,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
         <Show when={markdown() && !source()} fallback={<div class="git-diff-content"><Suspense>
           <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} onContentChange={editor.change} onSave={value => void editor.save(value)} />
         </Suspense></div>}>
-          <div class="workspace-markdown"><Markdown part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml /></div>
+          <div class="workspace-markdown"><Markdown instanceId={props.instanceId} part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml /></div>
         </Show>
       </Show>
     </>}</Show>

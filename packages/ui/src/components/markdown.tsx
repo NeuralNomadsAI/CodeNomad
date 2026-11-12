@@ -23,6 +23,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { createProjectServerMeta } from "../lib/project-server-meta"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { projectScope } from "../lib/backend-identity"
+import { backendOf } from "../lib/backend-client"
 
 const log = getLogger("session")
 
@@ -35,6 +36,7 @@ interface ResolvedMarkdownSnapshot {
   highlightEnabled: boolean
   escapeRawHtml: boolean
   literalRawHtml: boolean
+  originRelativeImages: boolean
   defaultCodeBlockWrap: boolean
   partId: string | undefined
   cacheId: string
@@ -245,6 +247,8 @@ export function Markdown(props: MarkdownProps) {
     const part = props.part
     const window = bounded.window()
     const literalRawHtml = Boolean(props.literalRawHtml)
+    let originRelativeImages = !props.instanceId
+    try { originRelativeImages = !props.instanceId || backendOf(props.instanceId).id === "local" } catch { /* Missing owners stay inert. */ }
     const boundedText = props.formatText ? props.formatText(window.text) : window.text
     const text = literalRawHtml ? boundedText : decodeHtmlEntitiesLocally(boundedText)
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
@@ -269,6 +273,7 @@ export function Markdown(props: MarkdownProps) {
       highlightEnabled,
       escapeRawHtml,
       literalRawHtml,
+      originRelativeImages,
       defaultCodeBlockWrap,
       partId,
       cacheId,
@@ -281,8 +286,8 @@ export function Markdown(props: MarkdownProps) {
     sessionId: () => props.sessionId,
     scope: "markdown",
     cacheId: () => {
-      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, literalRawHtml, defaultCodeBlockWrap } = resolved()
-      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}`
+      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, literalRawHtml, originRelativeImages, defaultCodeBlockWrap } = resolved()
+      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}${originRelativeImages ? "" : ":owner"}`
     },
     version: () => resolved().version,
   })
@@ -297,7 +302,7 @@ export function Markdown(props: MarkdownProps) {
     const cacheEntry: RenderCache = {
       html: renderedHtml,
       theme: snapshot.themeKey,
-      mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
+      mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}${snapshot.originRelativeImages ? "" : ":owner"}`,
     }
     setHtml(renderedHtml)
     setRendered(true)
@@ -317,6 +322,7 @@ export function Markdown(props: MarkdownProps) {
       suppressHighlight: !snapshot.highlightEnabled,
       escapeRawHtml: snapshot.escapeRawHtml,
       literalRawHtml: snapshot.literalRawHtml,
+      originRelativeImages: snapshot.originRelativeImages,
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
     })
     if (!isCurrentRender(request)) return
@@ -352,7 +358,7 @@ export function Markdown(props: MarkdownProps) {
     previousSnapshot = snapshot
     // Cache hits must also invalidate any older render waiting to publish.
     const request = ++latestRenderRequest
-    const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
+    const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}${snapshot.originRelativeImages ? "" : ":owner"}`
 
     const cacheMatches = (cache: RenderCache | undefined) => {
       if (!cache) return false
