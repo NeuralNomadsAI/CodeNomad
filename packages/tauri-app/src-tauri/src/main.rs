@@ -254,6 +254,13 @@ fn is_allowed_local_origin(url: &Url, managed_backend: Option<&str>) -> bool {
         || same_origin(url, managed_backend)
 }
 
+/// Navigation policy for local and Preferences windows. `about:blank` is the
+/// initial document carrying the boot splash: it holds no origin and grants no
+/// IPC authority, so admitting it says nothing about trusted renderer origins.
+fn is_navigable_local_origin(url: &Url, managed_backend: Option<&str>) -> bool {
+    url.as_str() == "about:blank" || is_allowed_local_origin(url, managed_backend)
+}
+
 pub(crate) fn require_preferences_or_local_app_webview(
     webview: &tauri::Webview,
     state: &AppState,
@@ -786,7 +793,7 @@ fn should_allow_window_origin<R: Runtime>(
     if identity::local_window_id(window_label).is_ok() || window_label == preferences_window::LABEL
     {
         let status = state.manager.status();
-        return is_allowed_local_origin(url, status.url.as_deref());
+        return is_navigable_local_origin(url, status.url.as_deref());
     }
     let Ok(allowed) = state.remote_navigation.lock() else {
         return false;
@@ -2686,7 +2693,7 @@ fn about_fallback_text(version: &str) -> String {
 mod menu_tests {
     use super::{
         about_fallback_text, claim_unowned_remote_proxy_session, releases_page, clear_remote_tls_handler,
-        is_allowed_local_origin, is_final_application_window, local_close_event_action,
+        is_allowed_local_origin, is_final_application_window, is_navigable_local_origin, local_close_event_action,
         require_http_url, rollback_remote_window_metadata, open_remote_external_url,
         should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
         titlebar_menu_id, LocalCloseEventAction,
@@ -2717,6 +2724,28 @@ mod menu_tests {
         ] {
             assert!(!open_remote_external_url(&Url::parse(value).unwrap(), |_| panic!("denied URL reached the system opener: {value}")));
         }
+    }
+
+    #[test]
+    fn about_blank_boot_document_navigates_but_never_becomes_a_trusted_origin() {
+        let backend = "http://127.0.0.1:43123/";
+        let blank = Url::parse("about:blank").unwrap();
+        assert!(
+            is_navigable_local_origin(&blank, Some(backend)),
+            "the initial boot splash document must be navigable in local windows"
+        );
+        assert!(
+            !is_allowed_local_origin(&blank, Some(backend)),
+            "about:blank never gains IPC or renderer authority"
+        );
+        assert!(is_navigable_local_origin(
+            &Url::parse(backend).unwrap(),
+            Some(backend)
+        ));
+        assert!(!is_navigable_local_origin(
+            &Url::parse("https://example.com/").unwrap(),
+            Some(backend)
+        ));
     }
 
     #[test]

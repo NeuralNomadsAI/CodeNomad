@@ -295,3 +295,85 @@ fn menu_toggle_during_native_focus_gap_keeps_view_and_file_commands_enabled() {
     windows.remove_runtime(&local.label);
     assert_eq!(windows.menu_state(None), (false, None), "closed windows cannot remain targets");
 }
+
+#[test]
+fn initial_local_document_is_an_offline_about_blank() {
+    // Windows gates the custom protocol and loopback on proxy/PAC resolution;
+    // about:blank never touches the network, so the window can paint at t=0.
+    let WebviewUrl::External(url) = local_window_initial_url() else {
+        panic!("the initial local document must be an external URL");
+    };
+    assert_eq!(url.as_str(), "about:blank");
+}
+
+#[test]
+fn local_window_initialization_script_appends_the_boot_splash() {
+    let script = local_window_initialization_script("window-1");
+    assert!(script.starts_with(LOCAL_WINDOW_CONTEXT_SCRIPT));
+    assert!(script.contains("window.__CODENOMAD_WINDOW_ID__ = \"window-1\";"));
+    assert!(
+        script.ends_with(BOOT_SPLASH_SCRIPT),
+        "the boot splash must run in the initial about:blank document"
+    );
+}
+
+#[test]
+fn boot_splash_paints_only_a_top_level_about_blank_document() {
+    for guard in [
+        "window.top !== window",
+        "'about:blank'",
+        "__CODENOMAD_BOOT__",
+    ] {
+        assert!(BOOT_SPLASH_SCRIPT.contains(guard), "missing guard: {guard}");
+    }
+}
+
+#[test]
+fn boot_splash_has_no_network_or_storage_dependencies() {
+    for forbidden in [
+        "fetch(",
+        "XMLHttpRequest",
+        "WebSocket",
+        "localStorage",
+        "sessionStorage",
+        "indexedDB",
+        " src=",
+        "import ",
+    ] {
+        assert!(
+            !BOOT_SPLASH_SCRIPT.contains(forbidden),
+            "the boot splash must not use {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn boot_splash_renders_the_real_logo_and_loading_palette() {
+    let logo = include_str!("../../../ui/src/images/CodeNomad-Logo-OnDark.svg");
+    let mut paths = 0;
+    for path in logo.split("d=\"").skip(1) {
+        let data = path.split('"').next().unwrap();
+        assert!(!data.is_empty());
+        assert!(
+            BOOT_SPLASH_SCRIPT.contains(data),
+            "the boot splash must embed the checked-in on-dark logo"
+        );
+        paths += 1;
+    }
+    assert_eq!(paths, 2, "the on-dark logo has two paths");
+    assert!(BOOT_SPLASH_SCRIPT.contains("viewBox=\"-100 -115.47 200 230.94\""));
+    for visual in [
+        "#1a1a1a",
+        "#cfd4dc",
+        "rgba(255, 255, 255, 0.18)",
+        "#0080ff",
+        "5.3rem",
+        "CodeNomad",
+        "@keyframes",
+    ] {
+        assert!(
+            BOOT_SPLASH_SCRIPT.contains(visual),
+            "the boot splash must copy the loading page visuals: {visual}"
+        );
+    }
+}
