@@ -1140,7 +1140,7 @@ impl CliProcessManager {
             let snapshot = status.clone();
             drop(status);
             crate::local_windows::emit_all(app, "cli:error", json!({"message": message}));
-            crate::local_windows::emit_all(app, "cli:status", snapshot);
+            Self::emit_status(app, &snapshot);
         });
     }
 
@@ -1992,6 +1992,30 @@ pub(crate) mod tests {
         assert!(main.contains("std::env::set_var(\"CLI_CONFIG\", config)"));
         if let Some(value) = old { std::env::set_var("CLI_CONFIG", value); }
         else { std::env::remove_var("CLI_CONFIG"); }
+    }
+
+    #[test]
+    fn publish_error_shows_loading_pages_like_the_exit_path() {
+        // The initial document is about:blank with only the static boot splash:
+        // a bare cli:status emit cannot display an error there. Only emit_status
+        // navigates windows (and Preferences) back to loading.html, where the
+        // status is fetched and rendered.
+        let source = include_str!("cli_manager.rs");
+        let body = source
+            .split("fn publish_error")
+            .nth(1)
+            .unwrap()
+            .split("fn write_native_response")
+            .next()
+            .unwrap();
+        assert!(
+            body.contains("Self::emit_status(app, &snapshot)"),
+            "publish_error must broadcast its status through emit_status"
+        );
+        assert!(
+            !body.contains("\"cli:status\""),
+            "a direct cli:status emit skips the loading-page navigation"
+        );
     }
 
     #[test]
