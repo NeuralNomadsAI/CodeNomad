@@ -138,19 +138,27 @@ export async function resolveWorktreeSlugForDirectory(params: WorktreeSource & {
   return refreshed.worktrees.find((wt) => wt.normalizedDirectory === target)?.slug ?? null
 }
 
-async function resolveDirectoryPath(directory: string): Promise<string | null> {
+async function resolveDirectoryPath(directory: string, check?: () => void): Promise<string | null> {
+  check?.()
   const trimmed = (directory ?? "").trim()
   if (!trimmed) return null
   let current = path.resolve(trimmed)
   const missing: string[] = []
   while (true) {
+    check?.()
     try {
-      return path.join(await realpath(current), ...missing)
-    } catch {
+      const resolved = await realpath(current)
+      check?.()
+      return path.join(resolved, ...missing)
+    } catch (error) {
+      check?.()
+      if (check && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
       try {
         await lstat(current)
+        check?.()
         return null
       } catch (error) {
+        check?.()
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null
       }
       const parent = path.dirname(current)
@@ -187,7 +195,7 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
 }): Promise<{ slug: string; directory: string; worktreeDirectory: string } | null> {
   const current = params.media?.current
   current?.()
-  const target = params.media ? await realpath(params.directory) : await resolveDirectoryPath(params.directory)
+  const target = await resolveDirectoryPath(params.directory, current)
   current?.()
   if (!target) return null
   const find = (worktrees: WorktreeCacheEntry["worktrees"]) => worktrees
@@ -209,12 +217,13 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
         if (common !== undefined) throw new Error("Git ownership inventory unavailable")
       }
       try {
-        const normalizedDirectory = await realpath(worktree.directory)
+        const normalizedDirectory = await resolveDirectoryPath(worktree.directory, current)
         current()
+        if (!normalizedDirectory) throw new Error("Worktree project directory unavailable")
         return { ...worktree, worktreeDirectory, normalizedDirectory }
       } catch (error) {
         current()
-        if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")
+        if ((error as NodeJS.ErrnoException).code === "ENOTDIR"
           && worktree.slug !== "root" && worktree.directory !== worktreeDirectory) return null
         throw error
       }

@@ -362,7 +362,7 @@ export class WorkspaceManager {
     // Resolve aliases against the explicitly opened folder without spawning Git.
     if (!record.wslDistro) {
       const [target, root] = await Promise.all([
-        realpath(directory).catch(error => { if (media) throw error }), realpath(record.path).catch(error => { if (media) throw error }),
+        realpath(directory).catch(error => { if (media && error.code !== "ENOENT") throw error }), realpath(record.path).catch(error => { if (media) throw error }),
       ])
       media?.current()
       if (target && target === root) return target
@@ -522,7 +522,7 @@ export class WorkspaceManager {
     media?.current()
     if (!hostDirectory) return null
     const [target, root] = await Promise.all([
-      realpath(hostDirectory).catch(error => { if (media) throw error }), realpath(record.path).catch(error => { if (media) throw error }),
+      realpath(hostDirectory).catch(error => { if (media && error.code !== "ENOENT") throw error }), realpath(record.path).catch(error => { if (media) throw error }),
     ])
     media?.current()
     // The explicitly opened folder is already authority. Do not require native

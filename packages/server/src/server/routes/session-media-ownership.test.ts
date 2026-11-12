@@ -24,8 +24,12 @@ test("media ownership retains real manager, physical worktrees and connection cu
   // Install the targeted physical hold before importing the manager, as in the
   // existing builtin-I/O mock tests. No ownership implementation is substituted.
   const realpath = fs.realpath
+  let physicalError: { directory: string; code: string } | undefined
   let physical: { directory: string; entered: ReturnType<typeof deferred<void>>; release: ReturnType<typeof deferred<void>> } | undefined
   t.mock.method(fs, "realpath", (async (...args: Parameters<typeof fs.realpath>) => {
+    if (physicalError && String(args[0]) === physicalError.directory) {
+      throw Object.assign(new Error("indeterminate physical fixture"), { code: physicalError.code })
+    }
     const held = physical
     if (held && String(args[0]) === held.directory) {
       physical = undefined; held.entered.resolve(); await held.release.promise
@@ -198,6 +202,18 @@ test("media ownership retains real manager, physical worktrees and connection cu
     }
   })
 
+  await t.test("a missing nested project in a registered sibling checkout still serves exact PNG bytes", async () => {
+    const f = await fixture(true)
+    try {
+      await fs.rm(f.target, { recursive: true })
+      assert.equal(await f.manager.ownsLocation(f.id, { directory: f.target }), true)
+      const response = await f.app.inject(f.url())
+      assert.equal(response.statusCode, 200)
+      assert.deepEqual(response.rawPayload, f.bytes)
+      assert.equal(response.headers["content-type"], "image/png")
+    } finally { await f.close() }
+  })
+
   await t.test("WSL adapters preserve service and physical namespaces on the real ownership path", async () => {
     const f = await fixture(false, true)
     try {
@@ -205,6 +221,23 @@ test("media ownership retains real manager, physical worktrees and connection cu
       assert.equal(response.statusCode, 200); assert.deepEqual(response.rawPayload, f.bytes)
       assert.equal(f.counts().mediaNativeReads, 6); assert.equal(f.counts().sharedClients, 0)
     } finally { await f.close() }
+  })
+
+  await t.test("missing-path admission still refuses broken links, invalid checkouts and indeterminate ancestors", async () => {
+    for (const mode of ["broken-link", "invalid-checkout", "EACCES", "EIO"]) {
+      const f = await fixture(true)
+      try {
+        await fs.rm(f.target, { recursive: true })
+        if (mode === "broken-link") f.setDirectory(path.join(f.alias, "missing"))
+        else if (mode === "invalid-checkout") await fs.rm(path.join(path.dirname(f.target), ".git"))
+        else physicalError = { directory: path.dirname(f.target), code: mode }
+        const response = await f.app.inject(f.url())
+        assert([403, 502].includes(response.statusCode), mode)
+        assert.equal(response.headers["content-type"], "application/json; charset=utf-8")
+        assert(!f.events.includes("A:message"), "refusal precedes the message read")
+        assert(!f.events.includes("A:session2"), "refusal precedes the dependent session read")
+      } finally { physicalError = undefined; await f.close() }
+    }
   })
 
   await t.test("physical hold rejects retired A and exact-record ABA before any catalogue acquisition", async st => {
