@@ -39,7 +39,7 @@ const body = z.object({ requestID: id, expectedRevision: z.number().int().nonneg
   && (value.deleteManagedSessions === undefined || value.action === "delete") && (value.action !== "create" || value.expectedRevision === 0)
   && !(value.action === "create" && value.configuration && !requiresMissionCalendar(value.configuration.launch)))
 const resultSchema = z.object({ pending: z.boolean(), deleted: z.boolean().optional(), refusal: missionScheduleRefusalSchema.optional(), document: z.object({ id,
-  control: z.object({ requestID: id, expectedRevision: z.number().int().nonnegative().safe(), action: z.enum(missionScheduleActions), pending: z.boolean() }).strict().nullable(),
+  control: z.object({ requestID: id, expectedRevision: z.number().int().nonnegative().safe(), action: z.enum([...missionScheduleActions, "reconcile"]), pending: z.boolean() }).strict().nullable(),
 }).passthrough().nullable() }).passthrough()
 
 /** Physical permits survive unknown native outcomes. Exact completed receipts or
