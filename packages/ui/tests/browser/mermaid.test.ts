@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { before, after, test } from "node:test"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -13,6 +14,7 @@ before(async () => {
     '<html><meta name="viewport" content="width=device-width, initial-scale=1"><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mermaid.tsx"></script></body></html>' }] })
   url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close() })
 async function open() {
