@@ -368,15 +368,19 @@ function isNotifiableSession(instanceId: string, sessionId: string | undefined |
 
 function getInstanceDisplayName(instanceId: string, detail?: string): string {
   const instance = instances().get(instanceId)
-  const label = detail || (instance ? getInstanceLabel(instance) : instanceId)
   const { backendId } = parseInstanceKey(instanceId)
-  if (backendId === "local") return label
+  if (backendId === "local") {
+    const folder = instance?.folder ?? instanceId
+    return detail || folder.split(/[\\/]/).filter(Boolean).pop() || folder
+  }
+  const label = detail || (instance ? getInstanceLabel(instance) : instanceId)
   const server = uiState().remoteServers.find(profile => profile.id === backendId)?.name ?? backendId
   return tGlobal("sessionEvents.notify.serverTitle", { server, label })
 }
 
 /** Keep navigation and displayed notices on the exact event attachment. */
 function showInstanceToast(instanceId: string, sessionId: string | undefined | null, payload: ToastPayload): ToastHandle {
+  if (parseInstanceKey(instanceId).backendId === "local") return showToastNotification(payload)
   const authority = captureEventAuthority(instanceId)
   const target = { backendId: parseInstanceKey(instanceId).backendId, instanceId, ...(sessionId ? { sessionId } : {}) }
   return showToastNotification({ ...payload, signal: authority.signal, action: {
