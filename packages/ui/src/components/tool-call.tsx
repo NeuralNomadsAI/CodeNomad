@@ -1,4 +1,4 @@
-import { For, createSignal, Show, createEffect, createMemo, on, onCleanup, type Accessor, type JSXElement } from "solid-js"
+import { For, createSignal, Show, createEffect, createMemo, on, onCleanup, untrack, type Accessor, type JSXElement } from "solid-js"
 import { createStore, reconcile, unwrap } from "solid-js/store"
 import { ArrowRightSquare, Check, ChevronRight, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
@@ -39,6 +39,7 @@ import {
 } from "./tool-call/utils"
 import { BoundedText } from "./hidden-text"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
+import { scheduleFrameBatchedMount } from "../lib/frame-batch-schedule"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
@@ -638,6 +639,24 @@ export default function ToolCall(props: ToolCallProps) {
     return defaultExpandedForTool()
   }
 
+  // A session switch mounts dozens of expanded tool bodies at once; rendering
+  // every body inside the mounting task blocks the main thread for seconds.
+  // The header mounts immediately and a default-expanded settled body joins
+  // over the next frames. User interaction, live and failed tools render at
+  // once, and any user expansion state releases the wait for this instance.
+  const [bodyMountReleased, setBodyMountReleased] = createSignal(
+    untrack(() => userExpanded() !== null || !defaultExpandedForTool()
+      || toolState()?.status === "running" || toolState()?.status === "error"),
+  )
+  if (!bodyMountReleased()) {
+    let bodyMountDisposed = false
+    onCleanup(() => { bodyMountDisposed = true })
+    scheduleFrameBatchedMount(() => {
+      if (!bodyMountDisposed) setBodyMountReleased(true)
+    })
+  }
+  createEffect(on(userExpanded, () => { setBodyMountReleased(true) }, { defer: true }))
+
   const toolInput = createMemo(() => {
     const state = toolState()
     return readToolStatePayload(state).input
@@ -918,7 +937,7 @@ export default function ToolCall(props: ToolCallProps) {
         </div>
       </Show>
 
-      <Show when={!hasPendingForm() && expanded()}>
+      <Show when={!hasPendingForm() && expanded() && bodyMountReleased()}>
         <ToolCallDetails
           toolCallMemo={toolCallMemo}
           toolState={toolState}

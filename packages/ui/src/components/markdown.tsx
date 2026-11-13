@@ -12,6 +12,7 @@ import {
   type TextSource,
 } from "../lib/render-text-window"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
+import { scheduleDeferredHighlight } from "../lib/markdown-highlight-schedule"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 import { messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
@@ -318,7 +319,7 @@ export function Markdown(props: MarkdownProps) {
     notifyRendered()
   }
 
-  const renderSnapshot = async (snapshot: ResolvedMarkdownSnapshot, request: number): Promise<void> => {
+  const renderSnapshot = async (snapshot: ResolvedMarkdownSnapshot, request: number, highlight = snapshot.highlightEnabled): Promise<void> => {
     const markdown = await loadMarkdownModule()
     // Awaiting even a warm module suspends this invocation. Skip stale work before
     // entering the synchronous parser, including retries with the same key.
@@ -326,7 +327,7 @@ export function Markdown(props: MarkdownProps) {
     markdown.setMarkdownTheme(snapshot.themeKey === "dark")
     const diagrams: MermaidCodeBlock[] = []
     const rendered = await markdown.renderMarkdown(snapshot.text, {
-      suppressHighlight: !snapshot.highlightEnabled,
+      suppressHighlight: !highlight,
       escapeRawHtml: snapshot.escapeRawHtml,
       literalRawHtml: snapshot.literalRawHtml,
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
@@ -334,21 +335,35 @@ export function Markdown(props: MarkdownProps) {
       truncated: snapshot.truncated,
     })
     if (!isCurrentRender(request)) return
-    const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
+    // A deferred plain pass never publishes under a cache key that promises
+    // highlighting; a highlight-disabled snapshot still caches its plain render.
+    const shouldCache = highlight
+      ? !markdown.hasPendingCodeHighlight(snapshot.text)
+      : !snapshot.highlightEnabled
 
     if (isCurrentRender(request)) {
       commitCacheEntry(snapshot, rendered, { cache: shouldCache, mermaid: diagrams })
     }
   }
 
-  const startRender = (snapshot: ResolvedMarkdownSnapshot, request: number) => {
+  const startRender = (snapshot: ResolvedMarkdownSnapshot, request: number, highlight = snapshot.highlightEnabled) => {
     lastRenderStartedAt = performance.now()
-    void renderSnapshot(snapshot, request).catch((error) => {
-      log.error("Failed to render markdown:", error)
-      if (isCurrentRender(request)) {
-        commitCacheEntry(snapshot, renderFallbackHtml(snapshot.text))
-      }
-    })
+    void renderSnapshot(snapshot, request, highlight)
+      .catch((error) => {
+        log.error("Failed to render markdown:", error)
+        if (isCurrentRender(request)) {
+          commitCacheEntry(snapshot, renderFallbackHtml(snapshot.text))
+        }
+      })
+      .then(() => {
+        // A first render that held highlighting back schedules its highlighted
+        // pass for idle time: a mounting burst of blocks must not run every
+        // Shiki highlight inside the mounting task.
+        if (highlight || !snapshot.highlightEnabled || !isCurrentRender(request)) return
+        scheduleDeferredHighlight(() => {
+          if (isCurrentRender(request)) startRender(snapshot, request, true)
+        })
+      })
   }
 
   // At most one render per interval, always of the latest snapshot.
@@ -409,7 +424,9 @@ export function Markdown(props: MarkdownProps) {
       setRendered(false)
       notifyRendered()
     }
-    startRender(snapshot, request)
+    // A block's first render commits plain Markdown and takes up highlighting
+    // in idle time; every later render of the component renders immediately.
+    startRender(snapshot, request, previous === undefined && snapshot.highlightEnabled ? false : snapshot.highlightEnabled)
   })
 
   createEffect(() => {
