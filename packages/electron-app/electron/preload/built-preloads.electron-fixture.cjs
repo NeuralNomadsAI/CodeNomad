@@ -3,7 +3,8 @@ const http = require("node:http")
 const { join } = require("node:path")
 const { writeFileSync } = require("node:fs")
 
-const [scratch, resultFile, preloads] = process.argv.slice(2)
+// Electron retains switches such as --no-sandbox before the fixture path.
+const [scratch, resultFile, preloads] = process.argv.slice(-3)
 app.setPath("userData", join(scratch, "profile"))
 const errors = []
 const windows = []
@@ -17,8 +18,12 @@ const server = http.createServer((_request, response) => response.end(
 app.whenReady().then(async () => {
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
   const port = server.address().port
-  const result = { errors, contexts: [] }
-  const watch = contents => contents.on("preload-error", (_event, file, error) => errors.push({ file, error: error.message }))
+  const result = { errors, contexts: [], security: [] }
+  const watch = contents => {
+    const { sandbox, contextIsolation, nodeIntegration } = contents.getLastWebPreferences()
+    result.security.push({ sandbox, contextIsolation, nodeIntegration })
+    contents.on("preload-error", (_event, file, error) => errors.push({ file, error: error.message }))
+  }
   try {
     ipcMain.on("codenomad:browser-prompt", (event, args) => { event.returnValue = args.message === "fixture" ? "native answer" : null })
     const owner = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } })
@@ -59,6 +64,6 @@ app.whenReady().then(async () => {
   } finally {
     for (const window of windows) window.destroy()
     server.close()
-    app.quit()
+    app.exit(process.exitCode ?? 0)
   }
 })

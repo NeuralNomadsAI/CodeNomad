@@ -182,6 +182,9 @@ Native open claims retain their request deadline and backend-generation fence. T
   entry must load autonomously under Electron's sandboxed module loader.
   The built regression checks ordinary prompt behavior and
   local/Preferences/remote application bridge fences.
+  Linux runs under Xvfb with Chromium's process sandbox disabled for CI;
+  each tested renderer retains asserted `sandbox: true`, context isolation and
+  disabled page Node integration. Child exit status and bounded output accompany failures.
 - Tauri: `embedded_view_tests.rs`, `browser_controller.rs` and `browser_controller_regressions.rs` tests, including ownership, fail-closed child policy, creation rollback, replacement fencing, actual capability resolution, primary-renderer cleanup, window counting, lock ordering and expired dispatch
 - Native capabilities: `packages/tauri-app/tests/webkit-capabilities/README.md` describes the backend-free production-layer harness on Windows/macOS/Linux and the Electron harness. It covers OAuth, blank/named windows, opener cleanup, HTTP/data/blob downloads, dialog values/cancellation, permission consent/denial, no app globals, fullscreen/Escape, file inputs/drop and WebAuthn availability. Windows runs the release build with scoped accessibility input; Linux uses both display backends. The HTTPS-to-loopback mode records the requesting origin in Electron's consent UI.
 - WebKitGTK history: `python3 packages/tauri-app/scripts/test-webkit-history-linux.py` in a graphical Linux session with GTK 3/WebKitGTK 4.1 development packages. Run with `GDK_BACKEND=wayland` and `GDK_BACKEND=x11`; the standalone native example includes the production adapters, bounded-window selection and handle allocator. It covers redirects, fragments, same-URL `pushState`, `replaceState`, native traversal, branching and the 32-entry bound.
