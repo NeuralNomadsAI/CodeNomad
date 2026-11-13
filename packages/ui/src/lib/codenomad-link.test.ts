@@ -42,5 +42,6 @@ test("20 consumed messages match P2 in ten locales and four legacy values stay u
     assert(keys.every(key => typeof current.get(key) === "string"))
     assert.equal(hash(keys.map(key => current.get(key))), snapshots[locale][0], `${locale}/P2`)
     assert.equal(hash(variants.map(key => current.get(`folderSelection.servers.dialog.${key}`))), snapshots[locale][1], `${locale}/legacy`)
+    for (const key of ["sshHost", "sshHint"]) assert.ok(current.get(`folderSelection.servers.dialog.${key}`)?.trim(), `${locale}/SSH ${key}`)
   }
 })

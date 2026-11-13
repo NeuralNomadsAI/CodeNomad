@@ -13,6 +13,8 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.skipTls": "TLS प्रमाणीकरण छोड्नुहोस्",
   "folderSelection.browseMenu.errorCredentials": "ठेगानाबाट प्रयोगकर्ता नाम र पासवर्ड हटाउनुहोस्।",
   "folderSelection.browseMenu.errorInvalid": "http(s) ठेगाना वा pairing link प्रविष्ट गर्नुहोस्।",
+  "folderSelection.servers.dialog.sshHost": "SSH होस्ट (वैकल्पिक)",
+  "folderSelection.servers.dialog.sshHint": "OpenSSH होस्ट वा उपनाम। त्यो होस्टबाट देखिने सर्भर ठेगाना प्रयोग गर्नुहोस्; कुञ्जी प्रमाणीकरण र ज्ञात होस्ट कुञ्जी आवश्यक छन्।",
   "folderSelection.language.ariaLabel": "भाषा",
 
   "folderSelection.logoAlt": "CodeNomad लोगो",

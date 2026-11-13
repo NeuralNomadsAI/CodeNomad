@@ -114,7 +114,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "opencode":
         return <OpenCodeSettingsSection />
       case "servers":
-        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} />}><ServersSettingsSection /></Show>
+        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} />}><ServersSettingsSection /></Show>
       case "providers":
         return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
       case "missions":

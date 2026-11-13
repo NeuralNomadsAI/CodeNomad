@@ -428,6 +428,9 @@ export function createServerApi(ctx: BackendHttp) {
         signal,
       })
     },
+    listSshHosts(signal?: AbortSignal): Promise<{ hosts: string[] }> {
+      return request("/api/remote-servers/ssh-hosts", { signal })
+    },
     createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
       return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
         method: "POST",

@@ -13,6 +13,8 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.skipTls": "TLS 検証をスキップ",
   "folderSelection.browseMenu.errorCredentials": "アドレスからユーザー名とパスワードを削除してください。",
   "folderSelection.browseMenu.errorInvalid": "http(s) のアドレスまたはペアリングリンクを入力してください。",
+  "folderSelection.servers.dialog.sshHost": "SSH ホスト（任意）",
+  "folderSelection.servers.dialog.sshHint": "OpenSSH のホストまたはエイリアス。そのホストから見たサーバーアドレスを使用してください。鍵認証と既知のホスト鍵が必要です。",
   "folderSelection.language.ariaLabel": "言語",
 
   "folderSelection.logoAlt": "CodeNomad ロゴ",

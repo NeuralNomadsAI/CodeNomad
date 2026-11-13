@@ -95,6 +95,8 @@ Mit der experimentellen Multi-Backend-Einstellung verwenden Sie **Einstellungen 
 
 **TLS-Prüfung überspringen** erscheint nach einem Zertifikatsfehler für diese Adresse; eine neue Adresse löscht die Zustimmung. Kopplung prüft TLS immer. **Öffnen** ist in diesen experimentellen Einstellungen deaktiviert. Die folgenden Schritte gelten für den Standardmodus.
 
+Bei aktiviertem experimentellem Multi-Backend speichert **SSH-Host (optional)** einen OpenSSH-Host oder Alias für das Backend-Relay. Vorschläge stammen aus `~/.ssh/config` des lokalen Backend-Kontos. Geben Sie die CodeNomad-Adresse aus Sicht dieses Hosts ein (etwa `https://127.0.0.1:9898` mit dem tatsächlichen Port) und wählen Sie **Speichern**. SSH-Profile nutzen das Relay; **Verbinden** öffnet direkte Serverfenster und ist für diese Profile deaktiviert. CodeNomad muss dort bereits installiert sein und laufen. Lokal werden OpenSSH, Schlüsselauthentifizierung und ein geprüfter Hostschlüssel in `known_hosts` benötigt; CodeNomad-Authentifizierung und HTTPS-Zertifikatsprüfungen gelten weiterhin.
+
 1. Wählen Sie auf der Desktop-Startseite **CodeNomad-Server verbinden**. Dieselbe Schaltfläche erscheint auf einem leeren Tab **Server** und unter **Einstellungen → Remote-Zugriff → Server**.
 2. Geben Sie in **Mit Server verbinden** **Servername** und **Server-URL** mit einer vertrauenswürdigen HTTPS-Origin ein. Lassen Sie **TLS-Verifizierung für selbstsignierte Zertifikate überspringen.** deaktiviert; richten Sie stattdessen Vertrauen ein.
 3. Wählen Sie **Speichern** für ein Lesezeichen oder **Verbinden** zum Speichern und Öffnen. Melden Sie sich auf diesem Server an.

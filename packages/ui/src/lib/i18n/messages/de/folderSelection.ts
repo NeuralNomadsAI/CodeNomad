@@ -13,6 +13,8 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.skipTls": "TLS-Prüfung überspringen",
   "folderSelection.browseMenu.errorCredentials": "Entfernen Sie Benutzername und Passwort aus der Adresse.",
   "folderSelection.browseMenu.errorInvalid": "Geben Sie eine http(s)-Adresse oder einen Kopplungslink ein.",
+  "folderSelection.servers.dialog.sshHost": "SSH-Host (optional)",
+  "folderSelection.servers.dialog.sshHint": "Ein OpenSSH-Host oder Alias. Verwenden Sie die Serveradresse aus Sicht dieses Hosts; Schlüsselauthentifizierung und ein bekannter Hostschlüssel sind erforderlich.",
   "folderSelection.language.ariaLabel": "Sprache",
 
   "folderSelection.logoAlt": "CodeNomad Logo",

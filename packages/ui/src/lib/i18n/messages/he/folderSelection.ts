@@ -13,6 +13,8 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.skipTls": "דילוג על אימות TLS",
   "folderSelection.browseMenu.errorCredentials": "הסירו את שם המשתמש והסיסמה מהכתובת.",
   "folderSelection.browseMenu.errorInvalid": "הזינו כתובת http(s) או קישור צימוד.",
+  "folderSelection.servers.dialog.sshHost": "מארח SSH (אופציונלי)",
+  "folderSelection.servers.dialog.sshHint": "מארח או כינוי של OpenSSH. יש להשתמש בכתובת השרת כפי שהיא נראית מהמארח; נדרשים אימות באמצעות מפתח ומפתח מארח מוכר.",
   "folderSelection.language.ariaLabel": "שפה",
 
   "folderSelection.logoAlt": "לוגו CodeNomad",

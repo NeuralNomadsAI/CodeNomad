@@ -512,6 +512,8 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       const name = typeof (server as any).name === "string" ? (server as any).name.trim() : ""
       const baseUrl = typeof (server as any).baseUrl === "string" ? (server as any).baseUrl.trim() : ""
       if (!id || !name || !baseUrl) return null
+      const ssh = (server as RemoteServerProfile).ssh
+      if (ssh !== undefined && (!ssh || typeof ssh.host !== "string" || !ssh.host.trim())) return null
       const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : new Date().toISOString()
       const updatedAt = typeof (server as any).updatedAt === "string" ? (server as any).updatedAt : createdAt
       const lastConnectedAt = typeof (server as any).lastConnectedAt === "string" ? (server as any).lastConnectedAt : undefined
@@ -520,6 +522,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
         name,
         baseUrl,
         skipTlsVerify: Boolean((server as any).skipTlsVerify),
+        ...(ssh === undefined ? {} : { ssh: { host: ssh.host.trim() } }),
         createdAt,
         updatedAt,
         lastConnectedAt,
@@ -611,6 +614,7 @@ interface RemoteServerProfileInput {
   name: string
   baseUrl: string
   skipTlsVerify: boolean
+  ssh?: { host: string }
 }
 
 function buildRemoteServerProfile(input: RemoteServerProfileInput, source: RemoteServerProfile[]): RemoteServerProfile {
@@ -621,6 +625,7 @@ function buildRemoteServerProfile(input: RemoteServerProfileInput, source: Remot
     name: input.name.trim(),
     baseUrl: input.baseUrl.trim(),
     skipTlsVerify: Boolean(input.skipTlsVerify),
+    ...(input.ssh === undefined ? {} : { ssh: { host: input.ssh.host.trim() } }),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     lastConnectedAt: existing?.lastConnectedAt,
@@ -1251,7 +1256,7 @@ function queueRemoteServerEdit<T>(current: () => boolean, edit: () => Promise<T>
 }
 async function saveRemoteServerProfile(input: RemoteServerProfileInput, current?: () => boolean): Promise<RemoteServerProfile> {
   if (current) return queueRemoteServerEdit(current, async () => {
-    const duplicate = !input.id && remoteServers().find(entry => entry.baseUrl === input.baseUrl)
+    const duplicate = !input.id && remoteServers().find(entry => entry.baseUrl === input.baseUrl && entry.ssh?.host === input.ssh?.host)
     if (duplicate && duplicate.skipTlsVerify !== input.skipTlsVerify) throw new DOMException("Changed server policy", "AbortError")
     const profile = buildRemoteServerProfile({ ...input, id: input.id ?? (duplicate ? duplicate.id : undefined) }, remoteServers())
     await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) }, current)

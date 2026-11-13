@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Loader2 } from "lucide-solid"
-import { createEffect, createSignal, createUniqueId, onCleanup, Show, type Component } from "solid-js"
+import { createEffect, createSignal, createUniqueId, For, onCleanup, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import type { RemoteServerInput } from "../lib/hooks/use-remote-server-profiles"
 import { remoteServerErrorKey } from "../lib/hooks/use-remote-server-profiles"
@@ -8,6 +8,7 @@ import { classifyCodeNomadLink, carriesCredentials } from "../lib/codenomad-link
 import { captureRequestFocus } from "../lib/request-focus"
 import { useConfig } from "../stores/preferences"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { serverApi } from "../lib/api-client"
 
 interface RemoteServerDialogProps {
   open: boolean
@@ -25,6 +26,17 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
 const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
   const { t } = useI18n()
   const config = useConfig()
+  const [sshHost, setSshHost] = createSignal("")
+  const [sshHosts, setSshHosts] = createSignal<string[]>([])
+  const sshListId = createUniqueId()
+  createEffect(() => {
+    if (!props.open || config.preferences().multiBackend !== true) return
+    let current = true
+    const controller = new AbortController()
+    onCleanup(() => { current = false; controller.abort() })
+    setSshHosts([])
+    void serverApi.listSshHosts(controller.signal).then(result => { if (current) setSshHosts(result.hosts) }).catch(() => {})
+  })
   const [name, setName] = createSignal("")
   const [baseUrl, setBaseUrl] = createSignal("")
   const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
@@ -42,6 +54,7 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
     setName(props.open ? initial?.name ?? "" : "")
     setBaseUrl(props.open ? initial?.baseUrl ?? "" : "")
     setSkipTlsVerify(props.open ? initial?.skipTlsVerify ?? false : false)
+    setSshHost(props.open ? initial?.ssh?.host ?? "" : "")
   })
   onCleanup(() => { alive = false; generation++; releaseFocus(); setBaseUrl("") })
   const submit = async () => {
@@ -53,7 +66,8 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
     const flight = ++generation, initial = props.initial, focus = captureRequestFocus()
     releaseFocus = focus.dispose
     const current = () => alive && props.open && flight === generation && props.initial === initial && config.preferences().multiBackend === true
-    const input = { id: initial?.id, name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify() }
+    const input = { id: initial?.id, name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify(),
+      ...(sshHost().trim() ? { ssh: { host: sshHost().trim() } } : {}) }
     if (link.kind === "pairing") setBaseUrl("")
     setBusy(true); setError(undefined)
     try {
@@ -99,6 +113,12 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
               <label class="flex flex-col gap-2 text-sm text-secondary"><span>{t("settings.servers.dialog.name")}</span>
                 <input type="text" class="selector-input w-full" value={name()} onInput={event => { changed(); setName(event.currentTarget.value) }} placeholder={t("folderSelection.servers.dialog.namePlaceholder")} />
               </label>
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span class="flex items-center gap-2">{t("folderSelection.servers.dialog.sshHost")}<SettingsInfoTip text={t("folderSelection.servers.dialog.sshHint")} /></span>
+                <input type="text" class="selector-input w-full" dir="ltr" aria-label={t("folderSelection.servers.dialog.sshHost")} value={sshHost()} list={sshListId}
+                  onInput={event => { changed(); setSshHost(event.currentTarget.value); setSkipTlsVerify(false) }} />
+                <datalist id={sshListId}><For each={sshHosts()}>{host => <option value={host} />}</For></datalist>
+              </label>
               <label class="flex items-start gap-3 text-sm text-secondary">
                 <input type="checkbox" aria-label={t("folderSelection.browseMenu.skipTls")} checked={skipTlsVerify()} onChange={event => { changed(); setSkipTlsVerify(event.currentTarget.checked) }} />
                 <span>{t("folderSelection.browseMenu.skipTls")}</span><SettingsInfoTip text={t("settings.servers.dialog.skipTls")} />
@@ -118,6 +138,12 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
 
 const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
+  const [sshHost, setSshHost] = createSignal("")
+  const [sshHosts, setSshHosts] = createSignal<string[]>([])
+  const sshListId = createUniqueId()
+  const sshHintId = createUniqueId()
+  const usesSsh = () => preferences().multiBackend && Boolean(sshHost().trim())
   const [name, setName] = createSignal("")
   const [baseUrl, setBaseUrl] = createSignal("")
   const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
@@ -130,7 +156,16 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
     setName("")
     setBaseUrl("")
     setSkipTlsVerify(false)
+    setSshHost("")
     setError(null)
+  })
+
+  createEffect(() => {
+    if (!props.open || !preferences().multiBackend) return
+    let current = true
+    onCleanup(() => { current = false })
+    setSshHosts([])
+    void serverApi.listSshHosts().then(result => { if (current) setSshHosts(result.hosts) }).catch(() => {})
   })
 
   const submit = async (openWindow: boolean) => {
@@ -138,7 +173,8 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
     setBusy(true)
     setError(null)
     try {
-      await props.onSubmit({ name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify() }, openWindow)
+      await props.onSubmit({ name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify(),
+        ...(usesSsh() ? { ssh: { host: sshHost().trim() } } : {}) }, openWindow)
       props.onOpenChange(false)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError))
@@ -168,6 +204,14 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
               </label>
               <span id={urlHintId} class="text-xs">{t("folderSelection.servers.dialog.urlHint")}</span>
             </div>
+            <Show when={preferences().multiBackend}>
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.servers.dialog.sshHost")}</span>
+                <input class="selector-input w-full" value={sshHost()} onInput={event => setSshHost(event.currentTarget.value)} list={sshListId} aria-describedby={sshHintId} />
+                <datalist id={sshListId}><For each={sshHosts()}>{host => <option value={host} />}</For></datalist>
+                <span id={sshHintId} class="text-xs">{t("folderSelection.servers.dialog.sshHint")}</span>
+              </label>
+            </Show>
             <label class="flex items-start gap-3 text-sm text-secondary">
               <input type="checkbox" checked={skipTlsVerify()} onChange={(event) => setSkipTlsVerify(event.currentTarget.checked)} />
               <span>{t("folderSelection.servers.dialog.skipTls")}</span>
@@ -176,7 +220,7 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
             <div class="flex items-center justify-end gap-3">
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" onClick={() => props.onOpenChange(false)}>{t("folderSelection.servers.dialog.cancel")}</button>
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(false)}>{t("folderSelection.servers.dialog.save")}</button>
-              <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(true)}>
+              <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy() || usesSsh()} onClick={() => void submit(true)}>
                 <Show when={busy()} fallback={<span>{t("folderSelection.servers.dialog.connect")}</span>}>
                   <span class="inline-flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin" />{t("folderSelection.servers.dialog.connecting")}</span>
                 </Show>

@@ -36,6 +36,7 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
   const calls: Array<{ method: string; url: string; body: any }> = []
   app.addHook("preHandler", async (request, reply) => {
     calls.push({ method: request.method, url: request.url, body: request.body })
+    if (request.url === "/api/remote-servers/ssh-hosts") return reply.send({ hosts: ["fixture-lab"] })
     if (request.url === "/api/remote-servers/probe") {
       const hold = holdProbe; holdProbe = undefined; await hold?.promise
       if (probeFailure) return reply.send({ ok: false, normalizedUrl: (request.body as any).baseUrl, errorCode: probeFailure, error: "raw-secret-do-not-display" })
@@ -50,7 +51,8 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
   registerRemoteServerBrowseRoutes(app, { manager, getSelfOrigins: () => new Set([origin, selfOrigin]) })
   registerBackendRelayRoutes(app, { manager, getSelfOrigins: () => new Set([origin, selfOrigin]) })
   app.addHook("onResponse", async request => { if (request.method === "PATCH" && request.url === "/api/storage/state/ui") manager.reconcile() })
-  app.get("/api/meta", async () => ({}))
+  app.get("/api/meta", async () => ({ localRequest: true }))
+  app.get("/api/memory/settings", async () => ({ enabled: false }))
   app.get("/api/speech/capabilities", async () => ({}))
   app.get("/api/auth/status", async () => ({ authenticated: true }))
   app.get("/api/remote-control/status", async () => ({ enabled: false, manageable: false, state: "stopped" }))
@@ -443,5 +445,47 @@ test("adding a saved address retains its own explicit TLS policy without probing
   assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)
   assert.equal(f.a.state.requests.length, before)
   assert.equal(fs.readFileSync(credentialsPath, "utf8"), credentials)
+  f.check()
+})
+
+test("Servers editor preserves SSH policy, suggests aliases, saves offline and fences a retargeted edit", { timeout: 90_000 }, async t => {
+  const f = await fixture(t), { page } = f
+  const saved = { ...f.rows[0], ssh: { host: "fixture-lab" } }
+  f.settings.mergePatchDoc("state", { ui: { remoteServers: [saved, f.rows[1]] } })
+  await f.sync()
+  await edit(page, "Alpha")
+  const ssh = page.getByLabel("SSH host (optional)", { exact: true })
+  assert.equal(await ssh.inputValue(), "fixture-lab")
+  await page.locator('datalist option[value="fixture-lab"]').waitFor({ state: "attached" })
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("SSH rename")
+  await page.getByRole("button", { name: "Save", exact: true }).click()
+  await page.getByRole("dialog").waitFor({ state: "hidden" })
+  assert.deepEqual(f.profileRows().find(row => row.id === "a")?.ssh, { host: "fixture-lab" })
+  assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)
+  assert.equal(f.a.state.requests.length, 0)
+  await edit(page, "SSH rename")
+  await ssh.fill("user@other-lab")
+  await page.getByRole("button", { name: "Save", exact: true }).click()
+  await page.getByRole("dialog").waitFor({ state: "hidden" })
+  assert.deepEqual(f.profileRows().find(row => row.id === "a")?.ssh, { host: "user@other-lab" })
+  assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)
+  const pending = await page.evaluate(() => {
+    const hook = (window as any).serversFixture.profiles
+    const profile = hook.remoteServers().find((row: any) => row.id === "a")
+    ;(window as any).sshCapture = hook.capture({ ...profile, ssh: { ...profile.ssh } })
+    return (window as any).sshCapture.current()
+  })
+  assert.equal(pending, true)
+  f.settings.mergePatchDoc("state", { ui: { remoteServers: f.profileRows().map(row => row.id === "a" ? { ...row, ssh: { host: "replacement" } } : row) } })
+  await f.sync()
+  assert.equal(await page.evaluate(() => (window as any).sshCapture.current()), false)
+  await page.evaluate(() => (window as any).sshCapture.dispose())
+  await field(page).fill(f.a.origin)
+  await field(page).press("Enter")
+  await page.waitForFunction(() => (window as any).serversFixture.config.remoteServers().length === 3)
+  const sameAddress = f.profileRows().filter(row => row.baseUrl === f.a.origin)
+  assert.equal(sameAddress.length, 2)
+  assert.equal(sameAddress.filter(row => row.ssh === undefined).length, 1)
+  assert.deepEqual(sameAddress.find(row => row.id === "a")?.ssh, { host: "replacement" })
   f.check()
 })

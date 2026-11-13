@@ -8,7 +8,7 @@ import { showConfirmDialog } from "../../stores/alerts"
 import { RemoteServerDialog } from "../remote-server-dialog"
 import ServerAddField from "../server-add-field"
 
-export type ServerSelectionIntent = Readonly<Pick<RemoteServerProfile, "id" | "baseUrl" | "skipTlsVerify">>
+export type ServerSelectionIntent = Readonly<Pick<RemoteServerProfile, "id" | "baseUrl" | "skipTlsVerify" | "ssh">>
 export const ServersSettingsSection: Component<{ onSelectServer?: (profile: ServerSelectionIntent) => void }> = (props) => {
   const { t } = useI18n()
   const { remoteServers, enabled, capture, submitServer, removeServer } = useRelayServerProfiles()
@@ -31,7 +31,8 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
   function open(server: RemoteServerProfile) {
     if (!enabled() || !props.onSelectServer) return
     const op = capture({ ...server })
-    try { if (op.current()) props.onSelectServer(Object.freeze({ id: server.id, baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify })) }
+    try { if (op.current()) props.onSelectServer(Object.freeze({ id: server.id, baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify,
+      ...(server.ssh ? { ssh: Object.freeze({ ...server.ssh }) } : {}) })) }
     finally { op.dispose() }
   }
   return (
@@ -55,7 +56,8 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
                     aria-label={`${t("settings.servers.open")}: ${displayName(server)}`} title={`${t("settings.servers.open")}: ${displayName(server)}`} onClick={() => open(server)}><ExternalLink class="w-4 h-4" /></button>
                   <button type="button" class="selector-button selector-button-secondary w-auto"
                     aria-label={`${t("folderSelection.remoteProject.edit")}: ${displayName(server)}`} title={`${t("folderSelection.remoteProject.edit")}: ${displayName(server)}`}
-                    onClick={() => { if (enabled()) setDialog({ initial: { id: server.id, name: displayName(server), baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify } }) }}><Pencil class="w-4 h-4" /></button>
+                    onClick={() => { if (enabled()) setDialog({ initial: { id: server.id, name: displayName(server), baseUrl: server.baseUrl, skipTlsVerify: server.skipTlsVerify,
+                      ...(server.ssh ? { ssh: { ...server.ssh } } : {}) } }) }}><Pencil class="w-4 h-4" /></button>
                   <button type="button" class="selector-button selector-button-secondary w-auto"
                     aria-label={`${t("folderSelection.servers.remove")}: ${displayName(server)}`} title={`${t("folderSelection.servers.remove")}: ${displayName(server)}`} onClick={() => void remove(server)}><Trash2 class="w-4 h-4" /></button>
                 </div>

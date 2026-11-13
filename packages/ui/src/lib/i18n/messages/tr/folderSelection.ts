@@ -13,6 +13,8 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.skipTls": "TLS doğrulamasını atla",
   "folderSelection.browseMenu.errorCredentials": "Adresten kullanıcı adını ve parolayı kaldırın.",
   "folderSelection.browseMenu.errorInvalid": "Bir http(s) adresi veya eşleştirme bağlantısı girin.",
+  "folderSelection.servers.dialog.sshHost": "SSH sunucusu (isteğe bağlı)",
+  "folderSelection.servers.dialog.sshHint": "Bir OpenSSH sunucusu veya takma adı. Sunucu adresini bu ana makineden görüldüğü şekilde kullanın; anahtar kimlik doğrulaması ve bilinen bir sunucu anahtarı gereklidir.",
   "folderSelection.language.ariaLabel": "Dil",
   "folderSelection.logoAlt": "CodeNomad logosu",
   "folderSelection.tagline": "AI ile kod yazmaya başlamak için bir klasör seçin",

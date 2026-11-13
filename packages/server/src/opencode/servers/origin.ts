@@ -1,17 +1,9 @@
-import { isIP } from "node:net"
-
 export type EndpointErrorCode = "invalid_origin" | "dns" | "network" | "tls" | "redirect" | "timeout" | "response_limit" | "probe_path" | "custom_ca_unsupported"
+  | "ssh_unavailable" | "ssh_host_key" | "ssh_auth"
 
 /** Diagnostics contain only a stable code, never a URL, credential or upstream error. */
 export class ExplicitEndpointError extends Error {
   constructor(readonly code: EndpointErrorCode) { super(code); this.name = "ExplicitEndpointError" }
-}
-
-/** A saved profile chooses its destination; only the resolver's IP syntax is checked here. */
-export function admitAddress(address: string): { address: string; family: 4 | 6 } {
-  const family = isIP(address)
-  if (!family) throw new ExplicitEndpointError("dns")
-  return { address, family: family as 4 | 6 }
 }
 
 /** Synchronous origin validation shared by registry metadata and network admission. */

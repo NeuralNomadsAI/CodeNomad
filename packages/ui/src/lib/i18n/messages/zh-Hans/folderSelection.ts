@@ -13,6 +13,8 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.skipTls": "跳过 TLS 验证",
   "folderSelection.browseMenu.errorCredentials": "请从地址中移除用户名和密码。",
   "folderSelection.browseMenu.errorInvalid": "请输入 http(s) 地址或配对链接。",
+  "folderSelection.servers.dialog.sshHost": "SSH 主机（可选）",
+  "folderSelection.servers.dialog.sshHint": "OpenSSH 主机或别名。请使用从该主机访问的服务器地址；需要密钥认证和已知的主机密钥。",
   "folderSelection.language.ariaLabel": "语言",
 
   "folderSelection.logoAlt": "CodeNomad 徽标",

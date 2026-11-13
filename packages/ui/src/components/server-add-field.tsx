@@ -30,7 +30,7 @@ export default function ServerAddField(props: ServerAddFieldProps) {
   let releaseFocus = () => {}
   const invalidate = () => { generation++; releaseFocus(); setBusy(false) }
   createEffect(() => { props.pairingProfile; if (!enabled() || props.disabled) { invalidate(); reset() } })
-  createEffect(on(() => props.pairingProfile && `${props.pairingProfile.id}|${props.pairingProfile.baseUrl}|${props.pairingProfile.skipTlsVerify}`, () => { invalidate(); reset() }, { defer: true }))
+  createEffect(on(() => props.pairingProfile && `${props.pairingProfile.id}|${props.pairingProfile.baseUrl}|${props.pairingProfile.skipTlsVerify}|${props.pairingProfile.ssh?.host}`, () => { invalidate(); reset() }, { defer: true }))
   onCleanup(() => { alive = false; generation++; releaseFocus(); setAddress("") })
 
   function reset() {
@@ -51,17 +51,18 @@ export default function ServerAddField(props: ServerAddFieldProps) {
       if (carriesCredentials(value)) setAddress("")
       return
     }
-    const target = props.pairingProfile && { ...props.pairingProfile }
+    const target = props.pairingProfile && { ...props.pairingProfile, ssh: props.pairingProfile.ssh && { ...props.pairingProfile.ssh } }
     if (target && (link.kind !== "pairing" || link.baseUrl !== target.baseUrl)) {
       setAddress(""); setErrorServer(serverDisplayName(target, remoteServers())); setError("remoteBrowse.pairAgain"); return
     }
-    const existing = remoteServers().find(server => server.baseUrl === link.baseUrl)
+    const existing = remoteServers().find(server => server.baseUrl === link.baseUrl && server.ssh === undefined)
     const input = { id: target?.id ?? existing?.id, name: target?.name ?? existing?.name ?? "", baseUrl: value,
-      skipTlsVerify: tlsFailedFor() === link.baseUrl && skipTls() || (existing?.skipTlsVerify ?? false) }
+      skipTlsVerify: tlsFailedFor() === link.baseUrl && skipTls() || (target?.skipTlsVerify ?? existing?.skipTlsVerify ?? false),
+      ...(target?.ssh ? { ssh: { ...target.ssh } } : {}) }
     const flight = ++generation, focus = captureRequestFocus()
     releaseFocus = focus.dispose
     const current = () => alive && flight === generation && enabled() && !props.disabled
-      && (!target || props.pairingProfile?.id === target.id && props.pairingProfile.baseUrl === target.baseUrl && props.pairingProfile.skipTlsVerify === target.skipTlsVerify)
+      && (!target || props.pairingProfile?.id === target.id && props.pairingProfile.baseUrl === target.baseUrl && props.pairingProfile.skipTlsVerify === target.skipTlsVerify && props.pairingProfile.ssh?.host === target.ssh?.host)
     if (link.kind === "pairing") setAddress("")
     setBusy(true)
     try {
@@ -73,7 +74,7 @@ export default function ServerAddField(props: ServerAddFieldProps) {
       if (!current() || failure instanceof DOMException && failure.name === "AbortError") return
       if (link.kind === "pairing") {
         reset()
-        const saved = remoteServers().find(server => server.baseUrl === link.baseUrl)
+        const saved = remoteServers().find(server => target ? server.id === target.id : server.baseUrl === link.baseUrl && server.ssh === undefined)
         setErrorServer(saved ? serverDisplayName(saved, remoteServers()) : codeNomadLinkName(link.baseUrl))
         setError(remoteServerErrorKey(failure))
         if (saved && !target) { props.onAdded?.(saved.id, () => current() && focus.retained()); props.onPairingFailure?.(saved.id) }

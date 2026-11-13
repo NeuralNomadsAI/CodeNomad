@@ -9,12 +9,14 @@ import { useConfig } from "../../stores/preferences"
 import { carriesCredentials, classifyCodeNomadLink, codeNomadLinkName } from "../codenomad-link"
 import { RemoteServerRequestError } from "../remote-server-request"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
+import { normalizeExplicitOrigin } from "../../../../server/src/opencode/servers/origin"
 
 export type RemoteServerInput = {
   id?: string
   name: string
   baseUrl: string
   skipTlsVerify: boolean
+  ssh?: { host: string }
 }
 
 export class RemoteServerProbeError extends Error {
@@ -41,7 +43,7 @@ export function useRelayServerProfiles() {
   const controllers = new Set<AbortController>()
   const enabled = () => alive && config.preferences().multiBackend === true
   const same = (a: RemoteServerProfile | undefined, b: RemoteServerProfile | undefined) =>
-    a === b || !!a && !!b && a.id === b.id && a.baseUrl === b.baseUrl && a.skipTlsVerify === b.skipTlsVerify
+    a === b || !!a && !!b && a.id === b.id && a.baseUrl === b.baseUrl && a.skipTlsVerify === b.skipTlsVerify && a.ssh?.host === b.ssh?.host
   const capture = (profile?: RemoteServerProfile) => {
     const controller = new AbortController()
     controllers.add(controller)
@@ -52,13 +54,15 @@ export function useRelayServerProfiles() {
   createEffect(() => { if (!enabled()) for (const controller of controllers) controller.abort() })
   onCleanup(() => { alive = false; for (const controller of controllers) controller.abort(); controllers.clear() })
   const submitServer = async (input: RemoteServerInput, _open = false, viewCurrent: () => boolean = () => true) => {
-    input = { ...input }
+    input = { ...input, ssh: input.ssh ? { ...input.ssh } : undefined }
     if (!enabled()) throw new DOMException("Server settings disabled", "AbortError")
     if (!input.baseUrl.trim()) throw new RemoteServerProbeError("required")
     if (carriesCredentials(input.baseUrl)) throw new RemoteServerProbeError("credentials")
     const link = classifyCodeNomadLink(input.baseUrl)
     if (!link) throw new RemoteServerProbeError("invalid")
-    const saved = input.id ? config.remoteServers().find(p => p.id === input.id) : config.remoteServers().find(p => p.baseUrl === link.baseUrl)
+    const ssh = input.ssh ? { host: input.ssh.host.trim() } : undefined
+    if (ssh && !/^[A-Za-z0-9_.@:/[\]%+][A-Za-z0-9_.@:/[\]%+-]{0,254}$/.test(ssh.host)) throw new RemoteServerProbeError("invalid")
+    const saved = input.id ? config.remoteServers().find(p => p.id === input.id) : config.remoteServers().find(p => p.baseUrl === link.baseUrl && p.ssh?.host === ssh?.host)
     if (input.id && !saved) throw new DOMException("Removed server", "AbortError")
     const op = capture(saved)
     const current = () => op.current() && viewCurrent()
@@ -67,7 +71,7 @@ export function useRelayServerProfiles() {
     try {
       assert()
       let baseUrl = link.kind === "address" && saved?.baseUrl === input.baseUrl.trim() ? saved.baseUrl : link.baseUrl
-      if (!saved || link.kind === "pairing" || saved.baseUrl !== baseUrl || saved.skipTlsVerify !== skipTlsVerify) {
+      if (!ssh && (!saved || link.kind === "pairing" || saved.baseUrl !== baseUrl || saved.skipTlsVerify !== skipTlsVerify || saved.ssh)) {
         const probe = await serverApi.probeRemoteServer({ baseUrl, skipTlsVerify }, op.signal)
         assert()
         if (!probe.ok) throw new RemoteServerProbeError(probe.errorCode ?? "unreachable")
@@ -76,7 +80,7 @@ export function useRelayServerProfiles() {
       assert()
       let profile: RemoteServerProfile
       try {
-        profile = await config.saveRemoteServerProfile({ id: saved?.id, name: input.name.trim() || (!input.id && saved?.name) || codeNomadLinkName(baseUrl), baseUrl, skipTlsVerify }, current)
+        profile = await config.saveRemoteServerProfile({ id: saved?.id, name: input.name.trim() || (!input.id && saved?.name) || codeNomadLinkName(baseUrl), baseUrl, skipTlsVerify, ssh }, current)
       } catch (error) {
         if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
         throw new RemoteServerProbeError("save")
@@ -108,6 +112,16 @@ export function useRemoteServerProfiles() {
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
 
   const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
+    if (input.ssh !== undefined) {
+      if (requestedWindow) throw new Error(t("folderSelection.servers.dialog.errorConnect"))
+      const name = input.name.trim()
+      const host = input.ssh.host.trim()
+      if (!name || !host) throw new Error(t("folderSelection.servers.dialog.errorRequired"))
+      let baseUrl: string
+      try { baseUrl = normalizeExplicitOrigin(input.baseUrl.trim()) }
+      catch { throw new Error(t("folderSelection.servers.dialog.errorConnect")) }
+      return saveRemoteServerProfile({ ...input, name, baseUrl, ssh: { host } })
+    }
     // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
     const pairing = splitPairingLink(input.baseUrl)
     const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())

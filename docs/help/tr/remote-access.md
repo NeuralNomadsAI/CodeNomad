@@ -95,6 +95,8 @@ Deneysel çoklu arka uç ayarı açıkken **Ayarlar → Sunucular** bölümünü
 
 **TLS doğrulamasını atla**, o adresin sertifika hatasından sonra sunulur; adres değişince onay silinir. Eşleştirme her zaman TLS doğrular. Bu deneysel ayarlarda **Aç** devre dışıdır. Aşağıdaki adımlar varsayılan modu anlatır.
 
+Deneysel çoklu backend etkinleştirildiğinde **SSH sunucusu (isteğe bağlı)**, backend aktarımı için bir OpenSSH sunucusu veya takma adı kaydeder. Öneriler yerel backend hesabının `~/.ssh/config` dosyasından gelir. CodeNomad adresini bu ana makineden görüldüğü şekilde girin (örneğin gerçek bağlantı noktasıyla `https://127.0.0.1:9898`) ve **Kaydet** seçeneğini kullanın. SSH profilleri aktarımı kullanır; doğrudan sunucu pencereleri açan **Bağlan** bu profiller için devre dışıdır. CodeNomad orada kurulu ve çalışıyor olmalıdır. Yerel OpenSSH, anahtarla kimlik doğrulama ve `known_hosts` içinde doğrulanmış bir sunucu anahtarı gereklidir; CodeNomad kimlik doğrulaması ve HTTPS sertifika kontrolleri de geçerlidir.
+
 1. Masaüstü ana sayfasında **CodeNomad Sunucusuna Bağlan** öğesini seçin. Aynı düğme boş bir **Sunucular** sekmesinde ve **Ayarlar → Uzak Erişim → Sunucular** bölümünde de bulunur.
 2. **Sunucuya Bağlan** penceresinde, güvenilir bir HTTPS kaynağını kullanarak **Sunucu adı** ve **Sunucu URL'si** öğesini girin. **Kendinden imzalı sertifikalar için TLS doğrulamasını atla.** öğesini işaretlemeden bırakın; bunun yerine güven oluşturun.
 3. Yer imlerine eklemek için **Kaydet** öğesini veya kaydedip açmak için **Bağlan** öğesini seçin. Bu sunucuda oturum açın.
