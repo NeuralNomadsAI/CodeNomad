@@ -7,7 +7,6 @@ import type { NativeMissionDocumentRunner } from "./native-mission-document-stor
 import type { NativeScheduleWake } from "./native-schedule-transport-contract"
 import { assertNativeScheduleWake } from "./native-schedule-transport-contract"
 import { NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
-import type { NativeScheduleCarrierMapping } from "./native-schedule-carrier"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -31,55 +30,64 @@ export const acquireNativeMissionScheduleWakeReader = Effect.fn("missions.acquir
       throw new Error("schedule-wake-reader-retired")
     return true
   }
-  // Shared by classification and original-message proofs in this invocation.
+  // Context classification cannot spend the nine deterministic recovery reads.
   // SQL applies both byte ceilings before returning any native message body.
-  let reads = 0, bytes = 0
-  const read = async (sessionID: string, messageID: string) => {
+  const classification = { reads: 0, bytes: 0, limit: 128 }, recovery = { reads: 0, bytes: 0, limit: 9 }
+  const resolved = new Map<string, unknown>()
+  const key = (sessionID: string, messageID: string) => JSON.stringify([sessionID, messageID])
+  const read = async (sessionID: string, messageID: string, budget = recovery) => {
     current()
-    if (++reads > 128) throw new Error("schedule-wake-reader-capacity")
-    const maximum = Math.min(262144, 1024 * 1024 - bytes)
-    const data = await run(client!.unsafe("SELECT type,data FROM session_message WHERE id=? AND session_id=? AND length(CAST(data AS BLOB))<=262144 AND length(CAST(data AS BLOB))<=? LIMIT 1",
-      [messageID, sessionID, maximum]).withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows))))
+    if (++budget.reads > budget.limit) throw new Error("schedule-wake-reader-coverage")
+    const maximum = Math.min(262144, 1024 * 1024 - budget.bytes)
+    const data = await run(client!.unsafe("SELECT type,CASE WHEN length(CAST(data AS BLOB))<=262144 AND length(CAST(data AS BLOB))<=? THEN data END AS data FROM session_message WHERE id=? AND session_id=? LIMIT 1",
+      [maximum, messageID, sessionID]).withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows))))
     current()
     if (!data.length) return undefined
     if (data.length !== 1 || typeof data[0].data !== "string" || Buffer.byteLength(data[0].data) > maximum)
       throw new Error("schedule-wake-reader-coverage")
-    bytes += Buffer.byteLength(data[0].data)
+    budget.bytes += Buffer.byteLength(data[0].data)
     return { ...JSON.parse(data[0].data), id: messageID, type: data[0].type }
   }
   const message = async (wake: NativeScheduleWake) => {
     assertNativeScheduleWake(wake)
-    const data = await read(wake.sessionID, wake.messageID)
-    if (data?.type !== "user") return undefined
+    current()
+    const data = resolved.get(key(wake.sessionID, wake.messageID)) ?? await read(wake.sessionID, wake.messageID)
+    if (!data || (data as { type?: unknown }).type !== "user") return undefined
     const user = Schema.decodeUnknownSync(SessionMessage.User)(data)
     const metadata = user.metadata?.schedule as { id?: unknown; run?: unknown; dueAt?: unknown; late?: unknown } | undefined
     if (user.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL || metadata?.id !== wake.scheduleID || metadata.run !== wake.run
       || !Number.isSafeInteger(metadata.dueAt) || Number(metadata.dueAt) < 0 || typeof metadata.late !== "boolean") return undefined
     return { scheduleID: wake.scheduleID, run: wake.run, messageID: wake.messageID, dueAt: Number(metadata.dueAt) }
   }
-  // Model-context IDs select exact native records; their prose never classifies
-  // a notice/checkpoint. Current deterministic wakes keep strict hint validation.
-  const nonWakeMessages = async (mapping: NativeScheduleCarrierMapping, messages: readonly unknown[]) => {
+  // The LLM projection supplies IDs only. Resolve every user-role entry against
+  // its native row, including wakes; projected metadata and prose carry no proof.
+  const contextMessages = async (sessionID: string, messages: readonly unknown[]) => {
     current()
     if (messages.length > 128 || Buffer.byteLength(JSON.stringify(messages)) > 1024 * 1024) throw new Error("schedule-carrier-coverage")
     const ids = new Set<string>()
     for (const raw of messages) {
       if (!raw || typeof raw !== "object") throw new Error("schedule-carrier-context")
-      const hint = raw as { role?: unknown; id?: unknown; metadata?: { schedule?: unknown } }
-      if (hint.role !== "user" || hint.metadata?.schedule !== undefined) continue
+      const hint = raw as { role?: unknown; id?: unknown }
+      if (hint.role !== "user") continue
       if (typeof hint.id !== "string" || !hint.id.length || hint.id.length > 1024) throw new Error("schedule-carrier-coverage")
-      if (!hint.id.startsWith(`msg_${mapping.scheduleID}_`)) ids.add(hint.id)
+      ids.add(hint.id)
     }
-    const result: Array<typeof SessionMessage.Synthetic.Type | typeof SessionMessage.Compaction.Type> = []
+    const result = []
     for (const id of ids) {
-      const data = await read(mapping.sessionID, id)
+      const data = await read(sessionID, id, classification)
       if (!data) throw new Error("schedule-carrier-coverage")
-      if (data.type === "synthetic") result.push(Schema.decodeUnknownSync(SessionMessage.Synthetic)(data))
+      if (data.type === "user") {
+        const user = Schema.decodeUnknownSync(SessionMessage.User)(data)
+        if (user.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL) throw new Error("schedule-carrier-wake")
+        result.push(user)
+      }
+      else if (data.type === "synthetic") result.push(Schema.decodeUnknownSync(SessionMessage.Synthetic)(data))
       else if (data.type === "compaction") result.push(Schema.decodeUnknownSync(SessionMessage.Compaction)(data))
       else throw new Error("schedule-carrier-wake")
+      resolved.set(key(sessionID, id), data)
     }
     return result
   }
-  return { current, message, nonWakeMessages }
+  return { current, message, contextMessages }
 })
 export type NativeMissionScheduleWakeReader = Effect.Success<ReturnType<typeof acquireNativeMissionScheduleWakeReader>>

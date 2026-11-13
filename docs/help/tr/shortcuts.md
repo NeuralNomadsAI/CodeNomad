@@ -35,9 +35,9 @@ Kaydetme başarısız olursa eski kısayolu kullanılabilir durumda tutun ve gö
 | Oturumu kapat | `Mod+Shift+W` |
 | Önceki / sonraki oturum | `Mod+Shift+[` / `Mod+Shift+]` |
 | Oturum sekmesi 1-9 | `Mod+Shift+1`'den `Mod+Shift+9`'ye kadar |
-| Örnek bilgisi | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | Oturum geçmişini ara | `Mod+F` |
-| Önceki / sonraki kullanıcı mesajı | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) veya `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
+| **Önceki Kullanıcı Mesajı** / **Sonraki Kullanıcı Mesajı**, istemin **Diğer eylemler** menüsünde de bulunur | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) veya `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Sonraki/önceki arama sonucu (arama odaklı) | `Enter` / `Shift+Enter` |
 | İsteme odaklan / İstemi temizle | `Mod+P` / `Mod+K` |
 | Model / temsilci seçiciyi aç | `Mod+Shift+M` / `Mod+Shift+A` |

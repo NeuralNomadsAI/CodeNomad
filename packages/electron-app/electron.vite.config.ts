@@ -55,14 +55,14 @@ export default defineConfig({
       outDir: "dist/preload",
       sourcemap: true,
       lib: {
-        entry: resolve(__dirname, "electron/preload/index.cjs"),
+        entry: { index: resolve(__dirname, "electron/preload/index.cjs"), "browser-prompt": resolve(__dirname, "electron/preload/browser-prompt.cjs") },
         formats: ["cjs"],
-        fileName: () => "index.js",
+        fileName: (_format, name) => `${name}.js`,
       },
       rollupOptions: {
         external: ["electron"],
         output: {
-          entryFileNames: "index.js",
+          entryFileNames: "[name].js",
         },
       },
     },

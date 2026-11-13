@@ -19,6 +19,8 @@ Las carpetas expandidas sobreviven a los cambios de modo. Las listas/el estado/e
 
 Las acciones de fila incluyen **Copiar ruta** y, cuando el cliente permite abrir rutas del backend, acciones de administrador de archivos/editor/terminal como **Abrir con la aplicación predeterminada**, **Mostrar en la carpeta**, **Abrir en el explorador de archivos** y **Abrir terminal aquí**. Las acciones pueden trasladarse a **Más acciones para {name}** cuando el espacio es limitado; el nombre del archivo o carpeta reemplaza `{name}`. Un navegador remoto no puede suponer que una ruta del servidor es local al dispositivo; consulta [Control remoto](remote-control.md).
 
+Los archivos `.mmd` del Workspace se abren como diagramas. Usa **Mostrar código fuente** para editar y **Mostrar diagrama** para previsualizar el borrador actual; Guardar sigue siendo explícito. Se aplican los mismos [formatos y límites de Mermaid](conversations.md#mermaid).
+
 ## Editar código fuente y guardar con seguridad {#edit-save}
 
 1. Abre un archivo de texto de Espacio de trabajo con su acción del ojo.

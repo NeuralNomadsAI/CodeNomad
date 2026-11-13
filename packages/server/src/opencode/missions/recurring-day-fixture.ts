@@ -122,7 +122,7 @@ export class RecurringDayFixture {
     this.root = await mkdtemp(path.join(parent, "recurring-day-"))
     process.env.LOCALAPPDATA = this.root // Never discover the person's real bridge registration.
     Date.now = () => this.now
-    execFileSync("git", ["init", "-q", this.root])
+    execFileSync("git", ["init", "-q", this.root], { windowsHide: true })
     this.root = realpathSync(this.root)
     this.db = new DatabaseSync(path.join(this.root, "service.sqlite"))
     this.db.exec(`CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT NOT NULL,time_created INTEGER NOT NULL,time_updated INTEGER NOT NULL);

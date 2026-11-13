@@ -146,7 +146,7 @@ async function createPreview(client: BackendClient, sessionId: string, url: stri
   }
 }
 
-async function openSessionPreview(sessionId: string, url: string, instanceFolder = "", instanceId = ""): Promise<SessionPreviewRecord> {
+async function openSessionPreview(sessionId: string, url: string, instanceFolder = "", instanceId = "", canPublish?: () => Promise<boolean>): Promise<SessionPreviewRecord> {
   if (!historyUrl(url)) throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
   const client = backendOf(instanceId)
   const operation = captureBackendOperation(instanceId)
@@ -157,6 +157,10 @@ async function openSessionPreview(sessionId: string, url: string, instanceFolder
   const existing = sessionPreviews().get(storageKey)
   const saved = storedPreviews.get(storageKey)
   const preview = await createPreview(client, sessionId, url)
+  if (canPublish && !await canPublish().catch(() => false)) {
+    void client.api.deletePreview(preview.token).catch(() => undefined)
+    throw new Error("Preview open request is no longer current")
+  }
   if (!operation.current() || operationVersions.get(storageKey) !== operationVersion) {
     void client.api.deletePreview(preview.token).catch(() => undefined)
     const current = sessionPreviews().get(storageKey)

@@ -1,12 +1,15 @@
 import assert from "node:assert/strict"
+import { openMissionProfiles } from "./mission-actions"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import type {} from "./fixtures/mission-defaults-models"
+import { fixtureEventStream } from "./fixture-event-stream"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
     name: "mission-defaults-models",
@@ -15,10 +18,11 @@ before(async () => {
     ],
   })
   url = fixture.url
+  events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
 const profiles = { coordinator: { agent: "root", model: { providerID: "p", id: "m", variant: "high" } }, roles: { specialist: { agent: "child" } } }
 /** A native catalog entry; its display name is "Model <ID>". */
@@ -26,19 +30,24 @@ const nativeModel = (id: string, variants: { id: string }[] = []) => ({ provider
   enabled: true, capabilities: { tools: true }, cost: [], limit: { context: 1, output: 1 }, variants })
 const modelID = "70d47119-e4c3-4b18-814b-3e72ff93a1b2"
 const text = (page: Page, key: string) => page.evaluate(key => window.missionDefaultsModels.text(key), key)
-const ensureOptions = async (page: Page) => { const summary = page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }); if (!await summary.evaluate(item => (item.parentElement as HTMLDetailsElement).open)) await summary.click() }
-const openProfiles = async (page: Page) => { await ensureOptions(page); await page.locator("summary").filter({ hasText: await text(page, "missions.create.agents") }).click() }
+const ensureOptions = async (page: Page) => {
+  await page.getByLabel("Playbook", { exact: true }).waitFor()
+  await page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).waitFor()
+  assert.equal(await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).count(), 0)
+}
+const openProfiles = async (page: Page) => {
+  await openMissionProfiles(page)
+  await page.getByLabel("Coordinator · Agent", { exact: true }).waitFor()
+}
 const openModels = ensureOptions
 /** Settings folds every agent/model choice under one "Agents and models" disclosure. */
-const openSettingsProfiles = async (page: Page) => {
-  const summary = page.locator(".mission-profiles-disclosure > summary")
-  if (!await summary.evaluate(item => (item.parentElement as HTMLDetailsElement).open)) await summary.click()
-}
-const toggleOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
-const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create"
+const openSettingsProfiles = openMissionProfiles
+const OBJECTIVE = "Objective", CREATE_ONLY = "Create"
 const pickBrief = async (page: Page, id: string) => page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).selectOption(id)
 const nameBrief = async (page: Page, name: string) => {
   await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).click()
+  assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(),
+    await page.getByLabel("Title", { exact: true }).inputValue(), "saving starts from the Mission title")
   await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).fill(name)
 }
 const briefMenu = async (page: Page, key: string) => {
@@ -63,6 +72,7 @@ async function setup(page: Page, initial: Record<string, unknown> = {}, delay?: 
   let bucket: Record<string, any> = { unrelated: "keep", settings: { showThinkingBlocks: true, ...initial } }
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await events.route(page)
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "/fixture" }, capability: null, effectiveDepth: null, project: null } }))
   await page.route("**/api/storage/config/ui*", async route => {
     if (route.request().method() === "GET") { if (delay) await delay; return route.fulfill({ json: bucket }) }
@@ -99,7 +109,7 @@ async function setup(page: Page, initial: Record<string, unknown> = {}, delay?: 
   return { writes, creates, reads, errors, bucket: () => bucket, replace: (value: Record<string, any>) => { bucket = value } }
 }
 
-test("creation waits for loaded defaults, summarizes exact choices and never fetches closed profile controls", async () => {
+test("creation waits for loaded defaults and exposes exact requested choices", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let release!: () => void
   const delay = new Promise<void>(resolve => { release = resolve })
@@ -109,12 +119,11 @@ test("creation waits for loaded defaults, summarizes exact choices and never fet
     await ensureOptions(page)
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Loaded defaults")
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
-    assert.equal(fixture.reads.length, 0)
     release()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())
-    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
-    await page.waitForTimeout(100)
-    assert.equal(fixture.reads.length, 0, "summary is preference-only")
+    await openProfiles(page)
+    await page.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Model M" }).waitFor({ state: "attached" })
+    assert.equal(await page.getByLabel("Coordinator · Thinking", { exact: true }).inputValue(), "high")
     await page.getByLabel("Playbook", { exact: true }).selectOption("wayfinder")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").waitFor()
@@ -126,7 +135,7 @@ test("creation waits for loaded defaults, summarizes exact choices and never fet
   } finally { release(); await page.close() }
 })
 
-test("explicit override survives playbook changes; closed and inactive controls do not refresh catalogs", async () => {
+test("explicit override survives playbook changes; inactive controls do not refresh catalogs", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
@@ -159,10 +168,19 @@ test("saved models store briefs only and manual use creates fresh authority requ
     await openModels(page)
     await pickBrief(page, modelID)
     assert.equal(await page.getByLabel(OBJECTIVE, { exact: true }).inputValue(), model.objective)
+    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), model.name)
+    assert.equal(await page.getByLabel("Notes", { exact: true }).inputValue(), model.notes)
+    assert.equal(await page.getByLabel("Playbook", { exact: true }).inputValue(), model.template)
+    const picker = page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true })
+    assert.equal(await picker.evaluate(select => {
+      const first = select.closest("form")!.querySelector("input, textarea, select")
+      return first === select
+    }), true, "the configuration picker is the first form field")
     assert.equal(fixture.creates.length, 0, "loading a brief is not a launch")
+    await page.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
     await nameBrief(page, "Second reusable brief")
-    await toggleOptions(page); await toggleOptions(page)
-    assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(), "Second reusable brief", "collapsing Options never discards the brief name draft")
+    await page.getByLabel("Notes", { exact: true }).focus()
+    assert.equal(await page.getByLabel(await text(page, "missions.models.name"), { exact: true }).inputValue(), "Second reusable brief", "editing another field keeps the configuration name draft")
     await page.getByRole("button", { name: await text(page, "missions.models.save"), exact: true }).click()
     await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionModels.length === 2)
     assert.equal(fixture.writes.length, 1)
@@ -178,12 +196,43 @@ test("saved models store briefs only and manual use creates fresh authority requ
     await page.getByRole("button", { name: "Cancel", exact: true }).click()
     await page.evaluate(async () => { await window.missionDefaultsModels.update({ missionProfileDefaults: [], missionModels: [] }); window.missionDefaultsModels.view("create") })
     await ensureOptions(page)
-    await page.getByText(await text(page, "missions.models.current").then(value => value.replace("{name}", model.name)), { exact: true }).waitFor()
+    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), model.name)
     assert.equal(await page.getByLabel(OBJECTIVE, { exact: true }).inputValue(), model.objective)
-    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
+    assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     assert.equal(fixture.creates.length, 1, "no retry with new defaults")
     assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("configuration names preserve punctuation and suffixes, shorten only at the title bound and leave manual titles intact", async () => {
+  const punctuation = "Release: Windows and Linux", suffix = "Audit. Follow-up; release notes!"
+  const long = "Release: Windows and Linux release validation for desktop and remote clients"
+  const emoji = "🚀".repeat(29)
+  const cases = [
+    { name: punctuation, expected: punctuation }, { name: suffix, expected: suffix },
+    { name: "Release:\n Windows\tand Linux", expected: punctuation },
+    { name: long, expected: long.slice(0, 60).trimEnd() },
+    { name: `${emoji}X🚀Remaining`, expected: `${emoji}X` },
+  ]
+  const models = cases.map((item, index) => ({ version: 1, id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    name: item.name, objective: "A different objective. Keep its instructions separate.", notes: "Verbatim notes", template: "custom" }))
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, { missionModels: models })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await ensureOptions(page)
+    const title = page.getByLabel("Title", { exact: true })
+    for (const [index, item] of cases.entries()) {
+      await pickBrief(page, models[index].id)
+      assert.equal(await title.inputValue(), item.expected)
+      assert.ok((await title.inputValue()).length <= 60)
+      assert.equal(await page.getByLabel("Notes", { exact: true }).inputValue(), "Verbatim notes")
+    }
+    await title.fill("Custom: Final title — Windows.")
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Changed objective: another sentence.")
+    await dispatchOwner(page, fixture.bucket())
+    assert.equal(await title.inputValue(), "Custom: Final title — Windows.")
+    assert.deepEqual(fixture.writes, []); assert.deepEqual(fixture.creates, []); assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
 
@@ -266,26 +315,27 @@ test("failed UI-owner reads stay fenced despite general readiness and server/sta
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     fail = false
     await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).click()
-    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
+    await openProfiles(page)
+    await page.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Model M" }).waitFor({ state: "attached" })
+    assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), false)
-    assert.equal(fixture.creates.length, 0); assert.equal(fixture.reads.length, 0)
+    assert.equal(fixture.creates.length, 0)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
 
-test("Use saved defaults explicitly resnapshots after Settings edits while a creation draft otherwise remains frozen", async () => {
+test("Preferences edits preserve the creation draft and profiles have no reset or Preferences commands", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles }] })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await ensureOptions(page)
-    fixture.replace({ settings: { missionProfileDefaults: [{ template: "custom", profiles: { coordinator: { agent: "all" } } }] } })
-    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
+    assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
     await openProfiles(page)
-    await page.getByRole("button", { name: await text(page, "missions.defaults.use"), exact: true }).click()
-    await page.getByLabel("Coordinator · Agent", { exact: true }).filter({ has: page.locator('option[value="all"]') }).waitFor()
+    await page.evaluate(() => window.missionDefaultsModels.update({ missionProfileDefaults: [{ template: "all", profiles: { coordinator: { agent: "all" } } }] }))
     await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionProfileDefaults[0]?.profiles.coordinator?.agent === "all")
-    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "all")
-    assert.equal(await page.getByLabel(await text(page, "missions.defaults.summary")).textContent().then(value => value?.includes("p/m")), false)
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "root")
+    assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
+    assert.equal(await page.locator(".mission-create-option button").count(), 0)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
@@ -348,18 +398,18 @@ test("stale model saves and deletes fail closed without resurrecting another win
   } finally { await page.close() }
 })
 
-test("explicit defaults reload locks every profile-affecting control until its fenced result settles", async () => {
+test("failed defaults recovery locks every profile-affecting control until its fenced result settles", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const fixture = await setup(page, { missionModels: [{ version: 1, id: modelID, name: "Locked brief", objective: "A task", notes: "", template: "custom" }] })
   let release!: () => void, started!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
+  await page.route("**/api/storage/config/ui*", route => route.fulfill({ status: 503, json: {} }))
   try {
-    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.goto(url); await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).waitFor()
     await ensureOptions(page)
     await openModels(page); await openProfiles(page)
-    await page.getByLabel("Coordinator · Agent", { exact: true }).locator('option[value="root"]').waitFor({ state: "attached" })
     await page.route("**/api/storage/config/ui*", async route => { started(); await hold; return route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }) })
-    await page.getByRole("button", { name: await text(page, "missions.defaults.use"), exact: true }).click()
+    await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).click()
     await reached
     assert.equal(await page.getByLabel("Playbook", { exact: true }).isDisabled(), true)
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).isDisabled(), true)
@@ -367,8 +417,7 @@ test("explicit defaults reload locks every profile-affecting control until its f
     assert.equal(await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).isDisabled(), true)
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     release()
-    // The open selectors read the catalog, so the summary names the model.
-    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "Model M / high" }).waitFor()
+    await page.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Model M" }).waitFor({ state: "attached" })
     assert.equal(await page.getByLabel("Playbook", { exact: true }).inputValue(), "custom")
     assert.equal(fixture.creates.length, 0); assert.deepEqual(fixture.errors, [])
   } finally { release(); await page.close() }
@@ -560,9 +609,7 @@ test("earlier unrelated SSE during write B is reconciled from owner authority be
     assert.equal(reads, 1); assert.equal(fixture.writes.length, 1)
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
     await ensureOptions(page)
-    const summary = page.getByLabel(await text(page, "missions.defaults.summary"))
-    await summary.filter({ hasText: "all" }).waitFor()
-    assert.equal((await summary.textContent())?.includes("root"), false)
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "all")
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Freeze accepted B")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").waitFor()
@@ -610,16 +657,15 @@ test("an acknowledged library write with continuously invalidated reads gates cr
   } finally { await page.close() }
 })
 
-test("Creation and Settings summaries group requested tuples once and collapse all native defaults without catalog reads", async () => {
+test("Creation exposes native choices and matches Settings' inherited requested profiles", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await ensureOptions(page)
-    const label = await text(page, "missions.defaults.summary"), native = await text(page, "missions.simple.profilesNative")
-    assert.equal(await page.getByLabel(label).textContent(), native)
+    const label = await text(page, "missions.defaults.summary")
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "")
     await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
-    assert.equal(await page.getByLabel(label).textContent(), native)
-    assert.equal(fixture.reads.length, 0)
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "")
     await page.evaluate(async () => {
       await window.missionDefaultsModels.update({ missionProfileDefaults: [{ template: "custom", profiles: {
         coordinator: { agent: "root" }, roles: { specialist: { agent: "child", model: { providerID: "p", id: "m", variant: "high" } } },
@@ -635,10 +681,10 @@ test("Creation and Settings summaries group requested tuples once and collapse a
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
     await ensureOptions(page)
     await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
-    const creationSummary = (await page.getByLabel(label).textContent())!
-    // The editor's omitted Location is the "/fixture" root Settings read, so it names the model too.
-    assert.equal(creationSummary, settingsSummary)
-    assert.equal(creationSummary.match(/Model M \/ high/g)?.length, 1)
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "root")
+    assert.equal(await page.getByLabel("Implementer · Agent", { exact: true }).inputValue(), "child")
+    assert.equal(await page.getByLabel("Implementer · Model", { exact: true }).inputValue(), JSON.stringify(["p", "m"]))
+    assert.equal(await page.getByLabel("Implementer · Thinking", { exact: true }).inputValue(), "high")
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
@@ -668,11 +714,11 @@ test("initial mission readiness waits for a stable owner barrier when an earlier
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     releaseStable()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded())
-    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "all" }).waitFor()
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).inputValue(), "all")
     await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await page.getByRole("alert").waitFor()
     assert.equal(fixture.creates[0].profiles.coordinator.agent, "all")
-    assert.equal(reads, 2); assert.equal(fixture.reads.length, 0)
+    assert.equal(reads, 2)
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
     assert.equal(reads, 2, "mounting another view does not re-run global initial loading")
@@ -688,7 +734,6 @@ test("new independent Missions freeze task policy and expose only primary/all ta
     await ensureOptions(page)
     const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
     assert.equal(await mode.inputValue(), "independent")
-    assert.equal(fixture.reads.length, 0)
     await openProfiles(page)
     const task = page.getByLabel("Tasks · Agent", { exact: true })
     await task.locator('option[value="root"]').waitFor({ state: "attached" })
@@ -799,7 +844,7 @@ test("native task defaults and an independent preference edit save once, compare
   } finally { await page.close() }
 })
 
-test("Compare exposes two main model selectors, refuses identical models and warns about the judge", async () => {
+test("Compare groups model selectors, refuses identical models beside the group and keeps judge explanations out of the form", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const fixture = await setup(page, { missionProfileDefaults: [{ template: "all", profiles }] })
   await page.route("**/api/workspaces/fixture/missions", route => {
@@ -813,13 +858,14 @@ test("Compare exposes two main model selectors, refuses identical models and war
     await ensureOptions(page)
     const template = page.getByLabel("Playbook", { exact: true })
     await template.selectOption("compare")
-    await page.locator("details.mission-create-options > summary").click()
+    await openProfiles(page)
     const first = page.getByLabel("Model A · Model", { exact: true }), second = page.getByLabel("Model B · Model", { exact: true })
     await first.locator('option[value=\'["p","m"]\']').waitFor({ state: "attached" })
-    assert.equal(await first.evaluate(node => Boolean(node.closest("details"))), false)
+    assert.equal(await first.evaluate(node => Boolean(node.closest("details"))), true)
     await first.selectOption(JSON.stringify(["p", "m"])); await second.selectOption(JSON.stringify(["p", "m"]))
     await page.getByRole("alert").filter({ hasText: "A and B must use different models" }).waitFor()
-    await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).waitFor()
+    assert.equal(await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).count(), 0)
+    assert.equal(await page.locator(".mission-create-option").getByRole("alert").count(), 1)
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Compare two models")
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     await second.selectOption(JSON.stringify(["p", "n"]))
@@ -827,10 +873,10 @@ test("Compare exposes two main model selectors, refuses identical models and war
     await ensureOptions(page); await openProfiles(page)
     await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "n"]))
     assert.equal(await page.getByLabel("Blind judge · Model", { exact: true }).inputValue(), JSON.stringify(["p", "n"]))
-    assert((await page.locator("form.mission-editor .mission-profile-summary").innerText()).includes("Blind judge: Model N"))
+    assert.equal(await page.getByLabel("Blind judge · Model", { exact: true }).locator("option:checked").innerText(), "Model N")
     await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "j"]))
     assert.equal(await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).count(), 0)
-    assert((await page.locator("form.mission-editor .mission-profile-summary").innerText()).includes("Blind judge: Model J"))
+    assert.equal(await page.getByLabel("Blind judge · Model", { exact: true }).locator("option:checked").innerText(), "Model J")
     await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "n"]))
     await page.getByLabel("Blind judge · Model", { exact: true }).selectOption(JSON.stringify(["p", "j"]))
     await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))

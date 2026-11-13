@@ -28,6 +28,16 @@ Agents use the same bundle's `codenomad.session_search` Code Mode tool to find
 past discussions. Native tool permissions govern execution. Backend presence
 owns both the tool and RPC registrations.
 
+## Stored-part coverage
+
+With `experimental.part_rows`, native assistant parts can reside in `session_part`
+beside an inline tail. CodeNomad's SQL history, search, outline/navigation, gallery
+and pruning readers use the shared `session-pruning/message-storage.ts` relation:
+ordinal split rows precede the inline tail, and all resulting part indexes use that
+combined order. Stored-byte bounds cover both forms before reconstruction. Existing
+split rows retain this read behavior after `part_rows` is disabled. Missions uses
+the same ordered-content SQL expression with its own read budgets and source fences.
+
 ## Scope and resource limits
 
 Session queries validate the session's current full native location and project.

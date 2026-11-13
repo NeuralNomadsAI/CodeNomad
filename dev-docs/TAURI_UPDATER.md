@@ -61,14 +61,15 @@ renderers generally.
 
 The plugin verifies the complete download before shutdown admission. A prepared
 installer and restart intent enter the shutdown coordinator under one lock.
-Every renderer must flush and the owned CodeNomad backend must stop before
-installation. A timeout or cleanup failure discards the pending installer; a
+Every renderer must flush and the owned CodeNomad backend must stop, with
+containment confirmed and both output readers successfully drained to EOF within
+the shared shutdown deadline, before installation. A timeout or cleanup failure discards the pending installer; a
 late acknowledgement or later ordinary quit cannot replay it. Windows logout
 discards a waiting update. Installation never stops the shared OpenCode daemon.
 
 On macOS/Linux, successful installation follows the normal native restart. On
 Windows, the NSIS installer performs relaunch and the plugin exits. The vendored
-2.12.0 plugin runs its exit callback only after a successful `ShellExecuteW`, so
+plugin runs its exit callback only after a successful `ShellExecuteW`, so
 a refused launch keeps client-state persistence ownership. On an installation
 error, the application restores its owned backend without replaying installation.
 That recovery reloads every window, so failures are recorded natively with the
@@ -234,8 +235,8 @@ Commands (from the checkout, unless noted):
 node --test packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs
 npm run typecheck --workspace @codenomad/ui
 cargo test --manifest-path packages/tauri-app/src-tauri/Cargo.toml --locked
-# From packages/tauri-app on Windows:
-cargo test --locked -p tauri-plugin-updater windows_launch_tests
+# On Windows:
+node scripts/test-tauri-updater-handoff.mjs
 # From packages/ui:
 node --import tsx --test tests/browser/desktop-updates.test.ts
 ```

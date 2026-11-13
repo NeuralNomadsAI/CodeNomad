@@ -36,6 +36,8 @@ Ist eine Prüfung beschäftigt, warten Sie den Vorgang des anderen Fensters ab. 
 
 ## Eigenständigen Server aktualisieren {#standalone-update}
 
+Die Oberfläche 1.1 benötigt für ihre Missions-APIs einen CodeNomad-Server ab **1.1.0**. Server der Reihe 1.0.x behalten ihre zwischengespeicherte oder mitgelieferte Oberfläche, statt die inkompatible Oberfläche herunterzuladen.
+
 1. Ermitteln Sie, wie CodeNomad gestartet wurde, und sichern Sie Backend-abhängige Arbeit.
 2. Stoppen Sie diesen CodeNomad-Serverprozess über dessen normale Prozess-/Dienststeuerung.
 3. Aktualisieren Sie dieselbe Paketinstallation und starten Sie mit vorgesehener Konfiguration und Flags neu.
@@ -54,6 +56,6 @@ Ein bereits laufender Prozess übernimmt neuen Code nicht allein durch npm-Insta
 
 CodeNomad zu aktualisieren aktualisiert nicht die ausgewählte OpenCode-CLI. Diese CLI zu aktualisieren startet nicht den laufenden gemeinsamen Daemon neu. Native Konfiguration neu zu laden ist ein weiterer expliziter Vorgang mit eigenen Auswirkungen auf geladene Locations und Anfragen.
 
-Desktop-Node-/npm-Ressourcen werden mit der Anwendung ausgeliefert; ein Anwendungsrelease liefert ihre Updates. Dies ersetzt weder System-Node/npm, Electrons interne Laufzeit, Plattform-Webview noch den unabhängig verwalteten OpenCode-Dienst.
+Desktop-Laufzeiten werden mit der Anwendung aktualisiert: Electron nutzt sein integriertes Node, Tauri bündelt Node, und beide enthalten npm. System-Node/npm, Plattform-Webview und OpenCode-Dienst werden unabhängig verwaltet.
 
 Verwenden Sie **Einstellungen → OpenCode** für Laufzeitauswahl, Installation/Update und explizite Dienststeuerung. Prüfen Sie vor Neustart/Neuladen die [OpenCode-Einrichtung](opencode.md), besonders bei geteiltem Daemon mit anderen Fenstern/Nutzern oder Missionen. Wiederholen Sie niemals einen ungewissen Prompt/eine Änderung allein wegen abgeschlossenem Update/Wiederverbinden.

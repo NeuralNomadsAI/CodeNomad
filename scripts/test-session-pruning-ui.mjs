@@ -41,15 +41,18 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
   const { createRuntimeFetch } = await tsImport("../packages/server/src/opencode/compatibility/transport.ts", import.meta.url)
   const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
   const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
+  const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
   const endpoint = connection?.endpoint ?? { url: baseUrl, auth: { type: "basic", username: "opencode", password: "isolated-pruning-fixture" } }
   console.log("Native pruning UI: creating isolated broker")
   if (!connection) rememberRuntime(endpoint, { ...await client.server.info(), discovery: "info" })
   const runtimeFetch = connection?.fetch ?? createRuntimeFetch(endpoint)
   const owns = candidate => path.resolve(candidate) === path.resolve(location.directory)
+  const workspace = { id: "pruning-ui", path: location.directory }
+  const captured = connection ?? { endpoint, client, fetch: runtimeFetch, assertCurrent() {} }
   const workspaceManager = {
-    get: () => ({ id: "pruning-ui", path: location.directory }),
+    get: () => workspace,
     getSharedServiceEndpoint: async () => endpoint,
-    ...(connection ? { getSharedServiceConnection: async () => connection } : {}),
+    getSharedServiceConnection: async () => captured,
     getInstanceAuthorizationHeader: () => `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
     getServiceDirectory: () => location.directory,
     getServiceLocation: () => location,
@@ -67,7 +70,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     ownsPath: async (_id, candidate) => owns(candidate),
     ownsLocation: async (id, candidate) => id === "pruning-ui" && owns(candidate.directory) && candidate.workspaceID === location.workspaceID,
   }
-  const dependencies = { workspaceManager, worktreeDeletionFence: { enter: () => () => {} }, logger: pino({ level: "silent" }) }
+  const dependencies = { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence(), logger: pino({ level: "silent" }) }
   const broker = Fastify()
   await broker.register(replyFrom)
   registerSessionPruningRoutes(broker, dependencies)

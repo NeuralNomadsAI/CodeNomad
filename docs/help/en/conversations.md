@@ -6,10 +6,14 @@ Messages render Markdown, code, diffs and supported tool-result images. Text cop
 
 Reasoning and tool headers show how long each step took, counting live while it runs; durations under one second are not shown. When **Tokens** is shown in **Message content** (the **Everything** preset shows it), each agent message ends with one token and cost line after its final text. That line adds up the message and the messages holding the tools and reasoning that its **Remove tools and reasoning from this response** action covers, within the loaded transcript; expand it for reasoning and cache counts. Steps that only ran tools have no line of their own.
 
+## Mermaid diagrams {#mermaid}
+
+Fenced `mermaid` and `mmd` blocks render with Mermaid Tiny after streaming finishes. Use **Show source** / **Show diagram** in the code header; Copy keeps the source text. Tiny excludes mindmaps, architecture diagrams and KaTeX. Invalid, unsupported or oversized diagrams keep their source with an error. Rendering is local and network-disabled, with a 50,000-character and 500-edge limit.
+
 ## Find and navigate conversations {#navigate-conversations}
 
 1. Select a row under **Sessions**, or use **New session** to start a parent conversation.
-2. Click a parent's chevron to expand or collapse its subsessions while keeping their badges intact. A collapsed chevron shows its descendants' most urgent state: needing input, working, compacting or idle; its accessible label counts them.
+2. Click a parent's chevron to expand or collapse its subsessions while keeping their badges intact. Expanded or collapsed, the chevron shows its descendants' most urgent state: needing input, working, compacting or idle; its accessible label counts them. Right-click it and choose **Mark as read** to clear the **Idle** and **Interrupted** badges of the conversation and all its subsessions at once.
 3. Use **Search sessions…**, **Main sessions** / **Subsessions**, the worktree filter and **Activity**, **Name** or **Worktree** sorting to narrow the list. In search results, drag across the rows' checkboxes to select or clear several conversations at once.
 4. Use the sidebar's **Back** and **Forward** to revisit conversations you displayed.
 
@@ -18,6 +22,12 @@ Click an **Idle** or **Interrupted** badge (**Clear**) to acknowledge it without
 Normal browsing is hierarchical; search/filter results are flat entries with each conversation's own identity and worktree. In **Settings → General**, **Automatically expand subsessions** is enabled by default. A visible collapsed row opens the paths to its active subsessions when its chevron changes to working, compacting or awaiting input, provided it is selected or belongs to the selected conversation's descendants. The same rule applies at every depth. Scrolling an already active row into view leaves it closed until a new transition. Disable the option to keep activity from opening branches; manual expansion and explicit navigation remain available. Open branches, including automatically opened ones, are saved for restoration.
 
 Back/Forward is a per-project-tab, per-window visit history, not list order. It is kept in memory, skips unavailable/deleted conversations and is not restored after restart. Selecting a new conversation after going back replaces the forward path. The palette's **Previous Session** / **Next Session** instead cycle the visible list.
+
+## Archive and restore {#archive}
+
+Choose **Archive session** in a session row's actions to keep its history while removing its idle branch from normal browsing. The selected conversation and conversations with running work or pending questions remain reachable. Archiving does not stop work, delete messages or change subsessions' own archive flags.
+
+Open **Search sessions…** and choose **Archived sessions** or **All sessions** to find archived conversations. Rows show **Archived** and offer **Restore session**. Enable **Subsessions** to find children independently, including children beneath an archived parent. **Unarchived sessions** filters by each conversation's own flag. Restore an archived ancestor to bring its idle branch back into normal browsing. If an action is not confirmed, refresh the session list before trying again.
 
 ## Choose Agent, Model and Thinking {#agent-model-thinking}
 

@@ -19,7 +19,7 @@ serverEvents.on("instance.event", (event) => {
   const native = event.event as { type: string; data?: { sessionID?: unknown } }
   if (native.type === GOAL_CHANGED_EVENT) sessionGoals.applyChanged(event.instanceId, native.data)
   else if (native.type === "session.deleted" && typeof native.data?.sessionID === "string") sessionGoals.forget(event.instanceId, native.data.sessionID)
-  else if (native.type === "server.connected") reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
+  else if (native.type === "server.connected" || native.type === "plugin.updated") reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
 })
 
 serverEvents.on("instance.eventStatus", (event) => {

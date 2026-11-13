@@ -1,6 +1,4 @@
-import { Show, createSignal } from "solid-js"
-import { OpenCodeLoginStartCard } from "../../../src/components/settings/opencode-login-start-card"
-import { activeSettingsSection, settingsOpen } from "../../../src/stores/settings-screen"
+import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import type { MissionLaunchPolicy } from "../../../../server/src/missions/launch-policy"
 import { MissionScheduling, type MissionSchedulingLock } from "../../../src/components/mission-scheduling"
@@ -32,10 +30,9 @@ function Fixture() {
     load: (policy: MissionLaunchPolicy) => change(decodeMissionSchedulingPolicy(policy, "/fixture", "UTC")) }
   return <main class="mission-editor window-shell" style={{ width: "min(420px, 100%)", margin: "auto", color: "var(--text-primary)" }}>
     <div class="window-body"><MissionScheduling draft={draft()} directory="/fixture" sources={sources()}
+      repository={{ repository: { provider: "github", host: "github.com", repository: "acme/repo" }, loading: false, failed: false, retry() {} }}
       capability={capability()} lockReason={lock()}
       onChange={change} onPolicy={setPolicy} /></div>
-    {/* The embedded Settings route: the real OpenCode setting row, mounted only when its section opens. */}
-    <Show when={settingsOpen() && activeSettingsSection() === "opencode"}><OpenCodeLoginStartCard /></Show>
   </main>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

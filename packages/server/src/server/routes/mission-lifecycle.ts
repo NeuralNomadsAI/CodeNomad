@@ -10,6 +10,8 @@ import { sameLocation, locationRequestOptions } from "../../opencode/compatibili
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { syncSessionGitContext } from "../../workspaces/session-git-context"
+import { syncSessionMemoryContext } from "../../workspaces/session-memory-context"
+import type { MemoryService } from "../../memory/service"
 import { prepareMissionAuthority, assertMissionAuthorityCurrent, missionInstructionClient, type MissionAuthorityCheckpoint } from "./mission-authority-checkpoint"
 import { interruptNativeMissionActor, interruptedMissionConversations, missionActorResumeInput } from "../../missions/native-actor-lifecycle"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "../../missions/lifecycle-input"
@@ -22,7 +24,7 @@ const schema = z.object({ kind: z.literal("lifecycle"), input: z.object({
 type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath" | "getSessionEnvironment">
 
 export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal,
-  authority?: MissionAuthorityCheckpoint) {
+  authority?: MissionAuthorityCheckpoint, memory?: MemoryService) {
   const { input } = schema.parse(command)
   const owner = await Promise.any(manager.list().map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
@@ -137,6 +139,11 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       await client.session.environment({ sessionID: target.sessionID, variables }, { signal })
       current()
       try { await syncSessionGitContext(missionInstructionClient(client, authority), target.sessionID, signal) } catch { /* advisory only */ }
+      await prepareMissionAuthority(authority)
+      await checkTarget()
+      await checkCoordinator()
+      await checkOperation()
+      await syncSessionMemoryContext(connection, memory, target.sessionID, signal, missionInstructionClient(client, authority), current)
       await prepareMissionAuthority(authority)
       await checkTarget()
       await checkCoordinator()

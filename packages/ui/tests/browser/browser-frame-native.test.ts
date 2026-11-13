@@ -64,6 +64,67 @@ const snapshot = (page: Page) => page.evaluate(() => {
   return { calls: fixture.calls, errors: fixture.errors, locations: fixture.locations, listeners: fixture.listenerCount() }
 })
 
+for (const platform of ["macos", "linux"]) {
+  test(`Tauri ${platform} keeps dimensions, history and hidden registration independent of emulation`, async () => {
+    const page = await browser.newPage({ userAgent: `${platform} WebKit fixture` })
+    try {
+      await page.goto(`${url}?platform=${platform}&history&dimensionsOnly`)
+      await page.getByRole("region", { name: "Preview", exact: true }).waitFor()
+      await page.waitForFunction(() => (window as any).nativeFixture?.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
+      assert.equal(await page.locator("iframe").count(), 0)
+      await page.getByRole("button", { name: "Viewport", exact: true }).click()
+      const options = page.getByRole("menuitemradio")
+      assert.equal(await options.count(), 6)
+      const mobile = page.getByRole("menuitemradio", { name: /390 × 844/ })
+      assert.equal(await mobile.isEnabled(), true)
+      assert.equal(await mobile.getAttribute("title"), "Dimensions only.")
+      await mobile.click()
+      await page.evaluate(() => {
+        const f = (window as any).nativeFixture
+        f.navigate(f.calls.find((c: any) => c.command === "browser_target_register").payload.registrationId, "https://example.org/next")
+      })
+      await page.getByRole("button", { name: "Back", exact: true }).waitFor({ state: "visible" })
+      await page.waitForFunction(() => !(document.querySelector('[aria-label="Back"]') as HTMLButtonElement).disabled)
+      await page.getByRole("button", { name: "Back", exact: true }).click()
+      await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.payload?.action === "history-go"))
+      await page.waitForFunction(() => !(document.querySelector('[aria-label="Forward"]') as HTMLButtonElement).disabled)
+      await page.getByRole("button", { name: "Forward", exact: true }).click()
+      await page.waitForFunction(() => (window as any).nativeFixture.calls.filter((c: any) => c.payload?.action === "history-go").length === 2)
+      assert.equal((await snapshot(page)).calls.some((c: any) => c.payload?.action === "emulate"), false)
+
+      // Hold native construction while a dialog takes focus and layout/scale change.
+      await page.evaluate(() => (window as any).nativeFixture.mount(false))
+      await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_unregister"))
+      await page.evaluate(() => {
+        const f = (window as any).nativeFixture
+        f.calls.length = 0
+        f.deferRegistration = true
+        f.mount(true)
+      })
+      await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+      await page.evaluate(() => {
+        const f = (window as any).nativeFixture
+        f.overlay(true)
+        document.getElementById("preview")!.style.width = "600px"
+        Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 2 })
+        window.dispatchEvent(new Event("resize"))
+        f.settleRegistration()
+      })
+      await page.getByRole("button", { name: "Dialog action" }).waitFor()
+      await page.waitForTimeout(100)
+      assert.equal(await page.getByRole("button", { name: "Dialog action" }).evaluate(e => document.activeElement === e), true)
+      const hidden = (await snapshot(page)).calls
+      assert.equal(hidden.find((c: any) => c.command === "browser_target_register").payload.visible, false)
+      assert.equal(hidden.some((c: any) => c.command === "browser_target_update" && c.payload.visible), false, "late construction never reveals the child under the dialog")
+      await page.evaluate(() => (window as any).nativeFixture.overlay(false))
+      await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
+      const reveal = (await snapshot(page)).calls.find((c: any) => c.command === "browser_target_update" && c.payload.visible)
+      assert.equal(reveal.payload.bounds.width, 1200, "latest scaled bounds accompany the first reveal")
+      assert.deepEqual((await snapshot(page)).errors, [])
+    } finally { await page.close() }
+  })
+}
+
 test("viewport menu distinguishes size from device emulation and restores desktop overrides", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture" })
   try {
@@ -91,6 +152,33 @@ test("viewport menu distinguishes size from device emulation and restores deskto
     assert.deepEqual((await snapshot(page)).calls.filter((c: any) => c.payload?.action === "emulate").map((c: any) => c.payload.preset), ["mobile", "mobileLandscape", "mobile", "none"])
   } finally { await page.close() }
 })
+
+for(const platform of ['macos','linux']) {
+  test(`WebKit ${platform} applies six native viewports with CSS bounds and commits only successful profiles`,async()=>{
+    const page=await browser.newPage({deviceScaleFactor:2,viewport:{width:1000,height:800}})
+    try {
+      await page.goto(`${url}?platform=${platform}`)
+      await page.waitForFunction(()=>(window as any).nativeFixture?.calls.some((call:any)=>call.command==='browser_target_update'&&call.payload.visible))
+      const registration=(await snapshot(page)).calls.find((call:any)=>call.command==='browser_target_register')
+      assert.equal(registration.payload.presentation.css,true)
+      for(const name of [/1440 × 900/,/768 × 1024/,/1024 × 768/,/390 × 844/,/844 × 390/,/^Responsive$/]) {
+        await page.getByRole('button',{name:'Viewport',exact:true}).click()
+        if(String(name).includes('390')) assert.match(await page.getByRole('menuitemradio',{name}).getAttribute('title')??'',/WebKit mobile identity/)
+        await page.getByRole('menuitemradio',{name}).click()
+      }
+      const calls=(await snapshot(page)).calls.filter((call:any)=>call.payload?.action==='emulate')
+      assert.deepEqual(calls.map((call:any)=>call.payload.preset),['none','none','none','mobile','mobileLandscape','none'])
+      assert.deepEqual(calls.map((call:any)=>call.payload.viewport),[{width:1440,height:900},{width:768,height:1024},{width:1024,height:768},{width:390,height:844},{width:844,height:390},undefined])
+      await page.evaluate(()=>{(window as any).nativeFixture.failEmulation=true})
+      await page.getByRole('button',{name:'Viewport',exact:true}).click()
+      await page.getByRole('menuitemradio',{name:/390 × 844/}).click()
+      await page.getByRole('alertdialog').waitFor()
+      await page.evaluate(()=>{(window as any).nativeFixture.overlay(false)})
+      await page.getByRole('button',{name:'Viewport',exact:true}).click()
+      assert.equal(await page.getByRole('menuitemradio',{name:/^Responsive$/}).getAttribute('aria-checked'),'true')
+    } finally {await page.close()}
+  })
+}
 
 for (const host of ["electron", "tauri"]) {
   test(`${host} mobile emulation remains retryable after retained-profile application fails`, async () => {
@@ -165,6 +253,7 @@ async function openElectronFixture() {
   const profile = await mkdtemp(join(temp, "browser-frame-electron-"))
   const env = { ...process.env, CODENOMAD_TEST_PROFILE: profile }
   delete env.ELECTRON_RUN_AS_NODE
+  delete env.ELECTRON_NO_ASAR
   const app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON || electronPath,
     args: ["--no-sandbox", fileURLToPath(new URL("fixtures/browser-frame-native-electron.cjs", import.meta.url))], env })
   return { page: await app.firstWindow(), close: async () => {

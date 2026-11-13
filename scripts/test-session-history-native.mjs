@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 
 // Invoked only inside the pruning fixture's private daemon and synthetic DB.
-export async function testSessionHistoryNative({ client, location, locationOptions, template }) {
+export async function testSessionHistoryNative({ client, location, locationOptions, template, ready }) {
+  await ready({ client, location, locationOptions })
   const seed = await client.session.create({ title: "Isolated full-history fixture", location }, locationOptions)
   const exported = await client.session.export({ sessionID: seed.id })
   await client.session.remove({ sessionID: seed.id })

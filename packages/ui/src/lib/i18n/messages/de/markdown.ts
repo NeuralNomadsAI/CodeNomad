@@ -1,4 +1,8 @@
 export const markdownMessages = {
+  "markdown.mermaid.diagram": "Mermaid-Diagramm",
+  "markdown.mermaid.preview": "Diagramm anzeigen",
+  "markdown.mermaid.source": "Quelltext anzeigen",
+  "markdown.mermaid.failed": "Diagramm nicht verfügbar. Prüfen Sie den Quelltext und die von Mermaid Tiny unterstützten Formate.",
   "markdown.codeBlock.copy.label": "Kopieren",
   "markdown.codeBlock.copy.copied": "Kopiert!",
   "markdown.codeBlock.copy.failed": "Fehlgeschlagen",

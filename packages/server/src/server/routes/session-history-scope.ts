@@ -19,7 +19,7 @@ export async function ownedHistorySessions<T extends { sessionID: string; direct
   for (const candidate of sessions) {
     if (sessionID && candidate.sessionID !== sessionID) throw new Error("Invalid history owner")
     const key = JSON.stringify([candidate.directory, candidate.workspaceID])
-    if (!ownership.has(key)) ownership.set(key, await manager.ownsLocation(id, readLocationRef(candidate), client, signal))
+    if (!ownership.has(key)) ownership.set(key, await manager.ownsLocation(id, readLocationRef(candidate), client, { signal }))
     current()
     if (ownership.get(key)) owned.push(candidate)
   }

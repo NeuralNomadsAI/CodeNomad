@@ -100,11 +100,12 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       }
       const result: unknown = await rpc.panelPage(input.data, call)
       if (!isMissionPanelPageResult(result) || missionPanelBytes(result) > MISSION_PANEL_PAGE_BYTES) return foreign()
-      const missionID = input.data.source === "tasks" ? input.data.task.missionID : input.data.source === "mission" ? input.data.missionID : undefined
+      const missionID = input.data.source === "tasks" ? input.data.task.missionID : input.data.source === "mission" || input.data.source === "task-marks" ? input.data.missionID : undefined
       const field = input.data.source === "mission" ? input.data.field : undefined
       if (result.available && (result.projectID !== projectID || result.source !== input.data.source
         || result.missionID !== missionID || result.field !== field || result.part !== (input.data.source === "mission" ? input.data.part : undefined) || result.text !== (input.data.source === "mission" ? input.data.text : undefined)
-        || result.header !== (input.data.source === "mission" ? input.data.header : undefined)
+         || result.header !== (input.data.source === "mission" ? input.data.header : undefined)
+         || (input.data.source === "task-marks" ? result.taskMarksThrough === undefined : result.taskMarksThrough !== undefined)
         || Boolean(result.window) !== Boolean("window" in input.data && input.data.window)
         || result.window && "window" in input.data && input.data.window && (result.window.offset !== Math.min(input.data.window.offset, result.window.total)
           || result.window.end !== Math.min(result.window.offset + (input.data.source === "mission" && input.data.text ? 1 : 50), result.window.total) || result.page.total !== result.window.end - result.window.offset

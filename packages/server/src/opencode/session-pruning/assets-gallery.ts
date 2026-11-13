@@ -7,6 +7,7 @@ import { assetBytes, cursorSchema, hash, listed, MESSAGE_LIMIT, storedAsset } fr
 import { GALLERY_RESPONSE_LIMIT, type GalleryEntry, type GenerationTarget, type ImageReferenceResult, type ImagesResult } from "./assets-gallery-contract"
 import { after, annotate, coverage, generationState, IMAGE_TOOL, interval, isGalleryFile, key, labelOf, promptFields, relativeInside, resolveName,
   sameFile, visible, writes, writesAnyFile, type Coverage, type Part } from "./assets-gallery-proof"
+import { messageStorage } from "./message-storage"
 
 // The image gallery (dev-docs/SESSION_PRUNING_RPC.md#image-gallery): image `read` parts and
 // `experimental_image_generate` calls of one session, recomputed from the transcript on every request.
@@ -36,9 +37,10 @@ export async function listGalleryImages(db: DatabaseSync, scope: HistoryScope, c
     if (previous && previous.binding !== binding) return { status: "blocked", reason: "conflict" }
     const through = previous?.through ?? throughOf(db, sessionID, boundary)
     const where = "session_id=? AND type='assistant'" + visible(boundary), params = [sessionID, ...after(boundary)]
-    const rows = db.prepare(`SELECT id,seq,length(CAST(data AS BLOB)) AS bytes FROM session_message WHERE ${where}
+    const storage = messageStorage(db)
+    const rows = db.prepare(`SELECT id,seq,${storage.bytes()} AS bytes FROM ${storage.table} WHERE ${where}
       AND seq<=? AND seq<=? ORDER BY seq DESC LIMIT ?`).all(...params, through, previous?.sequence ?? through, Math.min(windowMessages, WINDOW_MESSAGES))
-    const read = db.prepare("SELECT data FROM session_message WHERE session_id=? AND id=?")
+    const read = db.prepare(`SELECT data FROM ${storage.table} WHERE session_id=? AND id=?`)
     const preloaded = new Map<string, any>(), window: Array<{ id: string; seq: number; data: any; items: Array<{ part: number; index?: number }> }> = []
     let examined = 0, next: { sequence: number; offset: number } | undefined
     for (const row of rows) {
@@ -48,7 +50,9 @@ export async function listGalleryImages(db: DatabaseSync, scope: HistoryScope, c
       // A row the byte budget refuses is the continuation; every admitted row is emitted first.
       if (examined && examined + bytes > WINDOW_BYTES) { next = { sequence: seq, offset: 0 }; break }
       examined += bytes
-      const data = JSON.parse(String(read.get(sessionID, row.id)?.data))
+      const stored = read.get(sessionID, row.id)?.data
+      if (typeof stored !== "string") return { status: "blocked", reason: "unsupported_storage" }
+      const data = JSON.parse(stored)
       const files = listed(db, data)
       if (!files) return { status: "blocked", reason: "unsupported_storage" }
       preloaded.set(String(row.id), data)
@@ -131,7 +135,8 @@ export async function galleryImageReference(db: DatabaseSync, scope: HistoryScop
       if (annotate(cov, scope.directory, sessionID, seq, found.tool, file).origin !== "proven" || !span) return refused("unverifiable")
       start = span.start
     } else {
-      const row = db.prepare(`SELECT seq,length(CAST(data AS BLOB)) AS bytes,CASE WHEN length(CAST(data AS BLOB))<=? THEN data END AS data FROM session_message
+      const storage = messageStorage(db)
+      const row = db.prepare(`SELECT seq,${storage.bytes()} AS bytes,CASE WHEN ${storage.bytes()}<=? THEN data END AS data FROM ${storage.table}
         WHERE session_id=? AND type='assistant' AND id=?${visible(boundary)}`).get(MESSAGE_LIMIT, sessionID, target.messageID, ...after(boundary))
       if (!row) return refused("missing")
       if (typeof row.data !== "string") return refused("unverifiable")

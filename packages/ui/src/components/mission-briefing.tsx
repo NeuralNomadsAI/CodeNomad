@@ -1,4 +1,5 @@
 import { Show, createEffect } from "solid-js"
+import { generateUUID } from "../lib/client-identity"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
@@ -39,7 +40,7 @@ export function createMissionBriefingRequest(props: {
     const key = identity(), instanceId = props.instanceId, mission = props.mission
     const operation = captureBackendOperation(instanceId)
     if (!operation.current()) return
-    const original = { requestID: crypto.randomUUID(), state: "preparing" as const }
+    const original = { requestID: generateUUID(), state: "preparing" as const }
     const owner = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId), viewCurrent = capture()
     const current = () => operation.current() && viewCurrent() && !props.disabled && missionAcceptsMessage(props.mission)
       && missionBriefingRequest(key)?.requestID === original.requestID
@@ -61,9 +62,9 @@ export function createMissionBriefingRequest(props: {
     <div class="mission-briefing-feedback">
       <p role={request()?.state === "error" || request()?.state === "uncertain" ? "alert" : "status"}>{t(`missions.briefing.request.${request()!.state}`)}</p>
       <Show when={["admitted", "uncertain"].includes(request()!.state)}>
-        <button type="button" class="window-text-button" disabled={props.disabled || !props.active}
+        <button type="button" class="window-action" disabled={props.disabled || !props.active}
           onClick={onOpenCoordinator}>{t("missions.control.openCoordinator")}</button>
-        <button type="button" class="window-text-button" disabled={props.disabled || !props.active || !available()}
+        <button type="button" class="window-action" disabled={props.disabled || !props.active || !available()}
           onClick={() => { if (window.confirm(t("missions.briefing.newConfirm"))) {
             setMissionBriefingRequest(identity(), { requestID: request()!.requestID, state: "error" })
             void ask()

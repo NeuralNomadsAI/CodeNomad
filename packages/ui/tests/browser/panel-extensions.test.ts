@@ -20,6 +20,7 @@ import { fixtureArchive, fixtureManifest } from "../../../server/src/panel-exten
 import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/panel-extensions"
 import { createPanelExtensionCatalog, PANEL_EXTENSION_CATALOG_URL } from "../../../server/src/panel-extensions/catalog"
 import { registerPanelExtensionAssetRoutes } from "../../../server/src/server/routes/panel-extension-assets"
+import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { registerPanelExtensionWorkItemRoutes } from "../../../server/src/server/routes/panel-extension-work-items"
 import type { ForgeWorkItems } from "../../../server/src/forge/work-items"
 
@@ -46,7 +47,11 @@ before(async () => {
     return new Response(new Uint8Array(onlineArchive).buffer)
   }) as typeof fetch)
   registerPanelExtensionRoutes(app, { store, catalog, workspaceManager: { get: id => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined } })
-  registerPanelExtensionAssetRoutes(app, { store, workspaceManager: {
+  const assetWorkspace = { id: "first", path: "/first" }, assetLocation = { directory: "/first" }
+  registerPanelExtensionAssetRoutes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(), workspaceManager: {
+    get: id => id === "first" ? assetWorkspace as any : undefined,
+    getServiceLocation: () => assetLocation,
+    getWorktreeIdentityForPath: async () => "/first",
     desktopPluginsReady: async () => {},
     ownsLocation: async (id, location) => id === "first" && location.directory === "/first",
     // Asset reads are fenced to one current connection; this fixture's never changes.
@@ -92,10 +97,11 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close(); await app.close(); await rm(root, { recursive: true, force: true }) })
 
-async function page(locale = "en-US", drawer = false) {
+async function page(locale = "en-US", drawer = false, withoutRandomUUID = false) {
   const page = await browser.newPage({ locale })
   const observer = observeHeaderFixture(page, "extensionFixture")
   await observer.install()
+  if (withoutRandomUUID) await page.addInitScript(() => Object.defineProperty(crypto, "randomUUID", { value: undefined }))
   page.on("pageerror", error => console.error("Extension fixture:", error.message))
   let uiState: Record<string, unknown> = {}
   await page.addInitScript(() => {
@@ -197,6 +203,19 @@ test("online catalogue lists without downloading code; explicit consent installs
     assert.equal(archiveRequests, before + 2, "Install re-reads the approved package")
     await store.remove(fixtureManifest.id, onlineDigest)
   } finally { await view.close() }
+})
+
+test("extension handshakes and session remounts work without randomUUID", async () => {
+  const pkg = await installDirect(example)
+  const view = await page("en-US", false, true), errors: string[] = []
+  view.on("pageerror", error => errors.push(error.message))
+  try {
+    await view.getByRole("tab", { name: "Session example", exact: true }).click()
+    await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-a" }).waitFor()
+    await view.evaluate(() => (window as any).extensionFixture.session("session-b"))
+    await view.frameLocator('iframe[title="Session example"]').locator("#context").filter({ hasText: "session-b" }).waitFor()
+    assert.deepEqual(errors, [])
+  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("withdrawn online selection cannot install after its trust preview was approved", async () => {

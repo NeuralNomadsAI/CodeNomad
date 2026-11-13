@@ -5,22 +5,22 @@ import { SessionTranscriptMeasurementQueue } from "../lib/session-transcript-mea
 import { isSessionTranscriptProtected, SessionTranscriptLru } from "../lib/session-transcript-lru"
 import { messageStoreBus } from "./message-v2/bus"
 import { loading, sessions } from "./session-state"
-import { destroyOpenCodeData } from "./opencode-data"
+import { destroyOpenCodeData, getOpenCodeInstanceGeneration } from "./opencode-data"
 import { cancelTranscriptProjections } from "./opencode-projection-frame"
+import { isSessionTranscriptVisible, retainSessionTranscriptVisible, clearSessionTranscriptVisible, clearInstanceTranscriptVisible } from "./session-transcript-visibility"
+import type { captureBackendOperation } from "../lib/backend-operation"
 
 // Inactive transcript budget. Protected active/live 200-message windows retain authoritative content and may exceed it.
 export const SESSION_TRANSCRIPT_BYTE_BUDGET = 64 * 1024 * 1024
 
 const log = getLogger("session")
-const visible = new Map<string, number>()
-const key = (instanceId: string, sessionId: string) => `${instanceId}\u0000${sessionId}`
 
 const coordinator = new SessionTranscriptLru({
   byteBudget: SESSION_TRANSCRIPT_BYTE_BUDGET,
   isProtected: (instanceId, sessionId) => {
     const session = sessions().get(instanceId)?.get(sessionId)
     return isSessionTranscriptProtected({
-      visible: visible.has(key(instanceId, sessionId)),
+      visible: isSessionTranscriptVisible(instanceId, sessionId),
       loading: loading().loadingMessages.get(instanceId)?.has(sessionId),
       status: session?.status,
       generationPending: session?.generationAdmissionToken !== undefined || session?.generationRecovery === "pending",
@@ -57,18 +57,26 @@ export function touchSessionTranscript(instanceId: string, sessionId: string): v
   measurements.schedule(instanceId, sessionId)
 }
 
-export function setSessionTranscriptVisible(instanceId: string, sessionId: string, value: boolean): void {
-  const entryKey = key(instanceId, sessionId)
-  if (value) {
-    visible.set(entryKey, (visible.get(entryKey) ?? 0) + 1)
-    touchSessionTranscript(instanceId, sessionId)
-  } else {
-    const count = (visible.get(entryKey) ?? 0) - 1
-    if (count > 0) visible.set(entryKey, count)
-    else visible.delete(entryKey)
-    measurements.schedule(instanceId, sessionId)
-  }
+/** Scalar ownership identity: catalogue object replacements preserve a view's lease. */
+export function sessionTranscriptBinding(instanceId: string, sessionId: string): string | undefined {
+  const session = sessions().get(instanceId)?.get(sessionId)
+  return session ? JSON.stringify([getOpenCodeInstanceGeneration(instanceId), session.projectID,
+    session.location?.directory, session.location?.workspaceID]) : undefined
+}
+
+export function setSessionTranscriptVisible(instanceId: string, sessionId: string, operation: ReturnType<typeof captureBackendOperation>): () => void {
+  const binding = sessionTranscriptBinding(instanceId, sessionId)
+  const release = retainSessionTranscriptVisible(instanceId, sessionId, {
+    signal: operation.signal,
+    current: () => binding !== undefined && operation.current() && sessionTranscriptBinding(instanceId, sessionId) === binding,
+  })
+  if (isSessionTranscriptVisible(instanceId, sessionId)) touchSessionTranscript(instanceId, sessionId)
   coordinator.enforce()
+  return () => {
+    if (!release()) return
+    measurements.schedule(instanceId, sessionId)
+    coordinator.enforce()
+  }
 }
 
 export function reconcileSessionTranscriptBudget(): void {
@@ -84,13 +92,12 @@ createRoot(() => createEffect(() => {
 messageStoreBus.onSessionChanged(accountSessionTranscript)
 onCacheSessionChanged(accountSessionTranscript)
 messageStoreBus.onSessionCleared((instanceId, sessionId) => {
+  clearSessionTranscriptVisible(instanceId, sessionId)
   measurements.cancel(instanceId, sessionId)
   coordinator.forget(instanceId, sessionId)
 })
 messageStoreBus.onInstanceDestroyed((instanceId) => {
   coordinator.forgetInstance(instanceId)
-  for (const entryKey of visible.keys()) {
-    if (entryKey.startsWith(`${instanceId}\u0000`)) visible.delete(entryKey)
-  }
+  clearInstanceTranscriptVisible(instanceId)
   measurements.cancelInstance(instanceId)
 })

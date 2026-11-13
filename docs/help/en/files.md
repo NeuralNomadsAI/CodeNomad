@@ -19,6 +19,8 @@ Expanded folders survive mode changes. Listings/status/history use cached snapsh
 
 Row actions include **Copy path** and, where the client supports opening backend paths, file-manager/editor/terminal actions such as **Open with default application**, **Show in folder**, **Open in file manager** and **Open terminal here**. Actions can move into **More actions for {name}** when space is limited; the file or folder name replaces `{name}`. A remote browser cannot assume a server path is a local-device path; see [Remote Control](remote-control.md).
 
+Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show diagram** to preview the current draft; Save remains explicit. The same [Mermaid formats and limits](conversations.md#mermaid) apply.
+
 ## Edit source and save safely {#edit-save}
 
 1. Open a Workspace text file with its eye action.

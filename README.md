@@ -60,7 +60,7 @@ chmod +x CodeNomad-Tauri-linux-x64-<version>.AppImage
 
 Without FUSE (for example in a container), start the AppImage with `--appimage-extract-and-run`.
 
-Desktop builds bundle Node.js and npm; **you do not need to install Node.js separately**. On first launch, select an existing compatible OpenCode executable or install OpenCode through the setup screen. You can manage the executable, updates, and service later in **Preferences → OpenCode**.
+Desktop builds include the server's Node runtime and npm (Electron's integrated Node or Tauri's bundled Node); **you do not need to install Node.js separately**. On first launch, select an existing compatible OpenCode executable or install OpenCode through the setup screen. You can manage the executable, updates, and service later in **Preferences → OpenCode**.
 
 Open a project folder, connect your model provider, and start a session. Git must be available to the CodeNomad backend for repository and worktree features; see [Requirements](#requirements).
 
@@ -168,7 +168,7 @@ Add SideCar as:
 
 - **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.2.3 minimum and 2.2.5 recommended for CodeNomad 1.0.0. Install/select it through desktop setup or provide a compatible CLI on the server host.
 - **[Git](https://git-scm.com/downloads)** — a prerequisite for full functionality (repository identity, Git operations and worktrees). Git must be executable in the CodeNomad backend's `PATH`; it is not bundled with the desktop installers.
-- **Node.js and npm** — required for the standalone npm server and source builds, bundled with desktop releases. Use **Node.js 24 LTS**; development and release builds use the version in [`.node-version`](.node-version) (currently 24.20.0).
+- **Node.js and npm** — required for the standalone npm server and source builds; desktop releases include their own (Electron's integrated Node or Tauri's bundled Node, with npm). Use **Node.js 24 LTS**; development and release builds use the version in [`.node-version`](.node-version).
 
 On Windows, install [Git for Windows](https://gitforwindows.org/) with the option to use Git from the command line and third-party software. A per-user installation is sufficient and does not require administrator rights; install into a user-writable directory and make Git available in the user `PATH`. On macOS or Linux, follow the [platform installation instructions](https://git-scm.com/downloads). Fully quit and restart CodeNomad after installation so its backend inherits the updated `PATH`. For a remote server, install Git on the server host for the account running CodeNomad and restart that server process, not just the browser. A Git installation available only inside WSL does not satisfy the Windows backend's requirement.
 

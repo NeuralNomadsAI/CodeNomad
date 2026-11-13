@@ -8,16 +8,20 @@ mod browser_controller;
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
+mod clipboard_attachments;
 mod client_state;
 mod data_profile;
 mod data_profile_cleanup;
 mod developer_mode;
+mod embedded_view;
 mod external_open;
 mod identity;
 mod launch;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 mod local_windows;
+#[cfg(target_os = "macos")]
+mod macos_relaunch;
 mod managed_node;
 mod menu_bar;
 mod menu_labels;
@@ -42,6 +46,8 @@ mod window_zoom;
 mod windows_browser_accelerators;
 #[cfg(windows)]
 mod windows_notification_identity;
+#[cfg(windows)]
+mod windows_session_end;
 mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
@@ -248,6 +254,13 @@ fn is_allowed_local_origin(url: &Url, managed_backend: Option<&str>) -> bool {
         || same_origin(url, managed_backend)
 }
 
+/// Navigation policy for local and Preferences windows. `about:blank` is the
+/// initial document carrying the boot splash: it holds no origin and grants no
+/// IPC authority, so admitting it says nothing about trusted renderer origins.
+fn is_navigable_local_origin(url: &Url, managed_backend: Option<&str>) -> bool {
+    url.as_str() == "about:blank" || is_allowed_local_origin(url, managed_backend)
+}
+
 pub(crate) fn require_preferences_or_local_app_webview(
     webview: &tauri::Webview,
     state: &AppState,
@@ -285,13 +298,14 @@ pub(crate) fn handle_native_request(
     method: &str,
     params: Option<serde_json::Value>,
     deadline: u64,
+    fence: native_request::RequestFence,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     match method {
         "browser.probe" | "browser.execute" | "browser.page.begin" | "browser.page.send"
         | "browser.page.check" | "browser.page.end" => state
             .browser_controller
-            .handle_native(app, method, params, deadline),
+            .handle_native(app, method, params, deadline, fence),
         "opencode.service.start" => native_service_start::start(params, deadline),
         "developer.status" => state.developer_mode.native_snapshot(app),
         "developer.restart" => state.developer_mode.request_restart(app),
@@ -509,20 +523,25 @@ async fn browser_target_register(
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
     let window = webview.window();
-    state.browser_controller.register(&window, payload)
+    let controller = state.browser_controller.clone();
+    tauri::async_runtime::spawn_blocking(move || controller.register(&window, payload))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn browser_target_update(
+async fn browser_target_update(
     webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetUpdate,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    state
-        .browser_controller
-        .update(&app, webview.label(), payload)
+    let controller = state.browser_controller.clone();
+    let owner = webview.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || controller.update(&app, &owner, payload))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -734,7 +753,7 @@ fn wake_lock_start(
         .display(config.display)
         .idle(config.idle)
         .sleep(config.sleep)
-        .reason("CodeNomad active session")
+        .reason("CodeNomad keeps the computer awake")
         .app_name("CodeNomad")
         .app_reverse_domain("ai.neuralnomads.codenomad.client");
 
@@ -774,7 +793,7 @@ fn should_allow_window_origin<R: Runtime>(
     if identity::local_window_id(window_label).is_ok() || window_label == preferences_window::LABEL
     {
         let status = state.manager.status();
-        return is_allowed_local_origin(url, status.url.as_deref());
+        return is_navigable_local_origin(url, status.url.as_deref());
     }
     let Ok(allowed) = state.remote_navigation.lock() else {
         return false;
@@ -829,9 +848,8 @@ fn open_remote_external_url(url: &Url, open: impl FnOnce(&Url)) -> bool {
 
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let window_label = webview.label().to_string();
-    let state = webview.app_handle().state::<AppState>();
-    if let Some(allowed) = state
-        .browser_controller
+    if let Some(allowed) = webview.app_handle()
+        .state::<embedded_view::EmbeddedViews>()
         .navigation_allowed(&window_label, url)
     {
         return allowed;
@@ -1648,6 +1666,7 @@ fn is_final_application_window<'a>(
     !labels.any(|label| {
         label != closing_label
             && label != preferences_window::LABEL
+            && !label.starts_with("browser-popup-")
             && !launch_windows.iter().any(|launch| launch == label)
     })
 }
@@ -1835,6 +1854,9 @@ fn main() {
     let notification_badge_host = Arc::new(Mutex::new(None::<Arc<AppHandle>>));
     let setup_notification_badge_host = Arc::clone(&notification_badge_host);
 
+    let browser_controller = browser_controller::BrowserController::new(
+        setup_scope.webview_data_directory.join("browser"),
+    );
     desktop_updater::register(tauri::Builder::default(), context.config())
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
@@ -1865,6 +1887,11 @@ fn main() {
         )
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
+        .manage(browser_controller.embedded_views.clone())
+        .manage(embedded_view::StorageIdentity::new(
+            scope.profile.clone(),
+            scope.config_identity.clone(),
+        ))
         .manage(local_windows::LocalWindows::default())
         .manage(notification_badge::NotificationBadge::default())
         .manage(window_constraints::WindowConstraints::default())
@@ -1894,9 +1921,7 @@ fn main() {
                 backend_config.clone(),
             ),
             developer_mode,
-            browser_controller: browser_controller::BrowserController::new(
-                setup_scope.webview_data_directory.join("browser"),
-            ),
+            browser_controller,
             wake_lock: Mutex::new(WakeLockState::default()),
             remote_navigation: Mutex::new(HashMap::new()),
             remote_navigation_generation: AtomicU64::new(0),
@@ -2003,6 +2028,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
             cli_restart,
             wake_lock_start,
@@ -2015,6 +2041,9 @@ fn main() {
             preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
             preferences_window::preferences_opener_startup_state,
+            preferences_window::memory_cleanup::preferences_memory_cleanup,
+            preferences_window::memory_cleanup::memory_cleanup_result,
+            preferences_window::memory_cleanup::memory_cleanup_claim,
             window_control,
             window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
@@ -2052,6 +2081,9 @@ fn main() {
             browser_target_release_open
         ])
         .on_menu_event(|app_handle, event| {
+            if embedded_view::zoom::focused(app_handle, event.id().0.as_str()) {
+                return;
+            }
             match event.id().0.as_str() {
                 // File menu
                 action @ ("new-instance"
@@ -2214,6 +2246,10 @@ fn main() {
             }
             #[cfg(target_os = "linux")]
             tauri::RunEvent::Exit => appimage_exit::stop_mounted_children(),
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Exit if shutdown::restart_on_exit() => {
+                macos_relaunch::relaunch_and_exit(&app_handle)
+            }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),
@@ -2657,7 +2693,7 @@ fn about_fallback_text(version: &str) -> String {
 mod menu_tests {
     use super::{
         about_fallback_text, claim_unowned_remote_proxy_session, releases_page, clear_remote_tls_handler,
-        is_allowed_local_origin, is_final_application_window, local_close_event_action,
+        is_allowed_local_origin, is_final_application_window, is_navigable_local_origin, local_close_event_action,
         require_http_url, rollback_remote_window_metadata, open_remote_external_url,
         should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
         titlebar_menu_id, LocalCloseEventAction,
@@ -2691,6 +2727,28 @@ mod menu_tests {
     }
 
     #[test]
+    fn about_blank_boot_document_navigates_but_never_becomes_a_trusted_origin() {
+        let backend = "http://127.0.0.1:43123/";
+        let blank = Url::parse("about:blank").unwrap();
+        assert!(
+            is_navigable_local_origin(&blank, Some(backend)),
+            "the initial boot splash document must be navigable in local windows"
+        );
+        assert!(
+            !is_allowed_local_origin(&blank, Some(backend)),
+            "about:blank never gains IPC or renderer authority"
+        );
+        assert!(is_navigable_local_origin(
+            &Url::parse(backend).unwrap(),
+            Some(backend)
+        ));
+        assert!(!is_navigable_local_origin(
+            &Url::parse("https://example.com/").unwrap(),
+            Some(backend)
+        ));
+    }
+
+    #[test]
     fn preferences_does_not_keep_the_last_application_window_alive() {
         assert!(is_final_application_window(
             "local-a",
@@ -2705,6 +2763,23 @@ mod menu_tests {
         assert!(!is_final_application_window(
             "local-a",
             ["local-a", "preferences", "remote-a"].into_iter(),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn webkit_popups_follow_the_last_application_window_lifetime() {
+        assert_eq!(
+            is_final_application_window(
+                "local-a",
+                ["local-a", "browser-popup-a"].into_iter(),
+                &[],
+            ),
+            true,
+        );
+        assert!(!is_final_application_window(
+            "local-a",
+            ["local-a", "browser-popup-a", "local-b"].into_iter(),
             &[],
         ));
     }

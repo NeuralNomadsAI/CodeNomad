@@ -32,6 +32,7 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
 /></Show>, document.getElementById("root")!)
 ;(window as any).fixture = {
   bottom: () => api?.scrollToBottom({ immediate: true }),
+  top: () => api?.scrollToTop({ immediate: true }),
   follow: () => { api?.scrollToBottom({ immediate: true }); api?.setAutoScroll(true) },
   middle: () => api?.scrollToKey("row-100"),
   nearTail: () => api?.scrollToKey("row-180"),

@@ -22,22 +22,22 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
-test("technical carriers stay out of followed-conversation choices and native title searches", async () => {
+test("technical carriers stay out of criterion conversation choices and native title searches", async () => {
   const page = await browser.newPage()
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await events.route(page)
     await page.goto(url); await page.waitForFunction(() => Boolean((window as any).fixture))
-    const picker = page.locator(".mission-conversation-picker")
-    await picker.locator("summary").click()
+    await page.getByRole("button", { name: "Criterion 1 source", exact: true }).click()
+    const picker = page.locator(".mission-source-popover")
     await picker.getByText("Local conversation", { exact: true }).waitFor()
     assert.equal(await picker.getByText("Carrier needle", { exact: true }).count(), 0)
-    await picker.getByRole("searchbox").fill("needle")
+    await picker.getByRole("combobox", { name: "Search sources", exact: true }).fill("needle")
     await page.waitForFunction(() => (window as any).fixture.searches.some((s: any) => s.search === "needle"))
     await picker.getByText("Child needle", { exact: true }).waitFor()
     assert.equal(await picker.getByText("Carrier needle", { exact: true }).count(), 0)
     await picker.getByText("Child needle", { exact: true }).click()
-    assert.deepEqual(await page.evaluate(() => (window as any).fixture.watched()), ["child"])
+    assert.equal(await page.evaluate(() => (window as any).fixture.source()), "child")
     assert.equal(await page.locator('[data-session-id="ses_cn_schedule_fixture"]').count(), 0)
   } finally { await page.close() }
 })

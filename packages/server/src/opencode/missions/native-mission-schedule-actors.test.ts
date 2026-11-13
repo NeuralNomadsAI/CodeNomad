@@ -376,6 +376,34 @@ test("Stop retains a root reused by another active ordinary mission without inte
   assert.deepEqual(f.calls, [])
 })
 
+test("explicit adoption permits Stop across ordinary membership and drains the chosen root's existing inputs", async t => {
+  const f = await fixture(t)
+  await f.change(doc => {
+    doc.configuration.launch = { when: [{ kind: "cron", expression: "0 * * * *", zone: "UTC" }] }
+    doc.configuration.coordinatorSessionID = f.coordinatorID
+    doc.pending!.configuration = structuredClone(doc.configuration)
+    doc.pending!.coordinatorReused = true
+    doc.pending!.coordinatorBaseline = [[f.coordinatorID, -1, null, null, 0]]
+  })
+  f.sessions.get(f.coordinatorID).metadata["codenomad.mission"].document.coordinatorReused = true
+  const ordinary = new MissionControl({ project: { id: "project", canonical: f.directory, location: { directory: f.directory } }, storage: f.storage,
+    sessions: { get: async ({ sessionID }) => f.sessions.get(sessionID), create: async () => { throw new Error("No create") }, prompt: async () => {}, synthetic: async () => {} } })
+  await ordinary.create({ requestID: "ordinary_reuse", template: "custom", objective: "Existing work", coordinatorSessionID: f.coordinatorID })
+  f.inboxes.set(f.coordinatorID, [
+    { id: "inb_user", type: "user", sessionID: f.coordinatorID, delivery: "queue", time: { created: at }, payload: { text: "Existing ordinary input" } },
+    { id: "inb_foreign", type: "synthetic", sessionID: f.coordinatorID, delivery: "queue", time: { created: at },
+      payload: { text: "Existing mission input", metadata: { "codenomad.mission": { missionID: "other" } } } },
+  ])
+  f.state.lostCancel = true
+  const result = await f.invoke(async () => f.control.lifecycle(await f.prepare("stop")))
+  const ack = result.mission.control!.receipts![0].nativeAcknowledgement!
+  assert.equal(ack.disposition, "interrupt-observed")
+  if (ack.disposition !== "interrupt-observed") return
+  assert.equal(ack.descendants!.complete, true)
+  assert.deepEqual(f.inboxes.get(f.coordinatorID), [])
+  assert.deepEqual(ack.cancellations?.map(item => [item.inboxID, item.disposition]), [["inb_user", "observed-absent"], ["inb_foreign", "observed-absent"]])
+})
+
 test("a specialist whose frozen profile changed stays pending while the qualified coordinator can still pause", async t => {
   const f = await fixture(t), id = "ses_specialist", original = structuredClone(f.sessions.get(f.coordinatorID))
   f.sessions.set(id, { ...original, id, metadata: { "codenomad.mission": { ...original.metadata["codenomad.mission"], kind: "actor", role: "specialist" } } })

@@ -132,10 +132,10 @@ test("Mission task-session discovery never continues from late coordinator IO in
     root: () => root as never, warn: () => assert.fail("unexpected warning") })
   const mission = { id: "mission", projectID: "project", coordinatorSessionId: "coordinator", revision: 1,
     tasks: [{ key: "task", status: "running" }] } as unknown as MissionPanelMap
-  const first = store.demand(backend.instance, mission)
-  void store.demand(backend.instance, mission, 1)
+  const first = store.demand(backend.instance, mission, 0, "preview")
+  void store.demand(backend.instance, mission, 1, "preview")
   backend.detach(); backend.reattach()
-  await store.demand(backend.instance, mission, 2)
+  await store.demand(backend.instance, mission, 2, "preview")
   old.resolve({ data: [], headers: new Headers() } as never); await first
   assert.equal(messages, 2)
   assert.equal(children, 1)
@@ -217,7 +217,7 @@ test("shell admission, late lists and sent remove followups keep the captured at
   let calls = 0, removed = 0
   const old = deferred<never[]>(), removal = deferred<void>()
   const output = deferred<{ output: string; cursor: number; size: number; truncated: boolean }>()
-  const store = createShellStore(() => ({ list: async () => { calls++; return calls === 1 ? old.promise : [] },
+  const store = createShellStore(() => ({ list: async () => { calls++; return { data: calls === 1 ? await old.promise : [] } },
     remove: async () => { removed++; await removal.promise }, output: async () => output.promise }), signal)
   const queued = store.load(backend.instance, "/queued")
   backend.detach(); backend.reattach(); await queued
@@ -267,9 +267,11 @@ test("permission receipt queue admission and late pagination never cross attachm
 test("a Shell view first demanded while detached is reconciled on the new open", async t => {
   const backend = attachment(t, "demand_shell_offline")
   let calls = 0
-  const store = createShellStore(() => ({ list: async () => { calls++; return [] }, remove: async () => {},
+  const store = createShellStore(() => ({ list: async () => { calls++; return { data: [] } }, remove: async () => {},
     output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }) }), signal)
   backend.detach()
+  const release = store.watch(backend.instance, "/repo")
+  t.after(release)
   await store.load(backend.instance, "/repo")
   assert.equal(calls, 0)
   backend.reattach(); store.refreshBackend("demand_shell_offline"); await tick()

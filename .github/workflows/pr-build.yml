@@ -13,6 +13,10 @@ permissions:
   contents: read
   actions: write
 
+# Restore only: the Download Caches workflow and setup-node in trusted dev runs
+# write the caches; a pull request's own entries would never be shared.
+cache-mode: read
+
 concurrency:
   group: pr-build-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -55,6 +59,7 @@ jobs:
       - tests-session-pruning-native
       - tests-runtime-contracts
       - tests-tauri-macos
+      - tests-tauri-webkit
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     uses: ./.github/workflows/build-and-upload.yml
     with:
@@ -110,6 +115,8 @@ jobs:
           node scripts/run-session-pruning-native.mjs $cli $plugin
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npm run build:pruning --workspace @neuralnomads/codenomad
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-pruning-location-ready-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -168,9 +175,15 @@ jobs:
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
       - run: npm run build:missions --workspace @neuralnomads/codenomad
+      - run: npm run build:memory --workspace @neuralnomads/codenomad
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
+          $fixtures = Join-Path $env:RUNNER_TEMP 'runtime-contract-fixtures'
+          New-Item -ItemType Directory -Force $fixtures | Out-Null
+          "RUNTIME_CONTRACT_FIXTURES=$fixtures" >> $env:GITHUB_ENV
+          $env:TEMP = $fixtures
+          $env:TMP = $fixtures
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
           $version = '${{ matrix.runtime }}'
           if ($version -eq 'minimum') {
@@ -188,12 +201,22 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-automation-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-memory-tool-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Design agent activation through backend leases: load-time registration,
           # user priority and permissions, union, expiry and retained installations.
           node scripts/test-design-activation-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-pruning-location-ready-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-session-archive-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node scripts/test-session-pruning-native.mjs $cli --part-rows
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           # Shipped Missions bundle: loading, model-visible tools through the
           # ordinary prompt loop, journal RPC and recurrence capability.
           node scripts/test-missions-native-contract.mjs $cli
@@ -206,6 +229,14 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Parallel siblings, a recursive grandchild and coordinator readout.
           node scripts/test-missions-native-trajectory.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Context IDs must resolve native schedule metadata; the retained product
+          # bundle must admit cold scheduled passages with the backend closed.
+          node scripts/test-native-schedule-context.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $scheduleParent = node -p "require('node:path').join(require('node:os').tmpdir(), 'opencode')"
+          $scheduleScratch = Join-Path $scheduleParent "schedule-wakes-$([guid]::NewGuid().ToString('N'))"
+          node --import tsx scripts/test-native-mission-schedule-product.mjs $cli $scheduleScratch --parent-ready --kinds=at,in
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ('${{ matrix.runtime }}' -eq 'latest') {
             # Missions Preferences' Location subagent-depth editor against the
@@ -256,6 +287,40 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
 
+      - name: Upload isolated schedule product failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_PRODUCT_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-product-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/receipt.json
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-diagnostic.json
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-sql.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload isolated schedule foundation failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-foundation-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload isolated runtime contract failure diagnostics
+        if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: runtime-contract-failure-windows-${{ matrix.runtime }}
+          path: |
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/runtime.log
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/receipt.json
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/reload-diagnostics.json
+          if-no-files-found: warn
+          retention-days: 7
+
   tests:
     needs: authorize
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
@@ -275,6 +340,12 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+
       - name: Install Linux test dependencies (Tauri)
         run: |
           sudo apt-get update
@@ -293,6 +364,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test dependency glob compatibility and cancellation
+        run: node --test scripts/test-runtime-globs.cjs scripts/test-electron-universal.cjs
+
+      - name: Restore the Electron download
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
+
+      # The electron package fetches its binary on first use; fetch it once
+      # before parallel tests and command substitutions use it.
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Typecheck desktop clients
         run: npm run typecheck
 
@@ -302,11 +387,14 @@ jobs:
       - name: Build bundled mission integration
         run: npm run build:missions --workspace @neuralnomads/codenomad
 
+      - name: Build bundled memory integration
+        run: npm run build:memory --workspace @neuralnomads/codenomad
+
       - name: Test desktop packaging invariants
-        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs
+        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs scripts/native-pruning-ready.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs .github/scripts/download-cache.test.cjs
 
       - name: Test Electron client state
         env:
@@ -442,7 +530,9 @@ jobs:
           packages/ui/src/components/mission-attention.test.ts
           packages/ui/src/stores/mission-store.test.ts
           packages/ui/src/stores/mission-task-pages.test.ts
+          packages/ui/src/stores/mission-task-seen.test.ts
           packages/ui/tests/contracts/mission-task-page-read.test.ts
+          packages/ui/tests/contracts/mission-defaults.test.ts
           packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
           packages/ui/src/components/mission-briefing-model.test.ts
@@ -548,6 +638,7 @@ jobs:
           packages/ui/src/stores/opencode-data-trailing-read.test.ts
           packages/ui/src/stores/opencode-data-read-merge.test.ts
           packages/ui/src/stores/session-api-running-open.test.ts
+          packages/ui/src/stores/session-child-transcript-watch.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts
           packages/ui/src/stores/opencode-transcript-replay.test.ts
           packages/ui/src/stores/opencode-compaction.test.ts
@@ -562,6 +653,8 @@ jobs:
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/shell-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts
+          packages/ui/src/stores/session-archive.test.ts
+          packages/ui/src/stores/session-goal-activation.test.ts
           packages/ui/src/stores/session-model-reconciliation.test.ts
           packages/ui/src/stores/session-pruning-events.test.ts
           packages/ui/src/stores/session-pruning-projection.test.ts
@@ -577,6 +670,7 @@ jobs:
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-default-agent.test.ts
+          packages/ui/src/stores/session-default-model.test.ts
           packages/ui/src/stores/session-create-pending.test.ts
           packages/ui/src/stores/history-search-sessions.test.ts
           packages/ui/src/stores/session-git-degraded.test.ts
@@ -642,6 +736,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Restore the Electron download
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
+
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Install Chromium for UI rendering regressions
         run: npx playwright install --with-deps chromium
 
@@ -661,7 +764,7 @@ jobs:
 
   tests-tauri-windows:
     needs: authorize
-    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    if: ${{ needs.authorize.outputs.allowed == 'true' }}
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -677,6 +780,12 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
 
       - name: Install dependencies
         run: npm ci
@@ -694,8 +803,7 @@ jobs:
         run: cargo test --locked -- --test-threads=1
 
       - name: Test updater installer launch handoff
-        working-directory: packages/tauri-app
-        run: cargo test --locked -p tauri-plugin-updater windows_launch_tests
+        run: node scripts/test-tauri-updater-handoff.mjs
 
       - name: Test owned Tauri zoom input script
         run: node --test packages/tauri-app/tests/window-zoom-script.test.mjs
@@ -734,6 +842,22 @@ jobs:
       - name: Test concurrent server identity and crash recovery
         run: node --import tsx --test packages/server/src/settings/server-identity.test.ts
 
+      - name: Restore the Electron download
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: electron
+
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
+      - name: Test hidden Electron emulation reset on Windows
+        if: runner.os == 'Windows'
+        working-directory: packages/ui
+        env:
+          CODENOMAD_TEST_TEMP: ${{ runner.temp }}
+        run: node --import tsx --test tests/browser/browser-emulation-native.test.ts
+
       - name: Test binary compatibility and shared lifecycle
         run: >-
           node --import tsx --test
@@ -750,6 +874,32 @@ jobs:
       - name: Test first installation without system Node
         timeout-minutes: 10
         run: node scripts/test-opencode-install-native.mjs
+
+      # Tauri's resources: the pinned Node archive's executable with the pinned
+      # npm (`.npm-version`), so an npm update runs OpenCode's real postinstall.
+      - name: Test first installation with Tauri's Node and pinned npm
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          resources="$RUNNER_TEMP/tauri-node-resources"
+          node -e "require('./scripts/prepare-node-runtime.cjs').prepareBundledNodeRuntime({ resourcesRoot: process.argv[1] }).catch(error => { console.error(error); process.exit(1) })" "$resources"
+          target="$(node -p "require('./scripts/prepare-node-runtime.cjs').currentTarget()")"
+          executable="$(node -p "process.platform === 'win32' ? 'node.exe' : 'bin/node'")"
+          CODENOMAD_FIXTURE_NODE="$resources/node/$target/$executable" \
+            node scripts/test-opencode-install-native.mjs
+
+      # Electron's npm-only resources and its executable as Node: OpenCode's real
+      # postinstall runs through the scoped `node` command (sh adapter or node.cmd).
+      - name: Test first installation with Electron's Node and npm-only resources
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          resources="$RUNNER_TEMP/electron-npm-resources"
+          node -e "require('./scripts/prepare-node-runtime.cjs').prepareBundledNodeRuntime({ resourcesRoot: process.argv[1], npmOnly: true }).catch(error => { console.error(error); process.exit(1) })" "$resources"
+          CODENOMAD_FIXTURE_ELECTRON=1 \
+          CODENOMAD_FIXTURE_NODE="$(node -p "require('electron')")" \
+          CODENOMAD_FIXTURE_RESOURCES="$resources" \
+            node scripts/test-opencode-install-native.mjs
 
       - name: Test migration failure guards
         run: node --test scripts/native-fixture-guards.test.mjs "scripts/fixtures/wsl-*.test.mjs"
@@ -790,6 +940,119 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
 
+  # Native WebKit qualification also runs on drafts, without signing credentials.
+  tests-tauri-webkit:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            arch: x86_64
+          - os: macos-26
+            arch: arm64
+          - os: ubuntu-24.04
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+      - name: Restore Tauri bundler downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' && runner.os == 'Linux' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: tauri
+      # Sets LDAI_RUNTIME_FILE when the restored runtime matches the published digest.
+      - name: Restore the AppImage runtime
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' && runner.os == 'Linux' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: appimage-runtime
+      - name: Install Linux WebKit dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config zsh libgtk-3-dev \
+            libglib2.0-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+      - run: npm ci --workspaces --include=optional
+      - name: Test WebKit qualification workflow contract
+        run: node --test .github/scripts/tauri-webkit-workflow.test.cjs
+      - name: Prepare packaged server and browser resources
+        run: npm run prebuild --workspace @codenomad/tauri-app
+      - name: Check Tauri crate
+        working-directory: packages/tauri-app
+        run: cargo check --locked
+      - name: Clippy Tauri crate
+        working-directory: packages/tauri-app
+        run: cargo clippy --locked --no-deps
+      - name: Build native parent qualification example
+        working-directory: packages/tauri-app
+        run: cargo build --locked --example browser-parent-webkit --features browser-parent-qualification
+      - name: Test Tauri crate
+        working-directory: packages/tauri-app
+        run: CODENOMAD_TEST_ZSH=/bin/zsh CODENOMAD_TEST_NODE="$(command -v node)" cargo test --locked -- --test-threads=4
+      - name: Build Tauri without bundling
+        working-directory: packages/tauri-app
+        run: npm exec -- tauri build --no-bundle --config src-tauri/tauri.prebuilt.conf.json
+      - name: Bundle unsigned macOS app
+        if: runner.os == 'macOS'
+        working-directory: packages/tauri-app
+        run: npm exec -- tauri bundle --bundles app --config src-tauri/tauri.prebuilt.conf.json
+      - name: Verify macOS minimum and architecture
+        if: runner.os == 'macOS'
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(packages/tauri-app/target/release/bundle/macos/*.app)
+          test "${#apps[@]}" -eq 1
+          plist="${apps[0]}/Contents/Info.plist"
+          minimum=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")
+          test "$minimum" = '14.0'
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
+          lipo "${apps[0]}/Contents/MacOS/$executable" -verify_arch "$EXPECTED_ARCH"
+          echo "Verified $EXPECTED_ARCH bundle: LSMinimumSystemVersion=$minimum" >> "$GITHUB_STEP_SUMMARY"
+      - name: Bundle unsigned Linux AppImage
+        if: runner.os == 'Linux'
+        working-directory: packages/tauri-app
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          # Keep the WSLg/system display and GPU stack, as in release packaging.
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: libwayland-*;libxkbcommon*;libxcb*;libX11*;libXau*;libXdmcp*;libEGL*;libGL*;libgbm*;libdrm*
+        run: npm exec -- tauri bundle --bundles appimage --verbose --config src-tauri/tauri.prebuilt.conf.json
+      - name: Upload Linux AppImage for WSLg trials
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: pr-${{ github.event.pull_request.number }}-tauri-webkit-linux-x64
+          path: packages/tauri-app/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
   # Exercise the window persistence regressions on the architecture reported in
   # #676, independently of the Linux server gate. Packaging alone cannot test them.
   tests-tauri-macos:
@@ -810,6 +1073,12 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
 
       - name: Install dependencies
         run: npm ci

@@ -115,7 +115,8 @@ export function resolveWindowLabel(windowSeconds: number | null): string {
 export function result(
   providerId: string,
   providerName: string,
-  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string; status?: number },
+  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string; status?: number }
+    & Pick<ProviderResult, "unavailableReason" | "providerErrorCode" | "unavailableAction">,
 ): ProviderResult {
   return {
     providerId,
@@ -126,6 +127,9 @@ export function result(
     fetchedAt: Date.now(),
     ...(input.error ? { error: input.error } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.unavailableReason ? { unavailableReason: input.unavailableReason } : {}),
+    ...(input.providerErrorCode ? { providerErrorCode: input.providerErrorCode } : {}),
+    ...(input.unavailableAction ? { unavailableAction: input.unavailableAction } : {}),
   }
 }
 
@@ -133,9 +137,9 @@ export function notConfigured(providerId: string, providerName: string): Provide
   return result(providerId, providerName, { ok: false, configured: false, error: "Not configured" })
 }
 
-/** Only the status is retained; upstream bodies may echo credentials. */
+/** Retain only HTTP status and an explicitly allowlisted code; bodies may echo credentials. */
 export class ProviderHttpError extends Error {
-  constructor(readonly status: number) { super(`Provider returned HTTP ${status}`) }
+  constructor(readonly status: number, readonly code?: string) { super(`Provider returned HTTP ${status}`) }
 }
 
 export async function fetchJson(url: string, init: RequestInit = {}): Promise<any> {

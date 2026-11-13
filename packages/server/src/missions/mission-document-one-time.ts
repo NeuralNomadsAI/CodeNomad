@@ -51,6 +51,7 @@ export async function prepareMissionOneTimeDocument(access: MissionDocumentAcces
       profileID: null, executionHost: null, roots: [{ mode: "directory-only", directory: location.directory }], watchedConversationIDs: [],
       launch: { timing: { kind: "immediate" }, condition: null, ends: { maxLaunches: null, afterMs: null, at: null } },
     }, createdAt, current, { creationRequestID: input.requestID, creationDigest: digest,
+      ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),
       coordinatorSessionID, location: { ...location }, firstPlay: null })
   })
 }

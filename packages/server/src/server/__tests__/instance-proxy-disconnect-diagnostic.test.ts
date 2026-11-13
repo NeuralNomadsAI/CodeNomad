@@ -101,7 +101,7 @@ async function harness(phase: Phase, nativePreflight = false) {
       return {}
     },
     ownsDirectory: async () => true,
-    ownsLocation: async (_id: string, _location: unknown, _client?: unknown, requestSignal?: AbortSignal) => {
+    ownsLocation: async (_id: string, _location: unknown, _client?: unknown, { signal: requestSignal }: { signal?: AbortSignal } = {}) => {
       await hold("ownership", requestSignal)
       return true
     },

@@ -38,8 +38,9 @@ export async function testDesignCompanionUI({ cli, client, url, password, root, 
   const connection = await sharedService.acquire()
   const endpoint = connection.endpoint, runtimeFetch = connection.fetch
   const owns = candidate => path.resolve(candidate) === path.resolve(directory)
+  const workspace = { id: instanceId, path: directory }
   const workspaceManager = {
-    get: id => id === instanceId ? { id, path: directory } : undefined,
+    get: id => id === instanceId ? workspace : undefined,
     getSharedServiceEndpoint: async () => endpoint, getSharedServiceConnection: async () => connection,
     getInstanceAuthorizationHeader: () => authorization,
     getServiceDirectory: () => directory, getServiceLocation: () => location, getWorktrees: async () => ({ worktrees: [] }),

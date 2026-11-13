@@ -24,6 +24,7 @@ import {
 import {
   buildSessionThreadsFromMap,
   collectVisibleSessionIds,
+  projectUnarchivedSessionThreads,
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
   getSessionRootFromMap,
@@ -1014,7 +1015,7 @@ function getPersistentExpandedSessionIds(instanceId: string): string[] {
 }
 
 function getVisibleSessionIds(instanceId: string): string[] {
-  const threads = getSessionThreads(instanceId)
+  const threads = projectUnarchivedSessionThreads(getSessionThreads(instanceId), activeSessionId().get(instanceId))
   if (threads.length === 0) return []
 
   const expanded = expandedSessions().get(instanceId)

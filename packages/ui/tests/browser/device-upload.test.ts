@@ -22,7 +22,8 @@ before(async () => {
 after(async () => { try { await browser?.close() } finally { await server?.close() } })
 
 async function setup(host = "web", context = "remote", params = "") {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, locale: "en-US" })
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, locale: "en-US",
+    userAgent: host === "tauri" ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36" : undefined })
   const prompts: any[] = [], paths: string[] = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   const observer = observeHeaderFixture(page)
@@ -31,6 +32,15 @@ async function setup(host = "web", context = "remote", params = "") {
     ;(window as any).__CODENOMAD_RUNTIME_HOST__ = host
     ;(window as any).__CODENOMAD_WINDOW_CONTEXT__ = context
   }, { host, context })
+  await page.addInitScript(`
+    window.clipboardReads = 0
+    window.nativeClipboard = [{ name: "image.png", size: 3, data: "YWJj", mime: "image/png" }]
+    window.__TAURI_INTERNALS__ = { async invoke(command) {
+      if (command !== "read_clipboard_attachments") return null
+      window.clipboardReads++
+      return window.nativeClipboard
+    } }
+  `)
   await page.route("**/api/**", route => {
     const request = route.request(), target = new URL(request.url())
     if (target.pathname === "/api/events") return route.continue()
@@ -83,6 +93,202 @@ test("composer bootstrap retains one real SSE stream instead of reconnecting a J
     assert.equal(eventStreams.opened, opened + 1)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
+})
+
+// Keep the real trusted browser paste/textarea path, but model WebKitGTK's
+// missing File items at the browser boundary, rather than replacing the handler.
+async function nativePaste(page: Page, type = "", text = "", withPlainText = false) {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+  await page.evaluate(({ type, text, withPlainText }) => {
+    document.addEventListener("paste", event => {
+      const data = new DataTransfer()
+      if (type.startsWith("image/")) data.items.add(new File(["image bytes"], "photo.png", { type }))
+      else if (type) data.setData(type, text)
+      if (withPlainText) data.setData("text/plain", text)
+      Object.defineProperty(event, "clipboardData", { value: data })
+    }, { capture: true, once: true })
+    return navigator.clipboard.writeText(type === "text/plain" || withPlainText ? text : "browser clipboard gesture")
+  }, { type, text, withPlainText })
+  await page.locator("textarea:visible").first().press("Control+V")
+}
+
+test("Tauri trusted empty/URI paste reads native bytes through the real composer", async () => {
+  const { page, paths, prompts } = await setup("tauri", "local")
+  try {
+    await nativePaste(page)
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.equal(await page.locator("textarea:visible").first().inputValue(), "[Image #1]")
+    assert.equal(await page.evaluate(() => (window as any).clipboardReads), 1)
+    await page.evaluate(() => { (window as any).nativeClipboard = [{ name: "outside.txt", size: 3, data: "eHl6", mime: "" }] })
+    await nativePaste(page, "text/uri-list", "file:///outside/project/outside.txt\r\n", true)
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 2)
+    await page.getByRole("button", { name: "Send message", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 0)
+    assert.deepEqual(prompts[0].files, [
+      { name: "image.png", uri: "data:image/png;base64,YWJj" },
+      { name: "outside.txt", uri: "data:text/plain;base64,eHl6" },
+    ])
+    assert.deepEqual(paths, [])
+  } finally { await page.close() }
+})
+
+test("Tauri File items do not invoke the native fallback", async () => {
+  const { page } = await setup("tauri", "local")
+  try {
+    await nativePaste(page, "image/png")
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.equal(await page.evaluate(() => (window as any).clipboardReads), 0)
+  } finally { await page.close() }
+})
+
+test("Windows and macOS Tauri keep browser paste behavior without native reads", async () => {
+  for (const userAgent of ["Windows NT 10.0", "Macintosh; Intel Mac OS X 10_15_7"]) {
+    const { page } = await setup("tauri", "local")
+    try {
+      await page.evaluate(userAgent => Object.defineProperty(navigator, "userAgent", { value: userAgent }), userAgent)
+      await nativePaste(page)
+      assert.equal(await page.evaluate(() => (window as any).clipboardReads), 0)
+      await nativePaste(page, "image/png")
+      await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+      assert.equal(await page.evaluate(() => (window as any).clipboardReads), 0)
+    } finally { await page.close() }
+  }
+})
+
+test("Tauri text paste keeps short text and long-text attachment behavior without native reads", async () => {
+  const { page } = await setup("tauri", "local")
+  try {
+    const textarea = page.locator("textarea:visible").first()
+    await nativePaste(page, "text/plain", "plain text")
+    assert.equal(await textarea.inputValue(), "plain text")
+    await textarea.fill("")
+    await nativePaste(page, "text/uri-list", "https://example.com", true)
+    assert.equal(await textarea.inputValue(), "https://example.com")
+    await textarea.fill("")
+    await nativePaste(page, "text/plain", "long text ".repeat(20))
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.equal(await textarea.inputValue(), "[pasted #1]")
+    assert.equal(await page.evaluate(() => (window as any).clipboardReads), 0)
+  } finally { await page.close() }
+})
+
+test("pending native paste blocks send and preserves the paste anchor and draft epoch", async () => {
+  const { page } = await setup("tauri", "local")
+  try {
+    await page.evaluate(`window.__TAURI_INTERNALS__.invoke = async function(command) {
+      if (command !== "read_clipboard_attachments") return null
+      window.clipboardReads++
+      return new Promise(resolve => { window.releaseClipboard = () => resolve(window.nativeClipboard) })
+    }`)
+    const textarea = page.locator("textarea:visible").first()
+    await textarea.fill("before AFTER")
+    await textarea.evaluate((input: HTMLTextAreaElement) => input.setSelectionRange(7, 7))
+    await nativePaste(page)
+    assert.equal(await page.getByRole("button", { name: "Send message", exact: true }).isDisabled(), true)
+    await textarea.evaluate((input: HTMLTextAreaElement) => input.setSelectionRange(0, 0))
+    await page.locator("#outside").focus()
+    await page.evaluate(() => (window as any).releaseClipboard())
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.equal(await textarea.inputValue(), "before [Image #1]AFTER")
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "outside")
+    await nativePaste(page)
+    await page.evaluate(() => { (window as any).fixture.switch("other"); (window as any).fixture.switch("source") })
+    await page.evaluate(() => (window as any).releaseClipboard())
+    // The queue's finally has run once the current task and its microtasks end.
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+    assert.equal(await page.evaluate(() => (window as any).fixture.attachments().length), 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments("other")), [])
+  } finally { await page.close() }
+})
+
+test("a native read with no attachment keeps the clipboard text at the paste selection", async () => {
+  const { page } = await setup("tauri", "local")
+  try {
+    const textarea = page.locator("textarea:visible").first()
+    const uri = "file://other-host/shared/report.txt"
+    for (const outcome of ["empty", "error"]) {
+      await page.evaluate(outcome => {
+        (window as any).__TAURI_INTERNALS__.invoke = async (command: string) => {
+          if (command !== "read_clipboard_attachments") return null
+          ;(window as any).clipboardReads++
+          if (outcome === "error") throw new Error("native clipboard unavailable")
+          return []
+        }
+      }, outcome)
+      await textarea.fill("before AFTER")
+      await textarea.evaluate((input: HTMLTextAreaElement) => input.setSelectionRange(7, 7))
+      const reads = await page.evaluate(() => (window as any).clipboardReads)
+      await nativePaste(page, "text/uri-list", uri, true)
+      await page.waitForFunction(reads => (window as any).clipboardReads === reads + 1, reads)
+      await page.waitForFunction(expected => (document.querySelector("textarea") as HTMLTextAreaElement).value === expected, `before ${uri}AFTER`)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments()), [], outcome)
+    }
+  } finally { await page.close() }
+})
+
+test("text fallbacks keep paste order and leave a newer focus in place", async () => {
+  const { page } = await setup("tauri", "local")
+  try {
+    await page.evaluate(() => {
+      (window as any).pendingReads = []
+      ;(window as any).__TAURI_INTERNALS__.invoke = (command: string) => {
+        if (command !== "read_clipboard_attachments") return Promise.resolve(null)
+        ;(window as any).clipboardReads++
+        return new Promise(resolve => (window as any).pendingReads.push(() => resolve([])))
+      }
+    })
+    const textarea = page.locator("textarea:visible").first()
+    const pending = (count: number) => page.waitForFunction(count => (window as any).pendingReads.length === count, count)
+    await nativePaste(page, "text/uri-list", "file://other-host/first", true)
+    await pending(1)
+    await nativePaste(page, "text/uri-list", "file://other-host/second", true)
+    await pending(2)
+    // The second read answers first; its text still lands after the first paste's.
+    await page.evaluate(() => (window as any).pendingReads[1]())
+    await page.evaluate(() => (window as any).pendingReads[0]())
+    await page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement).value
+      === "file://other-host/firstfile://other-host/second")
+
+    await textarea.fill("before AFTER")
+    await textarea.evaluate((input: HTMLTextAreaElement) => input.setSelectionRange(7, 7))
+    await nativePaste(page, "text/uri-list", `file://other-host/${"long ".repeat(40)}`, true)
+    await pending(3)
+    await page.locator("#outside").focus()
+    await page.evaluate(() => (window as any).pendingReads[2]())
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.equal(await textarea.inputValue(), "before [pasted #1]AFTER")
+    // Let the composer's timers and frames run before checking focus stayed put.
+    await page.evaluate(() => new Promise<void>(resolve => setTimeout(() => requestAnimationFrame(() => resolve()), 0)))
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "outside")
+  } finally { await page.close() }
+})
+
+test("native paste uses the shared size limits and unreadable-file warnings", async () => {
+  const { page } = await setup("tauri", "local")
+  try {
+    await page.evaluate(() => { (window as any).nativeClipboard = [
+      { name: "large.bin", size: 5 * 1024 * 1024 + 1, data: null, mime: "" },
+      { name: "missing.txt", size: 0, data: null, mime: "" },
+      { name: "good.txt", size: 3, data: "YWJj", mime: "" },
+    ] })
+    await nativePaste(page, "text/uri-list", "file:///large.bin")
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    await page.getByText(/large.bin: exceeds 5 MiB per file.*missing.txt: could not be read/s).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.attachments()[0].filename), "good.txt")
+  } finally { await page.close() }
+})
+
+test("native clipboard reads require a trusted paste in a local Tauri window", async () => {
+  for (const [host, context] of [["web", "local"], ["electron", "local"], ["tauri", "remote"], ["tauri", "local"]]) {
+    const { page } = await setup(host, context)
+    try {
+      if (host === "tauri" && context === "local") {
+        await page.locator("textarea:visible").first().evaluate(input => input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: new DataTransfer(), bubbles: true })))
+      } else await nativePaste(page)
+      assert.equal(await page.evaluate(() => (window as any).clipboardReads), 0)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments()), [])
+    } finally { await page.close() }
+  }
 })
 
 async function chooseDevice(page: Page) {

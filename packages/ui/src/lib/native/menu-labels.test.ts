@@ -32,7 +32,7 @@ describe("native menu labels", () => {
   it("keep the Tauri host's English defaults identical to the English messages", () => {
     const source = readFileSync(new URL("../../../../tauri-app/src-tauri/src/menu_labels.rs", import.meta.url), "utf8")
     const block = source.slice(source.indexOf("pub(crate) const DEFAULTS"), source.indexOf("];"))
-    const rust = Object.fromEntries([...block.matchAll(/\("(\w+)", "((?:[^"\\]|\\.)*)"\)/g)].map(([, key, text]) => [key, text]))
+    const rust = Object.fromEntries([...block.matchAll(/\(\s*"(\w+)",\s*"((?:[^"\\]|\\.)*)",?\s*\)/g)].map(([, key, text]) => [key, text]))
     assert.deepEqual(rust, DEFAULT_NATIVE_MENU_LABELS)
     assert.deepEqual(Object.keys(rust).sort(), Object.keys(NATIVE_MENU_LABEL_KEYS).sort())
   })

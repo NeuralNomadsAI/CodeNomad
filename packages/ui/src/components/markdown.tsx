@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
-import type { TextPart, RenderCache } from "../types/message"
+import type { TextPart, RenderCache, MermaidCodeBlock } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
@@ -23,6 +23,8 @@ import { showAlertDialog } from "../stores/alerts"
 import { createProjectServerMeta } from "../lib/project-server-meta"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { projectScope } from "../lib/backend-identity"
+import { backendOf } from "../lib/backend-client"
+import { useMarkdownMermaid } from "./markdown-mermaid"
 
 const log = getLogger("session")
 
@@ -35,6 +37,7 @@ interface ResolvedMarkdownSnapshot {
   highlightEnabled: boolean
   escapeRawHtml: boolean
   literalRawHtml: boolean
+  originRelativeImages: boolean
   defaultCodeBlockWrap: boolean
   partId: string | undefined
   cacheId: string
@@ -42,6 +45,7 @@ interface ResolvedMarkdownSnapshot {
   revealSteps: number
   /** A long window of a streaming reply: rendered at most every interval, unhighlighted. */
   deferred: boolean
+  truncated: boolean
 }
 
 let markdownModulePromise: Promise<MarkdownModule> | null = null
@@ -166,6 +170,7 @@ export function Markdown(props: MarkdownProps) {
   // Whether `html` is the Markdown render rather than its plain-text fallback. The
   // reveal line waits for it, so a reveal's anchor never sits on a prefix that re-lays out.
   const [rendered, setRendered] = createSignal(false)
+  const [mermaidBlocks, setMermaidBlocks] = createSignal<MermaidCodeBlock[]>([])
   const bounded = createTextWindow({
     source: () => props.source ?? (typeof props.part.text === "string" ? props.part.text : ""),
     limit: () => props.renderLimit ?? MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
@@ -245,6 +250,8 @@ export function Markdown(props: MarkdownProps) {
     const part = props.part
     const window = bounded.window()
     const literalRawHtml = Boolean(props.literalRawHtml)
+    let originRelativeImages = !props.instanceId
+    try { originRelativeImages = !props.instanceId || backendOf(props.instanceId).id === "local" } catch { /* Missing owners stay inert. */ }
     const boundedText = props.formatText ? props.formatText(window.text) : window.text
     const text = literalRawHtml ? boundedText : decodeHtmlEntitiesLocally(boundedText)
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
@@ -262,6 +269,7 @@ export function Markdown(props: MarkdownProps) {
       : resolvePartVersion(part, text)
     return {
       revealSteps: bounded.steps(),
+      truncated: window.hidden > 0,
       deferred,
       part,
       text,
@@ -269,6 +277,7 @@ export function Markdown(props: MarkdownProps) {
       highlightEnabled,
       escapeRawHtml,
       literalRawHtml,
+      originRelativeImages,
       defaultCodeBlockWrap,
       partId,
       cacheId,
@@ -281,24 +290,28 @@ export function Markdown(props: MarkdownProps) {
     sessionId: () => props.sessionId,
     scope: "markdown",
     cacheId: () => {
-      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, literalRawHtml, defaultCodeBlockWrap } = resolved()
-      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}`
+      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, literalRawHtml, originRelativeImages, defaultCodeBlockWrap } = resolved()
+      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}${originRelativeImages ? "" : ":owner"}`
     },
     version: () => resolved().version,
   })
+  useMarkdownMermaid({ root: () => containerRef, html, identity: () => resolved().cacheId,
+    blocks: mermaidBlocks, dark: () => Boolean(props.isDark), streaming: () => Boolean(props.streaming), onRendered: notifyRendered })
 
   const commitCacheEntry = (
     snapshot: ResolvedMarkdownSnapshot,
     renderedHtml: string,
-    options?: { cache?: boolean },
+    options?: { cache?: boolean; mermaid?: MermaidCodeBlock[] },
   ) => {
     // No `text`: a window is a slice that would retain the whole part beyond its
     // eviction while the cache accounts only for the slice.
     const cacheEntry: RenderCache = {
       html: renderedHtml,
       theme: snapshot.themeKey,
-      mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
+      mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}${snapshot.originRelativeImages ? "" : ":owner"}`,
+      mermaid: options?.mermaid,
     }
+    setMermaidBlocks(options?.mermaid ?? [])
     setHtml(renderedHtml)
     setRendered(true)
     if (options?.cache ?? true) {
@@ -313,17 +326,21 @@ export function Markdown(props: MarkdownProps) {
     // entering the synchronous parser, including retries with the same key.
     if (!isCurrentRender(request)) return
     markdown.setMarkdownTheme(snapshot.themeKey === "dark")
+    const diagrams: MermaidCodeBlock[] = []
     const rendered = await markdown.renderMarkdown(snapshot.text, {
       suppressHighlight: !snapshot.highlightEnabled,
       escapeRawHtml: snapshot.escapeRawHtml,
       literalRawHtml: snapshot.literalRawHtml,
+      originRelativeImages: snapshot.originRelativeImages,
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
+      onMermaid: block => diagrams.push(block),
+      truncated: snapshot.truncated,
     })
     if (!isCurrentRender(request)) return
     const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
 
     if (isCurrentRender(request)) {
-      commitCacheEntry(snapshot, rendered, { cache: shouldCache })
+      commitCacheEntry(snapshot, rendered, { cache: shouldCache, mermaid: diagrams })
     }
   }
 
@@ -352,7 +369,7 @@ export function Markdown(props: MarkdownProps) {
     previousSnapshot = snapshot
     // Cache hits must also invalidate any older render waiting to publish.
     const request = ++latestRenderRequest
-    const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
+    const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}${snapshot.originRelativeImages ? "" : ":owner"}`
 
     const cacheMatches = (cache: RenderCache | undefined) => {
       if (!cache) return false
@@ -362,6 +379,7 @@ export function Markdown(props: MarkdownProps) {
     const localCache = snapshot.part.renderCache
     if (localCache && cacheMatches(localCache)) {
       cancelDeferredRender()
+      setMermaidBlocks(localCache.mermaid ?? [])
       setHtml(localCache.html)
       setRendered(true)
       notifyRendered()
@@ -371,6 +389,7 @@ export function Markdown(props: MarkdownProps) {
     const globalCache = cacheHandle.get<RenderCache>()
     if (globalCache && cacheMatches(globalCache)) {
       cancelDeferredRender()
+      setMermaidBlocks(globalCache.mermaid ?? [])
       setHtml(globalCache.html)
       setRendered(true)
       notifyRendered()
@@ -388,6 +407,7 @@ export function Markdown(props: MarkdownProps) {
     }
     cancelDeferredRender()
     if (!(samePart && (revealing || previous.deferred))) {
+      setMermaidBlocks([])
       setHtml(renderFallbackHtml(snapshot.text))
       setRendered(false)
       notifyRendered()

@@ -1,19 +1,29 @@
 import assert from "node:assert/strict"
 import { execFile, spawn } from "node:child_process"
 import { EventEmitter, once } from "node:events"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { registerHooks } from "node:module"
+import os from "node:os"
+import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import test from "node:test"
+import test, { before, after } from "node:test"
+import { WindowsProcessWorker } from "./windows-process-worker"
 import { getProcessStartIdentityAsync } from "./client-state-process-identity"
 import {
   CLI_SHUTDOWN_COMMAND,
   CLI_STOP_DEADLINE_MS,
+  captureInitialProcessTree,
   captureProcessTree,
   forceCapturedProcessTree,
   mergeCapturedProcessTrees,
   stopManagedChild,
 } from "./process-stop"
+
+const windowsWorker = process.platform === "win32" ? new WindowsProcessWorker() : undefined
+before(async () => {
+  if (windowsWorker) assert.ok(await captureProcessTree(process.pid, "win32", windowsWorker.run, 15_000))
+})
+after(() => windowsWorker?.dispose())
 
 class FakeChild extends EventEmitter {
   writes: string[] = []
@@ -230,6 +240,95 @@ test("Windows tree capture ignores the system idle PID without rejecting the pro
   ])
 })
 
+test("Windows initial capture retains the full-precision spawn identity", async () => {
+  // Get-Process and CIM readings of the same Windows process (100 ns vs 1 us).
+  const identity = "win32:639295132047334593"
+  const result = await captureInitialProcessTree(100, "win32", (_command, args) => ({
+    status: 0,
+    stdout: `100|1|${args.join(" ").includes("GetProcessTimes") ? identity : "win32:639295132047334590"}\n`,
+    stderr: "",
+  }), () => identity)
+
+  assert.deepEqual(result, {
+    rootStartIdentity: identity,
+    tree: { platform: "win32", members: [{ pid: 100, startIdentity: identity }] },
+  })
+})
+
+test("Windows capture uses a native snapshot instead of the full CIM inventory", async () => {
+  await captureProcessTree(100, "win32", (_command, args) => {
+    const script = args.join(" ")
+    assert.match(script, /CreateToolhelp32Snapshot/)
+    assert.match(script, /GetProcessTimes/)
+    assert.doesNotMatch(script, /Get-CimInstance|Get-Process/)
+    return { status: 0, stdout: "100|1|win32:100\n", stderr: "" }
+  })
+})
+
+test("Windows confirms a large captured tree in one native-handle batch", async () => {
+  let commands = 0
+  const tree = { platform: "win32" as const, members: Array.from({ length: 500 }, (_, i) => ({ pid: i + 100, startIdentity: `win32:${i + 1}` })) }
+  assert.equal(await forceCapturedProcessTree(tree, () => assert.fail("per-PID identity lookup"), (_command, args) => {
+    commands++
+    assert.match(args.at(-1)!, /WaitForSingleObject/)
+    return { status: 0, stdout: "confirmed\n", stderr: "" }
+  }), true)
+  assert.equal(commands, 1)
+})
+
+test("a warm Windows worker captures and confirms nested descendants inside the enforcement reserve", {
+  skip: process.platform !== "win32",
+  timeout: 10_000,
+}, async () => {
+  const child = spawn(process.execPath, ["-e", `
+    const {spawn}=require('child_process');
+    const nested=spawn(process.execPath,['-e',"process.stdout.write('ready');setInterval(()=>{},1000)"],{windowsHide:true,stdio:['ignore','pipe','ignore']});
+    nested.stdout.once('data',()=>process.stdout.write(String(nested.pid)));
+    setInterval(()=>{},1000);
+  `], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] })
+  const exited = once(child, "exit")
+  let nestedPid: number | undefined
+  try {
+    nestedPid = Number(String((await once(child.stdout!, "data"))[0]))
+    assert.ok(nestedPid)
+    const deadlineAt = Date.now() + 5_000
+    const initial = await captureInitialProcessTree(child.pid!, "win32", windowsWorker!.run)
+    assert.ok(initial.tree)
+    assert.ok(initial.tree.members.some(({ pid }) => pid === nestedPid))
+    const latest = await captureProcessTree(child.pid!, "win32", windowsWorker!.run)
+    const tree = mergeCapturedProcessTrees(initial.tree, latest, child.pid!)!
+    assert.equal(await forceCapturedProcessTree(tree, undefined, windowsWorker!.run, process.kill, { deadlineAt }), true)
+    await exited
+    for (const { pid } of tree.members) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" })
+  } finally {
+    if (nestedPid) { try { process.kill(nestedPid, "SIGKILL") } catch {} }
+    child.kill("SIGKILL")
+    await exited
+  }
+})
+
+test("Windows tree identity matches persisted owners and cannot confirm a still-live process", {
+  skip: process.platform !== "win32",
+  timeout: 10_000,
+}, async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" })
+  const exited = once(child, "exit")
+  try {
+    assert.ok(child.pid)
+    const identity = await getProcessStartIdentityAsync(child.pid, 1_500)
+    assert.ok(identity)
+    const result = await captureInitialProcessTree(child.pid, "win32", windowsWorker!.run)
+    const member = result.tree?.members.find(({ pid }) => pid === child.pid)
+    assert.deepEqual(member, { pid: child.pid, startIdentity: identity })
+    assert.equal(await forceCapturedProcessTree({ platform: "win32", members: [member!] }, undefined,
+      () => ({ status: 0, stdout: "terminated\n", stderr: "" })), false)
+    assert.doesNotThrow(() => process.kill(child.pid!, 0))
+  } finally {
+    child.kill("SIGKILL")
+    await exited
+  }
+})
+
 test("a malformed descendant row invalidates the entire process snapshot", async () => {
   const list = (() => ({
     status: 0,
@@ -242,16 +341,13 @@ test("a malformed descendant row invalidates the entire process snapshot", async
 
 test("Windows verifies creation time and terminates through one native process handle", async () => {
   const commands: Array<{ command: string; args: readonly string[] }> = []
-  let terminated = false
   const tree = { platform: "win32" as const, members: [{ pid: 42, startIdentity: "win32:638800000000000000" }] }
   const runner = async (command: string, args: readonly string[]) => {
     commands.push({ command, args })
-    terminated = true
-    return { status: 0, stdout: "terminated\n", stderr: "" }
+    return { status: 0, stdout: "confirmed\n", stderr: "" }
   }
   const lookup = async () => {
-    assert.equal(terminated, true, "identity was queried separately before the handle-bound termination")
-    return undefined
+    assert.fail("Windows confirmation must use the native handles, without another shell per member")
   }
   const kill = (() => { const error = new Error("gone") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error }) as typeof process.kill
 
@@ -263,7 +359,9 @@ test("Windows verifies creation time and terminates through one native process h
   assert.match(script, /GetProcessTimes/)
   assert.match(script, /TerminateProcess/)
   assert.match(script, /CloseHandle/)
+  assert.match(script, /WaitForSingleObject/)
   assert.match(script, /638800000000000000/)
+  assert.doesNotMatch(script, /\$nativeTicks\s*[-%]=/)
   assert.doesNotMatch(script, /taskkill/i)
 })
 
@@ -273,22 +371,22 @@ test("Windows native-handle termination refuses a live process with a mismatched
 }, async () => {
   const tree = { platform: "win32" as const, members: [{ pid: process.pid, startIdentity: "win32:1" }] }
 
-  assert.equal(await forceCapturedProcessTree(tree), true)
+  assert.equal(await forceCapturedProcessTree(tree, undefined, windowsWorker!.run), true)
   assert.doesNotThrow(() => process.kill(process.pid, 0))
 })
 
-test("Windows native-handle termination accepts CIM precision for an owned process", {
+test("Windows native-handle termination accepts the captured full-precision identity for an owned process", {
   skip: process.platform !== "win32",
   timeout: 10_000,
 }, async (t) => {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" })
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" })
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL") })
   assert.ok(child.pid)
   const exited = once(child, "exit")
-  const tree = await captureProcessTree(child.pid, "win32")
+  const tree = await captureProcessTree(child.pid, "win32", windowsWorker!.run)
   assert.ok(tree)
 
-  assert.equal(await forceCapturedProcessTree(tree), true)
+  assert.equal(await forceCapturedProcessTree(tree, undefined, windowsWorker!.run), true)
   await exited
 })
 
@@ -296,14 +394,17 @@ test("Windows native-handle termination refuses a sub-microsecond identity misma
   skip: process.platform !== "win32",
   timeout: 10_000,
 }, async (t) => {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" })
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" })
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL") })
   assert.ok(child.pid)
-  const tree = await captureProcessTree(child.pid, "win32")
+  const tree = await captureProcessTree(child.pid, "win32", windowsWorker!.run)
   assert.ok(tree)
-  tree.members[0]!.startIdentity = `win32:${BigInt(tree.members[0]!.startIdentity.slice(6)) + 1n}`
+  const root = tree.members.find(({ pid }) => pid === child.pid)!
+  // Isolate the handle under test: ending its conhost also ends the console's
+  // lifetime, independently of whether this process handle passed validation.
+  tree.members = [{ ...root, startIdentity: `win32:${BigInt(root.startIdentity.slice(6)) + 1n}` }]
 
-  assert.equal(await forceCapturedProcessTree(tree), true)
+  assert.equal(await forceCapturedProcessTree(tree, undefined, windowsWorker!.run), true)
   assert.doesNotThrow(() => process.kill(child.pid!, 0))
 })
 
@@ -314,7 +415,7 @@ test("PID reuse is identity-guarded on Windows and POSIX", async () => {
     const tree = { platform, members: [{ pid: 42, startIdentity: platform === "win32" ? "win32:1" : "old" }] }
     const runTaskkill = ((_command: string, args: readonly string[]) => {
       commands.push([...args])
-      return { status: 0, stdout: "mismatch\n", stderr: "", pid: 1, signal: null, output: [] }
+      return { status: 0, stdout: "confirmed\n", stderr: "", pid: 1, signal: null, output: [] }
     })
     const kill = ((pid: number) => { signals.push(pid); return true }) as typeof process.kill
 
@@ -329,7 +430,7 @@ test("a stale captured identity cannot authorize termination after handle-bound 
   const tree = { platform: "win32" as const, members: [{ pid: 42, startIdentity: "win32:1" }] }
   const runTaskkill = (() => {
     commands++
-    return { status: 0, stdout: "mismatch\n", stderr: "", pid: 1, signal: null, output: [] }
+    return { status: 0, stdout: "confirmed\n", stderr: "", pid: 1, signal: null, output: [] }
   })
 
   assert.equal(await forceCapturedProcessTree(tree, undefined, runTaskkill, process.kill, {
@@ -338,7 +439,7 @@ test("a stale captured identity cannot authorize termination after handle-bound 
   assert.equal(commands, 1)
 })
 
-test("a successful snapshot omission still requires a liveness check", async () => {
+test("Windows requires handle-bound exit confirmation, not a termination acknowledgement", async () => {
   let lookups = 0
   let livenessChecks = 0
   const tree = { platform: "win32" as const, members: [{ pid: 42, startIdentity: "win32:1" }] }
@@ -354,8 +455,8 @@ test("a successful snapshot omission still requires a liveness check", async () 
     runTaskkill,
     kill,
   ), false)
-  assert.equal(lookups, 1)
-  assert.equal(livenessChecks, 1)
+  assert.equal(lookups, 0)
+  assert.equal(livenessChecks, 0)
 })
 
 test("enforcement awaits asynchronous commands without blocking timers", async () => {
@@ -367,7 +468,7 @@ test("enforcement awaits asynchronous commands without blocking timers", async (
     async () => undefined,
     (async () => {
       await delay(30)
-      return { status: 0, stdout: "terminated\n", stderr: "", pid: 1, signal: null, output: [] }
+      return { status: 0, stdout: "confirmed\n", stderr: "", pid: 1, signal: null, output: [] }
     }),
     (() => { const error = new Error("gone") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error }) as typeof process.kill,
   )).then((value) => { settled = true; return value })
@@ -415,17 +516,22 @@ test("tree enforcement stops launching commands when its deadline is spent", asy
   ] }
   const timeouts: number[] = []
   let now = 0
-  const runTaskkill = ((_command: string, _args: readonly string[], options: { timeout?: number }) => {
+  const runTaskkill = ((_command: string, _args: readonly string[], options: { timeout?: number; windowsFallbackScript?: string }) => {
+    assert.match(options.windowsFallbackScript!, /Get-CimInstance/)
     timeouts.push(options.timeout ?? 0)
     now += options.timeout ?? 0
-    return { status: 0, stdout: "terminated\n", stderr: "", pid: 1, signal: null, output: [] }
+    return { status: 0, stdout: "confirmed\n", stderr: "", pid: 1, signal: null, output: [] }
   })
 
   assert.equal(await forceCapturedProcessTree(tree, undefined, runTaskkill, process.kill, {
     deadlineAt: 2_500,
     now: () => now,
   }), false)
-  assert.deepEqual(timeouts, [1_500, 1_000])
+  assert.deepEqual(timeouts, [2_500])
+  assert.equal(await forceCapturedProcessTree(tree, undefined, () => assert.fail("no command after the deadline"), process.kill, {
+    deadlineAt: 2_500,
+    now: () => now,
+  }), false)
 })
 
 test("later captures preserve root ownership and add every descendant identity", async () => {
@@ -550,6 +656,38 @@ test("signal dispatch is not confirmation while the captured identity remains", 
   assert.equal(await forceCapturedProcessTree(tree, () => "owned", undefined, kill), false)
 })
 
+test("process manager spawns the backend with Electron's plain-Node runtime variables", async () => {
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "electron") {
+        return { shortCircuit: true, url: "data:text/javascript,export const app={isPackaged:false,getAppPath(){return ''}}" }
+      }
+      return nextResolve(specifier, context)
+    },
+  })
+  const directory = await mkdtemp(path.join(os.tmpdir(), "backend-spawn-env-"))
+  const saved = process.env.CODENOMAD_TEST_BACKEND_ENV
+  try {
+    const { CliProcessManager } = await import("./process-manager")
+    const output = path.join(directory, "env.json")
+    const entry = path.join(directory, "backend.cjs")
+    // The fake backend records what it received and exits before readiness.
+    await writeFile(entry, "require('fs').writeFileSync(process.env.CODENOMAD_TEST_BACKEND_ENV, JSON.stringify("
+      + "{ run: process.env.ELECTRON_RUN_AS_NODE, asar: process.env.ELECTRON_NO_ASAR })); process.exit(3)\n")
+    process.env.CODENOMAD_TEST_BACKEND_ENV = output
+    const manager = new CliProcessManager()
+    ;(manager as any).resolveCliEntry = async () => ({ entry, runner: "node", nodeBinaryPath: process.execPath })
+    await assert.rejects(manager.start({ dev: false }))
+    assert.deepEqual(JSON.parse(await readFile(output, "utf8")), { run: "1", asar: "1" })
+    await manager.shutdown()
+  } finally {
+    if (saved === undefined) delete process.env.CODENOMAD_TEST_BACKEND_ENV
+    else process.env.CODENOMAD_TEST_BACKEND_ENV = saved
+    hooks.deregister()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("process manager keeps incomplete shutdown terminal and interrupts a pending startup", async () => {
   const hooks = registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -562,6 +700,13 @@ test("process manager keeps incomplete shutdown terminal and interrupts a pendin
   try {
     const { CliProcessManager } = await import("./process-manager")
     const manager = new CliProcessManager()
+    ;(manager as any).resolveProdEntry = () => "/packaged/server/dist/bin.js"
+    const entry = await (manager as any).resolveCliEntry({ dev: false })
+    assert.equal(entry.nodeBinaryPath, process.execPath, "packaged server uses Electron's executable")
+    assert.deepEqual((manager as any).buildDirectSpawn(entry, ["--http-port", "0"]), {
+      command: process.execPath,
+      args: ["--experimental-specifier-resolution=node", "/packaged/server/dist/bin.js", "--http-port", "0"],
+    })
     let enforcements = 0
     ;(manager as EventEmitter).on("shutdownIncomplete", () => { enforcements++ })
 

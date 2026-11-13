@@ -2,11 +2,12 @@ import { For, Show, createEffect, createMemo, createSignal, createUniqueId } fro
 import { DragDropProvider, DragDropSensors, SortableProvider, closestCenter, type DragEventHandler } from "@thisbeyond/solid-dnd"
 import { Plus } from "lucide-solid"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
-import { missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
+import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
+import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import type { MissionRepositoryDiscovery } from "./mission-editor-repository"
 import { useI18n } from "../lib/i18n"
-import { SettingsInfoLink } from "./settings/settings-info-link"
-import { openSettingsRow } from "../stores/settings-screen"
-import { MissionSchedulingCriterion, type MissionSchedulingSourceLists } from "./mission-scheduling-sources"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { MissionSchedulingCriterion, type MissionSchedulingSourceLists, type MissionSourcePage, type SelectedSource } from "./mission-scheduling-sources"
 import { isMissionEventKind, missionCardConnectors, missionSchedulingPolicy, MissionSchedulingError, MISSION_CRITERIA_LIMIT, newMissionCriterion,
   newMissionSchedulingDraft, type MissionSchedulingDraft } from "./mission-scheduling-data"
 
@@ -15,39 +16,50 @@ export type MissionSchedulingLock = "uncertain" | "passage" | "launched-once" | 
 /** Shared controlled scheduling fields. This component performs no reads or mutations. */
 export function MissionScheduling(props: {
   draft: MissionSchedulingDraft; directory?: string; sources: MissionSchedulingSourceLists
+  repository?: MissionRepositoryDiscovery
+  paging?: (kind: SelectedSource, value?: string) => MissionSourcePage | undefined
   capability: "available" | "activatable" | "missing" | "loading"
+  active?: () => boolean
   lockReason?: MissionSchedulingLock | null; disabled?: boolean
   onChange: (draft: MissionSchedulingDraft) => void
   onPolicy: (policy: MissionLaunchPolicy | undefined) => void
 }) {
   const { t } = useI18n(), description = createUniqueId(), errorID = createUniqueId(), zoneList = createUniqueId(), whenID = createUniqueId()
   const zones = (Intl as { supportedValuesOf?: (key: "timeZone") => string[] }).supportedValuesOf?.("timeZone") ?? []
-  let disclosure: HTMLDetailsElement | undefined
   const patch = (change: Partial<MissionSchedulingDraft>) => props.onChange({ ...props.draft, ...change })
   const patchCriteria = (next: MissionSchedulingDraft["criteria"]) => patch({ criteria: next })
   const retained = () => props.draft.stored?.reason
-  const locked = () => !!props.disabled || !!props.lockReason || !!retained()
+  const locked = () => !!props.disabled || !!props.lockReason || !!retained() || props.active?.() === false
   const unavailable = () => props.capability === "missing" || props.capability === "loading"
   const criteria = () => props.draft.criteria
   const result = createMemo((): { error?: string; index?: number; policy?: MissionLaunchPolicy } => {
     try {
-      const policy = missionSchedulingPolicy(props.draft, props.directory), model = missionLaunchModel(policy)
-      const calendar = model.schedules.length > 0 || model.events.length > 0
+      const policy = missionSchedulingPolicy(props.draft, props.directory), calendar = requiresMissionCalendar(policy)
       if (props.capability === "loading" && calendar) return {}
       if (unavailable() && calendar) return { error: "capability" }
-      const missing = criteria().findIndex(row => isMissionEventKind(row.kind) && row.kind !== "files-changed"
+      const missing = criteria().findIndex(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && row.kind !== "repository-activity" && !isMissionGithubKind(row.kind)
         && !props.sources[row.kind]?.some(item => item.id === row.source))
-      if (missing >= 0) return { error: "source", index: missing }
+      if (missing >= 0) return props.paging?.(criteria()[missing].kind as SelectedSource, criteria()[missing].source)?.loading() ? {} : { error: "source", index: missing }
       return { policy }
     } catch (error) {
       return error instanceof MissionSchedulingError ? { error: error.field, index: error.index } : { error: "empty" }
     }
   })
   createEffect(() => props.onPolicy(result().policy))
-  createEffect(() => { if (result().error && disclosure) disclosure.open = true })
+  const visibleError = createMemo(() => {
+    const error = result(), row = error.index === undefined ? undefined : criteria()[error.index]
+    if (error.error === "source" && row && !(row.kind === "files-changed" ? row.files.trim() : row.source.trim())) return undefined
+    return error.error
+  })
+  const errorText = () => {
+    if (!visibleError()) return undefined
+    const row = result().index === undefined ? undefined : criteria()[result().index!]
+    return t(visibleError() === "source" ? row?.kind === "files-changed" ? "missions.scheduling.error.files" : "missions.scheduling.chooseSource"
+      : `missions.scheduling.error.${visibleError()}`)
+  }
   const reason = () => props.lockReason ? t(`missions.scheduling.lock.${props.lockReason}`)
-    : unavailable() || props.capability === "activatable" ? t(`missions.scheduling.capability.${props.capability}`) : undefined
-  const rowError = (index: number) => result().index === index ? errorID : undefined
+    : props.capability === "missing" && result().error !== "capability" ? t("missions.scheduling.capability.missing") : undefined
+  const rowError = (index: number) => visibleError() && result().index === index ? errorID : undefined
   const ids = createMemo(() => criteria().map(row => row.id), undefined, { equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]) })
   // While dragging, the connectors follow the order the cards are shown in (the sortable's
   // projected order); the stored order changes only on drop.
@@ -87,10 +99,10 @@ export function MissionScheduling(props: {
   const systemZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   let zoneLatched = false
   const zoneShown = createMemo(() => zoneLatched ||= props.draft.zone !== systemZone || result().error === "zone")
-  const summary = () => retained() ? t("missions.scheduling.retained.title") : !criteria().length ? t("missions.scheduling.once")
-    : t(criteria().length === 1 ? "missions.scheduling.criteria.one" : "missions.scheduling.criteria.other", { count: String(criteria().length) })
-  return <details ref={disclosure} class="mission-scheduling mission-profile-optional">
-    <summary>{t("missions.scheduling.title")} · {summary()}</summary>
+  return <section class="mission-scheduling" aria-label={t("missions.scheduling.title")}>
+    <h4 id={whenID}>{t("missions.scheduling.title")}
+      <SettingsInfoTip text={t("missions.scheduling.whenHint")} help={{ page: "missions", anchor: "native-scheduling" }} />
+    </h4>
     <Show when={reason()}>{text => <p id={description} role="status">{text()}</p>}</Show>
     <Show when={retained()}>{reason => <section aria-label={t("missions.scheduling.retained.title")}>
       <p role="status">{t(`missions.scheduling.retained.${reason()}`)}</p>
@@ -99,22 +111,16 @@ export function MissionScheduling(props: {
         onClick={() => props.onChange(newMissionSchedulingDraft(props.draft.zone))}>{t("missions.scheduling.retained.replace")}</button>
     </section>}</Show>
     <Show when={!retained()}>
-      {/* Outside the fieldset: the information and its link stay available while editing is locked. */}
-      <div class="mission-scheduling-when-head">
-        <span id={whenID} class="mission-scheduling-label">{t("missions.scheduling.when")}</span>
-        {/* One "i" ending with a link only: Missions never reads or changes this independent setting. */}
-        <SettingsInfoLink title={t("missions.scheduling.when")} text={t("missions.scheduling.whenHint")} link={t("settings.loginStart.title")}
-          onLink={() => void openSettingsRow("opencode", "opencode-login-start")} />
-      </div>
-      <fieldset disabled={locked()} aria-describedby={[reason() ? description : "", result().error ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!result().error}>
+      <fieldset disabled={locked()} aria-describedby={[reason() ? description : "", visibleError() ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!visibleError()}>
       <div ref={list} class="mission-scheduling-when" role="group" aria-labelledby={whenID}>
-        {/* Launch when titles the list; each later card shows its connector to the card above. */}
+        {/* Scheduling titles the list; each later card shows its connector to the card above. */}
         <DragDropProvider collisionDetector={closestCenter} onDragOver={over} onDragEnd={dropped}>
           <DragDropSensors>
             <SortableProvider ids={ids()}>
               <For each={ids()}>{(id, index) => {
                 const row = () => criteria().find(item => item.id === id)!
-                return <MissionSchedulingCriterion row={row()} number={index() + 1} sources={props.sources} errorID={rowError(index())}
+                return <MissionSchedulingCriterion row={row()} number={index() + 1} sources={props.sources} repository={props.repository} errorID={rowError(index())}
+                  errorText={rowError(index()) ? errorText() : undefined} paging={props.paging} disabled={locked()}
                   sortable={criteria().length > 1} connector={connectorOf(id)}
                   onChange={value => patchCriteria(criteria().map(item => item.id === id ? value : item))}
                   onMove={delta => reorder(index(), index() + delta)}
@@ -124,7 +130,7 @@ export function MissionScheduling(props: {
           </DragDropSensors>
         </DragDropProvider>
         <p class="sr-only" aria-live="polite">{moved()}</p>
-        <button type="button" class="window-action mission-scheduling-add" disabled={unavailable() || criteria().length >= MISSION_CRITERIA_LIMIT}
+        <button type="button" class="button-primary mission-scheduling-add" disabled={unavailable() || criteria().length >= MISSION_CRITERIA_LIMIT}
           onClick={() => patchCriteria([...criteria(), newMissionCriterion("daily", criteria())])}><Plus class="h-3.5 w-3.5" aria-hidden="true" />{t("missions.scheduling.addCriterion")}</button>
       </div>
       <Show when={criteria().length && zoneShown()}>
@@ -134,6 +140,6 @@ export function MissionScheduling(props: {
         <datalist id={zoneList}><For each={zones}>{zone => <option value={zone} />}</For></datalist>
       </Show>
     </fieldset></Show>
-    <Show when={result().error}>{error => <p id={errorID} class="mission-create-field-error" role="alert">{t(`missions.scheduling.error.${error()}`)}</p>}</Show>
-  </details>
+    <Show when={visibleError() && result().index === undefined}><p id={errorID} class="mission-create-field-error" role="alert">{errorText()}</p></Show>
+  </section>
 }
