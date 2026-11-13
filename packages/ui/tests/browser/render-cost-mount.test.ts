@@ -27,12 +27,14 @@ const THROTTLE_RATE = 4
  */
 const FIRST_OPEN_LONGTASK_MS = 4_000
 /**
- * Timing backstop for switching between two long sessions (ms). Today's worst
- * single longtask there measures 3.6-4.1s idle (store hydration, shell mount
- * and scroll settling each still run as one task; follow-up work), up to
- * about 7s on a busy host.
+ * Timing backstop for switching between two long sessions (ms). With scroll
+ * observations coalesced to one per animation frame and each deferred
+ * highlight render its own idle drain, the worst single longtask there
+ * measures about 1.5s at this throttle rate on a loaded host (about 2.8-3.4s
+ * before both); this bound backstops gross regressions and stays quiet on a
+ * busier machine.
  */
-const SUBSEQUENT_SWITCH_LONGTASK_MS = 9_000
+const SUBSEQUENT_SWITCH_LONGTASK_MS = 3_000
 /** A switch counts as settled once no longtask occurred for this long (ms). */
 const QUIET_MS = 1_200
 
