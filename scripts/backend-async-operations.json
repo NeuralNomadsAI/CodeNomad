@@ -86,7 +86,7 @@
   "components/provider-auth/provider-model-visibility-manager.tsx": ["delegated:backend x5"],
   "components/remote-server-dialog.tsx": ["api-client:listSshHosts x2","continuation:createEffect x2"],
   "components/session-list.tsx": ["continuation:createEffect x3","continuation:delegated x1","continuation:setTimeout x1","delegated:backend x14"],
-  "components/remote-server-browser.tsx": ["api-client:browseRemoteServer x1","api-client:connectRemoteServer x1","continuation:createEffect x1","continuation:onMount x1","delegated:backend x18"],
+  "components/remote-server-browser.tsx": ["api-client:browseRemoteServer x1","api-client:connectRemoteServer x1","continuation:createEffect x1","continuation:onMount x1","delegated:backend x17"],
   "components/settings-screen.tsx": ["delegated:backend x2"],
   "components/settings/agent-memory-editor.tsx": ["delegated:backend x2"],
   "components/settings/agent-memory-settings-card.tsx": ["continuation:onMount x1","continuation:server-events:on x1","continuation:server-events:onOpen x1","delegated:backend x12","server-events:on x1","server-events:onOpen x1"],

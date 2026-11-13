@@ -211,6 +211,60 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await page.close()
     }
   })
+  for (const mode of ["different-server", "cancel-reselect"] as const) await t.test(`${mode} disposes the old dialog before opening only the current selection`, async () => {
+    const page = await prepare(), before = mutations.length
+    holdCreate = true
+    const entered = new Promise<void>(resolve => { createEntered = resolve })
+    const cancelled = new Promise<void>(resolve => { cancelEntered = resolve })
+    const target = mode === "different-server" ? "b" : "a"
+    try {
+      await select(page, "a")
+      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await entered
+      await page.evaluate(() => {
+        ;(window as any).oldBrowser = document.querySelector(".remote-server-browser")
+        ;(window as any).oldDialog = document.querySelector("[role=dialog]")
+      })
+      if (mode === "different-server") await select(page, "b")
+      else {
+        await page.keyboard.press("Escape")
+        await dialog(page).waitFor({ state: "detached" })
+      }
+      await cancelled
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
+        tabs: [{ id: "instance:w", kind: "instance" }], active: "instance:w",
+      })
+      if (mode === "different-server") {
+        await dialog(page).getByRole("heading", { name: "Beta", exact: true }).waitFor()
+        await page.locator(".remote-server-browser").filter({ has: page.getByRole("heading", { name: "Beta", exact: true }) })
+          .getByRole("button", { name: "Same", exact: true }).waitFor()
+        assert.equal(await page.locator(".remote-server-browser").count(), 1)
+        const ids = await dialog(page).locator("[id]").evaluateAll(nodes => nodes.map(node => node.id))
+        assert.equal(new Set(ids).size, ids.length, "dialog IDs remain unique")
+      }
+      assert.equal(await page.evaluate(() => (window as any).oldBrowser.isConnected), false)
+      assert.equal(await page.evaluate(() => (window as any).oldDialog.isConnected), false)
+      holdCreate = false
+      const send = hold; hold = undefined; send?.()
+      if (mode === "cancel-reselect") await select(page, "a")
+      const released = page.waitForResponse(response => response.url().includes(`/backends/${target}/api/workspaces/w/creation/release`))
+      void released.catch(() => undefined)
+      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await dialog(page).waitFor({ state: "detached" })
+      await released
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
+        tabs: [{ id: "instance:w", kind: "instance" }, { id: `instance:${target}~w`, kind: "instance" }],
+        active: `instance:${target}~w`,
+      })
+      assert.deepEqual((await page.evaluate(() => (window as any).remoteOpenFixture.records())).sort(), ["w", `${target}~w`].sort())
+      assert.deepEqual(mutations.slice(before), ["a:POST", "a:/creation/cancel:POST", `${target}:POST`, `${target}:/w/creation/release:POST`])
+    } finally {
+      holdCreate = false
+      const send = hold; hold = undefined; send?.()
+      createEntered = cancelEntered = undefined
+      await page.close()
+    }
+  })
   await t.test("Preferences sends only the selection through each native adapter", async () => {
     for (const host of ["electron", "tauri"] as const) {
       const page = await prepare(host, true)
@@ -236,10 +290,17 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   })
   await t.test("flag revocation cancels browsing without affecting a local tab", async () => {
     const page = await prepare()
+    const before = mutations.length
     await select(page, "a")
     await dialog(page).getByRole("button", { name: "Same", exact: true }).waitFor()
     await page.evaluate(() => (window as any).remoteOpenFixture.disable())
     await dialog(page).waitFor({ state: "detached" })
+    const rejected = await page.evaluate(intent => {
+      try { window.__CODENOMAD_SELECT_SERVER__!(intent); return false }
+      catch { return true }
+    }, { id: "a", baseUrl: a.origin, skipTlsVerify: false })
+    assert.equal(rejected, true, "stale native selection fails closed")
+    assert.equal(mutations.length, before)
     assert.equal(await page.getByRole("tab").count(), 1)
     await page.close()
   })

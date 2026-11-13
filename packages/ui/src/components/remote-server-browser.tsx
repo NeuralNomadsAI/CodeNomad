@@ -128,11 +128,13 @@ function RemoteServerBrowser(props: { profile: RemoteServerProfile; onOpened?: (
 
 export default function RemoteServerProjectDialog(props: { onOpened?: () => void }) {
   createEffect(() => { if (remoteServerSelection() && !selectedRemoteProfile()) closeRemoteServer() })
-  return <Dialog open={!!selectedRemoteProfile()} onOpenChange={open => { if (!open) closeRemoteServer() }}>
-    <Dialog.Portal><Dialog.Overlay class="modal-overlay" />
-      <Dialog.Content class="modal-surface window-shell remote-server-project-window">
-        <Show when={selectedRemoteProfile()} keyed>{profile => <RemoteServerBrowser profile={profile} onOpened={props.onOpened} />}</Show>
-      </Dialog.Content>
-    </Dialog.Portal>
-  </Dialog>
+  return <Show when={selectedRemoteProfile()} keyed>{profile =>
+    <Dialog open onOpenChange={open => { if (!open) closeRemoteServer() }}>
+      <Dialog.Portal><Dialog.Overlay class="modal-overlay" />
+        <Dialog.Content class="modal-surface window-shell remote-server-project-window">
+          <RemoteServerBrowser profile={profile} onOpened={props.onOpened} />
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog>
+  }</Show>
 }

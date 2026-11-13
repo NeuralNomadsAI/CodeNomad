@@ -5,6 +5,7 @@ Closing project tabs, temporary workspaces, the new-instance launcher and the Gi
 ## Agent conventions
 
 - Selecting the current saved-server policy preserves the picker intent and its in-flight opening. A changed origin, TLS or SSH policy creates a new selection; the picker lifetime and workspace receipt own cancellation.
+- The saved-server picker keys the entire Dialog/Portal lifetime by the validated profile. Replacing the server disposes its browser, pending work and ARIA title before the next dialog mounts. Same-policy reselection retains the current lifetime; cancellation followed by reselection starts a fresh one.
 
 - Experimental multi-backend opening uses `remote-project-open.ts` and `remote-server-browser.tsx`: the host's saved policy is captured as an immutable selection, rechecked before admission and publication, then `backendRegistry.ensure` supplies the exact client to `createInstance`. Caller cancellation owns only that creation receipt. The main renderer selects an ordinary instance tab; its server icon and visible server name distinguish remote projects, including duplicate server labels. Browse, typed paths and remote recents share this flow. Clone and temporary actions retain their local home-page owner. Explicit Retry and successful authentication recover a retained inventory through `retryWorkspaces`; incompatible metadata and HTTP 426 refuse admission.
 
