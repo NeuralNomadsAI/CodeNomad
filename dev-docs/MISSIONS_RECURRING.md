@@ -333,8 +333,13 @@ adapter, with zero model requests.
 
 `GET /api/workspaces/:id/missions/scheduled/capabilities` reads the acquired
 connection's consumed API contract, effective schedules flag and origin. Its
-read-only activation plan exposes the target scopes/paths or a refusal category.
-The native document preparation endpoint owns authenticated configuration writes.
+read-only activation plan exposes the project target/path or a refusal category,
+responsible layer and discovered path. Native `scheduleFlag` resolution supplies
+the effective state and provenance. Environment OFF and every discovered explicit
+document OFF refuse preparation, including an OFF hidden by a higher ON.
+The native document preparation endpoint owns authenticated project-only
+configuration writes; an already enabled Location receives a zero-target ready
+proof. Existing ready proofs are retained and revalidated read-only.
 Both display routes revalidate workspace, connection, physical checkout and request
 lifetime after asynchronous work. Missing methods or capabilities return an
 explicit unavailable response. UI reads use the shared secondary HTTP budget.

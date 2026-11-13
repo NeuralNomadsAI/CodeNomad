@@ -52,6 +52,7 @@ test("identical inline request/response structures qualify like refs, while malf
 test("read-only reader keeps API support, effective per-Location flag and origin separate and fences replacement", async () => {
   let current = true, owned = true, requests = 0, enabled = false
   const connection: any = { endpoint: { url: "http://127.0.0.1:1234" }, assertCurrent() { if (!current) throw Error("replaced") },
+    client: { rpc: () => ({ scheduleFlag: async () => ({ enabled, provenance: enabled ? "experimental-block" : "channel-default" }) }) },
     fetch: async (url: URL, options: RequestInit) => {
       requests++; assert.equal(url.pathname, "/openapi.json"); assert.equal(options.method, undefined)
       return Response.json(contract())
@@ -66,10 +67,29 @@ test("read-only reader keeps API support, effective per-Location flag and origin
   const reader = new NativeScheduleCapabilityReader(documents, { getSharedServiceConnection: async () => connection } as any)
   const snapshot = await reader.read("w", { directory: "/project" })
   assert.deepEqual(snapshot.api, { available: true }); assert.equal(snapshot.enabled, false)
-  assert.equal(snapshot.origin, "/project/opencode.jsonc")
+  assert.equal(snapshot.origin, null)
   enabled = true; assert.equal((await reader.read("w", { directory: "/project" })).enabled, true)
   owned = false; const before = requests
   await assert.rejects(reader.read("w", { directory: "/other" }), /unowned/); assert.equal(requests, before)
   owned = true; current = false
   await assert.rejects(reader.read("w", { directory: "/project" }), /replaced/)
+})
+
+test("capability trusts daemon environment, all-flags and channel defaults rather than document-only inference", async () => {
+  let flag = { enabled: true, provenance: "all-flags" }
+  const connection: any = { endpoint: { url: "http://127.0.0.1:1234" }, assertCurrent() {},
+    fetch: async () => Response.json(contract()), client: { rpc: () => ({ scheduleFlag: async () => flag }) } }
+  const documents: any = { readConfigDocuments: async () => ({ location: { directory: "/project" }, documents: [], entries: [
+    { type: "document", path: "/global/opencode.jsonc", info: { experimental: { all_flags: true } } },
+    { type: "document", path: "/project/opencode.jsonc", info: { experimental: {} } },
+  ] }) }
+  const reader = new NativeScheduleCapabilityReader(documents, { getSharedServiceConnection: async () => connection } as any)
+  assert.equal((await reader.read("w", { directory: "/project" })).origin, "/global/opencode.jsonc")
+  for (const provenance of ["environment", "channel-default"]) for (const enabled of [true, false]) {
+    flag = { enabled, provenance }
+    const view = await reader.read("w", { directory: "/project" })
+    assert.equal(view.enabled, enabled); assert.equal(view.origin, null); assert.equal(view.provenance, provenance)
+  }
+  flag = { enabled: true, provenance: "unknown" }
+  await assert.rejects(reader.read("w", { directory: "/project" }))
 })

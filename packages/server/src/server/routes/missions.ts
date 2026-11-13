@@ -37,7 +37,7 @@ import type { NativeScheduleCapabilityReader } from "../../opencode/native-sched
 
 interface MissionRouteDeps {
   scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
-  scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply">
+  scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply" | "verify">
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
     | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
     | "getHostPathForServicePath" | "getServiceWslDistro">
