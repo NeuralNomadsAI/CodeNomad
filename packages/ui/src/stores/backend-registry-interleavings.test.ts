@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { createBackendClient } from "../lib/backend-client"
-import { BackendEvents } from "../lib/backend-events"
+import { BackendEvents, backendEvents } from "../lib/backend-events"
+import { instances, refreshWorkspaceList, removeInstance } from "./instances"
 import { createBackendRegistry } from "./backend-registry"
 import { CODENOMAD_API_CONTRACT } from "../../../server/src/meta-contract"
 
@@ -19,7 +20,7 @@ function setup() {
     eventSource: () => { streams++; return { onopen: null, onerror: null, addEventListener() {}, close() {} } as unknown as EventSource } })
   const events = new BackendEvents()
   const registry = createBackendRegistry({ enabled: () => true, profiles: () => [{ id: "a", name: "A", baseUrl: "http://a.test", skipTlsVerify: false, createdAt: "", updatedAt: "" }],
-    events, createClient: () => client, register: () => () => {}, loadWorkspaces: async () => load() })
+    events, createClient: () => client, register: () => () => {}, loadWorkspaces: async () => { await load(); return true } })
   // Exercise the actual connection path, settling on its promise rather than its retry timer.
   const transport = client.events as unknown as { connect(): Promise<void>; connection: unknown; retryTimer: unknown }
   return { registry, client, meta, transport, streams: () => streams,
@@ -126,4 +127,60 @@ test("healthy reconnect preserves pending inventory success authority", async ()
     assert.equal(h.registry.state("a"), "compatible")
     assert.equal(h.streams(), 2)
   } finally { h.dispose() }
+})
+
+test("a retry superseded by a failed production reconnect cannot repair inventory availability", async t => {
+  const previous = globalThis.window
+  Object.assign(globalThis, { window: { location: { origin: "http://relay.test" } } })
+  const entered = deferred<void>(), held = deferred<void>(), reconnected = deferred<void>()
+  let calls = 0, open!: () => void, offline = true
+  const client = createBackendClient({ id: "inventoryRace", baseUrl: "http://relay.test",
+    fetcher: async () => Response.json({ apiContract: CODENOMAD_API_CONTRACT, serverId: "race" }),
+    eventSource: () => {
+      const source = { onopen: null as (() => void) | null, onerror: null, addEventListener() {}, close() {} }
+      open = () => source.onopen?.()
+      return source as unknown as EventSource
+    },
+  })
+  t.mock.method(client.api, "fetchWorkspaces", async () => {
+    calls++
+    if (calls === 1) throw new Error("initial inventory unavailable")
+    if (calls === 2) {
+      entered.resolve()
+      await held.promise
+      return [{ id: "w", path: "/race", status: "starting", proxyPath: "", createdAt: "", updatedAt: "" }]
+    }
+    if (offline) {
+      reconnected.resolve()
+      throw new Error("reconnect inventory unavailable")
+    }
+    return [{ id: "w", path: "/race", status: "starting", proxyPath: "", createdAt: "", updatedAt: "" }]
+  })
+  const registry = createBackendRegistry({ enabled: () => true, events: backendEvents,
+    profiles: () => [{ id: client.id, name: "Race", baseUrl: "http://race.test", skipTlsVerify: false, createdAt: "", updatedAt: "" }],
+    createClient: () => client, loadWorkspaces: (owner, signal) => refreshWorkspaceList(owner.id, owner.api, signal),
+  })
+  t.after(() => { held.resolve(); registry.dispose(); removeInstance("inventoryRace~w", { authoritative: false });
+    Object.assign(globalThis, { window: previous }) })
+  await registry.ensure(client.id)
+  assert.equal(registry.state(client.id), "unreachable")
+  const retry = registry.retryWorkspaces(client.id)
+  const outcome = retry.then(() => "success", () => "failed")
+  await entered.promise
+  open()
+  await reconnected.promise
+  await new Promise<void>(resolve => setImmediate(resolve))
+  held.resolve()
+  await outcome
+  assert.equal(calls, 3)
+  assert.equal(instances().has("inventoryRace~w"), false)
+  assert.equal(registry.state(client.id), "unreachable")
+  assert.equal(await outcome, "failed")
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(calls, 3, "supersession never launches an automatic retry")
+  offline = false
+  assert.equal(await registry.retryWorkspaces(client.id), client)
+  assert.equal(registry.state(client.id), "compatible")
+  assert.equal(instances().has("inventoryRace~w"), true)
+  assert.equal(calls, 4)
 })

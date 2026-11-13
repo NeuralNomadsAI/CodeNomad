@@ -66,7 +66,7 @@ for (const mode of ["retarget-auth", "retarget-anonymous", "remove-recreate", "s
     const make = (id: string) => createRemoteBackendClient(id, { bindRelayAuthority: true, fetcher,
       eventSource: url => { streams.push(url); return { close() {}, addEventListener() {}, onopen: null, onerror: null } as unknown as EventSource } })
     const registry = createBackendRegistry({ enabled: () => true, profiles, events, createClient: make,
-      loadWorkspaces: async (client, signal) => { const response = await client.fetch(client.url("/api/workspaces"), { signal }); assert.equal(response.status, 200) },
+      loadWorkspaces: async (client, signal) => { const response = await client.fetch(client.url("/api/workspaces"), { signal }); assert.equal(response.status, 200); return true },
     })
     t.after(async () => {
       registry.dispose(); manager.close(); app.server.closeAllConnections(); await app.close(); await a.close(); await b.close()

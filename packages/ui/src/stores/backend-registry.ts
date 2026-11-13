@@ -31,7 +31,8 @@ export interface BackendRegistryOptions {
   createClient?: (id: string) => BackendClient
   register?: (client: BackendClient) => () => void
   events?: BackendEvents
-  loadWorkspaces(client: BackendClient, signal: AbortSignal): Promise<void>
+  /** False marks a superseded read; only a current completion can repair availability. */
+  loadWorkspaces(client: BackendClient, signal: AbortSignal): Promise<boolean>
 }
 
 /** Owns candidates, attachment authority and disposal; observing profiles never probes them. */
@@ -153,7 +154,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         if (states[id] !== "compatible") return client
         // Start the stream first; domain reads always retain this exact attachment.
         const signal = events.signal(id)!
-        await options.loadWorkspaces(client, signal)
+        if (!await options.loadWorkspaces(client, signal)) throw new Error("Backend inventory superseded")
         return current(id, entry) ? client : undefined
       } catch {
         if (current(id, entry) && !entry.detach) detach(id, "unreachable")
@@ -185,7 +186,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         if (!await validate(id, entry, signal, false) || !active()) throw unavailable()
         const health = entry.health
         try {
-          await options.loadWorkspaces(entry.client, signal!)
+          if (!await options.loadWorkspaces(entry.client, signal!)) throw unavailable()
         } catch (error) {
           if (active()) {
             entry.inventoryFailed = true

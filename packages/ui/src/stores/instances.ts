@@ -1361,23 +1361,23 @@ function clearReloadableInstanceState(instanceId: string): void {
   markPendingRecovery(instanceId, true)
 }
 
-/** Reconciles one backend's workspaces; another backend's instances and tabs are left untouched. */
+/** Reconciles one backend; false means this read had no current publication authority. */
 async function refreshWorkspaceList(
   backendId: BackendId = LOCAL_BACKEND_ID,
   api: Pick<typeof serverApi, "fetchWorkspaces"> = serverApi,
   signal = serverEvents.signal(backendId),
-): Promise<void> {
-  if (signal?.aborted) return
+): Promise<boolean> {
+  if (signal?.aborted) return false
   // Preferences imports shared controls, but does not own workspace/session
   // hydration. Its provider editor receives an explicit location from the host.
-  if (!usesClientState()) return
+  if (!usesClientState()) return false
   if (backendId !== LOCAL_BACKEND_ID && api === serverApi) throw new Error("A non-local workspace list needs its backend API")
   const requestFence = workspaceListReconciliationFence.begin(backendId)
   const removalCandidates = new Set([...instances().values()]
     .filter((instance) => backendIdOf(instance) === backendId).map(({ id }) => id))
   try {
     const listed = await api.fetchWorkspaces(signal)
-    if (signal?.aborted || !workspaceListReconciliationFence.isCurrent(requestFence)) return
+    if (signal?.aborted || !workspaceListReconciliationFence.isCurrent(requestFence)) return false
     // Workspaces are keyed by instance key: the workspace id itself for the local backend.
     const workspaces = listed.map((workspace) => {
       const id = instanceKey(backendId, workspace.id)
@@ -1387,7 +1387,7 @@ async function refreshWorkspaceList(
     for (const descriptor of workspaces) {
       const workspace = observeRestoreWorkspace(descriptor)
       if (!workspace) continue
-      if (signal?.aborted) return
+      if (signal?.aborted) return false
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
       restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
       if (restoreCreationCommitGates.deferRefreshWorkspace(workspace)) continue
@@ -1402,10 +1402,11 @@ async function refreshWorkspaceList(
     for (const instanceId of getUnavailableWorkspaceIds(
       unchangedCandidates, remoteIds, (id) => restoreCreatedWorkspaceCleanup.owns(id),
     )) {
-      if (signal?.aborted) return
+      if (signal?.aborted) return false
       releaseInstanceResources(instanceId)
       removeInstance(instanceId, { authoritative: false })
     }
+    return !signal?.aborted && workspaceListReconciliationFence.isCurrent(requestFence)
   } finally {
     workspaceListReconciliationFence.complete(requestFence)
   }

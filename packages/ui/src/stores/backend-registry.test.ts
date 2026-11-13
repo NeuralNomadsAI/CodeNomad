@@ -43,7 +43,7 @@ function harness(initial: unknown = true, bound = false) {
     },
     register: client => { assert.equal(clients.has(client.id), false); clients.set(client.id, client)
       return () => { if (clients.get(client.id) === client) clients.delete(client.id) } },
-    loadWorkspaces: async (client, signal) => { assert.equal(signal.aborted, false); loads++; await load(client, signal) },
+    loadWorkspaces: async (client, signal) => { assert.equal(signal.aborted, false); loads++; await load(client, signal); return true },
   })
   return { registry, enabled, setEnabled, profiles, setProfiles, clients, created, events, requests, opens, failures,
     read: (next: typeof read) => { read = next }, load: (next: typeof load) => { load = next },
