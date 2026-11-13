@@ -4906,6 +4906,13 @@ You may have it installed on another user account, but it is not available for t
     });
   }
 
+  #[cfg(not(any(
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+  )))]
+  let fills_window = webview_attributes.bounds.is_none();
   let webview_bounds = if let Some(bounds) = webview_attributes.bounds {
     let bounds: RectWrapper = bounds.into();
     let bounds = bounds.0;
@@ -5187,8 +5194,15 @@ You may have it installed on another user account, but it is not available for t
     )))]
     WebviewKind::WindowChild => {
       let vbox = window.default_vbox().unwrap();
-      let (_, children) = gtk_child_layout::containers(vbox);
-      webview_builder.build_gtk(&children)
+      // The window's own webview has no requested bounds: it is primary content,
+      // laid out below the menu bar, never a fixed rectangle of the window's size.
+      if fills_window {
+        let content = gtk_child_layout::content(vbox);
+        webview_builder.build_gtk(&content)
+      } else {
+        let (_, children) = gtk_child_layout::containers(vbox);
+        webview_builder.build_gtk(&children)
+      }
     }
     #[cfg(any(
       target_os = "windows",
