@@ -1,6 +1,6 @@
 import { createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
-import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId } from "./instances"
+import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId, type WorkspaceCreationOwnership } from "./instances"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 import {
@@ -97,7 +97,7 @@ function getAppTabById(tabId: string | null): AppTabRecord | null {
   return appTabs().find((tab) => tab.id === tabId) ?? null
 }
 
-function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
+function selectAppTab(tabId: string | null, options?: { source?: "restore"; creation?: WorkspaceCreationOwnership }) {
   if (options?.source !== "restore") setAppTabSelectionRevision((revision) => revision + 1)
   if (!tabId) {
     setActiveAppTabId(null)
@@ -112,26 +112,27 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
   }
 
   const tab = appTabs().find((entry) => entry.id === tabId)
-  if (!tab) return
+  if (!tab || options?.creation && (tab.kind !== "instance" || !options.creation.current(tab.instance.id))) return false
 
   rememberTabOrder(tab.id)
   setActiveAppTabId(tab.id)
 
   if (tab.kind === "instance") {
-    if (options?.source !== "restore") claimRestoreCreatedInstanceForUser(tab.instance.id)
+    if (options?.source !== "restore") claimRestoreCreatedInstanceForUser(tab.instance.id, options?.creation)
     setActiveSidecarToken(null)
     setActiveInstanceId(tab.instance.id)
-    return
+    return true
   }
 
   setActiveInstanceId(null)
   setActiveSidecarToken(tab.sidecarTab.token)
+  return true
 }
 
-function selectInstanceTab(instanceId: string) {
-  if (!instances().has(instanceId)) return
+function selectInstanceTab(instanceId: string, creation?: WorkspaceCreationOwnership): boolean {
+  if (!instances().has(instanceId) || creation && !creation.current(instanceId)) return false
   attachInstanceTab(instanceId)
-  selectAppTab(getInstanceAppTabId(instanceId))
+  return selectAppTab(getInstanceAppTabId(instanceId), creation ? { creation } : undefined) === true
 }
 
 function publishLocalInstanceTabLifecycle(type: "opened" | "removed", instanceId: string): void {

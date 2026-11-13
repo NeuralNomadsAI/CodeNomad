@@ -35,6 +35,7 @@ const DEFAULT_RETRY_DELAYS_MS = [250, 1_000, 2_000] as const
 export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   private readonly owned = new Map<string, OwnedWorkspace<T>>()
   private readonly retired = new Map<string, OwnedWorkspace<T>>()
+  private readonly superseded = new Set<string>()
   // Exact request fences survive duplicate responses; settled entries retain no client or attachment.
   private readonly settled = new Set<string>()
   private readonly settledRequests = new Set<string>()
@@ -55,6 +56,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   private retire(workspaceId: string, entry: OwnedWorkspace<T>): void {
     const key = this.requestKey(entry.workspace)
     if (!key) return
+    this.superseded.add(key)
     this.retired.set(key, entry)
     if ("completion" in entry) { entry.owner = this.retired; entry.key = key }
     this.owned.delete(workspaceId)
@@ -62,6 +64,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
 
   track(workspace: T): void {
     const key = this.requestKey(workspace)
+    if (key && this.superseded.has(key)) return
     if (key && this.isReleased(workspace.id, key)) return
     const marker = this.markers.get(workspace.id)
     if (marker) {
@@ -80,6 +83,15 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
       if ("released" in entry || "tombstone" in entry) return
       entry.workspace = workspace
     }
+  }
+
+  /** An explicit commit supersedes the previous claim; observations only enrich it. */
+  trackCommitted(workspace: T): void {
+    const key = this.requestKey(workspace)
+    if (key && this.superseded.has(key)) return
+    const entry = this.owned.get(workspace.id)
+    if (entry && this.requestKey(entry.workspace) !== this.requestKey(workspace)) this.retire(workspace.id, entry)
+    if (workspace.requestId) this.track(workspace)
   }
 
   beginRequest(requestId: string): void {
@@ -118,6 +130,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   shouldIgnoreObservation(workspaceId: string, requestKey: string, reused = false): boolean {
+    if (this.superseded.has(requestKey)) return true
     const cancelled = this.cancelledRequests.get(requestKey)
     if (reused || cancelled === undefined) return false
     if (this.options.isCurrentKey && !this.options.isCurrentKey(workspaceId, requestKey)) return false
@@ -251,10 +264,10 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     return !!entry && "released" in entry
   }
 
-  shouldIgnoreEvent(workspaceId: string): boolean {
+  shouldIgnoreEvent(workspaceId: string, requestKey?: string): boolean {
     const marker = this.markers.get(workspaceId)
-    if (marker) return marker.tombstone && (!this.options.isCurrentKey || this.options.isCurrentKey(workspaceId, marker.requestKey))
-    const entry = this.owned.get(workspaceId)
+    if (marker && (!requestKey || marker.requestKey === requestKey)) return marker.tombstone && (!this.options.isCurrentKey || this.options.isCurrentKey(workspaceId, marker.requestKey))
+    const { entry } = this.slot(workspaceId, requestKey)
     return !!entry && ("completion" in entry || "tombstone" in entry)
       && (!this.options.isCurrent || this.options.isCurrent(entry.workspace))
   }

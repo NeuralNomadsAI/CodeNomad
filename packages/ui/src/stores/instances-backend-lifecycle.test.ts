@@ -3,7 +3,8 @@ import { it } from "node:test"
 import { createBackendClient, registerBackendClient } from "../lib/backend-client"
 import { backendEvents } from "../lib/backend-events"
 import { preferences } from "./preferences"
-import { createInstance, closeWorkspace, instances, removeInstance, releaseRestoreCreatedInstance } from "./instances"
+import { addInstance, createInstance, closeWorkspace, instances, removeInstance, releaseRestoreCreatedInstance, type WorkspaceCreationOwnership } from "./instances"
+import { selectInstanceTab, activeAppTabId } from "./app-tabs"
 import { serverApi } from "../lib/api-client"
 
 const deferred = <T,>() => {
@@ -11,6 +12,112 @@ const deferred = <T,>() => {
   const promise = new Promise<T>(done => { resolve = done })
   return { promise, resolve }
 }
+
+it("creation ownership without a scope is refused before dispatch", async t => {
+  let calls = 0
+  t.mock.method(serverApi, "createWorkspace", async () => { calls++; throw new Error("unexpected dispatch") })
+  await assert.rejects(createInstance("/same", undefined, { onCreation: () => {} }), /cancellation signal/)
+  assert.equal(calls, 0)
+})
+
+for (const scenario of ["resolved", "replacement", "reused", "lost-response", "rejected", "missing-echo", "foreign-echo"] as const) it(`captured creation ownership settles ${scenario} exactly once`, async t => {
+  const previous = preferences().multiBackend
+  preferences().multiBackend = true
+  const calls: Array<{ path: string; body: any }> = []
+  let sequence = 0
+  const client = createBackendClient({ id: "lease", baseUrl: "https://lease.invalid", relayProfileId: "lease", bindRelayAuthority: true,
+    fetcher: async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? "{}"))
+      calls.push({ path, body })
+      if (path.endsWith("/api/workspaces")) {
+        if (scenario === "lost-response") throw new TypeError("lost create response")
+        if (scenario === "rejected") return Response.json({ error: "invalid" }, { status: 400 })
+        return Response.json({ id: "w", requestId: scenario === "missing-echo" ? undefined : scenario === "foreign-echo" ? "foreign" : body.requestId, reused: scenario === "reused",
+          path: body.path, status: "starting", binaryLabel: `occurrence-${++sequence}`, proxyPath: "", createdAt: "", updatedAt: "" })
+      }
+      return Response.json({})
+    } })
+  client.admitRelayAuthority!("l".repeat(43))
+  const remove = registerBackendClient(client), detach = backendEvents.attach(client.id, client.events)
+  t.after(() => { preferences().multiBackend = previous; detach(); remove(); client.events.dispose(); removeInstance("lease~w", { authoritative: false }) })
+  let original!: WorkspaceCreationOwnership, replacement!: WorkspaceCreationOwnership
+  const opening = createInstance("/same", undefined, { backend: client, signal: new AbortController().signal, onCreation: owner => { original = owner } })
+  if (scenario === "lost-response" || scenario === "rejected" || scenario === "missing-echo" || scenario === "foreign-echo") {
+    await assert.rejects(opening)
+    await Promise.all([original.discard(), original.discard()])
+    assert.equal(instances().has("lease~w"), false)
+    const cancellations = calls.filter(c => c.path.endsWith("/creation/cancel"))
+    assert.equal(cancellations.length, scenario === "rejected" ? 0 : 1)
+    if (cancellations.length) assert.equal(cancellations[0].body.requestId, calls[0].body.requestId)
+    return
+  }
+  const result = await opening
+  addInstance({ ...instances().get(result.instanceId)!, id: "lease~other", folder: "/other" })
+  assert.equal(selectInstanceTab("lease~other", original), false, "ownership is bound to its exact occurrence")
+  removeInstance("lease~other", { authoritative: false })
+  if (scenario === "replacement") {
+    await createInstance("/same", undefined, { backend: client, signal: new AbortController().signal, onCreation: owner => { replacement = owner } })
+    assert.equal(original.current(result.instanceId), false)
+    assert.equal(selectInstanceTab(result.instanceId, original), false)
+  }
+  await Promise.all([original.discard(), original.discard()])
+  assert.equal(calls.filter(c => c.path.endsWith("/creation/cancel")).length, 1)
+  assert.equal(calls.find(c => c.path.endsWith("/creation/cancel"))!.body.requestId, result.requestId)
+  assert.equal(instances().has(result.instanceId), scenario !== "resolved")
+  if (scenario === "replacement") {
+    assert.equal(instances().get(result.instanceId)?.binaryLabel, "occurrence-2")
+    assert.equal(replacement.current(result.instanceId), true)
+    assert.equal(selectInstanceTab(result.instanceId, replacement), true)
+    assert.equal(activeAppTabId(), "instance:lease~w")
+    await new Promise<void>(resolve => setImmediate(resolve))
+    await replacement.discard()
+    assert.equal(instances().has(result.instanceId), true, "transferred tab survives later cleanup")
+    assert.equal(calls.filter(c => c.path.endsWith("/creation/cancel")).length, 1)
+    assert.equal(calls.filter(c => c.path.endsWith("/creation/release")).length, 1)
+  }
+})
+
+for (const phase of ["cancel", "release"] as const) it(`a pending captured ${phase} cannot settle or restore a replacement occurrence`, async t => {
+  const previous = preferences().multiBackend
+  preferences().multiBackend = true
+  const entered = deferred<void>(), finish = deferred<void>()
+  const calls: Array<{ path: string; requestId?: string }> = []
+  let firstRequest: string | undefined, fail = true, sequence = 0
+  const client = createBackendClient({ id: "retired", baseUrl: "https://retired.invalid", relayProfileId: "retired", bindRelayAuthority: true,
+    fetcher: async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? "{}"))
+      calls.push({ path, requestId: body.requestId })
+      if (path.endsWith("/api/workspaces")) {
+        firstRequest ??= body.requestId
+        return Response.json({ id: "w", requestId: body.requestId, path: body.path, status: "starting",
+          binaryLabel: `occurrence-${++sequence}`, proxyPath: "", createdAt: "", updatedAt: "" })
+      }
+      if (body.requestId === firstRequest && path.endsWith(phase === "cancel" ? "/creation/cancel" : "/creation/release")) {
+        entered.resolve(); await finish.promise
+        if (fail) throw new Error("old proof unavailable")
+      }
+      return Response.json({})
+    } })
+  client.admitRelayAuthority!("r".repeat(43))
+  const remove = registerBackendClient(client), detach = backendEvents.attach(client.id, client.events)
+  t.after(async () => {
+    fail = false; finish.resolve()
+    if (firstRequest) await releaseRestoreCreatedInstance("retired~w", firstRequest)
+    preferences().multiBackend = previous; detach(); remove(); client.events.dispose(); removeInstance("retired~w", { authoritative: false })
+  })
+  let old!: WorkspaceCreationOwnership, next!: WorkspaceCreationOwnership
+  const original = await createInstance("/same", undefined, { backend: client, signal: new AbortController().signal, onCreation: owner => { old = owner } })
+  const pending = phase === "cancel" ? old.discard() : old.release().catch(() => undefined)
+  await entered.promise
+  const replacement = await createInstance("/same", undefined, { backend: client, signal: new AbortController().signal, onCreation: owner => { next = owner } })
+  finish.resolve(); await pending
+  assert.equal(instances().get("retired~w")?.binaryLabel, "occurrence-2")
+  assert.equal(next.current(replacement.instanceId), true)
+  assert.equal(calls.filter(c => c.requestId === replacement.requestId && !c.path.endsWith("/api/workspaces")).length, 0)
+  assert(calls.filter(c => c.path.includes("/creation/")).every(c => c.requestId === original.requestId))
+  fail = false
+  await next.discard()
+})
 
 for (const phase of ["POST", "commit"] as const) it(`revokes publication during ${phase} while claim settlement retains its exact API`, async t => {
   const previous = preferences().multiBackend

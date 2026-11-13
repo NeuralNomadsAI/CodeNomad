@@ -35,6 +35,7 @@ render(() => <ConfigProvider><I18nProvider>
 ;(window as any).remoteOpenFixture = {
   snapshot: () => ({ tabs: appTabs().map(tab => ({ id: tab.id, kind: tab.kind })), active: activeAppTabId() }),
   records: () => [...instances().keys()],
+  details: (id: string) => instances().get(id),
   state: (id: string) => backendRegistry.state(id),
   home: () => setHome(true),
   select: (id: string) => {

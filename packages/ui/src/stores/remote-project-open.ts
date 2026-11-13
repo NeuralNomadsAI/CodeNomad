@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import { normalizeServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
 import { preferences, preferencesForBackend } from "./preferences"
 import { backendRegistry } from "./remote-backends"
-import { createInstance } from "./instances"
+import { createInstance, type WorkspaceCreationOwnership } from "./instances"
 import { selectInstanceTab } from "./app-tabs"
 import { closeSettings } from "./settings-screen"
 
@@ -34,9 +34,16 @@ export async function openRemoteProject(path: string, signal: AbortSignal): Prom
   if (client && backendRegistry.state(intent.id) === "unreachable") client = await backendRegistry.retryWorkspaces(intent.id)
   if (!current()) return false
   if (!client || backendRegistry.state(intent.id) !== "compatible") throw new Error(backendRegistry.state(intent.id))
-  const result = await createInstance(path, undefined, { backend: client, signal })
-  if (!current()) return false
-  selectInstanceTab(result.instanceId)
-  closeRemoteServer()
-  return true
+  let creation: WorkspaceCreationOwnership | undefined
+  let transferred = false
+  try {
+    const result = await createInstance(path, undefined, { backend: client, signal, onCreation: owner => { creation = owner } })
+    if (!current() || !creation?.current(result.instanceId)) return false
+    transferred = selectInstanceTab(result.instanceId, creation)
+    if (!transferred) return false
+    if (current()) closeRemoteServer()
+    return true
+  } finally {
+    if (!transferred) await creation?.discard()
+  }
 }

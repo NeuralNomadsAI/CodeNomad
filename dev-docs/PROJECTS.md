@@ -7,6 +7,22 @@ Closing project tabs, temporary workspaces, the new-instance launcher and the Gi
 - Selecting the current saved-server policy preserves the picker intent and its in-flight opening. A changed origin, TLS or SSH policy creates a new selection; the picker lifetime and workspace receipt own cancellation.
 - The saved-server picker keys the entire Dialog/Portal lifetime by the validated profile. Replacing the server disposes its browser, pending work and ARIA title before the next dialog mounts. Same-policy reselection retains the current lifetime; cancellation followed by reselection starts a fresh one.
 
+**Remote opening ownership boundaries**
+
+`openRemoteProject` receives an opaque `WorkspaceCreationOwnership` through signal-scoped `createInstance.onCreation` before dispatch. Every untransferred exit runs its idempotent discard, including rejected or resolved-but-obsolete creation. Explicit commits retire older claims for the same UI key; passive observations enrich their current claim. Cleanup and failed-settlement restoration retain the exact request/API/attachment and current occurrence.
+
+| Boundary | Owner | Stale or cancelled outcome |
+| --- | --- | --- |
+| `await backendRegistry.ensure` | Shared registry admission/client | Current-intent check ends the opening before creation; the registry retains its shared client. |
+| `await retryWorkspaces` | Shared inventory flight and captured attachment | Current-intent check ends the opening before creation. |
+| `await createInstance` / POST | Captured creation request, API and attachment | Abort and caller-finally share one cancellation flight. Definitive route rejection settles the request; uncertain outcomes retain the original responsibility until confirmed cancellation. |
+| Response / commit wait | Exact receipt and prospective occurrence | Cancellation joins that same request; publication checks the attachment and commit gate. |
+| Resolved create continuation | Exact committed occurrence and receipt | Caller-finally discards the captured claim. UI removal matches its current request key; retired cleanup preserves replacement occurrences. |
+| Synchronous tab selection → release ACK | Guarded occurrence transfers to its tab; release retains the captured API/request key | Selection rechecks ownership and reports successful transfer. Subsequent intent changes preserve the adopted tab; release completes or retains its exact retryable claim. |
+| Native selection reply | Correlated profile-selection ticket and exact opener | ACK, refusal or timeout consumes its matching ticket. Current browsers and adopted tabs follow their own ownership lifetimes. |
+
+- Claim discard coalesces across abort, creation continuation and caller-finally. Failed bounded settlement keeps its original receipt; failed retired cleanup preserves the replacement's projection. A reused record stays available while only its new request is cancelled.
+
 - Experimental multi-backend opening uses `remote-project-open.ts` and `remote-server-browser.tsx`: the host's saved policy is captured as an immutable selection, rechecked before admission and publication, then `backendRegistry.ensure` supplies the exact client to `createInstance`. Caller cancellation owns only that creation receipt. The main renderer selects an ordinary instance tab; its server icon and visible server name distinguish remote projects, including duplicate server labels. Browse, typed paths and remote recents share this flow. Clone and temporary actions retain their local home-page owner. Explicit Retry and successful authentication recover a retained inventory through `retryWorkspaces`; incompatible metadata and HTTP 426 refuse admission.
 
 - Restore claim settlement uses the receipt's exact attachment/request key, including terminal events and delayed callbacks. A confirmed release, cancellation or stop drops the descriptor and its client/API/attachment references; explicit create-route rejection ends its receipt, while transport failures, aborted requests and uncertain server errors retain their captured responsibility. Settled requests keep primitive identity fences for duplicate responses, and cancelled occurrences keep lightweight event tombstones until an explicit user opening. Unsettled and revoked claims retain their full owner for settlement retries, independently of replacement occurrences.

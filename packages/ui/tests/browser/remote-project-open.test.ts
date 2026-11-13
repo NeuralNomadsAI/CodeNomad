@@ -17,10 +17,11 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-test("the real home/browser opens ordinary tabs on two relayed servers, with isolated refusal and cancellation", { timeout: 120_000 }, async t => {
+test("the real home/browser opens ordinary tabs on two relayed servers, with isolated refusal and cancellation", { timeout: 180_000 }, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-project-open-"))
   const a = await startFakeCodeNomad({ anonymous: true }), b = await startFakeCodeNomad({ anonymous: true })
   let refusal: "contract" | "426" | undefined, hold: (() => void) | undefined, holdCreate = false
+  let failInventory = false
   let createEntered: (() => void) | undefined, cancelEntered: (() => void) | undefined
   const mutations: string[] = [], paths: string[] = []
   const descriptor = (folder = "/same") => ({ id: "w", path: folder, status: "starting", proxyPath: "/workspaces/w/instance",
@@ -35,8 +36,9 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       response.writeHead(200, { "content-type": "application/json" }); response.end("{}")
     })
     remote.state.handlers.set("/api/workspaces", (request, response) => {
-      if (request.method === "GET") { response.writeHead(200, { "content-type": "application/json" }); response.end("[]"); return }
+      if (request.method === "GET") { response.writeHead(id === "a" && failInventory ? 503 : 200, { "content-type": "application/json" }); response.end(id === "a" && failInventory ? "{}" : "[]"); return }
       mutations.push(`${id}:POST`)
+      const binaryLabel = holdCreate ? "held-previous" : "fresh-current"
       let body = ""
       request.on("data", chunk => { body += chunk })
       request.on("end", () => {
@@ -44,7 +46,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         paths.push(`${id}:${input.path ?? input.folder}`)
         const send = () => {
           response.writeHead(200, { "content-type": "application/json" })
-          response.end(JSON.stringify({ ...descriptor(input.path ?? input.folder), ...(input.requestId ? { requestId: input.requestId } : {}) }))
+          response.end(JSON.stringify({ ...descriptor(input.path ?? input.folder), binaryLabel, ...(input.requestId ? { requestId: input.requestId } : {}) }))
         }
         if (holdCreate) { hold = send; createEntered?.() }
         else send()
@@ -82,7 +84,30 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   origins.add(target)
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   const server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), cacheDir: cache.cacheDir,
-    logLevel: "error", resolve: { dedupe: ["solid-js"] }, plugins: [shutdown.plugin, solid(), { name: "remote-project-open", configureServer(vite) {
+    logLevel: "error", resolve: { dedupe: ["solid-js"] }, plugins: [{
+      name: "opening-boundary-observer", enforce: "pre", transform(source, id) {
+        const file = id.replaceAll("\\", "/").split("?")[0]
+        const gate = (phase: string, value: string) => `\nif ((window as any).__openingGate) await (window as any).__openingGate("${phase}", ${value}, signal);\n`
+        if (file.endsWith("/src/stores/remote-project-open.ts")) {
+          const create = "const result = await createInstance(path, undefined, {"
+          assert(source.includes(create), "observe the real create callback")
+          source = source.replace(create, `${create} onCreateCommit: id => (window as any).__onCreateCommit?.(id),`)
+          const guard = /(\n\s*)(if \(!current\(\).*return false)(?=\n\s*(?:transferred = )?selectInstanceTab)/
+          assert(guard.test(source), "observe the real post-create continuation")
+          source = source.replace(guard, `$1${gate("post-create", "result")}$2`)
+          source = source.replace("let client = await backendRegistry.ensure(intent.id)", `$&${gate("ensure", "client")}`)
+          source = source.replace("client = await backendRegistry.retryWorkspaces(intent.id)", `$&;${gate("inventory", "client")}`)
+          source = source.replace(/selectInstanceTab\(result\.instanceId(?:, creation)?\)/, "$&;\n(window as any).__afterTabSelection?.(result.instanceId)")
+          return source
+        }
+        if (file.endsWith("/src/stores/instances.ts")) {
+          const publication = "const id = instanceKey(receipt.backendId, response.id)"
+          assert(source.includes(publication), "observe the real response before publication")
+          return source.replace(publication, `${gate("pre-publication", "response")}${publication}`)
+            + "\nexport function __openingReceipts() { return [...restoreCreationReceipts.values()].map(r => ({ backendId: r.backendId, requestId: r.requestId, instanceId: r.instanceId, aborted: r.signal.aborted })); }"
+        }
+      },
+    }, shutdown.plugin, solid(), { name: "remote-project-open", configureServer(vite) {
       vite.middlewares.use("/fixture", async (_request, response) => {
         response.setHeader("content-type", "text/html")
         response.end(await vite.transformIndexHtml("/fixture", '<html><head><link rel="icon" href="data:,"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/remote-project-open.tsx"></script></body></html>'))
@@ -119,8 +144,101 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   }
   const select = (page: Page, id: string) => page.evaluate(id => (window as any).remoteOpenFixture.select(id), id)
   const dialog = (page: Page) => page.getByRole("dialog")
+  for (const boundary of ["commit-microtask", "post-create", "pre-publication", "ensure", "inventory"] as const) await t.test(`${boundary} settles stale A before any tab transfer`, async () => {
+    const page = await prepare(), before = mutations.length
+    failInventory = boundary === "inventory"
+    try {
+      await page.evaluate(boundary => {
+        const w = window as any
+        if (boundary === "commit-microtask") w.__onCreateCommit = () => queueMicrotask(() => w.remoteOpenFixture.select("b"))
+        else w.__openingGate = (phase: string) => {
+          if (phase !== boundary && !(boundary === "inventory" && phase === "ensure")) return
+          return new Promise<void>(resolve => { w.__boundary = { phase, resume: resolve } })
+        }
+      }, boundary)
+      await select(page, "a")
+      const cancel = page.waitForResponse(response => response.url().includes("/backends/a/api/workspaces/creation/cancel"))
+      void cancel.catch(() => undefined)
+      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      if (boundary !== "commit-microtask") {
+        await page.waitForFunction(() => !!(window as any).__boundary)
+        if (boundary === "inventory") {
+          failInventory = false
+          await page.evaluate(() => (window as any).__boundary.resume())
+          await page.waitForFunction(() => (window as any).__boundary?.phase === "inventory")
+          assert.equal(await page.evaluate(() => (window as any).remoteOpenFixture.state("a")), "compatible")
+        }
+        await select(page, "b")
+        await page.evaluate(() => (window as any).__boundary.resume())
+      }
+      await dialog(page).getByRole("heading", { name: "Beta", exact: true }).waitFor()
+      const records = await page.evaluate(() => (window as any).remoteOpenFixture.records())
+      assert.deepEqual(records, ["w"], "stale A leaves no orphan occurrence")
+      if (boundary !== "ensure" && boundary !== "inventory") await cancel
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
+        tabs: [{ id: "instance:w", kind: "instance" }], active: "instance:w",
+      })
+      const receipts = await page.evaluate(async () => (await import("/src/stores/instances.ts") as any).__openingReceipts())
+      assert.equal(receipts.some((r: any) => r.backendId === "a"), false, "the exact stale receipt is settled")
+      assert.deepEqual(mutations.slice(before), boundary === "ensure" || boundary === "inventory" ? [] : ["a:POST", "a:/creation/cancel:POST"])
+    } finally {
+      failInventory = false
+      await page.evaluate(() => { (window as any).__boundary?.resume(); (window as any).__openingGate = undefined })
+      await page.close()
+    }
+  })
+  await t.test("tab transfer retains A through a later intent while its captured release completes", async () => {
+    const page = await prepare(), before = mutations.length
+    try {
+      await page.evaluate(() => { (window as any).__afterTabSelection = () => (window as any).remoteOpenFixture.select("b") })
+      await select(page, "a")
+      const released = page.waitForResponse(response => response.url().includes("/backends/a/api/workspaces/w/creation/release"))
+      void released.catch(() => undefined)
+      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await dialog(page).getByRole("heading", { name: "Beta", exact: true }).waitFor()
+      await released
+      await page.waitForFunction(async () => !(await import("/src/stores/instances.ts") as any).__openingReceipts().some((r: any) => r.backendId === "a"))
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
+        tabs: [{ id: "instance:w", kind: "instance" }, { id: "instance:a~w", kind: "instance" }], active: "instance:a~w",
+      })
+      assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST"])
+    } finally { await page.close() }
+  })
+  for (const host of ["electron", "tauri"] as const) await t.test(`${host} late native reply owns only its selection, never a project occurrence`, async () => {
+    const main = await prepare(), preferences = await prepare(host, true), before = mutations.length
+    let accept!: () => void, entered!: () => void
+    const accepted = new Promise<void>(resolve => { accept = resolve })
+    const delivered = new Promise<void>(resolve => { entered = resolve })
+    try {
+      await preferences.exposeFunction("__nativeSelect", async (intent: unknown) => {
+        await main.evaluate(intent => window.__CODENOMAD_SELECT_SERVER__!(intent), intent)
+        entered(); await accepted
+      })
+      await preferences.evaluate(({ host, intent }) => {
+        const w = window as any
+        if (host === "electron") w.electronAPI.selectServer = (target: unknown) => w.__nativeSelect(target)
+        else w.__TAURI_INTERNALS__.invoke = (command: string, args: any) => command === "preferences_select_server" ? w.__nativeSelect(args.intent) : Promise.resolve()
+        w.__reply = import("/src/lib/native/server-selection.ts").then(module => module.requestServerSelection(intent))
+        void w.__reply.catch(() => undefined)
+      }, { host, intent: { id: "a", baseUrl: a.origin, skipTlsVerify: false } })
+      await delivered
+      await dialog(main).getByRole("heading", { name: "Alpha", exact: true }).waitFor()
+      const released = main.waitForResponse(response => response.url().includes("/backends/a/api/workspaces/w/creation/release"))
+      void released.catch(() => undefined)
+      await dialog(main).getByRole("button", { name: "Same", exact: true }).click()
+      await dialog(main).waitFor({ state: "detached" })
+      await released
+      await select(main, "b")
+      accept(); await preferences.evaluate(() => (window as any).__reply)
+      await dialog(main).getByRole("heading", { name: "Beta", exact: true }).waitFor()
+      assert.equal(await main.locator(".remote-server-browser").count(), 1)
+      assert.deepEqual(await main.evaluate(() => (window as any).remoteOpenFixture.records()), ["w", "a~w"])
+      assert.equal(await main.evaluate(() => (window as any).remoteOpenFixture.snapshot().active), "instance:a~w")
+      assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST"])
+    } finally { accept(); await preferences.close(); await main.close() }
+  })
   await t.test("home, navigation, typed path, recents, server labels and ordinary instance tabs", async () => {
-    const page = await prepare()
+    const page = await prepare(), pathStart = paths.length
     await page.getByRole("button", { name: /Servers/ }).click()
     await page.getByRole("button", { name: /^Alpha/ }).click()
     await dialog(page).getByRole("button", { name: "app", exact: true }).waitFor()
@@ -140,7 +258,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       tabs: [{ id: "instance:w", kind: "instance" }, { id: "instance:a~w", kind: "instance" }, { id: "instance:b~w", kind: "instance" }],
       active: "instance:b~w",
     })
-    assert.deepEqual(paths, ["a:/same", "b:/same"])
+    assert.deepEqual(paths.slice(pathStart), ["a:/same", "b:/same"])
     assert.equal(local.includes("POST /api/workspaces"), false)
     assert.equal(await page.locator("webview, iframe").count(), 0)
     await select(page, "a"); await dialog(page).getByRole("button", { name: /Close/ }).click()
@@ -211,7 +329,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await page.close()
     }
   })
-  for (const mode of ["different-server", "cancel-reselect"] as const) await t.test(`${mode} disposes the old dialog before opening only the current selection`, async () => {
+  for (const mode of ["different-server", "cancel-reselect", "rapid-a-b-a"] as const) await t.test(`${mode} disposes the old dialog before opening only the current selection`, async () => {
     const page = await prepare(), before = mutations.length
     holdCreate = true
     const entered = new Promise<void>(resolve => { createEntered = resolve })
@@ -225,7 +343,10 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         ;(window as any).oldBrowser = document.querySelector(".remote-server-browser")
         ;(window as any).oldDialog = document.querySelector("[role=dialog]")
       })
-      if (mode === "different-server") await select(page, "b")
+      if (mode !== "cancel-reselect") {
+        await select(page, "b")
+        if (mode === "rapid-a-b-a") await select(page, "a")
+      }
       else {
         await page.keyboard.press("Escape")
         await dialog(page).waitFor({ state: "detached" })
@@ -234,9 +355,10 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
         tabs: [{ id: "instance:w", kind: "instance" }], active: "instance:w",
       })
-      if (mode === "different-server") {
-        await dialog(page).getByRole("heading", { name: "Beta", exact: true }).waitFor()
-        await page.locator(".remote-server-browser").filter({ has: page.getByRole("heading", { name: "Beta", exact: true }) })
+      if (mode !== "cancel-reselect") {
+        const name = target === "b" ? "Beta" : "Alpha"
+        await dialog(page).getByRole("heading", { name, exact: true }).waitFor()
+        await page.locator(".remote-server-browser").filter({ has: page.getByRole("heading", { name, exact: true }) })
           .getByRole("button", { name: "Same", exact: true }).waitFor()
         assert.equal(await page.locator(".remote-server-browser").count(), 1)
         const ids = await dialog(page).locator("[id]").evaluateAll(nodes => nodes.map(node => node.id))
@@ -257,6 +379,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         active: `instance:${target}~w`,
       })
       assert.deepEqual((await page.evaluate(() => (window as any).remoteOpenFixture.records())).sort(), ["w", `${target}~w`].sort())
+      assert.equal(await page.evaluate(target => (window as any).remoteOpenFixture.details(`${target}~w`).binaryLabel, target), "fresh-current")
       assert.deepEqual(mutations.slice(before), ["a:POST", "a:/creation/cancel:POST", `${target}:POST`, `${target}:/w/creation/release:POST`])
     } finally {
       holdCreate = false
