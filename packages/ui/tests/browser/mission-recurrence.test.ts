@@ -244,20 +244,21 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     await detail.locator(".mission-schedule-notice").getByText("This passage's start was accepted, but its end cannot be confirmed. Its original identity is preserved and another passage stays blocked.", { exact: true }).waitFor()
     assert.equal(await detail.getByText("Resume checks the running passage; it never sends it twice.", { exact: true }).count(), 0)
     assert.equal(await missionToolbarAction(page, RUN_NOW).isEnabled(), false, "unknown terminal evidence never offers another passage")
-    // Without a live observer the sentence names the one action that reconciles it.
+    // Without a live observer the sentence names Resume; a native Check is never offered as a control.
     schedule.state = "paused"; schedule.nextDueAt = null; schedule.lastError = undefined
     schedule.pending = { passageID: "pas_stuck", status: "uncertain", trigger: "daily", reason: "not-observed" }
     schedule.actions = ["resume", "check", "stop"]
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
-    await page.getByText("This passage is not being observed. Check passage reconciles it without sending it again.", { exact: true }).waitFor()
-    assert.equal(await page.getByRole("button", { name: "Check the pending passage of Daily source review", exact: true }).count(), 1)
+    await page.getByText("Resume checks the running passage; it never sends it twice.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Check the pending passage of Daily source review", exact: true }).count(), 0)
+    await missionToolbarAction(page, RESUME).waitFor()
     assert.equal(await page.getByText(/last scheduled check failed/).count(), 0)
-    await captureMissionView(page, "uncertain-check-passage")
+    await captureMissionView(page, "uncertain-paused-passage")
     assert.deepEqual(errors, [])
   } catch (error) { console.error(errors, await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
-test("paused pending passage exposes a labelled reconcile-only Check passage control sent once", async () => {
+test("paused pending passage offers Resume as its primary and never a Check passage control", async () => {
   const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], errors: string[] = []
   page.setDefaultTimeout(10_000)
   page.on("pageerror", error => errors.push(error.message))
@@ -284,18 +285,16 @@ test("paused pending passage exposes a labelled reconcile-only Check passage con
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
     await selectMission(page, schedule.title)
-    const check = missionToolbarAction(page, `Check the pending passage of ${TITLE}`)
-    await check.waitFor()
-    // Check passage is the primary; Stop stays available and Run now stays in place, disabled.
-    assert.deepEqual(await lifecycleButtons(page), [[`Check the pending passage of ${TITLE}`, true], [STOP, true], [RUN_NOW, false]])
-    await captureMissionView(page, "paused-check-passage")
-    await check.click()
-    await check.waitFor({ state: "hidden" })
-    assert.equal(posts.length, 1)
-    assert.equal(posts[0].action, "check")
+    const resume = missionToolbarAction(page, RESUME)
+    await resume.waitFor()
+    // Resume is the primary even though native still offers check; Stop stays available and Run now in place, disabled.
+    assert.deepEqual(await lifecycleButtons(page), [[RESUME, true], [STOP, true], [RUN_NOW, false]])
+    assert.equal(await page.getByRole("button", { name: `Check the pending passage of ${TITLE}`, exact: true }).count(), 0)
+    await captureMissionView(page, "paused-pending-passage")
+    await resume.click()
     await missionToolbarAction(page, CHECK).waitFor({ state: "hidden" })
-    await missionToolbarAction(page, RESUME).waitFor()
-    assert.equal(posts.length, 1, "refresh never resends")
+    assert.equal(posts.length, 1)
+    assert.equal(posts[0].action, "resume")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -387,7 +386,6 @@ const notDispatched = (status: 409 | 503) => ({ status, json: { error: "Recurren
 const variants = [
   { action: "play", state: "paused", actions: ["play", "stop", "run-now"], label: `Play schedule ${TITLE}`, status: 503 },
   { action: "resume", state: "paused", actions: ["resume", "stop", "run-now"], label: RESUME, status: 409 },
-  { action: "check", state: "paused", actions: ["check", "stop"], label: `Check the pending passage of ${TITLE}`, status: 503 },
   { action: "pause", state: "running", actions: ["pause", "stop", "run-now"], label: `Pause schedule ${TITLE}`, status: 409 },
   { action: "stop", state: "paused", actions: ["play", "stop", "run-now"], label: STOP, status: 503 },
   { action: "run-now", state: "paused", actions: ["play", "stop", "run-now"], label: RUN_NOW, status: 409 },
@@ -398,8 +396,7 @@ for (const variant of variants) test(`a ${variant.action} refused before dispatc
   page.on("pageerror", error => errors.push(error.message))
   // Paused schedules make no daily writes: the revision never moves on its own.
   const schedule: RecurrenceSchedule = { ...scheduleFixture(), state: variant.state, actions: [...variant.actions],
-    nextDueAt: variant.state === "running" ? Date.UTC(2026, 9, 9, 8, 15) : null,
-    pending: variant.action === "check" ? { passageID: "pas_manual", status: "running" } : null }
+    nextDueAt: variant.state === "running" ? Date.UTC(2026, 9, 9, 8, 15) : null, pending: null }
   let snapshots = 0
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)

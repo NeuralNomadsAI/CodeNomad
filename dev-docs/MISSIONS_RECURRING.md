@@ -589,8 +589,9 @@ it starts from its current revision as the bound.
 A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
 later completed control that restarted or cancelled it. While such an intent, or
 a reserved but unadmitted Run now, stays unknown, the snapshot offers only
-Resume/Pause/Stop/Check and the UI enables exactly those that native offers once
-its snapshot records the intent; the original is never resent. The backend admits
+Resume/Pause/Stop/Check and the UI enables those that native offers once its
+snapshot records the intent, except Check, which it never shows; the original is
+never resent. The backend admits
 that new request with its own permit only after a fresh exact native read through
 the current connection shows the original recorded and incomplete under the same
 owner; a committed superseding control retires the original permit, a no-effect
@@ -729,9 +730,10 @@ of a schedule not desired running; an unknown read of a desired-running schedule
 starts nothing (if its Job is in fact gone it shows Interrupted and Resume
 reconciles the passage), so no second observer runs beside the daily Job. After a
 service restart with a pending passage on a paused or stopped schedule, the
-snapshot offers an explicit **Check passage** (`check`) control, admitted like the
-others (requestID, expectedRevision, authenticated route), which only restarts
-that observer and keeps the schedule paused or stopped.
+snapshot lists a `check` control, admitted like the others (requestID,
+expectedRevision, authenticated route), which only restarts that observer and keeps
+the schedule paused or stopped. The Missions UI does not expose it: a paused
+schedule reconciles its passage through Resume.
 
 A failed wake keeps the Job running: it records a display-only `lastError
 { code, at }` in a sibling kv key (outside the document revision) and retries with

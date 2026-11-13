@@ -16,7 +16,6 @@ export const missionsPanelMessages = {
   "missionsPanel.action.interruptNow": "अहिले नै रोक्नुहोस्",
   "missionsPanel.action.resume": "पुनः सुरु गर्नुहोस्",
   "missionsPanel.action.runNow": "अहिले चलाउनुहोस्",
-  "missionsPanel.action.checkPassage": "पालो जाँच गर्नुहोस्",
   "missionsPanel.action.checkStatus": "अवस्था जाँच गर्नुहोस्",
   "missionsPanel.action.stop": "बन्द गर्नुहोस्…",
   "missionsPanel.action.openConversation": "कुराकानी खोल्नुहोस्",

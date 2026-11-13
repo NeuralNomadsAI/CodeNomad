@@ -122,7 +122,6 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
         changes.admitted(value, value.pending!.id, Date.now()); changes.settle(value, value.pending!.id, "completed", Date.now()); value.state = state
       }
     })
-    if (body.action === "check") for (const receipt of receipts.values()) receipt.pending = false
     receipts.set(body.requestID, { ...body, pending: partial === body.action })
     if (lost === body.action) return route.abort("connectionreset")
     const value = result(body.requestID)
@@ -550,20 +549,17 @@ test("document inventory pages only on demand and revalidates the loaded frontie
   } finally { await page.close() }
 })
 
-test("Check reconciles a positively recorded partial request and retains both identities when its own ACK is lost", async () => {
+test("a positively recorded partial request offers no Check passage; its exact receipt alone settles it", async () => {
   const page = await browser.newPage(), f = await setup(page, { seed: true })
   try {
     await select(page); f.partial = "play"; await click(page, "Play")
     await button(page, "Refresh saved request").waitFor()
     const original = f.posts[0]
-    // The server's exact partial receipt, rather than the row alone, enables Check.
-    f.lost = "check"
-    await click(page, "Check passage")
+    assert.equal(await button(page, "Check passage").count(), 0)
+    f.resolve()
     await button(page, "Refresh saved request").click()
     await button(page, "Refresh saved request").waitFor({ state: "detached" })
-    assert.deepEqual(f.posts.map(item => item.action), ["play", "check"])
-    assert.notEqual(f.posts[1].requestID, original.requestID)
-    assert.ok(f.reads.some(value => value.includes(`requestID=${f.posts[1].requestID}`)))
+    assert.deepEqual(f.posts, [original], "settled by its exact receipt, never by another control")
     assert.ok(f.reads.some(value => value.includes(`requestID=${original.requestID}`)))
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -600,7 +596,7 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
     await selectedChevron.click()
     assert.equal(await page.locator(".mission-list-paging").isVisible(), true, "folding the selection keeps directory continuation")
     await selectedChevron.click()
-    assert.equal(await button(page, "Check passage").isDisabled(), true, "retained partial metadata grants no new control")
+    assert.equal(await button(page, "Check passage").count(), 0, "retained partial metadata grants no new control")
     assert.equal(await button(page, "Stop…").isDisabled(), true)
     if (negativeFirst) {
       await button(page, "Refresh saved request").click()

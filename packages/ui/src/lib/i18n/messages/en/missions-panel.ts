@@ -16,7 +16,6 @@ export const missionsPanelMessages = {
   "missionsPanel.action.interruptNow": "Interrupt now",
   "missionsPanel.action.resume": "Resume",
   "missionsPanel.action.runNow": "Run now",
-  "missionsPanel.action.checkPassage": "Check passage",
   "missionsPanel.action.checkStatus": "Check status",
   "missionsPanel.action.stop": "Stop…",
   "missionsPanel.action.openConversation": "Open conversation",
