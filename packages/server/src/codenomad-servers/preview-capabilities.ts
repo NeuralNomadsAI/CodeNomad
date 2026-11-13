@@ -20,6 +20,7 @@ const Preview = z.object({
 })
 type Owner = ReturnType<RemoteServerBrowseManager["previewOwner"]>
 type Capability = { id: string; proof: string; preview: z.infer<typeof Preview>; owner: Owner; embeddingOrigin?: string; controller: AbortController; release(): void }
+// Never forward Service-Worker-Allowed: content authority cannot become persistent origin authority.
 const safeHeaders = ["content-type", "content-disposition", "cache-control", "etag", "last-modified", "content-range", "accept-ranges",
   "content-security-policy", "referrer-policy", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers"]
 
@@ -121,6 +122,7 @@ export class RemotePreviewCapabilities {
   }
 
   private capture(request: IncomingMessage) {
+    if (request.headers["service-worker"] !== undefined) throw new Error("Service workers are unavailable")
     const port = (this.#server.address() as { port: number } | null)?.port
     const capability = request.headers.host?.match(/^([0-9a-f-]{36})\.preview\.localhost:(\d+)$/)?.[1]
     const record = capability && this.#records.get(capability)
@@ -207,7 +209,11 @@ export class RemotePreviewCapabilities {
       } else reply.end()
     } catch {
       if (reply.headersSent) reply.destroy()
-      else { reply.writeHead(404, { connection: "close", "content-length": "0" }); reply.end() }
+      else {
+        const capability = request.headers.host?.match(/^([0-9a-f-]{36})\.preview\.localhost:\d+$/)?.[1]
+        if (capability && !this.#records.has(capability)) reply.setHeader("clear-site-data", '"storage"')
+        reply.writeHead(404, { connection: "close", "content-length": "0" }); reply.end()
+      }
     } finally {
       request.off("aborted", abort)
       // Keep close cancellation through streaming; the response owns its listener.

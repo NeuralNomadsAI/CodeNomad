@@ -155,6 +155,10 @@ issuing local UI.
 See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
 for the API and revocation lifetime.
 
+The isolated listener refuses service-worker script fetches before dispatch and
+keeps scope-widening response headers private. Expired content-origin network
+responses request storage cleanup independently of the host UI's storage.
+
 ## Direct listener origins and password sessions
 
 The direct listener grants credentialed CORS to its advertised local and remote

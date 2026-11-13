@@ -14,7 +14,7 @@ import { RemotePreviewCapabilities } from "../../../server/src/codenomad-servers
 import { RELAY_AUTHORITY_HEADER, RELAY_BOOTSTRAP } from "../../../server/src/codenomad-servers/relay-authority"
 
 const TOKEN = "33333333-3333-4333-8333-333333333333"
-async function backend(t: TestContext, label: string) {
+async function backend(t: TestContext, label: string, workerFetches: string[] = []) {
   const sockets = new Set<Socket>()
   const server = http.createServer(async (request, reply) => {
     if (request.url === "/api/meta") return reply.end(JSON.stringify({ serverId: label }))
@@ -26,6 +26,18 @@ async function backend(t: TestContext, label: string) {
     }
     if (request.url === `/api/previews/${TOKEN}`) return reply.writeHead(204).end()
     const pathname = request.url!.slice(`/previews/${TOKEN}`.length)
+    if (pathname === "/sw.js") {
+      workerFetches.push(String(request.headers["service-worker"] ?? ""))
+      return reply.writeHead(200, { "content-type": "application/javascript", "service-worker-allowed": "/" }).end(`
+        self.addEventListener("install",()=>self.skipWaiting());
+        self.addEventListener("activate",event=>event.waitUntil(self.clients.claim()));
+        self.addEventListener("fetch",event=>{
+          if(new URL(event.request.url).pathname==="/worker-document")event.respondWith(new Response(
+            '<script>parent.postMessage({serviceWorkerForeign:true},"*")<\\/script>',
+            {headers:{"content-type":"text/html"}}));
+        });
+      `)
+    }
     if (pathname === "/data") return reply.writeHead(200, { "content-type": "text/plain" }).end(`private-${label}`)
     if (pathname === "/script.js") return reply.writeHead(200, { "content-type": "application/javascript" }).end(`window.foreignScript="${label}"`)
     if (pathname === "/image.png") return reply.writeHead(200, { "content-type": "image/png" }).end(Buffer.from(
@@ -48,7 +60,8 @@ async function backend(t: TestContext, label: string) {
 }
 
 async function fixture(t: TestContext) {
-  const a = await backend(t, "A"), b = await backend(t, "B")
+  const workerFetches: string[] = []
+  const a = await backend(t, "A", workerFetches), b = await backend(t, "B", workerFetches)
   const ui = await backend(t, "UI")
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "preview-origin-isolation-"))
   const manager = new RemoteServerBrowseManager({
@@ -65,11 +78,12 @@ async function fixture(t: TestContext) {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
   t.after(async () => { await browser.close(); await previews.close(); manager.close(); fs.rmSync(directory, { recursive: true, force: true }) })
-  const page = await browser.newPage()
+  const context = await browser.newContext()
+  const page = await context.newPage()
   await page.addInitScript("window.__name = value => value")
   await page.goto(caps[0]!.contentUrl)
   await page.waitForFunction(() => (window as any).ready)
-  return { page, a: caps[0]!, b: caps[1]!, ui }
+  return { page, a: caps[0]!, b: caps[1]!, ui, previews, workerFetches }
 }
 
 test("a real preview cannot read another known capability through CORS, WS, no-CORS resources or an iframe", { timeout: 20_000 }, async t => {
@@ -194,4 +208,37 @@ test("the issuing UI can embed both isolated documents without sharing their DOM
     assert.equal(await frame.evaluate(() => window.origin), new URL(cap.contentUrl).origin)
     assert.equal(await frame.evaluate(() => { try { return parent.document.body.innerText } catch { return "blocked" } }), "blocked")
   }
+})
+
+test("service workers cannot replace preview security or survive capability revocation", { timeout: 20_000 }, async t => {
+  const f = await fixture(t)
+  const own = await f.page.context().newPage()
+  await own.goto(f.b.contentUrl)
+  const registration = await own.evaluate(async () => {
+    try {
+      await navigator.serviceWorker.register("/sw.js", { scope: "/" })
+      await navigator.serviceWorker.ready
+      if (!navigator.serviceWorker.controller) await new Promise<void>(resolve => navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true }))
+      return "registered"
+    } catch { return "blocked" }
+  })
+  const foreignFrame = () => f.page.evaluate(async source => new Promise<string>(resolve => {
+    const frame = document.createElement("iframe")
+    let received = false
+    const listener = (event: MessageEvent) => { if (event.source === frame.contentWindow && event.data?.serviceWorkerForeign) received = true }
+    window.addEventListener("message", listener)
+    frame.onload = () => setTimeout(() => {
+      window.removeEventListener("message", listener)
+      frame.remove()
+      resolve(received ? "worker document executed" : "blocked")
+    }, 100)
+    frame.src = `${new URL(source).origin}/worker-document`
+    document.body.append(frame)
+  }), f.b.contentUrl)
+  const before = await foreignFrame()
+  f.previews.revoke(f.b.capability)
+  const after = await foreignFrame()
+  const result = { registration, before, after, upstreamWorkerScripts: f.workerFetches }
+  t.diagnostic(JSON.stringify(result))
+  assert.deepEqual(result, { registration: "blocked", before: "blocked", after: "blocked", upstreamWorkerScripts: [] })
 })

@@ -6,6 +6,8 @@
 2. Saisissez une **URL de l'aperçu** `http://` ou `https://` sans identifiants, puis choisissez **Ouvrir l'aperçu**. Utilisez la barre d’outils pour naviguer, actualiser et aller en arrière/en avant.
 3. Utilisez le bouton de fermeture de l’aperçu pour revenir au chat. Rouvrez-le dans cette conversation pour poursuivre.
 
+Les service workers restent désactivés dans les aperçus distants.
+
 Cliquer sur un lien `localhost` ou `127.0.0.1` dans une conversation l'ouvre dans l'aperçu web de cette session, sur tout client où les aperçus sont disponibles. Via Remote Control lorsque l'hôte garde les aperçus web désactivés, ou sur un client où les aperçus sont autrement indisponibles, ces liens conservent leur comportement normal dans le navigateur. Ctrl+clic (⌘-clic sur macOS) ou clic milieu ouvre le lien dans votre navigateur à la place. Dans le cadre d'aperçu sandboxé, où aucun stockage réel n'est disponible, la page reçoit un `localStorage`, un `sessionStorage` et un `document.cookie` en mémoire pour le chargement actuel de la page ; un hôte d'aperçu par jeton ouvert seul conserve son stockage réel.
 
 Chaque aperçu appartient à son dossier de projet et sa session. Changer de conversation, projet, Info ou chat masque un invité natif explicitement ouvert sans abandonner son document/historique actif. Les invités masqués ne sont pas des cibles d’automatisation. Fermer le projet/la fenêtre ou redémarrer le moteur de rendu termine le document actif.

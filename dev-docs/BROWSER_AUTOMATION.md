@@ -129,6 +129,14 @@ authority header. Retargeting, removal, Forget, observed identity change and
 backend shutdown also revoke transfers. Remote token deletion is best-effort
 under that original generation.
 
+Service-worker script requests are refused on the isolated listener before
+transport construction or upstream dispatch. `Service-Worker-Allowed` stays
+outside the response allowlist. An expired content origin's network response
+carries `Clear-Site-Data: "storage"` as best-effort cleanup; the control API
+retains the trusted UI's storage. A worker-synthesized response can bypass
+network headers, so registration prevention and fresh capability origins own
+the authority boundary.
+
 `preview-capabilities.test.ts` covers content-origin reservation, equal remote
 tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
 destination ownership, revocation and the real remote CodeNomad path proxy.
