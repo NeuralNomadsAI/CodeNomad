@@ -3,6 +3,7 @@ import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./se
 import { normalizeRestorableAttachmentRecord, type RestorableAttachment } from "./client-state-attachments-codec"
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
 import { normalizeOutlineIndexes, outlineBudget, type OutlineBudget, type PersistedOutline } from "./session-outline-persistence"
+import { MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, type RestorableTabViewState } from "./tab-view-state-codec"
 
 export interface RestorableWorkspaceTabState {
   kind: "workspace"; folder: string; occurrence?: number; projectName?: string; binaryPath?: string
@@ -14,6 +15,7 @@ export interface RestorableWorkspaceTabState {
   expandedSessionIds?: string[]
   outlineIndexes?: Record<string, PersistedOutline>
   sessionCatalog?: PersistedSessionCatalogEntry[]
+  viewState?: RestorableTabViewState
 }
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
@@ -30,10 +32,10 @@ const MAX_LAYOUT_VALUE = 4096, MAX_DRAFT = 32 * 1024, MAX_ANCHOR_KEY = 1024
 const MAX_STRINGS = 96 * 1024, MAX_SCROLLS = 256, MAX_NEWER_CURSORS = 32, MAX_WINDOW_CURSOR = 1024
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
-interface StringBudget { remaining: number; scrollSnapshotsRemaining: number; outlines: OutlineBudget }
+interface StringBudget { remaining: number; scrollSnapshotsRemaining: number; outlines: OutlineBudget; previews: { remaining: number } }
 
 function createBudget(): StringBudget {
-  return { remaining: MAX_STRINGS, scrollSnapshotsRemaining: MAX_SCROLLS, outlines: outlineBudget() }
+  return { remaining: MAX_STRINGS, scrollSnapshotsRemaining: MAX_SCROLLS, outlines: outlineBudget(), previews: { remaining: MAX_TAB_PREVIEW_STORAGE } }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -197,6 +199,11 @@ function normalizeWorkspaceTab(
   if (outlineIndexes) result.outlineIndexes = outlineIndexes
   const sessionCatalog = normalizeSessionCatalog(value.sessionCatalog)
   if (sessionCatalog) result.sessionCatalog = sessionCatalog
+  const viewState = normalizeTabViewState(value.viewState, budget.previews)
+  if (viewState && JSON.stringify(viewState).length <= budget.remaining) {
+    result.viewState = viewState
+    budget.remaining -= JSON.stringify(viewState).length
+  }
   if (Number.isInteger(value.occurrence) && Number(value.occurrence) >= 0 && Number(value.occurrence) < MAX_TABS) {
     result.occurrence = Number(value.occurrence)
   }

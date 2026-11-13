@@ -4,6 +4,7 @@ import type { PreviewSession } from "../../../server/src/api-types"
 import { readClientLayoutValue, writeClientLayoutValue } from "./client-state"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
 import { updateMissionProjectView } from "./mission-view-state"
+import { parseLegacySessionPreviews } from "./tab-view-state-codec"
 
 interface SessionPreviewRecord extends PreviewSession {
   mode: "preview" | "chat"
@@ -36,30 +37,7 @@ function beginOperation(storageKey: string): number {
 }
 
 export function parseStoredSessionPreviews(value: string | null): Array<[string, StoredSessionPreview]> {
-  if (!value) return []
-  try {
-    const parsed = JSON.parse(value) as unknown
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return []
-    const result: Array<[string, StoredSessionPreview]> = []
-    for (const [sessionId, preview] of Object.entries(parsed).slice(0, MAX_STORED_PREVIEWS)) {
-      if (!sessionId || sessionId.length > 4_096 || !preview || typeof preview !== "object" || Array.isArray(preview)) continue
-      const targetUrl = (preview as Record<string, unknown>).targetUrl
-      const mode = (preview as Record<string, unknown>).mode
-      if (typeof targetUrl !== "string" || targetUrl.length > 2_048 || (mode !== "preview" && mode !== "chat")) continue
-      let target: URL
-      try {
-        target = new URL(targetUrl)
-      } catch {
-        continue
-      }
-      if (!historyUrl(target.href)) continue
-      const history = (preview as StoredSessionPreview).history
-      result.push([sessionId, { targetUrl: target.href, mode, ...(history ? { history: parseBrowserHistory(history, target.href) } : {}) }])
-    }
-    return result
-  } catch {
-    return []
-  }
+  return parseLegacySessionPreviews(value)
 }
 
 function initializeStorage() {

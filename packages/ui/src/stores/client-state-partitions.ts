@@ -5,6 +5,7 @@ import { canonicalJson, sha256 } from "./client-state-partition-json"
 export { canonicalJson, sha256 } from "./client-state-partition-json"
 import { encodeOutlinePartitions, decodeOutlinePartitions } from "./client-state-outline-partitions"
 import { encodeCatalogPartitions, decodeCatalogPartitions } from "./client-state-catalog-partitions"
+import { normalizeTabViewState } from "./tab-view-state-codec"
 
 const MAX_PARTITION_BYTES = 1024 * 1024
 const MAX_ROOT_BYTES = 1024 * 1024
@@ -168,6 +169,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
       if (tab.activeSessionId !== undefined) workspace.activeSessionId = tab.activeSessionId
       if (tab.expandedSessionIds !== undefined) workspace.expandedSessionIds = tab.expandedSessionIds
       if (tab.sessionCatalog !== undefined) workspace.catalogPartitions = await encodeCatalogPartitions(tab.sessionCatalog, addPartition)
+      if (tab.viewState !== undefined) workspace.viewState = tab.viewState
       const shell: Record<string, unknown> = {
         kind: tab.kind,
         folder: tab.folder,
@@ -375,7 +377,7 @@ async function decodeGraph(
     const workspace = await loadCanonical(shell.workspacePartition)
     if (!workspace || (workspace.format !== 1 && workspace.format !== 2)
       || !hasExactKeys(workspace, ["format", "sessions"],
-        ["activeParentSessionId", "activeSessionId", "expandedSessionIds", "catalogPartitions"])
+        ["activeParentSessionId", "activeSessionId", "expandedSessionIds", "catalogPartitions", "viewState"])
       || !isRecord(workspace.sessions)) return
     legacyGraph ||= workspace.format === 1
     if (!Object.keys(workspace.sessions).every(isSafePersistedSessionId)
@@ -398,6 +400,11 @@ async function decodeGraph(
     }
     for (const key of ["activeParentSessionId", "activeSessionId", "expandedSessionIds"] as const) {
       if (hasOwn(workspace, key)) tab[key] = workspace[key]
+    }
+    if (hasOwn(workspace, "viewState")) {
+      const viewState = normalizeTabViewState(workspace.viewState)
+      if (viewState) tab.viewState = viewState
+      if (!canonicalEquals(viewState, workspace.viewState)) degraded = true
     }
     if (workspace.catalogPartitions !== undefined) {
       const catalog = await decodeCatalogPartitions(workspace.catalogPartitions, new Set(persistedKeys), declaredGraph, loadCanonical)

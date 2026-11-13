@@ -5,6 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { hydrateRestoredWorkspaceState } from "./app-session-workspace-hydration.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { getTabViewState, updateTabViewState, clearTabViewState } from "./tab-view-state.ts"
 import {
   clearInstanceDraftPrompts,
   clearInstanceSessionSelection,
@@ -54,18 +55,23 @@ it("restores the selected draft before inactive session hydration settles", asyn
       unseenIdleSince: { stale: 1 },
       generationRecovery: { stale: "interrupted" },
       expandedSessionIds: ["stale"],
+      viewState: { version: 1, previews: { active: { mode: "preview", targetUrl: "https://example.com/" } },
+        rightPanelTab: "files", filesMode: "workspace" },
     }, controller.signal, () => true).then((value) => { settled = true; return value })
 
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(settled, false)
     assert.equal(getSessionDraftPrompt(instanceId, "active"), "active draft")
     assert.equal(getSessionDraftPrompt(instanceId, "inactive"), "")
+    assert.equal(getTabViewState(instanceId).previews?.active.targetUrl, "https://example.com/")
+    updateTabViewState(instanceId, { previews: { active: { mode: "chat", targetUrl: "https://example.com/" } } })
 
     inactive.resolve(apiSession("inactive"))
     assert.deepEqual(await hydration, new Set(["stale"]))
     assert.equal(getSessionDraftPrompt(instanceId, "inactive"), "inactive draft")
     assert.equal(signals.length, 2)
     assert.equal(signals.every((signal) => signal === controller.signal), true)
+    assert.equal(getTabViewState(instanceId).previews?.active.mode, "chat")
   } finally {
     if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
     clearInstanceDraftPrompts(instanceId)
@@ -73,6 +79,7 @@ it("restores the selected draft before inactive session hydration settles", asyn
     setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
     removeInstance(instanceId, { authoritative: false })
     sdkManager.destroyClientsForInstance(instanceId)
+    clearTabViewState(instanceId)
   }
 })
 

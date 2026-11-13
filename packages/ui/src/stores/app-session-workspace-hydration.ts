@@ -9,6 +9,7 @@ import { seedRestoredSessionSelection } from "./session-state"
 import { seedSessionOutlineIndexes } from "./session-outline"
 import { seedSessionCatalog } from "./session-catalog-hydration"
 import { hydrateSeenInterruptions } from "./session-interruption-seen"
+import { seedTabViewState } from "./tab-view-state"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
@@ -20,6 +21,7 @@ export function seedRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
 ): void {
+  seedTabViewState(instanceId, snapshot.viewState)
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
     .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_STREAM_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
