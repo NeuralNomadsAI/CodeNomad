@@ -41,6 +41,7 @@ export function createMediaSource(instanceId: Accessor<string>, source: Accessor
     const owner = backend
     const inline = url.protocol === "data:"
     const root = new URL(owner.url("/"))
+    root.search = ""
     const sameOrigin = url.origin === root.origin
     // UI- and backend-origin sources must stay inside this owner's namespace.
     if ((sameOrigin || url.origin === window.location.origin) && !url.href.startsWith(root.href)) return

@@ -4,7 +4,7 @@ import { chromium, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-async function fixturePage(run: (page: Page, probes: string[]) => Promise<void>, relay = true) {
+async function fixturePage(run: (page: Page, probes: string[]) => Promise<void>, relay = true, authority = false) {
   const fixture = await borrowFixture({ name: "backend-media-relay", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-media-routing.tsx"></script></body></html>' }] })
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -20,7 +20,7 @@ async function fixturePage(run: (page: Page, probes: string[]) => Promise<void>,
       return route.fulfill({ json: {} })
     })
     await page.route("**/media-probe.png", route => route.fulfill({ status: 204 }))
-    await page.goto(fixture.url + (relay ? "?relay=1" : ""))
+    await page.goto(fixture.url + (relay ? `?relay=1${authority ? "&authority=1" : ""}` : ""))
     if (relay) await page.waitForFunction(() => !!(window as any).media && document.querySelectorAll('[data-owner="remote"] [data-consumer="html"] img, [data-owner="remote"] [data-consumer="html"] .markdown-local-image').length === 3)
     await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('[data-owner="local"] img')].filter(image => image.complete && image.naturalWidth === 8).length === 3)
     await run(page, probes)
@@ -101,6 +101,21 @@ test("relay session media uses its owning fetch exactly once per consumer", asyn
   assert.equal(new Set(calls.map((call: any) => call.url)).size, 3)
   assert.ok(calls.every((call: any) => call.url.startsWith(new URL("/api/backends/lab/api/workspaces/same/session-media/", page.url()).href) && call.credentials === "include"))
 }))
+
+test("authority-bound relay session media renders through its owning transport with the proof intact", async () => fixturePage(async page => {
+  await settle(page)
+  const calls = await page.evaluate(() => (window as any).media.calls)
+  assert.equal(calls.length, 3, "all media consumers must reach the authority-bound transport")
+  for (const call of calls) {
+    const url = new URL(call.url)
+    assert.ok(url.pathname.startsWith("/api/backends/lab/api/workspaces/same/session-media/"))
+    assert.equal(url.searchParams.get("__codenomad_authority"), "a".repeat(43))
+    assert.equal(call.authority, "a".repeat(43))
+    assert.equal(call.credentials, "include")
+  }
+  await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('[data-owner="remote"] img')]
+    .filter(image => image.src.startsWith("blob:") && image.naturalWidth === 8).length === 3)
+}, true, true))
 
 for (const relay of [true, false]) test(`remote absolute UI-origin sources outside the owner never reach any consumer (${relay ? "relay" : "direct"})`, async () => fixturePage(async page => {
   const requests: string[] = []
