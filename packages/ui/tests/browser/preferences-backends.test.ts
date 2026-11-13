@@ -95,6 +95,44 @@ async function api(page: Page, selected: () => string) {
 }
 
 for (const kind of ["electron", "tauri"] as const) {
+  test(`${kind}: detached Preferences clears Images and Web search, including retained hook snapshots`, async () => {
+    const page = await browser.newPage(), f = await api(page, () => "a")
+    await host(page, kind, project("a", "providers"))
+    try {
+      await page.goto(url)
+      await page.getByRole("heading", { name: "Web search", exact: true }).click()
+      await page.getByRole("heading", { name: "Images", exact: true }).click()
+      await page.getByLabel("For the current project", { exact: true }).waitFor()
+      await page.getByLabel("Image generation", { exact: true }).waitFor()
+      await page.evaluate(async () => {
+        const path = "/tests/browser/fixtures/preferences-provider-state.ts"
+        ;(window as any).providerProbe = (await import(path)).observeProviderSettings("a~same")
+      })
+      await page.waitForFunction(() => {
+        const state = (window as any).providerProbe.state()
+        return !!state.image && !!state.search && state.providers.length > 0 && state.integrations.length > 0 && !state.busy
+      })
+      assert.equal(await page.evaluate(async () => {
+        const path = "/src/stores/remote-backends.ts"
+        return (await import(path)).backendRegistry.state("a")
+      }), "compatible", "metadata-only admission satisfies the registry's inventory callback contract")
+      await page.evaluate(async () => {
+        const path = "/src/stores/remote-backends.ts"
+        ;(await import(path)).backendRegistry.detach("a")
+      })
+      await page.waitForFunction(() => {
+        const state = (window as any).providerProbe.state()
+        return !state.image && !state.search && !state.providers.length && !state.integrations.length && !state.busy
+      })
+      assert.equal(await page.getByLabel("For the current project", { exact: true }).count(), 0)
+      assert.equal(await page.getByLabel("Image generation", { exact: true }).count(), 0)
+      assert.deepEqual(f.errors, [])
+    } finally {
+      await page.evaluate(() => (window as any).providerProbe?.dispose()).catch(() => {})
+      await page.close()
+    }
+  })
+
   test(`${kind}: Preferences owns homonym projects, memory mutations and native cleanup intent`, async () => {
     const page = await browser.newPage()
     page.setDefaultTimeout(30_000)
