@@ -1,4 +1,4 @@
-// Run: node --import tsx scripts/test-integrations-host-install-native.mjs <absolute 2.2.5 CLI> [integration checkout]
+// Run: node --import tsx scripts/test-integrations-host-install-native.mjs <absolute supported CLI> [integration checkout]
 // Uses the existing built kit read-only; never launches Blender or installs an application payload.
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
@@ -18,6 +18,7 @@ import { catalogEntry, catalogOf } from "../packages/server/src/opencode/integra
 import { IntegrationAttachments } from "../packages/server/src/opencode/integrations/attachments.ts"
 import { registerIntegrationAttachmentRoutes } from "../packages/server/src/server/routes/integration-attachments.ts"
 import { registerRequestLogging } from "../packages/server/src/server/request-logging.ts"
+import { isBelowOpenCodeMinimum } from "../packages/server/src/opencode/runtime-support.ts"
 
 const checkout = path.resolve(process.argv[3] ?? "D:/opencode_bundles-work/opencode-integrations")
 const probes = {
@@ -138,7 +139,7 @@ export default { id: marker.plugin, async setup(ctx) {
   }, async ({ root, env, requests, connection: fixtureConnection }) => {
     assert(Object.keys(env).every(key => !/^BLENDER_|^PYTHON(PATH|HOME)$/.test(key)), "Daemon inherits no user Blender or Python overrides")
     const info = await fixtureConnection.client.server.info()
-    assert.equal(info.version, "2.2.5")
+    assert(!isBelowOpenCodeMinimum(info.version), `Qualify a supported OpenCode runtime, not ${info.version}`)
     console.log(`Native runtime: ${info.version}`)
     const authorization = `Basic ${Buffer.from(`opencode:${fixtureConnection.endpoint.auth.password}`).toString("base64")}`
     const client = OpenCode.make({ baseUrl: fixtureConnection.endpoint.url, headers: { authorization }, fetch: (input, init) =>
