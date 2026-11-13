@@ -193,7 +193,7 @@ export class RemoteServerBrowseManager {
         const client = new CodeNomadServerClient(profile.origin, this.credentials.read(id, profile.scope, profile.skipTlsVerify), {
           skipTlsVerify: profile.skipTlsVerify,
           dial: this.dial(profile),
-          onRejected: () => { if (this.#state.clients.get(id)?.client === client) this.remove(id) },
+          onRejected: () => { if (this.#state.clients.get(id)?.client === client && this.#state.authorities.get(id) === profile) this.remove(id) },
           onSecretChanged: secret => {
             if (this.#state.clients.get(id)?.client === client && !client.closed) {
               this.assertCurrent(profile)
@@ -241,8 +241,40 @@ export class RemoteServerBrowseManager {
       let tunnel = tunnels.get(authority)
       if (!tunnel) {
         const url = new URL(authority.origin)
-        const created: SshForward = this.openForward(ssh, `${url.hostname}:${url.port || (url.protocol === "https:" ? 443 : 80)}`,
+        const forward = this.openForward(ssh, `${url.hostname}:${url.port || (url.protocol === "https:" ? 443 : 80)}`,
           { onExit: () => { if (tunnels.get(authority) === created) tunnels.delete(authority) } })
+        // Every borrower awaits this one identity check before the new endpoint is usable.
+        const created: SshForward = { close: () => forward.close(), ready: forward.ready.then(async port => {
+          this.assertCurrent(authority)
+          if (tunnels.get(authority) !== created) throw new CodeNomadServerError("unreachable")
+          const known = this.#state.serverIds.get(authority)
+          if (known) {
+            const probe = new CodeNomadServerClient(authority.origin, this.credentials.read(authority.id, authority.scope, authority.skipTlsVerify), {
+              skipTlsVerify: authority.skipTlsVerify,
+              // Probe this exact forward, bypassing the gate rather than recursively borrowing it.
+              dial: async () => {
+                this.assertCurrent(authority)
+                if (tunnels.get(authority) !== created) throw new CodeNomadServerError("unreachable")
+                return { address: "127.0.0.1", family: 4 as const, port }
+              },
+            })
+            this.#state.pending.set(probe, authority)
+            try {
+              const result = await probe.json<{ serverId?: unknown }>("/api/meta")
+              this.assertCurrent(authority)
+              if (tunnels.get(authority) !== created || result.status !== 200 || result.body?.serverId !== known) {
+                throw new CodeNomadServerError("unknown_server")
+              }
+            } catch (error) {
+              if (this.#state.authorities.get(authority.id) === authority) this.remove(authority.id)
+              throw error
+            } finally { this.#state.pending.delete(probe); probe.close() }
+          }
+          return port
+        }).catch(error => {
+          forward.close()
+          throw error
+        }) }
         tunnels.set(authority, tunnel = created)
       }
       const port = await tunnel.ready
