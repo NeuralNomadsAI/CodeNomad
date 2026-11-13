@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser } from "playwright"
 
 // Deleting one conversation must not pay for every other conversation resident
@@ -20,6 +21,7 @@ before(async () => {
   })
   url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close() })
 
