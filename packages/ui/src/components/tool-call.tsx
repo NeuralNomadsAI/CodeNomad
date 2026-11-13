@@ -656,6 +656,12 @@ export default function ToolCall(props: ToolCallProps) {
     })
   }
   createEffect(on(userExpanded, () => { setBodyMountReleased(true) }, { defer: true }))
+  // A live or failed tool mounts its body at once even when the deferred
+  // state began while it was still pending.
+  createEffect(() => {
+    const status = toolState()?.status
+    if (status === "running" || status === "error") setBodyMountReleased(true)
+  })
 
   const toolInput = createMemo(() => {
     const state = toolState()

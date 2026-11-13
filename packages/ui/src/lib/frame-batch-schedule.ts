@@ -37,3 +37,16 @@ export function scheduleFrameBatchedMount(mount: () => void): void {
   queue.push(mount)
   schedule()
 }
+
+/**
+ * Drains every queued mount at once. A placement-critical navigation (a key
+ * jump or an element alignment) must land on its final layout: deferred
+ * content still growing over the following frames would leave the held
+ * target drifting for the reader.
+ */
+export function flushFrameBatchedMounts(): void {
+  // A pending frame callback finds an empty queue and stops; clearing the
+  // flag lets a later mount reschedule at once.
+  scheduled = false
+  while (queue.length > 0) queue.shift()!()
+}
