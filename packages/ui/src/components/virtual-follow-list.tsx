@@ -5,7 +5,7 @@ import { flushFrameBatchedMounts } from "../lib/frame-batch-schedule"
 import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
-import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollObservationGate, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -170,6 +170,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
 
   const scrollController = new VirtualScrollController(initialAutoScroll())
+  // Scroll events observe the DOM at most once per animation frame: a
+  // settling list emits one per rendering update (every programmatic write,
+  // each of Virtua's measurement compensations, the follow pin), and each
+  // observation reads layout and can write again. Direct entries (a gesture
+  // at a clamped edge, content-rendered flushes, viewport resizes) keep their
+  // synchronous observation and consume the frame slot.
+  const scrollObservation = new ScrollObservationGate(() => updateScrollStateFromDom(), {
+    schedule: (callback) => requestAnimationFrame(callback),
+    cancel: (handle) => cancelAnimationFrame(handle),
+  })
   // Virtua measures and compensates the header like any row. It is created
   // once: a Virtua remount moves it into its new first row instead of
   // recreating it (focus and its components' state survive).
@@ -244,6 +254,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     readerSettlement.cancel()
     invalidateScrollRestore()
     endBottomPin("interrupted")
+    scrollObservation.cancelPending()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     pendingContentRenderedFrame = null
   }
@@ -321,7 +332,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // No list positioning outlives this: see `writeScroll`.
     // At a clamped edge a wheel/key produces no scroll event. The gesture
     // itself must be able to request the next historical window.
-    if (direction) updateScrollStateFromDom()
+    if (direction) scrollObservation.observeNow()
   }
 
   function hasProgrammaticScrollIntent() {
@@ -627,7 +638,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function handleScroll() {
     followRollAnchor()
-    updateScrollStateFromDom()
+    scrollObservation.request()
     props.onScroll?.()
 
     const handle = virtuaHandle()
@@ -765,7 +776,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     else if (!bottomPin?.settle && !maybeEscapeForHoldTrigger()) {
       dispatchFollowEvent({ type: "content-grew", canPinToBottom: autoScroll() && !externalSuspendAutoPinToBottom() })
     }
-    updateScrollStateFromDom()
+    scrollObservation.observeNow()
   }
 
   function captureScrollSnapshot(): VirtualFollowScrollSnapshot | undefined {
@@ -1020,7 +1031,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       lastPrimaryPointerY = null
       if (wasDragging) {
         programmaticScrollUntil = 0
-        updateScrollStateFromDom()
+        scrollObservation.observeNow()
       }
     }
     let lastTouchY: number | null = null
@@ -1355,7 +1366,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         // The rolled reader's place follows the bottom-anchored (and clamped) content.
         if (rollReader) rollReader.offset -= element.scrollTop - before
       }
-      updateScrollStateFromDom()
+      scrollObservation.observeNow()
     })
     // An inactive or restoring list only rebases. A held element re-aligns itself on its next frame.
     const observer = new ResizeObserver(() => { viewportHeight.update(isActive() && !scrollController.snapshot().restoring) })

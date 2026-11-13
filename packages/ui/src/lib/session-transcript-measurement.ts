@@ -28,6 +28,15 @@ export class SessionTranscriptMeasurementQueue {
         return
       }
       current.revision += 1
+      // The delay follows the last schedule: a burst of commits (store
+      // publishes, deferred-highlight cache writes) walks the retained graph
+      // once after it stops, instead of admitting a walk per quiet gap —
+      // one trailing follow-up per identity, like every other coalesced
+      // refresh in the codebase.
+      if (current.timer !== undefined) {
+        clearTimeout(current.timer)
+        this.arm(instanceId, sessionId, current)
+      }
       return
     }
 

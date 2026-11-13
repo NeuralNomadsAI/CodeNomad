@@ -23,7 +23,10 @@ it("keeps a visible over-budget transcript pinned across catalogue and loading c
       useSessionCache({ instanceId: () => instanceId, activeSessionId: () => sessionId,
         isActiveInstance: active, instanceSessions: () => sessions().get(instanceId)! })
     })
-    await new Promise(resolve => setTimeout(resolve, 250))
+    // The transcript account's measurement debounce waits out a 500ms quiet
+    // window before its retained-size walk; give it time to account the
+    // over-budget bytes while the session stays visible and protected.
+    await new Promise(resolve => setTimeout(resolve, 650))
     assert.deepEqual(store.getSessionMessageIds(sessionId), ["message"])
     setSessions(prev => new Map(prev).set(instanceId, new Map([[sessionId, { ...session, title: "Renamed" }]])))
     assert.deepEqual(store.getSessionMessageIds(sessionId), ["message"])

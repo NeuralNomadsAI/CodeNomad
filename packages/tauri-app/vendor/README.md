@@ -15,8 +15,10 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
    `patches/wry-browser-print.patch` and `patches/wry-browser-download.patch`;
   native trials ship beside the runtime examples.
 - GTK: the runtime lazily installs a window-owned `GtkOverlay` inside Tao's
-  content box, below its menu bar. Primary content stays boxed; child webviews use
-  `GtkFixed`. The overlay passes uncovered input through to the primary view.
+  content box, below its menu bar. Primary content stays boxed, including a
+  window's own webview in Tauri's multi-webview mode (it requests no bounds), so a
+  visible menu bar never pushes it past the window; child webviews use `GtkFixed`.
+  The overlay passes uncovered input through to the primary view.
   Primary-only windows keep their ordinary box. Reparenting uses the destination
   window's own child container.
 - Wry stores child positions in `GtkFixed` and sizes in GTK size requests, alongside
@@ -69,6 +71,12 @@ module and vendored Wry, then exercises Wayland and X11 with native input:
 rectangles, relayout, menus, reparenting, hide/show, independent owning windows,
 destruction, permission/download denial and distinct persistent data managers.
 Full application checks additionally exercise Tauri's dispatch integration.
+`cargo run --example menu-layout-linux` (from `packages/tauri-app`, in an unlocked
+X11 and Wayland session) runs the runtime itself with a visible menu bar: the
+window's page must match its allocation below the menu initially, after maximizing
+and after a child webview joins at its requested rectangle. Its negative control
+builds the window's own webview into the child `GtkFixed`, which overflows by the
+menu bar's height.
 
 
 The Tauri workspace's `[patch.crates-io]` (`packages/tauri-app/Cargo.toml`)

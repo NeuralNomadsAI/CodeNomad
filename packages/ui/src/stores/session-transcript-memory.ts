@@ -37,7 +37,11 @@ const coordinator = new SessionTranscriptLru({
 })
 
 const measurements = new SessionTranscriptMeasurementQueue({
-  delayMs: 100,
+  // Deferred-highlight cache commits land every ~150-350ms while a mounted
+  // burst drains; a shorter quiet window would keep aborting and restarting
+  // the retained-graph walk mid-drain. The trailing debounce plus this
+  // window collapses a switch's measurement storm into one final walk.
+  delayMs: 500,
   measure: async (instanceId, sessionId, signal) => {
     return messageStoreBus.getInstance(instanceId)?.estimateSessionRetainedBytes(sessionId, signal) ?? 0
   },
