@@ -36,7 +36,6 @@ import { useTheme } from "../../../../lib/theme"
 import { ExtensionPanel } from "../../../panel-extensions/extension-panel"
 import { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
 import { RightPanelCustomizationPopover } from "./RightPanelCustomizationPopover"
-import { createIntegrationStatusModule } from "./integration-status-module"
 import type { RightPanelModule } from "./registry"
 
 function RightPanelTabFallback() {
@@ -217,13 +216,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         host={extensionHost} />,
     }] }
   }))
-  const integrationModule = createIntegrationStatusModule({
-    instanceId: props.instanceId,
-    folder: () => props.instance.folder,
-    t: props.t,
-    isActive: () => props.isActive() && rightPanelTab() === "status",
-  })
-  const rightPanelModules = createMemo(() => [coreModule, missionsModule, integrationModule(), ...externalModules()])
+  const rightPanelModules = createMemo(() => [coreModule, missionsModule, ...externalModules()])
   const extraStatusContent = createMemo(() => rightPanelModules().flatMap(module => module.renderStatusExtras ? [module.renderStatusExtras] : []), [],
     { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))

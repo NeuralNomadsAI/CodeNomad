@@ -198,6 +198,8 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.refresh": "Обновить управление плагинами",
   "instanceServiceStatus.plugins.toggleAriaLabel": "Изменить правило активации для {name}",
   "instanceServiceStatus.plugins.globalOverridden": "Правило проекта переопределяет здесь глобальное состояние.",
+  "instanceServiceStatus.plugins.kind.plugin": "Плагин: {id}",
+  "instanceServiceStatus.plugins.kind.integration": "Интеграция: {id}",
   "instanceServiceStatus.plugins.source.package": "Пакет: {source}",
   "instanceServiceStatus.plugins.source.local": "Локальный источник: {source}",
   "instanceServiceStatus.plugins.source.builtin": "Встроен в OpenCode",

@@ -602,8 +602,7 @@ jobs:
           packages/ui/src/lib/settings/behavior-registry.test.ts
           packages/ui/src/components/instance/shell/right-panel/core-plugin.test.ts
           packages/ui/src/components/instance/shell/right-panel/registry.test.ts
-          packages/ui/src/components/instance/shell/right-panel/integration-sections.test.ts
-          packages/ui/src/components/integration-section-state.test.ts
+          packages/ui/src/lib/integration-row-state.test.ts
           packages/ui/src/lib/i18n/messages/integrations-locales.test.ts
           packages/ui/src/stores/message-v2/empty-content.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts

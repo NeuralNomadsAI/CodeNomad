@@ -1,13 +1,13 @@
 import type { Page, Route } from "playwright"
 
-/** One catalogue integration as the integrations route projects it (spec change §4.2). */
+/** One catalogue integration as the integrations route projects it (`IntegrationView`). */
 export function integrationView(id: string, overrides: Record<string, unknown> = {}) {
   const app = id[0]!.toUpperCase() + id.slice(1)
   return {
     id, displayName: `OpenCode for ${app}`, family: "native", app: { name: app, versions: ">=5.2" },
     summary: { en: `Use ${app} from OpenCode.`, fr: `Utiliser ${app} depuis OpenCode.` },
     docs: `https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/${id}`, catalogStatus: "preview",
-    configured: true, plugin: { declared: true, runtime: "loaded" }, scopes: ["global"],
+    configured: true, plugin: { declared: true, runtime: "loaded", runtimeId: `neuralnomads.${id}` }, scopes: ["global"],
     configuredSources: [{ scope: "global", entryIndex: id === "blender" ? 2 : 3, expectedRevision: "a".repeat(64) }], configuredRules: [],
     version: "0.1.0", state: "ok",
     status: { version: "0.1.0", host: { state: "ok" }, connection: { offers: 1 } },
@@ -15,7 +15,7 @@ export function integrationView(id: string, overrides: Record<string, unknown> =
   }
 }
 
-export type IntegrationCall = { action: string; method: string; integration?: string; directory: string | null; body: any }
+export type IntegrationCall = { action: string; method: string; integration?: string; directory: string | null; sessionID?: string; body: any }
 
 /**
  * Deterministic HTTP model of the CodeNomad integration routes. Every request is recorded; `hold` keeps the next
@@ -46,7 +46,8 @@ export async function routeIntegrations(page: Page) {
     if (!match) return route.fulfill({ json: {} })
     const action = match[2] ?? "read", integration = match[1]
     const body = request.method() === "GET" ? undefined : request.postDataJSON()
-    calls.push({ action, method: request.method(), integration, directory: url.searchParams.get("directory"), body })
+    calls.push({ action, method: request.method(), integration, directory: url.searchParams.get("directory"),
+      ...(url.searchParams.has("sessionID") ? { sessionID: url.searchParams.get("sessionID")! } : {}), body })
     if (model.hold.has(action)) { model.held.push({ action, route }); return }
     const failure = model.fail.get(action)
     if (failure === "network") return route.abort("connectionfailed")
@@ -56,7 +57,8 @@ export async function routeIntegrations(page: Page) {
     if (action === "binding") return route.fulfill({ json: model.bindings[key] ?? { state: "none" } })
     if (action === "hosts") return route.fulfill({ json: { offers: model.offers } })
     if (action === "attach") {
-      if (model.outcomes.attach === "attached") model.bindings[key] = { state: "attached", label: model.offers[0].document ?? model.offers[0].label }
+      const offer = model.offers.find(item => item.offerID === body.offerID)
+      if (model.outcomes.attach === "attached" && offer) model.bindings[key] = { state: "attached", label: offer.label }
       return route.fulfill({ json: { outcome: model.outcomes.attach } })
     }
     if (action === "detach") { model.bindings[key] = { state: "none" }; return route.fulfill({ json: { outcome: model.outcomes.detach } }) }

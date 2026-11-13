@@ -40,3 +40,15 @@ export function integrationPlugin(snapshot: PluginControlsSnapshot | undefined,
   return { sources, ...(control ? { control } : {}), ...(source ? { source } : {}) }
 }
 
+/** Read-only row identity for inherited, virtual or runtime-only plugins; writable correlations stay separate. */
+export function integrationDisplayPlugin(snapshot: PluginControlsSnapshot | undefined,
+  entry: Pick<IntegrationView, "configuredSources" | "configuredRules" | "plugin" | "ambiguous">): IntegrationPlugin {
+  if (entry.ambiguous) return { sources: [] }
+  const configured = integrationPlugin(snapshot, entry)
+  if (configured.control || configured.sources.length || !snapshot || !entry.plugin.runtimeId) return configured
+  const matches = snapshot.runtime.filter(runtime => runtime.id === entry.plugin.runtimeId)
+  if (matches.length !== 1) return configured
+  const runtime = matches[0]!
+  const controls = snapshot.controls.filter(control => control.id === runtime.id && control.runtime?.key === runtime.key)
+  return { sources: [], ...(controls.length === 1 ? { control: controls[0] } : {}), source: runtime.source }
+}
