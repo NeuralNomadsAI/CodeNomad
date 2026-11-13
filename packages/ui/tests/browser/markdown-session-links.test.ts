@@ -41,6 +41,11 @@ test("session links route to the preview and the file reader", { timeout: 60_000
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.targetFull()),
       { path: "README.md", directory: "/fixture-root/wt-a" })
 
+    // An independently moved child keeps its own directory, never the parent's.
+    await page.click('#child-root a[href="./README.md"]')
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.targetFull()),
+      { path: "README.md", directory: "/fixture-root/wt-b" })
+
     // Loopback routing: a plain click opens the session preview instead.
     await page.click('#main-root a[href="http://localhost:3000/x"]')
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.previews()),
@@ -58,7 +63,7 @@ test("session links route to the preview and the file reader", { timeout: 60_000
     await page.click('#main-root a[href="http://localhost:3000/x"]', { modifiers: ["Control"] })
     await page.waitForFunction(count => (window as any).fixture.clicks().length === count, clicksBefore + 4)
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.targetFull()),
-      { path: "README.md", directory: "/fixture-root/wt-a" })
+      { path: "README.md", directory: "/fixture-root/wt-b" })
     assert.equal(await page.evaluate(() => (window as any).fixture.previews().length), previewsBefore)
     for (const click of await page.evaluate(() => (window as any).fixture.clicks().slice(-4))) {
       assert.equal(click.prevented, false, click.href)
@@ -75,6 +80,33 @@ test("session links route to the preview and the file reader", { timeout: 60_000
     assert.equal(await page.evaluate(() => (window as any).fixture.title('a[href="./README.md"]')),
       await page.evaluate(() => (window as any).fixture.label("markdown.link.fileOpens")))
     assert.equal(await page.evaluate(() => (window as any).fixture.title('a[href="https://example.com/x"]')), null)
+  } finally {
+    await page.close()
+  }
+  assert.deepEqual(errors, [])
+})
+
+test("a populated but unmatched inventory never captures session links", async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.goto(`${url}?inventory=1`)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => (window as any).fixture.rendered() > 0)
+
+    // The root inventory entry exists but holds neither session's directory.
+    await page.click('#sub-root a[href="./README.md"]')
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.targetFull()),
+      { path: "README.md", directory: "/fixture-root/wt-a" })
+    await page.click('#child-root a[href="./README.md"]')
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.targetFull()),
+      { path: "README.md", directory: "/fixture-root/wt-b" })
+
+    // A session the inventory does contain still resolves through its entry.
+    await page.click('#main-root a[href="./README.md"]')
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.targetFull()),
+      { path: "README.md", directory: "/fixture-root" })
   } finally {
     await page.close()
   }

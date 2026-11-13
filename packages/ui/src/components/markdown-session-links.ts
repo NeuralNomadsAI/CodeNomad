@@ -4,9 +4,9 @@ import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { showAlertDialog } from "../stores/alerts"
 import { instances } from "../stores/instances"
 import { openFilePreview } from "../stores/files-preview"
-import { getWorktreeSlugForSession, getWorktrees } from "../stores/worktrees"
+import { getWorktreeForDirectory } from "../stores/worktrees"
 import { openSessionPreview, getSessionPreview, showSessionChat } from "../stores/session-previews"
-import { getSessionRoot } from "../stores/session-state"
+import { sessions } from "../stores/session-state"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 
 // One session-bound Markdown instance asks for the server meta; the answer
@@ -64,13 +64,17 @@ export interface SessionLinkBase {
 }
 
 export function sessionLinkBase(instanceId: string, sessionId: string): SessionLinkBase | undefined {
-  const slug = getWorktreeSlugForSession(instanceId, sessionId)
-  const worktree = getWorktrees(instanceId).find(entry => entry.slug === slug)
+  // The session's own location: an independently moved child carries its own
+  // directory, never its parent's.
+  const sessionDirectory = sessions().get(instanceId)?.get(sessionId)?.location.directory
+  // Inventory by directory, never by a fallback slug: a populated inventory
+  // holding only the root checkout must not capture unmatched sessions.
+  const worktree = sessionDirectory !== undefined ? getWorktreeForDirectory(instanceId, sessionDirectory) : undefined
   const directory = worktree?.directory
-    ?? getSessionRoot(instanceId, sessionId)?.location.directory
+    ?? sessionDirectory
     ?? instances().get(instanceId)?.folder
   if (!directory) return undefined
-  return { slug, directory, serviceDirectory: worktree?.serviceDirectory, base: worktree?.serviceDirectory ?? directory }
+  return { slug: worktree?.slug ?? "root", directory, serviceDirectory: worktree?.serviceDirectory, base: worktree?.serviceDirectory ?? directory }
 }
 
 /** The file-reader target a link href resolves to inside the session's
@@ -131,7 +135,10 @@ export function decorateSessionLinks(container: ParentNode, titles: { preview: s
     const file = Boolean(fileTitle) && resolveProjectLinkPath(href, base!.base) !== undefined
     const title = loopback ? previewTitle : file ? titles.file : ""
     if (title) {
-      if (!anchor.hasAttribute("title")) {
+      if (anchor.getAttribute("data-preview-link-title") === "true") {
+        // Our own tooltip follows locale changes; an author's title never does.
+        if (anchor.getAttribute("title") !== title) anchor.setAttribute("title", title)
+      } else if (!anchor.hasAttribute("title")) {
         anchor.setAttribute("title", title)
         anchor.setAttribute("data-preview-link-title", "true")
       }

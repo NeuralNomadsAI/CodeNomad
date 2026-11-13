@@ -13,6 +13,7 @@ import { getFilePreview } from "../../../src/stores/files-preview"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { getServerMeta } from "../../../src/lib/server-meta"
+import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 
 const id = "markdown-session-links", scope = "/fixture-root"
 const client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -31,7 +32,17 @@ const session = { id: "ses_link", instanceId: id, parentId: null, title: "Links"
 // Lives in a worktree the (empty) inventory does not know: links must resolve
 // against this session's directory, not the instance folder.
 const subSession = { ...session, id: "ses_sub", title: "Sub", location: { directory: "/fixture-root/wt-a" } } satisfies Session
-setSessions(previous => new Map(previous).set(id, new Map([[session.id, session], [subSession.id, subSession]])))
+// Independently moved child: its own location wins, never the parent's.
+const childSession = { ...session, id: "ses_child", parentId: "ses_link", title: "Child", location: { directory: "/fixture-root/wt-b" } } satisfies Session
+setSessions(previous => new Map(previous).set(id, new Map(
+  [[session.id, session], [subSession.id, subSession], [childSession.id, childSession]])))
+// A populated inventory holding only the root checkout must not capture
+// sessions whose directories it does not contain.
+if (new URLSearchParams(location.search).has("inventory")) {
+  serverApi.fetchWorktrees = async () => ({ gitAvailable: true, worktrees: [
+    { slug: "root", kind: "root" as const, directory: scope }] }) as never
+  await ensureWorktreesLoaded(id)
+}
 await getServerMeta()
 
 let renderCount = 0
@@ -54,6 +65,10 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
     <div id="sub-root">
       <Markdown part={{ id: "sub-part", type: "text", version: 0, text: "See [readme](./README.md)." }}
         instanceId={id} sessionId="ses_sub" />
+    </div>
+    <div id="child-root">
+      <Markdown part={{ id: "child-part", type: "text", version: 0, text: "See [readme](./README.md)." }}
+        instanceId={id} sessionId="ses_child" />
     </div>
   </div>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
