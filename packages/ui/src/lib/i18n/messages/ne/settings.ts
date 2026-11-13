@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "सर्भरहरू",
+  "settings.servers.open": "खोल्नुहोस्",
+  "settings.servers.dialog.name": "नाम",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "यो सर्भरको प्रमाणपत्र जाँच बन्द गर्छ। यसको पहिचान प्रमाणित गर्न सकिँदैन।",
+  "settings.servers.dialog.errorRequired": "सर्भर URL आवश्यक छ।",
   "settings.preferenceSaveFailed": "प्राथमिकता सुरक्षित गर्न सकिएन।",
   "settings.behavior.keepComputerAwake.title": "CodeNomad चलिरहेको बेलासम्म कम्प्युटर जागा राख्नुहोस्",
   "settings.behavior.keepComputerAwake.info": "स्थानीय CodeNomad सञ्झ्याल खुला रहँदा (मिनिमाइज गरिएको अवस्थामा पनि) कम्प्युटरलाई स्लीप मोडमा जानबाट रोक्छ; स्क्रिन भने बन्द हुन सक्छ। यो विकल्प बन्द हुँदा, सत्रले काम गरिरहेको बेला मात्र CodeNomad ले कम्प्युटर जागा राख्छ।",

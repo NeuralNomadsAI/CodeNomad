@@ -50,6 +50,7 @@
 @import "./components/composer-notice.css";
 @import "./components/integration-attachment.css";
 @import "./components/integration-catalog.css";
+@import "./components/server-add-field.css";
 @import "./components/agent-memory.css";
 @import "./components/browser-native-dialog.css";
 @import "./components/usage-metrics.css";

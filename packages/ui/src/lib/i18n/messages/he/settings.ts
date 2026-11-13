@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "שרתים",
+  "settings.servers.open": "פתיחה",
+  "settings.servers.dialog.name": "שם",
+  "settings.servers.dialog.url": "כתובת URL",
+  "settings.servers.dialog.skipTls": "משבית את בדיקת התעודה של שרת זה. לא ניתן לאמת את זהותו.",
+  "settings.servers.dialog.errorRequired": "נדרשת כתובת URL של השרת.",
   "settings.preferenceSaveFailed": "לא ניתן לשמור את ההעדפה.",
   "settings.behavior.keepComputerAwake.title": "השארת המחשב ער כל עוד CodeNomad פועל",
   "settings.behavior.keepComputerAwake.info": "מונע מהמחשב לעבור למצב שינה כל עוד חלון מקומי של CodeNomad פתוח (גם כשהוא ממוזער); המסך עדיין יכול להיכבות. כשהאפשרות כבויה, CodeNomad משאיר את המחשב ער רק בזמן שסשן עובד.",
