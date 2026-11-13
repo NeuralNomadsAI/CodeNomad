@@ -13,20 +13,12 @@ import {
 } from "../lib/render-text-window"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
-import { isLoopbackHttpUrl } from "./browser-frame-security"
+import { decorateSessionLinks, routeSessionLink, sessionLinkTitles, warmLoopbackPreviewMeta } from "./markdown-session-links"
 import { messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import { openSessionPreview } from "../stores/session-previews"
-import { instances } from "../stores/instances"
-import { showAlertDialog } from "../stores/alerts"
-import { previewsUnavailable, previewsAvailabilityResolved, getServerMeta } from "../lib/server-meta"
 import { useMarkdownMermaid } from "./markdown-mermaid"
 
 const log = getLogger("session")
-
-// One session-bound Markdown instance asks for the server meta; the answer
-// decides whether loopback links may open the web preview on this client.
-let loopbackPreviewMetaRequested = false
 
 type MarkdownModule = typeof import("../lib/markdown")
 
@@ -141,31 +133,8 @@ interface MarkdownProps {
 export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
 
-  // A loopback link click opens the session preview on the instance owning
-  // the session; failures surface through the shared alert dialog.
-  const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
-    const folder = instances().get(instanceId)?.folder ?? ""
-    void openSessionPreview(sessionId, url, folder).catch((error) => {
-      showAlertDialog(t("sessionPreview.open.title"), {
-        title: t("sessionPreview.open.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    })
-  }
-
-  // Whether clicking a loopback link opens the web preview on this client.
-  // Availability must be known first: through Remote Control with previews
-  // off the default false would otherwise open a dead preview before the
-  // server meta answers. Other callers (update checks, settings) usually
-  // resolve the meta earlier.
-  const loopbackLinksOpenPreview = () => previewsAvailabilityResolved() && !previewsUnavailable()
-  if (props.instanceId && props.sessionId && !previewsAvailabilityResolved() && !loopbackPreviewMetaRequested) {
-    loopbackPreviewMetaRequested = true
-    void getServerMeta().catch(() => {
-      loopbackPreviewMetaRequested = false
-    })
-  }
+  // Loopback-link availability resolves without waiting for a click.
+  warmLoopbackPreviewMeta(props.instanceId, props.sessionId)
 
   const [html, setHtml] = createSignal("")
   // Whether `html` is the Markdown render rather than its plain-text fallback. The
@@ -419,29 +388,16 @@ export function Markdown(props: MarkdownProps) {
 
   createEffect(() => {
     html()
-    // Decorate exactly the links that intercept: only session-bound loopback
-    // links while previews are known available, and never over an author's
-    // own title attribute.
-    const decorate = Boolean(props.instanceId && props.sessionId) && loopbackLinksOpenPreview()
-    const title = decorate ? t("markdown.link.previewOpens") : ""
+    // Decorate exactly the links that intercept (see markdown-session-links):
+    // loopback links while previews are known available, and project-file
+    // links; never over an author's own title attribute. The titles are read
+    // synchronously so availability and locale changes re-run this pass.
+    const titles = sessionLinkTitles(props.instanceId, props.sessionId)
     Promise.resolve().then(() => {
       if (disposed || !containerRef) {
         return
       }
-      for (const anchor of containerRef.querySelectorAll<HTMLAnchorElement>("a[href]")) {
-        if (!isLoopbackHttpUrl(anchor.getAttribute("href") ?? "")) {
-          continue
-        }
-        if (title) {
-          if (!anchor.hasAttribute("title")) {
-            anchor.setAttribute("title", title)
-            anchor.setAttribute("data-preview-link-title", "true")
-          }
-        } else if (anchor.getAttribute("data-preview-link-title") === "true") {
-          anchor.removeAttribute("title")
-          anchor.removeAttribute("data-preview-link-title")
-        }
-      }
+      decorateSessionLinks(containerRef, titles, props.instanceId, props.sessionId)
     })
   })
 
@@ -461,20 +417,18 @@ export function Markdown(props: MarkdownProps) {
   onMount(() => {
     const handleClick = async (event: Event) => {
       const target = event.target as HTMLElement
-      // A plain click on a loopback URL opens the session preview instead of
-      // a dead browser tab: browser-accessed frontends cannot reach the
-      // backend host's localhost. Modified clicks keep browser defaults, and
-      // clients without a working preview surface keep the link behavior.
       const anchor = target.closest("a[href]") as HTMLAnchorElement | null
       if (anchor && props.instanceId && props.sessionId) {
         const href = anchor.getAttribute("href") ?? ""
         const mouseEvent = event as MouseEvent
         // Firefox fires `click` for the middle button too; only a primary
-        // left click without modifiers opens the preview.
+        // left click without modifiers routes to an app surface.
         const plainClick = mouseEvent.button === 0 && !mouseEvent.ctrlKey && !mouseEvent.metaKey && !mouseEvent.shiftKey && !mouseEvent.altKey
-        if (plainClick && loopbackLinksOpenPreview() && isLoopbackHttpUrl(href)) {
+        // A plain click on a loopback URL opens the session preview, and one
+        // on a path inside the session's worktree opens the file reader;
+        // modified clicks keep browser defaults (see markdown-session-links).
+        if (plainClick && routeSessionLink(props.instanceId, props.sessionId, href)) {
           event.preventDefault()
-          openLoopbackPreview(props.instanceId, props.sessionId, href)
           return
         }
       }
