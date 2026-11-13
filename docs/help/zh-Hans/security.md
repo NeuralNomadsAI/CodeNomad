@@ -33,7 +33,7 @@
 
 退出登录会撤销当前直接会话。在主机成功更改密码会撤销该用户的所有直接会话，包括当前会话；请重新登录。会话在 24 小时没有经过认证的请求后，或创建七天后过期。要调整期限，请在启动后端前将 `CODENOMAD_SESSION_IDLE_SECONDS` 和 `CODENOMAD_SESSION_ABSOLUTE_SECONDS` 设为正整数秒。远程控制设备需单独撤销。
 
-LAN 客户端可以登录、退出和使用项目。密码更改、远程控制管理、远程服务器／代理工具和 SideCars 由主机通过回环连接管理。浏览器修改请求须提供允许的 Origin，缺少 Origin 时则检查 Referer。服务器公布的来源默认允许；如使用 DNS 别名、反向代理或单独托管的界面，请将 `CODENOMAD_ALLOWED_ORIGINS` 设为逗号分隔的精确 HTTP(S) 来源，例如 `https://code.example.test,https://ui.example.test:8443`，然后重启。不要包含路径或通配符。这仅授予浏览器访问权，不授予主机权限。原生 LAN 客户端修改请求也须发送允许的 Origin。通过回环连接的可信代理具有主机权限，须自行实施访问控制。
+LAN 客户端可以登录、退出和使用项目。密码更改、远程控制管理、远程服务器／代理工具和 SideCars 由主机通过回环连接管理。浏览器修改请求须提供允许的 Origin，缺少 Origin 时则检查 Referer。服务器公布的来源默认允许；如使用 DNS 别名、反向代理或单独托管的界面，请将 `CODENOMAD_ALLOWED_ORIGINS` 设为逗号分隔的精确 HTTP(S) 来源，例如 `https://code.example.test,https://ui.example.test:8443`，然后重启。不要包含路径或通配符。这仅授予浏览器访问权，不授予主机权限。原生 LAN 客户端修改请求也须发送允许的 Origin。通过回环连接的可信代理具有主机权限，须自行实施访问控制。在主机本机上，以 `localhost` 或 `127.0.0.1` 打开界面同样可用；IPv6 监听时也可使用 `[::1]`。
 
 怀疑被入侵时：
 
