@@ -8,8 +8,10 @@ import { CodeNomadServerClient, CodeNomadServerError } from "./client"
 import { CodeNomadServerCredentials, type CodeNomadServerSecret } from "./credentials"
 import { relayedFolderListing } from "./folders"
 import { isRelayAuthority, RELAY_AUTHORITY_HEADER, RELAY_BOOTSTRAP } from "./relay-authority"
+import { openSshForward, SSH_HOST, type SshForward } from "./ssh"
 
-const Profile = z.object({ id: z.string(), baseUrl: z.string(), skipTlsVerify: z.boolean().default(false) })
+const Profile = z.object({ id: z.string(), baseUrl: z.string(), skipTlsVerify: z.boolean().default(false),
+  ssh: z.object({ host: z.string().regex(SSH_HOST) }).optional() })
 const Recent = z.object({ path: z.string().min(1).max(8192), projectName: z.string().max(1024).optional(), lastAccessed: z.number().finite() })
 function pairingCode(link: string, origin: string): string {
   try {
@@ -24,7 +26,8 @@ export const BrowseBody = z.object({ path: z.string().max(8192).optional() }).st
 export const ConnectBody = z.object({ username: z.string().min(1).max(1024).optional(), password: z.string().min(1).max(8192).optional(),
   pairingLink: z.string().max(8192).optional() }).strict()
 
-type ProfileAuthority = Readonly<{ id: string; origin: string; skipTlsVerify: boolean; key: string; proof: string }>
+/** `origin` is the server's address; over SSH it is resolved on `ssh`, and `scope` binds credentials to both. */
+type ProfileAuthority = Readonly<{ id: string; origin: string; skipTlsVerify: boolean; key: string; proof: string; scope: string; ssh?: string }>
 type ConnectionState = {
   credentials?: CodeNomadServerCredentials
   clients: Map<string, { authority: ProfileAuthority; client: CodeNomadServerClient }>
@@ -32,6 +35,7 @@ type ConnectionState = {
   queues: Map<string, Promise<unknown>>
   authorities: Map<string, ProfileAuthority>
   serverIds: Map<ProfileAuthority, string>
+  tunnels: Map<ProfileAuthority, SshForward>
   owners: number
 }
 // Listeners of one backend share the SettingsService and one revocable authority.
@@ -42,10 +46,11 @@ export class RemoteServerBrowseManager {
   readonly #state: ConnectionState
   #closed = false
 
-  constructor(private readonly settings: Pick<SettingsService, "getOwner" | "configYamlPathForAuthority">) {
+  constructor(private readonly settings: Pick<SettingsService, "getOwner" | "configYamlPathForAuthority">,
+    private readonly openForward: typeof openSshForward = openSshForward) {
     let state = connections.get(settings)
     if (!state) {
-      state = { clients: new Map(), pending: new Map(), queues: new Map(), authorities: new Map(), serverIds: new Map(), owners: 0 }
+      state = { clients: new Map(), pending: new Map(), queues: new Map(), authorities: new Map(), serverIds: new Map(), tunnels: new Map(), owners: 0 }
       connections.set(settings, state)
     }
     this.#state = state
@@ -63,7 +68,9 @@ export class RemoteServerBrowseManager {
     let origin: string
     try { origin = normalizeExplicitOrigin(profile.data.baseUrl) }
     catch (error) { this.remove(id); throw error }
-    return { ...profile.data, origin, key: `${origin}|${profile.data.skipTlsVerify}` }
+    const ssh = profile.data.ssh?.host
+    const scope = ssh === undefined ? origin : `ssh:${ssh}|${origin}`
+    return { ...profile.data, origin, scope, ssh, key: `${scope}|${profile.data.skipTlsVerify}` }
   }
 
   private capture(id: string): ProfileAuthority {
@@ -72,9 +79,9 @@ export class RemoteServerBrowseManager {
     let authority = this.#state.authorities.get(id)
     if (authority && authority.key !== profile.key) { this.remove(id); authority = undefined }
     // Disk identities also belong to this exact policy, including before a replacement login.
-    this.credentials.read(id, profile.origin, profile.skipTlsVerify)
+    this.credentials.read(id, profile.scope, profile.skipTlsVerify)
     if (!authority) {
-      authority = Object.freeze({ id, origin: profile.origin, skipTlsVerify: profile.skipTlsVerify, key: profile.key, proof: randomBytes(32).toString("base64url") })
+      authority = Object.freeze({ id, origin: profile.origin, skipTlsVerify: profile.skipTlsVerify, key: profile.key, scope: profile.scope, ssh: profile.ssh, proof: randomBytes(32).toString("base64url") })
       this.#state.authorities.set(id, authority)
     }
     return authority
@@ -119,10 +126,11 @@ export class RemoteServerBrowseManager {
       if (Boolean(body.username) !== Boolean(body.password)) throw new CodeNomadServerError("needs_credentials")
       let secret: CodeNomadServerSecret | undefined = code ? undefined : body.password
         ? { kind: "password", username: body.username!, password: body.password }
-        : this.credentials.read(id, profile.origin, profile.skipTlsVerify)
+        : this.credentials.read(id, profile.scope, profile.skipTlsVerify)
       const client = new CodeNomadServerClient(profile.origin, secret, {
         signal,
         skipTlsVerify: profile.skipTlsVerify,
+        dial: this.dial(profile),
         onSecretChanged: next => { secret = next },
         onRejected: () => { if (!code && !body.password && this.#state.authorities.get(id) === profile) this.remove(id) },
       })
@@ -136,14 +144,14 @@ export class RemoteServerBrowseManager {
         this.assertCurrent(profile)
         if (this.#closed || client.closed) throw new CodeNomadServerError("unknown_server")
         // Publish only under the still-current authority after remote authentication.
-        const previous = this.credentials.read(id, profile.origin, profile.skipTlsVerify)
+        const previous = this.credentials.read(id, profile.scope, profile.skipTlsVerify)
         // Cookie rotation of one password principal preserves its generation; an explicit
         // replacement login/pairing revokes operations admitted under another identity.
         if (this.#state.serverIds.has(profile) && secret && (code || body.password && (previous?.kind !== "password" || previous.username !== body.username || previous.password !== body.password))) {
           this.remove(id)
           this.capture(id)
         }
-        if (secret) this.credentials.set(id, profile.origin, secret, profile.skipTlsVerify)
+        if (secret) this.credentials.set(id, profile.scope, secret, profile.skipTlsVerify)
         this.#state.clients.get(id)?.client.close()
         this.#state.clients.delete(id)
         return { ok: true }
@@ -158,7 +166,7 @@ export class RemoteServerBrowseManager {
       signal?.throwIfAborted()
       const entry = this.client(profile)
       const suffix = body.path === undefined ? "" : `?path=${encodeURIComponent(body.path)}`
-      if (!this.credentials.has(id, profile.origin, profile.skipTlsVerify)) {
+      if (!this.credentials.has(id, profile.scope, profile.skipTlsVerify)) {
         const status = await entry.client.json<{ pairingRequired?: unknown }>("/api/auth/status", { signal })
         if (status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
       }
@@ -182,13 +190,14 @@ export class RemoteServerBrowseManager {
       let entry = this.#state.clients.get(id)
       if (entry?.authority !== profile) { entry?.client.close(); this.#state.clients.delete(id); entry = undefined }
       if (!entry) {
-        const client = new CodeNomadServerClient(profile.origin, this.credentials.read(id, profile.origin, profile.skipTlsVerify), {
+        const client = new CodeNomadServerClient(profile.origin, this.credentials.read(id, profile.scope, profile.skipTlsVerify), {
           skipTlsVerify: profile.skipTlsVerify,
-          onRejected: () => { if (this.#state.clients.get(id)?.client === client) this.remove(id) },
+          dial: this.dial(profile),
+          onRejected: () => { if (this.#state.clients.get(id)?.client === client && this.#state.authorities.get(id) === profile) this.remove(id) },
           onSecretChanged: secret => {
             if (this.#state.clients.get(id)?.client === client && !client.closed) {
               this.assertCurrent(profile)
-              this.credentials.set(id, profile.origin, secret, profile.skipTlsVerify)
+              this.credentials.set(id, profile.scope, secret, profile.skipTlsVerify)
             }
           },
         })
@@ -221,6 +230,61 @@ export class RemoteServerBrowseManager {
     return Response.json(result.body, { headers: { [RELAY_AUTHORITY_HEADER]: authority.proof } })
   }
 
+  /** The dial address of an SSH profile: its current owned forward, opened on demand and never persisted. */
+  private dial(authority: ProfileAuthority) {
+    const ssh = authority.ssh
+    if (ssh === undefined) return undefined
+    return async () => {
+      if (!this.#state.owners) throw new CodeNomadServerError("unreachable")
+      this.assertCurrent(authority)
+      const tunnels = this.#state.tunnels
+      let tunnel = tunnels.get(authority)
+      if (!tunnel) {
+        const url = new URL(authority.origin)
+        const forward = this.openForward(ssh, `${url.hostname}:${url.port || (url.protocol === "https:" ? 443 : 80)}`,
+          { onExit: () => { if (tunnels.get(authority) === created) tunnels.delete(authority) } })
+        // Every borrower awaits this one identity check before the new endpoint is usable.
+        const created: SshForward = { close: () => forward.close(), ready: forward.ready.then(async port => {
+          this.assertCurrent(authority)
+          if (tunnels.get(authority) !== created) throw new CodeNomadServerError("unreachable")
+          const known = this.#state.serverIds.get(authority)
+          if (known) {
+            const probe = new CodeNomadServerClient(authority.origin, this.credentials.read(authority.id, authority.scope, authority.skipTlsVerify), {
+              skipTlsVerify: authority.skipTlsVerify,
+              // Probe this exact forward, bypassing the gate rather than recursively borrowing it.
+              dial: async () => {
+                this.assertCurrent(authority)
+                if (tunnels.get(authority) !== created) throw new CodeNomadServerError("unreachable")
+                return { address: "127.0.0.1", family: 4 as const, port }
+              },
+            })
+            this.#state.pending.set(probe, authority)
+            try {
+              const result = await probe.json<{ serverId?: unknown }>("/api/meta")
+              this.assertCurrent(authority)
+              if (tunnels.get(authority) !== created || result.status !== 200 || result.body?.serverId !== known) {
+                throw new CodeNomadServerError("unknown_server")
+              }
+            } catch (error) {
+              if (this.#state.authorities.get(authority.id) === authority) this.remove(authority.id)
+              throw error
+            } finally { this.#state.pending.delete(probe); probe.close() }
+          }
+          return port
+        }).catch(error => {
+          forward.close()
+          throw error
+        }) }
+        tunnels.set(authority, tunnel = created)
+      }
+      const port = await tunnel.ready
+      this.assertCurrent(authority)
+      if (tunnels.get(authority) !== tunnel) throw new CodeNomadServerError("unreachable")
+      return { address: "127.0.0.1", family: 4 as const, port }
+    }
+  }
+
+
   /** Settings commits synchronously revoke removed or retargeted owners. */
   reconcile() {
     if (this.#closed) return
@@ -229,7 +293,7 @@ export class RemoteServerBrowseManager {
         const profile = this.profile(id)
         const authority = this.#state.authorities.get(id)
         if (authority && authority.key !== profile.key) this.remove(id)
-        else this.credentials.read(id, profile.origin, profile.skipTlsVerify)
+        else this.credentials.read(id, profile.scope, profile.skipTlsVerify)
       } catch { this.remove(id) }
     }
   }
@@ -237,6 +301,7 @@ export class RemoteServerBrowseManager {
   private remove(id: string) {
     const authority = this.#state.authorities.get(id)
     if (authority) this.#state.serverIds.delete(authority)
+    if (authority) { this.#state.tunnels.get(authority)?.close(); this.#state.tunnels.delete(authority) }
     this.#state.authorities.delete(id)
     for (const [client, owner] of this.#state.pending) if (owner.id === id) client.close()
     this.#state.clients.get(id)?.client.close()
@@ -260,5 +325,7 @@ export class RemoteServerBrowseManager {
     for (const { client } of this.#state.clients.values()) client.close()
     for (const client of this.#state.pending.keys()) client.close()
     this.#state.clients.clear()
+    for (const tunnel of this.#state.tunnels.values()) tunnel.close()
+    this.#state.tunnels.clear()
   }
 }

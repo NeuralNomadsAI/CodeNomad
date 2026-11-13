@@ -420,6 +420,9 @@ export function createServerApi(ctx: BackendHttp) {
         body: JSON.stringify(payload),
       })
     },
+    listSshHosts(): Promise<{ hosts: string[] }> {
+      return request("/api/remote-servers/ssh-hosts")
+    },
     createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
       return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
         method: "POST",

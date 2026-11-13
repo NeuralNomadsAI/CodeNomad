@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "folderSelection.servers.dialog.sshHost": "SSH 主机（可选）",
+  "folderSelection.servers.dialog.sshHint": "OpenSSH 主机或别名。请使用从该主机访问的服务器地址；需要密钥认证和已知的主机密钥。",
   "folderSelection.language.ariaLabel": "语言",
 
   "folderSelection.logoAlt": "CodeNomad 徽标",

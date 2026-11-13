@@ -1,8 +1,10 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Loader2 } from "lucide-solid"
-import { createEffect, createSignal, createUniqueId, Show, type Component } from "solid-js"
+import { createEffect, createSignal, createUniqueId, For, onCleanup, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import type { RemoteServerInput } from "../lib/hooks/use-remote-server-profiles"
+import { useConfig } from "../stores/preferences"
+import { serverApi } from "../lib/api-client"
 
 interface RemoteServerDialogProps {
   open: boolean
@@ -12,6 +14,12 @@ interface RemoteServerDialogProps {
 
 export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
+  const [sshHost, setSshHost] = createSignal("")
+  const [sshHosts, setSshHosts] = createSignal<string[]>([])
+  const sshListId = createUniqueId()
+  const sshHintId = createUniqueId()
+  const usesSsh = () => preferences().multiBackend && Boolean(sshHost().trim())
   const [name, setName] = createSignal("")
   const [baseUrl, setBaseUrl] = createSignal("")
   const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
@@ -24,7 +32,16 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
     setName("")
     setBaseUrl("")
     setSkipTlsVerify(false)
+    setSshHost("")
     setError(null)
+  })
+
+  createEffect(() => {
+    if (!props.open || !preferences().multiBackend) return
+    let current = true
+    onCleanup(() => { current = false })
+    setSshHosts([])
+    void serverApi.listSshHosts().then(result => { if (current) setSshHosts(result.hosts) }).catch(() => {})
   })
 
   const submit = async (openWindow: boolean) => {
@@ -32,7 +49,8 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
     setBusy(true)
     setError(null)
     try {
-      await props.onSubmit({ name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify() }, openWindow)
+      await props.onSubmit({ name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify(),
+        ...(usesSsh() ? { ssh: { host: sshHost().trim() } } : {}) }, openWindow)
       props.onOpenChange(false)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError))
@@ -62,6 +80,14 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
               </label>
               <span id={urlHintId} class="text-xs">{t("folderSelection.servers.dialog.urlHint")}</span>
             </div>
+            <Show when={preferences().multiBackend}>
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span>{t("folderSelection.servers.dialog.sshHost")}</span>
+                <input class="selector-input w-full" value={sshHost()} onInput={event => setSshHost(event.currentTarget.value)} list={sshListId} aria-describedby={sshHintId} />
+                <datalist id={sshListId}><For each={sshHosts()}>{host => <option value={host} />}</For></datalist>
+                <span id={sshHintId} class="text-xs">{t("folderSelection.servers.dialog.sshHint")}</span>
+              </label>
+            </Show>
             <label class="flex items-start gap-3 text-sm text-secondary">
               <input type="checkbox" checked={skipTlsVerify()} onChange={(event) => setSkipTlsVerify(event.currentTarget.checked)} />
               <span>{t("folderSelection.servers.dialog.skipTls")}</span>
@@ -70,7 +96,7 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
             <div class="flex items-center justify-end gap-3">
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" onClick={() => props.onOpenChange(false)}>{t("folderSelection.servers.dialog.cancel")}</button>
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(false)}>{t("folderSelection.servers.dialog.save")}</button>
-              <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(true)}>
+              <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy() || usesSsh()} onClick={() => void submit(true)}>
                 <Show when={busy()} fallback={<span>{t("folderSelection.servers.dialog.connect")}</span>}>
                   <span class="inline-flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin" />{t("folderSelection.servers.dialog.connecting")}</span>
                 </Show>

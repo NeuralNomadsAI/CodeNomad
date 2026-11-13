@@ -153,12 +153,13 @@ test("absent metadata endpoint and non-JSON metadata refuse without attachment",
 })
 
 test("URL/TLS change, removal, flag off or disposal during metadata fences late publication", async () => {
-  for (const change of ["url", "tls", "remove", "off", "dispose"]) {
+  for (const change of ["url", "tls", "ssh", "remove", "off", "dispose"]) {
     const h = harness(), response = deferred<Response>()
     h.read(() => response.promise)
     const pending = h.registry.ensure("saved")
     if (change === "url") h.setProfiles([{ ...profile, baseUrl: "http://b.test" }])
     if (change === "tls") h.setProfiles([{ ...profile, skipTlsVerify: true }])
+    if (change === "ssh") h.setProfiles([{ ...profile, ssh: { host: "lab" } }])
     if (change === "remove") h.setProfiles([])
     if (change === "off") h.setEnabled(false)
     if (change === "dispose") h.registry.dispose()
