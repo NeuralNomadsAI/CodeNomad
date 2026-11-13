@@ -125,3 +125,41 @@ test("changed remote identity through an SSH forward revokes proof and closes th
   assert.equal(f.remote.state.requests.length, requests)
   assert.equal(f.forwards.length, 1)
 })
+
+for (const identity of ["A", "B", "missing", "refused"] as const) {
+  test(`SSH renewal checks identity once before concurrent mutations: ${identity}`, async t => {
+    const a = await startFakeCodeNomad({ anonymous: true }), b = await startFakeCodeNomad({ anonymous: true })
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ssh-renewal-"))
+    const profiles = [{ id: "saved", baseUrl: "http://remote.invalid:9898", ssh: { host: "lab" } }]
+    const forwards: { closed: boolean; die(): void }[] = []
+    let destination = a
+    const manager = new RemoteServerBrowseManager({
+      getOwner: () => ({ remoteServers: profiles }), configYamlPathForAuthority: () => path.join(dir, "config.yaml"),
+    }, (_host, _target, options) => {
+      const entry = { closed: false, die() { options?.onExit?.() } }
+      forwards.push(entry)
+      return { ready: Promise.resolve(Number(new URL(destination.origin).port)), close() { entry.closed = true; entry.die() } }
+    })
+    t.after(async () => { manager.close(); await a.close(); await b.close(); fs.rmSync(dir, { recursive: true, force: true }) })
+    a.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A" } })
+    b.state.overrides.set("/api/meta", { status: identity === "refused" ? 503 : 200,
+      body: identity === "missing" ? {} : { serverId: identity } })
+    b.state.overrides.set("/api/workspaces", { status: 200, body: {} })
+    const proof = (await manager.relay("saved", "/api/meta", {}, RELAY_BOOTSTRAP)).headers.get(RELAY_AUTHORITY_HEADER)!
+    forwards[0]!.die()
+    destination = b
+    const results = await Promise.allSettled(Array.from({ length: 5 }, () =>
+      manager.relay("saved", "/api/workspaces", { method: "POST", body: "{}" }, proof)))
+    assert.equal(b.state.requests.filter(request => request.path === "/api/workspaces").length, identity === "A" ? 5 : 0)
+    assert.equal(results.every(result => result.status === (identity === "A" ? "fulfilled" : "rejected")), true)
+    assert.equal(b.state.requests.filter(request => request.path === "/api/meta").length, 1)
+    if (identity === "A") {
+      assert.equal(manager.assertProof("saved", proof).proof, proof)
+      assert.equal(forwards[1]!.closed, false)
+      for (const result of results) if (result.status === "fulfilled") await result.value.body?.cancel()
+    } else {
+      assert.throws(() => manager.assertProof("saved", proof))
+      assert.equal(forwards[1]!.closed, true)
+    }
+  })
+}
