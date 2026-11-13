@@ -5,11 +5,12 @@ import { createShellStore } from "./shell-store"
 it("shares mounted Shell reads and coalesces an event burst into one authoritative follow-up", async () => {
   const pending: Array<(value: any[]) => void> = []
   const store = createShellStore(() => ({
-    list: () => new Promise(resolve => pending.push(resolve)),
+    list: () => new Promise<any[]>(resolve => pending.push(resolve)).then(data => ({ data })),
     remove: async () => {},
     output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
   }))
   const reads = Array.from({ length: 30 }, () => store.load("instance", "/repo"))
+  store.watch("instance", "/repo")
   await Promise.resolve()
   assert.equal(pending.length, 1)
   const events = Array.from({ length: 20 }, () => store.refreshForEvent("instance", {
@@ -30,7 +31,7 @@ it("a successful removal waits for a new read rather than accepting an in-flight
   let resolve!: (value: any[]) => void
   let calls = 0
   const store = createShellStore(() => ({
-    list: async () => ++calls === 1 ? new Promise<any[]>(done => { resolve = done }) : [],
+    list: async () => ({ data: ++calls === 1 ? await new Promise<any[]>(done => { resolve = done }) : [] }),
     remove: async () => {},
     output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
   }))

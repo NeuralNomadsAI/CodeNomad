@@ -4,9 +4,22 @@ import path from "node:path"
 import type { LocationRef, OpenCodeClient } from "@opencode/client"
 import type { WorktreeDescriptor, WorktreeListResponse } from "../api-types"
 import { locationRequestOptions } from "../opencode/compatibility/location"
-import { readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
+import {
+  readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot,
+  prepareWorktreeBranch, attachWorktreeBranch, revisionContainsFolder,
+} from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 import { GitRequiredError } from "./git-requirement"
+
+export class NestedFolderUnavailableError extends Error {
+  readonly code = "nested_folder_unavailable"
+  readonly statusCode = 409
+
+  constructor() {
+    super("nested_folder_unavailable: Git does not track the opened folder on this branch, so a new worktree would not contain it.")
+    this.name = "NestedFolderUnavailableError"
+  }
+}
 
 export interface NativeWorktreeContext {
   client: OpenCodeClient
@@ -23,37 +36,75 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
   return a.isDirectory() && b.isDirectory() && a.dev === b.dev && a.ino === b.ino && a.birthtimeMs === b.birthtimeMs
 }
 
-export async function listNativeWorktrees(context: NativeWorktreeContext, options: { refresh?: boolean } = {}): Promise<WorktreeListResponse> {
+async function isDirectory(directory: string): Promise<boolean> {
+  try {
+    return (await stat(directory)).isDirectory()
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "ENOTDIR") return false
+    throw error
+  }
+}
+
+export async function listNativeWorktrees(context: NativeWorktreeContext, options: { refresh?: boolean; media?: { signal: AbortSignal; current: () => void } } = {}): Promise<WorktreeListResponse> {
   const { client, location, workspacePath, toHost } = context
+  const signal = options.media?.signal, assertCurrent = options.media?.current
+  const check = () => { signal?.throwIfAborted(); assertCurrent?.() }
+  check()
   let isGitRepo: boolean
   try {
     ;({ isGitRepo } = await resolveRepoRoot(workspacePath))
+    check()
   } catch (error) {
+    check()
     if (!(error instanceof GitRequiredError)) throw error
     // No repository claim or discovered sibling checkouts without Git.
     return { gitAvailable: false, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root", directoryOnly: true }] }
   }
   if (!isGitRepo) return { isGitRepo, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root" }] }
   const local = await readCheckout(workspacePath)
-  const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))
+  check()
+  const current = await client.location.get({ location: { directory: location.directory } }, signal
+    ? { ...locationRequestOptions(location), signal } : locationRequestOptions(location))
+  check()
   const checkoutHost = await toHost(current.project.directory)
-  if (!checkoutHost || !await sameDirectory(local.root, checkoutHost)) throw new Error("OpenCode resolved a different local checkout")
+  check()
+  if (!checkoutHost) throw new Error("OpenCode resolved a different local checkout")
+  const sameCheckout = await sameDirectory(local.root, checkoutHost)
+  check()
+  if (!sameCheckout) throw new Error("OpenCode resolved a different local checkout")
   const mainHost = await toHost(current.project.canonical)
-  if (!mainHost || !await sameDirectory(local.common, (await readCheckout(mainHost)).common)) {
-    throw new Error("OpenCode resolved a different local repository")
-  }
-  const requestOptions = locationRequestOptions(location, { includeDirectory: true })
+  check()
+  if (!mainHost) throw new Error("OpenCode resolved a different local repository")
+  const main = await readCheckout(mainHost)
+  check()
+  const sameRepository = await sameDirectory(local.common, main.common)
+  check()
+  if (!sameRepository) throw new Error("OpenCode resolved a different local repository")
+  const requestOptions = { ...locationRequestOptions(location, { includeDirectory: true }),
+    ...(signal ? { signal } : {}) }
   // Routing native events must not run strategy discovery or join a display
   // scan held inside worktree.refresh. Native registration remains authority.
-  if (options.refresh !== false) await client.worktree.refresh({ projectID: current.project.id }, requestOptions)
+  check()
+  if (options.refresh !== false) {
+    await client.worktree.refresh({ projectID: current.project.id }, requestOptions)
+    check()
+  }
   const native = await client.worktree.list({ projectID: current.project.id }, requestOptions)
+  check()
   const verifyCheckoutRoot = await createCheckoutRootVerifier(workspacePath)
+  check()
   const annotations = new Map<string, Awaited<ReturnType<typeof readWorktreeAnnotations>>[number]>()
-  for (const annotation of await readWorktreeAnnotations(workspacePath)) {
+  const registeredAnnotations = await readWorktreeAnnotations(workspacePath)
+  check()
+  for (const annotation of registeredAnnotations) {
+    check()
     const registered = await realpath(annotation.root).catch(error => {
+      check()
       if (error.code === "ENOENT") return undefined
       throw error
     })
+    check()
     if (registered) annotations.set(registered, annotation)
   }
   const paths = servicePaths(location.directory)
@@ -65,20 +116,26 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
   // come from one Git snapshot rather than three processes per checkout.
   const pending = native.values()
   const inspect = async (entry: (typeof native)[number]) => {
+    check()
     const host = await toHost(entry.directory)
+    check()
     if (!host) throw new Error("Unable to translate native worktree directory")
     try {
       await stat(host)
+      check()
     } catch (error) {
+      check()
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return
       throw error
     }
     // Independent clones can share a native project ID. Git's physical common
     // directory decides local membership; branch names and remote URLs do not.
     const registeredDirectory = await realpath(host)
+    check()
     const annotation = annotations.get(registeredDirectory)
     if (!annotation) return
     const checkout = await readCheckoutIdentity(host).catch(error => {
+      check()
       // `git worktree remove` deletes the checkout's `.git` before the rest of
       // its folder (minutes for a large tree), and an interrupted removal can
       // leave the folder behind. A registration whose Git layout is gone is no
@@ -87,22 +144,36 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
       throw error
     })
+    check()
     if (!checkout) return
-    if (!await sameDirectory(local.common, checkout.common)) return
-    if (!await sameDirectory(checkout.root ?? mainHost, registeredDirectory)) throw new Error("Native worktree entry is not a checkout root")
+    const sameCommon = await sameDirectory(local.common, checkout.common)
+    check()
+    if (!sameCommon) return
+    const sameRoot = await sameDirectory(checkout.root ?? mainHost, registeredDirectory)
+    check()
+    if (!sameRoot) throw new Error("Native worktree entry is not a checkout root")
     await verifyCheckoutRoot(host)
+    check()
     if (seen.has(registeredDirectory)) return
     seen.add(registeredDirectory)
     const root = await sameDirectory(local.root, registeredDirectory)
+    const directory = root ? workspacePath : path.join(registeredDirectory, ...relative.split(/[\\/]/).filter(Boolean))
+    // A nested workspace folder (ignored, untracked or branch-specific) can be absent
+    // from a sibling checkout. The checkout keeps owning the sessions placed there.
+    const nestedFolderMissing = !root && directory !== registeredDirectory && !await isDirectory(directory)
+    check()
+    const removable = !root && !await sameDirectory(checkout.gitDirectory, checkout.common)
+    check()
     worktrees.push({
+      ...(nestedFolderMissing ? { nestedFolderMissing } : {}),
       slug: root ? "root" : identifier(registeredDirectory),
       label: annotation.branch ?? `${path.basename(registeredDirectory)} @ ${annotation.head?.slice(0, 7) ?? "HEAD"}`,
-      directory: root ? workspacePath : path.join(registeredDirectory, ...relative.split(/[\\/]/).filter(Boolean)),
+      directory,
       serviceDirectory: root ? current.directory : paths.join(entry.directory, relative),
       registeredDirectory,
       serviceRoot: entry.directory,
       kind: root ? "root" : "worktree",
-      removable: !root && !await sameDirectory(checkout.gitDirectory, checkout.common),
+      removable,
       branch: annotation.branch,
       head: annotation.head,
     })
@@ -111,7 +182,7 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
   const scans = Array.from({ length: Math.min(8, native.length) }, async () => {
     for (const entry of pending) {
       if (failed) return
-      try { await inspect(entry) }
+      try { check(); await inspect(entry); check() }
       catch (error) { failed = true; throw error }
     }
   })
@@ -119,8 +190,10 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
   catch (error) {
     // Keep custody of admitted reads until their filesystem/Git work has settled.
     await Promise.allSettled(scans)
+    check()
     throw error
   }
+  check()
   if (!worktrees.some(entry => entry.kind === "root")) throw new Error("Native worktree inventory is missing the opened checkout")
   return {
     isGitRepo,
@@ -132,8 +205,12 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
 export async function createNativeWorktree(context: NativeWorktreeContext, branch: string, fromSlug = "root") {
   const catalogue = await listNativeWorktrees(context)
   const source = catalogue.worktrees.find(entry => entry.slug === fromSlug)
-  if (!catalogue.isGitRepo || !source?.serviceRoot || !catalogue.defaultDirectory) throw new Error("Source worktree not found")
+  if (!catalogue.isGitRepo || !source?.serviceRoot || source.nestedFolderMissing || !catalogue.defaultDirectory) {
+    throw new Error("Source worktree not found")
+  }
   const policy = await prepareWorktreeBranch(source.registeredDirectory!, branch)
+  // An ignored or untracked opened folder would be absent from the new checkout.
+  if (!await revisionContainsFolder(source.directory, policy.revision)) throw new NestedFolderUnavailableError()
   await ensureCodenomadGitExclude(context.workspacePath)
   const { client, location } = context
   const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))

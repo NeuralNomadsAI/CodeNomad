@@ -58,12 +58,12 @@ paired device ले समान ownership जाँचअन्तर्गत
 | password login/logout, password परिवर्तन, local token bootstrap | अनुपलब्ध; direct authentication disabled भए पनि device credential चाहिन्छ। |
 | Remote Control status | paired device ले पढ्न सक्छ; management अनुपलब्ध। Start/Stop, pairing सिर्जना, device सूची र revocation host access path मै रहन्छन्। |
 | desktop remote-window/server management र proxy route | अनुपलब्ध (`/api/remote-servers/`, `/api/remote-proxy/`)। |
-| SideCar **सामग्री proxy** | अनुपलब्ध (`/sidecars/`)। यसको अर्थ सबै SideCar API blocked **होइन**: paired client ले `/api/sidecars` registration API अझै प्रयोग गर्न सक्छन्। |
+| SideCar **सामग्री proxy** | loopback चाहिन्छ (`/sidecars/`); SideCar WebSocket लाई पनि यही चाहिन्छ। `/api/sidecars` दर्ता API जोडी बनाइएका उपकरण र प्रमाणीकृत प्रत्यक्ष LAN क्लाइन्टलाई उपलब्ध छन्। |
 | वेब पूर्वावलोकन सामग्री | host मा **सेटिङहरू → रिमोट पहुँच → रिमोट कन्ट्रोल** अन्तर्गत **वेब पूर्वावलोकन** खुला (पूर्वनिर्धारित) रहँदा उपलब्ध। प्रत्येक पूर्वावलोकन ठेगानाले जोडाइबिना आफ्नो पृष्ठ खोल्छ, त्यसैले यसलाई निजी राख्नुहोस्। switch बन्द गर्दा दिइएका पूर्वावलोकन र तिनका WebSocket रोकिन्छन्; जोडिएका उपकरणहरूले reload पछि **वेब पूर्वावलोकन खोल्नुहोस्** लुकाउँछन्। |
 | automation bridge | अनुपलब्ध (`/api/opencode-plugin/`)। native desktop क्षमता browser क्षमता बन्दैनन्। |
 | WebSocket upgrade | वेब पूर्वावलोकनका लागि मात्र उपलब्ध। |
 
-blocked proxy/WebSocket चाहिने प्रक्रियामा उचित सुरक्षित [प्रत्यक्ष जडान](remote-access.md) प्रयोग गर्नुहोस्। Remote Control त्यसमा स्वतः switch हुँदैन।
+होस्टमा सीमित प्रोक्सी/WebSocket र Remote Control व्यवस्थापन (`/api/remote-control/`) का लागि होस्टमा loopback जडान प्रयोग गर्नुहोस्। प्रत्यक्ष LAN पहुँचमा पनि यी कार्यलाई loopback चाहिन्छ; [स्तरोन्नति](remote-access.md#upgrading) हेर्नुहोस्। Remote Control का वेब पूर्वावलोकनले ठेगानामा भएको क्षमता टोकन प्रयोग गर्छन् र होस्टमा सक्षम रहँदा उपलब्ध रहन्छन्; त्यो ठेगाना निजी राख्नुहोस्।
 
 ## Relay र गोपनीयता {#relay-privacy}
 

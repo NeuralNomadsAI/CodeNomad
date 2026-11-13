@@ -54,6 +54,7 @@ export const missionConfigurationWire = { type: "object", properties: {
   title: text, objective: text, notes: text, template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
   profiles: missionProfilesSchema, taskMode: missionTaskModeSchema,
   profileID: { type: ["string", "null"] }, executionHost: { type: ["string", "null"] },
+  coordinatorSessionID: text,
   roots: { type: "array", minItems: 1, maxItems: 32, items: root },
   watchedConversationIDs: { type: "array", maxItems: 64, items: text }, launch: missionDocumentSummaryWire.properties.launch,
 }, required: ["title", "objective", "template", "taskMode", "profileID", "executionHost", "roots", "watchedConversationIDs", "launch"], additionalProperties: false } as const
@@ -74,7 +75,9 @@ const missionScheduleHistoryWire = { type: "object", properties: { id: text, mis
       scheduleIDs: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: text } },
       required: ["kind", "afterPassageID", "dueAt", "scheduleIDs"], additionalProperties: false },
   ] }, admittedAt: { type: ["integer", "null"], minimum: 0 }, manualAllowed: { type: "boolean" }, admissionAttempted: { type: "boolean" },
-  manualExpectedRevision: counter, launchedBy: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: text },
+  manualExpectedRevision: counter, coordinatorReused: { const: true },
+  settlementProof: { type: "object", properties: { revision: counter, familyDigest: text }, required: ["revision", "familyDigest"], additionalProperties: false },
+  launchedBy: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: text },
   configurationDigest: text, settledAt: counter,
   outcome: { type: "string", enum: ["completed", "failed", "ended-without-report"] }, reason: { const: "not-started" },
 }, required: ["id", "missionID", "coordinatorSessionID", "messageID", "configurationGeneration", "timeGeneration", "createdAt", "dueAt", "origin", "admittedAt", "configurationDigest", "settledAt", "outcome"], additionalProperties: false } as const

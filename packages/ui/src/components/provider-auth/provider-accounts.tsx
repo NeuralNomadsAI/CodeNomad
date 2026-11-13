@@ -148,7 +148,9 @@ export function ProviderAccounts(props: {
           }}</For>
         </select>
       </label>
-      <For each={ids()}>{(id, index) => {
+      <For each={ids()} fallback={
+        <Show when={props.onAdd}><div class="provider-account"><div class="provider-account-actions">{addAccountControl()}</div></div></Show>
+      }>{(id, index) => {
         const connection = () => connections().find(item => id === (item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`))!
         const [label, setLabel] = createSignal("")
         const [dirty, setDirty] = createSignal(false)

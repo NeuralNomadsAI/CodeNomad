@@ -37,6 +37,9 @@ import { createSettingsScrollRestoration } from "./settings/settings-scroll-rest
 import { Server } from "lucide-solid"
 import { ServersSettingsSection } from "./settings/servers-settings-section"
 import { useConfig } from "../stores/preferences"
+import { createPreferencesProjectContext } from "./settings/preferences-project-context"
+import { activeInstanceId, instances } from "../stores/instances"
+import { getActiveCatalogLocation } from "../stores/sessions"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -58,6 +61,12 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const phoneQuery = useMediaQuery("(max-width: 640px)")
   const config = useConfig()
   const serversEnabled = () => config.preferences().multiBackend === true
+  const embeddedProject = createPreferencesProjectContext(() => {
+    const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
+    return { section: "general", instanceId, workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
+      location: instanceId ? getActiveCatalogLocation(instanceId) : undefined }
+  }, () => !props.standalone && !props.providerContext && settingsOpen() && activeSettingsSection() === "general", () => {})
+  const memoryContext = () => props.providerContext ?? embeddedProject()
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -122,7 +131,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return <InfoSettingsSection />
       case "general":
       default:
-        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} />
+        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} />
     }
   }
 

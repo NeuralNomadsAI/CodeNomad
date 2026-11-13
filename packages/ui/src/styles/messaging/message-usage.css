@@ -38,22 +38,3 @@
   height: 0.75rem;
   color: var(--text-muted);
 }
-
-.message-step-usage-chip {
-  @apply inline-flex items-center border border-[var(--border-base)] px-2 text-[10px];
-  min-height: 22px;
-  color: var(--icon-button-hover-color);
-  font-weight: var(--font-weight-semibold);
-  line-height: 1;
-}
-
-.message-step-usage-chip::before {
-  content: attr(data-label);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 9px;
-  color: var(--text-muted);
-  font-weight: var(--font-weight-medium);
-  line-height: 1;
-  margin-inline-end: 0.35rem;
-}

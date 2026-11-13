@@ -26,11 +26,23 @@ export function nativeMissionSchedulePriorHeld(claim: NativeMissionScheduleClaim
     && calendar.sessionID === claim.wake.sessionID && calendar.timeGeneration === claim.wake.generation && calendar.highWater >= claim.wake.run)
 }
 
+/** An unsettled claim on another occurrence holds every later wake of its Mission,
+ * including the auxiliary turns that recover principals. Reconcile that exact
+ * original first; the caller continues only once it is applied. */
+export async function recoverNativeMissionScheduleClaim(claim: NativeMissionScheduleClaim | undefined, candidate: NativeScheduleWake,
+  dispatch: (wake: NativeScheduleWake) => Promise<NativeScheduleTransportResult>): Promise<boolean> {
+  if (!claim || claim.settled || claim.key === nativeScheduleWakeKey(candidate)) return true
+  const result = await dispatch(claim.wake)
+  return result.state === "received" && result.reply.state === "applied"
+}
+
 /** One outer deadline includes read-only preflight and the original dispatch.
- * A previous exact/unknown claim stays status-only, including across reloads. */
+ * A previous exact/unknown claim stays status-only, including across reloads,
+ * until status proves its receiver ended without consuming the run: that same
+ * identity is then claimed again (`retry`) and dispatched. */
 export async function dispatchNativeMissionScheduleWake(input: { wake: NativeScheduleWake; registrationFile: string; directory: string; signal?: AbortSignal },
   ports: { transport: ReturnType<typeof createNativeScheduleTransport>; current(): true; held(): Promise<boolean>;
-    claim(incarnation: NativeScheduleIncarnation, preflight: NativeSchedulePreflight): Promise<boolean> }): Promise<NativeScheduleTransportResult> {
+    claim(incarnation: NativeScheduleIncarnation, preflight: NativeSchedulePreflight, retry: boolean): Promise<boolean> }): Promise<NativeScheduleTransportResult> {
   const abort = new AbortController(), signal = input.signal ? AbortSignal.any([input.signal, abort.signal]) : abort.signal
   const timer = setTimeout(() => abort.abort(), 8000)
   const request = { ...input, signal }
@@ -40,12 +52,15 @@ export async function dispatchNativeMissionScheduleWake(input: { wake: NativeSch
     const status = await ports.transport.status(request)
     ports.current(); signal.throwIfAborted()
     if (status.state !== "received" || status.reply.state === "applied" || !status.reply.messagePresent
-      || !status.reply.ready || !status.reply.preflight || await ports.held()) return status
+      || !status.reply.ready || !status.reply.preflight) return status
+    // The claim rechecks abandonment under the Mission exclusion before replacing it.
+    const retry = status.reply.abandoned === true
+    if (!retry && await ports.held()) return status
     ports.current(); signal.throwIfAborted()
     const preflight = status.reply.preflight
     attempted = true
     return await ports.transport.wake({ ...request, preflight,
-      claim: incarnation => { ports.current(); signal.throwIfAborted(); return ports.claim(incarnation, preflight) } })
+      claim: incarnation => { ports.current(); signal.throwIfAborted(); return ports.claim(incarnation, preflight, retry) } })
   } catch { return { state: attempted ? "uncertain" : "not-dispatched", reason: signal.aborted ? "deadline" : "unavailable" } }
   finally { clearTimeout(timer) }
 }

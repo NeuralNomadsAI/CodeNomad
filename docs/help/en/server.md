@@ -6,9 +6,9 @@ The same UI supports [multiple project tabs and worktrees](projects.md), [conver
 
 ## Prepare the host {#prerequisites}
 
-1. Install Node.js 24 LTS and npm; the repository's pinned build runtime is 24.20.0. Desktop packages include Node/npm.
+1. Install Node.js 24 LTS and npm; the repository pins its build runtime in `.node-version`. Desktop packages provide their own runtime: Electron uses its integrated Node, Tauri bundles Node, and both include npm.
 2. Put Git on the **backend process's PATH**. Git inside WSL alone does not satisfy a Windows backend.
-3. Install or select OpenCode: **2.2.3** is the required minimum and **2.2.5** the recommended qualification target. Newer or custom builds undergo compatibility checks, not a tested-version allowlist. See [OpenCode setup](opencode.md).
+3. Install or select OpenCode: **2.2.3** is the required minimum and **2.2.7** the recommended qualification target. Newer or custom builds undergo compatibility checks, not a tested-version allowlist. See [OpenCode setup](opencode.md).
 4. Choose the folder from which to start the server, or pass `--workspace-root` explicitly.
 
 Without Git, conversations remain available only in the explicitly opened physical folder; Git and worktree operations fail. Install Git and restart the backend after a PATH change. A workspace root limits opening/browsing, not agent execution: see [Security](security.md).
@@ -58,6 +58,8 @@ The backend can also open an unannounced, authenticated HTTP listener on a rando
 For listener exposure, certificates, VPN/SSH and reverse proxies, use [Direct remote access](remote-access.md). For access without an inbound port, use [Remote Control](remote-control.md).
 
 ## Public CLI reference {#cli-reference}
+
+Launching Tauri or Electron? See [Desktop launch arguments](desktop.md#desktop-cli) for `--connect-server`, `--folder`, `--new-window` and executable/shortcut examples. This table covers the standalone server executable.
 
 Flags override their environment counterparts. Value-taking flags use the shown argument; switches do not. HTTPS/HTTP values recognize `1`, `true`, `yes`, `y` and `on` as enabled, case-insensitively; use explicit `true`/`false` for clarity. UI auto-update recognizes `1`, `true` and `yes`.
 

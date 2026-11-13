@@ -1,7 +1,8 @@
 import { createMemo, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import SessionList from "../../../src/components/session-list"
-import { MissionConversationPicker } from "../../../src/components/mission-conversation-picker"
+import { MissionSourceSelect } from "../../../src/components/mission-source-select"
+import { createMissionEditorSources } from "../../../src/components/mission-editor-sources"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
@@ -51,14 +52,18 @@ setSessionPage(id, ["parent", "local", "ses_cn_schedule_fixture"], false, true)
 await ensureWorktreesLoaded(id)
 const [searchMode, setSearchMode] = createSignal(true)
 const [active, setActive] = createSignal<string | null>(null)
-const [watched, setWatched] = createSignal<string[]>([])
+const [source, setSource] = createSignal("")
 function Fixture() {
   const threads = createMemo(() => buildSessionThreadsFromMap(sessions().get(id)!, ["parent", "local", "ses_cn_schedule_fixture"]))
+  const sources = createMissionEditorSources({ instanceId: id, projectID: "fixture", directory: () => "/repo",
+    kinds: () => ["conversation-message"], selected: () => source() ? [{ kind: "conversation-message", id: source() }] : [],
+    active: () => true, captureView: () => () => true })
   return <ConfigProvider><I18nProvider><div style={{ width: "440px", height: "650px", display: "flex" }}>
     <SessionList instanceId={id} threads={threads()} activeSessionId={active()} onSelect={value => { selected.push(value); setActive(value) }}
       onNew={() => {}} enableFilterBar={searchMode()} showHeader={false} showFooter={false} />
-  </div><MissionConversationPicker instanceId={id} directory="/repo" projectID="fixture" value={watched()} disabled={false} active={() => true} onChange={setWatched} /></I18nProvider></ConfigProvider>
+  </div><MissionSourceSelect label="Criterion 1 source" value={source()} choices={sources.sources()["conversation-message"]}
+    paging={sources.reader("conversation-message", source())} onChange={setSource} /></I18nProvider></ConfigProvider>
 }
 render(() => <Fixture />, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).fixture = { searches, selected, parentReads: () => parentReads, setSearchMode, watched }
+;(window as any).fixture = { searches, selected, parentReads: () => parentReads, setSearchMode, source }

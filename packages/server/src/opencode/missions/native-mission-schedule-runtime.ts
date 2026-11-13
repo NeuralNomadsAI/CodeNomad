@@ -11,6 +11,7 @@ import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import type { NativeDocumentBusiness } from "./desktop-plugin"
 import { registerNativeMissionScheduleIdleHints } from "./native-mission-schedule-wake-idle"
 import { registerNativeMissionScheduleMaintenance } from "./native-mission-schedule-wake-maintenance"
+import { registerScheduledChildInput } from "./native-scheduled-child-input"
 
 /** Setup owns public registrations only. Private calendar/business services are
  * acquired by each receiving HTTP RPC, including after a service restart. */
@@ -20,6 +21,7 @@ export const registerNativeMissionScheduleRuntime = Effect.fn("missions.register
   if (artifacts) yield* registerNativeScheduleProvider(ctx, artifacts)
   const idle = yield* registerNativeMissionScheduleIdleHints(ctx)
   yield* registerNativeMissionScheduleCarrierHooks(ctx, idle.remember)
+  yield* registerScheduledChildInput(ctx)
   yield* ctx.rpc.register(Rpc.define(NativeScheduleTransportRpc), nativeMissionScheduleWakeHandlers(ctx, artifacts)).pipe(Effect.orDie)
   yield* registerNativeMissionScheduleMaintenance(ctx)
   // One registration, shared by persistent native tool routing and preparation.

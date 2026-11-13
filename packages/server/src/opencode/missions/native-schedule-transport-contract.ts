@@ -42,12 +42,13 @@ const input = {
 } as const
 const output = { type: "object", additionalProperties: false, required: ["key", "state"],
   properties: { key: { type: "string", maxLength: 32768 }, state: { enum: ["applied", "pending", "rejected", "unknown"] },
-    messagePresent: { type: "boolean" }, ready: { type: "boolean" }, preflight } } as const
+    messagePresent: { type: "boolean" }, ready: { type: "boolean" }, abandoned: { type: "boolean" }, preflight } } as const
 
 /** Internal service-owned adapter. Register wake with CAS and status as a pure read. */
 export const NativeScheduleTransportRpc = {
   id: "codenomad.missions.schedule", methods: { wake: { input, output }, status: { input, output } }, events: {},
 } as const
 
+/** `abandoned`: status found an unsettled claim on this unconsumed wake whose receiver ended. */
 export type NativeScheduleTransportReply = { key: string; state: "applied" | "pending" | "rejected" | "unknown"; messagePresent?: boolean;
-  ready?: boolean; preflight?: NativeSchedulePreflight }
+  ready?: boolean; abandoned?: boolean; preflight?: NativeSchedulePreflight }

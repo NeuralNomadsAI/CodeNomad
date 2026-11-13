@@ -35,18 +35,22 @@ export function createMediaSource(instanceId: Accessor<string>, source: Accessor
     if (/^blob:/i.test(value)) return
     let url: URL
     try {
-      url = new URL(backend.url(value))
+      url = new URL(isSessionMediaPath(value) ? backend.url(value) : value)
       if (!/^(?:https?:|data:)$/.test(url.protocol) || url.username || url.password) return
     } catch { return }
     const owner = backend
     const inline = url.protocol === "data:"
-    const sameOrigin = url.origin === new URL(owner.url("/")).origin
+    const root = new URL(owner.url("/"))
+    root.search = ""
+    const sameOrigin = url.origin === root.origin
+    // UI- and backend-origin sources must stay inside this owner's namespace.
+    if ((sameOrigin || url.origin === window.location.origin) && !url.href.startsWith(root.href)) return
     // Backend fetchers may inject device authorization, independently of cookie credentials.
     if (!inline && !sameOrigin) { setResolved(url.href); return }
     void (async () => {
       try {
         if (!operation.current()) return
-        const backendMedia = !inline && isSessionMediaPath(url.pathname)
+        const backendMedia = !inline && sameOrigin && isSessionMediaPath(url.pathname.slice(root.pathname.length - 1))
         const fetcher = backendMedia ? owner.fetch : globalThis.fetch
         const response = await fetcher(url.href, {
           signal: operation.signal,

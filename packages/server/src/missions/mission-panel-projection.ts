@@ -7,7 +7,7 @@ import { missionActivityContext, activityActorWindow } from "./mission-activity-
 import { MISSION_ACTIVITY_ACTORS } from "./mission-panel-map"
 
 /** Project one already validated range observation; callers own its identity/lifetime. */
-export function projectMissionPanel(mission: MissionMap, request: Exclude<MissionPanelPageRequest, { source: "summaries" | "cleanups" | "marks" }>,
+export function projectMissionPanel(mission: MissionMap, request: Exclude<MissionPanelPageRequest, { source: "summaries" | "cleanups" | "marks" | "task-marks" }>,
   damage: Required<Pick<MissionPanelPage, "discardedEvents" | "controlUnavailable" | "notificationUnavailable" | "cleanupUnavailable">>,
   extra: Pick<MissionPanelPage, "passage"> = {}) {
   const header = { projectID: mission.projectID, source: request.source, missionID: mission.id, revision: mission.revision, ...damage, ...extra }

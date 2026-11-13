@@ -18,18 +18,27 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 
 | Client | Implémentation de l’aperçu | Automatisation navigateur par agent | Modèles mobiles |
 | --- | --- | --- | --- |
-| Electron sur les plateformes de bureau prises en charge | Invité Chromium natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri Windows | Enfant WebView2 natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri macOS/Linux | Iframe en bac à sable | Pas d’automatisation navigateur native | Dimensions seules |
+| Electron sur les plateformes de bureau prises en charge | Invité Chromium natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
+| Tauri Windows | Enfant WebView2 natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
+| Tauri macOS (14+) | Vue enfant WKWebView native ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Identité mobile WebKit et viewport CSS ; limites de saisie natives |
+| Tauri Linux | Vue enfant WebKitGTK native ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Identité mobile WebKit et viewport CSS ; limites natives de densité/saisie |
 | Navigateur ordinaire/vue distante | Iframe de repli | Aucune cible locale d’aperçu natif | Dimensions seules |
 
-L’automatisation native est préparée au démarrage du bureau et utilise l’outil `codenomad.browser` lié à la session pour ouvrir, naviguer, capturer l’état, prendre une capture d’écran et agir sur la page : cliquer, saisir, sélectionner, survoler, glisser, faire défiler, appuyer sur des touches et attendre un texte. La disponibilité d’un outil n’autorise pas toutes les fenêtres : l’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Une action dont la page a été masquée, remplacée ou a changé d’adresse entre-temps est refusée plutôt qu’envoyée à une autre page, et une action n’est jamais répétée automatiquement. Le contenu des pages reste non fiable. Une iframe peut échouer si la cible interdit l’intégration ; utilisez un navigateur externe plutôt que d’affaiblir ses protections.
+Sur tous les hôtes de bureau natifs, l’outil `codenomad.browser` lié à la session ouvre, navigue et capture l’aperçu et effectue les actions clic, saisie, sélection, survol, glisser, défilement, touches et attente de texte. L’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Les cibles masquées, remplacées ou ayant navigué sont refusées ; les actions ne sont jamais répétées automatiquement. Le contenu reste non fiable. Pour les sites bloquant l’iframe, utilisez un navigateur externe.
+
+Les aperçus natifs s’ouvrent manuellement ou par l’agent, conservent les connexions partagées entre redémarrages et utilisent l’historique natif arrière/avant. Les menus et dialogues locaux masquent l’aperçu. Les commentaires sur éléments sont indisponibles en mode natif. Les captures WebKit parcourent les shadow roots fermés créés par script ; les racines fermées déclaratives restent opaques. Sur macOS, le premier survol peut omettre pointerenter et ⌘A sélectionne par le responder natif sans keydown A. Sous GTK, la lecture du presse-papiers passe par Ctrl+V explicite ; écriture et copier/coller natifs fonctionnent.
+
+Les pop-ups natifs partagent les connexions de l’aperçu, conservent `opener`/`postMessage` et se ferment avec leur page d’origine. Les adresses saisies/restaurées acceptent HTTP(S) sans identifiants ; les sites peuvent aussi ouvrir des documents vierges et blob de même origine. Les schémas de fichiers et applicatifs sont bloqués. Les téléchargements vont dans Téléchargements, avec des noms assainis et uniques, sans écrasement ni ouverture automatique. Caméra, microphone, localisation et notifications sont refusés ; les permissions classifiées demandent un consentement, les requêtes inconnues affichent une erreur. Tauri et Electron prennent en charge `alert`/`confirm`/`prompt` ; le dialogue prompt d’Electron couvre les pages principales de l’aperçu, les pop-ups et les sous-frames. Les sélecteurs de périphériques et d’écrans permettent de faire défiler les entrées disponibles. Les autres API dépendent du moteur et du matériel.
+
+Les sites peuvent demander confirmation à la fermeture d’un pop-up natif. Sous Linux, le consentement au verrouillage du pointeur apparaît en haut de sa fenêtre. Les versions de WebKitGTK affectées par [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), dont 2.52.6, nécessitent le sélecteur de fichiers de la page pour les envois : l’accès aux fichiers déposés est bloqué pour des raisons de sécurité. Enregistrez le travail de la page avant de fermer ou recharger la fenêtre CodeNomad qui l’héberge.
+
+Sur Tauri macOS/Linux, donnez le focus à l’aperçu pour le zoomer avec ⌘/Ctrl +, − ou 0, ou avec le menu de zoom de l’application. Si le focus est ailleurs, ces commandes de menu zooment l’application.
 
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 
 1. Ouvrez le menu de zone d’affichage de l’aperçu.
 2. Sélectionnez un modèle ci-dessous. Utilisez directement les entrées portrait/paysage ; aucune commande de rotation séparée.
-3. Attendez-vous à un rechargement natif en entrant/changeant l’émulation mobile ou en revenant à un modèle de dimensions seules.
+3. Sur Electron et Tauri Windows, attendez-vous à un rechargement natif en entrant/changeant l’émulation mobile ou en revenant à un modèle de dimensions seules.
 
 | Modèle | Zone d’affichage CSS |
 | --- | --- |
@@ -40,7 +49,7 @@ L’automatisation native est préparée au démarrage du bureau et utilise l’
 | Zone mobile | 390 × 844 |
 | Mobile paysage | 844 × 390 |
 
-Les modèles mobiles natifs définissent identité Android/Chromium, orientation, tactile et DPR 2.75 sur l’invité détenu seulement. Revenir à adaptatif/bureau/tablette efface ces remplacements et recharge. L’iframe de repli change seulement de taille. Ce sont des références de disposition reproductibles, pas une émulation Safari/Firefox ou des simulations de clavier téléphonique, barres navigateur/système ou réglages de texte mobile. Enregistrez le travail de page avant de changer de modèle, car le rechargement peut perdre l’état non envoyé.
+Sur Electron et Tauri Windows, les modèles mobiles définissent identité Android/Chromium, orientation, tactile et DPR 2.75 sur l’invité détenu seulement. Revenir à adaptatif/bureau/tablette efface ces remplacements et recharge. Tauri macOS/Linux appliquent une identité mobile WebKit générique en HTTP et JavaScript et ajustent les viewports CSS indépendamment du zoom/DPI de l’application, avec rechargement au changement ou à la réinitialisation. macOS utilise un DPR natif de 2,75 si disponible ; la densité GTK suit le zoom d’ajustement et le moniteur. Écran, plateforme, médias pointeur/survol et nombre maximal de contacts conservent leurs valeurs natives de bureau. Les clics mobiles GTK produisent du tactile natif avec événements souris de compatibilité ; macOS conserve la souris. L’iframe de repli redimensionne seulement. Ces profils servent de références de disposition ; claviers téléphoniques, barres système et réglages de texte mobile restent hors périmètre. Enregistrez le travail de page avant de changer de modèle, car le rechargement peut perdre l’état non envoyé.
 
 ## Enregistrer un SideCar {#register-sidecar}
 
@@ -60,7 +69,9 @@ L’enregistrement est une configuration serveur partagée par ses clients ; il 
 
 Si le service est inaccessible, vérifiez le processus et le port sur le backend. Si HTML charge mais pas les ressources/WebSockets, vérifiez le chemin de base et le mode de préfixe. Recréez un enregistrement erroné avec les paramètres voulus ; n’exposez pas l’amont publiquement pour contourner une erreur de proxy. Les applications SideCar peuvent exposer un terminal ou des fichiers avec l’autorité du compte serveur ; faites confiance à leurs utilisateurs et configuration.
 
-Un SideCar est une extension de confiance de CodeNomad, pas un aperçu en bac à sable : sa page s’exécute avec l’origine même de CodeNomad, si bien que ses scripts peuvent utiliser CodeNomad avec votre accès connecté. N’enregistrez que des services dont vous jugez le code fiable. CodeNomad ne transmet pas ses propres cookies de connexion au service, tandis que les cookies propres au service sont conservés. Le Contrôle à distance n’expose pas le trafic proxy des applications SideCar ; utilisez le chemin direct approprié décrit dans [Accès distant](remote-access.md) et [Contrôle à distance](remote-control.md).
+Un SideCar est une extension de confiance de CodeNomad, pas un aperçu en bac à sable : sa page s’exécute avec l’origine même de CodeNomad, si bien que ses scripts peuvent utiliser CodeNomad avec votre accès connecté. N’enregistrez que des services dont vous jugez le code fiable. CodeNomad ne transmet pas ses propres cookies de connexion au service, tandis que les cookies propres au service sont conservés.
+
+Le contenu SideCar (`/sidecars/`) et les WebSockets SideCar exigent une connexion en boucle locale sur l’hôte. L’enregistrement via `/api/sidecars` est accessible aux appareils appairés et aux clients LAN directs authentifiés. Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide ; les aperçus web du [Contrôle à distance](remote-control.md#remote-surface) restent accessibles avec leur jeton de capacité lorsqu’ils sont activés. Voir [Mise à niveau](remote-access.md#upgrading) pour les conditions de l’accès direct.
 
 ## Recette OpenVSCode Server {#openvscode}
 

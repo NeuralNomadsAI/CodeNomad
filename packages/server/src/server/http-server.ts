@@ -1,11 +1,9 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
-import cors, { type FastifyCorsOptions } from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { isIP, type Socket } from "net"
 import path from "path"
-import type { Readable } from "stream"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
@@ -17,6 +15,7 @@ import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
 import { registerTemporaryWorkspaceRoutes } from "./routes/temporary-workspaces"
 import { syncSessionGitContext } from "../workspaces/session-git-context"
+import { syncSessionMemoryContext } from "../workspaces/session-memory-context"
 import { assertOrdinaryMissionScheduleBody, assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "./mission-schedule-input-guard"
 import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
@@ -31,11 +30,15 @@ import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerImagesConversationRoute } from "./routes/images-conversation"
 import { registerSessionGoalRoute } from "./routes/session-goal"
+import { registerBackgroundShellRoutes } from "./routes/background-shells"
+import { ownedShellDirectory } from "../opencode/background-shells"
 import { registerSessionMediaRoutes } from "./routes/session-media"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerPendingRequestRoutes } from "./routes/pending-requests"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
+import { registerOpenCodeLogsRoutes } from "./routes/opencode-logs"
+import { BinaryResolver } from "../settings/binaries"
 import { registerRemoteControlRoutes } from "./routes/remote-control"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteServerBrowseRoutes } from "./routes/remote-server-browse"
@@ -55,7 +58,8 @@ import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import { registerPanelExtensionWorkItemRoutes } from "./routes/panel-extension-work-items"
 import { registerPanelExtensionApi4Routes } from "./routes/panel-extension-api4"
-import { ForgeWorkItems } from "../forge/work-items"
+import { forgeWorkItems } from "../forge/work-items"
+import { registerRepositorySourceRoute } from "./routes/repository-source"
 import type { PanelExtensionStore } from "../panel-extensions/store"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
@@ -93,10 +97,13 @@ import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy
 import { proxyWebSocket } from "./proxy-websocket"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
-import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
-import { isRemoteRequest } from "../remote-control/request-origin"
-import { routedPath } from "./routed-path"
+import { gateRemoteRequest, isHostOnlyPath, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { registerDirectOriginPolicy } from "./direct-origin"
+import { framesNoBody } from "./bodiless-request"
+import { addProxiedHttpMethods } from "./proxied-http-methods"
+import { ROUTER_OPTIONS, routedPath } from "./routed-path"
 import { redactSecrets, registerRequestLogging } from "./request-logging"
 export { redactSecrets, registerRequestLogging } from "./request-logging"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
@@ -112,12 +119,17 @@ import { createOpenCodeUpdateService } from "../opencode-update/service"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
 import type { NativeParent } from "../native-parent"
 import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./routes/automation-plugin"
+import type { MemoryStore } from "../memory/store"
+import { MemoryService } from "../memory/service"
+import { registerMemoryRoutes } from "./routes/memory"
 import { DeveloperCdp } from "../developer-cdp"
 import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
 import { validatePromptAttachmentBudget } from "./prompt-attachment-budget"
 import { ProviderAccountsService, AccountSelectionFailed } from "../provider-accounts/service"
 import { registerProviderAccountsRoutes } from "./routes/provider-accounts"
 import { observeProviderQuotaFailures } from "../provider-accounts/quota-observer"
+import { createOpenCodeFreeExhaustion } from "../usage/opencode-free-exhaustion"
+import { createOpenCodeFreeUsage } from "../usage/opencode-free-usage"
 import { deferPendingDiscovery, grantPendingReconciliation, PENDING_DISCOVERY_DEFERRED, PENDING_RECONCILIATION_HEADER } from "../workspaces/pending-discovery"
 
 interface HttpServerDeps {
@@ -145,9 +157,11 @@ interface HttpServerDeps {
   permissionReceipts?: PermissionReceipts
   uiStaticDir: string
   uiDevServerUrl?: string
+  allowedOrigins?: string[]
   logger: Logger
   nativeParent: NativeParent
   automationBridgeToken: string
+  memoryStore?: MemoryStore
   panelExtensions?: PanelExtensionStore
   /** Shared by every listener of one backend; a fresh one serves a lone server. */
   worktreeDeletionFence?: WorktreeDeletionFence
@@ -175,9 +189,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   const app = Fastify(
     ({
       logger: false,
+      routerOptions: ROUTER_OPTIONS,
       ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
     } as unknown) as any,
   ) as unknown as FastifyInstance
+  // Before any route: `all()` routes take the methods supported when declared.
+  addProxiedHttpMethods(app)
   const proxyLogger = deps.logger.child({ component: "proxy" })
   const apiLogger = deps.logger.child({ component: "http" })
   const sseLogger = deps.logger.child({ component: "sse" })
@@ -193,75 +210,68 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     sseClients.clear()
   }
+  // Upgraded sockets leave Node's HTTP connection pool, including unmatched
+  // upgrades (for example Vite HMR). Server.close() cannot drain them itself.
+  const upgrades = new Set<Socket>()
+  let closing = false
+  app.server.on("upgrade", (_request, socket: Socket) => {
+    if (closing) { socket.destroy(); return }
+    upgrades.add(socket)
+    socket.once("close", () => upgrades.delete(socket))
+  })
+  app.addHook("preClose", async () => {
+    closing = true
+    closeSseClients()
+    for (const socket of upgrades) socket.destroy()
+  })
+  app.addHook("onSend", (_request, reply, payload, done) => {
+    if (closing) reply.header("Connection", "close")
+    done(null, payload)
+  })
+  app.addHook("onResponse", async () => {
+    // Streams can send their keep-alive headers before shutdown starts.
+    if (closing) app.server.closeIdleConnections()
+  })
 
   registerRequestLogging(app, apiLogger)
 
   // Remote Control admission runs before CORS, authentication and routing.
   const remoteGate = deps.remoteControlManager.gate()
+  const getSelfOrigins = (): Set<string> => {
+    const origins = new Set<string>()
+    for (const candidate of [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl, ...(deps.serverMeta.addresses ?? []).map(address => address.remoteUrl)]) {
+      try { if (candidate) origins.add(new URL(candidate).origin) } catch { /* Ignore unavailable metadata. */ }
+    }
+    return origins
+  }
   app.addHook("onRequest", (request, reply, done) => {
     if (guardServerPairRequest(request, reply)) return
     if (!gateRemoteRequest(request, reply, remoteGate)) done()
   })
 
-  const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
-  const getSelfOrigins = (): Set<string> => {
-    const origins = new Set<string>()
-    const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl]
-    for (const candidate of candidates) {
-      if (!candidate) continue
-      try {
-        origins.add(new URL(candidate).origin)
-      } catch {
-        // ignore
-      }
-    }
-    for (const addr of deps.serverMeta.addresses ?? []) {
-      try {
-        origins.add(new URL(addr.remoteUrl).origin)
-      } catch {
-        // ignore
-      }
-    }
-    return origins
+  const isLivePreview = (request: FastifyRequest) => {
+    // Capability admission belongs to the matched proxy route, never Host alone:
+    // explicit application routes take precedence over the host's wildcard route.
+    const config = request.routeOptions.config
+    if (!("previewCapability" in config) || config.previewCapability !== true) return false
+    const pathname = routedPath(request.raw.url ?? "/")
+    const token = parsePreviewCapabilityHost(request.headers.host) ?? pathname?.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
+    if (!token) return false
+    try { return Boolean(deps.previewManager.get(decodeURIComponent(token))) } catch { return false }
   }
-
-  const corsOptions: FastifyCorsOptions = {
-    origin: (origin, cb) => {
-      if (!origin) {
-        cb(null, true)
-        return
-      }
-
-      const selfOrigins = getSelfOrigins()
-      if (selfOrigins.has(origin)) {
-        cb(null, true)
-        return
-      }
-
-      if (origin === "null") {
-        cb(null, true)
-        return
-      }
-
-       if (allowedDevOrigins.has(origin)) {
-         cb(null, true)
-         return
-       }
-
-       // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
-       if (isWildcardHost(deps.bindHost) || !isLoopbackHost(deps.bindHost)) {
-         cb(null, true)
-         return
-       }
-
-
-      cb(null, false)
-    },
-    credentials: true,
-  }
-  // This CORS version uses a per-request delegator for route-level opt-out.
-  app.register(cors, { delegator: (request, callback) => callback(null,
-    routedPath(request.raw.url ?? request.url) === SERVER_PAIR_PATH ? { origin: false } : corsOptions) })
+  app.addHook("onRequest", (request, reply, done) => {
+    if (isLocalRequest(request) || isRemoteRequest(request)) return done()
+    const pathname = routedPath(request.raw.url ?? "/")
+    if (pathname === null) return reply.header("connection", "close").code(400).send({ error: "Invalid request path" })
+    if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)) {
+      return reply.header("connection", "close").code(404).send({ error: "Not found" })
+    }
+    done()
+  })
+  const allowsDirectSource = registerDirectOriginPolicy(app, {
+    meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, devServerUrl: deps.uiDevServerUrl,
+    publicHost: () => remoteGate.publicHost(), isPreview: isLivePreview,
+  })
 
   app.register(replyFrom, {
     contentTypesToEncode: [],
@@ -295,18 +305,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       pathname.startsWith("/api/remote-proxy/sessions/") &&
       deps.authManager.isLoopbackRequest(request)
 
-    const encodedPreviewToken = pathname.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
-    const hostPreviewToken = parsePreviewCapabilityHost(request.headers.host)
-    let isPreviewCapability = false
-    if (hostPreviewToken) {
-      isPreviewCapability = Boolean(deps.previewManager.get(hostPreviewToken))
-    } else if (encodedPreviewToken) {
-      try {
-        isPreviewCapability = Boolean(deps.previewManager.get(decodeURIComponent(encodedPreviewToken)))
-      } catch {
-        // Malformed capability paths remain subject to normal authentication.
-      }
-    }
+    const isPreviewCapability = isLivePreview(request)
 
     if (request.headers.origin === "null" && !isPreviewCapability) {
       reply.code(403).send({ error: "Opaque origins may access preview capabilities only" })
@@ -362,6 +361,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   const worktreeDeletionFence = deps.worktreeDeletionFence ?? new WorktreeDeletionFence()
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  registerRepositorySourceRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, forge: forgeWorkItems })
   registerTemporaryWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, eventBus: deps.eventBus })
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerPluginControlRoutes(app, { controls: configurationControls })
@@ -379,15 +379,22 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
   const loginStart = createOpenCodeLoginStart(deps.settings, deps.workspaceManager)
   registerOpenCodeLoginStartRoutes(app, { loginStart, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
-  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh() })
+  const memory = deps.memoryStore ? new MemoryService(deps.memoryStore, deps.settings, deps.workspaceManager, deps.eventBus) : undefined
+  if (memory) registerMemoryRoutes(app, memory)
+  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
+    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined })
   const accounts = new ProviderAccountsService(deps.settings)
-  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
-  app.addHook("onClose", async () => stopQuotaObserver())
+  const freeExhaustion = createOpenCodeFreeExhaustion()
+  const freeUsage = createOpenCodeFreeUsage(freeExhaustion)
+  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts, freeExhaustion.observe)
+  app.addHook("onClose", async () => { stopQuotaObserver(); freeExhaustion.dispose(); freeUsage.dispose() })
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, loginStart),
     logger: apiLogger,
   })
+  const logBinaryResolver = new BinaryResolver(deps.settings)
+  registerOpenCodeLogsRoutes(app, { resolveBinary: () => deps.workspaceManager.resolveBinaryPath(logBinaryResolver.resolveDefault().path) })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   const remotePreviewsAllowed = () => deps.remoteControlManager.previewsAllowed()
@@ -424,6 +431,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   const developerCdp = new DeveloperCdp()
   registerAutomationPluginRoute(app, {
+    memory,
     authManager: deps.authManager,
     settings: deps.settings,
     bridgeToken: deps.automationBridgeToken,
@@ -434,7 +442,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
-  registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerUsageRoutes(app, { workspaceManager: deps.workspaceManager, freeUsage })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
     scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
     scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
@@ -447,8 +455,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerMissionRecurrenceManual(app, { auth: deps.authManager, manager: deps.workspaceManager,
     settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
-  if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
-  if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: new ForgeWorkItems() })
+  if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: forgeWorkItems })
   if (deps.panelExtensions) registerPanelExtensionApi4Routes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence, imageSettings })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
@@ -456,6 +464,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     sidecarManager: deps.sidecarManager,
     authManager: deps.authManager,
     logger: proxyLogger,
+    allowsSource: request => allowsDirectSource({ raw: request, headers: request.headers }),
   })
   const previewUpgrade = setupPreviewWebSocketProxy(app, {
     previewManager: deps.previewManager,
@@ -467,8 +476,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
+  registerBackgroundShellRoutes(app, deps.workspaceManager)
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, permissionReceipts: deps.permissionReceipts,
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
       remoteDevices: deps.remoteControlManager } })
 
@@ -527,10 +537,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
       return { port: actualPort, url: serverUrl, displayHost }
     },
-    stop: () => {
-      closeSseClients()
-      return app.close()
-    },
+    stop: () => app.close(),
   }
 }
 
@@ -548,7 +555,7 @@ export interface InstanceProxyWorkspaceManager {
   getSharedServiceClient(): Promise<OpenCodeClient>
   getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>>
   desktopPluginsReady?(): Promise<void>
-  ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, signal?: AbortSignal): ReturnType<WorkspaceManager["ownsLocation"]>
+  ownsLocation: WorkspaceManager["ownsLocation"]
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
 }
@@ -558,6 +565,7 @@ interface InstanceProxyDeps {
   logger: Logger
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
+  memory?: MemoryService
   permissionReceipts?: PermissionReceipts
   humanAnswers?: Parameters<typeof replyMissionHumanAnswer>[4]
 }
@@ -569,7 +577,7 @@ interface SideCarProxyDeps {
 }
 
 interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
-  authManager: AuthManager
+  allowsSource(request: import("http").IncomingMessage): boolean
 }
 
 interface PreviewProxyDeps {
@@ -606,12 +614,21 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
       sidecarManager: deps.sidecarManager,
       logger: deps.logger,
       sessionCookie: deps.authManager.getCookieName(),
-      pathSuffix: request.params["*"] ?? "",
+      pathSuffix: reencodePercent(request.params["*"] ?? ""),
     })
   }
 
-  app.all("/sidecars/:id", proxyBaseHandler)
-  app.all("/sidecars/:id/*", proxyWildcardHandler)
+  app.register(async (sidecarApp) => {
+    // Like the instance proxy, a SideCar's bodiless DELETE or OPTIONS passes as such even when it declares JSON.
+    const parseJson = sidecarApp.getDefaultJsonParser("error", "error")
+    sidecarApp.removeContentTypeParser("application/json")
+    sidecarApp.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+      if (framesNoBody(request)) done(null, undefined)
+      else parseJson(request, body.toString(), done)
+    })
+    sidecarApp.all("/sidecars/:id", proxyBaseHandler)
+    sidecarApp.all("/sidecars/:id/*", proxyWildcardHandler)
+  })
 }
 
 function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps) {
@@ -634,21 +651,43 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
       })
     }
 
-    previewApp.all("/", { constraints: { host: capabilityHost } }, hostHandler)
-    previewApp.all("/*", { constraints: { host: capabilityHost } }, hostHandler)
-    previewApp.all("/previews/:token", async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
+    const config = { previewCapability: true }
+    previewApp.all("/", { config, constraints: { host: capabilityHost } }, hostHandler)
+    previewApp.all("/*", { config, constraints: { host: capabilityHost } }, hostHandler)
+    previewApp.all("/previews/:token", { config }, async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
       await proxyPreviewRequest({ request, reply, previewManager: deps.previewManager, logger: deps.logger, pathSuffix: "" })
     })
-    previewApp.all("/previews/:token/*", async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
+    previewApp.all("/previews/:token/*", { config }, async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
       await proxyPreviewRequest({
         request,
         reply,
         previewManager: deps.previewManager,
         logger: deps.logger,
-        pathSuffix: request.params["*"] ?? "",
+        pathSuffix: reencodePercent(request.params["*"] ?? ""),
       })
     })
   })
+}
+
+/**
+ * Wildcard parameters arrive percent-decoded. A literal "%" in one (sent as
+ * "%25") is escaped again so the target URL decodes back to it; every other
+ * character keeps the form the URL parser gives it ("@vite/client" stays raw).
+ */
+function reencodePercent(decoded: string): string {
+  return decoded.replaceAll("%", "%25")
+}
+
+/**
+ * @fastify/reply-from validates a target by decoding it whole, so a query with
+ * a raw "%" ("?q=50%") would fail. The target travels without its query, and the
+ * query, as the URL parser serialized it, is appended unchanged.
+ */
+function withoutQuery(target: string): { url: string; query: string } {
+  const url = new URL(target)
+  const query = url.search.slice(1)
+  url.search = ""
+  return { url: url.href, query }
 }
 
 function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
@@ -657,6 +696,15 @@ function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocket
     const rawUrl = request.url ?? "/"
     const parsed = parseSideCarUpgradePath(rawUrl)
     if (!parsed) {
+      return
+    }
+    if (!isLocalRequest({ raw: request })) {
+      rejectUpgrade(socket as Socket, 404, "Not Found")
+      return
+    }
+    // Upgrades bypass Fastify hooks; use the HTTP mutation source policy before proxying.
+    if (!deps.allowsSource(request)) {
+      rejectUpgrade(socket as Socket, 403, "Forbidden")
       return
     }
 
@@ -720,14 +768,18 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
 export function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
   app.register(async (instance) => {
     instance.removeAllContentTypeParsers()
-    instance.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+    instance.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
+      if (framesNoBody(req)) {
+        done(null, undefined)
+        return
+      }
       try {
         done(null, body.length ? JSON.parse(body.toString()) : {})
       } catch {
         done(Object.assign(new Error("Invalid JSON request body"), { statusCode: 400 }), undefined)
       }
     })
-    instance.addContentTypeParser("*", (req, body, done) => done(null, body))
+    instance.addContentTypeParser("*", (req, body, done) => done(null, framesNoBody(req) ? undefined : body))
 
     const proxyBaseHandler = async (
       request: FastifyRequest<{ Params: { id: string } }>,
@@ -739,6 +791,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: "",
@@ -756,6 +809,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: request.params["*"] ?? "",
@@ -773,6 +827,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
@@ -796,6 +851,7 @@ interface InstanceProxyRequestArgs {
   workspaceManager: InstanceProxyWorkspaceManager
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
+  memory?: MemoryService
   permissionReceipts?: PermissionReceipts
   humanAnswers?: Parameters<typeof replyMissionHumanAnswer>[4]
   logger: Logger
@@ -906,7 +962,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     const entries = await Promise.all(Object.entries(active).map(async ([sessionId, status]) => {
       try {
         const session = await wait(client.session.get({ sessionID: sessionId }, { signal }))
-        return await wait(workspaceManager.ownsLocation(workspaceId, session.location, client, signal)) ? [sessionId, status] as const : null
+        return await wait(workspaceManager.ownsLocation(workspaceId, session.location, client, { signal })) ? [sessionId, status] as const : null
       } catch {
         return null
       }
@@ -1096,11 +1152,12 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   if (shellId) {
     try {
       const shell = await wait((await clientForRequest()).shell.get({ id: shellId, location: { directory: runtimeLocation.directory } }, runtimeLocationOptions))
-      if (!(await wait(workspaceManager.ownsDirectory(workspaceId, shell.data.cwd)))) {
+      const ownerDirectory = await wait(ownedShellDirectory(shell.data, await clientForRequest(), directory => workspaceManager.ownsDirectory(workspaceId, directory), signal))
+      if (!ownerDirectory) {
         reply.code(403).send({ error: "Shell does not belong to workspace" })
         return
       }
-      mutationDirectories.add(shell.data.cwd)
+      mutationDirectories.add(ownerDirectory)
     } catch (error) {
       if (isShellNotFoundError(error)) {
         reply.code(404).send({ error: "Shell not found" })
@@ -1137,7 +1194,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       }
       if (!isSessionNotFoundError(error)) throw error
     }
-    if (session && !(await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), signal)))) {
+    if (session && !(await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), { signal })))) {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
@@ -1196,7 +1253,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           const fresh = await wait(client.session.get({ sessionID: session.id }, { signal }))
           current()
           if (fresh.id !== session.id || !sameLocation(readLocationRef(fresh.location), readLocationRef(session.location))
-            || !await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, signal))) {
+            || !await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, { signal }))) {
             throw new MissionScheduleInputError(403)
           }
           assertOrdinaryMissionScheduleBody({ metadata: fresh.metadata })
@@ -1278,6 +1335,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           // Do not log SDK bodies (they may include unrelated session context).
           logger.debug({ workspaceId, sessionId }, "Unable to update Git availability context")
         }
+        if (connection) {
+          await wait(syncSessionMemoryContext(connection, args.memory, sessionId!, signal))
+        }
       }
       signal.throwIfAborted()
       connection?.assertCurrent()
@@ -1287,7 +1347,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
             const current = await connection.client.session.get({ sessionID: sessionId! }, { signal })
             return workspaceManager.get(workspaceId) === workspace
               && directory === authorizedSessionDirectory && current.location.directory === authorizedSessionDirectory
-              && await workspaceManager.ownsLocation(workspaceId, current.location, connection.client, signal)
+              && await workspaceManager.ownsLocation(workspaceId, current.location, connection.client, { signal })
           }))
         } catch (error) {
           releaseMutation?.()
@@ -1349,7 +1409,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         if (proxyReply.statusCode === 401) {
           workspaceManager.invalidateSharedServiceConnection?.()
         }
-        const upstream = upstreamResponse as typeof upstreamResponse & { readableEnded?: boolean; destroyed?: boolean }
+        const upstream = upstreamResponse.stream
         const release = () => releaseMutation?.()
         if (upstream.readableEnded || upstream.destroyed) release()
         else {
@@ -1452,7 +1512,7 @@ async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, works
 
 async function allLocationsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, locations: LocationRef[], client?: OpenCodeClient, signal?: AbortSignal) {
   const unique = new Map(locations.map((location) => [JSON.stringify([location.directory, location.workspaceID]), location]))
-  return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location, client, signal)))).every(Boolean)
+  return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location, client, { signal })))).every(Boolean)
 }
 
 async function allPathsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, paths: string[]) {
@@ -1536,7 +1596,7 @@ async function authorizeSessionList(
   if (ownership !== "allowed") return ownership
   if (!(await readGitStatus()).available) {
     signal?.throwIfAborted()
-    if (directory && !await manager.ownsLocation(workspaceId, { directory }, client, signal)) return "foreign"
+    if (directory && !await manager.ownsLocation(workspaceId, { directory }, client, { signal })) return "foreign"
     // Narrow the initial query, preserving native directory-scoped pagination.
     // Unlike a project cursor this request has no already-established scope.
     const root = manager.getServiceDirectory?.(workspaceId) ?? manager.get(workspaceId)?.path
@@ -1561,7 +1621,7 @@ async function ownsSessionListScope(
 ): Promise<"allowed" | "foreign"> {
   signal?.throwIfAborted()
   if (scope.directory) {
-    const owned = await manager.ownsLocation(workspaceId, { directory: scope.directory }, client, signal)
+    const owned = await manager.ownsLocation(workspaceId, { directory: scope.directory }, client, { signal })
     return owned ? "allowed" : "foreign"
   }
   if (!scope.project) return "foreign"
@@ -1575,7 +1635,7 @@ async function ownsSessionListScope(
     : /^[A-Za-z]:[\\/]|^\\\\/.test(project.canonical)
       ? path.win32.resolve(project.canonical, scope.subpath)
       : path.posix.resolve(project.canonical, scope.subpath)
-  const owned = await manager.ownsLocation(workspaceId, { directory }, client, signal)
+  const owned = await manager.ownsLocation(workspaceId, { directory }, client, { signal })
   return owned ? "allowed" : "foreign"
 }
 
@@ -2190,7 +2250,9 @@ async function proxyPreviewTargetRequest(args: {
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
   let responseKind: "html" | "css" | "js" | null = null
-  await args.reply.from(args.targetUrl, {
+  const target = withoutQuery(args.targetUrl)
+  await args.reply.from(target.url, {
+    queryString: () => target.query,
     rewriteRequestHeaders: (_originalRequest, headers) => {
       const next = sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin)
       delete next["accept-encoding"]
@@ -2214,7 +2276,7 @@ async function proxyPreviewTargetRequest(args: {
       return next
     },
     onResponse: (_proxyRequest, proxyReply, upstreamResponse) => {
-      const upstream = upstreamResponse as unknown as Readable
+      const upstream = upstreamResponse.stream
       if (!responseKind || args.request.method === "HEAD") {
         proxyReply.send(upstream)
         return
@@ -2247,7 +2309,9 @@ async function proxyTargetRequest(args: {
   errorMessage: string
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
-  await args.reply.from(args.targetUrl, {
+  const target = withoutQuery(args.targetUrl)
+  await args.reply.from(target.url, {
+    queryString: () => target.query,
     rewriteRequestHeaders: (_originalRequest, headers) =>
       sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin, args.sessionCookie),
     rewriteHeaders: args.rewriteHeaders,
@@ -2304,12 +2368,6 @@ async function proxySideCarWebSocketUpgrade(args: {
 
   if (!isWebSocketUpgradeRequest(request)) {
     rejectUpgrade(socket, 400, "Bad Request")
-    return
-  }
-
-  // Upgrades bypass the HTTP preHandler: refuse opaque origins here as it does.
-  if (request.headers.origin === "null") {
-    rejectUpgrade(socket, 403, "Forbidden")
     return
   }
 

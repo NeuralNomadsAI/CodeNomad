@@ -1,4 +1,10 @@
 export const logMessages = {
+  "settings.opencode.logs.title": "OpenCode-Protokolle",
+  "settings.opencode.logs.open": "OpenCode-Protokolle anzeigen",
+  "settings.opencode.logs.info": "Globale Protokolle auf dem ausgewählten OpenCode-Host. Sie können private Daten enthalten. Beim Öffnen werden die letzten 128 KiB gelesen; Aktualisieren liest erneut.",
+  "settings.opencode.logs.failed": "OpenCode-Protokolle können nicht gelesen werden. Prüfen Sie Programm und Dateizugriff und aktualisieren Sie erneut.",
+  "settings.opencode.logs.empty": "Das Protokoll ist leer.",
+  "settings.opencode.logs.truncated": "Ende des Protokolls angezeigt (maximal 128 KiB).",
   "logsView.title": "Server-Protokolle",
   "logsView.actions.show": "Server-Protokolle anzeigen",
   "logsView.actions.hide": "Server-Protokolle ausblenden",

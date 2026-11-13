@@ -34,8 +34,7 @@ test("AC-C15 sessionless install/update needs fresh active native status and a p
       const dialog = await launchInstallation(page, name)
       assert.match(await dialog.innerText(), /Blender.*OpenCode for Blender 1\.2\.3/s)
       assert.match(await dialog.innerText(), /machine where OpenCode runs/)
-      // Kobalte moves focus in its next task after mounting the visible dialog.
-      await page.waitForFunction(() => document.activeElement?.matches(".alert-dialog button.button-secondary"))
+      await page.waitForFunction(element => element === document.activeElement, await dialog.getByRole("button", { name: "Cancel", exact: true }).elementHandle())
       assert.equal(await dialog.getByRole("button", { name: "Cancel", exact: true }).evaluate(el => el === document.activeElement), true)
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
     }
@@ -79,7 +78,6 @@ test("AC-C5/C15 installer rejects sub-500ms activation and admits exactly one do
   await withAttachment(async ({ page, model, calls }) => {
     await installationReady(page, model)
     const time = new Date("2026-11-03T12:00:00Z")
-    await page.clock.install({ time })
     await page.clock.pauseAt(time)
     const dialog = await launchInstallation(page)
     const confirm = dialog.locator("button.button-primary")
@@ -257,7 +255,6 @@ async function launchRemoval(page: Page, surface: "plugins" | "section", guarded
   const item = page.getByRole("menuitem", { name: "Remove from Global", exact: true })
   if (guardedClock) {
     const time = new Date("2026-11-03T12:00:00Z")
-    await page.clock.install({ time })
     await page.clock.pauseAt(time)
     // Kobalte selects on pointer-up/Enter, then closes its menu on a zero-delay timer.
     await item.press("Enter")

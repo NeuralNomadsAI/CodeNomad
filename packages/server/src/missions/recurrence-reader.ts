@@ -1,3 +1,4 @@
+import type { output } from "zod"
 import { archivedRecurrencePassage } from "./recurrence-passage"
 import type { MissionStorage } from "./journal"
 import type { RecurrenceDocument } from "./recurrence-contract"
@@ -30,7 +31,7 @@ export async function readArchivedRecurrencePage(storage: MissionStorage, docume
   if (!snapshot.events.some(event => event.type === "mission.created"
     && event.missionID === missionID && event.requestID === receipt.passage.id)) throw new Error("Archived recurrence creation binding unavailable")
 
-  type Section = typeof recurrenceReadPage._type.sections[number]
+  type Section = output<typeof recurrenceReadPage>["sections"][number]
   const sections: Array<Omit<Section, "index"> & { text: string }> = []
   const add = (label: Section["label"], text: string | undefined, title = "", raw = false, comparison?: Section["comparison"]) => {
     if (text) {

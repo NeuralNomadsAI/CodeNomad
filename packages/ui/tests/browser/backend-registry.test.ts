@@ -82,9 +82,11 @@ test("registry admits two real relayed backends and revalidates before reconnect
   origins.add(origin)
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
+  const abortWaits: Promise<unknown>[] = []
   t.after(async () => {
     hold?.()
     await browser.close()
+    await Promise.allSettled(abortWaits)
     manager.close()
     await server.close()
     app.server.closeAllConnections()
@@ -94,6 +96,13 @@ test("registry admits two real relayed backends and revalidates before reconnect
   })
   const page = await browser.newPage(), errors: string[] = [], failed: string[] = [], streamAborts: string[] = []
   const expectedAborts = new Set<string>()
+  const aborted = (id: "a" | "b") => {
+    const pending = page.waitForEvent("requestfailed", request => new URL(request.url()).pathname === `/api/backends/${id}/api/events`
+      && request.method() === "GET" && request.resourceType() === "eventsource" && request.failure()?.errorText === "net::ERR_ABORTED")
+    abortWaits.push(pending)
+    void pending.catch(() => {})
+    return pending
+  }
   page.on("pageerror", error => errors.push(error.message))
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
   page.on("requestfailed", request => {
@@ -144,6 +153,7 @@ test("registry admits two real relayed backends and revalidates before reconnect
   assert.deepEqual((await page.evaluate(() => (window as any).registryFixture.snapshot())).frames.sort(), ["a~same", "b~same"])
   incompatible = true
   expectedAborts.add("b")
+  const bAborted = aborted("b")
   const meta = page.waitForRequest(request => new URL(request.url()).pathname === "/api/backends/b/api/meta")
   await page.evaluate(() => (window as any).registryFixture.restart("b"))
   await meta
@@ -155,8 +165,10 @@ test("registry admits two real relayed backends and revalidates before reconnect
   assert.deepEqual(state.ids.sort(), ["a", "local"])
   assert.equal(state.opens.length, 2)
   expectedAborts.add("a")
+  const aAborted = aborted("a")
   await page.evaluate(() => (window as any).registryFixture.dispose())
   await allStreamsClosed
+  await Promise.all([bAborted, aAborted])
   assert.deepEqual(closed.sort(), ["a", "b"])
   assert.deepEqual(errors, [])
   assert.deepEqual(failed, [])

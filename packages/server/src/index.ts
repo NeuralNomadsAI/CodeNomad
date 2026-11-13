@@ -8,6 +8,8 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
+import { parseAllowedOrigins } from "./server/direct-origin"
+import { sessionTimeoutMs } from "./auth/session-manager"
 import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
 import { resolveConfigLocation } from "./config/location"
@@ -48,6 +50,7 @@ import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
 import { designRequestRefresher } from "./opencode/design/demand"
+import { followMemoryPreference } from "./opencode/memory/preference"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
 import { provisionDesktopPlugins } from "./opencode/desktop-plugin-provisioning"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
@@ -56,6 +59,7 @@ import { RemoteControlManager } from "./remote-control/manager"
 import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
 import { WorktreeDeletionFence } from "./workspaces/worktree-session-evacuation"
 import { IntegrationCatalogSource } from "./opencode/integrations/catalog"
+import { MemoryStore } from "./memory/store"
 
 const require = createRequire(import.meta.url)
 
@@ -298,6 +302,7 @@ async function main() {
 
   const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
+  const memoryStore = new MemoryStore(configLocation.baseDir)
 
   if ((options.tlsKeyPath && !options.tlsCertPath) || (!options.tlsKeyPath && options.tlsCertPath)) {
     throw new InvalidArgumentError("--tls-key and --tls-cert must be provided together")
@@ -322,6 +327,8 @@ async function main() {
       username: options.authUsername,
       password: options.authPassword,
       cookieName: options.authCookieName,
+      sessionIdleMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_IDLE_SECONDS, "CODENOMAD_SESSION_IDLE_SECONDS"),
+      sessionAbsoluteMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_ABSOLUTE_SECONDS, "CODENOMAD_SESSION_ABSOLUTE_SECONDS"),
       generateToken: options.generateToken,
       dangerouslySkipAuth: options.dangerouslySkipAuth,
     },
@@ -358,6 +365,10 @@ async function main() {
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")
   const missionsLifecycle = new DesktopPluginLifecycle("missions")
+  const memoryLifecycle = new DesktopPluginLifecycle("memory")
+  // Before any lease is created: the native memory tool follows the preference.
+  followMemoryPreference(settings, eventBus, memoryLifecycle,
+    error => logger.warn({ err: error }, "Failed to publish the memory preference to native plugins"))
   // Missions dispatch through the loopback bridge of the owning backend, desktop or
   // standalone; window/browser automation needs a desktop host. Settles once
   // publication has been attempted, so early connections never skip Missions.
@@ -377,7 +388,8 @@ async function main() {
           pruning: pruningLifecycle,
           automation: nativeParent.available ? automationLifecycle : undefined,
           missions: missions ? missionsLifecycle : undefined,
-        })
+          memory: missions ? memoryLifecycle : undefined,
+        }, connection)
       },
     })
   const temporaryFolders = await TemporaryFolderRegistry.open(
@@ -395,7 +407,7 @@ async function main() {
     eventBus,
     logger: workspaceLogger,
     prepareDesktopPlugins,
-    desktopPluginsReady: () => pruningLifecycle.ready(),
+    desktopPluginsReady: target => pruningLifecycle.ready(target),
     startServiceCommand: nativeServiceStarter(nativeParent),
   })
   const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
@@ -531,6 +543,8 @@ async function main() {
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
+    allowedOrigins: parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS),
+    memoryStore,
     workspaceManager,
     settings,
     remoteServerBrowseManager,
@@ -708,27 +722,29 @@ async function main() {
     shutdown: () =>
       orchestrateServerShutdown(
         {
-          stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
+          stopInstanceEventBridge: async () => {
+            instanceEventBridge.shutdown()
+            await Promise.all([yoloManager.stop(), permissionReceipts.stop()])
+          },
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
-            instanceEventBridge.shutdown()
-            yoloManager.stop()
+            // Accepted HTTP mutations can confirm receipts after observers stop.
+            await yoloManager.stop()
             await permissionReceipts.stop()
-            await workspaceManager.shutdown()
+            const results = await Promise.allSettled([
+              workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(), memoryLifecycle.stop(),
+              removeAutomationBridge?.(),
+            ])
+            nativeParent.close()
+            const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
+            if (failures.length) throw new AggregateError(failures, "Workspace and plugin cleanup failed")
           },
           stopHttpServers: async () => {
             eventBus.off("storage.stateChanged", reconcileBackends)
             remoteServerBrowseManager.close()
-            await pruningLifecycle.stop()
-            await automationLifecycle.stop()
-            await missionsLifecycle.stop()
-            nativeParent.close()
-            await removeAutomationBridge?.()
-            yoloManager.stop()
-            await permissionReceipts.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
             if (failures.length > 0) {

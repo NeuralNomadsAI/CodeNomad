@@ -16,6 +16,7 @@ import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
 import { PluginActivationSwitch } from "./plugin-activation-switch"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginAddMenu } from "./plugin-add-menu"
+import { PluginSystemAttention } from "./plugin-system-attention"
 import "../stores/plugin-controls-events"
 
 interface PluginActivationControlsProps {
@@ -57,6 +58,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const state = createMemo(() => pluginControlsCache.state(props.instanceId, requestLocation()))
   const consentEpoch = () => state().invalidationRevision
   const snapshot = createMemo(() => state().snapshot)
+  let refreshButton: HTMLButtonElement | undefined
   const nativeControls = createMemo(() => {
     const value = integrations.state(props.instanceId, directory())
     return new Set(value.status === "ready" ? value.response.integrations
@@ -64,35 +66,42 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       .map(entry => integrationPlugin(snapshot(), entry).control?.id).filter(Boolean) : [])
   })
   const controls = createMemo(() => (
-    snapshot()?.controls.filter((control) => !control.builtin && control.runtime?.source.type !== "builtin") ?? []
+    snapshot()?.controls.filter((control) => control.managedBy !== "codenomad" && !control.builtin && control.runtime?.source.type !== "builtin") ?? []
   ))
   const controlsById = createMemo(() => new Map(controls().map((control) => [control.id, control])))
   const controlIds = createMemo(() => [...controlsById().keys()])
-  // A package can fail before exporting a plugin ID. Keep its native target
+  // A source can fail before exporting a plugin ID. Keep its native target
   // actionable without inventing an ID that could become an activation rule.
-  const packagesByTarget = createMemo(() => {
+  const runtimesByTarget = createMemo(() => {
     const represented = new Set(controls().flatMap(control =>
-      control.runtime?.source.type === "package" ? [control.runtime.source.target] : []))
-    const packages = new Map<string, PluginRuntimeInventoryEntry>()
+      control.runtime?.source.type === "package" ? [control.runtime.source.target]
+        : control.runtime?.source.type === "local" ? [control.runtime.source.path] : []))
+    const entries = new Map<string, PluginRuntimeInventoryEntry>()
     for (const entry of snapshot()?.runtime ?? []) {
-      if (entry.source.type !== "package" || represented.has(entry.source.target)) continue
-      if (!packages.has(entry.source.target)) packages.set(entry.source.target, entry)
+      if (entry.managedBy === "codenomad") continue
+      const target = entry.source.type === "package" ? entry.source.target
+        : entry.source.type === "local" && entry.state.status === "failed" ? entry.source.path : undefined
+      if (!target || represented.has(target)) continue
+      if (!entries.has(target)) entries.set(target, entry)
     }
-    return packages
+    return entries
   })
-  const packageTargets = createMemo(() => [...packagesByTarget().keys()])
+  const runtimeTargets = createMemo(() => [...runtimesByTarget().keys()])
   // Declarations and just-added specs the inventory does not report yet: installing,
   // disabled, or never confirmed. Their rows carry no switch (no plugin ID is known).
   const sourceTargets = createMemo(() => {
-    const loaded = new Set((snapshot()?.runtime ?? []).flatMap(entry => entry.source.type === "package" ? [entry.source.target] : []))
+    const loaded = new Set((snapshot()?.runtime ?? []).flatMap(entry => entry.source.type === "package" ? [entry.source.target]
+      : entry.source.type === "local" ? [entry.source.path] : []))
     const targets = new Set<string>()
     const configured = new Set<string>()
     for (const source of snapshot()?.configured.sources ?? []) {
       configured.add(source.target)
+      if (source.managedBy === "codenomad") continue
       if (!source.pluginId && !loaded.has(source.target)) targets.add(source.target)
     }
     // An added spec removed elsewhere stops being shown once its pending window closes.
     for (const added of pluginSourcesStore.addedSpecs(props.instanceId, requestLocation())) {
+      if (snapshot()?.configured.sources.some(source => source.target === added.spec && source.managedBy === "codenomad")) continue
       if (loaded.has(added.spec)) continue
       if (configured.has(added.spec) || pluginSourcesStore.state(props.instanceId, requestLocation(), added.spec) === "pending") targets.add(added.spec)
     }
@@ -197,8 +206,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     equals: (left, right) => left.length === right.length && left.every((source, index) => sameSource(source, right[index]!)),
   })
 
-  const renderPackage = (target: string) => {
-    const entry = () => packagesByTarget().get(target)
+  const renderRuntime = (target: string) => {
+    const entry = () => runtimesByTarget().get(target)
     const nameId = createUniqueId()
     const removable = removableFor(target)
     const details = () => {
@@ -207,7 +216,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       lines.push(...guiNotice(current, declarationsFor(source => source.target === target)))
       return lines.map(bidi).join("\n")
     }
-    return <div class="plugin-control-row" data-package-target={target} role="group" aria-labelledby={nameId}>
+    return <div class="plugin-control-row" data-package-target={entry()?.source.type === "package" ? target : undefined}
+      data-local-path={entry()?.source.type === "local" ? target : undefined} role="group" aria-labelledby={nameId}>
       <div class="plugin-control-identity">
         <Tooltip placement="top-start" openDelay={300}>
           <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{target}</bdi></Tooltip.Trigger>
@@ -259,9 +269,13 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       <Show when={snapshot() && !snapshot()?.targets.some((target) => target.scope === "project")}>
         <span id={noticeId} class="sr-only">{t("instanceServiceStatus.plugins.scope.unavailable")}</span>
       </Show>
+      <PluginSystemAttention instanceId={props.instanceId} location={requestLocation()} snapshot={snapshot()} active={props.active}
+        runtimeUnconfirmed={state().runtimeUnconfirmed}
+        restoreFocus={() => refreshButton?.focus()} />
       <div class="plugin-controls-header">
         <div class="plugin-controls-header-actions">
           <button
+            ref={refreshButton}
             type="button"
             class="icon-button-compact"
             data-plugin-refresh
@@ -290,10 +304,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
               : t("instanceServiceStatus.plugins.loading")}</p>
         </div>
       }>
-        <Show when={controlIds().length + packageTargets().length + sourceTargets().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
+        <Show when={controlIds().length + runtimeTargets().length + sourceTargets().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
           <div class="plugin-control-list">
             <For each={controlIds()}>{renderControl}</For>
-            <For each={packageTargets()}>{renderPackage}</For>
+            <For each={runtimeTargets()}>{renderRuntime}</For>
             <For each={sourceTargets()}>{renderSource}</For>
           </div>
         </Show>

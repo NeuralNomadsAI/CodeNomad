@@ -18,18 +18,27 @@ Native previews share cookies, sign-ins and site storage across projects/session
 
 | Client | Preview implementation | Agent browser automation | Mobile templates |
 | --- | --- | --- | --- |
-| Electron on supported desktop platforms | Native Chromium guest | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
-| Windows Tauri | Native WebView2 child | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
-| macOS/Linux Tauri | Sandboxed iframe | No native browser automation | Dimensions only |
+| Electron on supported desktop platforms | Native Chromium guest; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
+| Windows Tauri | Native WebView2 child; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
+| macOS Tauri (14+) | Native WKWebView child; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | WebKit mobile identity and CSS viewport; native input limits |
+| Linux Tauri | Native WebKitGTK child; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | WebKit mobile identity and CSS viewport; native density/input limits |
 | Plain browser/remote view | Iframe fallback | No local native preview target | Dimensions only |
 
-Native automation is prepared at desktop startup and uses the session-bound `codenomad.browser` tool for open, navigate, snapshot, screenshot and page actions: click, type, select, hover, drag, scroll, key presses and waiting for text. Tool availability is not authorization for every window: execution checks the owning backend, native capabilities, session and visible target. An action whose page was hidden, replaced or navigated meanwhile is refused rather than sent to another page, and an action is never repeated automatically. Page contents remain untrusted. An iframe may fail because the target forbids embedding; use an external browser rather than weakening its protections.
+On every native desktop host, the session-bound `codenomad.browser` tool opens, navigates, snapshots and screenshots the preview, and performs click, type, select, hover, drag, scroll, key and text-wait actions. Execution checks the owning backend, native capabilities, session and visible target. Hidden, replaced or navigated targets fail safely; actions are never retried automatically. Page content stays untrusted. For sites blocking iframe embedding, use an external browser.
+
+Native previews open manually or through the agent, retain shared sign-ins across restarts and use native Back/Forward history. Local menus and dialogs hide the preview. Element comments are unavailable in native mode. WebKit snapshots capture script-created closed shadow roots; declarative closed roots stay opaque. On macOS, the first hover can omit pointerenter and ⌘A selects through the native responder without an A keydown. GTK clipboard reads require explicit Ctrl+V; clipboard writes and native copy/paste work.
+
+Native pop-ups share preview sign-ins, preserve `opener`/`postMessage` and close with their opener. Typed/restored addresses accept credential-free HTTP(S); sites can also open blank and same-origin blob documents. File and app schemes are blocked. Downloads save to Downloads with sanitized unique names, never overwrite files and never auto-open. Camera, microphone, location and notifications are denied; classified permissions use consent, unknown requests show an error. Tauri and Electron support `alert`/`confirm`/`prompt`; Electron's prompt dialog covers top-level preview pages, pop-ups and subframes. Device and screen selectors scroll through the available entries. Other APIs depend on the engine and hardware.
+
+Sites can ask for confirmation when closing a native pop-up. Linux pointer-lock consent appears at the top of its owning window. WebKitGTK builds affected by [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), including 2.52.6, require the page's file input for uploads because dropped-file access is blocked for security. Save page work before closing or reloading the owning CodeNomad window.
+
+On Tauri macOS/Linux, focus the preview to zoom it with ⌘/Ctrl +, − or 0, or the app's zoom menu. With focus elsewhere, these menu actions zoom the app.
 
 ## Choose one of six viewport templates {#templates}
 
 1. Open the preview's viewport menu.
 2. Select a template below. Use the portrait/landscape entries directly; there is no separate rotate control.
-3. Expect a native reload when entering/changing mobile emulation or returning to a dimensions-only template.
+3. On Electron and Windows Tauri, expect a native reload when entering/changing mobile emulation or returning to a dimensions-only template.
 
 | Template | CSS viewport |
 | --- | --- |
@@ -40,7 +49,7 @@ Native automation is prepared at desktop startup and uses the session-bound `cod
 | Mobile viewport | 390 × 844 |
 | Mobile landscape | 844 × 390 |
 
-Native mobile templates set Android/Chromium identity, orientation, touch and DPR 2.75 on the owned guest only. Returning to responsive/desktop/tablet clears those overrides and reloads. Iframe fallback only resizes. These are reproducible layout references, not Safari/Firefox emulation or simulations of phone keyboards, browser/system bars or mobile OS text settings. Save page work before changing templates because reload can discard unsent page state.
+On Electron and Windows Tauri, mobile templates set Android/Chromium identity, orientation, touch and DPR 2.75 on the owned guest only. Returning to responsive/desktop/tablet clears those overrides and reloads. Tauri macOS/Linux apply a generic WebKit mobile identity to HTTP and JavaScript and fit CSS viewports independently of app zoom/DPI, reloading on template/profile changes and reset. macOS uses native DPR 2.75 when available; GTK density follows the fitted zoom and monitor. Screen, platform, pointer/hover media and maximum touch points keep native desktop values. GTK mobile clicks deliver native touch with mouse compatibility events; macOS keeps mouse input. The iframe fallback resizes only. These profiles provide layout references; phone keyboards, system bars and mobile OS text settings stay outside their scope. Save page work before changing templates because reload can discard unsent page state.
 
 ## Register a SideCar {#register-sidecar}
 
@@ -60,7 +69,9 @@ Registration is server configuration, shared by its clients; it neither installs
 
 If unreachable, check the process and port on the backend. If HTML loads but assets/WebSockets fail, check the tool's base path and prefix mode. Recreate a wrong registration with the intended settings; do not expose the upstream publicly just to work around a proxy error. SideCar applications can expose a terminal or files with the server account's authority; trust their users and configuration.
 
-A SideCar is a trusted extension of CodeNomad, not a sandboxed preview: its page runs with CodeNomad's own origin, so its scripts can use CodeNomad with your signed-in access. Register only services whose code you trust. CodeNomad does not forward its own sign-in cookies to the service, while the service's own cookies are kept. Remote Control does not expose SideCar application proxy traffic; use the appropriate direct-access path described in [Remote access](remote-access.md) and [Remote Control](remote-control.md).
+A SideCar is a trusted extension of CodeNomad, not a sandboxed preview: its page runs with CodeNomad's own origin, so its scripts can use CodeNomad with your signed-in access. Register only services whose code you trust. CodeNomad does not forward its own sign-in cookies to the service, while the service's own cookies are kept.
+
+SideCar content (`/sidecars/`) and SideCar WebSockets require a loopback connection on the host. Registration through `/api/sidecars` is available to paired devices and authenticated direct LAN clients. Live preview content (`/previews/`) is available over direct LAN access with a valid capability token; [Remote Control](remote-control.md#remote-surface) web previews remain available with their capability token while enabled. See [Upgrading](remote-access.md#upgrading) for direct-access requirements.
 
 ## OpenVSCode Server recipe {#openvscode}
 

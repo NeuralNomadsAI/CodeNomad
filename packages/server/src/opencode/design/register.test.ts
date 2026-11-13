@@ -154,7 +154,7 @@ test("the session-pruning plugin registers Design transforms at load, without an
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-design-load-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const spy = spyContext()
-  const close = await open(desktopPlugin(path.join(directory, "presence")).effect(spy.ctx as never))
+  const close = await open(desktopPlugin(path.join(directory, "presence")).effect({ ...spy.ctx, location: { directory } } as never))
   assert.equal(spy.agentTransforms.length, 1)
   assert.equal(spy.skillTransforms.length, 1)
   assert.equal(spy.state().agents.has("design"), false, "No lease requests Design")

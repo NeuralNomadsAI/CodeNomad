@@ -384,21 +384,6 @@
   @apply flex flex-col h-full min-h-0;
 }
 
-.status-process-card {
-  @apply border px-2 py-2 transition-colors duration-150;
-  background-color: var(--surface-inset);
-}
-
-.status-process-card:hover {
-  background-color: var(--surface-inset);
-  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
-  box-shadow: none;
-}
-
-.status-process-actions {
-  @apply mt-1 grid grid-cols-2 gap-1;
-}
-
 /* Accordion improvements for right panel */
 .right-panel-accordion {
   @apply flex flex-col;
@@ -595,6 +580,9 @@
 .section-info-tooltip {
   @apply max-w-xs px-3 py-2 text-xs border shadow-lg;
   border-radius: 0;
+  /* A multi-part explanation puts each part on its own line. */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   background-color: var(--surface-overlay);
   border-color: var(--border-base);
   color: var(--text-primary);

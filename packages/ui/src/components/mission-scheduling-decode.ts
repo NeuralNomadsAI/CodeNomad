@@ -1,6 +1,7 @@
 import { Cron } from "effect"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
+import { isMissionGithubCondition } from "../../../server/src/missions/mission-github-condition"
 import { missionHourSteps, newMissionCriterion, newMissionSchedulingDraft, type MissionCriterionDraft,
   type MissionSchedulingDraft } from "./mission-scheduling-data"
 
@@ -33,11 +34,12 @@ function shortcut(expression: string, zone: string): Partial<MissionCriterionDra
 export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, directory?: string,
   defaultZone = Intl.DateTimeFormat().resolvedOptions().timeZone): MissionSchedulingDraft {
   const draft = newMissionSchedulingDraft(defaultZone), model = missionLaunchModel(policy)
+  draft.criteria = []
   const exact: NonNullable<MissionSchedulingDraft["stored"]>["exact"] = {}
   let reason: NonNullable<MissionSchedulingDraft["stored"]>["reason"]
   // Intervals, delays, single dates, passage limits and relative ends have no criteria control.
   const once = !model.schedules.length && model.triggers.length > 0 && "timing" in policy
-  if (model.maxLaunches !== null && !once || model.endAfterMs !== null || model.schedules.some(item => item.kind !== "cron")) reason = "retired"
+  if (model.maxLaunches !== null && !once || model.endAfterMs !== null || model.schedules.some(item => item.kind !== "cron" && item.kind !== "now")) reason = "retired"
   const zones = [...new Set(model.schedules.flatMap(item => item.kind === "cron" || item.kind === "at" ? [item.zone] : []))]
   if (zones.length > 1) reason ??= "timing"
   draft.zone = zones[0] ?? defaultZone
@@ -45,6 +47,11 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
   // first and its condition below it, which makes that event a condition.
   const items = "when" in policy ? policy.when : [...model.schedules, ...model.events]
   for (const item of items) {
+    if (item.kind === "now") {
+      const row = newMissionCriterion("now")
+      exact[row.id] = { kind: "now" }; draft.criteria.push(row)
+      continue
+    }
     if (item.kind === "cron") {
       const row = { ...newMissionCriterion("cron"), expression: item.expression, ...shortcut(item.expression, item.zone) }
       exact[row.id] = { kind: "cron", expression: item.expression, zone: item.zone }
@@ -53,7 +60,13 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
     }
     if (item.kind === "every" || item.kind === "at" || item.kind === "in") continue
     const event = item, row = newMissionCriterion(event.kind)
+    if (isMissionGithubCondition(event)) {
+      row.source = event.repository ?? ""
+      if ("author" in event && event.author) row.author = event.author
+    }
     switch (event.kind) {
+      case "repository-activity": row.repository = { provider: event.provider, host: event.host, repository: event.repository };
+        row.event = event.event; row.author = event.author; break
       case "schedule-success": case "mission-completed": row.source = event.missionID; break
       case "conversation-message": row.source = event.conversationID; break
       case "branch-commits": row.source = event.ref; if (event.directory !== directory) reason ??= "source"; break
@@ -62,6 +75,7 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
     exact[row.id] = structuredClone(event)
     draft.criteria.push(row)
   }
+  if (!items.length) draft.criteria.push(newMissionCriterion("now"))
   const { stored: _stored, ...initial } = draft
   return { ...draft, stored: { policy: structuredClone(policy), initial: structuredClone(initial), exact, ...(reason ? { reason } : {}) } }
 }

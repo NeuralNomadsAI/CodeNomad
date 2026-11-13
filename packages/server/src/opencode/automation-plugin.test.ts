@@ -4,10 +4,13 @@ import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
+import childProcess from "node:child_process"
+import { syncBuiltinESMExports } from "node:module"
 import {
   AUTOMATION_BRIDGE_PATH,
   automationBridgeDirectory,
   automationBridgeDirectories,
+  discoverAutomationBridgeDirectories,
   createAutomationBridgeRegistration,
   parseBrowserAction,
   parseDeveloperAction,
@@ -17,6 +20,7 @@ import {
   removeLegacyAutomationPlugin,
   setupAutomationPlugin,
   sendMissionInput,
+  executeBrowserTool,
 } from "./automation-plugin"
 
 type ToolDefinition = {
@@ -24,13 +28,13 @@ type ToolDefinition = {
   execute(input: unknown, context: { sessionID: string }): Promise<{ content: unknown }>
 }
 
-function listen(handler: (body: Record<string, unknown>) => Promise<Record<string, unknown>>) {
+function listen(handler: (body: Record<string, unknown>, response: http.ServerResponse) => Promise<Record<string, unknown>>) {
   return new Promise<{ server: http.Server; url: string }>((resolve) => {
     const server = http.createServer((request, response) => {
       const chunks: Buffer[] = []
       request.on("data", (chunk) => chunks.push(Buffer.from(chunk)))
       request.on("end", () => {
-        void handler(JSON.parse(Buffer.concat(chunks).toString("utf8"))).then((body) => {
+        void handler(JSON.parse(Buffer.concat(chunks).toString("utf8")), response).then((body) => {
           response.setHeader("content-type", "application/json")
           response.end(JSON.stringify(body))
         })
@@ -175,6 +179,29 @@ test("mission discovery waits for cold ownership validation and still rejects co
   }
 })
 
+test("browser discovery executes native WebKit open, snapshot and screenshot actions", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-webkit-browser-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  const calls: unknown[] = []
+  let remove: (() => Promise<void>) | undefined
+  const { server, url } = await listen(async (body, response) => {
+    calls.push(body.mode)
+    return { result: body.mode === "browser-execute" ? { text: "WebKit native result" } : { available: true } }
+  })
+  try {
+    remove = await publishAutomationBridge(createAutomationBridgeRegistration(url))
+    for (const command of [{ action: "open", url: "https://example.com" }, { action: "snapshot" }, { action: "screenshot" }]) {
+      assert.match((await executeBrowserTool("ses_webkit", command)).content as string, /WebKit native result/)
+    }
+    assert.deepEqual(calls, ["browser-claim", "browser-execute", "browser-probe", "browser-execute", "browser-probe", "browser-execute"])
+  } finally {
+    await remove?.()
+    await closeServer(server)
+    restore()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("validates browser actions", () => {
   assert.deepEqual(parseBrowserAction({ action: "open", url: "https://example.com" }), {
     action: "open",
@@ -214,8 +241,8 @@ test("registers developer tools while execution remains session-gated", async ()
   assert.deepEqual(tools, ["inspect", "act", "screenshot"])
 })
 
-test("discovers the Windows bridge registry from a WSL plugin", () => {
-  assert.deepEqual(automationBridgeDirectories({
+test("discovers the Windows bridge registry from a WSL plugin", async () => {
+  assert.deepEqual(await automationBridgeDirectories({
     platform: "linux",
     env: { WSL_DISTRO_NAME: "Ubuntu", XDG_RUNTIME_DIR: "/run/user/1000" },
     home: "/home/dev",
@@ -224,6 +251,36 @@ test("discovers the Windows bridge registry from a WSL plugin", () => {
     "/run/user/1000/codenomad/automation-bridges",
     "/mnt/c/Users/dev/AppData/Local/CodeNomad/automation-bridges",
   ])
+})
+
+test("slow WSL registry discovery stays cancellable, retries cancellation and caches a qualified path", async t => {
+  const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "Ubuntu", XDG_RUNTIME_DIR: "/run/user/1000" }, home: "/home/dev" }
+  let calls = 0, aborted = false
+  const mock = t.mock.method(childProcess, "execFile", ((_file: string, _args: string[], settings: { signal?: AbortSignal }, callback: (error: Error | null, stdout: string) => void) => {
+    calls++
+    settings.signal?.addEventListener("abort", () => { aborted = true; callback(new Error("cancelled"), "") }, { once: true })
+    return {} as never
+  }) as unknown as typeof childProcess.execFile)
+  syncBuiltinESMExports()
+  try {
+    const controller = new AbortController()
+    const pending = discoverAutomationBridgeDirectories(controller.signal, options)
+    // The first interop command stays held. A real timer must still run.
+    await new Promise(resolve => setTimeout(resolve, 10))
+    controller.abort(new Error("budget expired"))
+    await assert.rejects(pending, /budget expired/)
+    assert.equal(aborted, true); assert.equal(calls, 1)
+    mock.mock.restore()
+    t.mock.method(childProcess, "execFile", ((_file: string, _args: string[], _settings: unknown, callback: (error: null, stdout: string) => void) => {
+      calls++; callback(null, calls === 2 ? "C:\\Users\\dev\\AppData\\Local\r\n" : "/mnt/c/Users/dev/AppData/Local\n")
+      return {} as never
+    }) as unknown as typeof childProcess.execFile)
+    syncBuiltinESMExports()
+    const expected = await automationBridgeDirectories({ ...options, windowsLocalAppData: "/mnt/c/Users/dev/AppData/Local" })
+    assert.deepEqual(await discoverAutomationBridgeDirectories(undefined, options), expected)
+    assert.deepEqual(await discoverAutomationBridgeDirectories(undefined, options), expected)
+    assert.equal(calls, 3, "successful Windows discovery is cached across demands")
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
 })
 
 test("removes only the generated legacy global plugin shim", async () => {

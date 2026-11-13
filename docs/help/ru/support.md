@@ -31,7 +31,7 @@
 
 ## Сборка из исходников {#build-from-source}
 
-Используйте Node.js **24.20.0**, закреплённый в `.node-version`, npm, Git и совместимый OpenCode CLI. Выполните команды из рабочей копии разработки:
+Используйте версию Node.js, закреплённую в `.node-version`, npm, Git и совместимый OpenCode CLI. Выполните команды из рабочей копии разработки:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git

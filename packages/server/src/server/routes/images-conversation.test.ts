@@ -4,6 +4,7 @@ import Fastify from "fastify"
 import { registerImagesConversationRoute } from "./images-conversation"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import type { ExcludeTarget, GitExclusion } from "../../workspaces/design-git-exclude"
+import { brokerIdentities } from "./rpc-broker-test-fixture"
 
 const url = "/api/workspaces/w/images-conversation"
 const model = { providerID: "fixture", id: "chosen" }
@@ -17,9 +18,10 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; d
     worktreeDeletionFence: fence,
     excludeDesignFolder: async target => { excluded.push(target); return options.exclusion ?? "excluded" },
     workspaceManager: {
-      getSharedServiceClient: async () => {
+      ...brokerIdentities("/owned/repo"),
+      getSharedServiceConnection: async () => {
         order.push("client")
-        return {
+        return { assertCurrent() {}, client: {
           location: { get: async () => {
             order.push("location.get")
             if (options.directory === "") throw new Error("location not found")
@@ -32,7 +34,7 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; d
             if (options.fail) throw new Error("method not found")
             return { output: options.output ?? { status: "found", sessionID: "ses_images", created: true } }
           } },
-        } as any
+        } } as any
       },
       // Only the workspace "w" exists; ownership needs no OpenCode request.
       ownsLocation: async (id: string, location: { directory: string }) => {

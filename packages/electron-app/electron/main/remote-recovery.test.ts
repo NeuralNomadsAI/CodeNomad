@@ -17,6 +17,7 @@ test("only the host's own unavailable-server document reaches the remote recover
     const resultPath = join(scratch, "result.json")
     const environment: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: "--import tsx" }
     delete environment.ELECTRON_RUN_AS_NODE
+    delete environment.ELECTRON_NO_ASAR
     const args = [
       ...(process.platform === "linux" ? ["--no-sandbox"] : []),
       join(here, "remote-recovery.electron-fixture.ts"),

@@ -277,8 +277,8 @@ test("invalid pairing links never dispatch; browser pairing preserves its Origin
     request.on("error", reject)
     request.end(JSON.stringify({ code: "secret" }))
   })
-  assert.equal(status, 403, "real gate refuses server-to-server pairing without Origin")
-  assert.equal(exchanges, 0)
+  assert.equal(status, 401, "native pairing without Origin reaches the handler, which rejects the invalid code")
+  assert.equal(exchanges, 1)
 })
 
 test("real HTTPS honors the saved certificate policy; TLS errors never expose details", async t => {

@@ -64,3 +64,23 @@ test("the composer menu and Alt+Enter send with the other follow-up delivery whi
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("the prompt menu disables transcript navigation when its session is absent", async () => {
+  const page = await fixture.browser.newPage()
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.goto(fixture.url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.locator("textarea").first().fill("Keep the draft")
+    await page.evaluate(async () => {
+      const { setSessions } = await import("/src/stores/session-state.ts" as string)
+      setSessions(new Map())
+    })
+    await openMenu(page)
+    assert.equal(await menuItem(page, "Previous User Message").isDisabled(), true)
+    assert.equal(await menuItem(page, "Next User Message").isDisabled(), true)
+    await page.keyboard.press("Escape")
+    assert.equal(await page.locator("textarea").first().inputValue(), "Keep the draft")
+    assert.deepEqual(await sends(page), [])
+  } finally { await page.close() }
+})

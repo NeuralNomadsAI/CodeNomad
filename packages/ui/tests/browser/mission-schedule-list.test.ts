@@ -6,6 +6,7 @@ import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
+import { expandRow, missionMenuItemState } from "./mission-actions"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../../server/src/missions/mission-document-state"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
@@ -121,17 +122,19 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
         changes.admitted(value, value.pending!.id, Date.now()); changes.settle(value, value.pending!.id, "completed", Date.now()); value.state = state
       }
     })
-    if (body.action === "check") for (const receipt of receipts.values()) receipt.pending = false
     receipts.set(body.requestID, { ...body, pending: partial === body.action })
     if (lost === body.action) return route.abort("connectionreset")
     const value = result(body.requestID)
     return route.fulfill({ status: value.pending ? 503 : 200, json: { ...value, ...(value.pending ? { code: "schedule-pending" } : {}) } })
   })
-  const stream = page.waitForResponse(response => response.headers()["content-type"] === "text/event-stream")
-  await page.goto(url)
-  await stream.catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
-  await page.waitForFunction(() => (window as any).missionFixture).catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
-  await page.evaluate(() => (window as any).missionFixture.connectCatalog())
+   let streamObserved = false
+   const observeStream = (response: import("playwright").Response) => { if (response.headers()["content-type"] === "text/event-stream") streamObserved = true }
+   page.on("response", observeStream)
+   await page.goto(url)
+   await page.waitForFunction(() => (window as any).missionFixture, undefined, { timeout: 60_000 }).catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
+   await page.evaluate(() => (window as any).missionFixture.connectCatalog())
+   if (!streamObserved) await page.waitForResponse(response => response.headers()["content-type"] === "text/event-stream")
+   page.off("response", observeStream)
   return { posts, reads, errors, store, get doc() { return doc! }, result,
     addSchedule: async (id: string, change: Partial<MissionConfiguration>) => {
       extras.push(await store.create(id, { ...config, ...change } as MissionConfiguration, Date.now(), () => true))
@@ -148,15 +151,18 @@ const detail = (page: Page) => page.locator(".mission-unified-schedule")
 const technicalCalendars = () => (["principal", "reconciliation"] as const).map((role, slot) => ({ role, slot: role === "principal" ? slot : 0,
   timeGeneration: 1, scheduleID: `sch_${role}_${"a".repeat(90)}`, sessionID: `ses_cn_schedule_${role}_${"b".repeat(90)}`,
   highWater: 2, pendingWake: null, wakePreparing: null }))
-const button = (page: Page, name: string) => detail(page).getByRole("button", { name, exact: true })
+/** A selected schedule's toolbar and text actions sit in the persistent header's selection line. */
+const button = (page: Page, name: string) => page.locator(".mission-picker-selection-actions").getByRole("button", { name, exact: true })
 const deferred = () => {
   let resolve!: () => void
   const promise = new Promise<void>(yes => { resolve = yes })
   return { promise, resolve }
 }
 async function select(page: Page) {
-  await page.getByRole("combobox").click()
-  await page.getByRole("option").filter({ hasText: "Inspect local changes" }).click()
+  const entry = page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inspect local changes" })
+  await entry.click()
+  // A click only selects the row; its chevron shows the detail.
+  await expandRow(entry)
   await detail(page).waitFor()
 }
 async function click(page: Page, name: string, confirm = false) {
@@ -174,9 +180,8 @@ test("real panel Create → Play → Pause/Resume → Run now → Stop → Delet
   try {
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
-    await form.getByLabel("What should the mission do?", { exact: true }).fill("Inspect local changes")
-    await form.locator(".mission-scheduling > summary").click()
-    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    await form.getByLabel("Objective", { exact: true }).fill("Inspect local changes")
+    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
     await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("hours")
     await form.getByLabel("Criterion 1 hours", { exact: true }).selectOption("1")
     await form.getByRole("button", { name: "Create", exact: true }).click()
@@ -198,7 +203,7 @@ test("real panel Create → Play → Pause/Resume → Run now → Stop → Delet
     assert.equal(f.doc.launchedCount, 1); assert.equal(f.doc.successfulCount, 1)
     await capture(page, "schedule-running-history-en.png")
     await click(page, "Stop", true)
-    await page.waitForFunction(() => (document.querySelector('.mission-unified-schedule [aria-label="Start"]') as HTMLButtonElement)?.disabled)
+    await page.waitForFunction(() => (document.querySelector('.mission-picker-selection-actions [aria-label="Start"]') as HTMLButtonElement)?.disabled)
     await click(page, "Delete", true); await detail(page).waitFor({ state: "detached" })
     assert.deepEqual(f.posts.map(post => post.action), ["create", "play", "pause", "resume", "run-now", "stop", "delete"])
     assert.equal(new Set(f.posts.map(post => post.requestID)).size, f.posts.length)
@@ -217,10 +222,11 @@ for (const lost of ["play", "pause", "run-now", "stop", "delete"]) test(`lost ${
     f.lost = lost; f.proof = false
     const name = { play: "Play", pause: "Pause", "run-now": "Run now", stop: "Stop", delete: "Delete" }[lost]!
     await click(page, name, ["run-now", "stop", "delete"].includes(lost))
-    await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor().catch(async error => { throw new Error(`${error}\n${JSON.stringify(f.posts)}\n${await detail(page).innerText()}\n${f.errors.join("\n")}`) })
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor().catch(async error => { throw new Error(`${error}\n${JSON.stringify(f.posts)}\n${await detail(page).innerText()}\n${f.errors.join("\n")}`) })
     const count = f.posts.length, original = f.posts.at(-1)!
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
     await button(page, "Refresh saved request").click()
     assert.equal(f.posts.length, count)
     f.proof = true
@@ -242,7 +248,7 @@ test("revision conflict is refused before dispatch and preserves the refreshed c
       await route.fulfill({ json: f.result() })
     })
     await click(page, "Play")
-    await detail(page).getByRole("status").filter({ hasText: "The Mission changed" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "The Mission changed" }).waitFor()
     assert.equal(f.posts.length, 0); assert.equal(f.doc.configuration.notes, "Concurrent change")
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -294,26 +300,26 @@ test(`confirmed publication barrier retains ${scenario} across stale inventory a
     await click(page, "Play")
     if (activation) await page.getByRole("dialog").getByRole("button", { name: "Start", exact: true }).click()
     if (scenario.startsWith("recovered")) {
-      await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
+      await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
       await button(page, "Refresh saved request").click()
-      await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor({ state: "detached" })
+      await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor({ state: "detached" })
       assert.equal(await button(page, "Start").isDisabled(), true, "a recovered effect cannot admit a new Start before its revision is published")
     }
-    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
     const count = f.posts.length, confirmedRevision = f.doc.revision
     assert.ok(confirmedRevision > stale!.revision!, JSON.stringify({ confirmedRevision, staleRevision: stale!.revision, posts: f.posts }))
     assert.equal(await button(page, "Start").isDisabled(), true)
-    assert.equal(await button(page, "Edit selected mission").isDisabled(), true)
-    assert.doesNotMatch(await detail(page).innerText(), /This request is unconfirmed/)
+    assert.equal((await missionMenuItemState(page, "edit")).enabled, false)
+    assert.doesNotMatch(await page.locator(".mission-picker-selection-actions").innerText(), /This request is unconfirmed/)
     old.resolve(); await following.promise
     assert.equal(await button(page, "Start").isDisabled(), true, "an older in-flight publication cannot clear the confirmed minimum")
     await button(page, "Start").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
-    await button(page, "Edit selected mission").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
     assert.equal(await page.locator("form.mission-editor").count(), 0)
     assert.equal(f.posts.length, count)
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
-    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, count, "remount retains the obligation and never resubmits")
     fresh.resolve()
@@ -335,7 +341,7 @@ test("missing calendar capability keeps Play grey and explains the limit", async
   const page = await browser.newPage(), f = await setup(page, { seed: true, available: false })
   try {
     await select(page)
-    await detail(page).getByRole("status").filter({ hasText: "Scheduling is unavailable" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Scheduling is unavailable" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -349,14 +355,14 @@ test("a confirmed activation stays known through read failure and stale recovery
     f.lost = "activation"
     await click(page, "Play")
     await page.getByRole("dialog").getByRole("button", { name: "Start", exact: true }).click()
-    await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
     let mode: "failed" | "stale" | "current" = "failed"
     await page.route("**/missions/scheduled?*", route => route.fulfill(mode === "failed" ? { status: 503, json: {} }
       : { json: { version: 1, projectID: "project", schedules: [mode === "stale" ? stale : f.result().document] } }))
     await button(page, "Refresh saved request").click()
     await page.getByRole("status").filter({ hasText: "Mission schedules could not be refreshed" }).waitFor()
-    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
-    assert.doesNotMatch(await detail(page).innerText(), /This request is unconfirmed/)
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    assert.doesNotMatch(await page.locator(".mission-picker-selection-actions").innerText(), /This request is unconfirmed/)
     assert.equal(await button(page, "Start").isDisabled(), true)
     const receiptReads = f.reads.filter(url => url.includes("/schedule-settings")).length
     mode = "stale"
@@ -364,7 +370,8 @@ test("a confirmed activation stays known through read failure and stale recovery
     await button(page, "Refresh saved request").click(); await oldResponse
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     await page.evaluate(() => (window as any).missionFixture.mount(true))
-    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, 1)
     mode = "current"
@@ -383,7 +390,7 @@ test("inactive but activatable scheduling disables Run now with a reason and ref
   try {
     await f.change(doc => { doc.firstPlayedAt = Date.now(); doc.state = "paused" })
     await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
-    await detail(page).getByRole("status").filter({ hasText: /Run now requires native scheduling/ }).waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: /Run now requires native scheduling/ }).waitFor()
     assert.equal(await button(page, "Run now").isDisabled(), true)
     await button(page, "Run now").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
     assert.equal(await page.getByRole("dialog").count(), 0)
@@ -400,7 +407,7 @@ test("Run now rechecks a capability lost after display and sends neither activat
     const before = f.posts.length
     f.enabled = false
     await click(page, "Run now", true)
-    await detail(page).getByRole("status").filter({ hasText: /Run now requires native scheduling/ }).first().waitFor()
+    await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: /Run now requires native scheduling/ }).first().waitFor()
     assert.equal(f.posts.length, before); assert.equal(f.doc.pending, null); assert.equal(f.doc.launchedCount, 0)
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -512,7 +519,7 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
 })
 
 test("document inventory pages only on demand and revalidates the loaded frontier without changing selection or focus", async () => {
-  const page = await browser.newPage(), f = await setup(page, { seed: true }), calls: URL[] = []
+  const page = await browser.newPage({ viewport: { width: 900, height: 240 } }), f = await setup(page, { seed: true }), calls: URL[] = []
   try {
     await select(page)
     const documents: MissionDocument[] = [f.doc]
@@ -525,10 +532,10 @@ test("document inventory pages only on demand and revalidates the loaded frontie
       return route.fulfill({ json: { version: 1, projectID: "project", schedules: slice.map(doc => missionScheduleView(doc).document), ...(next ? { next } : {}) } })
     })
     await page.evaluate(() => (window as any).missionFixture.refresh())
-    await page.getByRole("button", { name: "Load more Missions", exact: true }).waitFor()
+    await page.locator(".mission-list-paging").waitFor()
     assert.ok(calls.length > 0); assert.ok(calls.every(call => call.searchParams.get("after") === null), "display hints may revalidate the first page, never speculate another page")
-    await page.getByRole("button", { name: "Load more Missions", exact: true }).click()
-    await page.getByRole("button", { name: "Load more Missions", exact: true }).waitFor({ state: "detached" })
+    await page.locator(".mission-control").hover(); await page.mouse.wheel(0, 10000)
+    await page.locator(".mission-list-paging").waitFor({ state: "detached" })
     assert.equal(calls.filter(call => call.searchParams.get("after") === documents[7].id).length, 1)
     await button(page, "Start").focus()
     const refreshed = page.waitForResponse(response => new URL(response.url()).searchParams.has("after"))
@@ -542,44 +549,54 @@ test("document inventory pages only on demand and revalidates the loaded frontie
   } finally { await page.close() }
 })
 
-test("Check reconciles a positively recorded partial request and retains both identities when its own ACK is lost", async () => {
+test("a positively recorded partial request offers no Check passage; its exact receipt alone settles it", async () => {
   const page = await browser.newPage(), f = await setup(page, { seed: true })
   try {
     await select(page); f.partial = "play"; await click(page, "Play")
     await button(page, "Refresh saved request").waitFor()
     const original = f.posts[0]
-    // The server's exact partial receipt, rather than the row alone, enables Check.
-    f.lost = "check"
-    await click(page, "Check passage")
+    assert.equal(await button(page, "Check passage").count(), 0)
+    f.resolve()
     await button(page, "Refresh saved request").click()
     await button(page, "Refresh saved request").waitFor({ state: "detached" })
-    assert.deepEqual(f.posts.map(item => item.action), ["play", "check"])
-    assert.notEqual(f.posts[1].requestID, original.requestID)
-    assert.ok(f.reads.some(value => value.includes(`requestID=${f.posts[1].requestID}`)))
+    assert.deepEqual(f.posts, [original], "settled by its exact receipt, never by another control")
     assert.ok(f.reads.some(value => value.includes(`requestID=${original.requestID}`)))
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
 for (const negativeFirst of [true, false]) test(`cold reopen keeps the first page, cursor and original held request when selected detail is partial 503 (${negativeFirst ? "negative then positive" : "FIRST positive receipt"})`, async () => {
-  const page = await browser.newPage(), f = await setup(page, { seed: true, outsidePage: true })
+  const page = await browser.newPage({ viewport: { width: 900, height: 240 } }), f = await setup(page, { seed: true, outsidePage: true })
   const originalRevision = f.doc.revision
+  let release!: () => void
+  const continuation = new Promise<void>(resolve => { release = resolve })
   try {
     await select(page); f.partial = "play"; await click(page, "Play")
     await button(page, "Refresh saved request").waitFor()
     const original = f.posts[0]
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     f.outside = true
+    // Keep the selected object outside the freshly read inventory while asserting
+    // the partial point-read state. End-of-list continuation is now automatic.
+    await page.route("**/missions/scheduled?*", async route => {
+      if (new URL(route.request().url()).searchParams.has("after")) await continuation
+      return route.fallback()
+    })
     const pointRead = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/msn_schedule/schedule")
       && !new URL(response.url()).searchParams.has("requestID") && response.status() === 503)
     await page.evaluate(() => (window as any).missionFixture.mount(true))
     await pointRead
-    await page.getByRole("button", { name: "Load more Missions", exact: true }).and(page.locator(":enabled")).waitFor()
+    await page.locator(".mission-list-paging").waitFor()
+    // The remounted panel restores the selection; its chevron shows the detail again.
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
     await button(page, "Refresh saved request").waitFor()
-    await page.getByRole("combobox").click()
-    assert.equal(await page.getByRole("option").filter({ hasText: "Inventory Mission" }).count(), 8)
-    await page.keyboard.press("Escape")
-    assert.equal(await button(page, "Check passage").isDisabled(), true, "retained partial metadata grants no new control")
+    assert.equal(await page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inventory Mission" }).count(), 8)
+    // Inventory paging belongs to the list, not to the selection: folding keeps it.
+    const selectedChevron = page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
+    await selectedChevron.click()
+    assert.equal(await page.locator(".mission-list-paging").isVisible(), true, "folding the selection keeps directory continuation")
+    await selectedChevron.click()
+    assert.equal(await button(page, "Check passage").count(), 0, "retained partial metadata grants no new control")
     assert.equal(await button(page, "Stop…").isDisabled(), true)
     if (negativeFirst) {
       await button(page, "Refresh saved request").click()
@@ -589,16 +606,18 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
     const before = f.reads.length
     f.resolve()
     await button(page, "Refresh saved request").click()
+    release()
     await button(page, "Refresh saved request").waitFor({ state: "detached" })
     await button(page, "Pause").and(page.locator(":enabled")).waitFor()
     const confirmedReads = f.reads.slice(before).map(value => new URL(value))
     assert.equal(confirmedReads.filter(value => value.searchParams.get("requestID") === original.requestID).length, 1)
-    assert.ok(confirmedReads.some(value => value.pathname.endsWith("/msn_schedule/schedule") && !value.searchParams.has("requestID")),
-      "controls are restored by a fresh document read, never by retained partial display or receipt metadata")
+    assert.ok(confirmedReads.some(value => value.pathname.endsWith("/msn_schedule/schedule") && !value.searchParams.has("requestID")
+      || value.pathname.endsWith("/scheduled") && value.searchParams.get("after") === "aaa_7"),
+      "controls are restored by a fresh point or inventory document read, never by retained partial display or receipt metadata")
     assert.equal(original.expectedRevision, originalRevision); assert.equal(typeof original.requestID, "string")
-    assert.equal(await page.getByRole("button", { name: "Load more Missions", exact: true }).count(), 1)
+    assert.equal(await page.locator(".mission-list-paging").count(), 0, "the automatic continuation disappears once the remaining page is read")
     assert.deepEqual(f.posts, [original]); assert.deepEqual(f.errors, [])
-  } finally { await page.close() }
+  } finally { release(); await page.close() }
 })
 
 for (const [minutes, duration] of [[1, "1 minute"], [2, "2 minutes"]] as const) {
@@ -652,13 +671,13 @@ test("the schedule list summarizes each launch criterion and its role; a stored 
       condition: { kind: "branch-commits", directory: "fixture", ref: "refs/heads/main" }, ends: { maxLaunches: null, afterMs: null, at: Date.parse("2026-12-31T17:00:00Z") } } })
     await f.addSchedule("msn_files", { title: "Follow package changes", launch: { when: [{ kind: "files-changed", paths: ["package.json"] }] } })
     await page.evaluate(() => (window as any).missionFixture.refresh())
-    await page.getByRole("combobox").click()
-    const option = (title: string) => page.getByRole("option").filter({ hasText: title })
+    const option = (title: string) => page.locator(".mission-rows button.mission-row-select").filter({ hasText: title })
     assert.match(await option("Daily review").innerText(), /Every day · 09:00 · Europe\/Paris/)
     assert.match(await option("Review new commits").innerText(), /Selected weekdays · .* · 09:00 · Europe\/Paris; if · New commits on a local branch · main/)
     assert.match(await option("Follow package changes").innerText(), /Explicit files change · package\.json/)
     await capture(page, "schedule-list-criteria-en.png")
     await option("Review new commits").click()
+    await expandRow(option("Review new commits"))
     await detail(page).waitFor()
     assert.match(await detail(page).innerText(), /Until\s+Dec 31, 2026, 6:00 PM/)
     await capture(page, "schedule-detail-criteria-en.png")

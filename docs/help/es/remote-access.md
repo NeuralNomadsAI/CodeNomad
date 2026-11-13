@@ -52,6 +52,14 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 No supongas que el puerto es 9898 o 9899: los puertos omitidos pueden cambiar si están ocupados. Un `--https-port` explícito distinto de cero, o un `--http-port` con HTTP activado, fija el puerto y falla si no puede escuchar; `0` pide al sistema operativo que asigne uno. Las **Local Connection URL** y **Remote Connection URL** indicadas, y las **Direcciones accesibles** actualizadas, son autoritativas para esa ejecución. Consulta la [referencia completa de la CLI del servidor](server.md).
 
+## Actualizar {#upgrading}
+
+Vuelve a iniciar sesión después de actualizar. Para un alias de nombre de host, un proxy inverso o una interfaz alojada por separado, configura `CODENOMAD_ALLOWED_ORIGINS` en el backend con los orígenes de confianza de la interfaz (esquema, nombre de host y puerto). Los clientes nativos de la LAN deben enviar una cabecera `Origin` permitida en las solicitudes de modificación.
+
+Usa una conexión loopback para las operaciones reservadas al anfitrión: contenido de SideCar (`/sidecars/`) y WebSockets, gestión de Control remoto (`/api/remote-control/`), puente de plugins (`/api/opencode-plugin/`), proxies remotos (`/api/remote-proxy/`), gestión de servidores guardados (`/api/remote-servers/`), cambios de contraseña e inicialización por token. Estas operaciones requieren loopback incluso con una sesión autenticada mediante acceso directo por LAN. El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido.
+
+Las API de registro `/api/sidecars` siguen disponibles para los clientes directos de LAN autenticados y los dispositivos emparejados. Las vistas previas web de Control remoto siguen disponibles con su token de capacidad mientras estén activadas en el anfitrión.
+
 ## Configurar TLS de confianza {#tls}
 
 ### Proporcionar tu propio certificado {#custom-certificates}

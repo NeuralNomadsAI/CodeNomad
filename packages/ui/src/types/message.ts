@@ -36,6 +36,12 @@ export type NormalizedMessagePart =
   | ToolMessagePart
   | CompactionMessagePart
 
+export interface MermaidCodeBlock {
+  token: string
+  code: string
+  complete: boolean
+}
+
 export interface RenderCache {
   /** Source the HTML was rendered from, for caches that compare it (Markdown keys on its version instead). */
   text?: string
@@ -43,6 +49,7 @@ export interface RenderCache {
   theme?: string
   mode?: string
   wrap?: boolean
+  mermaid?: MermaidCodeBlock[]
 }
 
 export interface PendingPermissionState {

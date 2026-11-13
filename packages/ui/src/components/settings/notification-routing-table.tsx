@@ -57,7 +57,7 @@ export const NotificationRoutingTable: Component<{
         <tr>
           <th scope="col"><span class="sr-only">{t("settings.notifications.routing.category")}</span></th>
           <For each={NOTIFICATION_DESTINATIONS}>{(destination) => (
-            <th scope="col">{destinationLabel(destination)}<SettingsInfoTip text={t(`settings.notifications.routing.${destination}.info`)} /></th>
+            <th scope="col">{destinationLabel(destination)}<SettingsInfoTip text={t(`settings.notifications.routing.${destination}.info`)} help={{ page: "settings", anchor: "notifications" }} /></th>
           )}</For>
         </tr>
       </thead>

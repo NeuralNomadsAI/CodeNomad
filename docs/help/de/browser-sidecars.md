@@ -18,18 +18,27 @@ Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |
-| Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| Windows-Tauri | Natives WebView2-Unterfenster | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| macOS-/Linux-Tauri | Iframe in Sandbox | Keine native Browser-Automatisierung | Nur Abmessungen |
+| Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
+| Windows-Tauri | Natives WebView2-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
+| macOS-Tauri (14+) | Natives WKWebView-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Mobile WebKit-Identität und CSS-Viewport; native Eingabegrenzen |
+| Linux-Tauri | Natives WebKitGTK-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Mobile WebKit-Identität und CSS-Viewport; native Dichte-/Eingabegrenzen |
 | Normaler Browser/Remote-Ansicht | Iframe-Ersatz | Kein lokales natives Vorschauziel | Nur Abmessungen |
 
-Native Automatisierung wird beim Desktop-Start vorbereitet und nutzt das sitzungsgebundene Werkzeug `codenomad.browser` zum Öffnen, Navigieren, Schnappschuss, Screenshot und für Seitenaktionen: Klicken, Tippen, Auswählen, Überfahren, Ziehen, Scrollen, Tastendrücke und Warten auf Text. Werkzeugverfügbarkeit autorisiert nicht jedes Fenster: Ausführung prüft zuständiges Backend, native Fähigkeiten, Sitzung und sichtbares Ziel. Eine Aktion, deren Seite inzwischen verborgen, ersetzt oder weiternavigiert wurde, wird abgelehnt statt an eine andere Seite gesendet, und eine Aktion wird nie automatisch wiederholt. Seiteninhalte bleiben nicht vertrauenswürdig. Ein iframe kann scheitern, weil das Ziel Einbettung verbietet; nutzen Sie einen externen Browser, statt Schutzmaßnahmen zu schwächen.
+Auf allen nativen Desktop-Hosts öffnet und navigiert das sitzungsgebundene Werkzeug `codenomad.browser` die Vorschau, erstellt Schnappschüsse/Screenshots und führt Klick-, Eingabe-, Auswahl-, Hover-, Zieh-, Scroll-, Tasten- und Textwarteaktionen aus. Die Ausführung prüft zuständiges Backend, native Fähigkeiten, Sitzung und sichtbares Ziel. Verborgene, ersetzte oder weiternavigierte Ziele werden abgelehnt; Aktionen werden nie automatisch wiederholt. Seiteninhalte bleiben nicht vertrauenswürdig. Bei blockierter Iframe-Einbettung verwenden Sie einen externen Browser.
+
+Native Vorschauen öffnen sich manuell oder durch den Agenten, behalten gemeinsame Anmeldungen über Neustarts und nutzen den nativen Zurück-/Vorwärts-Verlauf. Lokale Menüs und Dialoge blenden die Vorschau aus. Elementkommentare sind im nativen Modus nicht verfügbar. WebKit erfasst skripterzeugte geschlossene Shadow Roots; deklarative geschlossene Wurzeln bleiben undurchsichtig. Unter macOS kann das erste Hover pointerenter auslassen; ⌘A wählt nativ ohne A-keydown aus. GTK-Zwischenablagezugriff erfolgt ausdrücklich mit Strg+V; Schreiben und natives Kopieren/Einfügen funktionieren.
+
+Native Pop-ups teilen Vorschau-Anmeldungen, behalten `opener`/`postMessage` und schließen mit ihrer Ursprungsseite. Eingegebene/wiederhergestellte Adressen erlauben HTTP(S) ohne Zugangsdaten; Websites können auch leere und gleichursprüngliche Blob-Dokumente öffnen. Datei- und App-Schemata bleiben gesperrt. Downloads landen mit bereinigten, eindeutigen Namen im Downloads-Ordner, ohne Überschreiben oder automatisches Öffnen. Kamera, Mikrofon, Standort und Benachrichtigungen werden verweigert; klassifizierte Berechtigungen benötigen Zustimmung, unbekannte Anfragen zeigen einen Fehler. Tauri und Electron unterstützen `alert`/`confirm`/`prompt`; Electrons Prompt-Dialog gilt für Hauptseiten der Vorschau, Pop-ups und Unterframes. Geräte- und Bildschirmauswahlen zeigen die verfügbaren Einträge in einer scrollbaren Liste. Weitere APIs hängen von Engine und Hardware ab.
+
+Websites können beim Schließen eines nativen Pop-ups eine Bestätigung verlangen. Unter Linux erscheint die Zustimmung zur Zeigersperre oben im zugehörigen Fenster. Von [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) betroffene WebKitGTK-Versionen, einschließlich 2.52.6, benötigen für Uploads die Dateiauswahl der Seite, da der Zugriff auf abgelegte Dateien aus Sicherheitsgründen gesperrt ist. Speichern Sie die Arbeit auf der Seite, bevor Sie das zugehörige CodeNomad-Fenster schließen oder neu laden.
+
+Fokussieren Sie unter Tauri macOS/Linux die Vorschau, um sie mit ⌘/Strg +, − oder 0 oder über das Zoommenü der App zu zoomen. Bei anderem Fokus zoomen diese Menüaktionen die App.
 
 ## Eine von sechs Ansichtsgrößenvorlagen wählen {#templates}
 
 1. Öffnen Sie das Ansichtsgrößenmenü der Vorschau.
 2. Wählen Sie eine Vorlage unten. Verwenden Sie Hoch-/Querformat direkt; es gibt keine separate Drehsteuerung.
-3. Rechnen Sie mit nativem Neuladen beim Aktivieren/Ändern mobiler Emulation oder Rückkehr zu einer reinen Abmessungsvorlage.
+3. Rechnen Sie in Electron und Windows-Tauri mit nativem Neuladen beim Aktivieren/Ändern mobiler Emulation oder Rückkehr zu einer reinen Abmessungsvorlage.
 
 | Vorlage | CSS-Ansichtsgröße |
 | --- | --- |
@@ -40,7 +49,7 @@ Native Automatisierung wird beim Desktop-Start vorbereitet und nutzt das sitzung
 | Mobile Ansichtsgröße | 390 × 844 |
 | Mobiles Querformat | 844 × 390 |
 
-Native Mobilvorlagen setzen Android-/Chromium-Identität, Ausrichtung, Touch und DPR 2.75 nur auf dem zugehörigen Gast. Rückkehr zu responsiv/Desktop/Tablet entfernt diese Überschreibungen und lädt neu. Iframe-Ersatz ändert nur die Größe. Dies sind reproduzierbare Layoutreferenzen, keine Safari-/Firefox-Emulation oder Simulation von Telefontastaturen, Browser-/Systemleisten oder mobilen OS-Texteinstellungen. Sichern Sie Seitenarbeit vor Vorlagenwechsel, da Neuladen ungesendeten Seitenzustand verwerfen kann.
+Unter Electron und Windows-Tauri setzen Mobilvorlagen Android-/Chromium-Identität, Ausrichtung, Touch und DPR 2.75 nur auf dem zugehörigen Gast. Rückkehr zu responsiv/Desktop/Tablet entfernt diese Überschreibungen und lädt neu. Tauri macOS/Linux verwenden eine generische mobile WebKit-Kennung für HTTP und JavaScript und passen CSS-Viewports unabhängig von App-Zoom/DPI ein; Vorlagenwechsel und Zurücksetzen laden neu. macOS nutzt DPR 2,75, soweit nativ verfügbar; GTK-Dichte folgt Einpassungszoom und Monitor. Bildschirm, Plattform, Zeiger-/Hover-Medien und maximale Touchpunkte behalten native Desktopwerte. Mobile GTK-Klicks erzeugen native Touch- und kompatible Mausereignisse; macOS behält Mauseingabe. Der Iframe-Ersatz ändert nur die Größe. Die Profile dienen als Layoutreferenz; Telefontastaturen, Systemleisten und mobile Texteinstellungen liegen außerhalb ihres Umfangs. Sichern Sie Seitenarbeit vor Vorlagenwechsel, da Neuladen ungesendeten Seitenzustand verwerfen kann.
 
 ## SideCar registrieren {#register-sidecar}
 
@@ -60,7 +69,9 @@ Registrierung ist von Clients geteilte Serverkonfiguration; sie installiert oder
 
 Prüfen Sie bei Nichterreichbarkeit Prozess und Port auf dem Backend. Lädt HTML, aber scheitern Dateien/WebSockets, prüfen Sie Basispfad und Präfix-Modus des Werkzeugs. Erstellen Sie eine falsche Registrierung mit den vorgesehenen Einstellungen neu; geben Sie den Upstream nicht nur zum Umgehen eines Proxyfehlers öffentlich frei. SideCar-Anwendungen können Terminal oder Dateien mit der Autorität des Serverkontos freigeben; vertrauen Sie ihren Benutzern und ihrer Konfiguration.
 
-Ein SideCar ist eine vertrauenswürdige Erweiterung von CodeNomad, keine Vorschau in einer Sandbox: Seine Seite läuft unter dem eigenen Origin von CodeNomad, sodass seine Skripte CodeNomad mit Ihrem angemeldeten Zugang nutzen können. Registrieren Sie nur Dienste, deren Code Sie vertrauen. CodeNomad leitet seine eigenen Anmelde-Cookies nicht an den Dienst weiter, während die eigenen Cookies des Dienstes erhalten bleiben. Fernsteuerung stellt keinen SideCar-Anwendungsproxyverkehr bereit; verwenden Sie den passenden Direktzugriffsweg unter [Fernzugriff](remote-access.md) und [Fernsteuerung](remote-control.md).
+Ein SideCar ist eine vertrauenswürdige Erweiterung von CodeNomad, keine Vorschau in einer Sandbox: Seine Seite läuft unter dem eigenen Origin von CodeNomad, sodass seine Skripte CodeNomad mit Ihrem angemeldeten Zugang nutzen können. Registrieren Sie nur Dienste, deren Code Sie vertrauen. CodeNomad leitet seine eigenen Anmelde-Cookies nicht an den Dienst weiter, während die eigenen Cookies des Dienstes erhalten bleiben.
+
+SideCar-Inhalte (`/sidecars/`) und SideCar-WebSockets erfordern eine Loopback-Verbindung auf dem Host. Die Registrierung über `/api/sidecars` ist für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar; Web-Vorschauen der [Fernsteuerung](remote-control.md#remote-surface) bleiben mit ihrem Berechtigungstoken verfügbar, solange sie aktiviert sind. Anforderungen für den Direktzugriff stehen unter [Aktualisieren](remote-access.md#upgrading).
 
 ## OpenVSCode-Server-Rezept {#openvscode}
 

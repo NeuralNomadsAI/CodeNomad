@@ -1,4 +1,8 @@
 export const markdownMessages = {
+  "markdown.mermaid.diagram": "Mermaid diyagramı",
+  "markdown.mermaid.preview": "Diyagramı göster",
+  "markdown.mermaid.source": "Kaynağı göster",
+  "markdown.mermaid.failed": "Diyagram kullanılamıyor. Kaynağı ve Mermaid Tiny'nin desteklediği biçimleri kontrol edin.",
   "markdown.codeBlock.copy.label": "Kopyala",
   "markdown.codeBlock.copy.copied": "Kopyalandı!",
   "markdown.codeBlock.copy.failed": "Başarısız",

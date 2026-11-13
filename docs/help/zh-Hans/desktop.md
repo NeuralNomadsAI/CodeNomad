@@ -10,11 +10,37 @@
 
 窗口加载完成后，原生应用菜单会使用 CodeNomad 的界面语言；在此之前显示英文。**帮助 → 关于 CodeNomad**（也位于 macOS 应用菜单中）会打开**设置 → 信息**，其中包含版本、更新和诊断信息。**帮助 → 赞助 CodeNomad** 会在浏览器中打开[赞助 CodeNomad](sponsor.md)页面。
 
+## 桌面应用启动参数 {#desktop-cli}
+
+在终端或 Windows 快捷方式的**目标**字段中，将这些参数放在**桌面可执行文件**（Tauri 或 Electron）之后。请将示例路径替换为实际的可执行文件路径。
+
+| 参数 | 效果 |
+| --- | --- |
+| `--connect-server <server>` | 使用 HTTP(S) URL、已保存的名称或 ID 打开远程 CodeNomad 服务器。参阅[连接和登录行为](remote-access.md#saved-servers)。 |
+| `--folder <path>` | 打开现有项目目录。可重复使用以打开多个目录；相对路径以启动时的工作目录为基准。 |
+| `<path> ...` | 省略 `--folder`，直接打开项目目录。**Windows Tauri 已在运行时：**每个目录都必须使用 `--folder`。混用位置路径和 `--folder` 也会丢弃整个目录打开请求。 |
+| `--new-window` | 请求新的应用窗口，即使再次启动通常会聚焦已有窗口。 |
+
+也支持 `--connect-server=<server>` 和 `--folder=<path>`。包含空格的路径或服务器名称应加引号。若只打开远程窗口，请单独使用 `--connect-server`，不附带目录或 `--new-window`；仅在连接失败时恢复本地窗口。桌面应用仍运行本地辅助后端进行协调。
+
+在 **PowerShell** 中：
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+在 Windows 快捷方式的**目标**中填写 `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"`（`&` 属于 PowerShell 语法）。Linux 下使用 AppImage 文件，例如 `./CodeNomad.AppImage --connect-server "https://server.example:9898"`。
+
+桌面配置档和配置路径可在启动前通过 `CODENOMAD_PROFILE` 和 `CLI_CONFIG` 设置，参阅[数据配置档](#data-profiles)。后端监听、TLS 和认证选项参阅[服务器 CLI 参考](server.md#cli-reference)。Windows Tauri 拒绝包含 `|` 的启动参数；请使用 URL 或重命名已保存的服务器。
+
 ## 偏好设置和启动恢复 {#preferences-startup}
 
 1. 从想配置的窗口打开设置。本地桌面入口会聚焦唯一的原生偏好设置窗口，并使用打开它的窗口的项目/Location。
 2. 在**常规**中开启或关闭**恢复上次状态**。
 3. 要忘记该窗口保存的布局，请使用**清除已保存的启动状态**。它会立即生效，无需确认。
+
+崩溃后，恢复的费用和令牌计数可能显示上次保存时的值，直到 OpenCode 刷新。在生成或压缩期间，仅计数变化会等待下一个保存点；正常关闭会保存当前计数。
 
 恢复可重新打开工作区/SideCar 标签页和活动会话、未发送文本、滚动位置、面板、窗口位置和缩放。这是按窗口保存的客户端状态，而非原生对话数据库副本。清除会移除保存的标签页、草稿和布局；不会删除 CodeNomad 配置或 OpenCode 对话。请先将重要未发送草稿另存。
 

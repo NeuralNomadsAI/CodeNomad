@@ -1173,7 +1173,7 @@ function trackCreation(instanceId: string, current: () => boolean): () => void {
   }
 }
 
-async function createSession(instanceId: string, agent?: string): Promise<Session> {
+async function createSession(instanceId: string, agent?: string, location?: { directory: string }): Promise<Session> {
   const attachment = backendEvents.signalForInstance(instanceId)
   attachment.throwIfAborted()
   const instance = instances().get(instanceId)
@@ -1181,9 +1181,9 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     throw new Error("Instance not ready")
   }
   const activeId = activeSessionId().get(instanceId)
-  const activeLocation = activeId && activeId !== "info"
+  const activeLocation = location ?? (activeId && activeId !== "info"
     ? sessions().get(instanceId)?.get(activeId)?.location
-    : undefined
+    : undefined)
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
@@ -1838,7 +1838,10 @@ async function loadMessages(
         if (!isCurrent()) return false
       }
     }
-    const olderCursor = (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
+    // The first ascending page is the oldest: its boundary cursor promises no older page.
+    const olderCursor = intent === "oldest"
+      ? undefined
+      : (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
     const newerCursor = (responseAscending ? response.cursor?.next : response.cursor?.previous) ?? undefined
     const responseCursor = intent === "oldest" || planned.forward ? newerCursor : olderCursor
     if (planned.cursor && responseCursor === planned.cursor) {

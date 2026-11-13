@@ -1,0 +1,35 @@
+.mermaid-renderer-frame {
+  position: fixed;
+  left: -2000px;
+  top: 0;
+  width: 1024px;
+  height: 768px;
+  border: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.markdown-mermaid-preview[hidden],
+.markdown-body .markdown-code-block > pre[hidden] {
+  display: none;
+}
+
+.mermaid-diagram {
+  padding: var(--space-md);
+  background: var(--surface-inset);
+  overflow: auto;
+}
+
+.mermaid-diagram img {
+  display: block;
+  width: 100%;
+  max-height: 640px;
+  object-fit: contain;
+}
+
+.mermaid-error,
+.mermaid-loading {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}

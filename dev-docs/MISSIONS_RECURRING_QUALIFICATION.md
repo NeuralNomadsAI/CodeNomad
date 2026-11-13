@@ -27,6 +27,7 @@ Product checks cover authenticated paused creation, activation/control receipts,
 backend closure and managed-service restart. Terminal checks require original-input
 correlation and whole-family/background-delivery quiescence before settlement.
 Desktop packaging and host-login gates require their own evidence.
+After a cold-first-admission failure, a disposable ten-second worker records timestamped HTTP status/PID and the expected version only after exact PID/version correlation, shared-incarnation log sizes/truncation within a 256 KiB read budget and targeted read-only SQL within 512 KiB. Both cold and authenticated current-incarnation SQL exports use an explicit metadata projection: numeric counters/timestamps, booleans, finite schema states, SHA-256 opaque identifiers and text digests, schedule-proof identity correlation and overflow/omission markers. Hashes cover complete bounded values before any truncation; oversized SQL values are omitted with retained size evidence where collected. Configuration, objectives, message bodies, nested metadata, database keys, maintenance event text, logs and errors are omitted; maintenance retains its count. Diagnostic, receipt and cleanup failures preserve the original qualification error and failed verdict; a receipt write failure also fails an otherwise successful qualification. The entrypoint emits a fixed safe failure category.
 
 UI qualification uses the real Solid/HTTP fixtures under
 `packages/ui/tests/browser/` with `npm run test:browser --workspace @codenomad/ui`:
@@ -77,6 +78,9 @@ HOME/XDG/config/database/bridge roots and a loopback deterministic provider. Eve
 fixture stops it. Never point the fixture at the shared daemon, its registration,
 configuration or database, or at a user's Missions, and never add installers,
 pattern kills or pushes.
+
+Initial provisioning and owned-service restarts await the retained Missions
+plugin's active state for the project before observing its recurrence RPCs.
 
 The fixture drives the production recurrence create, control and Run now routes,
 WorkspaceManager ownership and deletion fences, the automation bridge with HMAC

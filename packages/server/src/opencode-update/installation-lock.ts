@@ -1,5 +1,15 @@
-import { mkdir, open, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, open, readdir, rm } from "node:fs/promises"
 import path from "node:path"
+
+const INSTALLER_DIRECTORY = /^\.codenomad-(?:npm|upgrade)-/
+
+/** Private installer commands live beside the lock in the npm prefix, which must
+ * allow execution for the installed commands anyway; a temporary directory may be
+ * mounted noexec. Neither npm nor OpenCode resolves dot directories in the prefix. */
+export async function createInstallerDirectory(prefix: string, kind: "npm" | "upgrade"): Promise<string> {
+  await mkdir(prefix, { recursive: true })
+  return mkdtemp(path.join(prefix, `.codenomad-${kind}-`))
+}
 
 export class InstallationBusyError extends Error {
   constructor(readonly code: "installation_busy" | "installation_in_use", message: string) {
@@ -27,6 +37,13 @@ export async function withInstallationLock<T>(prefix: string, install: () => Pro
   let retain = false
   try {
     await handle.writeFile(JSON.stringify({ pid: process.pid, started: new Date().toISOString() }))
+    // A fresh lock means any retained installer directory belongs to an
+    // interrupted installer whose exit was verified before its lock was removed.
+    for (const entry of await readdir(prefix, { withFileTypes: true }).catch(() => [])) {
+      if (entry.isDirectory() && INSTALLER_DIRECTORY.test(entry.name)) {
+        await rm(path.join(prefix, entry.name), { recursive: true, force: true }).catch(() => {})
+      }
+    }
     return await install()
   } catch (error) {
     retain = error instanceof InstallationInterruptedError

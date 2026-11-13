@@ -1,11 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import os from "node:os"
-import path from "node:path"
-import { executeInstaller } from "./npm-runtime"
-import { InstallationInterruptedError } from "./installation-lock"
+import { rm } from "node:fs/promises"
+import { executeInstaller, openCodeAllowScripts, writeNpmCommands } from "./npm-runtime"
+import { createInstallerDirectory, InstallationInterruptedError } from "./installation-lock"
 
-/** Let OpenCode retain its running Windows image while using our bundled npm
- * and the already verified shared prefix, not an unrelated system installation. */
+/** Let OpenCode retain its running Windows image while using our npm (in Electron resources,
+ * or beside the Node runtime) and the already verified shared prefix, not an unrelated system
+ * installation. */
 export async function upgradeSharedOpenCode(options: {
   binary: string
   version: string
@@ -16,29 +15,25 @@ export async function upgradeSharedOpenCode(options: {
   platform: NodeJS.Platform
   execute?: typeof executeInstaller
 }): Promise<void> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-upgrade-"))
+  const allowScripts = openCodeAllowScripts(options.version)
+  const directory = await createInstallerDirectory(options.prefix, "upgrade")
   let retain = false
   try {
-    const windows = options.platform === "win32"
-    const shim = windows
-      ? '@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" "%CODENOMAD_UPGRADE_NPM%" %*\r\n'
-      : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n'
-    await writeFile(path.join(directory, windows ? "npm.cmd" : "npm"), shim, { mode: 0o700 })
     const env = { ...options.env }
+    await writeNpmCommands(directory, options.node, options.npm, env, options.platform)
     // npm config keys are case-insensitive, even on POSIX. Do not allow an
-    // inherited prefix or registry to redirect this verified installation.
+    // inherited prefix or registry to redirect this verified installation, nor
+    // an inherited script allow-list to replace the one below.
     for (const key of Object.keys(env)) {
-      if (/^npm_config_(prefix|registry|audit|fund)$/i.test(key)) delete env[key]
+      if (/^npm_config_(prefix|registry|audit|fund|allow_scripts)$/i.test(key)) delete env[key]
     }
-    const pathKey = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH"
-    env[pathKey] = [directory, path.dirname(options.node), env[pathKey] || ""].join(windows ? ";" : ":")
     Object.assign(env, {
-      CODENOMAD_UPGRADE_NODE: options.node,
-      CODENOMAD_UPGRADE_NPM: options.npm,
       npm_config_prefix: options.prefix,
       npm_config_registry: "https://registry.npmjs.org",
       npm_config_audit: "false",
       npm_config_fund: "false",
+      // OpenCode runs npm itself: the environment is the only per-invocation channel.
+      npm_config_allow_scripts: allowScripts,
     })
     // Windows searches cwd before PATH for npm.cmd. Own that directory too.
     // Give native npm's five-minute deadline time to finish its own cleanup.

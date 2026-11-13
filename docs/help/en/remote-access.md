@@ -52,6 +52,14 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 Do not assume port 9898 or 9899: omitted ports can fall back when busy. An explicit nonzero `--https-port`, or `--http-port` with HTTP enabled, pins the port and fails if it cannot bind; `0` asks the OS to assign one. The printed **Local Connection URL** and **Remote Connection URL**, and refreshed **Reachable addresses**, are authoritative for that run. See the complete [server CLI reference](server.md).
 
+## Upgrading {#upgrading}
+
+Sign in again after upgrading. For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations.
+
+Use a loopback connection for host-only operations: SideCar content (`/sidecars/`) and WebSockets, Remote Control management (`/api/remote-control/`), the plugin bridge (`/api/opencode-plugin/`), remote proxies (`/api/remote-proxy/`), saved-server management (`/api/remote-servers/`), password changes and token bootstrap. These require loopback even when signed in through direct LAN access. Live preview content (`/previews/`) is available over direct LAN access with a valid capability token.
+
+The `/api/sidecars` registration APIs remain available to authenticated direct LAN clients and paired devices. Remote Control web previews remain available with their capability token while enabled on the host.
+
 ## Configure trusted TLS {#tls}
 
 ### Supply your own certificate {#custom-certificates}

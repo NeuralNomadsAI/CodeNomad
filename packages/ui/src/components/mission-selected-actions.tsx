@@ -1,4 +1,5 @@
-import { createSignal, onCleanup } from "solid-js"
+import { Show, createSignal, onCleanup } from "solid-js"
+import { MissionTaskActions, type MissionTaskSelection } from "./mission-task-actions"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionActorActivityState } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -6,7 +7,7 @@ import { MissionActionBar } from "./mission-action-bar"
 import { createMissionBriefingRequest } from "./mission-briefing"
 import { createMissionLifecycle, type MissionControlRetry, type MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
-import { MissionBriefSave } from "./mission-model-library"
+import { MissionBriefSave, type MissionBriefSaveTrigger } from "./mission-model-library"
 import { missionRecordedBrief } from "../lib/mission-model-library"
 import { missionDisplayTitle } from "../lib/mission-display"
 import { useRecordedBriefInputs } from "./mission-target-bodies"
@@ -26,6 +27,10 @@ export function MissionSelectedActions(props: {
   interrupted: boolean
   onEdit: () => void; onDelete: () => void; editDisabled: boolean; deleteDisabled: boolean
   registerRetry?: (retry: MissionControlRetry) => () => void
+  /** The selected task takes the toolbar; Summary then toggles its reader. */
+   task?: MissionTaskSelection; taskPending?: boolean; taskReading?: boolean; onToggleTask?: () => void; onOpenTask?: (sessionId: string) => void
+  /** Unfolds the selection's detail, where Save as brief opens its name field. */
+  onRevealDetail?: () => void
 }) {
   const { t } = useI18n()
   const lifecycle = createMissionLifecycle({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
@@ -53,6 +58,8 @@ export function MissionSelectedActions(props: {
   // state (full wording as tooltip) and never resends automatically.
   // Save as brief saves the recorded inputs of the one snapshot shown when its name field opens.
   const [briefOpen, setBriefOpen] = createSignal(false)
+  // The overflow menu's Save as brief opens the name field shown in the detail.
+  const [briefTrigger, setBriefTrigger] = createSignal<MissionBriefSaveTrigger>()
   const brief = useRecordedBriefInputs({ instanceId: () => props.instanceId, mission: () => props.mission, open: briefOpen,
     refresh: () => missionStore.refresh(props.instanceId) })
   const recordedBrief = () => {
@@ -65,12 +72,20 @@ export function MissionSelectedActions(props: {
     key: "briefing", label: requestLabel(),
     ariaLabel: briefing.waiting() ? t(`missions.briefing.request.${briefing.state()}`) : undefined,
     disabled: briefing.waiting() || props.messagingDisabled || !props.active, onSelect: () => briefing.ask() } : undefined
-  return <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
-    primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
-    onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
-    secondary={<MissionBriefSave instanceId={props.instanceId} disabled={props.disabled} active={() => props.active}
-      draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
-      reading={() => brief.state() === "ready" ? undefined
-        : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}
-    feedback={<>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>} />
+  // The Mission's lifecycle state lives here, so it survives a task taking the toolbar.
+  const feedback = <>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>
+  return <Show when={props.task?.task.key} keyed fallback={
+     <Show when={!props.taskPending} fallback={<MissionActionBar task label={t("missionsPanel.picker.actions")} reading={false} feedback={feedback} />}><MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
+      primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
+      onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
+      saveBrief={briefTrigger() && { disabled: briefTrigger()!.disabled, open: returnFocus => { props.onRevealDetail?.(); briefTrigger()!.open(returnFocus) } }}
+       secondaryInDetail secondary={<MissionBriefSave instanceId={props.instanceId} disabled={props.disabled} active={() => props.active} trigger={trigger => setBriefTrigger(() => trigger)}
+        draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
+        reading={() => brief.state() === "ready" ? undefined
+          : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}
+       feedback={feedback} /></Show>}>
+    {_key => <MissionTaskActions instanceId={props.instanceId} mission={props.mission} selection={props.task!}
+      disabled={props.disabled || !props.active} onAdmitted={props.onAdmitted} reading={Boolean(props.taskReading)} onToggleReader={() => props.onToggleTask?.()}
+      onOpenConversation={id => props.onOpenTask?.(id)} feedback={feedback} />}
+  </Show>
 }

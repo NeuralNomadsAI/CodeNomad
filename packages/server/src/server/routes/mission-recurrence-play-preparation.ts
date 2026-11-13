@@ -49,12 +49,12 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
     return true
   }
   const client = connection.client
-  if (!await deps.manager.ownsLocation(workspaceID, { directory }, client, signal)) throw new Error("Location is not owned")
+  if (!await deps.manager.ownsLocation(workspaceID, { directory }, client, { signal })) throw new Error("Location is not owned")
   const location = await client.location.get({ location: { directory } }, { signal })
   const baseInfo = await client.location.get({ location: { directory: base.directory } }, { ...locationRequestOptions(base), signal })
   current()
   if (location.project.id !== baseInfo.project.id || location.project.canonical !== baseInfo.project.canonical
-    || !sameLocation(location, { directory }) || !await deps.manager.ownsLocation(workspaceID, location, client, signal)) throw new Error("Foreign native Location")
+    || !sameLocation(location, { directory }) || !await deps.manager.ownsLocation(workspaceID, location, client, { signal })) throw new Error("Foreign native Location")
   const checkout = await deps.manager.getWorktreeIdentityForPath(workspaceID, directory)
   if (!checkout) throw new Error("Checkout unavailable")
   const physicalRoot = await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)
@@ -95,7 +95,7 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
       current()
       if (await deps.manager.getWorktreeIdentityForPath(workspaceID, directory) !== checkout
         || canonicalAuthority(await resolveRecurrenceRoot(deps.manager, workspaceID, directory, location.project.canonical, distro)) !== canonicalAuthority(physicalRoot)
-        || !await deps.manager.ownsLocation(workspaceID, location, client, signal)) throw new Error("Physical root changed")
+        || !await deps.manager.ownsLocation(workspaceID, location, client, { signal })) throw new Error("Physical root changed")
       current()
     }
     const yaml = deps.settings.configYamlPathForAuthority(), executionHost = distro ? `wsl:${distro}` : "local"

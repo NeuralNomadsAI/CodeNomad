@@ -20,8 +20,8 @@ writers are unsupported.
   a subsequent primary request and a restart both see pruned content (native
   smoke test).
 - `session/projector.ts` / `bus.ts`: native projections run transactionally. The
-  plugin changes only an already-completed assistant row's content, with exact-data
-  CAS; it never manufactures sequence values or emits replacement events.
+  plugin changes only an already-completed assistant's stored content, with exact-data
+  CAS on its envelope and split-part deletions under the same write lock; it never manufactures sequence values or emits replacement events.
 
 Rather than relying on move/revert controls, the plugin rechecks
 directory/project/workspace identity and staged-revert/compaction state *inside*
@@ -51,7 +51,9 @@ keep their text.
    Never rewrite/replay events to repair them or mutate V1 tables.
 4. Bound/read the row, check assistant completion, completed/error tool state,
    known content kinds, selected technical indices and canonical SHA-256 revision.
-   Update only `$.content`, with CAS against the exact stored row data.
+   Reconstruct ordinal split parts followed by the inline tail. Delete only selected
+   split rows and selected inline entries; retained split ordinals and bytes stay intact.
+   Update only envelope `$.content`, with CAS against its exact stored row data.
 5. Insert a content-free receipt in the same transaction; commit or roll back both.
    Identical requests cannot accidentally delete the next block after indices shift.
    Receipts are retained indefinitely.
@@ -71,7 +73,7 @@ DB are unsupported.
   history is in the context window. Copied summaries, native checkpoints and forks
   keep their content. Provider-specific state continuation and budget estimates
   need their own validation.
-- **Persistence**: only selected V2 content arrays change. Usage/cost record past
+- **Persistence**: only selected V2 technical content changes, in split rows or inline arrays. Usage/cost record past
   execution and stay unchanged.
 - **Physical storage**: freed SQLite pages become reusable. The DB file shrinks
   only through separately consented maintenance such as VACUUM; this plugin never

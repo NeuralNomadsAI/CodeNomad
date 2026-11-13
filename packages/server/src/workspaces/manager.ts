@@ -34,7 +34,7 @@ import { WslOpenCodeService } from "./wsl-opencode-service"
 import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
 import { initializeNativeGit } from "./git-init"
-import { WorktreeInventory } from "./worktree-inventory"
+import { WorktreeInventory, WORKTREE_OWNERSHIP_RESTART_LIMIT } from "./worktree-inventory"
 import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
 import { GitRequiredError, requireHostGit } from "./git-requirement"
@@ -45,6 +45,19 @@ const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
 const WORKSPACE_STATE = Symbol("workspaceState")
 type ManagerTimeout = number | NodeJS.Timeout
+
+async function ownershipRealpath(directory: string, strict = false): Promise<string | undefined> {
+  try { return await realpath(directory) }
+  catch (error) { if (strict) throw error }
+}
+
+interface LocationOwnershipOptions {
+  signal?: AbortSignal
+  purpose?: "request" | "event"
+  strict?: boolean
+  media?: { current: () => void }
+}
+type MediaOwnership = { client: OpenCodeClient; signal: AbortSignal; current: () => void }
 
 interface SharedService {
   acquire?: () => Promise<import("./opencode-service").ServiceConnection>
@@ -88,8 +101,8 @@ interface WorkspaceManagerOptions {
     connection: import("./opencode-service").ServiceConnection,
     deadlineAt?: number,
   ) => Promise<boolean>
-  /** Bounded wait for bundled plugins to register for this backend (never rejects). */
-  desktopPluginsReady?: () => Promise<void>
+  /** Startup marker wait, or fresh observed registration for an authorized Location. */
+  desktopPluginsReady?: (target?: import("../opencode/desktop-plugin-lifecycle").DesktopPluginReadinessTarget) => Promise<void>
   shutdownTimeoutMs?: number
   launchSettlementTimeoutMs?: number
   launchTimeoutMs?: number
@@ -129,6 +142,7 @@ interface WorkspaceRecord extends WorkspaceDescriptor {
 }
 
 interface WorkspaceState {
+  mediaOwnershipRevision: number
   abortController: AbortController
   settlement?: Promise<void>
   cleanupSettlement?: Promise<WorkspaceDescriptor>
@@ -206,6 +220,20 @@ export class WorkspaceManager {
     return record?.[WORKSPACE_STATE].published ? record : undefined
   }
 
+  /** Capture the published occurrence before asynchronous owned reads. */
+  captureWorkspaceOperation(id: string) {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    const signal = record[WORKSPACE_STATE].abortController.signal
+    const current = (): true => {
+      signal.throwIfAborted()
+      if (this.workspaces.get(id) !== record || !record[WORKSPACE_STATE].published) throw new WorkspaceLaunchCancelledError(id)
+      return true
+    }
+    current()
+    return { signal, current }
+  }
+
   getInstanceAuthorizationHeader(id: string): string | undefined {
     return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.serviceAuthorization : undefined
   }
@@ -248,9 +276,15 @@ export class WorkspaceManager {
     return this.sharedService.client()
   }
 
-  /** Await before a bundled-plugin RPC: plugins register only after observing this backend's lease. */
-  desktopPluginsReady(): Promise<void> {
-    return this.options.desktopPluginsReady?.() ?? Promise.resolve()
+  /** Targeted callers supply captured connection and pre-authorized Location fences. */
+  desktopPluginsReady(target?: import("../opencode/desktop-plugin-lifecycle").DesktopPluginReadinessTarget): Promise<void> {
+    if (target) {
+      target.signal.throwIfAborted()
+      target.connection.assertCurrent()
+      target.assertCurrent()
+      if (!this.options.desktopPluginsReady) return Promise.reject(new Error("Pruning Location readiness unavailable"))
+    }
+    return this.options.desktopPluginsReady?.(target) ?? Promise.resolve()
   }
 
   async reserveWorktreeDeletion(directory: string): Promise<() => void> {
@@ -296,35 +330,69 @@ export class WorkspaceManager {
     return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory, purpose))
   }
 
-  // `_client` is retained for callers' pinned-connection signature; directory
-  // ownership needs no native request.
-  async ownsLocation(id: string, location: LocationRef, _client?: OpenCodeClient, signal?: AbortSignal, purpose: "request" | "event" = "request"): Promise<boolean> {
+  // Strict probes reject unreadable ownership instead of turning it into a negative.
+  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, { signal, purpose = "request", strict = false, media }: LocationOwnershipOptions = {}): Promise<boolean> {
     signal?.throwIfAborted()
+    media?.current()
     // OpenCode V2 identifies locations by directory; a retired workspace selector
     // is never authorized, whatever directory it names.
     if (location.workspaceID !== undefined) return false
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
-    const directory = await this.getServiceDirectoryForPath(id, location.directory, purpose)
+    if (media) {
+      if (!client || !signal) throw new Error("Media ownership context unavailable")
+      const state = record[WORKSPACE_STATE]
+      const captured: WorkspaceRecord = { ...record, [WORKSPACE_STATE]: state,
+        wslDistro: record.wslDistro, location: { ...(record.location ?? { directory: record.path }) } }
+      const directory = location.directory
+      const current = () => {
+        signal.throwIfAborted()
+        media.current()
+        state.abortController.signal.throwIfAborted()
+        if (this.workspaces.get(id) !== record || !state.published) throw new WorkspaceLaunchCancelledError(id)
+      }
+      const context = { client, signal, current }
+      for (let restarts = 0; ; restarts++) {
+        current()
+        const revision = state.mediaOwnershipRevision
+        const owned = await this.serviceDirectoryForRecord(captured, directory, purpose, true, context)
+        current()
+        if (state.mediaOwnershipRevision === revision) return Boolean(owned)
+        if (restarts >= WORKTREE_OWNERSHIP_RESTART_LIMIT) throw new Error("Worktree ownership inventory changed repeatedly")
+      }
+    }
+    const directory = await this.getServiceDirectoryForPath(id, location.directory, { purpose, strict })
     signal?.throwIfAborted()
     return Boolean(directory)
   }
 
-  async getServiceDirectoryForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
+  async getServiceDirectoryForPath(id: string, directory: string, { purpose = "request", strict = false }: Pick<LocationOwnershipOptions, "purpose" | "strict"> = {}): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
+    return this.serviceDirectoryForRecord(record, directory, purpose, strict)
+  }
+
+  private async serviceDirectoryForRecord(record: WorkspaceRecord, directory: string,
+    purpose: "request" | "event", strict = false, media?: MediaOwnership): Promise<string | undefined> {
+    media?.current()
     // Directory authorization does not need the checkout's Git mutation identity.
     // Resolve aliases against the explicitly opened folder without spawning Git.
     if (!record.wslDistro) {
       const [target, root] = await Promise.all([
-        realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+        media ? realpath(directory).catch(error => { if (error.code !== "ENOENT") throw error }) : ownershipRealpath(directory, strict),
+        ownershipRealpath(record.path, strict),
       ])
+      media?.current()
       if (target && target === root) return target
     }
-    const owned = await this.resolveOwnedWorktree(record, directory, purpose)
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose, strict, media)
+    media?.current()
     if (!owned) return undefined
     if (!record.wslDistro) return owned.directory
-    return await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+    const translated = await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    media?.current()
+    if (strict && !translated) throw new Error("WSL service directory translation unavailable")
+    return translated ?? undefined
   }
 
   async getWorktreeIdentityForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
@@ -385,6 +453,8 @@ export class WorkspaceManager {
   private readonly worktreeInventory = new WorktreeInventory({
     load: (id) => this.nativeWorktreeContext(id).then(listNativeWorktrees),
     changed: (id) => {
+      const record = this.workspaces.get(id)
+      if (record) record[WORKSPACE_STATE].mediaOwnershipRevision++
       invalidateWorktreeCache(id)
       invalidateWorktreeCache(`event:${id}`)
       this.eventWorktreeInventory.invalidate(id)
@@ -403,6 +473,8 @@ export class WorkspaceManager {
   private readonly eventWorktreeInventory = new WorktreeInventory({
     load: (id) => this.nativeWorktreeContext(id, "event").then(context => listNativeWorktrees(context, { refresh: false })),
     changed: (id) => {
+      const record = this.workspaces.get(id)
+      if (record) record[WORKSPACE_STATE].mediaOwnershipRevision++
       invalidateWorktreeCache(`event:${id}`)
       this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
     },
@@ -410,14 +482,15 @@ export class WorkspaceManager {
     now: () => this.now(),
   })
 
-  private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event") {
+  private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event", strict = false) {
     const mode = refresh ? "fresh" : "validated"
     return (await (purpose === "event"
-      ? this.eventWorktreeInventory.read(id, mode)
-      : this.getWorktrees(id, mode))).worktrees
+      ? this.eventWorktreeInventory.read(id, mode, { strict })
+      : strict ? this.worktreeInventory.read(id, mode, { strict }) : this.getWorktrees(id, mode))).worktrees
   }
 
   invalidateWorktrees(mode: "lazy" | "blocking" = "lazy"): void {
+    for (const record of this.workspaces.values()) record[WORKSPACE_STATE].mediaOwnershipRevision++
     this.worktreeInventory.invalidate(undefined, mode)
     this.eventWorktreeInventory.invalidate(undefined, mode)
     invalidateWorktreeCache()
@@ -444,7 +517,7 @@ export class WorkspaceManager {
 
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
     const [target, root] = await Promise.all([
-      realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+      ownershipRealpath(directory), ownershipRealpath(record.path),
     ])
     if (target && target === root) return true
     if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return false
@@ -457,23 +530,33 @@ export class WorkspaceManager {
     })) !== null
   }
 
-  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request") {
+  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request", strict = false, media?: MediaOwnership) {
+    media?.current()
     const hostDirectory = record.wslDistro
       ? isWindowsHostPath(directory)
         ? directory
         : await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
       : directory
-    if (!hostDirectory) return null
+    if (!hostDirectory) {
+      if (strict) throw new Error("WSL host directory translation unavailable")
+      return null
+    }
     const [target, root] = await Promise.all([
-      realpath(hostDirectory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+      media ? realpath(hostDirectory).catch(error => { if (error.code !== "ENOENT") throw error }) : ownershipRealpath(hostDirectory, strict),
+      ownershipRealpath(record.path, strict),
     ])
+    media?.current()
     // The explicitly opened folder is already authority. Do not require native
     // discovery (or a second connection) to authorize that exact local directory.
     if (target && target === root) {
       try {
         const { repoRoot } = await resolveRepoRoot(root)
-        return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
+        media?.current()
+        const worktreeDirectory = await realpath(repoRoot)
+        media?.current()
+        return { slug: "root", directory: target, worktreeDirectory }
       } catch (error) {
+        media?.current()
         if (!(error instanceof GitRequiredError)) throw error
         // Without Git only the explicitly opened physical folder is authority.
         // The deletion fence compares ancestor/descendant identities as well,
@@ -481,14 +564,35 @@ export class WorkspaceManager {
         return { slug: "root", directory: target, worktreeDirectory: root }
       }
     }
-    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return null
-    return resolveOwnedWorktreePath({
+    if (target && root && !isPathWithinWorktree(root, target)) {
+      const shared = await sharesGitCommonDirectory(root, target, { strict })
+      media?.current()
+      if (!shared) return null
+    }
+    media?.current()
+    const owned = await resolveOwnedWorktreePath({
       workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
       workspacePath: record.path,
       directory: hostDirectory,
-      loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),
+      media,
+      strict,
+      loadWorktrees: media ? async () => {
+        media.current()
+        const inventory = await listNativeWorktrees({ client: media.client, location: record.location!, workspacePath: record.path,
+          toHost: async directory => {
+            media.current()
+            const host = record.wslDistro
+              ? await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) : directory
+            media.current()
+            return host
+          } }, { media })
+        media.current()
+        return inventory.worktrees
+      } : (refresh) => this.ownershipWorktrees(record.id, refresh, purpose, strict),
       logger: this.options.logger,
     })
+    media?.current()
+    return owned
   }
 
   async ownsPath(id: string, candidate: string): Promise<boolean> {
@@ -660,6 +764,7 @@ export class WorkspaceManager {
     Object.defineProperties(record, {
       wslDistro: { value: undefined, writable: true },
       [WORKSPACE_STATE]: { value: {
+        mediaOwnershipRevision: 0,
         abortController: new AbortController(),
         published: false,
         stoppedPublished: false,
@@ -1145,7 +1250,7 @@ export class WorkspaceManager {
     const locator = process.platform === "win32" ? "where" : "which"
 
     try {
-      const result = spawnSync(locator, [identifier], { encoding: "utf8", timeout: Math.max(1, timeoutMs) })
+      const result = spawnSync(locator, [identifier], { encoding: "utf8", timeout: Math.max(1, timeoutMs), windowsHide: true })
       if (result.status === 0 && result.stdout) {
         const candidates = result.stdout
           .split(/\r?\n/)

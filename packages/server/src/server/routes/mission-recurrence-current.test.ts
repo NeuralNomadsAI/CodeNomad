@@ -35,7 +35,7 @@ async function fixture() {
       return envelope()
     }, recurrenceCurrentPage: async (input: { source: unknown; selector: MissionPanelPageRequest }) => {
       calls.push({ method: "page", input })
-      if (input.selector.source === "summaries" || input.selector.source === "cleanups" || input.selector.source === "marks") throw Error("Not a passage range")
+      if (input.selector.source === "summaries" || input.selector.source === "cleanups" || input.selector.source === "marks" || input.selector.source === "task-marks") throw Error("Not a passage range")
       const result = projectMissionPanel(mission, input.selector, { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }, { passage: envelope().source })
       state.afterPage?.()
       return result

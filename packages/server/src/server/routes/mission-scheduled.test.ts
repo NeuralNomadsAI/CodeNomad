@@ -88,6 +88,43 @@ test("authenticated schedule Play dispatches; a lost human refuses it", async t 
   assert.equal(f.state.writes.at(-1)!.requestID, control.requestID)
 })
 
+test("schedule reads preserve internal reconciliation without exposing it as a user control", async t => {
+  const f = await fixture(t)
+  for (const pending of [false, true]) {
+    const raw = { pending, document: { id: "msn_owned", revision: 32,
+      control: { requestID: "reconcile_31", expectedRevision: 31, action: "reconcile", pending } } }
+    f.state.read = async () => raw
+    const response = await f.get()
+    assert.equal(response.statusCode, pending ? 503 : 200)
+    assert.deepEqual(response.json().document, raw.document)
+    assert.equal(response.json().pending, pending)
+  }
+  assert.equal((await f.post({ ...control, action: "reconcile" })).statusCode, 400)
+  assert.equal(f.state.writes.length, 0)
+  assert.equal(f.state.reads.length, 2)
+  assert.equal(scheduledMissionHold(f.fence, "msn_owned"), undefined)
+  f.state.read = async () => ({ pending: false, document: { id: "msn_owned",
+    control: { ...control, action: "unknown", pending: false } } })
+  assert.equal((await f.get()).statusCode, 503)
+})
+
+test("internal reconciliation cannot acknowledge an uncertain user control", async t => {
+  const f = await fixture(t)
+  f.state.write = async () => { throw new Error("Lost native ACK") }
+  assert.equal((await f.post()).statusCode, 503)
+  const retained = scheduledMissionHold(f.fence, "msn_owned")
+  f.state.read = async () => ({ pending: false, document: { id: "msn_owned",
+    control: { ...control, action: "reconcile", pending: false } } })
+  const response = await f.get()
+  assert.equal(response.statusCode, 503)
+  assert.equal(response.json().document.control.action, "reconcile")
+  assert.equal(scheduledMissionHold(f.fence, "msn_owned"), retained)
+  assert.equal(f.state.writes.length, 1)
+  f.state.read = async () => f.result()
+  assert.equal((await f.get()).statusCode, 200)
+  assert.equal(scheduledMissionHold(f.fence, "msn_owned"), undefined)
+})
+
 test("creation status locates the original request after losing the HTTP document identity, without another write", async t => {
   const f = await fixture(t), requestID = "lost_create_response"
   f.state.write = async () => { throw new Error("Lost creation ACK") }

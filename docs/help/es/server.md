@@ -6,9 +6,9 @@ La misma interfaz admite [varias pestañas de proyecto y worktrees](projects.md)
 
 ## Preparar el equipo anfitrión {#prerequisites}
 
-1. Instala Node.js 24 LTS y npm; el entorno de compilación fijado por el repositorio es 24.20.0. Los paquetes de escritorio incluyen Node/npm.
+1. Instala Node.js 24 LTS y npm; el repositorio fija su entorno de compilación en `.node-version`. Los paquetes de escritorio proporcionan su propio entorno: Electron usa su Node integrado, Tauri incluye Node y ambos incluyen npm.
 2. Pon Git en el **PATH del proceso del backend**. Git solo dentro de WSL no satisface a un backend Windows.
-3. Instala o selecciona OpenCode: **2.2.3** es el mínimo requerido y **2.2.5**, el objetivo recomendado de verificación. Las compilaciones más nuevas o personalizadas pasan comprobaciones de compatibilidad, no una lista de versiones probadas permitidas. Consulta [configuración de OpenCode](opencode.md).
+3. Instala o selecciona OpenCode: **2.2.3** es el mínimo requerido y **2.2.7**, el objetivo recomendado de verificación. Las compilaciones más nuevas o personalizadas pasan comprobaciones de compatibilidad, no una lista de versiones probadas permitidas. Consulta [configuración de OpenCode](opencode.md).
 4. Elige la carpeta desde la que iniciar el servidor o pasa `--workspace-root` explícitamente.
 
 Sin Git, las conversaciones siguen disponibles solo en la carpeta física abierta explícitamente; las operaciones Git y worktree fallan. Instala Git y reinicia el backend tras cambiar PATH. Una raíz de espacio de trabajo limita la apertura/exploración, no la ejecución del agente: consulta [Seguridad](security.md).
@@ -58,6 +58,8 @@ El backend también puede abrir un listener HTTP autenticado y no anunciado en u
 Para exposición de listeners, certificados, VPN/SSH y proxies inversos, usa [Acceso remoto directo](remote-access.md). Para acceso sin puerto entrante, usa [Control remoto](remote-control.md).
 
 ## Referencia de la CLI pública {#cli-reference}
+
+Para iniciar Tauri o Electron, consulta [Argumentos de inicio de escritorio](desktop.md#desktop-cli): `--connect-server`, `--folder`, `--new-window` y ejemplos de comandos y accesos directos. Esta tabla corresponde al ejecutable del servidor independiente.
 
 Las opciones prevalecen sobre sus equivalentes del entorno. Las opciones con valor usan el argumento mostrado; los interruptores no. Los valores HTTPS/HTTP reconocen `1`, `true`, `yes`, `y` y `on` como activados, sin distinguir mayúsculas; usa `true`/`false` explícitos para mayor claridad. La actualización automática de interfaz reconoce `1`, `true` y `yes`.
 

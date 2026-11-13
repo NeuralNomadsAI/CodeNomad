@@ -19,6 +19,7 @@ import { renameProject } from "../stores/project-names"
 import { LocaleSelector } from "./locale-selector"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
+import { getServerMeta, localRequest } from "../lib/server-meta"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
@@ -58,7 +59,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const folders = () => recentFolders()
   const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
-  const canUseRemoteServerWindows = () => canOpenRemoteWindows()
+  const canUseRemoteServerWindows = () => localRequest() && canOpenRemoteWindows()
+  onMount(() => { void getServerMeta().catch(() => {}) })
 
   function getActiveListLength() {
     return activeTab() === "local" ? folders().length : serverList().length
@@ -784,7 +786,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </button>
                   </Show>
 
-                  <button
+                  <Show when={localRequest()}><button
                     type="button"
                     onClick={() => props.onOpenSidecar?.()}
                     class="button-primary w-full flex items-center justify-center text-sm"
@@ -793,7 +795,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                       <MonitorUp class="w-4 h-4" />
                       <span>{t("folderSelection.sidecars.button")}</span>
                     </div>
-                  </button>
+                  </button></Show>
 
                   <Show when={canUseRemoteServerWindows()}>
                     <button

@@ -62,6 +62,17 @@ export class ForgeWorkItems {
       shared => this.read(directory, request.kind, query, request.page, fresh, shared), signal)
   }
 
+  /** Shared repository detection and bounded transport for repository activity readers. */
+  async openRepository(directory: string, fresh = false, signal?: AbortSignal) {
+    const resolved = await this.resolve(directory, fresh, signal)
+    if (typeof resolved === "string") return { status: "unavailable" as const, reason: resolved }
+    const { remote, api, transport } = resolved
+    return { status: "ok" as const, repository: { provider: api.provider, host: remote.host, path: remote.path,
+      webUrl: forgeWebUrl(api.provider, remote.host, remote.path), access: transport.access } satisfies ForgeRepository,
+      transport: { get access() { return transport.access }, request: (path: string, live: AbortSignal) =>
+        this.budget.run(live, () => transport.request(path, live)) } satisfies ForgeTransport }
+  }
+
   /** The web page of one item of this project's repository, built locally once the repository is known. */
   async itemUrl(directory: string, kind: ForgeWorkItemKind, number: number, signal?: AbortSignal): Promise<string | undefined> {
     const resolved = await this.resolve(directory, false, signal)
@@ -103,7 +114,7 @@ export class ForgeWorkItems {
   }
 
   private async identify(directory: string, signal: AbortSignal): Promise<Resolved> {
-    const remote = await readForgeRemote(directory)
+    const remote = await readForgeRemote(directory, signal)
     if (signal.aborted) throw signal.reason
     if (!remote) return "no_remote"
     const known = PUBLIC_FORGES[remote.host]
@@ -135,3 +146,5 @@ function classifyFailure(response: ForgeResponse): ForgeUnavailableReason | unde
   if ([401, 403, 404, 422].includes(response.status)) return "sign_in"
   throw new ForgeRequestError(`Forge request failed (HTTP ${response.status})`)
 }
+
+export const forgeWorkItems = new ForgeWorkItems()

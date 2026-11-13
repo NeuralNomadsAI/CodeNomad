@@ -80,5 +80,6 @@ const dispatch = (payload: unknown) => (serverEvents as any).dispatchBatch([payl
     id: `evt_${Date.now()}`, type: "rpc.opencode.goal.changed", created: Date.now(), location: { directory: "/fixture" }, data: { sessionID, goal },
   } }),
   reconnect: () => dispatch({ type: "instance.eventStatus", instanceId, status: "connected", generation: 2 }),
+  pluginUpdated: () => dispatch({ type: "instance.event", instanceId, event: { id: `evt_${Date.now()}`, type: "plugin.updated", created: Date.now(), location: { directory: "/fixture" }, data: {} } }),
   select: (id: string | null) => setActiveSession(id ? sessions.get(id)! : null),
 }

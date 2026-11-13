@@ -5,6 +5,17 @@ import { missionProjectView, updateMissionProjectView } from "./mission-view-sta
 import { serverApi } from "../lib/api-client"
 
 describe("session preview persistence", () => {
+  it("an expired native open cannot publish a delayed preview response", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview
+    const deleted: string[] = []
+    serverApi.createPreview = async () => ({ token: "expired-native-open", targetUrl: "https://example.com" }) as any
+    serverApi.deletePreview = async token => { deleted.push(token); return undefined as any }
+    try {
+      await assert.rejects(openSessionPreview("session", "https://example.com", "expired-native", "", async () => false), /no longer current/)
+      assert.equal(getSessionPreview("session", "expired-native"), null)
+      assert.deepEqual(deleted, ["expired-native-open"])
+    } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
+  })
   it("restores only valid HTTP preview records", () => {
     assert.deepEqual(parseStoredSessionPreviews(JSON.stringify({
       valid: { targetUrl: "http://localhost:3000/app", mode: "preview" },

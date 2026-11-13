@@ -4,6 +4,7 @@ import { pruneAllRequestSchema, pruneRequestSchema, pruneResultSchema, type Prun
 import { planPrune, previewContent, revision } from "./planner"
 import { canonicalContent } from "./revision"
 import { canReleaseMedia, projectStoredMedia, releaseDroppedMedia } from "./media-blob"
+import { messageStorage, pruneSplitParts } from "./message-storage"
 
 const MESSAGE_LIMIT = 16 * 1024 * 1024
 type BlockReason = Extract<PruneResult, { status: "blocked" }>["reason"]
@@ -33,8 +34,9 @@ export function pruneTransaction(
         return result
       }
     }
-    const row = db.prepare(`SELECT type, data, length(CAST(data AS BLOB)) AS bytes FROM session_message WHERE session_id=? AND id=?
-      AND length(CAST(data AS BLOB)) <= ?`).get(request.sessionID, request.messageID, MESSAGE_LIMIT)
+    const storage = messageStorage(db)
+    const row = db.prepare(`SELECT type, data, ${storage.bytes()} AS bytes FROM ${storage.table} WHERE session_id=? AND id=?
+      AND ${storage.bytes()} <= ?`).get(request.sessionID, request.messageID, MESSAGE_LIMIT)
     if (!row || row.type !== "assistant" || typeof row.data !== "string") return { status: "blocked", reason: "not_deletable" }
     const data = JSON.parse(row.data)
     // Compare what the caller hashed from native reads; the same budget bounds the native form.
@@ -47,8 +49,13 @@ export function pruneTransaction(
     if (!indexes.length) return { status: "blocked", reason: "not_deletable" }
     const plan = planPrune(data, { ...request, indexes }, projection.data)
     if (plan.status !== "planned") return plan
+    const inline = db.prepare("SELECT data FROM session_message WHERE session_id=? AND id=?").get(request.sessionID, request.messageID)?.data
+    if (typeof inline !== "string") return { status: "blocked", reason: "conflict" }
+    const removed = new Set(indexes)
+    const splitCount = pruneSplitParts(db, request.sessionID, request.messageID, removed)
+    const inlineContent = splitCount ? JSON.parse(inline).content.filter((_: unknown, index: number) => !removed.has(splitCount + index)) : plan.content
     const update = db.prepare("UPDATE session_message SET data=json_set(data,'$.content',json(?)) WHERE session_id=? AND id=? AND data=?")
-      .run(JSON.stringify(plan.content), request.sessionID, request.messageID, row.data)
+      .run(JSON.stringify(inlineContent), request.sessionID, request.messageID, inline)
     if (update.changes !== 1) return { status: "blocked", reason: "conflict" }
     releaseDroppedMedia(db, request.sessionID, request.messageID, data, { ...data, content: plan.content })
     const result: PruneResult = { status: "pruned", messageID: request.messageID, revision: revision(plan.projected), removedCount: indexes.length }

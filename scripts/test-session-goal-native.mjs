@@ -12,10 +12,13 @@ import { registerSessionGoalRoute } from "../packages/server/src/server/routes/s
 import { GOAL_CHANGED_EVENT, goalChangedSchema } from "../packages/server/src/opencode/goal-contract.ts"
 import { getOpencodeErrorMessage } from "../packages/ui/src/lib/opencode-api.ts"
 
-await withProductRuntime(process.argv[2], async () => ({}), async ({ client, root }) => {
+await withProductRuntime(process.argv[2], async () => ({}), async ({ client, root, connection }) => {
   const owns = async (id, location) => id === "fixture" && location?.directory === root
   const records = [{ id: "fixture", path: root }]
+  const location = { directory: root }
   const manager = {
+    get: id => records.find(record => record.id === id), getServiceLocation: id => id === "fixture" ? location : undefined,
+    getSharedServiceConnection: async () => connection,
     list: () => records, ownsDirectory: async (id, directory) => owns(id, { directory }), ownsLocation: owns,
     getSharedServiceClient: async () => client, subscribeToSharedService: signal => client.event.subscribe({ signal }),
     invalidateWorktrees() {},

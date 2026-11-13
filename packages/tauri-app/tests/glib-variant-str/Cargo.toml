@@ -1,0 +1,8 @@
+[package]
+name = "codenomad-glib-variant-str-regression"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+glib = "0.18"

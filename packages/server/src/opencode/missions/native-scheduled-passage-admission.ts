@@ -41,6 +41,7 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
     // A deterministic capacity/source-proof refusal is not an absence proof.
     if (pending.admittedAt !== null || pending.admissionAttempted) return { kind: "unknown" }
     const exists = await observation.exists(pending.coordinatorSessionID)
+    if (pending.coordinatorReused && !pending.admissionAttempted) return { kind: "not-started", current: publicationCurrent }
     if (exists) {
       const state = await observation.session(pending.coordinatorSessionID, pending.messageID)
       if (state.messagePresent || state.active || state.inbox || state.suspended || state.runningTools
@@ -57,12 +58,29 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
   const exists = observed?.exists ?? await observation.exists(pending.coordinatorSessionID)
   if (!exists && pending.admittedAt !== null) return { kind: "unknown" }
   if (!exists && !dispatchAllowed(doc)) return { kind: "not-started", current: publicationCurrent }
+  if (pending.coordinatorReused && !exists) throw new Error("Selected coordinator session is missing")
+  if (pending.coordinatorReused && pending.admittedAt === null && !observed?.present && !pending.admissionAttempted) {
+    if (!dispatchAllowed(doc)) return { kind: "not-started", current: publicationCurrent }
+    if (!pending.coordinatorBaseline) {
+      const fence = input.settlementFence?.()
+      if (!fence) throw new Error("Existing coordinator baseline unavailable")
+      const baseline = fence.family(pending.coordinatorSessionID, undefined, true)
+      const fresh = await input.locked.read(doc.id)
+      if (!fresh || "deletedAt" in fresh || fresh.pending?.id !== pending.id) throw new Error("Existing coordinator baseline owner changed")
+      await input.locked.change(doc.id, fresh.revision, () => { publicationCurrent(); return fence.current() }, next => { next.pending!.coordinatorBaseline = baseline })
+      pending.coordinatorBaseline = baseline
+    }
+    if (!input.adoptCoordinator) throw new Error("Existing coordinator adoption unavailable")
+    await input.adoptCoordinator(metadata, effectCurrent)
+  }
   const session = exists ? await native.get({ sessionID: pending.coordinatorSessionID }, { signal })
     : await native.create({ id: pending.coordinatorSessionID, title: missionCoordinatorTitle(config.title, config.objective),
       location: { directory: native.location.directory }, metadata, agent: selected.agent, model: selected.model }, { signal }, effectCurrent)
   if (session.parentID || session.id !== pending.coordinatorSessionID || session.projectID !== doc.projectID
     || session.location.directory !== native.location.directory || session.location.workspaceID !== native.location.workspaceID
-    || !matchesExecution(selected, session) || !same(session.metadata, metadata)) throw new Error("Original document coordinator differs")
+    || !matchesExecution(selected, session) || !(pending.coordinatorReused
+      ? same(session.metadata?.["codenomad.mission"], metadata["codenomad.mission"]) : same(session.metadata, metadata)))
+    throw new Error("Original document coordinator differs")
   const business = nativeScheduledPassageBusiness(input)
   await business.control.create({ requestID: pending.id, objective: config.objective, notes: config.notes, template: config.template,
     profiles: config.profiles, taskMode: config.taskMode, coordinatorSessionID: session.id, expectedCoordinatorLocation: session.location })
@@ -81,7 +99,7 @@ export async function admitNativeScheduledPassage(input: NativeScheduledPassageC
     return { kind: "not-started", current: publicationCurrent }
   }
   const variables = await (input.environment ?? readAutonomousMissionEnvironment)({ profileID: config.profileID, executionHost: config.executionHost }, input.profile, signal)
-  const exact = { id: session.id, projectID: doc.projectID, location: session.location, metadata, agent: selected.agent, model: selected.model }
+  const exact = { id: session.id, projectID: doc.projectID, location: session.location, metadata: session.metadata ?? metadata, agent: selected.agent, model: selected.model }
   await native.environment({ sessionID: session.id, variables: { ...variables } }, { signal }, effectCurrent, exact)
   const beforeSend = await readOriginalDocumentAdmission(input, original)
   if (!beforeSend.present) {

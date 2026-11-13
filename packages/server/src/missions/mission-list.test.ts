@@ -93,6 +93,15 @@ test("a row's objective label keeps what its title reads and nothing beyond", ()
       location: { directory: "/repo" }, joinedAt: 1 }], tasks: [], reports: [], frontier: [], claims: [], createdAt: 1, updatedAt: 2, revision: 3,
     history: [], historyTruncated: false })
   assert.deepEqual(base("  Fix   the\tbuild.\n\n  Then   ship  "), { id: "msn_a", objective: "Fix the build.\nThen ship", status: "completed",
-    coordinatorSessionId: "ses_c", actorSessionIds: ["ses_c"], updatedAt: 2, revision: 3 })
+    coordinatorSessionId: "ses_c", actorSessionIds: ["ses_c"], updatedAt: 2, revision: 3, taskCount: 0 })
   assert.equal(Array.from(base("é".repeat(20_000)).objective).length, 502)
+})
+
+test("a row counts its plan's tasks: a compact map's page names the whole plan", () => {
+  const task = (id: string) => ({ id, key: id, title: id, status: "completed", blockedBy: [], createdAt: 1, updatedAt: 1 })
+  const map = { version: 1, id: "msn_t", projectID: "p", projectCanonical: "/repo", objective: "Plan", template: "custom", status: "active",
+    coordinatorSessionId: "ses_c", actors: [], tasks: [task("a"), task("b")], reports: [], frontier: [], claims: [], createdAt: 1, updatedAt: 2,
+    revision: 3, history: [], historyTruncated: false }
+  assert.equal(missionSummary(map as never).taskCount, 2)
+  assert.equal(missionSummary({ ...map, tasks: [task("a")], taskPage: { offset: 0, total: 40 } } as never).taskCount, 40)
 })

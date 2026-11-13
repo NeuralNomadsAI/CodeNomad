@@ -1,4 +1,10 @@
 export const logMessages = {
+  "settings.opencode.logs.title": "Registros de OpenCode",
+  "settings.opencode.logs.open": "Ver registros de OpenCode",
+  "settings.opencode.logs.info": "Registros globales del host de OpenCode seleccionado. Pueden contener datos privados. Al abrir se leen los últimos 128 KiB; Actualizar vuelve a leerlos.",
+  "settings.opencode.logs.failed": "No se pueden leer los registros de OpenCode. Comprueba el ejecutable y el acceso al archivo y actualiza.",
+  "settings.opencode.logs.empty": "El registro está vacío.",
+  "settings.opencode.logs.truncated": "Se muestra el final del registro (128 KiB como máximo).",
   "logsView.title": "Registros del servidor",
   "logsView.actions.show": "Mostrar registros del servidor",
   "logsView.actions.hide": "Ocultar registros del servidor",

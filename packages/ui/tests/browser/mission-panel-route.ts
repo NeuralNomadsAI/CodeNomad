@@ -3,6 +3,7 @@ import { armFixtureNavigationBudget as armBudget } from "./fixture-navigation-bu
 import { compactMissionMap, missionTaskPage } from "../../../server/src/missions/mission-compact-map"
 import { missionSummary } from "../../../server/src/missions/mission-summary"
 import { missionPanelPage, missionPanelWindow, missionPanelTextWindow } from "../../../server/src/missions/mission-panel-page"
+import { missionTaskMarks } from "../../../server/src/missions/mission-task-marks"
 import { missionPanelHeader } from "../../../server/src/missions/mission-panel-header"
 import { missionActivityContext, activityActorWindow } from "../../../server/src/missions/mission-activity-context"
 import { contentDigest } from "../../../server/src/missions/content-digest"
@@ -125,6 +126,10 @@ export function missionPanelRoute(handler: (route: Route) => unknown) {
     const map = maps.find(map => map.id === (input.missionID ?? input.task?.missionID))
     if (!map) return reply({ json: { available: false, reason: "mission-not-found" } })
     const own = { ...header, missionID: map.id, revision: map.revision }
+    if (input.source === "task-marks") {
+      if (map.taskPage && map.taskPage.total > map.tasks.length) return reply({ json: { available: false, reason: "field-not-found" } })
+      return reply({ json: missionPanelWindow({ ...own, taskMarksThrough: map.updatedAt }, missionTaskMarks(map.tasks), input.window, input.cursor) })
+    }
     if (input.source === "activity") return reply({ json: missionPanelPage({ ...own, phase: "observed", observedAt: data.activity?.generatedAt ?? 1 }, [observe(map, input.actorOffset ?? 0, 160)], input.cursor) })
     if (input.source === "tasks") return reply({ json: missionPanelPage(own, [missionTaskPage(map, input.task)], input.cursor) })
     if (input.header) return reply({ json: missionPanelPage({ ...own, header: true }, [missionPanelHeader(map as MissionMap)], input.cursor) })
