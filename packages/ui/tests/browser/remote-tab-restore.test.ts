@@ -17,7 +17,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse", "offline", "auth", "pairing", "refused", "absent", "disabled", "closed", "uncertain"]) {
+for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse", "offline", "auth", "pairing", "refused", "absent", "disabled", "closed", "uncertain", "partial-refusal", "auto-off"]) {
   test(`${host}: real restore hook preserves remote occurrences (${mode})`, async () => {
     const context = await browser.newContext()
     const page = await context.newPage()
@@ -39,7 +39,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       const commit = (value: any) => { (window as any).committedState = value; sessionStorage.setItem("restored-state", JSON.stringify(value)); return true }
       ;(window as any).electronAPI = { claimClientStateAccess: async () => true, loadClientState: async () => load(),
         loadClientStatePartition: async (_token: any, key: string) => persisted?.partitions[key] ?? null, commitClientStatePartitions: async (_token: any, value: any) => commit(value),
-        saveClientState: async () => true }
+        saveClientState: async () => true, setClientStateRestoreEnabled: async () => true }
       if (host === "tauri") {
         ;(window as any).__TAURI_INTERNALS__ = { transformCallback: () => 1, invoke: async (command: string, args: any) =>
           command === "client_state_load" ? load() : command === "client_state_load_partition" ? persisted?.partitions[args.key] ?? null
@@ -80,6 +80,9 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         if (request.method() === "POST") {
           const input = request.postDataJSON()
           creates.push(`${remote ? "a" : "local"}:${input.path}`)
+          if (remote && mode === "partial-refusal" && creates.filter(value => value === "a:/same").length === 2) {
+            return route.fulfill({ status: 403, json: { error: "refused" } })
+          }
           if (remote && mode === "uncertain") return route.fulfill({ status: 503, json: { error: "unconfirmed" } })
           if (remote && mode === "closed") { markCreate(); await createGate }
           body = { ...descriptor(remote ? `remote-${generation}-${projects.length}` : "local", input.path), requestId: input.requestId }
@@ -105,6 +108,18 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       }
       await page.locator('[data-restoring="false"]').waitFor()
       await page.waitForFunction(() => (window as any).restoreFixture.tabs().some((tab: any) => tab.id === "instance:local"))
+      if (mode === "partial-refusal") {
+        const before = await page.evaluate(() => (window as any).restoreFixture.tabs())
+        assert.equal(before.length, 3)
+        assert.equal(before[1].kind, "remote-restore")
+        assert.equal(before[2].drafts.__no_session_draft__, "draft-2")
+        await page.evaluate(() => (window as any).restoreFixture.retry())
+        const after = await page.evaluate(() => (window as any).restoreFixture.tabs())
+        assert.equal(after.length, 3, "Retry must retain both occurrences")
+        assert.equal(after[2].id, before[2].id, "the successful active occurrence keeps its binding")
+        assert.deepEqual(after.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
+        assert.equal(creates.filter(value => value === "a:/same").length, 3, "only the definitively refused occurrence is recreated")
+      }
       if (["offline", "auth", "pairing", "refused", "absent"].includes(mode)) {
         assert.equal(await page.getByRole("tab").count(), 3)
         assert.equal(await page.locator('[data-remote-restore="a"]').count(), 1)
@@ -137,18 +152,19 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
         const tabs = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.deepEqual(tabs.map((tab: any) => tab.folder), ["/local", "/same", "/same"])
-        assert.equal(tabs[2].drafts.__no_session_draft__, "draft-2")
+        assert.deepEqual(tabs.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[2].id)
-        assert.equal(creates.filter(value => value === "a:/same").length, mode === "reuse" ? 0 : 2)
+        assert.equal(creates.filter(value => value === "a:/same").length, mode === "reuse" ? 0 : mode === "partial-refusal" ? 3 : 2)
         const before = creates.length
         await page.waitForFunction(() => Boolean((window as any).committedState))
         await page.reload()
         await page.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
+        assert.deepEqual((await page.evaluate(() => (window as any).restoreFixture.tabs())).map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         const secondWindow = await context.newPage()
         await secondWindow.goto(url)
         await secondWindow.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
         assert.equal((await secondWindow.evaluate(() => (window as any).restoreFixture.tabs()))[2].drafts.__no_session_draft__, "draft-2")
-        assert.equal(creates.filter(value => value === "a:/same").length, mode === "reuse" ? 0 : 2, "restart and another window reuse remote occurrences")
+        assert.equal(creates.filter(value => value === "a:/same").length, mode === "reuse" ? 0 : mode === "partial-refusal" ? 3 : 2, "restart and another window reuse remote occurrences")
         assert.equal(creates.length, before + 2, "only the mock local inventory is empty on restart and in the second window")
         await secondWindow.close()
         // A backend restart replaces UUIDs; Retry recreates the same logical tabs.
@@ -158,7 +174,8 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.id.includes("remote-1")).length === 2)
         const restored = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.equal(restored[2].drafts.__no_session_draft__, "draft-2")
-        if (mode === "create" || mode === "pairing") {
+        if (mode === "create" || mode === "pairing" || mode === "auto-off") {
+          if (mode === "auto-off") await page.evaluate(() => (window as any).restoreFixture.disableAutoRestore())
           const count = creates.filter(value => value.startsWith("a:")).length
           healthy = false
           await page.evaluate(() => (window as any).restoreFixture.disconnect())
@@ -175,7 +192,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           }
           await page.waitForFunction(() => (window as any).restoreFixture.tabs().every((tab: any) => tab.kind === "instance"))
           assert.equal(creates.filter(value => value.startsWith("a:")).length, count, "reconnect reuses the retained occurrences")
-          assert.equal((await page.evaluate(() => (window as any).restoreFixture.tabs()))[2].drafts.__no_session_draft__, "draft-2")
+          assert.deepEqual((await page.evaluate(() => (window as any).restoreFixture.tabs())).map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         }
         assert.equal(await page.evaluate(() => (window as any).restoreFixture.removeServer().then(() => false, () => true)), true)
         if (mode === "create") {

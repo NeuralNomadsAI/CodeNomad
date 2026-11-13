@@ -1,7 +1,7 @@
 import { createEffect, For, Show } from "solid-js"
 import { render } from "solid-js/web"
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
-import { initializeClientState, loadedRestorableSession } from "../../../src/stores/client-state"
+import { initializeClientState, loadedRestorableSession, setRestorePreviousStateEnabled } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { activeAppTabId, appTabs, closeInstanceTab, ensureActiveAppTab, moveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
@@ -44,6 +44,7 @@ function Fixture() {
     drafts: tab.kind === "instance" ? getSessionDraftPromptsForInstance(tab.instance.id) : tab.kind === "remote-restore" ? tab.snapshot.drafts : {},
   })),
   active: activeAppTabId, close,
+  disableAutoRestore: () => setRestorePreviousStateEnabled(false),
   retry: async () => { await Promise.all(appTabs().filter(tab => tab.kind === "remote-restore").map(tab => tab.retry())) },
   restartBackend: async () => { const client = backends.get("a")!; await refreshWorkspaceList("a", client.api) },
   disconnect: () => backends.get("a")!.events.restart(),

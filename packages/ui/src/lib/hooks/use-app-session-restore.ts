@@ -76,6 +76,28 @@ function hasLocalRestoredTab(capture: AppSessionCaptureController, index: number
   return Boolean(tabId && appTabs().some(tab => tab.id === tabId && tab.kind !== "remote-restore"))
 }
 const waitForWorkspaceMountAdoption = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+function reconcileRestoredWorkspaces({ snapshot, capture }: RestoreContext) {
+  const tabs = appTabs()
+  const bindings = capture.restoredTabIds().map(id => {
+    const tab = tabs.find(tab => tab.id === id)
+    return tab?.kind === "instance" ? tab.instance.id : tab?.kind === "remote-restore" ? tab.instanceId : undefined
+  })
+  const reserved = new Set(tabs.flatMap(tab => tab.kind === "instance" ? [tab.instance.id]
+    : tab.kind === "remote-restore" && tab.instanceId ? [tab.instanceId] : []))
+  const live = [...instances().values()].map(instance => ({
+    id: instance.id, folderPath: instance.folder, status: instance.status, backendId: instance.backendId,
+  }))
+  return reconcileWorkspaceTabs(snapshot.tabs.map(tab => tab.kind === "workspace"
+    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence, backendId: tab.backendId }
+    : { kind: tab.kind }), live).map(match => {
+      const bound = live.find(instance => instance.id === bindings[match.tabIndex]
+        && instance.status !== "stopped" && instance.status !== "error")
+      // Inventory positions can compact after a refusal. A tab's binding owns
+      // its drafts even when another occurrence now occupies its saved position.
+      return { ...match, existingWorkspaceId: bound?.id
+        ?? (match.existingWorkspaceId && !reserved.has(match.existingWorkspaceId) ? match.existingWorkspaceId : null) }
+    })
+}
 async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>): Promise<void> {
   const { snapshot, signal, capture } = context
   const sidecars = retryIndexes ? [] : snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
@@ -93,10 +115,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
     localInventoryReady = false
   }
   if (signal.aborted) return Promise.all(sidecars).then(() => undefined)
-  const matches = reconcileWorkspaceTabs(snapshot.tabs.map((tab) => tab.kind === "workspace"
-    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence, ...(tab.backendId ? { backendId: tab.backendId } : {}) }
-     : { kind: tab.kind }), Array.from(instances().values())
-       .map(({ id, folder, status, backendId }) => ({ id, folderPath: folder, status, ...(backendId ? { backendId } : {}) })))
+  const matches = reconcileRestoredWorkspaces(context)
     .filter(match => !retryIndexes || (retryIndexes.get(match.tabIndex)?.() && !hasLocalRestoredTab(capture, match.tabIndex)))
     .filter(match => { const tab = snapshot.tabs[match.tabIndex]; return localInventoryReady || tab.kind === "workspace" && backendIdOf(tab) !== LOCAL_BACKEND_ID })
   const existing = matches.filter(({ existingWorkspaceId }) => existingWorkspaceId)
@@ -113,7 +132,6 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
     if (requestedId && hasLocalRestoredTab(capture, snapshot.activeTabIndex)) context.selectActive(requestedId, true)
     else if (existing[0]) context.selectActive(getInstanceAppTabId(existing[0].existingWorkspaceId!), false)
   })
-  const claimedIds = new Set(existing.map(({ existingWorkspaceId }) => existingWorkspaceId!))
   const restoreWorkspace = async (
     match: (typeof matches)[number],
     waitForCreateCommit?: Promise<void>,
@@ -133,11 +151,8 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
         const backend = remote ? await backendRegistry.ensure(backendId) : undefined
         if (remote && (!backend || backendRegistry.state(backendId) !== "compatible")) return null
         if (!canCommitCreation() || operationSignal.aborted) return null
-        const admittedId = remote ? reconcileWorkspaceTabs(snapshot.tabs.map(tab => tab.kind === "workspace"
-          ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence, backendId: tab.backendId }
-          : { kind: tab.kind }), [...instances().values()].map(instance => ({
-            id: instance.id, folderPath: instance.folder, status: instance.status, backendId: instance.backendId,
-          }))).find(candidate => candidate.tabIndex === match.tabIndex)?.existingWorkspaceId : undefined
+        const admittedId = remote ? reconcileRestoredWorkspaces(context)
+          .find(candidate => candidate.tabIndex === match.tabIndex)?.existingWorkspaceId : undefined
         const reusableId = existingId ?? admittedId
         if (remote && !reusableId && context.attemptedRemoteCreates.has(match.tabIndex)) return null
         const create = () => createInstance(tab.folder, tab.projectName, {
@@ -159,7 +174,6 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
         if (remote && !canCommitCreation()) return null
         const id = reusableId ?? creation?.instanceId ?? null
         if (!id) return null
-        claimedIds.add(id)
         const tabId = getInstanceAppTabId(id)
         // Project selection belongs to the restored tab binding, not to the
         // slower conversation hydration (which can also settle in capture).
@@ -264,7 +278,7 @@ export function useAppSessionRestore(): void {
     if (pending) return pending
     const flight = (async () => {
       await initialRestore
-      if (!context || !canRecover()) return
+      if (!context || disposed || !clientStateIsPrimary() || preferences().multiBackend !== true) return
       const backend = await backendRegistry.ensure(backendId)
       if (!backend) return
       await backendRegistry.retryWorkspaces(backendId)

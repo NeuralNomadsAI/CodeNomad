@@ -38,6 +38,8 @@ Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek 
 
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 
+**Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de açık kalan bekleyen sekmeleri kurtarır. Aynı klasörün ayrı sekmeleri kendi taslaklarını korur.
+
 Çoklu arka uç etkin olduğunda kayıtlı uzak projeler sekme sırası, taslaklar ve seçimle geri gelir. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kimlik bilgileri veya yeni bir **Eşleştirme bağlantısı** ile **Bağlan** kullanın. Diğer sunucular kullanılabilir kalır. Kurtarma durumu okur; onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
 
 Sunucuyu kaldırmadan veya adresini değiştirmeden önce tüm pencerelerdeki proje sekmelerini kapatın. Erişilemeyen proje listesi, kontrol edilebilene kadar değişikliği engeller.

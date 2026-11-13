@@ -38,6 +38,8 @@ Closing a whole window, quitting or reloading does not close its project connect
 
 ## Restore remote tabs {#restore-remote-tabs}
 
+**Retry** also recovers still-open waiting tabs when automatic startup restoration is disabled. Separate tabs for the same folder keep their own drafts.
+
 With multi-backend enabled, saved remote projects return in their tab order with their drafts and selection. An unavailable server keeps a waiting tab: use **Retry** when it returns, or **Connect** with its username/password or a fresh **Pairing link**. Other servers remain usable. Recovery reads state; send any unconfirmed conversation action yourself only after checking its outcome.
 
 Close this server’s project tabs in every window before removing it or changing its address. An unreachable inventory keeps that change blocked until it can be checked.
