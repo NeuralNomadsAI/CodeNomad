@@ -1,4 +1,5 @@
-import { Agent, fetch as undiciFetch } from "undici"
+import { Agent, buildConnector, fetch as undiciFetch } from "undici"
+import { checkServerIdentity } from "node:tls"
 import { ExplicitEndpointError, normalizeExplicitOrigin, resolveExplicitAddress, type ResolveAddresses } from "./endpoint"
 
 const requestDenied = /^(origin|authorization|proxy-authorization|cookie|cookie2|host|forwarded|x-forwarded-.*|x-real-ip|connection|keep-alive|proxy-connection|te|trailer|transfer-encoding|upgrade)$/i
@@ -40,6 +41,8 @@ export function createExplicitTransport(options: {
   onSetCookie?: (values: string[]) => void
   /** Explicit server protocols must not carry Fetch's automatically generated browser metadata. */
   omitFetchMetadata?: boolean
+  /** Owned local endpoint that carries this origin (an SSH forward). The origin stays the request and TLS identity. */
+  dial?: () => Promise<{ address: string; family: 4 | 6; port: number }>
 }, resolve?: ResolveAddresses) {
   const origin = normalizeExplicitOrigin(options.origin)
   if (options.ca !== undefined) throw new ExplicitEndpointError("custom_ca_unsupported")
@@ -56,16 +59,20 @@ export function createExplicitTransport(options: {
       if (url.origin !== origin || url.username || url.password || url.hash) throw new ExplicitEndpointError("invalid_origin")
       signal = AbortSignal.any([lifetime, request.signal])
       signal.throwIfAborted()
-      const address = await abortable(resolveExplicitAddress(origin, resolve), signal)
+      const address: { address: string; family: 4 | 6; port?: number } = await abortable(options.dial ? options.dial() : resolveExplicitAddress(origin, resolve), signal)
       signal.throwIfAborted()
-      agent = new Agent({ connect: {
+      const connect = buildConnector({
         rejectUnauthorized: !options.skipTlsVerify,
+        checkServerIdentity: (_hostname, cert) => checkServerIdentity(url.hostname.replace(/^\[|\]$/g, ""), cert),
         // No second DNS query: TLS still verifies the original hostname and sends its SNI.
         lookup: (_hostname, options, callback) => {
           if (options.all) callback(null, [{ address: address.address, family: address.family }] as never)
           else callback(null, address.address, address.family)
         },
-      } })
+      })
+      const port = address.port
+      agent = new Agent({ connect: port === undefined ? connect
+        : (target, callback) => connect({ ...target, hostname: address.address, port: String(port) }, callback) })
       const dispatcher = options.omitFetchMetadata ? agent.compose(dispatch => (options, handler) => {
         const input = options.headers
         // Fetch supplies an object; also accept the dispatch API's flat pair form.

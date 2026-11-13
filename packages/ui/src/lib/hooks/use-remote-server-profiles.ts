@@ -6,12 +6,14 @@ import { splitPairingLink } from "../remote-pairing-link"
 import { canOpenRemoteWindows, isTauriHost } from "../runtime-env"
 import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
+import { normalizeExplicitOrigin } from "../../../../server/src/opencode/servers/origin"
 
 export type RemoteServerInput = {
   id?: string
   name: string
   baseUrl: string
   skipTlsVerify: boolean
+  ssh?: { host: string }
 }
 
 export function useRemoteServerProfiles() {
@@ -20,6 +22,16 @@ export function useRemoteServerProfiles() {
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
 
   const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
+    if (input.ssh !== undefined) {
+      if (requestedWindow) throw new Error(t("folderSelection.servers.dialog.errorConnect"))
+      const name = input.name.trim()
+      const host = input.ssh.host.trim()
+      if (!name || !host) throw new Error(t("folderSelection.servers.dialog.errorRequired"))
+      let baseUrl: string
+      try { baseUrl = normalizeExplicitOrigin(input.baseUrl.trim()) }
+      catch { throw new Error(t("folderSelection.servers.dialog.errorConnect")) }
+      return saveRemoteServerProfile({ ...input, name, baseUrl, ssh: { host } })
+    }
     // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
     const pairing = splitPairingLink(input.baseUrl)
     const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())

@@ -7,6 +7,7 @@ import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { DEVICE_COOKIE_NAME } from "../remote-control/gate"
 
 export type CodeNomadServerErrorCode = "unreachable" | "tls_error" | "auth" | "pairing_unavailable" | "pairing_expired" | "pairing_rate_limited" | "needs_credentials" | "unknown_server"
+  | "ssh_unavailable" | "ssh_host_key" | "ssh_auth"
 
 /** Stable codes only; never a URL, credential or upstream message. */
 export class CodeNomadServerError extends Error {
@@ -46,6 +47,7 @@ const PairResponse = z.object({
 export function endpointErrorCode(error: unknown): CodeNomadServerErrorCode {
   if (error instanceof CodeNomadServerError) return error.code
   if (error instanceof ExplicitEndpointError && error.code === "tls") return "tls_error"
+  if (error instanceof ExplicitEndpointError && (error.code === "ssh_unavailable" || error.code === "ssh_host_key" || error.code === "ssh_auth")) return error.code
   return "unreachable"
 }
 
@@ -77,6 +79,7 @@ export class CodeNomadServerClient {
     resolve?: ResolveAddresses
     skipTlsVerify?: boolean
     signal?: AbortSignal
+    dial?: Parameters<typeof createExplicitTransport>[0]["dial"]
   } = {}) {
     this.#signal = options.signal ? AbortSignal.any([this.#controller.signal, options.signal]) : this.#controller.signal
     if (secret?.cookie) for (const [name, value] of cookiePairs([secret.cookie])) this.#cookies.set(name, value)
@@ -88,6 +91,7 @@ export class CodeNomadServerClient {
       origin: this.origin, signal: this.#signal,
       omitFetchMetadata: true,
       skipTlsVerify: this.options.skipTlsVerify,
+      dial: this.options.dial,
       headers: (): Record<string, string> => { check(); return { ...(this.#cookies.size ? { cookie: [...this.#cookies].map(([name, value]) => `${name}=${value}`).join("; ") } : {}),
         ...(this.secret?.kind === "device" ? { "x-codenomad-server-request": "1" } : {}) } },
       onSetCookie: values => this.capture(values, check),
@@ -121,7 +125,7 @@ export class CodeNomadServerClient {
   /** A fresh, cookie-free exchange; the code is never retained by the client. */
   async pair(code: string): Promise<CodeNomadServerSecret> {
     const transport = createExplicitTransport({ origin: this.origin, signal: this.#signal,
-      skipTlsVerify: this.options.skipTlsVerify, omitFetchMetadata: true }, this.options.resolve)
+      skipTlsVerify: this.options.skipTlsVerify, omitFetchMetadata: true, dial: this.options.dial }, this.options.resolve)
     const response = await transport.fetch(new URL(SERVER_PAIR_PATH, this.origin), {
       method: "POST", headers: { "content-type": "application/json", "x-codenomad-server-pairing": "1" },
       body: JSON.stringify({ code, hostName: hostname().slice(0, 255) }), signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
