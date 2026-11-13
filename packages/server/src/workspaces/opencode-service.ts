@@ -34,7 +34,7 @@ export type OpenCodeSharedServiceOptions = {
 export interface ServiceConnection {
   endpoint: Endpoint
   client: OpenCodeClient
-  fetch: typeof fetch
+  fetch: ReturnType<typeof createRuntimeTransport>["fetch"]
   assertCurrent: () => void
   invalidate: () => void
   profile: (signal?: AbortSignal) => Promise<ContractProfile>
@@ -246,9 +246,9 @@ export class OpenCodeSharedService {
       connection.assertCurrent()
       return globalThis.fetch(input, init)
     }, negotiation.signal)
-    const fetch: typeof globalThis.fetch = (input, init) => {
+    const fetch: ServiceConnection["fetch"] = (input, init, mediaResponseProcessor) => {
       connection.assertCurrent()
-      return transport.fetch(input, init)
+      return transport.fetch(input, init, mediaResponseProcessor)
     }
     const connection: ServiceConnection = {
       endpoint,

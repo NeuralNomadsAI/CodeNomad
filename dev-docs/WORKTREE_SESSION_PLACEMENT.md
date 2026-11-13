@@ -175,6 +175,15 @@ authorized workspace spelling before changing UI state.
 ## Agent conventions
 
 - Preference authority probes use `ownsLocation(id, location, client, { signal, purpose, strict: true })`: a successful read can establish a negative; physical-path, Git identity and WSL translation failures reject. Ordinary inventory preserves root-only fallback when Git reports a non-repository. Only strict ownership qualifies a cached fallback's checkout absence through filesystem discovery; its qualification state stays inside the ownership cache. Git-unavailable inventory retains its exact-folder `directoryOnly` authority. Strict reads validate each registered checkout root before omitting a missing projected project subfolder; registered-root and opened-root failures reject. Concurrent Git identity preflights retain all admitted reads through settlement.
+- Session-media ownership captures the published workspace occurrence, root scalars,
+  connection client and request signal before asynchronous reads. Non-root checks
+  scan a private native inventory with physical Git validation and guards between
+  dependent steps. Invalidation restarts at most three times under that capture;
+  retirement, replacement and repeated invalidation refuse the read.
+  Missing nested project directories resolve through existing physical ancestors
+  and retain the registered checkout's projection. Broken links, indeterminate
+  physical errors and invalid checkout registrations refuse media ownership.
+
 - Event ownership uses registered-only native worktree snapshots, isolated from display/request discovery scans (`ownsDirectory` / `ownsLocation` with the `event` purpose). Never run native strategy refresh from routing or join its pending inventory. Keep physical Git identity, nested-folder/WSL projection, native registration, invalidation and disposal checks shared with ordinary ownership; ordinary requests and explicit worktree discovery retain refresh semantics. Regression: `instance-event-ownership.test.ts` and the isolated native worktree fixture.
 - Worktree discovery/create/remove use `workspaces/native-worktrees.ts` and the native OpenCode worktree API. CodeNomad supplies the `.codenomad/worktrees` default, named-branch policy and verified family transactions. Git common-directory identity scopes the native inventory to the opened local repository; opaque worktree identifiers are separate from mutable branch labels. Validate through `scripts/test-opencode-location-native.mjs` with an isolated CLI and `tests/browser/worktrees.test.ts` for selector gestures.
 - Worktree inventory snapshots live in `workspaces/worktree-inventory.ts`: display reads serve cached data and lazily revalidate, directory authorization uses validated reads, and family transactions force fresh reads. Invalidation retains display data and fences pending scans; `workspace.worktreesChanged` refreshes UI consumers after a changed snapshot is published. Keep selector opening independent of refresh completion and suppress duplicate selection events during inventory reconciliation.

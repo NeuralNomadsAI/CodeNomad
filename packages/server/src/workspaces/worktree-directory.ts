@@ -163,19 +163,27 @@ export async function resolveWorktreeSlugForDirectory(params: WorktreeSource & {
   return refreshed.worktrees.find((wt) => wt.normalizedDirectory === target)?.slug ?? null
 }
 
-async function resolveDirectoryPath(directory: string): Promise<string | null> {
+async function resolveDirectoryPath(directory: string, check?: () => void): Promise<string | null> {
+  check?.()
   const trimmed = (directory ?? "").trim()
   if (!trimmed) return null
   let current = path.resolve(trimmed)
   const missing: string[] = []
   while (true) {
+    check?.()
     try {
-      return path.join(await realpath(current), ...missing)
-    } catch {
+      const resolved = await realpath(current)
+      check?.()
+      return path.join(resolved, ...missing)
+    } catch (error) {
+      check?.()
+      if (check && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
       try {
         await lstat(current)
+        check?.()
         return null
       } catch (error) {
+        check?.()
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null
       }
       const parent = path.dirname(current)
@@ -209,8 +217,12 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   directory: string
   strict?: boolean
   logger?: LogLike
+  media?: { current: () => void }
 }, budget = params.strict ? { restarts: 0 } : undefined): Promise<{ slug: string; directory: string; worktreeDirectory: string } | null> {
-  const target = params.strict ? await realpath(params.directory) : await resolveDirectoryPath(params.directory)
+  const current = params.media?.current
+  current?.()
+  const target = params.strict && !params.media ? await realpath(params.directory) : await resolveDirectoryPath(params.directory, current)
+  current?.()
   if (!target) return null
   const find = (worktrees: WorktreeCacheEntry["worktrees"]) => worktrees
     .filter((worktree) => worktree.directoryOnly ? worktree.normalizedDirectory === target : isPathWithinWorktree(worktree.normalizedDirectory, target))
@@ -230,6 +242,37 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
         throw error
       }
     }))).filter((worktree): worktree is NonNullable<typeof worktree> => worktree !== null))
+  }
+  if (params.media) {
+    const current = params.media.current
+    current()
+    const worktrees = await params.loadWorktrees()
+    current()
+    if (worktrees.some(worktree => worktree.directoryOnly)) throw new Error("Git ownership inventory unavailable")
+    const entries = await Promise.all(worktrees.map(async worktree => {
+      current()
+      const worktreeDirectory = await realpath(worktree.registeredDirectory ?? worktree.directory)
+      current()
+      if (worktree.kind === "root" && !worktree.registeredDirectory) {
+        const common = await discoverCheckoutCommonDirectory(worktreeDirectory)
+        current()
+        if (common !== undefined) throw new Error("Git ownership inventory unavailable")
+      }
+      try {
+        const normalizedDirectory = await resolveDirectoryPath(worktree.directory, current)
+        current()
+        if (!normalizedDirectory) throw new Error("Worktree project directory unavailable")
+        return { ...worktree, worktreeDirectory, normalizedDirectory }
+      } catch (error) {
+        current()
+        if ((error as NodeJS.ErrnoException).code === "ENOTDIR"
+          && worktree.slug !== "root" && worktree.directory !== worktreeDirectory) return null
+        throw error
+      }
+    }))
+    current()
+    const match = find(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null))
+    return match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null
   }
   const finalFreshRead = budget?.restarts === WORKTREE_OWNERSHIP_RESTART_LIMIT
   let entry = await getCachedWorktrees(params, finalFreshRead, budget)
