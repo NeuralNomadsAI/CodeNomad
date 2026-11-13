@@ -150,6 +150,11 @@ Ingress clients remain subject to the host-only gate for capability management.
 See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
 for the API and revocation lifetime.
 
+Remote project previews retain their issuing client for dismissal, tab cleanup
+and attachment revocation. Renderer `pagehide` sends keepalive capability deletion
+under that same proof. Displayed addresses and persisted history use application
+URLs; loading capabilities remain inside the embedded preview.
+
 ## Direct listener origins and password sessions
 
 The direct listener grants credentialed CORS to its advertised local and remote

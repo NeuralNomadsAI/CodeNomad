@@ -12,6 +12,8 @@ Each preview belongs to its project folder and session. Switching conversation, 
 
 Saved history restores only when you explicitly reopen that session's browser, not at startup/session selection. It stores URLs and a cursor, not unsent forms, DOM, POST bodies or JavaScript memory. History is bounded to 32 URLs per session and a shared layout budget; older entries may be trimmed. Restoring a URL may perform a fresh page load; it is not transaction replay.
 
+Remote project tabs load previews through that project's CodeNomad server. The address bar and saved history show the application URL. Closing the preview or project tab, disconnecting/removing the server, or quitting ends its live page and connections; reopening loads the saved address with its history. Server sign-in credentials stay on the backend; proxied application cookies are filtered. Keep internal preview loading addresses inside CodeNomad.
+
 ## Shared sign-ins and automation boundaries {#signins-automation}
 
 Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments remain session-owned. Iframe previews are not a full shared native browser profile.

@@ -37,7 +37,7 @@ test("Markdown availability and live preview navigation follow their backend, ke
   await page.waitForFunction(() => document.querySelector('[data-owner="remote"] a')?.hasAttribute("data-preview-link-title"))
   await remote.locator("a").click()
   await remote.locator("iframe").waitFor()
-  assert.match(await remote.locator("iframe").getAttribute("src") ?? "", /^https:\/\/preview.example.invalid\/previews\/remote-\d+\/app\?q=1#hash$/)
+  assert.match(await remote.locator("iframe").getAttribute("src") ?? "", /^http:\/\/cap-remote-\d+.preview.localhost:1234\/previews\/remote-\d+\/app\?q=1#hash$/)
   await remote.locator("form input").fill("https://example.com/next")
   await remote.locator("form input").press("Enter")
   await page.waitForFunction(() => (window as any).previewRouting.calls.filter((call: any) => call.owner === "remote" && call.method === "POST").length === 2

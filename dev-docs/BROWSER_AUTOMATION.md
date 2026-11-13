@@ -124,6 +124,17 @@ authority header. Retargeting, removal, Forget, observed identity change and
 backend shutdown also revoke transfers. Remote token deletion is best-effort
 under that original generation.
 
+The session preview store uses the owning client's capability API for remote
+projects. Same-application navigation reuses its capability; changing application
+origins creates a replacement. `BrowserFrame` separates the loaded source from
+the displayed application address and maps native history entries before storing
+their logical URLs. Remote dismissal releases live authority while retaining
+saved logical history. Tab detachment and attachment revocation fence pending
+creation/restoration and release live capabilities; `pagehide` uses keepalive
+deletion. Internal content URLs remain confined to embedded loading. The
+`isolatedOrigin` frame policy requires origin-bound HTTP/WS admission on its
+host-issued content origin.
+
 `preview-capabilities.test.ts` covers content-origin reservation, equal remote
 tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
 destination ownership, revocation and the real remote CodeNomad path proxy.

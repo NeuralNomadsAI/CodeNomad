@@ -12,6 +12,8 @@ Chaque aperçu appartient à son dossier de projet et sa session. Changer de con
 
 L’historique enregistré se restaure seulement à la réouverture explicite du navigateur de cette session, pas au démarrage/à la sélection de session. Il stocke des URL et un curseur, pas les formulaires non envoyés, le DOM, les corps POST ou la mémoire JavaScript. L’historique est borné à 32 URL par session et à un budget de disposition partagé ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page ; ce n’est pas un rejeu de transaction.
 
+Dans un onglet de projet distant, l’aperçu passe par le serveur CodeNomad de ce projet. La barre d’adresse et l’historique enregistré affichent l’URL de l’application. Fermer l’aperçu ou l’onglet du projet, déconnecter/supprimer le serveur ou quitter termine la page et ses connexions ; la réouverture recharge l’adresse enregistrée avec son historique. Les identifiants de connexion au serveur restent sur le backend ; les cookies applicatifs relayés sont filtrés. Gardez les adresses internes de chargement des aperçus dans CodeNomad.
+
 ## Connexions partagées et limites d’automatisation {#signins-automation}
 
 Les aperçus natifs partagent cookies, connexions et stockage de site entre projets/sessions dans le même moteur de bureau et périmètre profil/configuration, séparément du moteur de rendu de confiance CodeNomad. Se déconnecter d’un site dans un aperçu affecte les autres qui utilisent ce stockage. Documents, formulaires, stockage de session, historiques de navigation et rattachements d’automatisation restent propres à la session. Les aperçus iframe ne sont pas un profil de navigateur natif partagé complet.

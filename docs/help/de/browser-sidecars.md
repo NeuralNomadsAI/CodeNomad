@@ -12,6 +12,8 @@ Jede Vorschau gehört zu ihrem Projektordner und ihrer Sitzung. Wechsel von Unte
 
 Gespeicherter Verlauf wird nur wiederhergestellt, wenn Sie den Sitzungsbrowser ausdrücklich erneut öffnen, nicht beim Start/bei Sitzungsauswahl. Er speichert URLs und einen Zeiger, keine ungesendeten Formulare, DOM, POST-Inhalte oder JavaScript-Speicher. Verlauf ist auf 32 URLs pro Sitzung und ein gemeinsames Layoutbudget begrenzt; ältere Einträge können gekürzt werden. URL-Wiederherstellung kann eine frische Seite laden; sie ist keine Transaktionswiederholung.
 
+Tabs entfernter Projekte laden Vorschauen über den CodeNomad-Server des jeweiligen Projekts. Adressleiste und gespeicherter Verlauf zeigen die Anwendungs-URL. Das Schließen der Vorschau oder des Projekt-Tabs, das Trennen/Entfernen des Servers oder das Beenden schließt die aktive Seite und ihre Verbindungen; erneutes Öffnen lädt die gespeicherte Adresse mit ihrem Verlauf. Server-Anmeldedaten bleiben im Backend; weitergeleitete Anwendungscookies werden gefiltert. Interne Ladeadressen der Vorschau bleiben innerhalb von CodeNomad.
+
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 
 Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen bleiben sitzungsbezogen. Iframe-Vorschauen sind kein vollständiges gemeinsames natives Browserprofil.

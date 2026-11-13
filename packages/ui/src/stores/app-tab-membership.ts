@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 
 const [openInstanceTabIds, setOpenInstanceTabIds] = createSignal<ReadonlySet<string>>(new Set())
 const closeRequestListeners = new Set<(instanceId: string) => void>()
+const detachListeners = new Set<(instanceId: string) => void>()
 
 function attachInstanceTabMembership(instanceId: string): void {
   setOpenInstanceTabIds((previous) => {
@@ -11,12 +12,18 @@ function attachInstanceTabMembership(instanceId: string): void {
 }
 
 function detachInstanceTabMembership(instanceId: string): void {
+  for (const listener of detachListeners) listener(instanceId)
   setOpenInstanceTabIds((previous) => {
     if (!previous.has(instanceId)) return previous
     const next = new Set(previous)
     next.delete(instanceId)
     return next
   })
+}
+
+export function onInstanceTabDetached(listener: (instanceId: string) => void): () => void {
+  detachListeners.add(listener)
+  return () => detachListeners.delete(listener)
 }
 
 function onInstanceTabCloseRequested(listener: (instanceId: string) => void): () => void {

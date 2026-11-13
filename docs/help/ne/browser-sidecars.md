@@ -12,6 +12,8 @@
 
 सुरक्षित इतिहास startup/session चयनमा होइन, त्यस सत्रको ब्राउजर स्पष्ट फेरि खोल्दा मात्र फर्किन्छ। यसले URL र cursor राख्छ, नपठाइएका form, DOM, POST body वा JavaScript memory होइन। इतिहास प्रति सत्र 32 URL र साझा layout budget मा सीमित छ; पुराना प्रविष्टि काटिन सक्छन्। URL पुनर्स्थापनाले नयाँ page load गर्न सक्छ; यो transaction replay होइन।
 
+रिमोट प्रोजेक्टका ट्याबहरूले त्यस प्रोजेक्टको CodeNomad सर्भरमार्फत पूर्वावलोकन लोड गर्छन्। ठेगाना पट्टी र सुरक्षित इतिहासले अनुप्रयोगको URL देखाउँछन्। पूर्वावलोकन वा प्रोजेक्ट ट्याब बन्द गर्दा, सर्भर विच्छेद/हटाउँदा वा बाहिरिँदा सक्रिय पृष्ठ र उसका जडानहरू समाप्त हुन्छन्; फेरि खोल्दा सुरक्षित ठेगाना र इतिहासबाट पुनः लोड हुन्छ। सर्भरका sign-in विवरण ब्याकएन्डमै रहन्छन्; प्रोक्सी गरिएका अनुप्रयोग cookies फिल्टर हुन्छन्। पूर्वावलोकनका आन्तरिक लोडिङ ठेगानाहरू CodeNomad भित्रै राख्नुहोस्।
+
 ## साझा sign-in र automation सीमा {#signins-automation}
 
 एउटै desktop engine र profile/configuration दायरामा नेटिभ पूर्वावलोकनले project/session भर cookie, sign-in र site storage साझा गर्छन्, trusted CodeNomad renderer बाट अलग। एउटामा site logout गर्दा त्यही store का अरू पूर्वावलोकन प्रभावित हुन्छन्। document, form, session storage, navigation history र automation attachment सत्रकै स्वामित्वमा रहन्छन्। iframe पूर्वावलोकन पूर्ण साझा native browser profile होइनन्।

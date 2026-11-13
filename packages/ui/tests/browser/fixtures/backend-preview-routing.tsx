@@ -38,7 +38,8 @@ const remote = createBackendClient({ id: "preview_remote", baseUrl: "https://pre
   const number = ++token
   await wait("preview")
   return Response.json({ token: `remote-${number}`, sessionId: body.sessionId, targetUrl: body.url,
-    proxyUrl: `/previews/remote-${number}/app?q=1#hash`, createdAt: "" })
+    proxyUrl: `/previews/remote-${number}/app?q=1#hash`, createdAt: "", capability: `cap-remote-${number}`,
+    contentUrl: `http://cap-remote-${number}.preview.localhost:1234/previews/remote-${number}/app?q=1#hash` })
 } })
 const registry = backends as Map<string, BackendClient>
 registry.set(remote.id, remote)
