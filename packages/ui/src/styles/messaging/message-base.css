@@ -523,6 +523,16 @@
   min-width: 0;
 }
 
+.message-reasoning-model {
+  @apply truncate;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  color: var(--text-muted);
+}
+
 .message-reasoning-label-primary {
   display: inline-flex;
   align-items: center;
