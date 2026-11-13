@@ -16,8 +16,220 @@ import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "../remote-control/test-support/surface"
 import { registerRequestLogging } from "../server/request-logging"
 import type { Logger } from "../logger"
+import { RELAY_AUTHORITY_HEADER as AUTHORITY, RELAY_AUTHORITY_QUERY, RELAY_BOOTSTRAP } from "./relay-authority"
 
 const PREFIX = "/api/backends/saved"
+
+for (const operation of ["login", "logout"] as const) {
+  for (const carrier of ["stale-query", "malformed-query", "duplicate-query", "conflicting"] as const) {
+    test(`auth ${operation} rejects ${carrier} without touching the current connection`, async t => {
+      const f = await fixture(t)
+      const admit = async () => {
+        assert.equal((await f.connect()).status, 200)
+        f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
+        return String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
+      }
+      const old = await admit()
+      await f.manager.forget("saved")
+      const current = await admit()
+      assert.notEqual(current, old)
+      const saved = fs.readFileSync(f.file, "utf8")
+      const before = f.remote.state.requests.length
+      const value = carrier === "malformed-query" ? "malformed" : old
+      const query = `${RELAY_AUTHORITY_QUERY}=${value}` + (carrier === "duplicate-query" ? `&${RELAY_AUTHORITY_QUERY}=${current}` : "")
+      const result = await f.call(`/api/auth/${operation}?${query}`, { method: "POST",
+        headers: { "content-type": "application/json", ...(carrier === "conflicting" ? { [AUTHORITY]: current } : {}) },
+        body: JSON.stringify(operation === "login" ? { username: "codenomad", password: "remote-password" } : {}),
+      })
+      assert.equal(result.status, operation === "login" ? 401 : 502)
+      assert.deepEqual(JSON.parse(result.body), { error: operation === "login" ? "auth" : "unreachable" })
+      assert.equal(f.remote.state.requests.length, before, "no upstream auth or fetch on refusal")
+      f.manager.assertProof("saved", current)
+      assert.equal(fs.readFileSync(f.file, "utf8"), saved)
+      assert.equal((await f.call("/api/filesystem", { headers: { [AUTHORITY]: current } })).status, 200)
+    })
+  }
+}
+
+test("auth carriers require unique nonempty exact values; bootstrap is login-only", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
+  const proof = String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
+  for (const operation of ["login", "logout"] as const) {
+    const before = f.remote.state.requests.length
+    for (const options of [
+      { query: `${RELAY_AUTHORITY_QUERY}=`, headers: {} },
+      { query: `${RELAY_AUTHORITY_QUERY}=${"x".repeat(43)}`, headers: {} },
+      { query: `${RELAY_AUTHORITY_QUERY}=bootstrap-extra`, headers: {} },
+      { query: "", headers: { [AUTHORITY]: "" } },
+      { query: "", headers: { [AUTHORITY]: [proof, proof] } },
+      { query: `${RELAY_AUTHORITY_QUERY}=${proof}&${RELAY_AUTHORITY_QUERY}=${proof}`, headers: {} },
+      ...(operation === "logout" ? [{ query: `${RELAY_AUTHORITY_QUERY}=${RELAY_BOOTSTRAP}`, headers: {} }] : []),
+    ]) {
+      assert.equal((await f.call(`/api/auth/${operation}?${options.query}`, { method: "POST", headers: options.headers })).status, operation === "login" ? 401 : 502)
+      f.manager.assertProof("saved", proof)
+    }
+    assert.equal(f.remote.state.requests.length, before)
+  }
+})
+
+for (const carrier of ["legacy", "bootstrap-query", "bootstrap-header", "current-query", "current-header", "current-both"] as const) {
+  test(`auth permits ${carrier} login and current/legacy logout without forwarding carriers`, async t => {
+    const f = await fixture(t)
+    await f.connect()
+    f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
+    const proof = String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
+    const value = carrier.startsWith("bootstrap") ? RELAY_BOOTSTRAP : proof
+    const query = carrier.endsWith("query") || carrier.endsWith("both") ? `?${RELAY_AUTHORITY_QUERY}=${value}` : ""
+    const headers = carrier.endsWith("header") || carrier.endsWith("both") ? { [AUTHORITY]: value } : {}
+    const before = f.remote.state.requests.length
+    assert.equal((await f.call(`/api/auth/login${query}`, { method: "POST", headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ username: "codenomad", password: "remote-password" }) })).status, 200)
+    f.manager.assertProof("saved", proof)
+    assert(f.remote.state.requests.length > before)
+    for (const request of f.remote.state.requests.slice(before)) {
+      assert.equal(request.headers[AUTHORITY], undefined)
+      assert.equal(new URL(request.path, f.remote.origin).searchParams.has(RELAY_AUTHORITY_QUERY), false)
+    }
+    const logoutQuery = query.replace(RELAY_BOOTSTRAP, proof)
+    const logoutHeaders = Object.keys(headers).length ? { [AUTHORITY]: proof } : {}
+    assert.equal((await f.call(`/api/auth/logout${logoutQuery}`, { method: "POST", headers: logoutHeaders })).status, 200)
+    assert.throws(() => f.manager.assertProof("saved", proof))
+  })
+}
+
+test("local metadata proof ignores forged upstream headers/body; stale and malformed proofs dispatch nothing", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1, [AUTHORITY]: "forged-body" }, headers: { [AUTHORITY]: "forged-upstream" } })
+  const legacy = await f.call("/api/meta")
+  assert.equal(legacy.headers[AUTHORITY], undefined)
+  const admitted = await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })
+  const proof = String(admitted.headers[AUTHORITY])
+  assert.equal(admitted.status, 200)
+  assert.match(proof, /^[A-Za-z0-9_-]{43}$/)
+  assert.notEqual(proof, "forged-upstream")
+  assert.equal(f.remote.state.requests.at(-1)!.headers[AUTHORITY], undefined)
+  const before = f.remote.state.requests.length
+  for (const value of ["", "malformed", "x".repeat(43), RELAY_BOOTSTRAP, [proof, proof]]) {
+    const result = await f.call("/api/filesystem", { headers: { [AUTHORITY]: value } })
+    assert.equal(result.status, 502)
+  }
+  const duplicate = await f.call(`/api/filesystem?${RELAY_AUTHORITY_QUERY}=${proof}&${RELAY_AUTHORITY_QUERY}=${proof}`)
+  assert.equal(duplicate.status, 502)
+  f.profiles.push({ id: "other", baseUrl: f.remote.origin, skipTlsVerify: false })
+  assert.equal((await send(f.origin, "/api/backends/other/api/filesystem", { headers: { [AUTHORITY]: proof } })).status, 502)
+  assert.equal(f.remote.state.requests.length, before)
+  assert.equal((await f.call(`/api/filesystem?path=app&${RELAY_AUTHORITY_QUERY}=${proof}`)).status, 200)
+  assert.equal(f.remote.state.requests.at(-1)!.path, "/api/filesystem?path=app")
+  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "B", apiContract: 1 } })
+  assert.equal((await f.call("/api/meta", { headers: { [AUTHORITY]: proof } })).status, 404)
+  const afterObservation = f.remote.state.requests.length
+  assert.equal((await f.call("/api/filesystem", { headers: { [AUTHORITY]: proof } })).status, 502)
+  assert.equal((await f.call(`/api/filesystem?${RELAY_AUTHORITY_QUERY}=${proof}`)).status, 502)
+  assert.equal(f.remote.state.requests.length, afterObservation)
+})
+
+test("revocation during a bounded metadata read publishes no proof", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  const entered = deferred<void>(), release = deferred<void>()
+  f.remote.state.handlers.set("/api/meta", (_request, response) => {
+    entered.resolve()
+    void release.promise.then(() => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ serverId: "A", apiContract: 1 })) })
+  })
+  const pending = f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })
+  await bounded(entered.promise)
+  await f.manager.forget("saved")
+  release.resolve()
+  const result = await pending
+  assert.equal(result.status, 502)
+  assert.equal(result.headers[AUTHORITY], undefined)
+})
+
+test("metadata refusal retains status and invalid body for registry classification without issuing a proof", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  for (const result of [{ status: 404, body: { error: "missing" } }, { status: 200, body: {} }, { status: 200, body: { serverId: " " } }]) {
+    f.remote.state.overrides.set("/api/meta", result)
+    const response = await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })
+    assert.equal(response.status, result.status)
+    assert.deepEqual(JSON.parse(response.body), result.body)
+    assert.equal(response.headers[AUTHORITY], undefined)
+  }
+})
+
+test("proof is shared across listeners until last owner closes and never persists with credentials", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
+  const proof = String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
+  assert.equal(fs.readFileSync(f.file, "utf8").includes(proof), false)
+  const second = new RemoteServerBrowseManager(f.settings)
+  t.after(() => second.close())
+  f.manager.close()
+  const result = await second.relay("saved", "/api/filesystem", { method: "GET" }, proof)
+  assert.equal(result.status, 200)
+  await result.body?.cancel()
+  second.close()
+  const replacement = new RemoteServerBrowseManager(f.settings)
+  t.after(() => replacement.close())
+  const before = f.remote.state.requests.length
+  await assert.rejects(replacement.relay("saved", "/api/filesystem", { method: "GET" }, proof))
+  assert.equal(f.remote.state.requests.length, before)
+  const next = await replacement.relay("saved", "/api/meta", { method: "GET" }, RELAY_BOOTSTRAP)
+  assert.equal(next.status, 200)
+  assert.notEqual(next.headers.get(AUTHORITY), proof)
+})
+
+test("same-principal cookie/login renewal retains proof; explicit replacement credentials revoke it", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
+  const proof = String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
+  f.remote.restart()
+  assert.equal((await f.call("/api/filesystem", { headers: { [AUTHORITY]: proof } })).status, 200)
+  assert.equal((await f.call("/api/meta", { headers: { [AUTHORITY]: proof } })).headers[AUTHORITY], proof)
+  assert.equal((await f.connect()).status, 200)
+  assert.equal((await f.call("/api/meta", { headers: { [AUTHORITY]: proof } })).headers[AUTHORITY], proof)
+  f.remote.state.password = "replacement-password"
+  assert.equal((await f.connect("replacement-password")).status, 200)
+  const before = f.remote.state.requests.length
+  for (const target of ["/api/filesystem", "/api/auth/login", "/api/auth/logout"]) {
+    const result = await f.call(target, { method: target === "/api/filesystem" ? "GET" : "POST", headers: { [AUTHORITY]: proof } })
+    assert([401, 502].includes(result.status))
+  }
+  assert.equal(f.remote.state.requests.length, before)
+  const next = await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })
+  assert.equal(next.status, 200)
+  assert.notEqual(next.headers[AUTHORITY], proof)
+})
+
+test("an already dispatched bound mutation is never replayed after revocation", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
+  const proof = String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
+  const entered = deferred<void>()
+  let mutations = 0
+  f.remote.state.handlers.set("/api/test/mutation", (request, response) => {
+    mutations++
+    request.resume()
+    request.on("end", () => { entered.resolve(); response.writeHead(200); response.write("accepted") })
+  })
+  const socket = open(f.origin, `${PREFIX}/api/test/mutation`, { method: "POST", headers: { [AUTHORITY]: proof } })
+  t.after(() => socket.request.destroy())
+  socket.request.end("payload")
+  await bounded(entered.promise)
+  const response = await bounded(socket.response)
+  const closed = new Promise<void>(resolve => { response.once("close", resolve); response.resume() })
+  await f.manager.forget("saved")
+  await bounded(closed)
+  assert.equal(mutations, 1)
+  assert.equal((await f.call("/api/test/mutation", { method: "POST", headers: { [AUTHORITY]: proof }, body: "payload" })).status, 502)
+  assert.equal(mutations, 1)
+})
 
 test("compressed upstream bodies publish decoded bytes without a stale wire length", async t => {
   const f = await fixture(t)
@@ -85,8 +297,8 @@ async function fixture(t: TestContext, remoteOrigin?: string) {
   const remote = await startFakeCodeNomad()
   const profiles = [{ id: "saved", baseUrl: remoteOrigin ?? remote.origin, skipTlsVerify: false }]
   const file = path.join(directory, "remote-server-credentials.json")
-  const manager = new RemoteServerBrowseManager({ getOwner: () => ({ remoteServers: profiles }),
-    configYamlPathForAuthority: () => path.join(directory, "config.yaml") })
+  const settings = { getOwner: () => ({ remoteServers: profiles }), configYamlPathForAuthority: () => path.join(directory, "config.yaml") }
+  const manager = new RemoteServerBrowseManager(settings)
   const app = Fastify()
   const logs: unknown[] = []
   registerRequestLogging(app, { debug: (record: unknown) => logs.push(record), trace: (record: unknown) => logs.push(record), isLevelEnabled: () => true } as unknown as Logger)
@@ -103,7 +315,7 @@ async function fixture(t: TestContext, remoteOrigin?: string) {
   const call = (target: string, options: Parameters<typeof send>[2] = {}) => send(origin, `${PREFIX}${target}`, options)
   const connect = (password = "remote-password") => call("/api/auth/login", { method: "POST",
     headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "codenomad", password }) })
-  return { remote, manager, app, origin, profiles, file, call, connect, logs }
+  return { remote, manager, settings, app, origin, profiles, file, call, connect, logs }
 }
 
 test("relay diagnostics omit private request bodies and target queries", async t => {

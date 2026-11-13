@@ -5,6 +5,7 @@ import { createRemoteBackendClient, registerBackendClient, type BackendClient } 
 import { backendCompatibility } from "../lib/backend-compatibility"
 import { backendEvents, type BackendEvents } from "../lib/backend-events"
 import { isBackendId, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import { RELAY_AUTHORITY_HEADER } from "../../../server/src/codenomad-servers/relay-authority"
 
 export type BackendAdmissionState = "idle" | "admitting" | "compatible" | "refused" | "unauthorized" | "unreachable"
 type Entry = {
@@ -90,6 +91,10 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         return false
       }
       entry.serverId = meta!.serverId
+      if (entry.client.admitRelayAuthority && !entry.client.admitRelayAuthority(response.headers.get(RELAY_AUTHORITY_HEADER))) {
+        detach(id, "refused")
+        return false
+      }
       if (entry.detach) setState(id, "compatible")
       return active()
     } catch (error) {
@@ -111,7 +116,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     if (!profile) return Promise.resolve(undefined)
     const active = entries.get(id)
     if (active) return active.revoked ? Promise.resolve(undefined) : active.pending
-    const client = (options.createClient ?? createRemoteBackendClient)(id)
+    const client = options.createClient ? options.createClient(id) : createRemoteBackendClient(id, { bindRelayAuthority: true })
     const entry: Entry = { profile: { ...profile }, client, controller: new AbortController(),
       pending: Promise.resolve(undefined), revoked: false }
     entries.set(id, entry)
