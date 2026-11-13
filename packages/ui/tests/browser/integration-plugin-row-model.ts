@@ -1,6 +1,6 @@
 import type { Page, Route } from "playwright"
 
-/** One catalogue integration as the integrations route projects it (spec change §4.2). */
+/** One catalogue integration as the integrations route projects it (`IntegrationView`). */
 export function integrationView(id: string, overrides: Record<string, unknown> = {}) {
   const app = id[0]!.toUpperCase() + id.slice(1)
   return {

@@ -1,4 +1,4 @@
-import { Show, createSignal, onCleanup } from "solid-js"
+import { createSignal, onCleanup } from "solid-js"
 import Switch from "@suid/material/Switch"
 import type { PluginActivationControl, PluginControlLocation, PluginControlScope } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -8,6 +8,11 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 import { pluginControlsCache } from "../stores/plugin-controls"
 
 const log = getLogger("session")
+// Like the Yolo switch's accent override, in the integration accent (styles/tokens.css).
+const INTEGRATION_SWITCH_SX = {
+  "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--integration-accent)" },
+  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--integration-accent)" },
+}
 const [pending, setPending] = createSignal<ReadonlySet<string>>(new Set())
 const pendingKey = (instanceId: string, location: PluginControlLocation, scope: PluginControlScope, pluginId: string) =>
   JSON.stringify([instanceId, location.directory, scope, pluginId])
@@ -49,8 +54,8 @@ export function PluginActivationSwitch(props: {
   active?: boolean
   /** Shown but not writable here, with this reason as its tooltip; it stays focusable. */
   lockedReason?: string
-  /** A visible scope caption, for surfaces without column headers. */
-  caption?: string
+  /** An integration's switch: blue, where a plain plugin's is green. */
+  integration?: boolean
 }) {
   const { t } = useI18n()
   let disposed = false
@@ -74,13 +79,14 @@ export function PluginActivationSwitch(props: {
     }
   }
   return (
-    <div class="plugin-control-switch" data-scope={props.scope} data-locked={props.lockedReason ? "" : undefined} title={props.lockedReason}>
-      <Show when={props.caption}><span class="plugin-control-switch-caption" aria-hidden="true">{props.caption}</span></Show>
+    <div class="plugin-control-switch" data-scope={props.scope} data-locked={props.lockedReason ? "" : undefined}
+      data-integration={props.integration ? "" : undefined} title={props.lockedReason}>
       <Switch
         checked={props.control ? pluginScopeChecked(props.control, props.scope) : false}
         disabled={!props.available}
         color="success"
         size="small"
+        sx={props.integration ? INTEGRATION_SWITCH_SX : undefined}
         inputProps={{
           "aria-label": props.label,
           "aria-describedby": props.describedBy,

@@ -11,12 +11,11 @@ import { serverEvents } from "../../../src/lib/server-events"
 import { getToastHistory } from "../../../src/lib/notifications"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { activeSessionId, sessions, setActiveSession, setSessions } from "../../../src/stores/session-state"
-import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
-import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
+import { initializeClientState } from "../../../src/stores/client-state"
 import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
 
-const instanceId = "integration-status", directory = "/repo"
+const instanceId = "integration-row", directory = "/repo"
 const globalPath = "/config/opencode.jsonc", projectPath = "/repo/.opencode/opencode.jsonc"
 const session = (id: string, title: string): Session => ({
   id, instanceId, parentId: null, title, agent: "build", model: { providerId: "fixture", modelId: "fixture" }, status: "idle", retry: null,
@@ -87,22 +86,15 @@ await updatePreferences({ locale: new URLSearchParams(location.search).get("loca
 const event = (type: string, data: unknown = {}) => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId,
   event: { id: `event-${Math.random()}`, created: Date.now(), type, data, location: { directory } } }])
 
-;(window as any).integrationStatus = {
+;(window as any).integrationRow = {
   event,
   reconnect: () => (serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId, status: "connected" }]),
   snapshotReads: () => snapshotReads,
   mutations: () => mutations,
   packageRequests: () => packageRequests,
-  customization: () => JSON.parse(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY) ?? "{}"),
   toasts: getToastHistory,
   /** Replaces the plugin inventory, then notifies like OpenCode does. */
   plugins: (next: PluginControlsSnapshot) => { snapshot = next; event("plugin.updated") },
   base: baseSnapshot,
   select: (id: string | null) => setActiveSession(instanceId, id ?? "info"),
-  hint: (integration: string, label: string) => setSessions(previous => {
-    const next = new Map(previous), values = new Map(next.get(instanceId))
-    const current = values.get("first")!
-    values.set("first", { ...current, metadata: { "codenomad.integrationAttachment": { integration, label, attachedAt: 1 } } } as any)
-    next.set(instanceId, values); return next
-  }),
 }

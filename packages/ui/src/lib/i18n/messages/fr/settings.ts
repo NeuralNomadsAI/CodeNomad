@@ -198,6 +198,8 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.refresh": "Actualiser les contrôles des plugins",
   "instanceServiceStatus.plugins.toggleAriaLabel": "Modifier la règle d’activation de {name}",
   "instanceServiceStatus.plugins.globalOverridden": "Une règle projet remplace ici l’état global.",
+  "instanceServiceStatus.plugins.kind.plugin": "Plugin : {id}",
+  "instanceServiceStatus.plugins.kind.integration": "Intégration : {id}",
   "instanceServiceStatus.plugins.source.package": "Package : {source}",
   "instanceServiceStatus.plugins.source.local": "Source locale : {source}",
   "instanceServiceStatus.plugins.source.builtin": "Intégré à OpenCode",

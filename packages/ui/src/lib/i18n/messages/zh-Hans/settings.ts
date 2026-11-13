@@ -198,6 +198,8 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.refresh": "刷新插件控件",
   "instanceServiceStatus.plugins.toggleAriaLabel": "更改 {name} 的激活规则",
   "instanceServiceStatus.plugins.globalOverridden": "项目规则在此处覆盖了全局状态。",
+  "instanceServiceStatus.plugins.kind.plugin": "插件:{id}",
+  "instanceServiceStatus.plugins.kind.integration": "集成:{id}",
   "instanceServiceStatus.plugins.source.package": "软件包：{source}",
   "instanceServiceStatus.plugins.source.local": "本地来源：{source}",
   "instanceServiceStatus.plugins.source.builtin": "OpenCode 内置",

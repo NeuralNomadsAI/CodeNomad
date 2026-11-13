@@ -198,6 +198,8 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.refresh": "प्लगइन नियन्त्रण ताजा गर्नुहोस्",
   "instanceServiceStatus.plugins.toggleAriaLabel": "{name} को सक्रियता नियम परिवर्तन गर्नुहोस्",
   "instanceServiceStatus.plugins.globalOverridden": "परियोजना नियमले यहाँ विश्वव्यापी अवस्था अधिलेखन गर्छ।",
+  "instanceServiceStatus.plugins.kind.plugin": "प्लगइन: {id}",
+  "instanceServiceStatus.plugins.kind.integration": "एकीकरण: {id}",
   "instanceServiceStatus.plugins.source.package": "प्याकेज: {source}",
   "instanceServiceStatus.plugins.source.local": "स्थानीय स्रोत: {source}",
   "instanceServiceStatus.plugins.source.builtin": "OpenCode मा निर्मित",

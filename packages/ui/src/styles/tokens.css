@@ -90,6 +90,8 @@
   --session-status-permission-fg: #b91c1c;
   --session-status-permission-bg: rgba(239, 68, 68, 0.16);
   --session-yolo-accent: var(--accent-primary);
+  /* Integration activation switches: a sky blue beside the Yolo accent, never equal to it. */
+  --integration-accent: #0284c7;
   --list-item-highlight-bg: rgba(0, 102, 255, 0.1);
   --list-item-highlight-bg-solid: #e5f0ff;
   --list-item-highlight-border: rgba(0, 102, 255, 0.25);
@@ -282,6 +284,7 @@
     --session-status-permission-fg: #f87171;
     --session-status-permission-bg: rgba(248, 113, 113, 0.22);
     --session-yolo-accent: var(--accent-primary);
+    --integration-accent: #38bdf8;
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
   --list-item-highlight-bg-solid: #15324e;
   --list-item-highlight-border: rgba(0, 128, 255, 0.4);
@@ -381,6 +384,7 @@
   --session-status-permission-fg: #f87171;
   --session-status-permission-bg: rgba(248, 113, 113, 0.22);
   --session-yolo-accent: var(--accent-primary);
+  --integration-accent: #38bdf8;
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
   --list-item-highlight-bg-solid: #15324e;
   --list-item-highlight-border: rgba(0, 128, 255, 0.4);

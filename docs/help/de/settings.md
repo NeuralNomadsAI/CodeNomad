@@ -68,7 +68,7 @@ Ziehen Sie am inneren Rand eines angedockten Panels, um seine Größe zu ändern
 2. Öffnen Sie **Rechtes Panel anpassen** im rechten Panel. Wählen Sie integrierte Tabs und Statusabschnitte per Kontrollkästchen; mindestens ein Statusabschnitt bleibt sichtbar. Ziehen Sie über diese Kontrollkästchen, um mehrere auf einmal einzustellen.
 3. Ziehen Sie rechte Panel-Tabs zum Umordnen. **Zurücksetzen** stellt integrierte Layoutauswahlen wieder her.
 
-Erkannte [Integrationen](integrations.md#integration-sections) haben ebenfalls Statusabschnitte. Blenden Sie diese mit denselben Kontrollkästchen aus; ordnen Sie jeden Statusabschnitt per Ziehen oder mit den Tasten Auf/Ab um. Sichtbarkeit und Reihenfolge bleiben bei Neuladen und vorübergehend fehlenden Integrationen erhalten.
+Ordnen Sie jeden Statusabschnitt per Ziehen oder mit den Tasten Auf/Ab um. Sichtbarkeit und Reihenfolge bleiben beim Neuladen erhalten.
 
 Status enthält Tokeninformationen, Yolo-Modus, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
 

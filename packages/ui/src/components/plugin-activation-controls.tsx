@@ -8,11 +8,16 @@ import type {
   PluginRuntimeInventoryEntry,
   PluginRuntimeSource,
 } from "../../../server/src/api-types"
+import type { IntegrationView } from "../../../server/src/integration-types"
 import { useI18n } from "../lib/i18n"
+import { integrationAttention, integrationConnection, integrationConnectionMessage } from "../lib/integration-row-state"
 import { integrationPlugin } from "../lib/integration-rows"
 import { integrations } from "../stores/integrations"
 import { pluginControlsCache } from "../stores/plugin-controls"
 import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
+import { createIntegrationHostInstallation } from "./integration-host-installation"
+import { createIntegrationRowBinding } from "./integration-row-binding"
+import { IntegrationAttentionIndicator, IntegrationLinkIndicator } from "./integration-row-indicators"
 import { PluginActivationSwitch } from "./plugin-activation-switch"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginAddMenu } from "./plugin-add-menu"
@@ -59,11 +64,29 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const consentEpoch = () => state().invalidationRevision
   const snapshot = createMemo(() => state().snapshot)
   let refreshButton: HTMLButtonElement | undefined
-  const nativeControls = createMemo(() => {
+  // Recognised integrations by the plugin ID or the declared target of their row; an ambiguous one has no row of its own.
+  const recognised = createMemo(() => {
     const value = integrations.state(props.instanceId, directory())
-    return new Set(value.status === "ready" ? value.response.integrations
-      .filter(entry => entry.family === "native" && !entry.ambiguous)
-      .map(entry => integrationPlugin(snapshot(), entry).control?.id).filter(Boolean) : [])
+    const byControl = new Map<string, IntegrationView>(), byTarget = new Map<string, IntegrationView>()
+    for (const entry of value.status === "ready" ? value.response.integrations : []) {
+      if (entry.ambiguous) continue
+      const plugin = integrationPlugin(snapshot(), entry)
+      if (plugin.control) byControl.set(plugin.control.id, entry)
+      for (const source of plugin.sources) byTarget.set(source.target, entry)
+    }
+    return { byControl, byTarget }
+  })
+  // Fresh reads only: installing an application part needs a current status.
+  const freshIntegrations = () => {
+    const value = integrations.state(props.instanceId, directory())
+    return value.status === "ready" && !value.stale ? value.response.integrations : []
+  }
+  const installation = createIntegrationHostInstallation({
+    get instanceId() { return props.instanceId },
+    get directory() { return directory() },
+    get sessionId() { return props.session?.id },
+    get active() { return props.active },
+    entries: freshIntegrations,
   })
   const controls = createMemo(() => (
     snapshot()?.controls.filter((control) => control.managedBy !== "codenomad" && !control.builtin && control.runtime?.source.type !== "builtin") ?? []
@@ -168,9 +191,33 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const removable = createMemo(() => removableSources(snapshot(), matchesControl), [], {
       equals: (left, right) => left.length === right.length && left.every((source, index) => sameSource(source, right[index]!)),
     })
+    const integration = () => recognised().byControl.get(pluginId)
+    const name = () => integration()?.displayName ?? pluginId
+    const version = () => {
+      const source = control()?.runtime?.source
+      return integration()?.version ?? (source?.type === "package" ? source.version : undefined)
+    }
+    const binding = createIntegrationRowBinding({
+      instanceId: () => props.instanceId, directory, sessionId: () => props.session?.id, integration, active: () => props.active !== false,
+    })
+    const attention = () => { const entry = integration(); return entry ? integrationAttention(entry) : undefined }
+    const connection = () => {
+      const entry = integration()
+      if (!entry) return undefined
+      const [key, vars] = integrationConnectionMessage(integrationConnection(entry), entry.app.name)
+      return t(key, vars)
+    }
+    const hostAction = createMemo(() => {
+      const entry = integration(), action = entry ? installation.action(entry.id) : undefined
+      return entry && action ? { action, run: () => void installation.open(entry.id) } : undefined
+    }, undefined, { equals: (left, right) => left?.action === right?.action })
+    const detach = () => binding.link()?.state === "attached" ? { run: () => void binding.detach(), busy: binding.busy() } : undefined
     const details = () => {
-      const current = control()
-      const lines = [pluginId, ...runtimeLines(current?.runtime), ...guiNotice(current?.runtime, declarationsFor(matchesControl))]
+      const current = control(), entry = integration()
+      const lines = [t(`instanceServiceStatus.plugins.kind.${entry ? "integration" : "plugin"}`, { id: pluginId }),
+        ...runtimeLines(current?.runtime), ...guiNotice(current?.runtime, declarationsFor(matchesControl))]
+      const part = entry?.status?.host?.partVersion
+      if (entry && part) lines.push(t("integrations.partVersion", { app: entry.app.name, version: part }))
       if (!failed() && overridden()) lines.push(t("instanceServiceStatus.plugins.globalOverridden"))
       for (const target of snapshot()?.targets ?? []) {
         lines.push(`${scopeLabel(target.scope)} — ${target.path}`)
@@ -182,20 +229,26 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const renderSwitch = (scope: PluginControlScope) => {
       const labelId = scope === "global" ? globalLabelId : projectLabelId
       return <PluginActivationSwitch instanceId={props.instanceId} location={requestLocation()} control={control()} scope={scope}
-        lockedReason={scope === "project" && nativeControls().has(pluginId) ? t("integrations.section.scopeGlobalOnly") : undefined}
+        lockedReason={scope === "project" && integration()?.family === "native" ? t("integrations.section.scopeGlobalOnly") : undefined}
         available={isAvailable(scope)} active={props.active} describedBy={isAvailable(scope) ? labelId : `${labelId} ${noticeId}`}
-        label={bidi(t("instanceServiceStatus.plugins.toggleAriaLabel", { name: `${pluginId} — ${scopeLabel(scope)}` }))} />
+        integration={Boolean(integration())} name={name()}
+        label={bidi(t("instanceServiceStatus.plugins.toggleAriaLabel", { name: `${name()} — ${scopeLabel(scope)}` }))} />
     }
     const nameId = `${headingId}-name-${pluginId}`
     return (
-      <div class="plugin-control-row" data-plugin-id={pluginId} role="group" aria-labelledby={nameId}>
+      <div class="plugin-control-row" data-plugin-id={pluginId} data-integration={integration()?.id} role="group" aria-labelledby={nameId}>
         <div class="plugin-control-identity"><Tooltip placement="top-start" openDelay={300}>
-          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{pluginId}</bdi></Tooltip.Trigger>
+          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{name()}</bdi></Tooltip.Trigger>
           <Tooltip.Portal>
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
-        </Tooltip>{nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
-          source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} /></div>
+        </Tooltip>
+          <Show when={version()}>{value => <span class="plugin-control-version"><bdi>{value()}</bdi></span>}</Show>
+          <Show when={binding.link()}>{link => <IntegrationLinkIndicator link={link()} />}</Show>
+          <Show when={attention()}>{value => <IntegrationAttentionIndicator attention={value()} app={integration()!.app.name} />}</Show>
+          {nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={name()}
+          source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id}
+          info={connection()} hostAction={hostAction()} detach={detach()} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -210,17 +263,19 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const entry = () => runtimesByTarget().get(target)
     const nameId = createUniqueId()
     const removable = removableFor(target)
+    const integration = () => recognised().byTarget.get(target)
     const details = () => {
       const current = entry()
       const lines = current ? runtimeLines(current) : [target]
+      if (integration()) lines.unshift(t("instanceServiceStatus.plugins.kind.integration", { id: integration()!.displayName }))
       lines.push(...guiNotice(current, declarationsFor(source => source.target === target)))
       return lines.map(bidi).join("\n")
     }
     return <div class="plugin-control-row" data-package-target={entry()?.source.type === "package" ? target : undefined}
-      data-local-path={entry()?.source.type === "local" ? target : undefined} role="group" aria-labelledby={nameId}>
+      data-local-path={entry()?.source.type === "local" ? target : undefined} data-integration={integration()?.id} role="group" aria-labelledby={nameId}>
       <div class="plugin-control-identity">
         <Tooltip placement="top-start" openDelay={300}>
-          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{target}</bdi></Tooltip.Trigger>
+          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{integration()?.displayName ?? target}</bdi></Tooltip.Trigger>
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
         {nonConformingLabel(declarationsFor(source => source.target === target))}
@@ -236,17 +291,19 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const nameId = createUniqueId()
     const removable = removableFor(target)
     const state = () => pluginSourcesStore.state(props.instanceId, requestLocation(), target)
+    const integration = () => recognised().byTarget.get(target)
     const details = () => [
+      ...(integration() ? [t("instanceServiceStatus.plugins.kind.integration", { id: integration()!.displayName })] : []),
       t("instanceServiceStatus.plugins.source.package", { source: target }),
       t(state() === "pending" ? "instanceServiceStatus.plugins.sources.pending" : "instanceServiceStatus.plugins.sources.unconfirmed"),
       ...declarationsFor(source => source.target === target).map(source => source.scope === "global" || source.scope === "project"
         ? `${scopeLabel(source.scope)} — ${source.path ?? ""}` : source.path ?? ""),
     ].map(bidi).join("\n")
-    return <div class="plugin-control-row" data-source-target={target} data-source-state={state()} role="group" aria-labelledby={nameId}
-      aria-busy={state() === "pending"}>
+    return <div class="plugin-control-row" data-source-target={target} data-source-state={state()} data-integration={integration()?.id}
+      role="group" aria-labelledby={nameId} aria-busy={state() === "pending"}>
       <div class="plugin-control-identity">
         <Tooltip placement="top-start" openDelay={300}>
-          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{target}</bdi></Tooltip.Trigger>
+          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{integration()?.displayName ?? target}</bdi></Tooltip.Trigger>
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
         <Show when={state() === "pending"} fallback={<span class="plugin-source-state" role="status">{t("instanceServiceStatus.plugins.sources.unconfirmedLabel")}</span>}>

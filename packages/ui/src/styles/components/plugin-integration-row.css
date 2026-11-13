@@ -1,0 +1,47 @@
+/* A Plugins row's version, an integration's link and attention indicators, and its menu's connection line
+   (components/plugin-activation-controls.tsx, integration-row-indicators.tsx, plugin-row-actions.tsx). */
+.plugin-control-version {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.plugin-control-indicator {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.plugin-control-indicator:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.plugin-control-indicator[data-integration-link="attached"] {
+  color: var(--integration-accent);
+}
+
+.plugin-control-indicator[data-integration-link="unknown"] {
+  opacity: 0.5;
+}
+
+.plugin-control-indicator[data-integration-attention] {
+  color: var(--status-warning);
+}
+
+.plugin-control-switch[data-locked] .MuiSwitch-root {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.action-overflow-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}

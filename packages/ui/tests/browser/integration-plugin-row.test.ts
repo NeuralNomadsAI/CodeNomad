@@ -1,0 +1,336 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { mkdirSync } from "node:fs"
+import { join } from "node:path"
+import { chromium, type Browser, type Page } from "playwright"
+import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { integrationView, routeIntegrations, waitFor } from "./integration-plugin-row-model"
+
+let browser: Browser, url: string
+const screenshots = process.env.CODENOMAD_INTEGRATION_SCREENSHOTS
+before(async () => {
+  const fixture = await borrowFixture({ name: "integration-plugin-row", routes: [{ path: "/integration-row", html:
+    '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/integration-plugin-row.tsx"></script></body></html>' }] })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+  if (screenshots) mkdirSync(screenshots, { recursive: true })
+})
+after(async () => { await browser?.close() })
+
+type Routes = Awaited<ReturnType<typeof routeIntegrations>>
+const fx = (page: Page, method: string, ...args: unknown[]) =>
+  page.evaluate(([name, values]) => (window as any).integrationRow[name as string](...(values as unknown[])), [method, args] as const)
+
+async function open(prepare?: (routes: Routes) => void, options: { dark?: boolean; locale?: string; clock?: boolean } = {}) {
+  const page = await browser.newPage({ viewport: { width: 420, height: 1000 }, colorScheme: options.dark ? "dark" : "light" })
+  page.setDefaultTimeout(10_000)
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(() => { if (!localStorage.getItem("opencode-session-right-panel-tab-v2")) localStorage.setItem("opencode-session-right-panel-tab-v2", "status") })
+  // Native events are dispatched explicitly; tsx names page functions with a page-absent `__name`.
+  await page.addInitScript("window.__name = f => f")
+  await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+  if (options.clock) await page.clock.install()
+  const routes = await routeIntegrations(page)
+  readCounts.set(page, () => routes.count("read") + routes.count("binding"))
+  prepare?.(routes)
+  await page.goto(`${url}${options.locale ? `?locale=${options.locale}` : ""}`)
+  await page.waitForFunction(() => Boolean((window as any).integrationRow), undefined, { timeout: 30_000 })
+  return { page, errors, ...routes }
+}
+
+const row = (page: Page, id = "blender") => page.locator(`[data-plugin-id="neuralnomads.${id}"]`)
+const link = (page: Page, id = "blender") => row(page, id).locator("[data-integration-link]")
+const readCounts = new WeakMap<Page, () => number>()
+/** The routes changed: OpenCode's payload-free event makes the row read again (coalesced over 300 ms). */
+async function notify(page: Page, type = "rpc.neuralnomads.blender.status_changed") {
+  const reads = readCounts.get(page)!, before = reads()
+  await fx(page, "event", type)
+  await waitFor(() => reads() > before, "the coalesced re-read", 10_000)
+  await page.waitForTimeout(150)
+}
+const waitLink = (page: Page, state: string, label: string) => page.waitForFunction(([expectedState, expectedLabel]) => {
+  const element = document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-integration-link]')
+  return element?.getAttribute("data-integration-link") === expectedState && element.getAttribute("aria-label") === expectedLabel
+}, [state, label] as const)
+async function openMenu(page: Page, name = "OpenCode for Blender") {
+  await page.mouse.move(0, 0)
+  await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click()
+  await page.getByRole("menu").waitFor()
+  return page.getByRole("menu")
+}
+const menuItems = async (page: Page) => (await page.getByRole("menuitem").allInnerTexts()).map(item => item.trim())
+const confirmation = (page: Page, title: RegExp) => page.locator(".alert-dialog").filter({ has: page.locator("h2", { hasText: title }) })
+const trackColor = (page: Page, id: string) => row(page, id).locator('[data-scope="global"] .MuiSwitch-track').evaluate(element => getComputedStyle(element).backgroundColor)
+const resolved = (page: Page, property: string) => page.evaluate(name => {
+  const probe = document.createElement("span")
+  probe.style.color = `var(${name})`
+  document.body.append(probe)
+  const color = getComputedStyle(probe).color
+  probe.remove()
+  return color
+}, property)
+
+test("one Plugins row per integration: display name, version and blue switches; no Status section of its own", async () => {
+  const { page, errors } = await open()
+  try {
+    await row(page).locator(".plugin-control-name").getByText("OpenCode for Blender", { exact: true }).waitFor()
+    assert.equal(await row(page).locator(".plugin-control-version").innerText(), "0.1.0")
+    assert.equal(await row(page, "gaffer").locator(".plugin-control-name").innerText(), "OpenCode for Gaffer")
+    assert.equal(await page.locator('[data-plugin-id="other.plugin"] .plugin-control-name').innerText(), "other.plugin")
+    assert.equal(await page.locator('[data-plugin-id="other.plugin"] [data-integration-link]').count(), 0, "a plain plugin has no link")
+    assert.equal(await page.locator('[data-status-section^="integration:"]').count(), 0)
+    assert.equal(await page.getByText("Attach…").count(), 0)
+    assert.equal(await row(page).getAttribute("data-integration"), "blender")
+    await row(page).getByRole("checkbox", { name: "Change activation rule for OpenCode for Blender — Global" }).waitFor()
+
+    const accent = await resolved(page, "--integration-accent")
+    // The track animates its colour: wait for it to settle.
+    await page.waitForFunction(expected => getComputedStyle(document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-scope="global"] .MuiSwitch-track')!).backgroundColor === expected, accent)
+      .catch(async () => assert.equal(await trackColor(page, "blender"), accent, "an integration's checked switch is the integration blue"))
+    assert.notEqual(accent, await resolved(page, "--session-yolo-accent"), "distinct from the Yolo accent")
+    assert.notEqual(await page.locator('[data-plugin-id="other.plugin"] [data-scope="global"] .MuiSwitch-track').evaluate(element => getComputedStyle(element).backgroundColor), accent)
+    // The Project switch of a native integration is locked to Global and stays focusable.
+    assert.equal(await row(page).locator('[data-scope="project"]').getAttribute("title"), "Global only")
+
+    // "Integration" instead of "Plugin" in the row's tooltip, opened from the keyboard.
+    await row(page).locator(".plugin-control-name").focus()
+    await page.locator(".plugin-control-tooltip").first().waitFor()
+    assert.match(await page.locator(".plugin-control-tooltip").first().innerText(), /^⁨?Integration: neuralnomads\.blender⁩?\n/)
+    await page.locator('[data-plugin-id="other.plugin"] .plugin-control-name').focus()
+    await page.waitForFunction(() => /^⁨?Plugin: other\.plugin/.test(document.querySelector(".plugin-control-tooltip")?.textContent ?? ""))
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("the chain icon follows the displayed conversation's attachment, refreshed by hosts_changed and status_changed", async () => {
+  for (const dark of [false, true]) {
+    const { page, model, errors } = await open(undefined, { dark })
+    try {
+      await waitLink(page, "none", "No conversation attached")
+      // A tooltip that opens from the keyboard.
+      await link(page).focus()
+      await page.locator(".plugin-control-tooltip").getByText("No conversation attached", { exact: true }).waitFor()
+
+      // The integration attached the conversation itself at its first use: its event reads the binding again.
+      model.bindings["first:blender"] = { state: "attached", label: "western_ia.blend" }
+      await notify(page, "rpc.neuralnomads.blender.hosts_changed")
+      await waitLink(page, "attached", "Attached to: western_ia.blend")
+      assert.equal(await link(page).evaluate(element => getComputedStyle(element).color), await resolved(page, "--integration-accent"))
+      if (screenshots) {
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+        await page.mouse.move(0, 0)
+        await page.locator(".plugin-control-tooltip").waitFor({ state: "hidden" })
+        await page.locator(".plugin-controls").screenshot({ path: join(screenshots, `integration-plugins-${dark ? "dark" : "light"}.png`) })
+      }
+
+      // Another conversation is not attached; returning shows the attachment again.
+      await fx(page, "select", "second")
+      await waitLink(page, "none", "No conversation attached")
+      await fx(page, "select", "first")
+      await waitLink(page, "attached", "Attached to: western_ia.blend")
+
+      // An integration that cannot tell stays unknown.
+      model.bindings["first:blender"] = { state: "unknown" }
+      await notify(page)
+      await waitLink(page, "unknown", "Attachment unknown")
+
+      // Other families and unloaded integrations have no chain.
+      model.integrations[1] = integrationView("gaffer", { family: "vendor-mcp", status: { version: "1.0.0", connection: { state: "connected" } } })
+      model.integrations[0] = integrationView("blender", { state: "inactive", status: undefined })
+      await notify(page)
+      await page.waitForFunction(() => !document.querySelector("[data-integration-link]"))
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  }
+})
+
+test("an indicator appears only when the application part needs an action", async () => {
+  const { page, model } = await open()
+  try {
+    await waitLink(page, "none", "No conversation attached")
+    assert.equal(await page.locator("[data-integration-attention]").count(), 0)
+    for (const [state, label] of [["absent", "Blender part missing"], ["outdated", "Blender part needs an update"], ["incompatible", "Incompatible with this Blender"]] as const) {
+      model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state, ...(state === "incompatible" ? {} : { action: state === "absent" ? "install" : "update" }) }, connection: { offers: 0 } } })
+      await notify(page)
+      await page.waitForFunction(expected => document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-integration-attention]')?.getAttribute("aria-label") === expected, label)
+    }
+    for (const state of ["unknown", "ok"] as const) {
+      model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state }, connection: { offers: 0 } } })
+      await notify(page)
+      await page.waitForFunction(() => !document.querySelector("[data-integration-attention]"))
+    }
+  } finally { await page.close() }
+})
+
+test("the row menu: connection state, application part installation, Detach the conversation and removal", async () => {
+  const { page, model, calls, count } = await open(routes => {
+    routes.model.bindings["first:blender"] = { state: "attached", label: "western_ia.blend" }
+  }, { clock: true })
+  try {
+    await waitLink(page, "attached", "Attached to: western_ia.blend")
+    let menu = await openMenu(page)
+    assert.equal((await menu.locator("[data-integration-connection]").innerText()).trim(), "Blender: 1 open document")
+    assert.deepEqual(await menuItems(page), ["Detach the conversation", "Check updates for @neuralnomads/opencode-blender@^0.1", "Remove from Global", "Refresh plugin controls"])
+
+    // One click detaches the displayed conversation only, then reads its binding again.
+    await page.getByRole("menuitem", { name: "Detach the conversation", exact: true }).click()
+    await waitFor(() => count("detach") === 1, "one detachHost")
+    assert.deepEqual(calls.find(call => call.action === "detach")!.body, { sessionID: "first" })
+    await waitLink(page, "none", "No conversation attached")
+    menu = await openMenu(page)
+    assert.equal((await menuItems(page)).includes("Detach the conversation"), false)
+    await page.keyboard.press("Escape")
+
+    // The application part is missing: the menu installs it after the guarded confirmation.
+    model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state: "absent", action: "install" }, connection: { offers: 0 } } })
+    await notify(page)
+    await row(page).locator("[data-integration-attention]").waitFor()
+    menu = await openMenu(page)
+    assert.equal((await menu.locator("[data-integration-connection]").innerText()).trim(), "Blender: no open document")
+    assert.equal((await menuItems(page))[0], "Install in application…")
+    await page.getByRole("menuitem", { name: "Install in application…", exact: true }).click()
+    const dialog = confirmation(page, /^Install in application…/)
+    await dialog.waitFor()
+    assert.match(await dialog.innerText(), /Install the Blender part of OpenCode for Blender 0\.1\.0 on the machine where OpenCode runs\?/)
+    const confirm = dialog.getByRole("button", { name: "Install in application…", exact: true })
+    assert.equal(await confirm.isDisabled(), true, "the action waits 600 ms")
+    await page.clock.fastForward(650)
+    await confirm.click()
+    await waitFor(() => count("install-host") === 1, "one installHost")
+    await page.waitForFunction(() => JSON.stringify((window as any).integrationRow.toasts()).includes("Application part installed."))
+
+    // An outdated part offers Update; a closed application, none.
+    model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state: "outdated", action: "update" }, connection: { offers: 2 } } })
+    await notify(page)
+    await openMenu(page)
+    assert.equal((await menuItems(page))[0], "Update application…")
+    assert.equal((await page.locator("[data-integration-connection]").innerText()).trim(), "Blender: 2 open documents")
+    await page.keyboard.press("Escape")
+    model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state: "unknown" }, connection: { offers: 0 } } })
+    await notify(page)
+    await openMenu(page)
+    assert.equal((await page.locator("[data-integration-connection]").innerText()).trim(), "Blender closed")
+    assert.deepEqual(await menuItems(page), ["Check updates for @neuralnomads/opencode-blender@^0.1", "Remove from Global", "Refresh plugin controls"])
+
+    // Removal names the integration and keeps its guarded confirmation.
+    await page.getByRole("menuitem", { name: "Remove from Global", exact: true }).click()
+    const removal = confirmation(page, /^Remove from Global — /)
+    await removal.waitFor()
+    assert.match(await removal.locator("h2").innerText(), /OpenCode for Blender/)
+    await removal.getByRole("button", { name: "Cancel", exact: true }).click()
+    assert.equal(count("remove"), 0)
+  } finally { await page.close() }
+})
+
+test("a lost detach answer is reported and read again, never replayed", async () => {
+  const { page, model, count } = await open(routes => { routes.model.bindings["first:blender"] = { state: "attached", label: "scene.blend" } })
+  try {
+    await waitLink(page, "attached", "Attached to: scene.blend")
+    model.fail.set("detach", "network")
+    await openMenu(page)
+    await page.getByRole("menuitem", { name: "Detach the conversation", exact: true }).click()
+    await page.waitForFunction(() => JSON.stringify((window as any).integrationRow.toasts()).includes("Not confirmed. Check the application, then refresh."))
+    await waitFor(() => count("binding") >= 2, "the binding is read again")
+    await page.waitForTimeout(400)
+    assert.equal(count("detach"), 1)
+  } finally { await page.close() }
+})
+
+test("the row renders in French and right-to-left Hebrew with translated labels", async () => {
+  for (const locale of ["fr", "he"] as const) {
+    const { page, errors } = await open(routes => { routes.model.bindings["first:blender"] = { state: "attached", label: "western_ia.blend" } }, { locale })
+    try {
+      await page.waitForFunction(() => document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-integration-link="attached"]'))
+      const label = await link(page).getAttribute("aria-label")
+      if (locale === "fr") assert.equal(label, "Rattachée à : western_ia.blend")
+      else assert.notEqual(label, "Attached to: western_ia.blend")
+      await page.mouse.move(0, 0)
+      await row(page).locator(".plugin-control-identity button").click()
+      const items = await menuItems(page)
+      if (locale === "fr") assert.equal(items[0], "Détacher la conversation")
+      assert.equal(items.some(item => /Detach the conversation|Remove from/.test(item)), false, `${locale}: no English fallback`)
+      await page.keyboard.press("Escape")
+      // Closing the menu returns focus to its trigger first.
+      await page.getByRole("menu").waitFor({ state: "hidden" })
+      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-haspopup") === "true")
+      await row(page).locator(".plugin-control-name").focus()
+      await page.locator(".plugin-control-tooltip").first().waitFor()
+      if (locale === "fr") assert.match(await page.locator(".plugin-control-tooltip").first().innerText(), /^⁨?Intégration : neuralnomads\.blender/)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  }
+})
+
+test("the catalogue window installs by catalogue ID after confirmation and reports catalogue states", async () => {
+  const { page, model, calls, count } = await open(routes => {
+    routes.model.integrations.push(
+      integrationView("resolve", { family: "vendor-mcp", plugin: { declared: false }, configured: false, configuredSources: [], state: "absent", status: undefined, version: undefined }),
+      integrationView("houdini", { plugin: { declared: false }, configured: true, configuredSources: [], state: "inactive", status: undefined, version: undefined }),
+    )
+  })
+  try {
+    await row(page).waitFor()
+    const openCatalog = async () => {
+      await page.mouse.move(0, 0)
+      await page.getByRole("button", { name: "Add", exact: true }).click()
+      await page.getByRole("menuitem", { name: "Add an integration…", exact: true }).click()
+      const dialog = page.getByRole("dialog", { name: "Add an integration" })
+      await dialog.waitFor()
+      return dialog
+    }
+    let catalog = await openCatalog()
+    assert.deepEqual(await catalog.locator("[data-catalog-integration]").evaluateAll(nodes => nodes.map(node => node.getAttribute("data-catalog-integration"))), ["resolve", "houdini"])
+    const houdini = catalog.locator('[data-catalog-integration="houdini"]')
+    assert.equal(await houdini.getByText("In the application", { exact: true }).count(), 1)
+    assert.equal(await houdini.getByRole("combobox").getAttribute("title"), "Global only")
+    const resolve = catalog.locator('[data-catalog-integration="resolve"]')
+    await resolve.getByRole("combobox").selectOption("project")
+    await resolve.getByRole("button", { name: "Install — OpenCode for Resolve", exact: true }).click()
+    const consent = confirmation(page, /^Install integration/)
+    await consent.waitFor()
+    assert.match(await consent.innerText(), /Install OpenCode for Resolve \(Project\)\? The code will run with your rights in OpenCode\./)
+    await page.waitForTimeout(650)
+    await consent.getByRole("button", { name: "Install", exact: true }).click()
+    await catalog.waitFor({ state: "hidden" })
+    await waitFor(() => count("install") === 1, "one install by ID")
+    assert.deepEqual(calls.find(call => call.action === "install")!, { action: "install", method: "POST", integration: "resolve", directory: "/repo", body: { scope: "project" } })
+
+    model.catalog = { state: "stale", fetchedAt: "2026-11-01T12:00:00Z" }
+    await notify(page)
+    catalog = await openCatalog()
+    await catalog.getByText(/^Catalogue of /).waitFor()
+    await page.keyboard.press("Escape")
+    model.catalog = { state: "unavailable" }
+    model.integrations = model.integrations.filter(item => item.plugin.declared)
+    await notify(page)
+    catalog = await openCatalog()
+    await catalog.getByText("Catalogue unavailable", { exact: true }).waitFor()
+  } finally { await page.close() }
+})
+
+test("catalogue consent is revoked by navigation, native invalidation and reconnect before dispatch", async () => {
+  const { page, count } = await open(routes => {
+    routes.model.integrations.push(integrationView("resolve", { family: "api", plugin: { declared: false }, configured: false, configuredSources: [], state: "absent", status: undefined }))
+  })
+  try {
+    await row(page).waitFor()
+    for (const change of ["navigation", "event", "reconnect"]) {
+      await page.mouse.move(0, 0)
+      await page.getByRole("button", { name: "Add", exact: true }).click()
+      await page.getByRole("menuitem", { name: "Add an integration…", exact: true }).click()
+      const catalog = page.getByRole("dialog", { name: "Add an integration", exact: true })
+      await catalog.getByRole("button", { name: "Install — OpenCode for Resolve", exact: true }).click()
+      const consent = confirmation(page, /^Install integration/)
+      await consent.waitFor()
+      if (change === "navigation") await fx(page, "select", "second")
+      else if (change === "event") await fx(page, "event", "plugin.updated")
+      else await fx(page, "reconnect")
+      await consent.waitFor({ state: "hidden" })
+      assert.equal(count("install"), 0, `${change}: no installation`)
+      if (await catalog.isVisible()) await catalog.getByRole("button", { name: "Close", exact: true }).click()
+    }
+  } finally { await page.close() }
+})

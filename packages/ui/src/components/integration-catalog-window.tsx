@@ -10,7 +10,7 @@ import { integrationEpoch, integrations } from "../stores/integrations"
 import { pluginSourcesStore } from "../stores/plugin-sources"
 import { InfoPopoverButton } from "./info-popover-button"
 import { confirmIntegrationAction } from "./integration-confirmation"
-import { integrationSummary } from "./integration-section"
+import { integrationSummary } from "../lib/integration-row-state"
 import WindowCloseButton from "./window-close-button"
 
 /** Catalogue entries that can be installed here: neither declared nor loaded, and not ambiguous. */

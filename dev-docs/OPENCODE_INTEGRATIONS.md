@@ -201,9 +201,8 @@ After an `attached` outcome, the session's `metadata["codenomad.integrationAttac
 `{ integration, label, attachedAt }`: catalog ID, offer's `label` for reattach matching and Unix milliseconds.
 The server reads the session afresh immediately before native `session.update`, whose whole metadata object
 replaces the stored object, retaining all unrelated keys from that read. Attach and detach serialize per session
-within the backend. Both `detached` and `none` remove the hint. Q8 is a display hint for a confirmed reattach to a
-matching integration and label; the plugin's live bindings retain authority. Concurrent writers in other clients
-share native whole-object replacement semantics.
+within the backend. Both `detached` and `none` remove the hint. The plugin's live bindings retain authority. Concurrent writers in other
+clients share native whole-object replacement semantics.
 
 ### Confirmed source removal
 
@@ -242,8 +241,8 @@ detected through `WSL_DISTRO_NAME` or the Microsoft kernel marker. Failure to es
 fails closed. A mirrored compatible application offer must never bypass this check.
 
 Installation is Location-scoped and works independently of sessions and offers. The installer acts on the OpenCode
-machine, including a remote machine. Its outcome describes that request; application status and a separate explicit
-attachment action establish application availability and conversation access. Never retry or replay an installation
+machine, including a remote machine. Its outcome describes that request; application status establishes application availability, and the integration
+attaches a conversation at its first use. Never retry or replay an installation
 request after an uncertain result: check the application, then require a fresh action and confirmation if needed.
 
 ## UI read model
@@ -259,55 +258,51 @@ own. `stores/integrations.ts` owns the production singleton and forwards `instan
 and workspace-stop notifications. The event relay projects only the two payload-free integration notifications,
 retaining the native Location for ownership routing and dropping plugin-authored envelope fields.
 
-`right-panel/integration-status-module.tsx` registers a native Status section per unambiguous integration with
-`plugin.declared` or `plugin.runtime` facts. Stable `integration:<id>` IDs follow catalog order after Plugins, with
-persisted hiding/order and keyboard Up/Down customization. Retained activation rules alone leave the entry in the
-installation catalog. `createIntegrationContext` shares the active Location with Plugins and supplies a conversation
-only when its Location matches. Sections retain their objects across display refreshes.
+Integrations are managed only from their row in **Status → Plugins** (`components/plugin-activation-controls.tsx`).
+A row whose plugin ID or declared target `integrationPlugin` correlates with an unambiguous catalog entry is that
+integration's single row:
 
-`integration-section-state.ts` derives section and Conversation labels from installation, activation, host and
-authoritative binding facts. Headers keep the state visible, with Documentation beside the information Popover;
-the body contains Plugin (version, switches and row actions), Application/Conversation for native integrations,
-or Connection for the other families. Expected-action changes or an attached conversation expand the section once;
-user collapse persists until the expected-action key changes. Each Status tab owns one grouped polite live region.
+- its `displayName` and installed version (every package row shows its version beside the name);
+- Global/Project switches in `--integration-accent` (`styles/tokens.css`, a sky blue distinct from
+  `--session-yolo-accent`), applied through `PluginActivationSwitch`'s `integration` flag with the shared switch
+  geometry; a plain plugin's switches stay green. A native integration's Project switch is locked to Global;
+- the name tooltip's first line reads **Integration: <plugin ID>** where a plain plugin's reads **Plugin: <ID>**;
+- for a loaded native integration, a chain icon (`components/integration-row-indicators.tsx`) for the displayed
+  conversation: linked with **Attached to: <label>**, broken with **No conversation attached** (also without a
+  conversation of this Location), dimmed with **Attachment unknown** when the integration cannot tell. Its text is
+  its accessible name and its keyboard-openable tooltip;
+- a warning icon only when the application part is `absent`, `outdated` or `incompatible`
+  (`lib/integration-row-state.ts`).
 
-The section's Conversation line opens the trusted application picker. It initially focuses Cancel, names its captured
-target conversation and the daemon machine, and enables explicit confirmation after 600 ms. Navigation discards the
-captured target; reconnect and relevant native invalidations discard offers. Admitted action receipts remain readable
-for their unchanged target across native echoes. WSL-unsupported status shows help in the information Popover.
-Saved Q8 hints offer confirmed reattachment only for matching integration and label. Action receipts describe the
-completed request. **Detach** sends one request directly from the section for the authoritative current binding.
-
-Plugins retains its ordinary rows with update/remove/refresh actions. Its Add menu opens **Add an integration…**:
-the reviewed catalog's installable entries, family label, summary Popover, Documentation, scope and Install. Native
-integrations lock scope to Global. Catalog availability and the last valid fetch date appear here. Installation uses
-the shared guarded confirmation and `pluginSourcesStore.installIntegration`, preserving its pending/reconciliation
-semantics. Activation and plugin package updates use ordinary native mutations without confirmation.
-Cancelling attachment or application installation restores the captured visible, enabled opener while its
-owning view, conversation and integration context remain current. Navigation, invalidation and view disposal revoke restoration.
+The row's menu (`components/plugin-row-actions.tsx`) is labelled by the connection state (open document count,
+application closed, unsupported machine, or the other families' server/connection state) and lists **Install in
+application…**/**Update application…** for a fresh `host.action`, **Detach the conversation** for an `attached`
+binding, then the ordinary package check/update, removal per scope and refresh. Integrations attach a conversation
+themselves at its first use; CodeNomad offers no attach control.
 
 `createIntegrationBindingsStore` (`stores/integration-bindings-store.ts`) shares reads for the exact instance,
-Location, session and native integration shown by the Status sections. The Conversation line keeps the safe binding
-label in isolated text and distinguishes `none` from explicit `unknown` and uncertain outcomes.
-Only a fresh `attached` binding offers Detach. Q8 supplies matching confirmed-reattach
-suggestions. Binding reads carry only the session selector and receive only the projected state/label.
+Location, displayed session and native integration of each shown row (`components/integration-row-binding.ts`).
+Binding reads carry only the session selector and receive only the projected state/label. The store uses the
+shared secondary HTTP budget. Relevant integration/plugin/configuration events (`status_changed`, `hosts_changed`)
+and exact-session updates, moves or deletions revoke authority immediately and coalesce reads over 300 ms, with one
+trailing follow-up. Reconnect, native stream-open and renderer stream-open reconcile demanded bindings; disconnect
+revokes them. Errors publish `unknown`; releasing the last demand aborts and drops its state. Detach sends one
+`detach` request for the displayed conversation, then invalidates and reconciles its captured target in `finally`,
+including uncertain outcomes, which show a fixed error toast and are never replayed.
 
-The store uses the shared secondary HTTP budget. Relevant integration/plugin/configuration events and exact-session
-updates, moves or deletions revoke authority immediately and coalesce reads over 300 ms, with one trailing follow-up.
-Reconnect, native stream-open and renderer stream-open reconcile demanded bindings; disconnect revokes them.
-Every read checks its demand identity and generation before publication. Errors publish `unknown`; releasing the last
-demand aborts and drops its state. Attach and detach run once, then invalidate and reconcile their captured target
-in `finally`, including uncertain outcomes, while navigation leaves reads scoped to the latest shown target.
+`components/integration-host-installation.ts` owns the application part's trusted shared confirmation for a fresh
+active native integration reporting `host.action: "install" | "update"`: application name, integration package
+version and the OpenCode-machine warning, with Cancel initially focused. The captured instance, Location,
+session-navigation identity, action, version and integration epoch fence consent. Navigation, reconnects and
+relevant native invalidations cancel pending confirmation; dispatch rechecks the captured identity. An admitted
+request runs once, and receipts use only the projected outcome or a localized fixed error.
 
-The integration section's Application line offers **Install in application…** or **Update application…**
-for a fresh active native integration reporting
-`host.action: "install" | "update"`. `components/integration-host-installation.ts` owns the trusted shared
-confirmation: application name, integration package version and the OpenCode-machine warning, with Cancel initially
-focused. The captured instance, Location, session-navigation identity, action, version and integration epoch fence
-consent. Navigation, reconnects and relevant native invalidations cancel pending confirmation; dispatch rechecks the
-captured identity. An admitted request runs once, and receipts use only the projected outcome or a localized fixed
-error. Uncertain errors require checking the application before a fresh action. UI strings live in each locale's
-`integrations.ts`, and public instructions in `docs/help/<locale>/integrations.md#application-installation`.
+The Plugins Add menu opens **Add an integration…**: the reviewed catalog's installable entries, family label,
+summary Popover, Documentation, scope and Install. Native integrations lock scope to Global. Catalog availability
+and the last valid fetch date appear here. Installation uses the shared guarded confirmation and
+`pluginSourcesStore.installIntegration`, preserving its pending/reconciliation semantics. Activation and plugin
+package updates use ordinary native mutations without confirmation. UI strings live in each locale's
+`integrations.ts`, and public instructions in `docs/help/<locale>/integrations.md#integration-rows`.
 
 ## Test fixtures
 
@@ -371,21 +366,13 @@ Commands:
 - `node --import tsx --test packages/server/src/server/__tests__/integration-request-logging.test.ts`: actual
   Fastify completion hooks and Pino capture at debug/trace, rejected/malformed paths, query/body values and keys,
   native error data, concurrent requests and error recovery, with positive ordinary-route diagnostics checks.
-- `packages/ui/tests/browser/integration-attachment.test.ts`: real Solid entry points and native dispatcher with
-  all renderer logger namespaces enabled. Every console level's text and structured arguments, nested Error
-  messages/stacks and page errors are captured before navigation and sentinel-scanned through native teardown.
-  Document-owned synchronous copies travel with the original console arguments on one ordered CDP channel;
-  native retirement receipts and exact packet/context/copy reconciliation gate completion. Workers, OOPIFs,
-  related targets and serialization/association loss fail closed. The helper's native-format, delayed-delivery,
-  reload/close and negative controls live in `fixture-console.test.ts`; the real dispatcher post-drain control
-  retains the original deferred-handle failure assertion alongside the by-value capture. Adversarial
-  HTTP/JSON/transport failures exercise read, hosts, attach, detach, retry and late navigation.
-  Binding qualification covers external authority, Q8/receipt separation, unknown versus none, wide/narrow durable
-  labels with isolation/truncation/accessibility, strict projected-response bounds, moved sessions, late replies,
-  expiry/revocation hints and native/renderer disconnects with pending trailing work.
-  Installation qualification exercises the existing row's source association and fresh `host.action`, sessionless
-  visibility, Cancel-first shared confirmation with machine/package-version text, preconsent navigation/event fences,
-  all projected outcomes, unsupported WSL and uncertain errors without automatic replay.
+- `packages/ui/tests/browser/integration-plugin-row.test.ts` (fixture `fixtures/integration-plugin-row.tsx`, HTTP
+  model `integration-plugin-row-model.ts`) renders the real right panel: one row per integration with its name,
+  version, integration-blue switches and tooltip kind; the chain icon across `hosts_changed`/`status_changed`,
+  conversation changes and `unknown`; the attention icon per host state; the menu's connection line, guarded
+  application installation, one-click detach with a lost answer read again and never replayed, removal; French
+  and Hebrew labels; and the catalog window's install by ID and consent revocation.
+  `packages/ui/src/lib/integration-row-state.test.ts` covers the link, attention and connection derivations.
 - `node --import tsx scripts/test-integrations-attachments-native.mjs <absolute-cli> [pilot-checkout] [blender-executable]`:
   A supported OpenCode runtime (at or above the minimum) with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
   `IntegrationCatalogSource`, and the real relay feeding `createIntegrationsStore` through SSE. Checks a 60-second
