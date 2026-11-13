@@ -21,8 +21,14 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum runtime **2.2.3**, recommended **2.2.7** (`runtime-support.ts`), with
-**2.2.3** client/schema/plugin pins. The minimum carries the image tool contract of
+Minimum and recommended runtime **2.3.0** (`runtime-support.ts`), with **2.3.0**
+client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
+qualifies only the 2.3 subagent contract: every subagent call returns at once
+(`metadata.status: "running"`) and the child reports to its parent through
+synthetic `<subagent sessionID state …>` messages, one per idle period, tagged
+`running` while background work remains (the subagent card in `TRANSCRIPT.md`,
+`scripts/test-missions-native-trajectory.mjs`,
+`scripts/test-subagent-nesting-native.mjs`). The minimum also carries the image tool contract of
 upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
 the Images gallery, the Design agent and skills and the Images settings: one
 name, `experimental_image_generate`, for the tool, its permission action, its job

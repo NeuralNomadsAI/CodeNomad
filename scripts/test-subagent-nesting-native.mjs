@@ -27,8 +27,8 @@ const provider = createServer(async (request, response) => {
     for await (const chunk of request) raw += chunk
     const body = JSON.parse(raw), tools = (body.tools ?? []).map(tool => tool.function?.name)
     assert(++calls < 100, "Provider request budget")
-    // Launch one General subagent when offered the tool; conclude once its launch or result returns: a
-    // foreground result is the tool message, a background child reports later in a `<subagent>` message.
+    // Launch one General subagent when offered the tool; conclude once its launch is acknowledged (a tool
+    // message) or the child reports in a later `<subagent>` message.
     const last = body.messages?.at(-1)
     const concluded = last?.role === "tool" || JSON.stringify(last?.content ?? "").includes("<subagent")
     const answer = !body.stream || concluded || !tools.includes("subagent") ? "DONE"
@@ -91,7 +91,7 @@ try {
     await client.session.prompt({ sessionID: session.id, text: "Start nesting" })
     await delay(300)
     await client.session.wait({ sessionID: session.id }, { signal: AbortSignal.timeout(60_000) })
-    // Background children keep working after the root goes idle and wake it with their reports:
+    // Children keep working after the root goes idle and wake it with their reports:
     // count once no session has been active for two consecutive reads.
     for (let quiet = 0, deadline = Date.now() + 60_000; quiet < 2;) {
       quiet = Object.keys(await client.session.active({}, { signal: AbortSignal.timeout(20_000) })).length ? 0 : quiet + 1
@@ -104,16 +104,11 @@ try {
     await delay(1_500)
     assert.equal(Object.keys(await client.session.active({}, { signal: AbortSignal.timeout(20_000) })).length, 0, "no late wake")
     assert.equal(calls, seen, "no provider request after the family went quiet")
-    /** The parent actually received the child's final result: a completed foreground call or a final background report. */
-    const received = async (parent, childID) => {
-      const messages = (await client.message.list({ sessionID: parent, limit: { order: "asc", limit: 100 } })).data
-      return messages.some(message => message.type === "synthetic" && message.metadata?.source === "subagent"
-          && message.metadata.childID === childID && message.metadata.state === "completed" && message.text.includes("DONE")
-          && !message.text.includes('state="running"'))
-        || messages.flatMap(message => message.content ?? []).some(part => part.type === "tool" && part.name === "subagent"
-          && part.state.status === "completed" && JSON.stringify(part.state).includes(childID) && JSON.stringify(part.state).includes("DONE")
-          && !JSON.stringify(part.state).includes("working in the background"))
-    }
+    /** The parent actually received the child's final report. */
+    const received = async (parent, childID) => (await client.message.list({ sessionID: parent, limit: { order: "asc", limit: 100 } })).data
+      .some(message => message.type === "synthetic" && message.metadata?.source === "subagent"
+        && message.metadata.childID === childID && message.metadata.state === "completed" && message.text.includes("DONE")
+        && !message.text.includes('state="running"'))
     let levels = 0
     for (let frontier = [session.id]; frontier.length; levels++) {
       const next = []

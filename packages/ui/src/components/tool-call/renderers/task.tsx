@@ -53,11 +53,13 @@ function readBackgroundReport(context: Pick<import("../types").ToolRendererConte
   // Track the parent session's revision only; the index is shared by its cards.
   const revision = store.getSessionRevision(context.sessionId)
   const messageIds = store.getSessionMessageIds(context.sessionId)
-  const index = untrack(() => cachedSubagentDeliveries(store, context.sessionId, revision, messageIds,
-    () => indexSubagentDeliveries(messageIds, store.getMessage)))
+  const index = untrack(() => cachedSubagentDeliveries(messageIds, revision, () => indexSubagentDeliveries(messageIds, store.getMessage)))
   const call = context.toolCall()
   const launchedAt = subagentCallTime(call, untrack(() => call.messageID ? store.getMessage(call.messageID)?.createdAt : undefined) ?? 0)
-  return latestReportForLaunch(index.get(childId), launchedAt)
+  return latestReportForLaunch(index.get(childId), launchedAt, (messageId, partId) => {
+    const text = (store.getMessage(messageId)?.parts[partId]?.data as { text?: unknown } | undefined)?.text
+    return typeof text === "string" ? text : undefined
+  })
 }
 
 function splitToolKey(key: string): { messageId: string; partId: string } | null {

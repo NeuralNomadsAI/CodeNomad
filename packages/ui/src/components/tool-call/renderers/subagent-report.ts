@@ -1,8 +1,7 @@
 /**
- * Background subagent delivery. A background launch completes its tool call at once with
- * `metadata.status: "running"`; the child's result reaches the parent session later as hidden
- * synthetic reports, one per idle period:
- * `<subagent sessionID="…" state="…" description="…">\n<body>\n</subagent>`.
+ * Background subagent delivery. A subagent call completes at once with `metadata.status: "running"`;
+ * the child's result reaches the parent session later as hidden synthetic reports, one per idle
+ * period: `<subagent sessionID="…" state="…" description="…">\n<body>\n</subagent>`.
  * A report tagged `running` is intermediate: the child still owns background work.
  */
 import type { ClientPart } from "../../../types/message"
@@ -18,9 +17,18 @@ export interface SubagentReport {
   messageId: string
 }
 
-/** One child's reports and the creation times of every call that launched or continued it. */
+/** Where a report lives; its body stays in the message store, so eviction releases it. */
+export interface SubagentReportRef {
+  childId: string
+  state: SubagentReportState
+  createdAt: number
+  messageId: string
+  partId: string
+}
+
+/** One child's reports and the execution start of every call that launched or continued it. */
 export interface SubagentDeliveries {
-  reports: SubagentReport[]
+  reports: SubagentReportRef[]
   launches: number[]
 }
 
@@ -35,7 +43,7 @@ export function parseSubagentReport(text: string): Pick<SubagentReport, "childId
   return match ? { childId: match[1], state: match[2] as SubagentReportState, body: match[3] } : null
 }
 
-/** A tool state that only acknowledges a background launch (OpenCode 2.3 always; 2.2 with `background: true`). */
+/** A tool state that only acknowledges a background launch. */
 export function isBackgroundSubagentLaunch(state: unknown): boolean {
   const value = state as { status?: unknown; metadata?: { status?: unknown } } | null | undefined
   return value?.status === "completed" && value.metadata?.status === "running"
@@ -48,18 +56,18 @@ export function subagentChildId(state: unknown): string {
   return typeof id === "string" ? id : ""
 }
 
+/** When a call started executing (`time.ran`, else its part or message creation): reports before it belong to earlier calls. */
+export function subagentCallTime(part: unknown, messageCreatedAt: number): number {
+  return getPartStartedAt(part as ClientPart) ?? messageCreatedAt
+}
+
 type ReportMessage = {
   createdAt: number
   partIds: readonly string[]
   parts: Record<string, { data?: unknown } | undefined>
 }
 
-/** When a call started executing (`time.ran`, else its part or message creation): reports before it belong to earlier calls. */
-export function subagentCallTime(part: unknown, messageCreatedAt: number): number {
-  return getPartStartedAt(part as ClientPart) ?? messageCreatedAt
-}
-
-/** Every child's reports and launch times in the parent session; listing order is irrelevant. */
+/** Every child's report references and call times in the parent session; listing order is irrelevant. */
 export function indexSubagentDeliveries(
   messageIds: readonly string[],
   getMessage: (messageId: string) => ReportMessage | undefined,
@@ -83,48 +91,47 @@ export function indexSubagentDeliveries(
       }
       if (part?.type !== "text" || !part.synthetic || typeof part.text !== "string") continue
       const report = parseSubagentReport(part.text)
-      if (report) entry(report.childId).reports.push({ ...report, createdAt: record.createdAt, messageId })
+      if (report) entry(report.childId).reports.push({ childId: report.childId, state: report.state, createdAt: record.createdAt, messageId, partId })
     }
   }
   return index
 }
 
+const newer = (left: SubagentReportRef, right: SubagentReportRef) =>
+  left.createdAt !== right.createdAt ? right.createdAt - left.createdAt : right.messageId < left.messageId ? -1 : right.messageId > left.messageId ? 1 : 0
+
 /**
  * The latest report delivered to the call started at `launchedAt`, chosen by creation time, then
- * by monotonic message id. A call's period ends at the next call continuing the same child; every
- * idle period reports, so a period without a report was still running when continued and joins
- * the next call's period until one reports.
+ * by monotonic message id, and read from the store (`readText`; an evicted report is skipped).
+ * A call's period ends at the next call continuing the same child; every idle period reports, so a
+ * period without a report was still running when continued and joins the next call's period.
  */
-export function latestReportForLaunch(deliveries: SubagentDeliveries | undefined, launchedAt: number): SubagentReport | null {
+export function latestReportForLaunch(deliveries: SubagentDeliveries | undefined, launchedAt: number,
+  readText: (messageId: string, partId: string) => string | undefined): SubagentReport | null {
   if (!deliveries) return null
   const boundaries = [...deliveries.launches.filter(time => time > launchedAt).sort((left, right) => left - right), Infinity]
   for (const end of boundaries) {
-    let latest: SubagentReport | null = null
-    for (const report of deliveries.reports) {
-      if (report.createdAt < launchedAt || report.createdAt >= end) continue
-      if (!latest || report.createdAt > latest.createdAt
-        || (report.createdAt === latest.createdAt && report.messageId > latest.messageId)) latest = report
+    const candidates = deliveries.reports.filter(report => report.createdAt >= launchedAt && report.createdAt < end).sort(newer)
+    for (const candidate of candidates) {
+      const text = readText(candidate.messageId, candidate.partId)
+      const report = text === undefined ? null : parseSubagentReport(text)
+      if (report?.childId === candidate.childId) {
+        return { childId: report.childId, state: report.state, body: report.body, createdAt: candidate.createdAt, messageId: candidate.messageId }
+      }
     }
-    if (latest) return latest
+    if (candidates.length) return null
   }
   return null
 }
 
-type IndexOwner = object
-const indexes = new WeakMap<IndexOwner, Map<string, { revision: number; messageIds: readonly string[]; length: number; index: Map<string, SubagentDeliveries> }>>()
+/** Weakly owned by the session's resident message-id list: a replaced or evicted list releases its index. */
+const indexes = new WeakMap<object, { revision: number; length: number; index: Map<string, SubagentDeliveries> }>()
 
-/**
- * One index per session revision, shared by every card of that session. Owned by the message store
- * and tied to the session's message-id list, so eviction, reload or store replacement (which can
- * restart revision numbers) always rebuild it.
- */
-export function cachedSubagentDeliveries(owner: IndexOwner, sessionId: string, revision: number,
-  messageIds: readonly string[], build: () => Map<string, SubagentDeliveries>) {
-  let sessions = indexes.get(owner)
-  if (!sessions) indexes.set(owner, sessions = new Map())
-  const cached = sessions.get(sessionId)
-  if (cached && cached.revision === revision && cached.messageIds === messageIds && cached.length === messageIds.length) return cached.index
+/** One index per session revision and message list, shared by every card of that session. */
+export function cachedSubagentDeliveries(messageIds: readonly string[], revision: number, build: () => Map<string, SubagentDeliveries>) {
+  const cached = indexes.get(messageIds)
+  if (cached && cached.revision === revision && cached.length === messageIds.length) return cached.index
   const index = build()
-  sessions.set(sessionId, { revision, messageIds, length: messageIds.length, index })
+  indexes.set(messageIds, { revision, length: messageIds.length, index })
   return index
 }
