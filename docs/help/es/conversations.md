@@ -60,6 +60,12 @@ En el escritorio, enviar mueve el foco del teclado a la conversación, de modo q
 
 Los borradores son estado de trabajo del cliente, no mensajes nativos compartidos. La restauración al iniciar puede conservar el estado compatible del editor, pero no trates un borrador o adjunto sin enviar como una copia de seguridad ni supongas que aparece en otro dispositivo. Guarda el texto importante antes de borrar los datos de inicio o cerrar un cliente cuya política de restauración esté desactivada; consulta [Escritorio](desktop.md).
 
+## Abrir archivos desde las respuestas {#open-files-from-replies}
+
+1. Las respuestas del agente enlazan archivos del proyecto con rutas relativas y absolutas.
+2. Un clic normal abre el archivo enlazado en la vista previa del archivo, leído del worktree de la conversación.
+3. Los clics con modificadores (Ctrl/⌘-clic, Mayús-clic, clic central) y los enlaces fuera del worktree de la sesión mantienen el comportamiento normal de los enlaces.
+
 ## Comandos y modo shell {#commands-shell}
 
 1. Escribe `/` y selecciona un comando personalizado descubierto; después, proporciona sus argumentos.
