@@ -386,14 +386,17 @@ try {
   // alpha holds an awaiting round. Ending that round while the leaf still runs yields an intermediate report.
   const recursion = async () => (await client.message.list({ sessionID: alpha.id, limit: { order: "asc", limit: 50 } }))
     .data.flatMap(message => message.content ?? []).find(part => part.type === "tool" && part.id === "trajectory_recurse")?.state.status
-  let blockedSince
-  await until(async () => {
-    if (holds.has("alpha")) return true
-    if (await recursion() !== "running") blockedSince = undefined
-    else if (Date.now() - (blockedSince ??= Date.now()) > 2_000) return true
-    return false
-  }, "alpha awaits its leaf")
-  const alphaAwaited = holds.has("alpha")
+  // The runtime's own subagent schema says which: a `background` option (2.2) leaves alpha's
+  // option-less recursion in the foreground; without it (2.3) every subagent runs in the background.
+  const offered = requests.find(value => value.sessionID === alpha.id && value.kind === "primary")?.body.tools
+    ?.find(tool => tool.function?.name === "subagent")?.function
+  assert(offered, "Alpha was offered the native subagent tool")
+  const alphaAwaited = !Object.hasOwn(offered.parameters?.properties ?? {}, "background")
+  if (alphaAwaited) await until(() => holds.has("alpha"), "alpha's background launch acknowledgement")
+  else {
+    await until(async () => await recursion() === "running", "alpha blocks on its foreground leaf")
+    assert(!holds.has("alpha"), "A foreground leaf never leaves alpha an awaiting round")
+  }
   receipt.alphaRecursion = alphaAwaited ? "background" : "foreground"
   if (alphaAwaited) {
     release("alpha")
@@ -429,6 +432,7 @@ try {
   // left its leaf running, so its report is tagged running (intermediate) before the final report carries the return.
   const alphaDelivery = deliveries.get("trajectory_launch_alpha"), betaDelivery = deliveries.get("trajectory_launch_beta")
   assert(alphaDelivery && betaDelivery && alphaDelivery.mode === betaDelivery.mode, JSON.stringify([...deliveries]))
+  if (alphaAwaited) assert.equal(alphaDelivery.mode, "background", "A background recursion implies background delivery")
   if (alphaDelivery.mode === "background") {
     assert.equal(alphaDelivery.child, alpha.id); assert.equal(betaDelivery.child, beta.id)
     assert.equal(alphaDelivery.state, "completed"); assert.equal(betaDelivery.state, "completed")

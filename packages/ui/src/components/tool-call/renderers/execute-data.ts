@@ -31,6 +31,23 @@ export function executeData(state: ToolState | undefined) {
 
 /** Parsing bound: larger outputs keep the shared raw rendering. */
 const EXECUTE_OUTPUT_FORMAT_LIMIT = 200_000
+/** Indentation grows with depth (quadratically for nested arrays): deeper results keep the raw rendering. */
+const EXECUTE_OUTPUT_FORMAT_DEPTH = 64
+
+/** Bracket nesting outside strings, stopping as soon as it passes `limit`. */
+function exceedsJsonDepth(text: string, limit: number): boolean {
+  let depth = 0, inString = false
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (inString) {
+      if (char === "\\") index += 1
+      else if (char === "\"") inString = false
+    } else if (char === "\"") inString = true
+    else if (char === "[" || char === "{") { if (++depth > limit) return true }
+    else if (char === "]" || char === "}") depth -= 1
+  }
+  return false
+}
 
 /**
  * Native Code Mode sends an object or array result as compact JSON, optionally followed by
@@ -41,11 +58,14 @@ export function executeOutputForRender(output: unknown): { text: string; languag
   if (typeof output !== "string" || output.length > EXECUTE_OUTPUT_FORMAT_LIMIT) return null
   const sections = output.search(/\n\n(?:Warnings|Logs):\n/)
   const head = sections < 0 ? output : output.slice(0, sections)
-  if (!/^\s*[[{]/.test(head)) return null
-  let value: unknown
-  try { value = JSON.parse(head) } catch { return null }
-  if (value === null || typeof value !== "object") return null
-  const text = JSON.stringify(value, null, 2)
+  if (!/^\s*[[{]/.test(head) || exceedsJsonDepth(head, EXECUTE_OUTPUT_FORMAT_DEPTH)) return null
+  let text: string
+  try {
+    const value: unknown = JSON.parse(head)
+    if (value === null || typeof value !== "object") return null
+    text = JSON.stringify(value, null, 2)
+  } catch { return null }
+  if (text.length > EXECUTE_OUTPUT_FORMAT_LIMIT * 4) return null
   return sections < 0 ? { text, language: "json" } : { text: text + output.slice(sections) }
 }
 

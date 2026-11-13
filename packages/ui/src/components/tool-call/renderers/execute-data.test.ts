@@ -19,6 +19,15 @@ describe("Code Mode output rendering", () => {
       { text: '{\n  "a": 1\n}\n\nWarnings:\n- [unawaited] call\n\nLogs:\nhello' })
   })
 
+  it("leaves deeply nested results to the shared rendering without throwing", () => {
+    assert.equal(executeOutputForRender(`${"[".repeat(5000)}0${"]".repeat(5000)}`), null)
+    assert.equal(executeOutputForRender(`${"[".repeat(1000)}0${"]".repeat(1000)}`), null)
+    // Brackets inside strings do not count as nesting.
+    assert.deepEqual(executeOutputForRender(`{"a":"${"[".repeat(500)}"}`), { text: `{\n  "a": "${"[".repeat(500)}"\n}`, language: "json" })
+    assert.notEqual(executeOutputForRender(`${"[".repeat(64)}0${"]".repeat(64)}`), null)
+    assert.equal(executeOutputForRender(`${"[".repeat(65)}0${"]".repeat(65)}`), null)
+  })
+
   it("leaves strings, scalars, errors and oversized output to the shared rendering", () => {
     for (const output of ["plain text", "42", "null", '"quoted"', "{not json", "Error: boom\n\nLogs:\nx", undefined, 7, `[${"1,".repeat(120_000)}1]`]) {
       assert.equal(executeOutputForRender(output), null, String(output).slice(0, 40))

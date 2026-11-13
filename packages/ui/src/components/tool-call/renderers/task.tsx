@@ -20,7 +20,7 @@ import { getMessageWindowPageKey } from "../../message-history-pagination"
 import { useTaskStepCopy } from "./task-copy"
 import { getCanonicalToolName } from "../tool-presentation"
 import { describeTaskTitle, readSubagentName } from "./task-title"
-import { findLatestSubagentReport, isBackgroundSubagentLaunch, type SubagentReport } from "./subagent-report"
+import { cachedSubagentDeliveries, indexSubagentDeliveries, isBackgroundSubagentLaunch, latestReportForLaunch, subagentCallTime, type SubagentReport } from "./subagent-report"
 
 const TASK_MESSAGE_SCAN_LIMIT = 10_000
 
@@ -50,7 +50,13 @@ function readBackgroundReport(context: Pick<import("../types").ToolRendererConte
   const childId = extractSessionIdFromTaskState(state)
   if (!childId) return null
   const store = messageStoreBus.getOrCreate(context.instanceId)
-  return findLatestSubagentReport(store.getSessionMessageIds(context.sessionId), store.getMessage, childId, context.toolCall().messageID)
+  // Track the parent session's revision only; the index is shared by its cards.
+  const revision = store.getSessionRevision(context.sessionId)
+  const index = untrack(() => cachedSubagentDeliveries(`${context.instanceId}\0${context.sessionId}`, revision,
+    () => indexSubagentDeliveries(store.getSessionMessageIds(context.sessionId), store.getMessage)))
+  const call = context.toolCall()
+  const launchedAt = subagentCallTime(call, untrack(() => call.messageID ? store.getMessage(call.messageID)?.createdAt : undefined) ?? 0)
+  return latestReportForLaunch(index.get(childId), launchedAt)
 }
 
 function splitToolKey(key: string): { messageId: string; partId: string } | null {

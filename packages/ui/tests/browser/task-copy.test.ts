@@ -78,8 +78,16 @@ test("a background subagent card shows the child's latest report instead of its 
   await page.evaluate(() => (window as any).fixture.reload())
   assert.equal(await output.getAttribute("data-subagent-report"), "completed")
   assert.match(await output.textContent() ?? "", /Final answer: 42/)
+  // Continuing the same child gives the new call its own report; the first card keeps its result.
+  await page.evaluate(() => (window as any).fixture.continueChild("Continued result"))
+  const continued = page.locator('.tool-call[data-part-id="continued-task"] section[data-subagent-report]')
+  await continued.waitFor()
+  assert.match(await continued.textContent() ?? "", /Continued result/)
+  assert.match(await output.textContent() ?? "", /Final answer: 42/)
+  assert.doesNotMatch(await output.textContent() ?? "", /Continued result/)
   await page.evaluate(() => (window as any).fixture.report("error", "Child failed"))
-  await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="parent-task"] section[data-subagent-report]')?.getAttribute("data-subagent-report") === "error")
+  await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="continued-task"] section[data-subagent-report]')?.getAttribute("data-subagent-report") === "error")
+  assert.equal(await output.getAttribute("data-subagent-report"), "completed")
 }, "background"))
 
 test("exactly 200 observed child rows are not render overflow", { timeout: 45_000 }, async () => withPage(async page => {

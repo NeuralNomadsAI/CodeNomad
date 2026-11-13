@@ -124,6 +124,16 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={mounted()}
       data: { sessionID: parentId, text: message.text, description: message.description, metadata: message.metadata } })
   },
   reload: () => loadMessages(instanceId, parentId, { force: true }),
+  /** The parent continues the same child with a second call, then gets that call's report. */
+  continueChild: async (body: string) => {
+    const created = 10 + history[parentId].length
+    history[parentId].push({ id: `msg_continue${created}`, type: "assistant", agent: "build", model, time: { created, completed: created },
+      content: [{ id: "continued-task", type: "tool", name: "subagent", time: { created, completed: created },
+        state: { status: "completed", input: { agent: "explore", description: "Continue child" },
+          metadata: { sessionID: childId, status: "running" }, content: [{ type: "text", text: "The subagent is working in the background (sessionID: child)." }] } }] })
+    history[parentId].push(subagentReport(created + 1, "completed", body))
+    await loadMessages(instanceId, parentId, { force: true })
+  },
   hold: () => { held = true },
   release: () => { held = false; gates.splice(0).forEach(resolve => resolve()) },
   selectSession: (id: string) => { setSelectedSession(id); setActiveSession(instanceId, id) },
