@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Servidores",
+  "settings.servers.open": "Abrir",
+  "settings.servers.dialog.name": "Nombre",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Desactiva la verificación del certificado de este servidor. Su identidad no se puede verificar.",
+  "settings.servers.dialog.errorRequired": "La URL del servidor es obligatoria.",
   "settings.preferenceSaveFailed": "No se pudo guardar la preferencia.",
   "settings.behavior.keepComputerAwake.title": "Mantener el ordenador activo mientras CodeNomad esté en ejecución",
   "settings.behavior.keepComputerAwake.info": "Impide la suspensión del sistema mientras haya una ventana local de CodeNomad abierta (aunque esté minimizada); la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando.",

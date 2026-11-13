@@ -15,6 +15,8 @@ Pour appairer un autre CodeNomad de bureau, choisissez **Se connecter au serveur
 
 ## Gérer les appareils appairés {#paired-devices}
 
+Avec les réglages multi-backend expérimentaux, collez le lien d’appairage dans **Paramètres → Serveurs → Adresse ou lien du serveur**. Le champ est vidé avant la requête ; seule l’origine est enregistrée. Le backend local conserve son identité d’appareil privée entre les lancements ; **Supprimer le serveur enregistré** oublie la connexion de ce profil avant son retrait. L’appairage vérifie TLS et n’ouvre aucun projet. Les instructions de fenêtre distante ci-dessus concernent le mode par défaut.
+
 1. Sur l’hôte, revenez à **Paramètres → Accès distant → Contrôle à distance**.
 2. Vérifiez **Appareils appairés** et leur heure **Dernière activité**. Chaque appareil porte le nom de la plateforme et du navigateur qui l’ont appairé, par exemple `iPhone · Safari`.
 3. Choisissez **Révoquer** pour un appareil qui ne doit plus se connecter.

@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "サーバー",
+  "settings.servers.open": "開く",
+  "settings.servers.dialog.name": "名前",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "このサーバーの証明書検証を無効にします。サーバーの身元を確認できなくなります。",
+  "settings.servers.dialog.errorRequired": "サーバー URL は必須です。",
   "settings.preferenceSaveFailed": "設定を保存できませんでした。",
   "settings.behavior.keepComputerAwake.title": "CodeNomad の実行中はコンピューターをスリープさせない",
   "settings.behavior.keepComputerAwake.info": "ローカルの CodeNomad ウィンドウが開いている間（最小化中も含む）、システムのスリープを防ぎます。画面は引き続きオフになることがあります。無効の場合、セッションが作業中の間だけコンピューターをスリープさせません。",

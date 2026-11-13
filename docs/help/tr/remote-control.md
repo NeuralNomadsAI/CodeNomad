@@ -15,6 +15,8 @@ Başka masaüstü CodeNomad istemcisini eşleştirmek için onun ana sayfasında
 
 ## Eşleştirilmiş cihazları yönetin {#paired-devices}
 
+Deneysel çoklu arka uç ayarlarında eşleştirme bağlantısını **Ayarlar → Sunucular → Sunucu adresi veya bağlantısı** alanına yapıştırın. İstekten önce alan temizlenir; yalnızca köken kaydedilir. Yerel arka uç özel cihaz kimliğini yeniden başlatmalar arasında korur. **Kayıtlı sunucuyu kaldır** önce bu profilin bağlantısını unutur. Eşleştirme TLS doğrular ve proje açmaz. Yukarıdaki uzak pencere yönergeleri varsayılan mod içindir.
+
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesine dönün.
 2. **Eşleştirilmiş cihazlar** ve **Son görülme** zamanlarını inceleyin. Her cihaz, onu eşleştiren platform ve tarayıcıya göre adlandırılır; örneğin `iPhone · Safari`.
 3. Artık bağlanmaması gereken cihaz için **İptal et** eylemini seçin.

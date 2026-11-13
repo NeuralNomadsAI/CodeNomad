@@ -91,6 +91,12 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
+Yalnızca SSH üzerinden erişilen bir hedef için deneysel **Ayarlar → Sunucular** bölümünde **Sunucu ekle** seçeneğini açın, **URL** ve **SSH sunucusu (isteğe bağlı)** alanlarını doldurup **Kaydet** seçeneğini kullanın. Profil çevrimdışı kaydedilir; bağlantı backend'in SSH aktarımını kullanır.
+
+Deneysel çoklu arka uç ayarı açıkken **Ayarlar → Sunucular** bölümünü kullanın: **Sunucu adresi veya bağlantısı** alanına adres ya da eşleştirme bağlantısı yapıştırın veya Enter tuşuna basın. Ekleme, proje açmadan ana bilgisayarda bir profil kaydeder. **Sunucuyu düzenle**, **URL** veya isteğe bağlı **Ad** alanını değiştirir; aynı URL ve TLS ilkesiyle ad değiştirme çevrimdışı çalışır. **Kayıtlı sunucuyu kaldır** onay ister, bağlantıyı unutur ve kaldırmayı kaydeder; kayıt hatasında profil yeniden denemek için kalır. Diğer bağlantılar sürer.
+
+**TLS doğrulamasını atla**, o adresin sertifika hatasından sonra sunulur; adres değişince onay silinir. Eşleştirme her zaman TLS doğrular. Bu deneysel ayarlarda **Aç** devre dışıdır. Aşağıdaki adımlar varsayılan modu anlatır.
+
 Deneysel çoklu backend etkinleştirildiğinde **SSH sunucusu (isteğe bağlı)**, backend aktarımı için bir OpenSSH sunucusu veya takma adı kaydeder. Öneriler yerel backend hesabının `~/.ssh/config` dosyasından gelir. CodeNomad adresini bu ana makineden görüldüğü şekilde girin (örneğin gerçek bağlantı noktasıyla `https://127.0.0.1:9898`) ve **Kaydet** seçeneğini kullanın. SSH profilleri aktarımı kullanır; doğrudan sunucu pencereleri açan **Bağlan** bu profiller için devre dışıdır. CodeNomad orada kurulu ve çalışıyor olmalıdır. Yerel OpenSSH, anahtarla kimlik doğrulama ve `known_hosts` içinde doğrulanmış bir sunucu anahtarı gereklidir; CodeNomad kimlik doğrulaması ve HTTPS sertifika kontrolleri de geçerlidir.
 
 1. Masaüstü ana sayfasında **CodeNomad Sunucusuna Bağlan** öğesini seçin. Aynı düğme boş bir **Sunucular** sekmesinde ve **Ayarlar → Uzak Erişim → Sunucular** bölümünde de bulunur.

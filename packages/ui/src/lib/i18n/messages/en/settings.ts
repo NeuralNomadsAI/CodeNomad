@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Servers",
+  "settings.servers.open": "Open",
+  "settings.servers.dialog.name": "Name",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Disables certificate checks for this server. Its identity cannot be verified.",
+  "settings.servers.dialog.errorRequired": "Server URL is required.",
   "settings.preferenceSaveFailed": "Could not save the preference.",
   "settings.behavior.keepComputerAwake.title": "Keep the computer awake while CodeNomad is running",
   "settings.behavior.keepComputerAwake.info": "Prevents system sleep while a local CodeNomad window is open (including minimized); the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working.",

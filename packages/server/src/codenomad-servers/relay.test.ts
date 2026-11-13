@@ -189,6 +189,9 @@ test("same-principal cookie/login renewal retains proof; explicit replacement cr
   f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
   const proof = String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
   f.remote.restart()
+  const beforeExpiry = f.remote.state.requests.length
+  assert.equal((await f.call("/api/filesystem", { headers: { [AUTHORITY]: proof } })).status, 401)
+  assert.equal(f.remote.state.requests.slice(beforeExpiry).filter(request => request.path === "/api/filesystem").length, 1, "restoration never replays the opted-in request")
   assert.equal((await f.call("/api/filesystem", { headers: { [AUTHORITY]: proof } })).status, 200)
   assert.equal((await f.call("/api/meta", { headers: { [AUTHORITY]: proof } })).headers[AUTHORITY], proof)
   assert.equal((await f.connect()).status, 200)

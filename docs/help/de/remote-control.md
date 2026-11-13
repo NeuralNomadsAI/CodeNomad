@@ -15,6 +15,8 @@ Um einen weiteren CodeNomad-Desktop zu koppeln, wählen Sie auf dessen Startseit
 
 ## Gekoppelte Geräte verwalten {#paired-devices}
 
+Mit experimentellen Multi-Backend-Einstellungen fügen Sie den Desktop-Kopplungslink in **Einstellungen → Server → Serveradresse oder -link** ein. Das Feld wird vor der Anfrage geleert; gespeichert wird nur der Ursprung. Das lokale Backend bewahrt seine private Geräteidentität über Neustarts hinweg auf. **Gespeicherten Server entfernen** vergisst zuerst die Verbindung dieses Profils. Kopplung prüft TLS und öffnet kein Projekt. Die obigen Anweisungen zum Remote-Fenster gelten für den Standardmodus.
+
 1. Kehren Sie auf dem Host zu **Einstellungen → Remote-Zugriff → Fernsteuerung** zurück.
 2. Prüfen Sie **Gekoppelte Geräte** und deren **Zuletzt gesehen:**-Zeit. Jedes Gerät ist nach der Plattform und dem Browser benannt, die es gekoppelt haben, etwa `iPhone · Safari`.
 3. Wählen Sie **Widerrufen** für ein Gerät, das nicht länger zugreifen soll.

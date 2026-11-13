@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Sunucular",
+  "settings.servers.open": "Aç",
+  "settings.servers.dialog.name": "Ad",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Bu sunucunun sertifika denetimini devre dışı bırakır. Sunucunun kimliği doğrulanamaz.",
+  "settings.servers.dialog.errorRequired": "Sunucu URL'si gerekli.",
   "settings.preferenceSaveFailed": "Tercih kaydedilemedi.",
   "settings.behavior.keepComputerAwake.title": "CodeNomad çalışırken bilgisayarı uyanık tut",
   "settings.behavior.keepComputerAwake.info": "Yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önler; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar.",
