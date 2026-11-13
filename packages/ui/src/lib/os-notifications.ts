@@ -13,6 +13,7 @@ export type OsNotificationCapability = {
 export type OsNotificationPayload = {
   title: string
   body: string
+  signal?: AbortSignal
 }
 
 const log = getLogger("actions")
@@ -65,7 +66,7 @@ async function sendElectronNotification(payload: OsNotificationPayload): Promise
   if (!api || typeof api.showNotification !== "function") {
     throw new Error("Electron notification bridge unavailable")
   }
-  await api.showNotification(payload)
+  await api.showNotification({ title: payload.title, body: payload.body })
 }
 
 async function getTauriNotificationModule(): Promise<any | null> {
@@ -107,6 +108,7 @@ async function requestTauriPermission(): Promise<OsNotificationPermission> {
 
 async function sendTauriNotification(payload: OsNotificationPayload): Promise<void> {
   const mod = await getTauriNotificationModule()
+  if (payload.signal?.aborted) return
   if (!mod) {
     throw new Error("Tauri notification plugin unavailable")
   }
@@ -173,6 +175,7 @@ export async function requestOsNotificationPermission(): Promise<OsNotificationP
 }
 
 export async function sendOsNotification(payload: OsNotificationPayload): Promise<void> {
+  if (payload.signal?.aborted) return
   if (typeof window === "undefined") {
     return
   }

@@ -165,6 +165,7 @@ export const sessionMessages = {
   "sessionEvents.sessionCompactedToast": "La sesión {label} fue compactada",
   "sessionEvents.notify.needsInput": "La sesión «{label}» espera tu respuesta",
   "sessionEvents.notify.done": "La sesión «{label}» ha terminado",
+  "sessionEvents.notify.serverTitle": "{server} · {label}",
   "sessionEvents.sessionError.unknown": "Error desconocido",
   "sessionEvents.sessionError.title": "Error de sesión",
   "sessionEvents.sessionError.message": "Error: {message}",

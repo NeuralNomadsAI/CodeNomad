@@ -165,6 +165,7 @@ export const sessionMessages = {
   "sessionEvents.sessionCompactedToast": "Sitzung {label} wurde komprimiert",
   "sessionEvents.notify.needsInput": "Sitzung „{label}“ wartet auf Ihre Antwort",
   "sessionEvents.notify.done": "Sitzung „{label}“ ist beendet",
+  "sessionEvents.notify.serverTitle": "{server} · {label}",
   "sessionEvents.sessionError.unknown": "Unbekannter Fehler",
   "sessionEvents.sessionError.title": "Sitzungsfehler",
   "sessionEvents.sessionError.message": "Fehler: {message}",
