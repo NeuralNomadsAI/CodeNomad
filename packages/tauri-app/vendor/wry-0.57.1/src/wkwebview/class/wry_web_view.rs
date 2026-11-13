@@ -56,6 +56,17 @@ define_class!(
     }
 
     #[cfg(target_os = "macos")]
+    #[unsafe(method_id(menuForEvent:))]
+    fn menu_for_event(&self, event: &NSEvent) -> Option<Retained<objc2_app_kit::NSMenu>> {
+      unsafe {
+        if self.URL().and_then(|url| url.absoluteString()).is_some_and(|url| url.to_string().contains(".preview.localhost")) {
+          return None;
+        }
+        objc2::msg_send![super(self), menuForEvent: event]
+      }
+    }
+
+    #[cfg(target_os = "macos")]
     #[unsafe(method(acceptsFirstMouse:))]
     fn accept_first_mouse(&self, _event: &NSEvent) -> Bool {
       self.ivars().accept_first_mouse

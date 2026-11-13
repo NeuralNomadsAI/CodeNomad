@@ -140,6 +140,15 @@ deletion. Internal content URLs remain confined to embedded loading. The
 `isolatedOrigin` frame policy requires origin-bound HTTP/WS admission on its
 host-issued content origin.
 
+Native remote previews pass a logical address with their registration. Their
+native presentation keeps the content capability private: native context menus,
+link dragging, printing, pop-ups, downloads, page dialogs and permission prompts
+are suppressed. Electron's guarded before-unload fallback uses the logical
+origin or CodeNomad as its title. WebView2 hides its native status bar; WebKit
+disables link previews/tooltips. The fixed privilege-free
+`lib/native/remote-preview-guards.cjs` document-start program applies only to
+private preview origins. Ordinary native previews retain their browser policy.
+
 `preview-capabilities.test.ts` covers content-origin reservation, equal remote
 tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
 destination ownership, revocation and the real remote CodeNomad path proxy.

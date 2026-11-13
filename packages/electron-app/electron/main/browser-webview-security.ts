@@ -1,4 +1,5 @@
 import type { WebPreferences } from "electron"
+import { isPrivatePreviewUrl } from "./browser-presentation"
 
 export const browserPartitionPrefix = "persist:codenomad-browser-"
 
@@ -46,6 +47,6 @@ export function secureBrowserWebview(webPreferences: WebPreferences, params: Rec
   webPreferences.sandbox = true
   webPreferences.webSecurity = true
   webPreferences.allowRunningInsecureContent = false
-  webPreferences.disableDialogs = false
+  webPreferences.disableDialogs = isPrivatePreviewUrl(params.src)
   return true
 }

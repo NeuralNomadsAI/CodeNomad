@@ -20,8 +20,10 @@ import { startRemoteSurface } from "../../../server/src/remote-control/test-supp
 const TOKEN = "22222222-2222-4222-8222-222222222222"
 async function appServer(t: TestContext, label: string) {
   const sockets = new Set<Socket>(), streams = new Set<http.ServerResponse>(), upgrades = new Set<Socket>()
+  const probes: string[] = []
   let document = 0
   const server = http.createServer((request, reply) => {
+    if (request.url === "/probe") { probes.push(request.headers.referer ?? ""); return reply.end("") }
     if (request.url === "/app.css") return reply.writeHead(200, { "content-type": "text/css" }).end("h1 { color: rgb(10,20,30) }")
     if (request.url === "/data") return reply.writeHead(200, { "content-type": "text/plain" }).end(`fetch-${label}`)
     if (request.url === "/stream") {
@@ -61,7 +63,7 @@ async function appServer(t: TestContext, label: string) {
   })
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   t.after(() => new Promise<void>(resolve => { for (const socket of sockets) socket.destroy(); server.close(() => resolve()) }))
-  return { origin: `http://127.0.0.1:${(server.address() as { port: number }).port}`, streams, upgrades }
+  return { origin: `http://127.0.0.1:${(server.address() as { port: number }).port}`, streams, upgrades, probes }
 }
 
 async function fixture(t: TestContext) {
@@ -169,6 +171,39 @@ test("hostile content cannot read its parent, local UI/relay or the other known 
     assert.equal(await hostile.evaluate(url => (window as any).attack(url), url), "blocked")
   }
   assert.deepEqual(f.errors, [])
+})
+
+test("shared native remote guards remove URL-exporting browser actions while ordinary pages stay unchanged", async t => {
+  const f = await fixture(t)
+  await ready(f.page)
+  const program = fs.readFileSync(new URL("../../src/lib/native/remote-preview-guards.cjs", import.meta.url), "utf8")
+  assert.equal(await f.page.evaluate(program => {
+    const print = window.print
+    ;(0, eval)(program)
+    return window.print === print
+  }, program), true)
+  const source = await f.page.evaluate(() => (window as any).remotePreviews.source("a"))
+  const frame = f.page.frames().find(frame => frame.url().startsWith(new URL(source).origin))!
+  const result = await frame.evaluate(program => {
+    ;(0, eval)(program)
+    const prevent = Event.prototype.preventDefault, stop = Event.prototype.stopImmediatePropagation
+    Event.prototype.preventDefault = () => {}
+    Event.prototype.stopImmediatePropagation = () => {}
+    const actions = ["contextmenu", "dragstart"].map(name => window.dispatchEvent(new Event(name, { cancelable: true })))
+    let unload = false
+    window.addEventListener("beforeunload", () => { unload = true })
+    window.dispatchEvent(new Event("beforeunload"))
+    const print = window.print
+    window.print()
+    const result = { actions, unload, confirm: window.confirm("test"), prompt: window.prompt("test"),
+      immutable: Object.getOwnPropertyDescriptor(window, "print")?.configurable === false, print: typeof print }
+    Event.prototype.preventDefault = prevent
+    Event.prototype.stopImmediatePropagation = stop
+    return result
+  }, program)
+  assert.deepEqual(result, { actions: [false, false], unload: true, confirm: false, prompt: null, immutable: true, print: "function" })
+  await frame.evaluate(url => fetch(`${url}/probe`, { mode: "no-cors" }).then(() => undefined), f.apps[1]!.origin)
+  assert.deepEqual(f.apps[1]!.probes, [""])
 })
 
 for (const action of ["close", "tab", "detach", "remove", "retarget", "shutdown"] as const) {

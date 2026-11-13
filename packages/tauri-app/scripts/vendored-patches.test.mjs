@@ -71,6 +71,7 @@ test("preview runtime fence separates app IPC, scripts and protocols from browse
   assert.match(runtime, /if !browser_guest \{\s*webview_builder = webview_builder\.with_ipc_handler/)
   assert.match(runtime, /for \(scheme, protocol\) in uri_scheme_protocols \{[\s\S]*?if browser_guest\s*\{\s*continue;\s*\}/)
   assert.doesNotMatch(read("src-tauri/src/embedded_view.rs"), /\.clipboard\(true\)/)
+  assert.match(runtime, /if browser_guest \{[\s\S]*?include_str!\("\.\.\/\.\.\/\.\.\/\.\.\/ui\/src\/lib\/native\/remote-preview-guards\.cjs"\), false\)/)
 })
 
 test("WK preview print and beforeunload callbacks retain native completion and app policy", () => {

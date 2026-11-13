@@ -538,6 +538,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           sessionId,
           registrationId,
           guestWebContentsId: webview.getWebContentsId(),
+          ...(props.isolatedSource ? { logicalAddress: props.initialAddress } : {}),
         }).then(async () => {
           registering = false
           if (!active) {
@@ -693,6 +694,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           sessionId,
           registrationId,
           url: target,
+          ...(props.isolatedSource ? { logicalAddress: props.initialAddress } : {}),
           bounds: next,
           ...(webkitEmulation ? { presentation: presentation() } : {}),
         })
@@ -759,6 +761,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const address = initialAddress ?? getEditablePathFromUrl(initialUrl)
       const source = props.isolatedSource ? initialUrl : address
       setPathInput(address)
+      if (props.isolatedSource && browserHost === "electron" && webviewReady && webviewRef) {
+        void window.electronAPI?.registerBrowserTarget?.({ sessionId: props.sessionId!, registrationId: browserRegistrationId,
+          guestWebContentsId: webviewRef.getWebContentsId(), logicalAddress: address }).catch(reportNativeError)
+      }
       // A redirect commits before dom-ready; do not reload it when its location
       // notification comes back through the preview props.
       if (nativeMode() && webviewRef && (webviewReady ? webviewRef.getURL() : webviewObservedUrl) === source) return
@@ -766,7 +772,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       requestNativeTarget(source)
       const nextNativeMode = nativeBrowserAvailable
       if (nextNativeMode && browserHost === "tauri" && tauriRegistered && previousTarget !== source) {
-        void controlTauriBrowserTarget(browserRegistrationId, "navigate", source).catch(reportNativeError)
+        void controlTauriBrowserTarget(browserRegistrationId, "navigate", source, props.isolatedSource ? address : undefined).catch(reportNativeError)
       }
       setNativeMode(nextNativeMode)
     })
@@ -825,7 +831,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       else if (nativeMode()) {
         const source = props.isolatedSource ? await props.onNavigate!(target.url) : target.url
         if (disposed || version !== historyTravelVersion) return
-        if (browserHost === "tauri") await controlTauriBrowserTarget(browserRegistrationId, "navigate", source)
+        if (browserHost === "tauri") await controlTauriBrowserTarget(browserRegistrationId, "navigate", source, props.isolatedSource ? target.url : undefined)
         else if (webviewReady) await webviewRef?.loadURL(source)
       } else {
         const source = await props.onNavigate!(target.url)
@@ -875,7 +881,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (journal) publishHistory(journal.visitUrl(target))
       if (nativeMode()) {
         requestNativeTarget(source)
-        if (browserHost === "tauri" && tauriRegistered) await controlTauriBrowserTarget(browserRegistrationId, "navigate", source)
+        if (browserHost === "tauri" && tauriRegistered) await controlTauriBrowserTarget(browserRegistrationId, "navigate", source, target)
       } else {
         loadFrameSource(source)
         props.onFrameLocation?.(target)

@@ -10,3 +10,4 @@ contextBridge.exposeInMainWorld("prompt", (message, value) => {
   })
   return typeof result === "string" ? result : null
 })
+contextBridge.executeInMainWorld({ func: require("../../../ui/src/lib/native/remote-preview-guards.cjs") })

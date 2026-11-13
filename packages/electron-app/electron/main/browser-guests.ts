@@ -4,6 +4,7 @@ import { nativeMenuLabels } from "./view-menu"
 import { isBrowserDialog } from "./browser-dialog"
 import { installBrowserPrompt } from "./browser-prompt"
 import { browserGuestLifetime } from "./browser-guest-lifetime"
+import { browserPresentationTitle, isPrivatePreviewUrl, restrictedBrowserGuest } from "./browser-presentation"
 
 const windows = new WeakSet<BrowserWindow>()
 const observedOwners = new WeakSet<BrowserWindow>()
@@ -36,6 +37,9 @@ export function protectBrowserGuest(owner: BrowserWindow, guest: WebContents, in
   let origin = isBrowserUrlAllowed(guest.getURL()) ? guest.getURL() : inheritedOrigin
   guest.once("destroyed", () => browserGuestLifetime.remove(guest))
   guest.on("render-process-gone", () => browserGuestLifetime.replaceDocument(guest))
+  guest.on("did-fail-load", (_event, code, _description, url, main) => {
+    if (main && code !== -3 && live() && isPrivatePreviewUrl(url)) void guest.loadURL("about:blank").catch(() => {})
+  })
   guest.on("did-navigate", (_event, url) => {
     browserGuestLifetime.replaceDocument(guest)
     if (live() && isBrowserUrlAllowed(url)) origin = url
@@ -51,15 +55,16 @@ export function protectBrowserGuest(owner: BrowserWindow, guest: WebContents, in
   guest.on("will-prevent-unload", event => {
     if (!live()) { event.preventDefault(); return }
     const l = nativeMenuLabels(owner)
+    const title = browserPresentationTitle(guest, origin)
     const response = dialog.showMessageBoxSync(BrowserWindow.fromWebContents(guest) ?? owner, {
-      type: "question", title: origin,
-      message: l.browserPermission.replace("{permission}", "navigation").replace("{origin}", origin),
+      type: "question", title,
+      message: l.browserPermission.replace("{permission}", "navigation").replace("{origin}", title),
       buttons: [l.browserDeny, l.browserAllow], defaultId: 0, cancelId: 0, noLink: true,
     })
     if (response === 1) event.preventDefault()
   })
   guest.setWindowOpenHandler(({ url }) => {
-    if (!live() || !isBrowserSiteUrlAllowed(url, origin)) return { action: "deny" }
+    if (!live() || restrictedBrowserGuest(guest) || isPrivatePreviewUrl(url) || !isBrowserSiteUrlAllowed(url, origin)) return { action: "deny" }
     const document = browserGuestLifetime.revision(guest)
     return { action: "allow", outlivesOpener: false, createWindow: options => {
       if (!live() || browserGuestLifetime.revision(guest) !== document) throw new Error("Expired preview opener")
@@ -75,7 +80,7 @@ export function protectBrowserGuest(owner: BrowserWindow, guest: WebContents, in
     } }
   })
   guest.on("context-menu", (_event, params) => {
-    if (!live()) return
+    if (!live() || restrictedBrowserGuest(guest) || isPrivatePreviewUrl(params.linkURL) || isPrivatePreviewUrl(params.srcURL)) return
     const document = browserGuestLifetime.revision(guest)
     const current = () => live() && browserGuestLifetime.revision(guest) === document
     const l = nativeMenuLabels(owner)
@@ -95,5 +100,8 @@ export function protectBrowserGuest(owner: BrowserWindow, guest: WebContents, in
       items.push({ label: l.browserSaveImage, click: () => { if (current()) guest.downloadURL(params.srcURL) } })
     items.push({ label: l.browserInspect, click: () => { if (current()) guest.inspectElement(params.x, params.y) } })
     Menu.buildFromTemplate(items).popup({ window: BrowserWindow.fromWebContents(guest) ?? owner })
+  })
+  guest.on("before-input-event", (event, input) => {
+    if (restrictedBrowserGuest(guest) && (input.control || input.meta) && input.key?.toLowerCase() === "p") event.preventDefault()
   })
 }

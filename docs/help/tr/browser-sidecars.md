@@ -14,6 +14,8 @@ Kaydedilen geçmiş, başlangıç/oturum seçiminde değil, yalnızca o oturumun
 
 Uzak proje sekmeleri önizlemeleri o projenin CodeNomad sunucusu üzerinden yükler. Adres çubuğu ve kaydedilen geçmiş uygulama URL’sini gösterir. Önizlemeyi veya proje sekmesini kapatmak, sunucunun bağlantısını kesmek/sunucuyu kaldırmak ya da uygulamadan çıkmak canlı sayfayı ve bağlantılarını sonlandırır; yeniden açmak kayıtlı adresi geçmişiyle yükler. Sunucu oturum bilgileri arka uçta kalır; proxy üzerinden geçen uygulama çerezleri filtrelenir. Dahili önizleme yükleme adreslerini CodeNomad içinde tutun.
 
+Yerel motorlu uzak önizlemeler dahili yükleme adreslerini gizli tutmak için bağlam menülerini, bağlantı sürüklemeyi, yazdırmayı, açılır pencereleri, indirmeleri, sayfa iletişim kutularını ve izin istemlerini kapatır. Kapatmadan önce sayfadaki çalışmanızı kaydedin.
+
 ## Paylaşılan oturum açma işlemleri ve otomasyon sınırları {#signins-automation}
 
 Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamındaki projeler/oturumlar arasında çerezleri, oturum açma bilgilerini ve site depolamasını paylaşır; bunlar güvenilir CodeNomad arayüzünden ayrıdır. Önizlemede siteden çıkış yapmak aynı depoyu kullanan diğer önizlemeleri etkiler. Belgeler, formlar, oturum depolaması, gezinme geçmişi ve otomasyon bağlantıları oturuma ait kalır. Iframe önizlemeleri tam bir ortak native tarayıcı profili değildir.

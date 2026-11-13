@@ -1,0 +1,25 @@
+--- a/src/wkwebview/class/wry_web_view_ui_delegate.rs
++++ b/src/wkwebview/class/wry_web_view_ui_delegate.rs
+@@ -119,0 +120,4 @@
++      if unsafe { frame.securityOrigin().host() }.to_string().ends_with(".preview.localhost") {
++        completion.call((false.into(),));
++        return;
++      }
+@@ -466,0 +471,3 @@
++    if webview.URL().and_then(|url| url.absoluteString()).is_some_and(|url| url.to_string().contains(".preview.localhost")) {
++      return;
++    }
+--- a/src/wkwebview/class/wry_web_view.rs
++++ b/src/wkwebview/class/wry_web_view.rs
+@@ -57,0 +58,11 @@
++    #[cfg(target_os = "macos")]
++    #[unsafe(method_id(menuForEvent:))]
++    fn menu_for_event(&self, event: &NSEvent) -> Option<Retained<objc2_app_kit::NSMenu>> {
++      unsafe {
++        if self.URL().and_then(|url| url.absoluteString()).is_some_and(|url| url.to_string().contains(".preview.localhost")) {
++          return None;
++        }
++        objc2::msg_send![super(self), menuForEvent: event]
++      }
++    }
++
