@@ -29,6 +29,26 @@ export function executeData(state: ToolState | undefined) {
     outputPath: typeof metadata.outputPath === "string" ? metadata.outputPath : undefined }
 }
 
+/** Parsing bound: larger outputs keep the shared raw rendering. */
+const EXECUTE_OUTPUT_FORMAT_LIMIT = 200_000
+
+/**
+ * Native Code Mode sends an object or array result as compact JSON, optionally followed by
+ * blank-line separated `Warnings:` and `Logs:` blocks. Render that result indented; anything
+ * else (strings, errors, unparsable or oversized output) returns null for the shared rendering.
+ */
+export function executeOutputForRender(output: unknown): { text: string; language?: string } | null {
+  if (typeof output !== "string" || output.length > EXECUTE_OUTPUT_FORMAT_LIMIT) return null
+  const sections = output.search(/\n\n(?:Warnings|Logs):\n/)
+  const head = sections < 0 ? output : output.slice(0, sections)
+  if (!/^\s*[[{]/.test(head)) return null
+  let value: unknown
+  try { value = JSON.parse(head) } catch { return null }
+  if (value === null || typeof value !== "object") return null
+  const text = JSON.stringify(value, null, 2)
+  return sections < 0 ? { text, language: "json" } : { text: text + output.slice(sections) }
+}
+
 export function executeSummary(calls: readonly ExecuteCall[]): string {
   const counts = new Map<string, number>()
   for (const call of calls) counts.set(call.tool, (counts.get(call.tool) ?? 0) + 1)

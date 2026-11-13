@@ -142,6 +142,16 @@ test("a tool image deferred by its transcript page loads from CodeNomad's sessio
   assert.equal(requested.length, 2)
 }))
 
+test("Code Mode indents a compact JSON result and keeps its logs", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.execute("json"))
+  const block = page.locator(".tool-call-execute pre", { hasText: '"answer"' }).first()
+  await block.waitFor()
+  const text = await block.textContent() ?? ""
+  assert.match(text, /\{\n\s+"answer": 42,\n\s+"items": \[\n\s+"a",/)
+  assert.match(text, /Logs:\nhello/)
+  assert.doesNotMatch(text, /\{"answer":42/)
+}))
+
 test("Code Mode renders native progress, nested errors, script, images and historical output", async () => withPage(async page => {
   await page.evaluate(() => (window as any).fixture.execute("running"))
   await page.locator(".execute-calls").waitFor()

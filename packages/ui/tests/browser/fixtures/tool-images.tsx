@@ -55,6 +55,8 @@ function content(kind: string) {
   if (kind === "deferred") return [{ ...png, uri: deferredUri() }]
   if (kind === "deferred-missing") return [{ ...png, uri: deferredUri("b") }]
   if (kind === "empty") return [{ type: "text", text: "Text-only result" }]
+  // Native Code Mode result: compact JSON, then its logs block.
+  if (kind === "json") return [{ type: "text", text: '{"answer":42,"items":["a","b"]}\n\nLogs:\nhello' }]
   if (kind === "broken") return [{ ...png, uri: "data:image/png;base64,broken" }]
   if (kind === "unsafe") return [{ ...png, uri: "javascript:window.unexpectedNavigation=true" }]
   return [{ type: "text", text: "Generated 2 images. Saved successfully." }, png, jpeg]
@@ -111,6 +113,12 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     if (phase === "progress") {
       metadata.toolCalls.push({ tool: "third", status: "running", input: { test: true } })
       emit("session.tool.progress", { id: "tool", metadata })
+      return
+    }
+    if (phase === "json") {
+      messages = [{ ...completed("json", "execute"), content: [{ id: "tool", type: "tool", name: "execute",
+        time: { created: 1, completed: time }, state: { status: "completed", input, metadata: { toolCalls: [] }, content: content("json") } }] }]
+      await loadMessages(instanceId, sessionId, { force: true })
       return
     }
     if (phase === "running") {
