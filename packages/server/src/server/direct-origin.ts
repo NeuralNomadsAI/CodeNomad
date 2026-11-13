@@ -4,6 +4,7 @@ import type { ServerMeta } from "../api-types"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
 
 type OriginRequest = Pick<FastifyRequest, "raw" | "headers">
+const LOOPBACK_HOST = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i
 
 /** Explicit origins only: credentials, paths, wildcards and opaque origins fail startup. */
 export function parseAllowedOrigins(value = ""): string[] {
@@ -33,14 +34,23 @@ export function registerDirectOriginPolicy(app: FastifyInstance, options: {
       const host = address.address.includes(":") ? `[${address.address}]` : address.address
       const protocol = request.raw.socket && "encrypted" in request.raw.socket ? "https" : "http"
       candidates.push(`${protocol}://${host}:${address.port}`)
-      if (isLocalRequest(request) && (address.address === "127.0.0.1" || address.address === "::1")) {
-        candidates.push(`${protocol}://localhost:${address.port}`)
-      }
     }
     if (isLocalRequest(request) && options.devServerUrl) candidates.push(options.devServerUrl)
-    return candidates.some(candidate => {
-      try { return candidate !== undefined && new URL(candidate).origin === origin } catch { return false }
+    const urls = candidates.flatMap(candidate => {
+      try { return candidate === undefined ? [] : [new URL(candidate)] } catch { return [] }
     })
+    if (urls.some(url => url.origin === origin)) return true
+    // A page on this machine reaches its own listener under any loopback name
+    // (localhost, 127.0.0.1, [::1]) whatever the bind address, including all interfaces.
+    if (!isLocalRequest(request)) return false
+    try {
+      const source = new URL(origin)
+      const ports = new Set(urls.map(url => url.port || (url.protocol === "https:" ? "443" : "80")))
+      if (address && typeof address === "object") ports.add(String(address.port))
+      // Only a canonical origin: a path, credentials or another spelling is no origin a browser sends.
+      return source.origin === origin && /^https?:$/.test(source.protocol) && LOOPBACK_HOST.test(source.hostname)
+        && ports.has(source.port || (source.protocol === "https:" ? "443" : "80"))
+    } catch { return false }
   }
 
   const allowsSource = (request: OriginRequest): boolean => {
