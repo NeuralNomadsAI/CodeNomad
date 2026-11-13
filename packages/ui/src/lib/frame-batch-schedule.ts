@@ -7,16 +7,16 @@
  * even when the main thread never reports idle.
  *
  * Queued work owns its own validity: callbacks are fenced by their caller
- * (a disposed check), so there is no cancellation API.
+ * (a disposed check), so there is no per-mount cancellation API.
  */
 
 const MOUNTS_PER_FRAME = 2
 
 const queue: Array<() => void> = []
-let scheduled = false
+let armed: number | null = null
 
 function flush() {
-  scheduled = false
+  armed = null
   let mounted = 0
   while (queue.length > 0 && mounted < MOUNTS_PER_FRAME) {
     queue.shift()!()
@@ -26,10 +26,16 @@ function flush() {
 }
 
 function schedule() {
-  if (scheduled || queue.length === 0) return
-  scheduled = true
-  if (typeof requestAnimationFrame === "function") requestAnimationFrame(flush)
-  else setTimeout(flush, 0)
+  if (armed !== null || queue.length === 0) return
+  if (typeof requestAnimationFrame === "function") armed = requestAnimationFrame(flush)
+  else armed = setTimeout(flush, 0) as unknown as number
+}
+
+function disarm() {
+  if (armed === null) return
+  if (typeof requestAnimationFrame === "function") cancelAnimationFrame(armed)
+  else clearTimeout(armed as unknown as ReturnType<typeof setTimeout>)
+  armed = null
 }
 
 /** Runs `mount` in the next frame batch of at most `MOUNTS_PER_FRAME` items. */
@@ -45,8 +51,6 @@ export function scheduleFrameBatchedMount(mount: () => void): void {
  * target drifting for the reader.
  */
 export function flushFrameBatchedMounts(): void {
-  // A pending frame callback finds an empty queue and stops; clearing the
-  // flag lets a later mount reschedule at once.
-  scheduled = false
+  disarm()
   while (queue.length > 0) queue.shift()!()
 }
