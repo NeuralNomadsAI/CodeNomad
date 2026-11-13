@@ -21,7 +21,7 @@ export const humanAnswerPrincipalSchema = z.discriminatedUnion("kind", [
 export type HumanAnswerPrincipal = z.infer<typeof humanAnswerPrincipalSchema>
 export const humanAnswerProofSchema = humanAnswerBindingSchema.extend({ workspaceID: z.string().min(1).max(200),
   principal: humanAnswerPrincipalSchema, username: z.string().min(1).max(256),
-  answer: z.record(z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])),
+  answer: z.record(z.string(), z.union([z.string().max(20000), z.array(z.string().max(20000)).max(32)])),
   issuedAt: z.number().int().nonnegative().safe() }).strict()
 export type HumanAnswerProof = z.infer<typeof humanAnswerProofSchema>
 export const humanAnswerRpcInputSchema = z.object({ body: humanAnswerProofSchema, proof: z.string().regex(/^[a-f0-9]{64}$/) }).strict()

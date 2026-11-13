@@ -16,6 +16,7 @@ import { nativeScheduleIncarnationGuard, sameNativeScheduleIncarnation } from ".
 import { nativeScheduleWakeKey, assertNativeScheduleWake, type NativeScheduleWake, type NativeScheduleTransportReply, type NativeSchedulePreflight } from "./native-schedule-transport-contract"
 import { assertNativeSchedulePreflight, nativeSchedulePreflight } from "./native-mission-schedule-preflight"
 import { parseNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
+import { nativeScheduleClaimAbandoned, receivingNativeScheduleWake } from "./native-mission-schedule-wake-flight"
 import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import type { NativeScheduleCalendarOwner } from "./native-schedule-owner"
 
@@ -33,7 +34,13 @@ export type NativeMissionScheduleWakePorts = { store: NativeMissionDocumentStore
 
 /** Orchestration over real document/owner/passage ports. An auxiliary consumes
  * and releases its own claim before any cleanup or pending-business observation. */
-export async function receiveNativeMissionScheduleWake(mode: "wake" | "status", input: Input, entry: Entry,
+export function receiveNativeMissionScheduleWake(mode: "wake" | "status", input: Input, entry: Entry,
+  ports: NativeMissionScheduleWakePorts): Promise<NativeScheduleTransportReply> {
+  // Status proves abandonment only for receivers that ended; register this one first.
+  return mode === "wake" ? receivingNativeScheduleWake(input.wake, () => receive(mode, input, entry, ports)) : receive(mode, input, entry, ports)
+}
+
+async function receive(mode: "wake" | "status", input: Input, entry: Entry,
   ports: NativeMissionScheduleWakePorts): Promise<NativeScheduleTransportReply> {
   const wake = input.wake, key = nativeScheduleWakeKey(wake), reply = (state: NativeScheduleTransportReply["state"]) => ({ key, state })
   entry.current(); entry.signal.throwIfAborted()
@@ -42,11 +49,13 @@ export async function receiveNativeMissionScheduleWake(mode: "wake" | "status", 
   if (calendar.highWater >= wake.run) return reply("applied")
   const claimed = claim?.key === key && sameNativeScheduleIncarnation(claim.incarnation, input.incarnation)
   if (mode === "status") {
+    const abandoned = !!claim && nativeScheduleClaimAbandoned(claim, wake, input.incarnation)
     const preflight = calendar.role === "reconciliation"
       ? { messagePresent: true, ready: wake.run === calendar.highWater + 1, cutoff: Date.now() }
       : await ports.runtime.preflight({ ...entry, missionID: wake.missionID, wake })
     entry.current()
     return { ...reply(claimed ? "pending" : "unknown"), messagePresent: preflight.messagePresent, ready: preflight.ready,
+      ...(abandoned ? { abandoned: true } : {}),
       ...(preflight.messagePresent && preflight.ready ? { preflight: nativeSchedulePreflight(wake, input.incarnation.id, preflight.cutoff) } : {}) }
   }
   if (!claimed) return reply("unknown")

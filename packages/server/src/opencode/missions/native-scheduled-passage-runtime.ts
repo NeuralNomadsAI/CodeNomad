@@ -2,7 +2,6 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Scope } from "effect"
 import type { MissionControl } from "../../missions/control"
 import type { MissionBusinessRoute } from "../missions-plugin"
-import { canonicalAuthority } from "../../missions/authority-protocol"
 import { matchesExecution } from "../../missions/execution"
 import type { MissionDocument } from "../../missions/mission-document"
 import type { NativeMissionDocumentStore } from "../../missions/mission-document-store"
@@ -13,7 +12,7 @@ import { acquireMissionNativeService, type MissionNativeRunner } from "./native-
 import { acquireNativePassageObservation } from "./native-passage-observation"
 import { acquireNativeScheduledPassageAuthority, documentPassageBusinessAllowed, documentPassageDispatchAllowed } from "./native-scheduled-passage-authority"
 import { acquireNativeScheduledPassageCoverage } from "./native-scheduled-passage-coverage"
-import { nativeScheduledPassageBusiness, scheduledPassageMarker, type NativeScheduledPassageContext } from "./native-scheduled-passage-business"
+import { nativeScheduledPassageBusiness, type NativeScheduledPassageContext } from "./native-scheduled-passage-business"
 import { admitNativeScheduledPassage } from "./native-scheduled-passage-admission"
 import { observeNativeScheduledPassage } from "./native-scheduled-passage-settlement"
 import { prepareNativeDocumentSources, type DocumentConditionReader } from "./native-scheduled-passage-sources"
@@ -22,6 +21,8 @@ import { controlNativeScheduledPassage, type ScheduledPassageControl } from "./n
 import { acquireNativeScheduledPassageCapability } from "./native-scheduled-passage-capability"
 import { acquireNativeMissionConditionReader } from "./native-mission-condition-reader"
 import { acquireNativeSourceFence } from "./native-source-fence"
+import { adoptNativeScheduledCoordinator, releaseNativeScheduledCoordinator } from "./native-scheduled-coordinator"
+import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 
 type Entry = { current(): true; signal: AbortSignal }
 type Options = {
@@ -76,6 +77,10 @@ export const acquireNativeScheduledPassageRuntime = Effect.fn("missions.acquireS
     const productive = await run(acquireMissionNativeService(current, run, () => capability.prepare(document))
       .pipe(Effect.provideService(Scope.Scope, scope)))
     return { document, locked, storage, native: productive, observation, authority: guardedAuthority, profile, signal: entry.signal, humanGate, current, now,
+      adoptCoordinator: (metadata, effectCurrent) => adoptNativeScheduledCoordinator(ctx, run, productive, document, metadata, effectCurrent,
+        () => run(capability.prepare(document)), entry.signal, current,
+        session => { const fence = sourceFence(); fence.selectedSession(session); return fence.current }),
+      settlementFence: sourceFence,
       qualifyBusiness: async () => { current(); await run(capability.prepare(document)); current() },
       environment: options.environment, lifecycle: options.lifecycle, businessAllowed }
   }
@@ -92,6 +97,20 @@ export const acquireNativeScheduledPassageRuntime = Effect.fn("missions.acquireS
       },
       admit: async (doc, locked) => admitNativeScheduledPassage(await context(doc, locked, entry), dispatchAllowed),
       observe: async (doc, locked) => observeNativeScheduledPassage(await context(doc, locked, entry)),
+      cleanup: async (doc, locked) => {
+        for (const pending of doc.coordinatorReleases) {
+          try {
+            const proof = await releaseNativeScheduledCoordinator(ctx, run, native, { ...pending, coordinatorReused: true }, doc.id,
+              current, entry.signal, session => { const fence = sourceFence(); fence.selectedSession(session); return fence.current },
+              id => { const fence = sourceFence(); fence.absentSession(id); return fence.current })
+            if (!proof) continue
+            const fresh = await locked.read(doc.id)
+            if (!fresh || "deletedAt" in fresh) return
+            await locked.change(doc.id, fresh.revision, () => { current(); return proof() },
+              next => { next.coordinatorReleases = next.coordinatorReleases.filter(item => item.id !== pending.id) })
+          } catch { entry.signal.throwIfAborted() }
+        }
+      },
     })
   }
   const business = async <T>(sessionID: string, entry: Entry,
@@ -105,12 +124,12 @@ export const acquireNativeScheduledPassageRuntime = Effect.fn("missions.acquireS
       const session = await native.get({ sessionID: id }, { signal: entry.signal })
       if (session.id !== id) throw new Error("Scheduled passage ancestry differs")
       if (session.parentID) { id = session.parentID; continue }
-      const marker = session.metadata?.["codenomad.mission"] as { missionID?: unknown; document?: { missionID?: unknown; passageID?: unknown } } | undefined
+      const marker = session.metadata?.["codenomad.mission"] as { missionID?: unknown; document?: { missionID?: unknown; passageID?: unknown; coordinatorReused?: unknown } } | undefined
       if (marker?.document === undefined) return undefined
       if (typeof marker.document?.missionID !== "string") throw new Error("Scheduled passage marker unavailable")
-      const doc = await locked.read(marker.document.missionID)
-      if (!doc || "deletedAt" in doc || !doc.pending || marker.missionID !== doc.pending.missionID
-        || canonicalAuthority(marker.document) !== canonicalAuthority(scheduledPassageMarker(doc))) throw new Error("Scheduled passage pending differs")
+      const doc = scheduledPassageOwner(await locked.read(marker.document.missionID),
+        { projectID: native.location.project.id, projectCanonical: native.location.project.canonical }, id, marker)
+      if (!doc?.pending) return undefined
       // Every traversed actor must remain in this exact invocation Location.
       for (const actorID of seen) {
         const actor = await native.get({ sessionID: actorID }, { signal: entry.signal })

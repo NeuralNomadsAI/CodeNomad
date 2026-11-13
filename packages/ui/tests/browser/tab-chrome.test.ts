@@ -125,6 +125,7 @@ test("Electron BrowserWindow native zoom retains tab seams and matching scrollba
   try {
     const env = { ...process.env, CODENOMAD_TEST_PROFILE: profile }
     delete env.ELECTRON_RUN_AS_NODE
+    delete env.ELECTRON_NO_ASAR
     app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON,
       args: [fileURLToPath(new URL("fixtures/tab-chrome-electron.cjs", import.meta.url))], env })
     const page = await app.firstWindow()

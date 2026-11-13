@@ -18,6 +18,10 @@
   height: 0.8rem;
 }
 
+.settings-info-tip[role="link"] {
+  cursor: pointer;
+}
+
 .settings-info-tip:hover,
 .settings-info-tip:focus-visible {
   color: var(--text-secondary);

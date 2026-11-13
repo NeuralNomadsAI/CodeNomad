@@ -4,6 +4,8 @@ app.setPath("userData", process.env.CODENOMAD_TEST_PROFILE)
 app.whenReady().then(() => {
   const window = new BrowserWindow({ show: false, width: 1100, height: 950,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } })
+  // Keep Electron's asynchronously installed default menu out of viewport measurements.
+  window.removeMenu()
   globalThis.emulationFixture = {
     apply: preset => setBrowserEmulation(window.webContents, preset),
     contentSize: () => window.getContentSize(),

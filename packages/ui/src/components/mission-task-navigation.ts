@@ -2,7 +2,9 @@ import type { MissionPanelMap, MissionPanelTask } from "../../../server/src/api-
 import { missionIncludesSession, type MissionObservedFamily } from "./mission-attention-model"
 
 /** No generic coordinator fallback: a task link must lead to its owned worker. */
-export function missionTaskConversation(mission: MissionPanelMap, task: MissionPanelTask, family?: MissionObservedFamily, derived?: string,
+export function missionTaskConversation(mission: Pick<MissionPanelMap, "coordinatorSessionId"> & {
+  actors: readonly { sessionId: string }[]; tasks: readonly Pick<MissionPanelTask, "key" | "actorSessionId">[]
+}, task: Pick<MissionPanelTask, "key" | "actorSessionId">, family?: MissionObservedFamily, derived?: string,
   actors: readonly { sessionId: string }[] = mission.actors): string | undefined {
   const id = task.actorSessionId
   if (id && id !== mission.coordinatorSessionId && missionIncludesSession(actors, id, family)) return id

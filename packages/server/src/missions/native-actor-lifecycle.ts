@@ -15,6 +15,7 @@ type InterruptAck = Extract<MissionNativeAcknowledgement, { disposition: "interr
 export async function interruptNativeMissionActor(options: {
   client: OpenCodeClient; root: SessionInfo; action: "pause" | "stop"; missionID: string
   signal: AbortSignal; current(): void; checkpoint(): Promise<void>
+  drainRootInputs?: boolean
 }): Promise<Pick<InterruptAck, "interrupt" | "cancellations" | "descendants">> {
   const { client, root, action, signal, current, checkpoint } = options
   const { descendants, ledger } = await interruptNativeMissionFamily({ ...options, deadline: Date.now() + FAMILY_CONTROL_BUDGET_MS })
@@ -26,7 +27,7 @@ export async function interruptNativeMissionActor(options: {
   const cancellable = (item: NativeInboxItem) => {
     if (item.type !== "user" && item.type !== "synthetic") return false
     const metadata = item.payload.metadata?.["codenomad.mission"]
-    return Boolean(metadata && typeof metadata === "object" && !Array.isArray(metadata) && metadata.missionID === options.missionID)
+    return options.drainRootInputs === true || Boolean(metadata && typeof metadata === "object" && !Array.isArray(metadata) && metadata.missionID === options.missionID)
       || isSubagentDelivery(item)
   }
   let overflow = false

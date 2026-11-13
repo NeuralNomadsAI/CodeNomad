@@ -11,6 +11,7 @@ import { loadMonaco } from "../lib/monaco/setup"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../lib/filesystem-events"
 import type { FilePreviewTarget } from "../stores/files-preview"
 import { Markdown } from "./markdown"
+import { MermaidDiagram } from "./mermaid-diagram"
 import { writeClientLayoutValue } from "../stores/client-state"
 import { readStoredEnum, RIGHT_PANEL_FILES_WORD_WRAP_KEY } from "./instance/shell/storage"
 import { decodeWorkspaceText, useWorkspaceFileEditor } from "./workspace-file-editor"
@@ -31,13 +32,15 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   let controller: AbortController | undefined
   let pending = false
   const markdown = () => /\.(md|markdown)$/i.test(props.target.path)
+  const mermaid = () => /\.mmd$/i.test(props.target.path)
+  const previewable = () => markdown() || mermaid()
   async function load() {
     if (!props.active || editor.dirty() || editor.saving()) return
     if (loading()) { pending = true; return }
     const request = controller = new AbortController(), target = props.target
     const operation = captureBackendOperation(props.instanceId, request.signal)
     if (!operation.current()) return
-    if (!markdown() && !imageTypes[target.path.split(".").pop()!.toLowerCase()]) void loadMonaco().catch(() => {})
+    if (!previewable() && !imageTypes[target.path.split(".").pop()!.toLowerCase()]) void loadMonaco().catch(() => {})
     setLoading(true)
     setError(null)
     try {
@@ -95,10 +98,10 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       <div class="git-diff-heading"><strong title={props.target.path}>{props.target.path}</strong>
         <span title={props.target.directory}>{props.target.directory}<Show when={editor.dirty()}> · ●</Show><Show when={content()?.text === undefined}> · {t("filesPanel.readOnly")}</Show></span></div>
       <button class="file-viewer-toolbar-button" disabled={loading() || editor.saving()} onClick={() => void explicitRefresh()}>{t("instanceShell.rightPanel.actions.refresh")}</button>
-      <Show when={markdown() && content()?.text !== undefined}>
-        <button class="file-viewer-toolbar-button" onClick={() => setSource(!source())}>{t(source() ? "instanceShell.filesShell.previewMarkdown" : "instanceShell.filesShell.showSource")}</button>
+      <Show when={previewable() && content()?.text !== undefined}>
+        <button class="file-viewer-toolbar-button" onClick={() => setSource(!source())}>{t(source() ? mermaid() ? "markdown.mermaid.preview" : "instanceShell.filesShell.previewMarkdown" : "instanceShell.filesShell.showSource")}</button>
       </Show>
-      <Show when={content()?.text !== undefined && (!markdown() || source())}>
+      <Show when={content()?.text !== undefined && (!previewable() || source())}>
         <button class="files-header-icon-button" aria-label={t("instanceShell.rightPanel.actions.save")} title={withHotkey(t("instanceShell.rightPanel.actions.save"), "file-save")} disabled={!editor.dirty() || editor.saving()} onClick={() => void editor.save()}><Save size={16} /></button>
         <button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button>
       </Show>
@@ -110,10 +113,12 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       <Show when={value().image}>{url => <div class="workspace-image"><img src={url()} alt={props.target.path} /></div>}</Show>
       <Show when={value().binary}><div class="p-3 text-secondary">{t("filesPanel.binary")}</div></Show>
       <Show when={value().text !== undefined}>
-        <Show when={markdown() && !source()} fallback={<div class="git-diff-content"><Suspense>
+        <Show when={previewable() && !source()} fallback={<div class="git-diff-content"><Suspense>
           <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} onContentChange={editor.change} onSave={value => void editor.save(value)} />
         </Suspense></div>}>
-          <div class="workspace-markdown"><Markdown instanceId={props.instanceId} part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml /></div>
+          <Show when={mermaid()} fallback={<div class="workspace-markdown"><Markdown instanceId={props.instanceId} part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml /></div>}>
+            <div class="workspace-mermaid"><MermaidDiagram code={editor.text()} isDark={isDark()} showSourceOnError /></div>
+          </Show>
         </Show>
       </Show>
     </>}</Show>

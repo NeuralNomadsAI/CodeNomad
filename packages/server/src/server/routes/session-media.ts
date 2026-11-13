@@ -54,7 +54,7 @@ export function registerSessionMediaRoutes(app: FastifyInstance, deps: { workspa
       const session = await wait(client.session.get({ sessionID: sessionId }, { signal }))
       current()
       const location = readLocationRef(session.location)
-      if (session.id !== sessionId || !await wait(deps.workspaceManager.ownsLocation(id, location, client, signal, "request", { current }))) {
+      if (session.id !== sessionId || !await wait(deps.workspaceManager.ownsLocation(id, location, client, { signal, strict: true, media: { current } }))) {
         return sendError(403, "Session does not belong to workspace")
       }
       current()
@@ -65,7 +65,7 @@ export function registerSessionMediaRoutes(app: FastifyInstance, deps: { workspa
       const latest = await wait(client.session.get({ sessionID: sessionId }, { signal }))
       current()
       if (latest.id !== sessionId || !sameLocation(location, readLocationRef(latest.location))
-        || !await wait(deps.workspaceManager.ownsLocation(id, latest.location, client, signal, "request", { current }))) {
+        || !await wait(deps.workspaceManager.ownsLocation(id, latest.location, client, { signal, strict: true, media: { current } }))) {
         return sendError(409, "Session location changed")
       }
       current()

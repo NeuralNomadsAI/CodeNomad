@@ -234,7 +234,7 @@ UI locale. Browser and remote users can run the same commands from the palette;
 Settings → Info's Support CodeNomad card opens the same `sponsor` page.
 
 `packages/ui/src/lib/help-url.ts` owns the base URL and locale→path mapping
-(`helpUrl(locale, page)` accepts only `[a-z0-9-]` page names, else the locale home);
+(`helpUrl(locale, page, anchor)` accepts ASCII kebab-case page names and section ids, falling back to the locale home for an invalid page and omitting an invalid anchor). Contextual `SettingsInfoTip.help` destinations use published page/section pairs checked across all ten locales by `lib/help-url.test.ts`;
 `openExternalUrl` opens the system browser on native hosts (Electron's
 new-window policy handles `window.open` and reports asynchronous opener failures
 through a visible host error) or a separate browser tab. Tauri remote windows

@@ -25,7 +25,7 @@ import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 
-const schema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
+export const recurrenceCreateSchema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
   instructions: z.string().trim().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
   // New schedules share the Mission title rule; stored schedules keep the
   // historical 120-character bound in recurrenceConfigSchema.
@@ -55,13 +55,18 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
     // Refused before any hold: an unqualified principal could never verify.
     const auth = deps.auth, human = auth && recurrenceHumanSession(request, { auth, remoteDevices: deps.remoteDevices })
     if (!auth || !human || !deps.bridgeToken) return reply.code(401).send({ error: "Human authentication required" })
+    const watched = (request.body as { watchedConversationIDs?: unknown } | undefined)?.watchedConversationIDs
+    // Enforce the watch ceiling and element kinds before schema evaluation.
+    if (!Array.isArray(watched) || watched.length > 32 || !watched.every(id => typeof id === "string")) {
+      return reply.code(400).send({ error: "Invalid recurrence creation request" })
+    }
     const lifetime = requestAdmission(request, reply)
     let admission: Awaited<ReturnType<typeof admitMissionCreationLocations>> | undefined
     // Flips immediately before the only native write; until then a refusal proves no effect.
     let dispatched = false
     const unavailable = (error: string) => reply.code(503).send({ error, code: "creation-unavailable" })
     try {
-      const parsed = schema.safeParse(request.body)
+      const parsed = recurrenceCreateSchema.safeParse(request.body)
       if (!parsed.success || !z.string().min(1).max(200).safeParse(request.params.id).success) {
         return reply.code(400).send({ error: "Invalid recurrence creation request" })
       }
@@ -103,7 +108,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
         }
       }
       const client = connection.client, requested = input.directory ? { directory: input.directory } : base
-      if (!await lifetime.wait(manager.ownsLocation(workspaceID, requested, client, lifetime.signal))) {
+      if (!await lifetime.wait(manager.ownsLocation(workspaceID, requested, client, { signal: lifetime.signal }))) {
         return reply.code(403).send({ error: "Recurrence directory is not owned" })
       }
       const directory = await lifetime.wait(manager.getServiceDirectoryForPath(workspaceID, requested.directory))
@@ -114,7 +119,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
         client.location.get({ location: { directory: base.directory } }, { ...locationRequestOptions(base), signal: lifetime.signal }),
       ]))
       check()
-      if (!sameLocation(resolved, location) || !await lifetime.wait(manager.ownsLocation(workspaceID, resolved, client, lifetime.signal))
+      if (!sameLocation(resolved, location) || !await lifetime.wait(manager.ownsLocation(workspaceID, resolved, client, { signal: lifetime.signal }))
         || resolved.project.id !== baseResolved.project.id || resolved.project.canonical !== baseResolved.project.canonical) {
         return reply.code(403).send({ error: "Recurrence project is not owned" })
       }
@@ -139,7 +144,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
           check()
           if (session.id !== sessionID || session.projectID !== resolved.project.id
             || !sameLocation(session.location, location)
-            || !await manager.ownsLocation(workspaceID, session.location, client, lifetime.signal)) return false
+            || !await manager.ownsLocation(workspaceID, session.location, client, { signal: lifetime.signal })) return false
           check()
         }
         return true
@@ -167,7 +172,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
           manager.getWorktreeIdentityForPath(workspaceID, directory),
         ])
         if (canonicalAuthority(currentRoot) !== canonicalAuthority(root) || currentCheckout !== physicalCheckout
-          || !await manager.ownsLocation(workspaceID, location, client, lifetime.signal)
+          || !await manager.ownsLocation(workspaceID, location, client, { signal: lifetime.signal })
           || !readCurrent()) throw new Error("Recurrence physical root changed")
         check()
       }

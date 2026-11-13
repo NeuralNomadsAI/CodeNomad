@@ -52,19 +52,70 @@ test("every signed binary of a build is restricted to the same product version",
       assert.match(element, /product-version="\$\{version\}"/, file)
     }
   }
-  // electron-builder's own ProductVersion string is numeric. The full version
-  // must reach the resource edit electron-builder performs before signing, never
-  // a hook that edits the executable after it may have been signed.
+  // The full version reaches the resource editor before signing.
   const electron = JSON.parse(fs.readFileSync(path.join(__dirname, "../../packages/electron-app/package.json"), "utf8"))
   assert.equal(electron.build.afterSign, undefined)
   assert.equal(electron.build.afterAllArtifactBuild, undefined)
   const build = fs.readFileSync(path.join(__dirname, "../../packages/electron-app/scripts/build.js"), "utf8")
   assert.match(build, /args\.includes\("--win"\) \? \[`-c\.extraMetadata\.shortVersionWindows=\$\{version\}`\] : \[\]/)
   assert.match(build, /"electron-builder", "--publish=never", \.\.\.job\.args, \.\.\.windowsVersionArgs\(job\.args, version\)/)
+  assert.equal(electron.devDependencies["electron-builder"], "26.18.0")
+  const patch = build.indexOf('"patch-builder-resources.cjs"')
+  assert.ok(patch >= 0 && patch < build.indexOf('["electron-builder", "--publish=never"'))
   // Every Windows build checks the result before any SignPath submission.
   const check = workflow("build-and-upload.yml").jobs["build-windows"].steps.find((step) => step.name === "Check Electron executable metadata")
   assert.equal(check.if, undefined)
   assert.match(check.run, /-ProductVersion \$env:SIGNING_VERSION -Unsigned/)
+})
+
+test("the reviewed Windows editor preserves strings and numeric versions before signing", async () => {
+  const { createRequire } = require("node:module")
+  const os = require("node:os")
+  const appRequire = createRequire(path.join(__dirname, "../../packages/electron-app/package.json"))
+  const builderRequire = createRequire(appRequire.resolve("electron-builder/package.json"))
+  const { patchSource, patchBuilderResources } = appRequire("./scripts/patch-builder-resources.cjs")
+  const editor = builderRequire.resolve("app-builder-lib/out/util/resEdit.js")
+  const patched = patchSource(fs.readFileSync(editor, "utf8"))
+  assert.equal(patchSource(patched), patched, "idempotent")
+  assert.throws(() => patchSource(`${patched}\n`), /Unreviewed/, "unknown source fails closed")
+  patchBuilderResources()
+  builderRequire("app-builder-lib")
+  const { WinPackager } = builderRequire("app-builder-lib/out/winPackager.js")
+  const { NtExecutable, NtExecutableResource, Resource } = builderRequire("resedit")
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "builder-resource-"))
+  try {
+    for (const version of ["1.0.1", "1.0.1-dev-20261110-example", "1.0.1-beta.2+build.3"]) {
+      const file = path.join(directory, `${version}.exe`)
+      fs.writeFileSync(file, Buffer.from(NtExecutable.createEmpty(false).generate()))
+      let signed = false
+      await WinPackager.prototype.signAndEditResources.call({
+        appInfo: { productName: "CodeNomad", buildVersion: version, shortVersionWindows: version },
+        platformSpecificBuildOptions: {},
+        config: { electronDist: directory },
+        getIconPath: async () => null,
+        signIf: async (target) => {
+          assert.equal(target, file)
+          const exe = NtExecutable.from(fs.readFileSync(target))
+          const resources = NtExecutableResource.from(exe)
+          const info = Resource.VersionInfo.fromEntries(resources.entries)[0]
+          for (const lang of info.getAllLanguagesForStringValues()) {
+            const strings = info.getStringValues(lang)
+            assert.equal(strings.ProductVersion, version)
+            assert.equal(strings.FileVersion, version)
+            assert.equal(strings.ProductName, "CodeNomad")
+          }
+          assert.equal(info.fixedInfo.fileVersionMS, 0x10000)
+          assert.equal(info.fixedInfo.fileVersionLS, 0x10000)
+          assert.equal(info.fixedInfo.productVersionMS, 0x10000)
+          assert.equal(info.fixedInfo.productVersionLS, 0x10000)
+          signed = true
+        },
+      }, file, 1, directory)
+      assert.equal(signed, true, "the actual packager signs only after the resource assertions")
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test("the Tauri executable is marked and signed before NSIS bundles it unpatched", () => {

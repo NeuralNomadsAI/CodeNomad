@@ -18,18 +18,27 @@ Las vistas previas nativas comparten cookies, inicios de sesión y almacenamient
 
 | Cliente | Implementación de vista previa | Automatización de navegador del agente | Plantillas móviles |
 | --- | --- | --- | --- |
-| Electron en plataformas de escritorio compatibles | Navegador invitado Chromium nativo | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
-| Tauri para Windows | Ventana hija nativa WebView2 | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
-| Tauri para macOS/Linux | Iframe aislado | Sin automatización nativa de navegador | Solo dimensiones |
+| Electron en plataformas de escritorio compatibles | Navegador invitado Chromium nativo; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
+| Tauri para Windows | Ventana hija nativa WebView2; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
+| Tauri para macOS (14+) | Ventana hija nativa WKWebView; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Identidad móvil WebKit y viewport CSS; límites nativos de entrada |
+| Tauri para Linux | Ventana hija nativa WebKitGTK; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Identidad móvil WebKit y viewport CSS; límites nativos de densidad/entrada |
 | Navegador normal/vista remota | Alternativa iframe | Sin objetivo local de vista previa nativa | Solo dimensiones |
 
-La automatización nativa se prepara al iniciar el escritorio y usa la herramienta `codenomad.browser` vinculada a la sesión para abrir, navegar, obtener una instantánea, capturar pantalla y realizar acciones en la página: hacer clic, escribir, seleccionar, pasar el cursor, arrastrar, desplazarse, pulsar teclas y esperar un texto. Que una herramienta esté disponible no autoriza todas las ventanas: la ejecución comprueba el backend propietario, las capacidades nativas, la sesión y el objetivo visible. Una acción cuya página se ocultó, se sustituyó o navegó mientras tanto se rechaza en lugar de enviarse a otra página, y una acción nunca se repite automáticamente. El contenido de las páginas sigue sin ser fiable. Un iframe puede fallar porque el destino prohíbe incrustarlo; usa un navegador externo en lugar de debilitar sus protecciones.
+En todos los hosts de escritorio nativos, la herramienta `codenomad.browser` vinculada a la sesión abre, navega y captura la vista previa, y ejecuta clic, escritura, selección, hover, arrastre, desplazamiento, teclas y espera de texto. La ejecución comprueba el backend propietario, capacidades nativas, sesión y objetivo visible. Los objetivos ocultos, sustituidos o navegados se rechazan; las acciones nunca se repiten automáticamente. El contenido sigue sin ser fiable. Si el sitio bloquea iframe, usa un navegador externo.
+
+Las vistas previas nativas se abren manualmente o mediante el agente, conservan inicios de sesión entre reinicios y usan el historial nativo Atrás/Adelante. Menús y diálogos locales ocultan la vista. Los comentarios sobre elementos no están disponibles en modo nativo. WebKit captura shadow roots cerrados creados por script; los declarativos cerrados permanecen opacos. En macOS, el primer hover puede omitir pointerenter y ⌘A selecciona de forma nativa sin keydown A. En GTK se lee el portapapeles mediante Ctrl+V explícito; escritura y copiar/pegar nativos funcionan.
+
+Las ventanas emergentes nativas comparten las sesiones de la vista previa, conservan `opener`/`postMessage` y se cierran con su página de origen. Las direcciones introducidas/restauradas permiten HTTP(S) sin credenciales; los sitios también pueden abrir documentos vacíos y blob del mismo origen. Se bloquean los esquemas de archivos y de la aplicación. Las descargas usan nombres saneados y únicos en Descargas, sin sobrescribir ni abrir archivos automáticamente. Se deniegan cámara, micrófono, ubicación y notificaciones; los permisos clasificados requieren consentimiento y las solicitudes desconocidas muestran un error. Tauri y Electron admiten `alert`/`confirm`/`prompt`; el diálogo prompt de Electron cubre las páginas principales de la vista previa, las ventanas emergentes y los submarcos. Los selectores de dispositivos y pantallas permiten desplazarse por las entradas disponibles. Otras API dependen del motor y del hardware.
+
+Los sitios pueden pedir confirmación al cerrar una ventana emergente nativa. En Linux, el consentimiento para bloquear el puntero aparece en la parte superior de su ventana. Las versiones de WebKitGTK afectadas por [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), incluida 2.52.6, requieren el selector de archivos de la página para subir archivos, ya que el acceso a archivos arrastrados está bloqueado por seguridad. Guarde el trabajo de la página antes de cerrar o recargar la ventana de CodeNomad que la contiene.
+
+En Tauri macOS/Linux, enfoque la vista previa para ampliarla con ⌘/Ctrl +, − o 0, o con el menú de zoom de la aplicación. Con el foco en otro lugar, estas acciones del menú amplían la aplicación.
 
 ## Elegir una de seis plantillas de área visible {#templates}
 
 1. Abre el menú de área visible de la vista previa.
 2. Selecciona una plantilla de las siguientes. Usa directamente las entradas vertical/horizontal; no hay un control de giro separado.
-3. Espera una recarga nativa al entrar/cambiar la emulación móvil o volver a una plantilla de solo dimensiones.
+3. En Electron y Tauri para Windows, espera una recarga nativa al entrar/cambiar la emulación móvil o volver a una plantilla de solo dimensiones.
 
 | Plantilla | Área visible CSS |
 | --- | --- |
@@ -40,7 +49,7 @@ La automatización nativa se prepara al iniciar el escritorio y usa la herramien
 | Área visible móvil | 390 × 844 |
 | Móvil horizontal | 844 × 390 |
 
-Las plantillas móviles nativas establecen identidad Android/Chromium, orientación, entrada táctil y DPR 2.75 solo en el navegador invitado propio. Volver a adaptable/escritorio/tableta borra esos valores y recarga. La alternativa iframe solo cambia el tamaño. Son referencias de disposición reproducibles, no emulación Safari/Firefox ni simulaciones de teclados de teléfono, barras del navegador/sistema o ajustes de texto del sistema móvil. Guarda el trabajo de la página antes de cambiar plantillas porque la recarga puede descartar estado sin enviar.
+En Electron y Tauri para Windows, las plantillas móviles establecen identidad Android/Chromium, orientación, entrada táctil y DPR 2.75 solo en el navegador invitado propio. Volver a adaptable/escritorio/tableta borra esos valores y recarga. Tauri para macOS/Linux aplica una identidad móvil WebKit genérica en HTTP y JavaScript y ajusta el viewport CSS con independencia del zoom/DPI de la aplicación; cambiar o restablecer plantillas recarga. macOS usa DPR nativo 2,75 cuando está disponible; la densidad GTK sigue el zoom de ajuste y el monitor. Pantalla, plataforma, medios de puntero/hover y máximo de contactos conservan valores nativos de escritorio. Los clics móviles GTK generan eventos táctiles nativos y de compatibilidad de ratón; macOS conserva el ratón. La alternativa iframe solo redimensiona. Los perfiles son referencias de disposición; teclados de teléfono, barras del sistema y ajustes de texto móvil quedan fuera de su alcance. Guarda el trabajo de la página antes de cambiar plantillas porque la recarga puede descartar estado sin enviar.
 
 ## Registrar un SideCar {#register-sidecar}
 
@@ -60,7 +69,9 @@ El registro es configuración del servidor, compartida por sus clientes; no inst
 
 Si no es accesible, comprueba el proceso y el puerto en el backend. Si carga el HTML pero fallan los recursos/WebSockets, comprueba la ruta base y el modo de prefijo de la herramienta. Recrea un registro incorrecto con los ajustes previstos; no expongas públicamente el destino solo para eludir un error de proxy. Las aplicaciones SideCar pueden exponer una terminal o archivos con la autoridad de la cuenta del servidor; confía en sus usuarios y configuración.
 
-Un SideCar es una extensión de confianza de CodeNomad, no una vista previa aislada: su página se ejecuta con el propio origen de CodeNomad, por lo que sus scripts pueden usar CodeNomad con tu acceso de sesión iniciada. Registra solo servicios cuyo código sea de tu confianza. CodeNomad no reenvía al servicio sus propias cookies de inicio de sesión, mientras que las cookies propias del servicio se conservan. Control remoto no expone el tráfico proxy de aplicaciones SideCar; usa la vía adecuada de acceso directo descrita en [Acceso remoto](remote-access.md) y [Control remoto](remote-control.md).
+Un SideCar es una extensión de confianza de CodeNomad, no una vista previa aislada: su página se ejecuta con el propio origen de CodeNomad, por lo que sus scripts pueden usar CodeNomad con tu acceso de sesión iniciada. Registra solo servicios cuyo código sea de tu confianza. CodeNomad no reenvía al servicio sus propias cookies de inicio de sesión, mientras que las cookies propias del servicio se conservan.
+
+El contenido de SideCar (`/sidecars/`) y sus WebSockets requieren una conexión loopback en el anfitrión. El registro mediante `/api/sidecars` está disponible para dispositivos emparejados y clientes directos de LAN autenticados. El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido; las vistas previas web de [Control remoto](remote-control.md#remote-surface) siguen disponibles con su token de capacidad mientras estén activadas. Consulta [Actualizar](remote-access.md#upgrading) para los requisitos del acceso directo.
 
 ## Ejemplo de OpenVSCode Server {#openvscode}
 

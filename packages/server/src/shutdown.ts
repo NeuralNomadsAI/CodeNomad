@@ -1,3 +1,5 @@
+import { StringDecoder } from "node:string_decoder"
+
 type ShutdownLogger = Pick<import("./logger").Logger, "info" | "warn" | "error">
 type ShutdownOperation = () => void | Promise<void>
 
@@ -30,10 +32,10 @@ export function installShutdownStdinHandler(
   handleLine?: (line: string) => boolean,
 ): void {
   let buffer = ""
+  const decoder = new StringDecoder("utf8")
   let requested = false
   const onData = (chunk: Buffer | string) => {
-    if (requested) return
-    buffer += chunk.toString()
+    buffer += decoder.write(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
     const lines = buffer.split(/\r?\n/)
     buffer = lines.pop() ?? ""
     let shutdownRequested = false
@@ -41,11 +43,15 @@ export function installShutdownStdinHandler(
       if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
       else handleLine?.(line)
     }
-    if (!shutdownRequested) return
+    if (!shutdownRequested || requested) return
 
     requested = true
-    source.off?.("data", onData)
-    source.destroy?.()
+    // Accepted requests can still need a native-parent response while draining.
+    // The entry point destroys stdin once resource cleanup completes.
+    if (!handleLine) {
+      source.off?.("data", onData)
+      source.destroy?.()
+    }
     void shutdown("stdin")
   }
   source.on("data", onData)
@@ -121,7 +127,11 @@ export async function orchestrateServerShutdown(
     }
   }
 
+  // Drain accepted HTTP handlers while their workspace and native-parent
+  // authority is still available for receipt and mission commits.
+  const httpShutdown = settle([["stopHttpServers", operations.stopHttpServers]])
   const workspaceShutdown = (async () => {
+    await httpShutdown
     const attempts = Math.max(1, Math.floor(workspaceAttempts))
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       const [result] = await Promise.allSettled([Promise.resolve().then(operations.stopWorkspaces)])
@@ -140,9 +150,9 @@ export async function orchestrateServerShutdown(
       ["stopInstanceEventBridge", operations.stopInstanceEventBridge], ["stopSidecars", operations.stopSidecars],
       ["stopClientConnections", operations.stopClientConnections], ["stopRemoteControl", operations.stopRemoteControl],
       ["stopRemoteProxySessions", operations.stopRemoteProxySessions],
+      ["stopReleaseMonitor", operations.stopReleaseMonitor],
     ]),
     workspaceShutdown,
   ])
-  await settle([["stopHttpServers", operations.stopHttpServers], ["stopReleaseMonitor", operations.stopReleaseMonitor]])
   if (errors.length) throw new AggregateError(errors, "Server shutdown failed")
 }

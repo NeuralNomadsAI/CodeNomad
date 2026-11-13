@@ -3,6 +3,7 @@ import { toDataURL } from "qrcode"
 import { ChevronRight, ExternalLink, Link2, Loader2, RefreshCw, Shield, Wifi } from "lucide-solid"
 import type { NetworkAddress, ServerMeta } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
+import { getServerMeta, localRequest } from "../../lib/server-meta"
 import { restartCli } from "../../lib/native/cli"
 import { serverSettings, setListeningMode } from "../../stores/preferences"
 import { showConfirmDialog } from "../../stores/alerts"
@@ -47,7 +48,7 @@ export const RemoteAccessSettingsSection: Component = () => {
     setError(null)
     setPasswordError(null)
     try {
-      const [metaResult, authResult] = await Promise.all([serverApi.fetchServerMeta(), serverApi.fetchAuthStatus()])
+      const [metaResult, authResult] = await Promise.all([getServerMeta(true), serverApi.fetchAuthStatus()])
       setMeta(metaResult)
       setAuthStatus(authResult)
       setShowAllAddresses(false)
@@ -228,7 +229,7 @@ export const RemoteAccessSettingsSection: Component = () => {
                    </p>
                     </div>
 
-                    <div class="settings-password-actions">
+                    <Show when={localRequest()}><div class="settings-password-actions">
                       <button
                         class="selector-button selector-button-secondary w-auto"
                         type="button"
@@ -243,10 +244,10 @@ export const RemoteAccessSettingsSection: Component = () => {
                             ? t("remoteAccess.password.actions.change")
                             : t("remoteAccess.password.actions.set")}
                       </button>
-                    </div>
+                    </div></Show>
                   </div>
 
-                   <Show when={passwordFormOpen()}>
+                   <Show when={localRequest() && passwordFormOpen()}>
                     <div class="settings-form-group">
                       <label class="settings-form-label">{t("remoteAccess.password.form.newPassword")}</label>
                       <input

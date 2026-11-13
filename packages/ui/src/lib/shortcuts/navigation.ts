@@ -1,7 +1,8 @@
 import { keyboardRegistry } from "../keyboard-registry"
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
-import { activeSessionId, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
+import { activeSessionId, getVisibleSessionIds, setActiveSessionFromList } from "../../stores/sessions"
+import { openSettings } from "../../stores/settings-screen"
 
 export function registerNavigationShortcuts(isMainView: () => boolean = () => true) {
   const hasInstance = () => isMainView() && Boolean(activeInstanceId())
@@ -73,12 +74,11 @@ export function registerNavigationShortcuts(isMainView: () => boolean = () => tr
 
   keyboardRegistry.register({
     id: "switch-to-info",
-    condition: hasInstance,
+    condition: isMainView,
     handler: () => {
-      const instanceId = activeInstanceId()
-      if (instanceId) setActiveSession(instanceId, "info")
+      void openSettings("opencode")
     },
-    description: "info tab",
+    description: "server logs",
     context: "global",
   })
   return () => ["instance-prev", "instance-next", "session-prev", "session-next", "switch-to-info"].forEach(id => keyboardRegistry.unregister(id))

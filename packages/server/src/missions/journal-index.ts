@@ -54,6 +54,7 @@ export interface MissionIndexHints {
   inventorySummaries(): MissionInventorySummary[]
   /** Lightweight mark contexts, up to 16 missions and 10 actors each; no range rereads. */
   activity(offset: number): { contexts: MissionActivityContext[]; order: string; offset: number; end: number; total: number }
+  taskMarks(missionID: string): Pick<MissionActivityContext, "revision" | "taskMarks" | "taskMarksThrough" | "discardedEvents" | "controlUnavailable" | "notificationUnavailable" | "cleanupUnavailable"> | undefined
 }
 
 /** The scalars `compareEvents` reads, copied: an entry keeps no event. */
@@ -309,6 +310,12 @@ function hints(state: State, live: () => void): MissionIndexHints {
     inventorySummaries: () => {
       live()
       return entries().filter(entry => entry.summary).sort(compareEntries).map(entry => missionInventorySummary(entry.summary!))
+    },
+    taskMarks: missionID => {
+      live()
+      const value = state.entries.get(missionID)?.activity
+      return value && { revision: value.revision, taskMarks: value.taskMarks?.map(task => ({ ...task })), taskMarksThrough: value.taskMarksThrough, discardedEvents: value.discardedEvents,
+        controlUnavailable: value.controlUnavailable, notificationUnavailable: value.notificationUnavailable, cleanupUnavailable: value.cleanupUnavailable }
     },
     activity: offset => {
       live()

@@ -92,6 +92,34 @@ test("eight-directory snapshots avoid ordinary pending lists with 100 cold histo
   } finally { serverApi.fetchWorktrees = originalWorktrees; h.cleanup() }
 })
 
+test("a checkout lacking the opened folder is no recovery location unless a session still needs it", async () => {
+  const h = harness()
+  const originalWorktrees = serverApi.fetchWorktrees
+  try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: [
+      { slug: "root", directory: h.directory, kind: "root" as const },
+      { slug: "present", directory: "/present", kind: "worktree" as const },
+      { slug: "absent", directory: "/absent", kind: "worktree" as const, nestedFolderMissing: true },
+    ] })
+    await reloadWorktrees(h.id)
+    const requested: string[] = []
+    serverApi.getPendingRequests = async (_id, directories) => {
+      requested.push(...directories)
+      return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok", locations: [emptyLocation(directory)] })) }
+    }
+    await syncPendingRequests(h.id)
+    assert.ok(requested.includes("/present"))
+    assert.ok(!requested.includes("/absent"), "an absent nested mirror is not an inventory-derived requirement")
+
+    requested.length = 0
+    const working = createClientSession({ id: "working", title: "Working", location: { directory: "/absent" }, time: { created: 1, updated: 1 } } as any, h.id)
+    setSessions(new Map([[h.id, new Map([[working.id, { ...working, status: "working" }]])]]))
+    invalidatePendingRequestSync(h.id)
+    await syncPendingRequests(h.id)
+    assert.ok(requested.includes("/absent"), "an active session placed there keeps its location required")
+  } finally { serverApi.fetchWorktrees = originalWorktrees; h.cleanup() }
+})
+
 test("partial and cold coverage only prune matching known locations; unknown queues survive", async () => {
   const h = harness()
   try {

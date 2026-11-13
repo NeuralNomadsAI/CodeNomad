@@ -6,6 +6,7 @@ import { ownedSession } from "./navigation-scope"
 import type { HistoryScope } from "./history-store"
 import { ASSET_URI_LIMIT, isEmbeddedAsset, type AssetTarget, type AssetsResult, type AssetReadResult } from "./assets-contract"
 import { mediaBlobBase64, mediaBlobSizes, mediaDataUri, mediaDataUriLength, toolMediaHash } from "./media-blob"
+import { messageStorage } from "./message-storage"
 
 export const MESSAGE_LIMIT = 16 * 1024 * 1024
 export const cursorSchema = z.object({ binding: z.string().length(64), through: z.number().int().min(0),
@@ -53,9 +54,10 @@ export async function listSessionAssets(db: DatabaseSync, scope: HistoryScope, c
     const params: SQLInputValue[] = [scope.sessionID!, ...(boundary ? [boundary] : [])]
     const maximum = Number(db.prepare(`SELECT coalesce(max(seq),0) AS value FROM session_message WHERE ${where}`).get(...params)?.value)
     const through = previous?.through ?? maximum
-    const rows = db.prepare(`SELECT id,seq,length(CAST(data AS BLOB)) AS bytes FROM session_message WHERE ${where}
+    const storage = messageStorage(db)
+    const rows = db.prepare(`SELECT id,seq,${storage.bytes()} AS bytes FROM ${storage.table} WHERE ${where}
       AND seq<=? AND seq<=? ORDER BY seq DESC LIMIT 32`).all(...params, through, previous?.sequence ?? through)
-    const read = db.prepare("SELECT data FROM session_message WHERE session_id=? AND id=?")
+    const read = db.prepare(`SELECT data FROM ${storage.table} WHERE session_id=? AND id=?`)
     const entries: Extract<AssetsResult, { status: "page" }>["entries"] = []
     let examined = 0
     for (const row of rows) {
@@ -66,7 +68,8 @@ export async function listSessionAssets(db: DatabaseSync, scope: HistoryScope, c
       if (examined && examined + bytes > 32 * 1024 * 1024) return page(sequence, 0)
       examined += bytes
       const data = read.get(scope.sessionID!, row.id)?.data
-      const assets = typeof data === "string" ? listed(db, JSON.parse(data)) : []
+      if (typeof data !== "string") return { status: "blocked", reason: "unsupported_storage" }
+      const assets = listed(db, JSON.parse(data))
       if (!assets) return { status: "blocked", reason: "unsupported_storage" }
       const offset = sequence === previous?.sequence ? previous.offset : 0
       for (let index = offset; index < assets.length; index++) {
@@ -96,7 +99,8 @@ export async function readSessionAsset(db: DatabaseSync, scope: HistoryScope, ta
 }
 /** The digest-bound tool file a target names, inside the caller's read transaction; the size is checked before its JSON loads. */
 export function storedAsset(db: DatabaseSync, sessionID: string, boundary: string | undefined, target: AssetTarget) {
-  const row = db.prepare(`SELECT seq,length(CAST(data AS BLOB)) AS bytes,CASE WHEN length(CAST(data AS BLOB))<=? THEN data END AS data FROM session_message
+  const storage = messageStorage(db)
+  const row = db.prepare(`SELECT seq,${storage.bytes()} AS bytes,CASE WHEN ${storage.bytes()}<=? THEN data END AS data FROM ${storage.table}
     WHERE session_id=? AND type='assistant' AND id=? ${boundary ? "AND id < ?" : ""}`).get(MESSAGE_LIMIT, sessionID, target.messageID, ...(boundary ? [boundary] : []))
   if (!row) return { status: "missing" } as const
   if (typeof row.data !== "string") return { status: Number(row.bytes) > MESSAGE_LIMIT ? "limit" : "missing" } as const

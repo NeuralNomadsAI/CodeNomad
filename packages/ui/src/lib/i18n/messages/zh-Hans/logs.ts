@@ -1,4 +1,10 @@
 export const logMessages = {
+  "settings.opencode.logs.title": "OpenCode 日志",
+  "settings.opencode.logs.open": "查看 OpenCode 日志",
+  "settings.opencode.logs.info": "所选 OpenCode 主机上的全局日志，可能包含私人数据。打开时读取最后 128 KiB；刷新会重新读取。",
+  "settings.opencode.logs.failed": "无法读取 OpenCode 日志。请检查可执行文件和文件访问权限，然后刷新。",
+  "settings.opencode.logs.empty": "日志为空。",
+  "settings.opencode.logs.truncated": "显示日志末尾（最多 128 KiB）。",
   "logsView.title": "服务器日志",
   "logsView.actions.show": "显示服务器日志",
   "logsView.actions.hide": "隐藏服务器日志",

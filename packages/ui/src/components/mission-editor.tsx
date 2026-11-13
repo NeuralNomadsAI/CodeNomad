@@ -1,7 +1,8 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, untrack } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
-import { compareModelError, freezeCompareProfiles, sameCompareModel, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import { compareModelError, freezeCompareProfiles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { backendOf } from "../lib/backend-client"
+import { generateUUID } from "../lib/client-identity"
 import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
 import { missionStore } from "../stores/missions"
@@ -11,13 +12,13 @@ import { isDefinitiveCreationRejection, missionMutationErrorKey } from "../lib/m
 import { copyMissionProfiles, holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation,
   retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
 import { MissionProfileControls } from "./mission-profile-controls"
+import { MissionProfileSummary } from "./mission-profile-summary"
 import { missionProfileRoles, profilesForTemplate } from "./mission-profile-controls-data"
 import { useConfig } from "../stores/preferences"
 import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionTaskMode } from "../lib/mission-defaults"
 import type { MissionProfileDefault } from "../lib/mission-defaults"
 import { retainSubmittedMissionModel, submittedMissionModel, type UserMissionModel } from "../lib/mission-model-library"
 import { MissionBriefPicker, MissionBriefSave } from "./mission-model-library"
-import { MissionProfileSummary } from "./mission-profile-summary"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
 import { MissionSubagentDepth } from "./mission-subagent-depth"
 import { missionPanelScroll } from "./mission-panel-scroll"
@@ -28,7 +29,6 @@ import { MISSION_TITLE_MAX, deriveMissionTitle } from "../../../server/src/missi
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
-import { MissionConversationPicker } from "./mission-conversation-picker"
 import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
 import { MissionBodyPending } from "./mission-reader-body"
 import { missionTargetState, retryMissionTarget, useTargetBody } from "./mission-target-bodies"
@@ -37,9 +37,16 @@ import { createMissionEditorScheduling } from "./mission-editor-schedule"
 import { isMissionEventKind, missionSchedulingPolicy } from "./mission-scheduling-data"
 import { MissionScheduling, type MissionSchedulingLock } from "./mission-scheduling"
 import { createMissionEditorSources } from "./mission-editor-sources"
+import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
+import { createMissionCreationStart } from "./mission-creation-start"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { MissionSourceSelect } from "./mission-source-select"
+import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { createMissionEditorRepository } from "./mission-editor-repository"
+import { isRepositoryCriterion } from "./mission-scheduling-data"
 
 export type { MissionEditorAction }
-type FieldError = { field: "objective" | "profiles" | "followed"; message: string }
+type FieldError = { field: "objective" | "profiles" | "followed" | "coordinator"; message: string }
 
 export function MissionEditor(props: {
   instanceId: string; directory?: string; viewDirectory?: string; projectID?: string; action: MissionEditorAction
@@ -61,7 +68,7 @@ export function MissionEditor(props: {
   onReopen?: () => Promise<void>
 }) {
   const { t } = useI18n()
-  const ids = { objective: createUniqueId(), objectiveError: createUniqueId(), profilesError: createUniqueId(), followedError: createUniqueId(), templateDescription: createUniqueId() }
+  const ids = { objective: createUniqueId(), objectiveError: createUniqueId(), profilesError: createUniqueId(), followedError: createUniqueId() }
   const config = useConfig(() => props.instanceId)
   // The revision and draft belong to this editor, not to live snapshot refreshes.
   const action = props.action, original = action.mission, kind = action.kind
@@ -79,6 +86,8 @@ export function MissionEditor(props: {
   const draft = scheduleHold?.draft ?? (held || recurrenceHold ? undefined : action.draft)
   const [titleOverride, setTitleOverride] = createSignal<string | undefined>(recurrenceHold?.title ?? held?.title ?? draft?.titleOverride ?? original?.title)
   const [watched, setWatched] = createSignal<string[]>(recurrenceHold?.watchedConversationIDs ?? draft?.watched ?? [])
+  const [coordinatorSessionID, setCoordinatorSessionID] = createSignal<string | undefined>(draft?.coordinatorSessionID
+    ?? draft?.scheduleDocument?.configuration.coordinatorSessionID)
   // An edit starts from the objective and notes of exactly the map it opened (its CAS
   // revision): content reads count only when their digests are that map's descriptors.
   const prefill = kind === "edit" && original !== undefined && !original.document && !action.scheduleID && !draft
@@ -112,6 +121,9 @@ export function MissionEditor(props: {
   const [template, setTemplate] = createSignal<MissionPanelMap["template"]>(recurrenceHold?.template ?? held?.template ?? draft?.template ?? original?.template ?? "custom")
   const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(recurrenceHold?.profiles ?? held?.profiles ?? draft?.profiles ?? original?.profiles))
   const [customProfiles, setCustomProfiles] = createSignal(Boolean(held || recurrenceHold || draft?.customProfiles))
+  const [profilesOpen, setProfilesOpen] = createSignal(draft?.profileDetailsOpen ?? false)
+  let profilesFold: HTMLDetailsElement | undefined
+  const [profilesReading, setProfilesReading] = createSignal(false)
   const [taskMode, setTaskMode] = createSignal<MissionTaskMode | undefined>(draft ? draft.taskMode : recurrenceHold?.taskMode ?? held?.taskMode ?? original?.taskMode ?? "native")
   const [customTaskMode, setCustomTaskMode] = createSignal(Boolean(held || recurrenceHold || draft?.customTaskMode))
   const [defaults, setDefaults] = createSignal<MissionProfileDefault[]>(draft?.defaults ?? [])
@@ -121,10 +133,6 @@ export function MissionEditor(props: {
   const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held || recurrenceHold) || config.isUiConfigLoaded())
   const effectiveProfiles = () => freezeCompareProfiles(template(), profiles())
   const compareError = () => template() === "compare" ? compareModelError(profiles()) : undefined
-  const judgeWarning = () => template() === "compare" && ["model-a", "model-b"].some(role =>
-    sameCompareModel(effectiveProfiles()?.roles?.comparator?.model, profiles()?.roles?.[role]?.model))
-  const [optionsOpen, setOptionsOpen] = createSignal(Boolean(draft?.optionsOpen))
-  const [profileDetailsOpen, setProfileDetailsOpen] = createSignal(Boolean(draft?.profileDetailsOpen))
   const [selectedModel, setSelectedModel] = createSignal<Pick<UserMissionModel, "id" | "name"> | undefined>(held ? submittedMissionModel(held.requestId)
     : recurrenceHold ? submittedMissionModel(recurrenceHold.requestID) : draft?.selectedModel)
   // One creation-time snapshot only, after the owned preference document loads.
@@ -149,15 +157,17 @@ export function MissionEditor(props: {
     && creationHold()!.operation.requestId !== shownRequestId() || schedule.held()?.state === "uncertain"
       && JSON.parse(schedule.held()!.payload).requestID !== requestId
   const busy = () => pending() || uncertain() || creationPending() || !!schedule.held()
-  const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(Boolean(draft?.deleteManagedSessions))
+  // Deletion asks nothing: it takes the Preferences' choice for task conversations, fixed for its one request.
+  const deleteManagedSessions = () => deleteSessions
+  const deleteSessions = draft?.deleteManagedSessions ?? untrack(() => config.preferences().missionDeleteSessions)
+  const [startOnCreation, setStartOnCreation] = createSignal(Boolean(held?.startOnCreation ?? draft?.startOnCreation))
   const [deleteAttempted, setDeleteAttempted] = createSignal(Boolean(draft?.deleteAttempted))
   const [pending, setPending] = createSignal(false)
   const [error, setError] = createSignal("")
   const [fieldError, setFieldError] = createSignal<FieldError>()
   const fail = (field: FieldError["field"], message: string) => {
+    if (field === "profiles") setProfilesOpen(true)
     setFieldError({ field, message })
-    if (field === "profiles" || field === "followed") setOptionsOpen(true)
-    if (field === "profiles") setProfileDetailsOpen(true)
   }
   const errorFor = (field: FieldError["field"]) => fieldError()?.field === field ? fieldError()!.message : undefined
   const schedule = createMissionEditorScheduling({ instanceId: props.instanceId, directory: props.directory, action, draft,
@@ -169,11 +179,19 @@ export function MissionEditor(props: {
     onLoad: config => {
       setTitleOverride(config.title); setObjective(config.objective); setNotes(config.notes ?? ""); setTemplate(config.template)
       setProfiles(copyMissionProfiles(config.profiles)); setTaskMode(config.taskMode); setWatched(config.watchedConversationIDs)
+      setCoordinatorSessionID(config.coordinatorSessionID)
       setCustomProfiles(true); setCustomTaskMode(true)
     }, captureDraft: () => captureDraft(), onSaved: (mission, scheduleID) => props.onSaved(mission, scheduleID) })
-  createEffect(() => props.onReading?.(schedule.revalidating()))
+  createEffect(() => props.onReading?.(schedule.revalidating() || profilesReading() || sourceChoices.loading()))
   onCleanup(() => props.onReading?.(false))
-  const mode = () => schedule.scheduling().criteria.length || schedule.scheduling().stored?.reason ? "recurring" : "once"
+  const policy = createMemo(() => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } })
+  const mode = () => policy() && !requiresMissionCalendar(policy()!) ? "once" : "recurring"
+  const captureStart = createMissionCreationStart({ instanceId: props.instanceId, get projectID() { return props.projectID },
+    get directory() { return props.viewDirectory ?? props.directory ?? props.instanceId }, active: isActive,
+    captureView: () => {
+      const view = captureView(), operation = props.captureOperation?.() ?? (() => true)
+      return () => view() && operation() && props.action === action
+    }, refresh: () => { void missionStore.refresh(props.instanceId); props.onRecurrenceRefresh?.() } })
   const immediateFollowed = () => mode() === "once" && watched().length > 0
   const immediateCreationFollowed = () => kind === "create" && immediateFollowed()
   const time = () => schedule.scheduling().criteria.find(row => row.kind === "daily")?.time ?? "09:00", zone = () => schedule.scheduling().zone
@@ -189,21 +207,25 @@ export function MissionEditor(props: {
     || observationUnknown() || scopeUnsupported()
     || kind === "edit" && !!original && (original.status !== "active" || original.runState === "stopped")
     || schedule.unified && !schedule.document()?.edit.structural && !["passage", "launched-once", "journal"].includes(schedule.document()?.edit.reason ?? "")
-  const policy = () => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } }
   const [policyReady, setPolicyReady] = createSignal(false)
   const sourceChoices = createMissionEditorSources({ instanceId: props.instanceId, projectID: props.projectID,
     target: action.scheduleID ?? original?.id, directory: schedule.directory,
-    kinds: () => schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
+    kinds: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
+      ...(coordinatorSessionID() !== undefined && mode() === "recurring" ? ["coordinator-session" as const] : [])],
+    selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && row.kind !== "repository-activity" && !isMissionGithubKind(row.kind) && row.source
+      ? [{ kind: row.kind, id: row.source }] : []), ...(coordinatorSessionID() ? [{ kind: "coordinator-session" as const, id: coordinatorSessionID()! }] : [])],
     active: isActive, captureView })
+  const repository = createMissionEditorRepository({ instanceId: props.instanceId, directory: schedule.directory, captureView,
+    active: () => isActive() && schedule.scheduling().criteria.some(row => isRepositoryCriterion(row.kind)) })
   const watchedIDs = watched
   const needsSourceLocation = createMemo(() => mode() === "recurring" && watchedIDs().length > 0)
-  const sourceIdentity = () => JSON.stringify([identity(), props.directory, getOpenCodeInstanceGeneration(props.instanceId)])
+  const sourceIdentity = createMemo(() => JSON.stringify([identity(), props.directory, getOpenCodeInstanceGeneration(props.instanceId)]))
   const [sourceLocation, setSourceLocation] = createSignal<{ key: string; directory: string }>()
   const [sourceLocationFailed, setSourceLocationFailed] = createSignal(false)
   const [sourceLocationRevision, setSourceLocationRevision] = createSignal(0)
-  createEffect(() => {
-    sourceLocationRevision()
-    if (!needsSourceLocation() || !creationReady() || !isActive()) return
+  const sourceLocationActive = createMemo(() => needsSourceLocation() && creationReady() && isActive())
+  createEffect(on([sourceIdentity, sourceLocationRevision, sourceLocationActive], () => {
+    if (!sourceLocationActive()) return
     const key = sourceIdentity(), viewCurrent = captureView(), controller = new AbortController()
     const operation = captureBackendOperation(props.instanceId, controller.signal)
     let alive = true
@@ -219,21 +241,27 @@ export function MissionEditor(props: {
       setSourceLocation({ key, directory: value.directory })
     }).catch(() => { if (current()) setSourceLocationFailed(true) })
     onCleanup(() => { alive = false; controller.abort() })
-  })
+  }))
   const sourceLocationReady = () => !needsSourceLocation() || sourceLocation()?.key === sourceIdentity()
+  const coordinatorReady = () => coordinatorSessionID() === undefined || mode() === "recurring"
+    && !watchedIDs().includes(coordinatorSessionID()!)
+    && !schedule.scheduling().criteria.some(row => row.kind === "conversation-message" && row.source === coordinatorSessionID())
+    && !!sourceChoices.sources()["coordinator-session"]?.some(row => row.id === coordinatorSessionID())
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
     roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
-  let requestId = held?.requestId ?? recurrenceHold?.requestID ?? draft?.requestId ?? crypto.randomUUID(), lastPayload = draft?.lastPayload ?? ""
+  let requestId = held?.requestId ?? recurrenceHold?.requestID ?? draft?.requestId ?? generateUUID(), lastPayload = draft?.lastPayload ?? ""
   const locked = () => !creationReady() || defaultsRefreshing() || busy() || prefilling() || !schedule.ready() || schedule.conflict() || schedule.reading()
   // Only an idle draft is kept: a request in flight or held settles through its own hold.
   const captureDraft = (): MissionEditorDraft => ({ mode: mode(), titleOverride: titleOverride(), time: time(), zone: zone(),
     watched: watched(), objective: objective(), notes: notes(), template: template(), profiles: copyMissionProfiles(profiles()),
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
-    defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: optionsOpen(), profileDetailsOpen: profileDetailsOpen(),
-    requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(),
+    defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: true, profileDetailsOpen: profilesFold?.open ?? profilesOpen(),
+    requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(), startOnCreation: startOnCreation(),
+    ...(coordinatorSessionID() !== undefined ? { coordinatorSessionID: coordinatorSessionID() } : {}),
+    deleteAutoSubmitted: kind === "delete" && !autoSubmit(), deleteError: kind === "delete" ? error() : undefined,
     scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(),
     previousDraft: schedule.previousDraft(), journalMission: schedule.journal() })
-  onCleanup(() => props.onDispose?.(busy() ? undefined : prefilling() ? null : captureDraft()))
+  onCleanup(() => props.onDispose?.(kind === "delete" ? captureDraft() : busy() ? undefined : prefilling() ? null : captureDraft()))
 
   async function useSavedDefaults() {
     if (busy() || defaultsRefreshing() || !isActive()) return
@@ -250,13 +278,14 @@ export function MissionEditor(props: {
     finally { setDefaultsRefreshing(false) }
   }
 
-  // Creation only creates: one-time Missions and schedules start through their explicit Play.
+  // A direct creation ACK may continue the captured opt-in through guarded Play.
   async function save(event: SubmitEvent) {
     event.preventDefault()
     if (locked() || !isActive()) return
     setFieldError(undefined)
     if (kind !== "delete" && !structuralLocked() && compareError()) return
     if (immediateCreationFollowed()) return
+    if (!coordinatorReady()) { fail("coordinator", t("missions.scheduling.coordinatorUnavailable")); return }
     const scheduledWrite = kind === "create" && mode() === "recurring" || kind === "edit" && schedule.unified
       && (schedule.document()?.kind === "schedule" || journalPreparation())
     if (scheduledWrite) {
@@ -284,15 +313,17 @@ export function MissionEditor(props: {
       const { roots: _roots, profileID: _profile, executionHost: _host, ...stored } = schedule.document()?.configuration ?? {} as NonNullable<ReturnType<typeof schedule.document>>["configuration"]
       const payload = structuralLocked() ? { ...stored, objective: objective().trim(), notes: notes() }
         : { title: submittedTitle(), objective: objective().trim(), notes: notes(), template: template(),
-        watchedConversationIDs: ids, profiles: selected, taskMode: taskMode() ?? "native", launch: policy()! }
+        watchedConversationIDs: ids, profiles: selected, taskMode: taskMode() ?? "native", launch: policy()!,
+        ...(coordinatorSessionID() ? { coordinatorSessionID: coordinatorSessionID() } : {}) }
       const serialized = JSON.stringify(payload)
-      if (lastPayload && lastPayload !== serialized) requestId = crypto.randomUUID()
+      if (lastPayload && lastPayload !== serialized) requestId = generateUUID()
       lastPayload = serialized
       const currentView = captureView(), operation = props.captureOperation?.() ?? (() => true)
       const current = () => currentView() && operation() && props.action === action
+      const start = captureStart(kind === "create" && startOnCreation())
       setPending(true); setError("")
       try {
-        await schedule.save(payload, requestId)
+        await schedule.save(payload, requestId, start)
       } catch (error) {
         if (current()) setError(t("missions.control.mutation.error"))
       } finally { setPending(false) }
@@ -301,7 +332,7 @@ export function MissionEditor(props: {
     if (kind === "edit") {
       if (textLocked()) return
       const payload = JSON.stringify({ objective: objective().trim(), notes: notes(), revision: schedule.journal()?.revision })
-      if (lastPayload && lastPayload !== payload) requestId = crypto.randomUUID()
+      if (lastPayload && lastPayload !== payload) requestId = generateUUID()
       lastPayload = payload
       const view = captureView(), operation = props.captureOperation?.() ?? (() => true)
       const current = () => view() && operation() && props.action === action
@@ -322,6 +353,7 @@ export function MissionEditor(props: {
         setProfiles(copyMissionProfiles(existingHold.profiles)); setCustomProfiles(true)
         setTaskMode(existingHold.taskMode); setCustomTaskMode(true)
         setSelectedModel(submittedMissionModel(existingHold.requestId))
+        setStartOnCreation(!!existingHold.startOnCreation)
         setShownRequestId(existingHold.requestId)
       }
       setAdopted(true); return
@@ -337,10 +369,11 @@ export function MissionEditor(props: {
       ...(kind === "create" && effectiveProfiles() !== undefined ? { profiles: copyMissionProfiles(effectiveProfiles()) } : {}) }
     const payload = kind === "create" ? missionCreationPayloadIdentity({ ...fields, directory })
       : JSON.stringify(kind === "delete" ? { deleteManagedSessions: deleteManagedSessions() } : fields)
-    if (lastPayload && lastPayload !== payload) requestId = crypto.randomUUID()
+    if (lastPayload && lastPayload !== payload) requestId = generateUUID()
     lastPayload = payload
-    const creation = { ...fields, requestId, directory }
+    const creation = { ...fields, requestId, directory, startOnCreation: startOnCreation() }
     const modelIdentity = selectedModel()
+    const start = captureStart(kind === "create" && startOnCreation())
     if (kind === "create") {
       if (!holdMissionCreation(origin, creation)) { setAdopted(true); return }
       setShownRequestId(creation.requestId)
@@ -370,6 +403,7 @@ export function MissionEditor(props: {
       } else {
         const result = await backendOf(instanceId).api.createMission(instanceId, { ...fields, directory, requestId })
         if (kind === "create") releaseMissionCreation(origin, creation.requestId)
+        if (kind === "create" && current()) await start(result.mission)
         if (current()) props.onSaved(result.mission)
         else if (viewCurrent() && identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
       }
@@ -409,42 +443,41 @@ export function MissionEditor(props: {
     <Show when={errorFor(field)}>{message => <span id={id} class="mission-create-field-error" role="alert">{message()}</span>}</Show>
 
   const createBody = () => <>
-    <label for={ids.objective}>{t("missions.create.objective")}</label>
-    <textarea id={ids.objective} required maxLength={mode() === "recurring" ? MISSION_LIFECYCLE_TEXT_LIMIT : 20_000} value={objective()}
+    <Show when={kind === "create"}><MissionBriefPicker instanceId={props.instanceId} disabled={locked() || !isActive()} active={isActive} value={selectedModel()?.id}
+      onUse={model => {
+        requestId = generateUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
+        const configurationTitle = model.name.replace(/\s+/g, " ").trim().slice(0, MISSION_TITLE_MAX).replace(/[\uD800-\uDBFF]$/, "").trimEnd()
+        setObjective(model.objective); setTitleOverride(configurationTitle); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
+        setCustomProfiles(model.profiles !== undefined)
+        setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
+        setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
+      }} /></Show>
+    <section class="mission-create-group">
+    <label class="mission-create-field" for={ids.objective}><span>{t("missions.create.objective")}</span>
+    <textarea id={ids.objective} rows={1} required maxLength={mode() === "recurring" ? MISSION_LIFECYCLE_TEXT_LIMIT : 20_000} value={objective()}
       placeholder={t("missions.create.objectivePlaceholder")} disabled={textLocked()}
       aria-invalid={Boolean(errorFor("objective"))} aria-describedby={errorFor("objective") ? ids.objectiveError : undefined}
-      onInput={e => setObjective(e.currentTarget.value)} />
+      onInput={e => setObjective(e.currentTarget.value)} /></label>
     {inlineError("objective", ids.objectiveError)}
     <Show when={mode() === "recurring" && sourceLocationReady() && !sourceInputBudget().sufficient && !errorFor("objective")}>
       <span class="mission-create-field-error" role="alert">{t(watchedIDs().length ? "missions.recurrence.sourceInputTooLong" : "missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })}</span>
     </Show>
-    <label>{t("missions.create.title")}
+    <label class="mission-create-field"><span>{t("missions.create.title")}</span>
       <input maxLength={MISSION_TITLE_MAX} value={title()} placeholder={derivedTitle()} disabled={structuralLocked()}
         onInput={e => setTitleOverride(e.currentTarget.value)} />
     </label>
     <Show when={kind === "edit" && structuralReason()}>{reason => <p role="status">{t(`missions.scheduling.lock.${reason()}`)}</p>}</Show>
-    <Show when={template() === "compare"}>
-      <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template="compare" profiles={profiles()}
-        roles={["model-a", "model-b"]} taskMode={taskMode()} disabled={structuralLocked()} active={isActive}
-        onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
-      <Show when={compareError()}>{error => <p role="alert" class="mission-create-field-error">{t(`missions.compare.${error()}`)}</p>}</Show>
-      <Show when={judgeWarning()}><p role="status">{t("missions.compare.judgeWarning")}</p></Show>
-    </Show>
-    <details class="mission-profile-optional mission-create-options" open={optionsOpen()} onToggle={event => setOptionsOpen(event.currentTarget.open)}>
-      <summary>{t("missions.create.options")}</summary>
-      {/* Natively hidden while closed so local drafts survive; network demand follows optionsOpen. */}
-      <Show when={kind === "create"}><MissionBriefPicker instanceId={props.instanceId} disabled={locked() || !isActive()} active={() => optionsOpen() && isActive()} value={selectedModel()?.id}
-        onUse={model => {
-          requestId = crypto.randomUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
-          setObjective(model.objective); setTitleOverride(undefined); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
-          setCustomProfiles(model.profiles !== undefined)
-          setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
-          setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
-        }} /></Show>
-      {/* The selected playbook's one-sentence description stays visible under its selector. */}
+    <label class="mission-create-field"><span>{t("missions.control.notes")}</span>
+      <textarea rows={1} maxLength={20_000} value={notes()} disabled={textLocked()} onInput={e => setNotes(e.currentTarget.value)} />
+    </label>
+    </section>
+    <section class="mission-create-group" aria-label={t("missions.create.options")}>
+      <h4>{t("missions.create.options")}</h4>
       <div class="mission-create-template">
-        <label>{t("missions.control.template")}
-          <select aria-label={t("missions.control.template")} aria-describedby={ids.templateDescription} value={template()} disabled={structuralLocked() || kind === "edit" && !schedule.document()?.edit.template} onChange={e => {
+        <label class="mission-create-field"><span>{t("missions.control.template")}
+          <SettingsInfoTip text={t(`missions.control.template.${template()}.description`)} help={{ page: "playbooks", anchor: template() }} />
+        </span>
+          <select aria-label={t("missions.control.template")} value={template()} disabled={structuralLocked() || kind === "edit" && !schedule.document()?.edit.template} onChange={e => {
             const next = e.currentTarget.value as MissionPanelMap["template"]
             setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
             if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
@@ -453,60 +486,62 @@ export function MissionEditor(props: {
           </select>
           <Show when={schedule.document()?.edit.templateReason === "ever-created-task"}><small>{t("missions.scheduling.lock.ever-created-task")}</small></Show>
         </label>
-        <p id={ids.templateDescription}>{t(`missions.control.template.${template()}.description`)}</p>
-        {/* Steps, roles and the exact instructions open in the central reader. On narrow layouts that
-            closes the panel, ending the view a request in flight completes in, so wait for it. */}
-        <Show when={props.onShowPlaybook}>
-          <button type="button" class="window-text-button" aria-describedby={ids.templateDescription} disabled={pending() || creationPending()}
-            onClick={() => props.onShowPlaybook?.(template(), taskMode() ?? "native")}>{t("missions.playbook.details")}</button>
-        </Show>
       </div>
       <MissionTaskModeControls value={taskMode() ?? "native"} disabled={structuralLocked()}
-        onChange={value => { setTaskMode(value); setCustomTaskMode(true) }} />
-      {/* Native nesting depth is project configuration, shared with every conversation there. */}
-      <Show when={kind === "create"}><MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={() => optionsOpen() && isActive()} /></Show>
-      <section class="mission-create-option" aria-label={t("missions.create.agents")} aria-describedby={errorFor("profiles") ? ids.profilesError : undefined}>
-        <MissionProfileSummary instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()} />
-        {/* Catalog-backed selectors mount (and read the native catalog) only on demand. */}
-        <details class="mission-profile-optional" open={profileDetailsOpen()} onToggle={event => setProfileDetailsOpen(event.currentTarget.open)}>
-          <summary>{t("missions.create.agents")}</summary>
-          <Show when={profileDetailsOpen()}>
+        onChange={value => { setTaskMode(value); setCustomTaskMode(true) }}>
+        {/* Native nesting depth is project configuration, shared with every conversation there. */}
+        <Show when={kind === "create"}><MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={isActive} /></Show>
+      </MissionTaskModeControls>
+    </section>
+      <section class="mission-create-option" aria-label={t("missions.create.agents")} aria-describedby={errorFor("profiles") || compareError() ? ids.profilesError : undefined}>
+        <details ref={profilesFold} class="settings-disclosure mission-profiles-disclosure" open={profilesOpen()} onToggle={event => setProfilesOpen(event.currentTarget.open)}>
+          <summary>{t("missions.create.agents")}
+            <MissionProfileSummary inline instanceId={props.instanceId} directory={props.directory} template={template()} profiles={effectiveProfiles()} />
+          </summary>
             <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
-              roles={template() === "compare" ? ["coordinator", "comparator"] : undefined}
               taskMode={taskMode()}
-              disabled={structuralLocked()} active={() => profileDetailsOpen() && optionsOpen() && isActive()}
+              disabled={structuralLocked()} active={() => isActive() && profilesOpen()}
+              onReading={setProfilesReading}
               onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
-          </Show>
-          <div class="mission-create-option-actions">
-            <button type="button" class="window-text-button" disabled={structuralLocked()} onClick={() => void useSavedDefaults()}>{t("missions.defaults.use")}</button>
-            <Show when={props.onOpenPreferences}><button type="button" class="window-text-button" title={t("missions.defaults.hint")} onClick={props.onOpenPreferences}>{t("missions.defaults.manage")}</button></Show>
-          </div>
         </details>
-        {inlineError("profiles", ids.profilesError)}
+        <Show when={compareError()} fallback={inlineError("profiles", ids.profilesError)}>{error =>
+          <span id={ids.profilesError} role="alert" class="mission-create-field-error">{t(`missions.compare.${error()}`)}</span>
+        }</Show>
       </section>
-      <label>{t("missions.control.notes")}
-        <textarea maxLength={20_000} value={notes()} disabled={textLocked()} onInput={e => setNotes(e.currentTarget.value)} />
-      </label>
-      <Show when={mode() === "recurring" || watchedIDs().length > 0}>
-        <MissionConversationPicker instanceId={props.instanceId} directory={props.directory} projectID={props.projectID}
-          value={watchedIDs()} disabled={structuralLocked()} active={() => mode() === "recurring" && optionsOpen() && isActive()} onChange={setWatched} />
-        {inlineError("followed", ids.followedError)}
-        <Show when={needsSourceLocation() && !sourceLocationReady() && !errorFor("followed")}><p role={sourceLocationFailed() ? "alert" : "status"}>{t(sourceLocationFailed() ? "missions.recurrence.sourceLocationUnavailable" : "missions.control.loading")}</p></Show>
-      </Show>
-    </details>
-    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()}
+    <Show when={kind === "create"}><label class="mission-create-autostart">
+      <input type="checkbox" checked={startOnCreation()} disabled={structuralLocked()}
+        onChange={event => setStartOnCreation(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
+    </label></Show>
+    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} repository={repository()} paging={sourceChoices.reader} active={isActive}
       capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
+    <Show when={mode() === "recurring" || coordinatorSessionID() !== undefined}>
+      <section class="mission-create-group">
+        <label class="mission-create-field"><span>{t("missions.scheduling.coordinatorMode")}<SettingsInfoTip text={t("missions.scheduling.coordinatorHint")} /></span>
+          <select aria-label={t("missions.scheduling.coordinatorMode")} value={coordinatorSessionID() === undefined ? "new" : "existing"}
+            disabled={structuralLocked()} onChange={event => setCoordinatorSessionID(event.currentTarget.value === "new" ? undefined : "")}>
+            <option value="new">{t("missions.scheduling.coordinatorNew")}</option>
+            <option value="existing" disabled={mode() !== "recurring"}>{t("missions.scheduling.coordinatorExisting")}</option>
+          </select>
+        </label>
+        <Show when={coordinatorSessionID() !== undefined}>
+          <MissionSourceSelect label={t("missions.scheduling.coordinatorSelect")} value={coordinatorSessionID() ?? ""}
+            choices={sourceChoices.sources()["coordinator-session"]} disabled={structuralLocked() || mode() !== "recurring"}
+            paging={sourceChoices.reader("coordinator-session", coordinatorSessionID())} onChange={setCoordinatorSessionID} />
+          <Show when={mode() !== "recurring"}><p role="alert">{t("missions.scheduling.coordinatorRequiresSchedule")}</p></Show>
+        </Show>
+        <Show when={errorFor("coordinator")}><p role="alert">{errorFor("coordinator")}</p></Show>
+      </section>
+    </Show>
+    {inlineError("followed", ids.followedError)}
+    <Show when={needsSourceLocation() && sourceLocationFailed() && !errorFor("followed")}>
+      <p role="alert">{t("missions.recurrence.sourceLocationUnavailable")}</p>
+    </Show>
     <Show when={immediateFollowed()}><p role="status">{t(immediateCreationFollowed() ? "missions.scheduling.immediateCreationFollowed" : "missions.scheduling.immediateFollowed")}</p></Show>
     <Show when={schedule.capability() === "missing"}><button type="button" class="window-action" disabled={busy() || schedule.reading()}
       onClick={schedule.retryRead}>{t("missions.control.retry")}</button></Show>
     <Show when={(observationUnknown() || schedule.document()?.edit.reason === "uncertain") && !schedule.held() && !schedule.conflict()}>
       <button type="button" class="window-action" disabled={pending() || schedule.reading()} onClick={schedule.retryRead}>{t("missions.scheduling.reload")}</button>
     </Show>
-    <Show when={sourceChoices.next()}><button type="button" class="window-action" disabled={sourceChoices.loading() || structuralLocked()}
-      onClick={sourceChoices.more}>{t("missions.scheduling.moreSources")}</button></Show>
-    <Show when={sourceChoices.failed()}><button type="button" class="window-action" disabled={sourceChoices.loading() || structuralLocked()}
-      onClick={sourceChoices.reload}>{t("missions.control.refresh")}</button></Show>
-    <Show when={selectedModel()}>{model => <p>{t("missions.models.current", { name: model().name })}</p>}</Show>
     <Show when={!defaultsReady() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid()}>
       <p role={config.uiConfigLoadFailed() || defaultsFailed() || config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "alert" : "status"}>
         {t(config.isUiConfigLoaded() && !config.missionDefaultsValid() ? "missions.defaults.invalid"
@@ -518,22 +553,34 @@ export function MissionEditor(props: {
   </>
 
   const createDisabled = () => locked() || !isActive() || !objective().trim() || Boolean(compareError()) || !policyReady()
+    || !coordinatorReady()
     || immediateCreationFollowed()
     || mode() === "recurring" && (!sourceLocationReady() || !sourceInputBudget().sufficient)
   // In the panel, creation's body scrolls above a fixed footer unless the panel is too short (mission-create.css).
   let body: HTMLDivElement | undefined
   const panelScrolls = kind === "create" ? missionPanelScroll(() => body, isActive) : () => false
 
-  return <form class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}
+  // The trash button deletes at once: the form shows only when the deletion failed or is
+  // unconfirmed. Only a freshly opened deletion submits by itself; a restored one (any
+  // saved draft, a refused attempt included) waits for its explicit button.
+  let form!: HTMLFormElement
+  const [autoSubmit, setAutoSubmit] = createSignal(kind === "delete" && !(draft?.deleteAutoSubmitted ?? draft?.deleteAttempted))
+  if (kind === "delete" && draft?.deleteError) setError(draft.deleteError)
+  createEffect(() => {
+    if (!autoSubmit() || deleteAttempted() || locked() || !isActive()) return
+    queueMicrotask(() => {
+      if (!autoSubmit() || locked() || !isActive()) return
+      setAutoSubmit(false)
+      form.requestSubmit()
+    })
+  })
+  return <form ref={form} class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}
+    hidden={kind === "delete" && !error() && !uncertain() && (pending() || autoSubmit())}
     data-scroller={panelScrolls() ? "panel" : undefined}>
     {/* Creation is headed by the panel's own Create button; edit/delete keep their title. */}
     <Show when={kind !== "create"}><header class="window-header"><h3 class="window-title">{t(`missions.control.${kind}`)}</h3></header></Show>
     <div class="window-body" ref={body}>
-      <Show when={kind !== "delete"} fallback={<>
-        <p>{t("missions.control.delete.detail")}</p>
-        <label class="mission-delete-sessions"><input type="checkbox" checked={deleteManagedSessions()} disabled={pending() || deleteAttempted()}
-          onChange={event => setDeleteManagedSessions(event.currentTarget.checked)} />{t("missions.control.delete.sessions")}</label>
-      </>}>{createBody()}</Show>
+      <Show when={kind !== "delete"}>{createBody()}</Show>
       {/* A field changed since this edit opened is never prefilled: reopen it on the current map. */}
       <Show when={prefilling()}><MissionBodyPending failed={reopen() === "failed" || reopen() === "idle" && prefillState() === "failed"}
         changed={reopen() === "idle" && prefillState() === "changed"} actionLabel={offersReopen() ? "missions.control.reopen" : undefined}
@@ -552,6 +599,7 @@ export function MissionEditor(props: {
       <Show when={kind === "create"}>
         {/* An unsent draft beside another request's hold may still be kept as a brief. */}
         <MissionBriefSave instanceId={props.instanceId} buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
+          initialName={submittedTitle}
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
@@ -568,7 +616,7 @@ export function MissionEditor(props: {
       <Show when={kind === "create"} fallback={
           <button type="submit" class="button-primary" disabled={locked() || !isActive() || (kind !== "delete" && (textLocked() || !objective().trim() || !structuralLocked() && !policyReady()))}>
           {t(pending() ? "missions.control.mutation.pending" : kind === "delete"
-            ? deleteAttempted() ? "missions.control.retry" : "missions.control.delete" : "missions.control.save")}
+             ? !autoSubmit() ? "missions.control.retry" : "missions.control.delete" : "missions.control.save")}
         </button>}>
         <button type="submit" class="button-primary" disabled={createDisabled()}>
           {t(pending() || creationPending() ? "missions.control.mutation.pending" : "missions.create.submit")}

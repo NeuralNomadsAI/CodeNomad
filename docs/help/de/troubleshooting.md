@@ -42,7 +42,7 @@ Lässt sich ein zugehöriger Worktree oder Unterhaltungsort nicht überprüfen, 
 ## OpenCode-Laufzeit und WSL {#opencode-runtime}
 
 1. Öffnen Sie **Einstellungen → OpenCode** und prüfen Sie die Karte **OpenCode-Version** (installierte Version und Status des laufenden Dienstes), dann die gewählte Programmdatei unter **OpenCode-Binärdatei**.
-2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.2.3**; empfohlene/qualifizierte Version: **2.2.5**.
+2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.2.3**; empfohlene/qualifizierte Version: **2.2.7**.
 3. Weicht die installierte CLI vom laufenden Dienst ab, entscheiden Sie ausdrücklich über einen Neustart des gemeinsamen Dienstes.
 
 **OpenCode-Dienst neu starten** ist unter **Fehlerbehebung** verfügbar und benötigt Bestätigung. Es unterbricht aktive Arbeit in jedem verbundenen Client, behält aber Sitzungsverlauf. Konfigurationsneuladen ist separat: Es behält den Prozess, erstellt aber geladene Locations neu und storniert offene Fragen/Berechtigungen. Beides ist keine harmlose Aktualisierung.
@@ -73,6 +73,8 @@ Kopplungslinks sind einmalig und kurzlebig; das Direktzugriffspasswort ersetzt s
 
 ## Anbieter-, Plugin- und Erweiterungszustand {#providers-and-addons}
 
+Wenn **Vollständige Zeitleiste nicht verfügbar** zusammen mit einem fehlgeschlagenen `codenomad-session-pruning`-Plugin erscheint, prüfen Sie dessen Ladefehler im OpenCode-Protokoll. Das Plugin stellt die vollständige Verlaufsnavigation und die Wiederherstellung ausstehender Fragen und Berechtigungen bereit. Versuchen Sie die Zeitleiste nach erfolgreichem Laden erneut; behalten Sie Ihre Sitzungsdaten.
+
 | Problem | Wiederherstellung |
 | --- | --- |
 | Falsches Anbieterkonto/Kontingent | Ausgewähltes natives Konto und **Nutzung** prüfen. Eine Kontingentanzeige ist keine Token-/Kostensumme. Nach ungewissem Kontowechsel aktualisieren; Auswahl kann andere Dienstclients betreffen. |
@@ -96,7 +98,7 @@ Lesen Sie bei abgebrochener/teilweiser Bereinigung Fortschritt/Belege vor weiter
 
 ## Logs und sichere Diagnosen {#diagnostics}
 
-1. Öffnen Sie **Instanz-Info** zur Statusprüfung; **Server-Protokolle anzeigen** zeigt verfügbare Ausgabe.
+1. Öffnen Sie **Einstellungen → OpenCode → OpenCode-Protokolle anzeigen**. Die globale Datei `opencode.log` des ausgewählten Ausführungshosts wird mit `opencode debug paths log` ermittelt. Das verschiebbare, nicht modale Fenster lässt die übrige Oberfläche bedienbar. Es zeigt höchstens die letzten 128 KiB; **Aktualisieren** liest die Datei erneut. Protokolle bleiben getrennt von Nachrichten und Modellanfragen.
 2. Wählen Sie unter **Einstellungen → OpenCode** nur bei Bedarf an mehr Details den vorgesehenen **Standard-Log-Level**. Für eigenständiges CodeNomad-Logging verwenden Sie die [Logging-Optionen der Server-CLI](server.md).
 3. Öffnen Sie **Einstellungen → Info → Diagnose** und verwenden Sie **Fehler melden**, **In Zwischenablage kopieren** oder **.txt herunterladen**.
 

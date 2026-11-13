@@ -1,12 +1,13 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
+import { Service } from "@opencode/client/service"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
 
 /** The resolved `opencode` folder fixtures are created in. With `projectConfig` the daemon reads
@@ -72,8 +73,9 @@ export async function writeFixtureServiceRegistration(env, { url, pid, version, 
 // (`CODENOMAD_NATIVE_FIXTURE_PARENT`), or it would read the user's own agents and skills.
 // `registry` points the daemon's package installs at a loopback fake npm registry
 // (`npm_config_registry`), so package fixtures never reach the public registry.
+// `service` enables native persisted calendar wakes in this owned child only.
 // `run` also receives the daemon's `env`, the environment of every other fixture-owned child.
-export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry } = {}) {
+export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry, service = false } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
   assert(!registry || /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(registry), "A fixture registry must be loopback")
   const root = await mkdtemp(path.join(await fixtureParent({ projectConfig }), "product-native-"))
@@ -105,7 +107,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} },
   } } })
   let output = "", spawnError
-  const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
+  const child = spawn(cli, ["serve", ...(service ? ["--service"] : []), "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
   const stopped = new Promise(resolve => child.once("close", resolve))
   child.on("error", error => { spawnError = error })
   child.stdout.on("data", data => { output += data })
@@ -117,10 +119,23 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
       if (child.exitCode !== null || Date.now() > deadline) throw new Error(output.slice(-3000))
       await delay(25)
     }
-    const endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
+    let endpoint
+    if (service) {
+      const file = path.join(env.XDG_STATE_HOME, "opencode/service.json")
+      while (!endpoint && Date.now() < deadline) {
+        if (spawnError) throw spawnError
+        assert.equal(child.exitCode, null, "Owned service exited before registration")
+        try {
+          if (JSON.parse(await readFile(file, "utf8")).pid === child.pid) endpoint = await Service.discover({ file })
+        } catch { /* Registration publication and readiness may still be in flight. */ }
+        if (!endpoint) await delay(25)
+      }
+    } else endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
+    assert(endpoint && endpoint.url === output.match(/http:\/\/127\.0\.0\.1:\d+/)[0])
     const boundedFetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
     const client = OpenCode.make({ baseUrl: endpoint.url,
-      headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` }, fetch: boundedFetch })
+      headers: Service.headers(endpoint), fetch: boundedFetch })
+    if (service) assert.equal((await client.server.info()).pid, child.pid)
     await run({ client, root, requests, env, connection: { endpoint, client, fetch: boundedFetch, assertCurrent() {} } })
     if (providerError) throw providerError
   } finally {

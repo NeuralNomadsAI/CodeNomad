@@ -25,11 +25,13 @@ function Get-EntryIndex($archive, [string]$path) {
 }
 
 function Get-EntryHash($item) {
-  $stream = $item.Open()
+  $stream = $null
   try {
+    $stream = $item.Open()
     $sha = [Security.Cryptography.SHA256]::Create()
     try { [Convert]::ToHexString($sha.ComputeHash($stream)) } finally { $sha.Dispose() }
-  } finally { $stream.Dispose() }
+  } catch { throw "Cannot hash ZIP entry $($item.FullName): $($_.Exception.Message)" }
+  finally { if ($null -ne $stream) { $stream.Dispose() } }
 }
 
 $archive = Open-Zip $Zip

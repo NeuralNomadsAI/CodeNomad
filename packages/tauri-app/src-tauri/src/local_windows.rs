@@ -8,8 +8,56 @@ use url::Url;
 
 const MAX_LOCAL_WINDOWS: usize = 16;
 const MAX_FOLDER_ATTEMPTS: u8 = 3;
-const LOCAL_WINDOW_CONTEXT_SCRIPT: &str =
-    "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local';";
+#[cfg(target_os = "windows")]
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true});";
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,reason:'webkit'});";
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:false,history:false,emulation:false,automation:false,reason:'unsupported-platform'});";
+
+/// Static boot splash injected into the initial `about:blank` document, before
+/// any navigation can be gated on proxy/PAC resolution. See `boot_splash.js`.
+const BOOT_SPLASH_SCRIPT: &str = include_str!("boot_splash.js");
+
+/// The interactive loading page owning every non-backend CLI state (starting,
+/// stopped, failed — where it displays the published error). Wry maps custom
+/// protocol URLs only when constructing a webview; a runtime navigation on
+/// Windows must use the mapped `http://tauri.localhost` form or WebView2
+/// rejects the scheme and never leaves the current document. WebKit hosts
+/// keep the custom scheme.
+#[cfg(target_os = "windows")]
+const LOADING_PAGE_URL: &str = "http://tauri.localhost/loading.html";
+#[cfg(not(target_os = "windows"))]
+const LOADING_PAGE_URL: &str = "tauri://localhost/loading.html";
+
+/// The first document a local webview shows. `about:blank` is created without
+/// network activity — on Windows even `tauri.localhost` and loopback requests
+/// wait for proxy/PAC resolution — so the webview paints the boot splash at
+/// once and the first navigation (loading.html, the app or a remote server)
+/// replaces it.
+fn local_window_initial_url() -> WebviewUrl {
+    WebviewUrl::External(Url::parse("about:blank").expect("about:blank always parses"))
+}
+
+/// The initialization script every document of a local webview runs. The boot
+/// splash guards itself to the top-level about:blank document.
+fn local_window_initialization_script(id: &str) -> String {
+    format!(
+        "{LOCAL_WINDOW_CONTEXT_SCRIPT} window.__CODENOMAD_WINDOW_ID__ = {};{BOOT_SPLASH_SCRIPT}",
+        serde_json::to_string(id).unwrap()
+    )
+}
+
+/// Where a freshly built local window navigates once its splash is up: the
+/// ready backend when there is one, otherwise the loading page. A window
+/// created while the CLI is starting, stopped, or failed would otherwise sit
+/// on the static splash forever — nothing later navigates it — and a published
+/// error would never be displayed.
+fn local_window_initial_destination(backend_target: Option<&str>) -> String {
+    backend_target
+        .map(|target| target.to_string())
+        .unwrap_or_else(|| LOADING_PAGE_URL.to_string())
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct LocalWindowRecord {
@@ -624,28 +672,24 @@ fn build_local_window(
     connect_only: bool,
 ) -> Result<LocalWindowRecord, String> {
     let record = register(app, id.clone(), persisted, connect_only)?;
-    let script = format!(
-        "{LOCAL_WINDOW_CONTEXT_SCRIPT} window.__CODENOMAD_WINDOW_ID__ = {};",
-        serde_json::to_string(&id).unwrap()
-    );
+    let script = local_window_initialization_script(&id);
     let data_directory = app
         .state::<crate::AppState>()
         .webview_data_directory
         .join("local");
     let badge_binding = crate::notification_badge::prepare_window(app, &record.label);
-    let builder =
-        WebviewWindowBuilder::new(app, &record.label, WebviewUrl::App("loading.html".into()))
-            .data_directory(data_directory)
-            .initialization_script(script)
-            .on_page_load(move |window, payload| {
-                if payload.event() == tauri::webview::PageLoadEvent::Started {
-                    crate::notification_badge::page_started(window.as_ref(), badge_binding);
-                }
-                if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                    let zoom = client_state::local_window_zoom(window.app_handle(), window.label());
-                    crate::title_bar::publish_page_zoom(window.as_ref(), zoom);
-                }
-            });
+    let builder = WebviewWindowBuilder::new(app, &record.label, local_window_initial_url())
+        .data_directory(data_directory)
+        .initialization_script(script)
+        .on_page_load(move |window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                crate::notification_badge::page_started(window.as_ref(), badge_binding);
+            }
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let zoom = client_state::local_window_zoom(window.app_handle(), window.label());
+                crate::title_bar::publish_page_zoom(window.as_ref(), zoom);
+            }
+        });
     #[cfg(windows)]
     let developer_browser_arguments = app
         .state::<crate::AppState>()
@@ -680,6 +724,11 @@ fn build_local_window(
             return Err(error.to_string());
         }
     };
+    // The WebView2 controller's implicit document is already about:blank, so
+    // the initial URL creates no new document and initialization scripts never
+    // fire there. Evaluate the boot splash directly on that document instead;
+    // its guard keeps it a no-op on every later page.
+    let _ = window.eval(BOOT_SPLASH_SCRIPT);
     crate::menu_bar::hide(&window.as_ref().window());
     if let Err(error) =
         client_state::setup_local_window(app, &window, &id, persisted, !connect_only)
@@ -701,12 +750,13 @@ fn build_local_window(
         let _ = window.destroy();
         return Err(error);
     }
-    if let Some(target) = app.state::<LocalWindows>().backend_target() {
+    let backend_target = app.state::<LocalWindows>().backend_target();
+    if let Some(target) = &backend_target {
         let cookie = app
             .state::<crate::AppState>()
             .manager
             .ready_local_access()
-            .and_then(|access| access.session_cookie_for(&target));
+            .and_then(|access| access.session_cookie_for(target));
         if let Some(cookie) = cookie {
             if let Err(error) = window.set_cookie(cookie) {
                 eprintln!(
@@ -714,8 +764,9 @@ fn build_local_window(
                 );
             }
         }
-        navigate_window(app, &record.label, &target, NavigationKind::Cli);
     }
+    let destination = local_window_initial_destination(backend_target.as_deref());
+    navigate_window(app, &record.label, &destination, NavigationKind::Cli);
     Ok(record)
 }
 
@@ -929,12 +980,7 @@ pub(crate) fn navigate_window(app: &AppHandle, label: &str, target: &str, kind: 
 pub(crate) fn show_loading_all(app: &AppHandle) {
     app.state::<LocalWindows>().set_backend_target(None);
     for record in app.state::<LocalWindows>().records() {
-        navigate_window(
-            app,
-            &record.label,
-            "tauri://localhost/loading.html",
-            NavigationKind::Cli,
-        );
+        navigate_window(app, &record.label, LOADING_PAGE_URL, NavigationKind::Cli);
     }
 }
 

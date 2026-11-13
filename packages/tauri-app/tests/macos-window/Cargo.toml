@@ -5,4 +5,4 @@ edition = "2021"
 publish = false
 
 [target.'cfg(target_os = "macos")'.dependencies]
-tao = "=0.34.6"
+tao = "=0.37.2"

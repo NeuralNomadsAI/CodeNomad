@@ -9,7 +9,7 @@ CodeNomad verbindet sich mit einem gemeinsamen OpenCode-Dienst auf dem Ausführu
 3. Verwenden Sie **Status und Updates prüfen**. Fehlt OpenCode, wählen Sie **OpenCode installieren und starten**; prüfen Sie vorher Host und Installationsumfang.
 4. Falls die Einrichtung **Verbinden und fortfahren** anbietet, verwenden Sie dies nach Behebung des gemeldeten Problems.
 
-Die Installation verwendet gebündeltes Node/npm für eine normale Benutzerinstallation, die mit anderen Clients geteilt wird. **Für den Benutzer installieren und PATH konfigurieren** ändert die Terminaleinrichtung dieses Benutzers; öffnen Sie danach ein neues Terminal. Ein Browser verbindet sich mit dem CodeNomad-Server: Dateiauswahl und Programmdateiauswahl betreffen diesen Server, nicht das Browsergerät.
+Die Installation verwendet die Node-Laufzeit, auf der der CodeNomad-Server läuft, und deren npm (am Desktop das integrierte Node von Electron oder das gebündelte Node von Tauri) für eine normale Benutzerinstallation, die mit anderen Clients geteilt wird. **Für den Benutzer installieren und PATH konfigurieren** ändert die Terminaleinrichtung dieses Benutzers; öffnen Sie danach ein neues Terminal. Ein Browser verbindet sich mit dem CodeNomad-Server: Dateiauswahl und Programmdateiauswahl betreffen diesen Server, nicht das Browsergerät.
 
 Steht ein älteres OpenCode im PATH an erster Stelle, hängt die angebotene Aktion davon ab, wie es installiert wurde. Bei einem mit npm installierten OpenCode 1.x fragt **OpenCode {version} durch OpenCode 2 ersetzen** nach Bestätigung, entfernt dieses npm-Paket und installiert OpenCode 2 im selben npm-Ordner; der OpenCode-Datenordner bleibt erhalten, und OpenCode 2 importiert 1.x-Unterhaltungen selbst. Ein älteres oder unbrauchbares, auf anderem Weg installiertes OpenCode (winget, Homebrew, manuell) wird nie verändert: **OpenCode 2 für CodeNomad installieren** installiert OpenCode 2 daneben im Benutzer-npm-Ordner, und CodeNomad verwendet dann diese Kopie. Liegt dieser ältere Befehl selbst im Benutzer-npm-Ordner (zum Beispiel ein Link in `~/.local/bin`) oder ist dieser Ordner nicht beschreibbar, nennt die Einrichtung den Grund, statt die Aktion anzubieten: Verschieben Sie den Befehl oder benennen Sie ihn um, oder korrigieren Sie die Ordnerrechte, und wählen Sie dann **Status und Updates prüfen**. Der Befehl `opencode` eines Terminals kann weiterhin die ältere Version starten. Eine ausdrücklich ausgewählte benutzerdefinierte Programmdatei wird nie ersetzt.
 
@@ -20,7 +20,7 @@ Installierte Programmdatei und laufender Dienst können unterschiedliche Version
 | Einstufung | Aktuelle Anforderung | Bedeutung |
 | --- | --- | --- |
 | Minimum | OpenCode **2.2.3** | Das Bildgenerierungswerkzeug, das die Einstellungen unter **Bilder** und die Design-Erweiterung nutzen, sowie die korrekte Reihenfolge von JavaScript-Jobs in Code Mode und das native Wiedergabe- und Komprimierungsformat; mit früheren Versionen gespeicherte Unterhaltungen bleiben nach dem Update lesbar. |
-| Empfohlen | OpenCode **2.2.5** | Qualifiziertes Ziel, getrennt vom technischen Minimum. |
+| Empfohlen | OpenCode **2.2.7** | Qualifiziertes Ziel, getrennt vom technischen Minimum. |
 | Ungeprüft | Neuere oder angepasste, nicht vollständig validierte Version | Nicht allein wegen fehlender Tests abgelehnt; geprüft werden die tatsächlichen API-Verträge des verbundenen Dienstes. |
 
 Der verbundene Dienst muss die erforderlichen Verträge für Sitzungen, Berechtigungen, Forms, Posteingang und Sitzungsumgebung bereitstellen. Native Missionszeitplanung prüft auch die Zeitplan-APIs, das Plugin-/Anbieterpaket und die wirksame Einstellung `experimental.schedules`. Die Verfügbarkeit richtet sich nach diesen genutzten Fähigkeiten, auch bei kompatiblen künftigen Versionen. Meldet die Einrichtung einen nicht unterstützten laufenden Dienst, wählen/installieren Sie eine unterstützte CLI und führen Sie bei Bereitschaft den expliziten Neustart des gemeinsamen Dienstes aus.
@@ -49,6 +49,8 @@ Ausschalten entfernt nur diese Aufgabe, diesen LaunchAgent oder Dienst; ein lauf
 2. Um installierte CLI-Dateien zu ersetzen, wählen Sie gegebenenfalls **Auf OpenCode {version} aktualisieren**. Warten Sie den Abschluss ab.
 3. Prüfen Sie den Status des laufenden Dienstes. Verwenden Sie **Gemeinsamen Dienst neu starten** nur, wenn Sie die ausgewählte Installation für jeden verbundenen Client aktivieren möchten.
 4. Für einen Prozessneustart ohne Installation klappen Sie **Fehlerbehebung** auf, wählen **OpenCode-Dienst neu starten** und bestätigen.
+
+Der Neustart bleibt während einer Statusaktualisierung im Hintergrund anklickbar. Jede Anforderung prüft den aktuellen Dienststatus erneut, bevor sie den Dienst ändert; eine fehlgeschlagene Prüfung blockiert den Neustart.
 
 | Aktion | Umfang und Wirkung | Sichere Wiederherstellung |
 | --- | --- | --- |

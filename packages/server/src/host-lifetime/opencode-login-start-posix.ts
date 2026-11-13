@@ -96,6 +96,7 @@ export class MacosLoginStart implements LoginStartPlatform {
 }
 
 export type SystemctlCommand = (args: string[]) => Promise<string>
+// console-window: Linux only.
 const systemctl: SystemctlCommand = args => new Promise((resolve, reject) => execFile(LINUX_SYSTEMCTL, ["--user", ...args],
   { timeout: 15_000, maxBuffer: 64 * 1024, encoding: "utf8" }, (error, stdout) => error ? reject(new Error("login-start-systemctl")) : resolve(stdout)))
 

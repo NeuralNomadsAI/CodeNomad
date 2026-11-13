@@ -5,6 +5,7 @@ import type { HistoryScope } from "./history-store"
 import type { OutlineCheckpoint, OutlineEntry, OutlineResult } from "./navigation-contract"
 import { displayLayout } from "./outline-layout"
 import { ownedSession } from "./navigation-scope"
+import { messageStorage } from "./message-storage"
 
 function boundedToolName(value: unknown): string {
   if (typeof value !== "string") return ""
@@ -37,9 +38,10 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
     const through = cursor?.through ?? Math.max(maximum, known.at(-1)?.through ?? 0)
     const total = Number(db.prepare(`SELECT count(*) AS value FROM session_message WHERE ${where} AND seq<=?`).get(...params, through)?.value)
     let after = cursor?.after ?? startAfter
-    const headers = db.prepare(`SELECT id,type,seq,time_updated,length(CAST(data AS BLOB)) AS bytes
-      FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
-    const project = db.prepare(`SELECT id,type,seq,
+    const storage = messageStorage(db)
+    const headers = db.prepare(`SELECT id,type,seq,time_updated,${storage.bytes()} AS bytes
+      FROM ${storage.table} WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
+    const project = db.prepare(`SELECT id,type,seq,data IS NULL AS unsupported,
       CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='tool') ELSE 0 END AS tools,
       CASE WHEN type='assistant' THEN coalesce((SELECT substr(CASE
           WHEN json_type(value,'$.name')='text' THEN json_extract(value,'$.name')
@@ -59,7 +61,7 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
       CASE WHEN type='assistant' THEN coalesce(json_array_length(data,'$.content'),0)
         + (coalesce(json_type(data,'$.error'),'null')<>'null' AND NOT EXISTS (SELECT 1 FROM json_each(data,'$.content')
           WHERE json_extract(value,'$.type')='text')) END AS display_parts` : ""}
-      FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
+      FROM ${storage.table} WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const entries: OutlineEntry[] = [], checkpoints: Array<OutlineCheckpoint & { changed: boolean }> = []
     let examined = 0, layoutCharacters = 0
     // Row counts do not bound time: one assistant can contain megabytes of tool
@@ -75,6 +77,7 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
       const rows = []
       for (const row of headers.iterate(...params, after, end)) {
         signal.throwIfAborted()
+        if (row.bytes === null || Number(row.bytes) > 16 * 1024 * 1024) return { status: "blocked", reason: "unsupported_storage" }
         rows.push(row)
         if (rows.length % 128 === 0 || performance.now() - turnStarted >= 8) {
           await yieldTurn(undefined, { signal })
@@ -92,6 +95,7 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
       if (changed) {
         for (const row of project.iterate(...params, after, chunkEnd)) {
           signal.throwIfAborted()
+          if (row.unsupported) return { status: "blocked", reason: "unsupported_storage" }
           const tools = Number(row.tools)
           const layout = layouts && row.type === "assistant" ? displayLayout(row.layout, Number(row.display_parts)) : {}
           layoutCharacters += layout.layout?.length ?? 0

@@ -1,11 +1,14 @@
 /* The timeline ends at the composer footer, not below its controls. */
 .session-view {
+  --session-rail-width: 40px;
+  /* The corner under the rail holds two side-by-side controls. */
+  --session-corner-width: 40px;
   position: relative;
   isolation: isolate;
 }
 
 .session-view:has(> .session-timeline-slot .message-timeline-sidebar) {
-  padding-inline-end: 40px;
+  padding-inline-end: var(--session-rail-width);
 }
 
 .session-timeline-slot {
@@ -13,20 +16,8 @@
   position: absolute;
   inset-block: 0;
   inset-inline-end: 0;
-  width: 40px;
+  width: var(--session-rail-width);
   display: flex;
-}
-
-.session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
-  content: "";
-  position: absolute;
-  inset-block: -1px 0;
-  inset-inline-start: 100%;
-  width: 40px;
-  border-block-start: 1px solid var(--border-divider);
-  border-inline-start: 1px solid var(--border-divider);
-  background-color: var(--surface-chrome);
-  pointer-events: none;
 }
 
 .session-timeline-slot .message-timeline-sidebar {
@@ -39,13 +30,25 @@
   min-height: 0;
 }
 
+/* The corner under a shown rail holds the first/latest controls; beyond the rail the footer leaves it the rest. */
+.session-scroll-corner:empty {
+  display: none;
+}
+
+.session-view:not(.mission-reading) .prompt-input-footer:has(> .session-scroll-corner:not(:empty)) {
+  margin-inline-end: calc(var(--session-corner-width) - var(--session-rail-width));
+}
+
+/* The floating controls stand in only where the rail, and with it the corner, hides. */
+.message-scroll-controls.message-scroll-controls--corner-fallback {
+  display: none;
+}
+
 @media (pointer: coarse) {
-  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) {
-    padding-inline-end: var(--touch-target-size);
-  }
-  .session-timeline-slot { width: var(--touch-target-size); }
-  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
-    width: var(--touch-target-size);
+  .session-view {
+    --session-rail-width: var(--touch-target-size);
+    /* Two compact touch targets beside the corner's 1px divider. */
+    --session-corner-width: calc(2 * var(--touch-target-size-compact) + 1px);
   }
 }
 
@@ -57,8 +60,16 @@
 
   .session-timeline-slot,
   .message-timeline-sidebar,
-  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
+  .session-scroll-corner {
     display: none;
+  }
+
+  .session-view:not(.mission-reading) .prompt-input-footer:has(> .session-scroll-corner:not(:empty)) {
+    margin-inline-end: 0;
+  }
+
+  .message-scroll-controls.message-scroll-controls--corner-fallback {
+    display: flex;
   }
 
   .message-layout--with-timeline {
@@ -68,4 +79,60 @@
 
 .session-view.mission-reading:has(> .session-timeline-slot .message-timeline-sidebar) { padding-inline-end: 0; }
 .session-view.mission-reading .session-timeline-slot,
-.session-view.mission-reading .prompt-input-footer::after { display: none; }
+.session-view.mission-reading .session-scroll-corner { display: none; }
+
+/* Inside the footer, it follows the composer wherever the session stack scrolls. */
+.session-scroll-corner {
+  position: absolute;
+  inset-block: -1px 0;
+  inset-inline-start: 100%;
+  width: var(--session-corner-width);
+  border-block-start: 1px solid var(--border-divider);
+  border-inline-start: 1px solid var(--border-divider);
+  background-color: var(--surface-chrome);
+}
+
+.session-scroll-corner > div {
+  display: flex;
+  height: 100%;
+}
+
+.session-scroll-corner-button {
+  flex: 1 1 0;
+  display: grid;
+  place-items: center;
+  color: var(--accent-primary);
+  background: transparent;
+}
+
+/* Each control keeps half the cell to click; the icons meet near its centre. */
+.session-scroll-corner-button:first-child {
+  justify-items: end;
+  padding-inline-end: 2px;
+}
+
+.session-scroll-corner-button:last-child {
+  justify-items: start;
+  padding-inline-start: 2px;
+}
+
+.session-scroll-corner-button:not(.session-scroll-corner-button--reached):hover {
+  background-color: var(--surface-hover-overlay);
+}
+
+.session-scroll-corner-icon {
+  width: 9px;
+  height: 9px;
+  fill: currentColor;
+}
+
+.session-scroll-corner-button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+/* The end the reader is at stays in place, barely visible. */
+.session-scroll-corner-button--reached {
+  color: var(--text-muted);
+  opacity: 0.25;
+}

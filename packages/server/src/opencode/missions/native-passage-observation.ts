@@ -11,7 +11,8 @@ import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-famil
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { nativeMessageDataSQL } from "./native-message-data"
 import type { NativeMissionSession } from "../../missions/control-types"
-import { acquireNativeSourceFence } from "./native-source-fence"
+import { acquireNativeSourceFence, nativeBackgroundSQL, assertNativeBackgroundRows } from "./native-source-fence"
+import { COORDINATOR_INPUT_MARKER, coordinatorInputSchema, type CoordinatorInputOwner, type CoordinatorBaseline } from "../../missions/mission-coordinator-baseline"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
@@ -37,13 +38,14 @@ export type PassageSessionObservation = {
   terminal?: { inputMessageID: string; messageID: string; outcome: "succeeded" | "failed" | "interrupted" }
   /** An old claim can be waiting for asynchronous native restart recovery. */
   orphaned?: boolean
+  historical?: boolean
 }
 export interface NativePassageObservation {
   assertCurrent(): true
   /** Synchronous fence only for native admission, which runs outside a SQL transaction. */
   assertScheduleCurrent(document: RecurrenceDocument, dispatch: boolean): true
   exists(sessionID: string): Promise<boolean>
-  session(sessionID: string, messageID?: string): Promise<PassageSessionObservation>
+  session(sessionID: string, messageID?: string, baseline?: CoordinatorBaseline[number], owner?: CoordinatorInputOwner): Promise<PassageSessionObservation>
   children(sessionID: string): Promise<string[]>
   requests(sessionIDs: readonly string[]): Promise<boolean>
   empty?(session: NativeMissionSession): Promise<() => true>
@@ -128,9 +130,9 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       return true
     },
     exists: async (id: string) => { assertCurrent(); return (await query("SELECT id FROM session_v2 WHERE id=?", [id])).length === 1 },
-    session: async (id: string, messageID?: string): Promise<PassageSessionObservation> => {
+    session: async (id: string, messageID?: string, baseline?: CoordinatorBaseline[number], owner?: CoordinatorInputOwner): Promise<PassageSessionObservation> => {
       assertCurrent()
-      const session = (await query("SELECT id,parent_id,project_id,directory,workspace_id,time_suspended FROM session_v2 WHERE id=?", [id]))[0]
+      const session = (await query(`SELECT id,parent_id,project_id,directory,workspace_id,time_suspended${owner ? ",metadata" : ""} FROM session_v2 WHERE id=?`, [id]))[0]
       if (!session || session.id !== id || typeof session.project_id !== "string" || typeof session.directory !== "string")
         throw new Error("Native passage session unavailable")
       const count = async (sql: string, params: readonly unknown[]) => {
@@ -145,18 +147,34 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       // seq is the native durable publication order, not message-ID or wall-clock order.
       // A terminal covers every coalesced drain in its busy period. Requiring the
       // latest projection to be idle also fences later delivered inputs/steps.
-      const anchor = (await query(`SELECT id,seq,type FROM session_message WHERE session_id=?
+      let anchor: Record<string, unknown> | undefined = (await query(`SELECT id,seq,type FROM session_message WHERE session_id=?
         AND ${messageID === undefined ? "type IN ('user','synthetic') ORDER BY seq ASC" : "id=?"} LIMIT 1`,
       messageID === undefined ? [id] : [id, messageID]))[0]
       const last = (await query(terminalSQL, [id]))[0]
+      let historical = false
+      const entry = owner ? coordinatorInputSchema.safeParse(JSON.parse(String(session.metadata ?? "{}"))[COORDINATOR_INPUT_MARKER]) : undefined
+      const currentEntry = entry?.success && entry.data.passageID === owner?.passageID && entry.data.missionID === owner.missionID
+        && entry.data.coordinatorSessionID === owner.coordinatorSessionID ? entry.data : undefined
+      if (baseline && messageID === undefined) {
+        if (baseline[0] !== id) throw new Error("Inherited native identity differs")
+        const boundary = baseline[2] === null ? undefined : (await query("SELECT id,seq FROM session_message WHERE session_id=? AND id=?", [id, baseline[2]]))[0]
+        if (baseline[2] !== null && (!boundary || boundary.seq !== baseline[1])) throw new Error("Inherited native boundary unavailable")
+        const expected = baseline[3] ?? currentEntry?.messageID
+        anchor = expected ? (await query("SELECT id,seq,type FROM session_message WHERE session_id=? AND id=?", [id, expected]))[0] : undefined
+        const watermark = (await query("SELECT seq FROM event_sequence WHERE aggregate_id=?", [id]))[0]?.seq
+        if (!Number.isSafeInteger(watermark) || Number(watermark) < baseline[4]) throw new Error("Inherited native sequence unavailable")
+        historical = !expected && !anchor && (last?.seq ?? -1) === baseline[1] && (last?.id ?? null) === baseline[2] && watermark === baseline[4]
+      } else if (owner && messageID === undefined) {
+        anchor = currentEntry ? (await query("SELECT id,seq,type FROM session_message WHERE session_id=? AND id=?", [id, currentEntry.messageID]))[0] : undefined
+      }
       const terminal = anchor && typeof anchor.id === "string" && ["user", "synthetic"].includes(String(anchor.type))
         && Number.isSafeInteger(anchor.seq) && Number(anchor.seq) >= 0 && last?.type === "idle" && typeof last.id === "string"
-        && Number.isSafeInteger(last.seq) && Number(last.seq) > Number(anchor.seq)
+        && Number.isSafeInteger(last.seq) && Number(last.seq) > Math.max(Number(anchor.seq), baseline?.[1] ?? -1)
         && ["succeeded", "failed", "interrupted"].includes(String(last.outcome))
         ? { inputMessageID: anchor.id, messageID: last.id, outcome: last.outcome as "succeeded" | "failed" | "interrupted" } : undefined
       const correlatedFailures = terminal ? await count(`SELECT count(*) AS count FROM session_message
         WHERE session_id=? AND seq>? AND seq<=? AND type='idle' AND json_extract(data,'$.outcome')='failed'`,
-      [id, anchor!.seq, last!.seq]) : 0
+      [id, baseline ? baseline[1] : anchor!.seq, last!.seq]) : 0
       const messagePresent = messageID !== undefined && ((await query("SELECT id FROM session_message WHERE session_id=? AND id=?", [id, messageID])).length === 1
         || (await query("SELECT id FROM session_inbox WHERE session_id=? AND id=?", [id, messageID])).length === 1)
       assertCurrent()
@@ -167,7 +185,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
         ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
         active, inbox, suspended: claimedAt != null, runningTools,
-        failed: correlatedFailures > 0, messagePresent, ...(terminal ? { terminal } : {}),
+        failed: correlatedFailures > 0, messagePresent, ...(terminal ? { terminal } : {}), ...(baseline ? { historical } : {}),
         orphaned: claimedAt != null && !active && Number(claimedAt) < startedAt }
     },
     children: async (id: string) => {
@@ -182,15 +200,8 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       // A completed background child can still have an undelivered notification
       // which resumes its parent. Native removes this durable record only after
       // delivery; process-local active and empty inboxes cannot close that gap.
-      const background = await query(`SELECT json_extract(value,'$.recovery.kind') AS kind,
-        json_extract(value,'$.recovery.sessionID') AS sessionID,
-        json_extract(value,'$.recovery.parentSessionID') AS parentSessionID,
-        json_extract(value,'$.recovery.childSessionID') AS childSessionID
-        FROM kv WHERE key>='job.background/' AND key<'job.background0' LIMIT 1025`, [])
-      if (background.length > 1024 || background.some(item => item.kind === "subagent"
-        ? typeof item.parentSessionID !== "string" || typeof item.childSessionID !== "string"
-        : !["shell", "image"].includes(String(item.kind)) || typeof item.sessionID !== "string"))
-        throw new Error("Native passage background coverage unavailable")
+      const background = await query(nativeBackgroundSQL, [])
+      assertNativeBackgroundRows(background)
       const read = async (operation: NativeEffect, codec: Schema.Codec<unknown, unknown>) => {
         const value = await run(operation)
         Schema.decodeUnknownSync(codec)(value)

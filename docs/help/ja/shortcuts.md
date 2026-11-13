@@ -35,9 +35,9 @@
 | セッションを閉じる | `Mod+Shift+W` |
 | 前／次のセッション | `Mod+Shift+[` / `Mod+Shift+]` |
 | セッションタブ 1〜9 | `Mod+Shift+1` から `Mod+Shift+9` |
-| インスタンス情報 | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | セッション履歴を検索 | `Mod+F` |
-| 前 / 次のユーザーメッセージ | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) または `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
+| **前のユーザーメッセージ** / **次のユーザーメッセージ**。入力欄の**その他の操作**メニューからも利用可能 | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) または `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | 次／前の検索結果（検索にフォーカス中） | `Enter` / `Shift+Enter` |
 | 入力欄にフォーカス／入力を消去 | `Mod+P` / `Mod+K` |
 | モデル／エージェントセレクターを開く | `Mod+Shift+M` / `Mod+Shift+A` |

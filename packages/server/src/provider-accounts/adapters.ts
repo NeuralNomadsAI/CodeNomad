@@ -146,7 +146,7 @@ function digest(parts: unknown[]) {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex")
 }
 
-/** Selection view of a display reading: every window needs a positive duration. */
+/** Preserve plan windows, including calendar quotas whose duration varies. */
 function windows(usage: ProviderUsage, options: { drop?: string[]; defaults?: Record<string, number>; fallbackSeconds?: number; dropUnmeasured?: boolean }) {
   const result: Record<string, ProviderUsageWindow> = {}
   for (const [label, window] of Object.entries(usage.windows)) {
@@ -168,6 +168,6 @@ async function readUsage(integrationID: string, auth: AuthFile, signal: AbortSig
     abort = () => reject(new Error("Quota read aborted"))
     signal.addEventListener("abort", abort, { once: true })
   })
-  try { return await Promise.race([reader.fetchQuota(auth), aborted]) }
+  try { return await Promise.race([reader.fetchQuota(auth, { signal, integrationID }), aborted]) }
   finally { signal.removeEventListener("abort", abort) }
 }

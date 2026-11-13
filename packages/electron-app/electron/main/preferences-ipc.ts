@@ -1,6 +1,8 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron"
 import { validateMainFrame } from "./ipc-security"
 import { requirePreferencesRequest, type PreferencesRequest } from "./preferences-window"
+import { requireMemoryCleanup } from "./memory-cleanup"
+import type { MemoryCleanupRequest } from "../../../ui/src/lib/native/memory-cleanup-command"
 import {
   requireOpenerEpoch, requireStartupStateCommand,
   type OpenerStartupStateResult, type StartupStateCommand,
@@ -16,6 +18,7 @@ interface PreferencesIPCDependencies {
   getAllowedOrigins(window: BrowserWindow): string[]
   openPreferences(request: PreferencesRequest, toggle?: boolean, resume?: boolean, openerId?: string): Promise<void>
   openerStartupState(window: BrowserWindow, command: StartupStateCommand, epoch: number | undefined): Promise<OpenerStartupStateResult>
+  memoryCleanup(window: BrowserWindow, request: MemoryCleanupRequest): Promise<void>
   getRequest(window: BrowserWindow): PreferencesRequest | undefined
   markReady(window: BrowserWindow): void
   acceptRequest(window: BrowserWindow, request: PreferencesRequest): void | Promise<void>
@@ -53,6 +56,11 @@ export function setupPreferencesIPC(ipcMain: IPCRegistrar, dependencies: Prefere
   })
   ipcMain.handle("preferences:openerStartupState", (event, command: unknown, epoch: unknown) =>
     dependencies.openerStartupState(preferences(event), requireStartupStateCommand(command), requireOpenerEpoch(epoch)))
+  ipcMain.handle("preferences:memoryCleanup", (event, value: unknown) => {
+    const window = preferences(event)
+    const request = requireMemoryCleanup(value, dependencies.getRequest(window))
+    return dependencies.memoryCleanup(window, request)
+  })
   ipcMain.handle("preferences:getSection", (event) => {
     const window = preferences(event)
     return dependencies.getRequest(window) ?? { section: "general" }

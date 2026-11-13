@@ -52,6 +52,14 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils sont occupés. Un `--https-port` explicite non nul, ou un `--http-port` avec HTTP activé, fixe le port et échoue si l’écoute est impossible ; `0` demande au système d’en attribuer un. Les **Local Connection URL** et **Remote Connection URL** affichées, et les **Adresses accessibles** actualisées, font autorité pour cette exécution. Voir la [référence CLI serveur](server.md) complète.
 
+## Mise à niveau {#upgrading}
+
+Reconnectez-vous après la mise à niveau. Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification.
+
+Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), gestion des serveurs enregistrés (`/api/remote-servers/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
+
+Les API d’enregistrement `/api/sidecars` restent accessibles aux clients LAN directs authentifiés et aux appareils appairés. Les aperçus web du Contrôle à distance restent accessibles avec leur jeton de capacité lorsqu’ils sont activés sur l’hôte.
+
 ## Configurer un TLS de confiance {#tls}
 
 ### Fournir son propre certificat {#custom-certificates}

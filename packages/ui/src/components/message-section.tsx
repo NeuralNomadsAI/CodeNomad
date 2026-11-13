@@ -83,6 +83,8 @@ function TimelinePlacement(props: { mount?: HTMLElement; children: JSX.Element }
 
 export interface MessageSectionProps {
   timelineMount?: HTMLElement
+  /** The composer corner cell under the rail; the first/latest controls render there while the rail shows. */
+  scrollCornerMount?: HTMLElement
   instanceId: string
   sessionId: string
   loading?: boolean
@@ -1450,6 +1452,9 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const showTimeline = createMemo(() => showMessageTimelinePreference() && hasTimelineSegments())
+  // The corner exists only under a shown rail; otherwise the controls float over the transcript.
+  const scrollCornerMount = () =>
+    showTimeline() && (preferences().scrollControlsInTimelineCorner ?? false) ? props.scrollCornerMount : undefined
 
   createEffect(on(isSearchOpen, open => { if (!open) closeSearch() }, { defer: true }))
   createEffect(() => { if (!isActive()) setIsSearchOpen(false) })
@@ -1533,7 +1538,8 @@ export default function MessageSection(props: MessageSectionProps) {
           registerApi={registerListApi}
           registerState={(state) => setListState(state)}
           renderControls={() => (
-            <div class="message-scroll-controls">
+            // While the corner holds the controls, these only show where the rail hides (narrow conversations).
+            <div class="message-scroll-controls" classList={{ "message-scroll-controls--corner-fallback": Boolean(scrollCornerMount()) }}>
               <Show when={showFirstButton()}>
                 <button
                   type="button"
@@ -1847,6 +1853,34 @@ export default function MessageSection(props: MessageSectionProps) {
             />
           </div>
           </TimelinePlacement>
+        </Show>
+        <Show when={scrollCornerMount()}>
+          {(mount) => (
+            <Portal mount={mount()}>
+              {/* Both stay in place; the end the reader is already at is dimmed. */}
+              <button
+                type="button"
+                class="session-scroll-corner-button"
+                classList={{ "session-scroll-corner-button--reached": !showFirstButton() }}
+                onClick={() => void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true }))}
+                aria-label={t("messageSection.scroll.toFirstAriaLabel")}
+                title={t("messageSection.scroll.toFirstAriaLabel")}
+              >
+                {/* A filled triangle against its stop: go to the start. */}
+                <svg class="session-scroll-corner-icon" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0h10v1.6H0zM5 3l5 7H0z" /></svg>
+              </button>
+              <button
+                type="button"
+                class="session-scroll-corner-button"
+                classList={{ "session-scroll-corner-button--reached": !showLatestButton() }}
+                onClick={() => void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true }))}
+                aria-label={t("messageSection.scroll.toLatestAriaLabel")}
+                title={t("messageSection.scroll.toLatestAriaLabel")}
+              >
+                <svg class="session-scroll-corner-icon" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 8.4h10V10H0zM5 7 0 0h10z" /></svg>
+              </button>
+            </Portal>
+          )}
         </Show>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { syncBuiltinESMExports } from "node:module"
 import assert from "node:assert/strict"
 import path from "node:path"
 import test from "node:test"
@@ -188,6 +189,7 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
       await close()
     } finally {
       t.mock.restoreAll()
+      syncBuiltinESMExports()
       t.mock.timers.reset()
       await fs.rm(directory, { recursive: true, force: true })
     }
@@ -196,6 +198,13 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   let monotonic = 0
   t.mock.method(performance, "now", () => monotonic)
   t.mock.timers.enable({ apis: ["setInterval", "Date"], now: Date.now() })
+  const completedWrites = new Set<string>()
+  const writeFile = fs.writeFile
+  t.mock.method(fs, "writeFile", async (...args: Parameters<typeof fs.writeFile>) => {
+    await writeFile(...args)
+    completedWrites.add(String(args[0]))
+  })
+  syncBuiltinESMExports()
   const entries: Array<{ id: string; methods: string[]; closed: boolean }> = []
   const tools: Array<{ closed: boolean }> = []
   let rejectNew = false
@@ -240,15 +249,14 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
     assert(check(), "Expected serial presence reconciliation")
   }
   await fs.writeFile(a, "")
-  await tick(() => entries.length === 2)
+  await tick(() => entries.length === 2 && completedWrites.has(`${a}.ready`))
   assert.deepEqual(entries.map(entry => entry.id), ["codenomad.session-pruning", "codenomad.pending-requests"])
   assert.deepEqual(entries[0].methods, ["assetRead", "assets", "history", "historyRanked", "imageRead", "imageReference", "images", "imagesConversation", "outline", "outlineLayout", "outlinePreview", "preview", "prune", "pruneBatch", "window"])
   assert.deepEqual(entries[1].methods, ["snapshot"])
   assert.equal(tools.length, 1)
   await fs.writeFile(b, "")
   await fs.unlink(a)
-  await tick(() => true)
-  await delay(20)
+  await tick(() => completedWrites.has(`${b}.ready`))
   assert.equal(entries.length, 2)
   assert(entries.every(entry => !entry.closed), "Another backend lease retains both registrations")
   assert(tools.every(entry => !entry.closed))

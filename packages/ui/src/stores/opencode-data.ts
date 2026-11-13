@@ -18,6 +18,7 @@ import {
 } from "./opencode-data-events"
 import { mergePageWithSnapshot, snapshotRows, type OpenCodeRowSnapshot } from "./opencode-data-read-merge"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
+import { hasTranscriptProjectionGates, scheduleTranscriptProjection } from "./opencode-projection-frame"
 import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
 
 const log = getLogger("session")
@@ -74,7 +75,30 @@ type TranscriptEntry = {
   /** Admitted `session.execution.started` events; a settlement's publication
    * fence is a newer execution, not same-round activity. */
   executionEpoch: number
+  /** A settlement-style reconciliation read in flight, scoped to the reducer
+   * entry that started it: replacing the entry abandons the read and its
+   * flag, and the abandoned completion can neither clear a successor's flag
+   * nor publish against it. */
+  settlementReadPending: boolean
+  settlementReadEntry?: DataEntry
+  /** The SDK reconciliation promise publication currently follows: a demand
+   * arriving mid-read may invalidate the message key and chain a trailing
+   * read, and the newest read's completion owns the publication. */
+  settlementReadPromise?: Promise<unknown>
+  /** The publishing chain the recorded read armed; callers holding obligations
+   * on the read settle with it (the SDK promise settles one hop earlier). */
+  settlementReadChain?: Promise<unknown>
+  /** The execution epoch the followed read owes a publication for; a newer
+   * settlement arriving mid-read upgrades it, so sharing the fetch never
+   * drops the newest publication demand. */
+  settlementReadEpoch: number
   queue: QueuedTranscriptEvent[]
+  /** Inbox-delivery repairs (authoritative reads a relocating delivery owes)
+   * that started and not settled: a retirement barrier. */
+  deliveryRepairPending: number
+  /** A repair demand reconnect carried across its reset; seeding owes it a new
+   * read instead of trailing behind the quiet reconciliation. */
+  deliveryRepairOwed: boolean
   onResynced?: (data: Data) => void
 }
 
@@ -342,7 +366,11 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     retryCount: 0,
     retireWhenDrained: false,
     executionEpoch: 0,
+    settlementReadPending: false,
+    settlementReadEpoch: 0,
     queue: [],
+    deliveryRepairPending: 0,
+    deliveryRepairOwed: false,
   }
   transcriptEntries.set(key, transcript)
   return transcript
@@ -352,9 +380,51 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
  * one would keep its last state, e.g. a delivered prompt shown as queued. */
 function replaceTranscriptEntry(transcript: TranscriptEntry, next: DataEntry): void {
   const previous = transcript.entry
+  // The successor owns reconciliation from here; a read the previous entry
+  // started is abandoned with it.
+  transcript.settlementReadPending = false
+  transcript.settlementReadEntry = undefined
+  transcript.settlementReadPromise = undefined
+  transcript.settlementReadChain = undefined
   transcript.entry = next
   previous.dispose()
   transcript.entryRevision[1]((value) => value + 1)
+}
+
+/** True when admitting `event` relocates an already-materialized prompt row
+ * that is not the reducer's last row: the SDK's delivery handler moves the
+ * admitted prompt to the tail of its list, reordering rows whose position the
+ * native message page owns. Such a delivery owes an authoritative read. */
+function deliveryRelocatesRow(entry: DataEntry, event: OpenCodeEvent): boolean {
+  if (event.type !== "session.inbox.delivered") return false
+  const sessionId = eventSessionId(event)
+  const inboxID = (event.data as { inboxID?: unknown }).inboxID
+  if (!sessionId || typeof inboxID !== "string") return false
+  const rows = entry.data.session.message.list(sessionId)
+  const index = rows.findIndex(row => row.id === inboxID)
+  return index >= 0 && index !== rows.length - 1
+}
+
+/** The native message page owns a delivered prompt's position; the reducer's
+ * list position does not. Invalidate the SDK's message key and finish the
+ * authoritative read — sharing any in-flight one — then publish through the
+ * gated frame path live events use (a missing gate registration keeps the
+ * direct projection), fenced like a settlement read: a newer admitted
+ * execution supersedes the publication, same-round activity does not. The
+ * outstanding read is a retirement barrier, and reconnect carries the demand. */
+function reconcileDeliveredPromptPage(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  transcript.deliveryRepairPending += 1
+  transcript.deliveryRepairOwed = false
+  transcript.entry.data.session.message.invalidate(sessionId)
+  void completeSettlementRead(instanceId, sessionId, transcript, { publishGated: true })
+    ?.finally(() => {
+      transcript.deliveryRepairPending = Math.max(0, transcript.deliveryRepairPending - 1)
+      // The read's own publication pass ran its retirement check while this
+      // counter still held the barrier; retry it now that the repair settled,
+      // so a drained settlement is not left resident. Abandoned scopes are
+      // already guarded by the current-transcript check.
+      retireDrainedTranscript(instanceId, sessionId, transcript)
+    })
 }
 
 function getOpenCodeFullDataRevision(instanceId: string, sessionId: string): number {
@@ -436,6 +506,7 @@ const reconnect = createReconnect({
           // A settlement still waiting on running work (e.g. a user shell) must
           // keep waiting after the reconnect, not strand its reducer forever.
           retireWhenDrained: transcript.retireWhenDrained,
+          deliveryRepairOwed: transcript.deliveryRepairPending > 0 || transcript.deliveryRepairOwed,
           onResynced: transcript.onResynced,
         })
       }
@@ -447,6 +518,7 @@ const reconnect = createReconnect({
     const transcript = ensureTranscript(instanceId, capture.sessionId, capture.directory)
     transcript.reconnectResync = true
     transcript.retireWhenDrained = capture.retireWhenDrained
+    transcript.deliveryRepairOwed = capture.deliveryRepairOwed
     // Without a later admitted event, nothing re-registers the publication
     // callback; carry it so a quiet snapshot still reaches the display.
     transcript.onResynced = capture.onResynced
@@ -455,6 +527,11 @@ const reconnect = createReconnect({
   seedPage: (instanceId, capture) =>
     ensureTranscript(instanceId, capture.sessionId, capture.directory)
       .entry.syncMessages(capture.sessionId, boundedTranscript(capture.messages), () => true),
+  resumeDeliveryRepair: (instanceId, sessionId, transcript) => {
+    transcript.deliveryRepairOwed = false
+    if (!isTranscriptCurrent(instanceId, sessionId, transcript)) return
+    reconcileDeliveredPromptPage(instanceId, sessionId, transcript)
+  },
   scheduleDroppingResync: scheduleAuthoritativeResync,
   isCurrent: isTranscriptCurrent,
   fullDataRevision: getOpenCodeFullDataRevision,
@@ -601,7 +678,14 @@ async function drainTranscriptQueue(
         break
       }
       transcript.queue.shift()
+      const relocatesDelivery = deliveryRelocatesRow(entry, queued.event)
       entry.emit(queued.event)
+      if (queued.event.type === "session.step.started") {
+        // Keep each replay chunk's synchronous budget untouched: the scan runs
+        // at the next task boundary, never inside a chunk.
+        queueMicrotask(() => reconcileStrandedRoundTools(instanceId, sessionId, transcript))
+      }
+      if (relocatesDelivery && current()) reconcileDeliveredPromptPage(instanceId, sessionId, transcript)
       if (!current()) return false
       if (queued.publication) events.push(queued.event)
       if (queued.onApplied) {
@@ -801,7 +885,17 @@ export function applyOpenCodeDataEvent(
       return transcript.entry.data
     }
   }
+  const relocatesDelivery = transcript ? deliveryRelocatesRow(entry, event) : false
   entry.emit(event)
+  // A finished round's tool still running or streaming once a later round
+  // began lost its terminal event mid-execution: reconcile it at this step
+  // boundary instead of waiting for the execution's settlement.
+  if (event.type === "session.step.started" && transcript && typeof sessionId === "string") {
+    reconcileStrandedRoundTools(instanceId, sessionId, transcript)
+  }
+  if (relocatesDelivery && transcript && isTranscriptCurrent(instanceId, sessionId!, transcript)) {
+    reconcileDeliveredPromptPage(instanceId, sessionId!, transcript)
+  }
   if (coalesced) {
     onDeferred?.(entry.data)
     if (!transcript || (isTranscriptCurrent(instanceId, sessionId!, transcript) && transcript.entry === entry)) {
@@ -957,10 +1051,14 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
     || transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync
     || transcript.retryTimer || transcript.queue.length) return
   // Work that outlives the settlement still needs this reducer: prompts parked in
-  // its inbox (e.g. after an interruption) are listed from it, and unsettled rows
-  // settle only in it.
+  // its inbox (e.g. after an interruption) are listed from it, unsettled rows
+  // settle only in it, and an outstanding delivery repair or shared
+  // reconciliation read publishes through it (a trailing read that superseded
+  // a repair's read owns its publication, and its own completion retries this).
   const data = transcript.entry.data
-  if (data.session.pending.list(sessionId).length || data.session.message.list(sessionId).some(isUnsettledAtSettlement)) return
+  if (transcript.deliveryRepairPending > 0 || transcript.deliveryRepairOwed
+    || (transcript.settlementReadPending && transcript.settlementReadEntry === transcript.entry)
+    || data.session.pending.list(sessionId).length || data.session.message.list(sessionId).some(isUnsettledAtSettlement)) return
   // The reducer's final coalesced page — e.g. a tool that settled after the
   // execution did — publishes here, before normal retirement destroys the
   // entry; resets, eviction and destructive teardown cancel instead.
@@ -1004,22 +1102,59 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
  * in-flight read when connected, start it when not, then project the
  * reconciled page without touching the display window's membership. A newer
  * admitted execution supersedes the publication; same-round activity does
- * not. */
-function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+ * not. `publishGated` routes the publication through the instance layer's
+ * frame gates instead of projecting directly. Returns the SDK read promise it
+ * followed, so a caller holding obligations on the read settles with it. */
+function completeSettlementRead(
+  instanceId: string,
+  sessionId: string,
+  transcript: TranscriptEntry,
+  options?: { publishGated?: boolean },
+): Promise<unknown> {
   const signal = backendEvents.signalForInstance(instanceId)
-  const epoch = transcript.executionEpoch
-  void transcript.entry.data.session.message.sync(sessionId)
+  const entry = transcript.entry
+  // A reconciliation read in flight against this reducer reconciles the same
+  // rows: share its fetch instead of chaining a duplicate beneath it. The
+  // demand still upgrades the recorded epoch, and publication follows the
+  // SDK's current promise: a settlement that invalidated the message key
+  // chained a trailing read, and the newest read's completion — not the one
+  // already resolving — owns publishing the reconciled page.
+  transcript.settlementReadPending = true
+  transcript.settlementReadEntry = entry
+  transcript.settlementReadEpoch = transcript.executionEpoch
+  const promise = entry.data.session.message.sync(sessionId)
+  if (transcript.settlementReadPromise === promise) return transcript.settlementReadChain ?? promise
+  transcript.settlementReadPromise = promise
+  const followed = promise
+  const chain = followed
     .catch(() => undefined)
     .then(() => {
-      // Publish unless a newer execution superseded this settlement:
-      // same-round activity (a late terminal tool event) must not
-      // suppress the repair.
+      // A newer demand re-followed a later read, or a replaced reducer
+      // abandoned this one: only the followed promise's owner publishes.
+      if (transcript.settlementReadEntry !== entry || transcript.settlementReadPromise !== followed) return
+      transcript.settlementReadPending = false
+      transcript.settlementReadEntry = undefined
+      transcript.settlementReadPromise = undefined
+      transcript.settlementReadChain = undefined
+      // Publish unless an execution newer than every recorded demand
+      // superseded this settlement: same-round activity (a late terminal tool
+      // event) must not suppress the repair.
       if (signal?.aborted || !isTranscriptCurrent(instanceId, sessionId, transcript)
-        || transcript.executionEpoch !== epoch) return
-      projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+        || transcript.executionEpoch !== transcript.settlementReadEpoch) return
+      if (options?.publishGated) {
+        // The instance layer's gates own active-session and latest-window
+        // admission exactly as live events' projections do; a registration-free
+        // context (unit tests) keeps the direct projection.
+        if (hasTranscriptProjectionGates()) scheduleTranscriptProjection(instanceId, sessionId, entry.data)
+        else projectOpenCodeMessages(instanceId, sessionId, entry.data, true)
+      } else {
+        projectOpenCodeMessages(instanceId, sessionId, entry.data, true)
+      }
       if (signal?.aborted) return
       retireDrainedTranscript(instanceId, sessionId, transcript)
     })
+  transcript.settlementReadChain = chain
+  return chain
 }
 
 /** Non-event settlement evidence: the liveness activity read observed a run
@@ -1042,6 +1177,38 @@ function hasUnsettledToolRow(messages: SessionMessageInfo[]): boolean {
   return messages.some((message) => message.type === "assistant"
     && message.content.some((part) => part.type === "tool"
       && (part.state.status === "streaming" || part.state.status === "running")))
+}
+
+/** Streaming or running tool parts in assistant rounds the native loop already
+ * completed; the active round's parallel tools are excluded. */
+function hasStrandedFinishedRoundTool(messages: SessionMessageInfo[]): boolean {
+  return messages.some((message) => message.type === "assistant" && message.time?.completed !== undefined
+    && message.content.some((part) => part.type === "tool"
+      && (part.state.status === "streaming" || part.state.status === "running")))
+}
+
+/** A finished round's tool still streaming or running once a later round
+ * began: the loop feeds every tool result back before it continues, so the
+ * terminal event was lost mid-execution. The settlement read that reconciles
+ * it must not wait for the execution to end — later rounds keep its spinner
+ * live, and a quickly following execution would suppress that repair.
+ *
+ * Re-reading is event-driven and bounded: an authoritative page that keeps
+ * the tool running makes each later step boundary issue one further read,
+ * never a loop — the daemon's own state is the progress guard. */
+function reconcileStrandedRoundTools(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+    || transcript.needsAuthoritativeResync || transcript.resyncing) return
+  // A settlement read already in flight against this reducer reconciles the
+  // same rows; invalidating beneath it would only chain a duplicate fetch.
+  // One started by a replaced reducer is abandoned with it and does not
+  // suppress this demand.
+  if (transcript.settlementReadPending && transcript.settlementReadEntry === transcript.entry) return
+  if (!hasStrandedFinishedRoundTool(transcript.entry.data.session.message.list(sessionId))) return
+  // Nothing invalidated the SDK's message key at a step boundary; a key an
+  // earlier sync completed would make this read a no-op.
+  transcript.entry.data.session.message.invalidate(sessionId)
+  completeSettlementRead(instanceId, sessionId, transcript)
 }
 
 /** A `session.tool.called` whose newest matching part already settled. The

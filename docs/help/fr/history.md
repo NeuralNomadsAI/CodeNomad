@@ -1,5 +1,7 @@
 # Historique, recherche et nettoyage
 
+La recherche, la chronologie, la galerie d’images et le nettoyage technique prennent aussi en charge le stockage expérimental `part_rows` d’OpenCode, y compris les messages mixtes. Les éléments déjà séparés restent lisibles après désactivation de l’option.
+
 L’historique enregistré, ce que la transcription affiche actuellement et le contexte compacté du modèle sont distincts. Préférez la navigation ou le filtrage avant toute suppression.
 
 ## Rechercher dans tout l’historique {#full-history-search}
@@ -23,7 +25,7 @@ Si une fenêtre de recherche expire ou si son historique change, **Relancer la r
 
 1. Choisissez un résultat de la session actuelle pour atteindre le passage qui l’entoure.
 2. Choisissez un résultat d’une autre session pour ouvrir un aperçu distinct de ce message ; utilisez **Ouvrir dans la session** pour aller à cette conversation, à l’emplacement du résultat.
-3. Dans **Chronologie des messages**, survolez ou focalisez un marqueur pour un extrait, puis sélectionnez-le pour naviguer : son bloc passe en haut et le marqueur reste en surbrillance jusqu’à ce que vous fassiez défiler, après quoi la surbrillance suit le bloc en haut de la conversation. Utilisez les commandes premier/dernier message pour revenir aux extrémités de l’historique enregistré.
+3. Dans **Chronologie des messages**, survolez ou focalisez un marqueur pour un extrait, puis sélectionnez-le pour naviguer : son bloc passe en haut et le marqueur reste en surbrillance jusqu’à ce que vous fassiez défiler, après quoi la surbrillance suit le bloc en haut de la conversation. Utilisez les flèches premier/dernier message pour revenir aux extrémités de l’historique enregistré. Elles flottent sur la conversation ; si **Placer les flèches premier/dernier message sous la chronologie** est activé dans **Général**, elles se placent dans l’angle sous la chronologie, à droite de **Envoyer le message**, et la flèche de l’extrémité où vous vous trouvez est estompée.
 
 La chronologie représente toute la structure de session même si la transcription ne contient qu’un passage borné. Les sauts chargent la destination sans récupérer tous les messages intermédiaires. Les aperçus de résultats d’autres sessions ne chargent pas leur transcription entière et ne les sélectionnent pas ; seul **Ouvrir dans la session** change de conversation.
 

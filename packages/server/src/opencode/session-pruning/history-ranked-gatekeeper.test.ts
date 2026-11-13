@@ -39,7 +39,7 @@ for (const change of ["deleted", "replaced", "during-read"]) test(`horizon senti
         const statement = prepare(sql)
         if (sql.includes("AS mask")) {
           const iterate = statement.iterate.bind(statement)
-          statement.iterate = function* (...params) {
+          statement.iterate = function* (...params): Generator<any, undefined> {
             for (const row of Reflect.apply(iterate, statement, params)) {
               if (!changed) { changed = true; mutate() }
               yield row

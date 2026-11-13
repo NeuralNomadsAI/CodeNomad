@@ -3,6 +3,7 @@ import type { HistoryRankedInput } from "../../../server/src/opencode/session-pr
 import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
 import type { SessionGoalResponse } from "../../../server/src/opencode/goal-contract"
+import type { ShellInfo } from "@opencode/client"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionRecurrenceSnapshot } from "../../../server/src/api-types"
 import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -285,12 +286,16 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     imagesConversation(instanceId: string, input: ImagesConversationRequest): Promise<ImagesConversationResponse> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/images-conversation`, {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/images-conversation`, {
         method: "POST", body: JSON.stringify(input),
       })
     },
     fetchSessionGoal(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<SessionGoalResponse> {
       return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { signal }))
+    },
+    fetchBackgroundShells(instanceId: string, directory: string, signal?: AbortSignal): Promise<{ location: { directory: string }; data: ShellInfo[] }> {
+      const query = new URLSearchParams({ directory })
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/background-shells?${query}`, { signal }))
     },
     pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
       return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-pruning/prune`, {
@@ -317,6 +322,11 @@ export function createServerApi(ctx: BackendHttp) {
       id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}/git-branches?${new URLSearchParams({ directory })}`, { signal })
     },
+  fetchRepositorySource(id: string, directory: string, signal?: AbortSignal): Promise<{ status: "ok";
+    repository: import("../../../server/src/missions/mission-repository-condition").MissionRepositoryIdentity } | { status: "unavailable"; reason: string }> {
+    return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(id).workspaceId)}/repository-source?${new URLSearchParams({ directory })}`, { signal })
+  },
+
 
     createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
       id = parseInstanceKey(id).workspaceId
@@ -710,6 +720,9 @@ export function createServerApi(ctx: BackendHttp) {
     /** `recheck` marks an explicit user check, which refreshes the server's cached version probes. */
     fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
       return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
+    },
+    fetchOpenCodeLogs(signal?: AbortSignal): Promise<import("../../../server/src/api-types").OpenCodeLogsResponse> {
+      return request("/api/opencode/logs", { signal })
     },
     getOpenCodeLoginStart(): Promise<import("../../../server/src/api-types").LoginStartResponse> {
       return request("/api/opencode/login-start")

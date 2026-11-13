@@ -310,8 +310,8 @@ test("media ownership retains real manager, physical worktrees and connection cu
       await ordinaryGate.entered.promise
       const privateGate = f.hold("location")
       const client = OpenCode.make({ baseUrl: f.connection.endpoint.url, fetch: createSessionMediaFetch(f.connection, abort.signal, () => {}) })
-      const privateRead = f.manager.ownsLocation(f.id, { directory: f.target }, client, abort.signal, "request",
-        { current: () => { abort.signal.throwIfAborted(); f.connection.assertCurrent() } })
+      const privateRead = f.manager.ownsLocation(f.id, { directory: f.target }, client, { signal: abort.signal, strict: true,
+        media: { current: () => { abort.signal.throwIfAborted(); f.connection.assertCurrent() } } })
       const rejected = assert.rejects(privateRead)
       await privateGate.entered.promise
       abort.abort()
