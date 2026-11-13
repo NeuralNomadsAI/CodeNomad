@@ -1,5 +1,5 @@
 import { batch } from "solid-js"
-import { createStore, produce, reconcile, unwrap } from "solid-js/store"
+import { $RAW, createStore, produce, reconcile, unwrap } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import { getCacheRetainedEntriesForSession } from "../../lib/global-cache"
@@ -498,6 +498,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return estimateRetainedBytesIncrementally(retainedValues(), {
       signal,
       rootIterable: true,
+      // Display and global caches reference record data through store
+      // proxies; canonicalizing every visited object to its raw target keeps
+      // the identity-based deduplication from counting those aliases twice.
+      canonicalize: (value: object) => (value as Record<symbol, object>)[$RAW] ?? value,
       maxBytes: MAX_TRANSCRIPT_MEASUREMENT_BYTES - globalCacheKeyBytes,
       maxNodes: MAX_TRANSCRIPT_MEASUREMENT_NODES,
     }).then((bytes) => Number.isFinite(bytes) ? bytes + globalCacheKeyBytes : bytes)

@@ -13,6 +13,7 @@ import { sessions, setActiveSession, setProviders, setSessionPage, setSessions, 
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages } from "../../../src/stores/session-api"
+import { buildRecordDisplayData } from "../../../src/stores/message-v2/record-display-cache"
 import { buildSessionThreadsFromMap } from "../../../src/stores/session-tree"
 import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
@@ -170,6 +171,22 @@ render(() => <Fixture />, document.getElementById("root")!)
       parts: [{ type: "text" as const, text: `bulk ${index} ${"hydration ".repeat(8)}` }],
     })))
   },
+  /** Direct hydration of assistant messages whose tool parts carry large outputs. */
+  hydrateTools: (sessionId: string, outputs: number[]) => {
+    store.hydrateMessages(sessionId, outputs.map((size, index) => ({
+      id: `${sessionId}_tool_msg_${index}`, sessionId, role: "assistant" as const, status: "complete" as const,
+      parts: [{ type: "tool" as any, id: `${sessionId}_tool_${index}`, tool: "bash", callID: `${sessionId}_tool_${index}`,
+        sessionID: sessionId, messageID: `${sessionId}_tool_msg_${index}`, time: { created: index + 1, completed: index + 1 },
+        state: { status: "completed", input: { command: "cat" }, output: "x".repeat(size), time: { created: index + 1, completed: index + 1 } } }],
+    })))
+  },
+  /** Materializes the record display cache, which references tool state through store proxies. */
+  materializeDisplay: (sessionId: string) => {
+    for (const messageId of store.getSessionMessageIds(sessionId)) {
+      buildRecordDisplayData(id, store.getMessage(messageId)!)
+    }
+  },
+  estimate: (sessionId: string) => store.estimateSessionRetainedBytes(sessionId),
   /** Synchronous duration of one native session.deleted dispatch. */
   emitDeleteMeasured: (sessionId: string) => {
     const started = performance.now()
