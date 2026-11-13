@@ -17,7 +17,8 @@ type ToastPosition = "top-left" | "top-right" | "top-center" | "bottom-left" | "
 
 export type ToastAction = {
   label: string
-  href: string
+  href?: string
+  target?: { backendId: string; instanceId: string; sessionId?: string }
   onClick?: () => void | Promise<void>
 }
 
@@ -33,6 +34,8 @@ export type ToastPayload = {
   duration?: number
   position?: ToastPosition
   action?: ToastAction
+  /** Revocation removes this owner's bubble and history entry. */
+  signal?: AbortSignal
 }
 
 // ==================== Toast History Types ====================
@@ -79,6 +82,12 @@ const MAX_HISTORY_ITEMS = 50;
 
 /** History records (module-level private state) */
 let _historyItems: IToastHistoryItem[] = [];
+const _historyCleanup = new Map<string, () => void>()
+
+function releaseHistoryOwner(id: string): void {
+  _historyCleanup.get(id)?.()
+  _historyCleanup.delete(id)
+}
 
 /** Subscribers list */
 const _subscribers = new Set<ToastHistoryCallback>();
@@ -132,6 +141,7 @@ function _generateId(): string {
  */
 function _trimHistory(): void {
   if (_historyItems.length > MAX_HISTORY_ITEMS) {
+    _historyItems.slice(MAX_HISTORY_ITEMS).forEach(item => releaseHistoryOwner(item.id))
     // Keep only the newest entries
     _historyItems = _historyItems.slice(0, MAX_HISTORY_ITEMS);
   }
@@ -174,6 +184,7 @@ export function addToToastHistory(
  * Clear all history
  */
 export function clearToastHistory(): void {
+  _historyItems.forEach(item => releaseHistoryOwner(item.id))
   _historyItems = [];
   _updateUnreadCount();
   _notifySubscribers();
@@ -216,6 +227,7 @@ export function markAllToastHistoryAsRead(): void {
  * @param id - Record ID
  */
 export function deleteToastHistoryItem(id: string): void {
+  releaseHistoryOwner(id)
   const index = _historyItems.findIndex((i) => i.id === id);
   if (index !== -1) {
     _historyItems.splice(index, 1);
@@ -308,7 +320,7 @@ async function openExternalUrl(url: string): Promise<void> {
 
 export async function runToastAction(action: ToastAction): Promise<void> {
   if (!action.onClick) {
-    await openExternalUrl(action.href)
+    if (action.href) await openExternalUrl(action.href)
     return
   }
 
@@ -316,7 +328,7 @@ export async function runToastAction(action: ToastAction): Promise<void> {
     await action.onClick()
   } catch (error) {
     console.warn("[notifications] action failed; opening fallback link", error)
-    await openExternalUrl(action.href)
+    if (action.href) await openExternalUrl(action.href)
   }
 }
 
@@ -370,7 +382,7 @@ function sendSystemNotification(payload: ToastPayload): void {
   if (typeof document === "undefined") return
   const focused = document.visibilityState === "visible" && document.hasFocus()
   if (!untrack(() => preferences().osNotificationsAllowWhenVisible) && focused) return
-  void sendOsNotification({ title: payload.title ?? "CodeNomad", body: payload.message }).catch((error) => {
+  void sendOsNotification({ title: payload.title ?? "CodeNomad", body: payload.message, signal: payload.signal }).catch((error) => {
     console.warn("[notifications] failed to send system notification", error)
   })
 }
@@ -383,17 +395,29 @@ function sendSystemNotification(payload: ToastPayload): void {
  * @returns Toast handle (a no-op when no bubble is shown)
  */
 export function showToastNotification(payload: ToastPayload): ToastHandle {
+  if (payload.signal?.aborted) return noToast
   // Untracked: an effect that notifies must not re-run whenever a setting changes.
   const targets = payload.transient
     ? { screen: true, history: false, system: false }
     : notificationTargets(untrack(() => preferences().notificationRouting), payload.category, payload.variant)
+  let historyId: string | undefined
   if (targets.history) {
-    addToToastHistory({
+    historyId = addToToastHistory({
       title: payload.title,
       message: payload.message,
       variant: payload.variant,
       action: payload.action,
     })
+  }
+  let dismiss = () => {}
+  const revoke = () => { dismiss(); if (historyId) deleteToastHistoryItem(historyId) }
+  if (payload.signal) {
+    const signal = payload.signal
+    signal.addEventListener("abort", revoke, { once: true })
+    const cleanup = () => signal.removeEventListener("abort", revoke)
+    if (historyId) _historyCleanup.set(historyId, () => { setTimeout(cleanup, payload.duration ?? 10000) })
+    else setTimeout(cleanup, payload.duration ?? 10000)
+    if (signal.aborted) { revoke(); return noToast }
   }
   if (targets.system) sendSystemNotification(payload)
   if (!targets.screen) return noToast
@@ -444,10 +468,12 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
       },
     },
   )
+  dismiss = () => toast.dismiss(id)
+  if (payload.signal?.aborted) revoke()
 
   return {
     id,
-    dismiss: () => toast.dismiss(id),
+    dismiss,
   }
 }
 

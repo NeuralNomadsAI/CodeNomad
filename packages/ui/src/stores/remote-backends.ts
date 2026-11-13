@@ -9,6 +9,6 @@ export const backendRegistry = createBackendRegistry({
   loadWorkspaces: async (client, signal) => {
     if (isPreferencesWindow()) return
     const { refreshWorkspaceList } = await import("./instances")
-    if (!signal.aborted) await refreshWorkspaceList(client.id, client.api, signal)
+    return !signal.aborted && refreshWorkspaceList(client.id, client.api, signal)
   },
 })

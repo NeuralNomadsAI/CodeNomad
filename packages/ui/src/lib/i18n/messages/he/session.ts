@@ -165,6 +165,7 @@ export const sessionMessages = {
   "sessionEvents.sessionCompactedToast": "הסשן {label} סוכם",
   "sessionEvents.notify.needsInput": "הסשן “{label}” ממתין לתשובתך",
   "sessionEvents.notify.done": "הסשן “{label}” הסתיים",
+  "sessionEvents.notify.serverTitle": "{server} · {label}",
   "sessionEvents.sessionError.unknown": "שגיאה לא ידועה",
   "sessionEvents.sessionError.title": "שגיאת סשן",
   "sessionEvents.sessionError.message": "שגיאה: {message}",

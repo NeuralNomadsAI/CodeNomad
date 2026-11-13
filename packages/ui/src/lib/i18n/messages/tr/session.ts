@@ -159,6 +159,7 @@ export const sessionMessages = {
   "sessionEvents.sessionCompactedToast": "{label} adlı session sıkıştırıldı",
   "sessionEvents.notify.needsInput": "“{label}” oturumu yanıtınızı bekliyor",
   "sessionEvents.notify.done": "“{label}” oturumu tamamlandı",
+  "sessionEvents.notify.serverTitle": "{server} · {label}",
   "sessionEvents.sessionError.unknown": "Bilinmeyen hata",
   "sessionEvents.sessionError.title": "Session hatası",
   "sessionEvents.sessionError.message": "Hata: {message}",

@@ -89,6 +89,8 @@ La altura del editor sigue la conversación visible, incluido el teclado en pant
 
 ## Notificaciones e indicadores {#notifications}
 
+Para una pestaña de proyecto en otro servidor CodeNomad, las notificaciones incluyen el nombre del servidor. **Ver conversación** abre ese proyecto y esa conversación exactos; desconectar el servidor elimina sus avisos. Los ajustes de Imágenes y Búsqueda web corresponden al servidor del proyecto, incluidos sus valores globales.
+
 1. Abre **Notificaciones**. Para cada tipo de notificación, marca dónde aparece: **En pantalla** (una burbuja temporal), **Historial** (se conserva en el historial de notificaciones de la campana de la barra de pestañas, o de la barra de título en la aplicación de escritorio de macOS) y **Sistema** (una notificación del sistema operativo). Arrastra sobre una fila o columna de casillas para ajustar varias a la vez.
 2. Marcar una casilla **Sistema** pide permiso si hace falta. En **Notificaciones del sistema**, **Solicitar** vuelve a pedirlo mientras falte el permiso.
 3. Activa **Notificar cuando la app tenga el foco** para conservar las notificaciones del sistema mientras esta ventana tiene el foco. Si no, aparecen en cuanto no lo tiene, aunque siga abierta en pantalla.
