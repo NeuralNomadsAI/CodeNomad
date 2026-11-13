@@ -40,6 +40,8 @@ Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto
 
 **Reintentar** también recupera las pestañas en espera que siguen abiertas cuando la restauración automática al iniciar está desactivada. Cada pestaña de una misma carpeta conserva sus propios borradores.
 
+Una notificación abre la pestaña en espera existente; usa **Reintentar** para volver a conectar.
+
 Con multi-backend activado, los proyectos remotos guardados recuperan el orden de pestañas, los borradores y la selección. Un servidor no disponible conserva una pestaña en espera: usa **Reintentar** cuando vuelva, o **Conectar** con sus credenciales o un nuevo **Enlace de emparejamiento**. Los demás servidores siguen disponibles. La recuperación lee el estado; comprueba el resultado de una acción de conversación no confirmada antes de enviarla otra vez.
 
 Cierra las pestañas de proyecto de este servidor en todas las ventanas antes de eliminarlo o cambiar su dirección. Un inventario inaccesible bloquea el cambio hasta que pueda comprobarse.

@@ -10,13 +10,17 @@ import "../../../src/index.css"
 
 // Two project tabs on one folder: the server delivers each event to both.
 const tabs = ["tab-a", "tab-b"], sessionID = "ses_compacted"
-await applyUiSettings({ locale: "en", notificationRouting: { sessions: { screen: true, history: true, system: false } } as never })
+const localControl = new URLSearchParams(location.search).has("local-control")
+const folder = localControl ? "/local" : "/fixture"
+await applyUiSettings({ locale: "en", multiBackend: false, osNotificationsAllowWhenVisible: true,
+  notificationRouting: { sessions: { screen: true, history: true, system: localControl } } as never })
 for (const id of tabs) {
-  addInstance({ id, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: null })
+  addInstance({ id, folder, ...(localControl ? { projectName: "Custom project label" } : {}),
+    port: 0, pid: 0, proxyPath: "", status: "ready", client: null })
   setSessions(previous => new Map(previous).set(id, new Map([[sessionID, {
     id: sessionID, instanceId: id, parentId: null, title: "Compaction fixture", agent: "build", model: { providerId: "fixture", modelId: "fixture" },
     status: "working", retry: null, idleSince: null, generationRecovery: null, runtimeStatusKnown: true, version: "1", projectID: "p",
-    location: { directory: "/fixture" }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
+    location: { directory: folder }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
   } as never]])))
 }
 render(() => <Toaster />, document.getElementById("root")!)
@@ -25,7 +29,8 @@ render(() => <Toaster />, document.getElementById("root")!)
   /** One `session.compaction.ended`, as the event stream delivers it to a tab. */
   compacted: (tab: string, id: string, seq: number) => (sseManager as any).handleEvent(tab, {
     id, type: "session.compaction.ended", created: seq, durable: { aggregateID: sessionID, seq, version: 1 },
-    location: { directory: "/fixture" }, data: { sessionID, reason: "auto", text: "Summary" },
+    location: { directory: folder }, data: { sessionID, reason: "auto", text: "Summary" },
   }),
   history: () => getToastHistory().map(item => item.message),
+  notices: () => getToastHistory().map(({ title, message, action }) => ({ title, message, hasAction: Boolean(action) })),
 }

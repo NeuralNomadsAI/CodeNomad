@@ -40,6 +40,8 @@ Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions d
 
 **Réessayer** reprend aussi les onglets en attente encore ouverts lorsque la restauration automatique au démarrage est désactivée. Chaque onglet d’un même dossier conserve ses propres brouillons.
 
+Une notification ouvre l’onglet en attente existant ; utilisez **Réessayer** pour vous reconnecter.
+
 Lorsque le multi-backend est activé, les projets distants enregistrés retrouvent leur ordre, leurs brouillons et la sélection. Un serveur indisponible conserve un onglet en attente : utilisez **Réessayer** à son retour, ou **Se connecter** avec ses identifiants ou un nouveau **Lien d’appairage**. Les autres serveurs restent utilisables. La reprise relit l’état ; vérifiez le résultat d’une action de conversation incertaine avant de la renvoyer vous-même.
 
 Fermez les onglets de projet de ce serveur dans chaque fenêtre avant de le supprimer ou de changer son adresse. Un inventaire inaccessible bloque ce changement jusqu’à sa vérification.

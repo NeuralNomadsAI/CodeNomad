@@ -1,5 +1,5 @@
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import type { LocationRef } from "@opencode/client"
@@ -37,10 +37,11 @@ export function isDesignAgentMissing(instanceId: string, location: LocationRef):
  * CodeNomad resolves for that agent; a found one keeps its own.
  */
 export async function resolveImagesConversation(instanceId: string, mode: "open" | "new",
-  send: (instanceId: string, request: ImagesConversationRequest) => Promise<ImagesConversationResponse> = (id, request) => serverApi.imagesConversation(id, request),
+  send?: (instanceId: string, request: ImagesConversationRequest) => Promise<ImagesConversationResponse>,
 ): Promise<ImagesConversationResponse> {
   const operation = captureBackendOperation(instanceId)
   if (!operation.current()) return { status: "unknown" }
+  const api = backendOf(instanceId).api
   const location = getActiveCatalogLocation(instanceId)
   // Without a fresh catalog of this Location, Design's presence is unknown: create nothing.
   if (!await fetchAgents(instanceId, location, true) || !operation.current()) return { status: "unknown" }
@@ -49,11 +50,15 @@ export async function resolveImagesConversation(instanceId: string, mode: "open"
   const agent = catalog.some(entry => entry.id === DESIGN_AGENT_ID) ? DESIGN_AGENT_ID : undefined
   const model = await getDefaultModel(instanceId, agent)
   if (!operation.current()) return { status: "unknown" }
-  return send(instanceId, {
+  const result = await (send ?? ((id, request) => api.imagesConversation(id, request, operation.signal)))(instanceId, {
     directory: location.directory, mode, title: tGlobal("imagesConversation.title"),
     ...(agent ? { agent } : {}),
     ...(model.providerId && model.modelId ? { model: { providerID: model.providerId, id: model.modelId } } : {}),
+  }).catch(error => {
+    if (operation.current()) throw error
+    return { status: "unknown" } as const
   })
+  return operation.current() ? result : { status: "unknown" }
 }
 
 /**

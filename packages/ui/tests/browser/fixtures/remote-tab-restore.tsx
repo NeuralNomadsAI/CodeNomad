@@ -2,6 +2,9 @@ import { createEffect, For, Show } from "solid-js"
 import { render } from "solid-js/web"
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
 import { useRelayServerProfiles } from "../../../src/lib/hooks/use-remote-server-profiles"
+import { getToastHistory, runToastAction, type ToastAction } from "../../../src/lib/notifications"
+import { sseManager } from "../../../src/lib/sse-manager"
+import "../../../src/stores/sessions"
 import { initializeClientState, loadedRestorableSession, setRestorePreviousStateEnabled } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { activeAppTabId, appTabs, closeInstanceTab, ensureActiveAppTab, moveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
@@ -27,6 +30,7 @@ function close(id: string) {
   ensureActiveAppTab()
 }
 let relayProfiles: ReturnType<typeof useRelayServerProfiles>
+let retainedNotice: ToastAction | undefined
 function RelayProfiles() {
   relayProfiles = useRelayServerProfiles()
   return null
@@ -52,6 +56,14 @@ function Fixture() {
   })),
   active: activeAppTabId, close,
   disableAutoRestore: () => setRestorePreviousStateEnabled(false),
+  notify: (id: string) => {
+    ;(sseManager as any).handleEvent(id.slice("instance:".length), {
+      id: "notice", type: "tui.toast.show", created: 1, data: { message: "Remote notice", variant: "info" },
+    })
+    retainedNotice = getToastHistory().find(item => item.action?.target?.instanceId === id.slice("instance:".length))?.action
+    if (!retainedNotice) throw new Error("Remote notice action missing")
+  },
+  activateNotice: () => retainedNotice && runToastAction(retainedNotice),
   retry: async () => { await Promise.all(appTabs().filter(tab => tab.kind === "remote-restore").map(tab => tab.retry())) },
   restartBackend: async () => { const client = backends.get("a")!; await refreshWorkspaceList("a", client.api) },
   disconnect: () => backends.get("a")!.events.restart(),

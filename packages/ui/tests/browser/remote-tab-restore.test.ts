@@ -185,12 +185,17 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.equal(restored[2].drafts.__no_session_draft__, "draft-2")
         if (mode === "create" || mode === "pairing" || mode === "auto-off") {
           if (mode === "auto-off") await page.evaluate(() => (window as any).restoreFixture.disableAutoRestore())
+          await page.evaluate(id => (window as any).restoreFixture.notify(id), restored[2].id)
           const count = creates.filter(value => value.startsWith("a:")).length
           healthy = false
           await page.evaluate(() => (window as any).restoreFixture.disconnect())
           await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.kind === "remote-restore").length === 2)
           assert.equal(await page.evaluate(() => (window as any).restoreFixture.state()), mode === "pairing" ? "unauthorized" : "unreachable")
           assert.equal(await page.getByRole("tab").count(), 3)
+          const suspended = await page.evaluate(() => (window as any).restoreFixture.tabs())
+          await page.evaluate(() => (window as any).restoreFixture.activateNotice())
+          assert.deepEqual(await page.evaluate(() => (window as any).restoreFixture.tabs()), suspended, "notification navigation preserves the waiting occurrences and drafts")
+          assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), suspended[2].id)
           if (mode === "pairing") {
             await page.getByRole("button", { name: "Connect", exact: true }).click()
             await page.getByLabel("Pairing link", { exact: true }).fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
