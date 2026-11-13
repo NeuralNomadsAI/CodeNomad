@@ -1,7 +1,8 @@
-import { For, Show, createMemo, createSignal, createEffect, type JSX } from "solid-js"
+import { For, Show, createMemo, createSignal, createEffect, untrack, type JSX } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { useMissionSchedules, unifiedScheduleHold, type UnifiedMissionSchedule } from "../stores/mission-schedules"
-import type { MissionPickerEntry } from "./mission-picker-model"
+import { missionMarkStateKey, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { markScheduleSuccessSeen, scheduleSuccessSeen, seedScheduleSuccessSeen } from "../stores/mission-view-state"
 import { describeMissionCriteria, missionCriteriaZone } from "./mission-scheduling-summary"
 import { createMissionScheduleControls } from "./mission-schedule-controls"
 import { MissionActionBar } from "./mission-action-bar"
@@ -22,6 +23,14 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   const list = useMissionSchedules({ instanceId: () => props.instanceId, projectID: () => props.projectID,
     directory: () => props.directory, active: props.active, refresh: () => props.refresh + revision(), selected: () => props.selected })
   const schedules = () => list.rows().filter(row => row.kind === "schedule")
+  const seenScope = () => JSON.stringify([props.directory, props.projectID])
+  createEffect(() => {
+    const docs = schedules(), scope = seenScope()
+    if (list.error()) return
+    const fresh = docs.filter(doc => list.fresh(doc.id))
+    untrack(() => { for (const doc of fresh) seedScheduleSuccessSeen(scope, "scheduled", doc.id,
+      doc.latestResult?.outcome === "completed" ? doc.latestResult.id : undefined) })
+  })
   createEffect(() => {
     const doc = schedules().find(row => row.id === props.selected)
     // Retire the former passage selection before releasing its current-source demand.
@@ -36,14 +45,16 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     ? doc.observation.nativeStatus ?? "unknown" : doc.observation.state}`)
   const zoneOf = (doc: UnifiedMissionSchedule) => missionCriteriaZone(doc.configuration.launch)
   const nextWake = (doc: UnifiedMissionSchedule) => `${t(doc.observation.kind === "check" ? "missions.scheduleList.nextCheck" : "missions.scheduleList.nextWake")} · ${date(doc.observation.nextDueAt, zoneOf(doc))}`
-  const entries = createMemo((): MissionPickerEntry[] => schedules().map(doc => ({ key: `scheduled:${doc.id}`,
-    title: doc.configuration.title,
-    mark: doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID && (props.selectedRequests?.count ?? 0) > 0 ? "permission"
-      : doc.blockReason ? "interrupted" : doc.pendingPassage ? "working" : doc.firstPlayedAt === null && doc.state === "paused" ? "prepared"
-      : doc.state === "paused" ? "paused" : doc.state === "finished" ? "done" : "idle",
-    status: [t(`missions.scheduleList.state.${doc.state}`),
-      doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID && (props.selectedRequests?.count ?? 0) > 0 ? t("missionsPanel.task.input") : "",
-      criteria(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
+  const entries = createMemo((): MissionPickerEntry[] => schedules().map(doc => {
+    const requests = doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID ? props.selectedRequests?.count ?? 0 : 0
+    const held = unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, doc.id]))
+    const mark = unifiedScheduleMark(doc, requests, !doc.latestResult || scheduleSuccessSeen(seenScope(), "scheduled", doc.id, doc.latestResult.id),
+      !list.error() && list.fresh(doc.id) && !held)
+    const stateKey = missionMarkStateKey(mark)
+    return { key: `scheduled:${doc.id}`, title: doc.configuration.title, mark,
+      status: [t(stateKey ?? `missions.scheduleList.state.${doc.state}`), requests ? t("missionsPanel.task.input") : "",
+        criteria(doc), nextWake(doc)].filter(Boolean).join(" · ") }
+  }))
   const refresh = () => setRevision(value => value + 1)
   const publishing = () => unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, props.selected]))?.phase === "publication"
   /** Inventory-wide notice; the directory owns the shared continuation button. */
@@ -120,7 +131,12 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   </>
   const ownsSession = (sessionID: string) => schedules().some(doc => doc.id === props.selected
     && (doc.pendingPassage?.coordinatorSessionID === sessionID || doc.history.some(item => item.coordinatorSessionID === sessionID)))
+  const markRead = (key: string) => {
+    const doc = schedules().find(item => key === `scheduled:${item.id}`), result = doc?.latestResult, scope = seenScope()
+    return doc && result?.outcome === "completed" && !scheduleSuccessSeen(scope, "scheduled", doc.id, result.id)
+      ? () => markScheduleSuccessSeen(scope, "scheduled", doc.id, result.id) : undefined
+  }
   return { entries, view, listView, refresh, ownsSession, loading: list.loading,
-    next: list.next, more: list.more, retry: list.refresh, error: list.error,
+    next: list.next, more: list.more, retry: list.refresh, error: list.error, markRead,
     representation: (id: string) => list.error() || list.loading() || !list.fresh(id) ? undefined : list.rows().find(row => row.id === id)?.kind }
 }

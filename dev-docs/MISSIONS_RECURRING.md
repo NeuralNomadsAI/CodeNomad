@@ -280,6 +280,12 @@ may continue the same user intention; recovered activation leaves Play explicit.
 Never replay a mutation or start Play from receipt recovery or display publication.
 
 List and detail also expose `observation`, `availableActions` and `blockReason`.
+The shared list mark uses the current observation's temporal generation and positive
+active principal/next-wake evidence for **Waiting for scheduled run**. Daily documents
+use the native snapshot's positively observed running state and next date. A missing,
+stale, blocked or unresolved observation keeps **State unconfirmed**. Successful-history
+attention and exact passage acknowledgement follow the shared marks contract in
+`MISSIONS.md` (Agent conventions).
 Their `technical` projection exposes only the recorded current/retiring carrier
 session and calendar identifiers, role, slot, temporal generation and pending
 cleanup. It derives these from the same document read, including attempted

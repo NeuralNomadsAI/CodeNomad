@@ -162,6 +162,50 @@ const deferred = () => {
   const promise = new Promise<void>(yes => { resolve = yes })
   return { promise, resolve }
 }
+
+test("unified waiting and exact successful passages distinguish prepared, pause, unknown and finished", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  const entry = page.locator('[data-mission-key="scheduled:msn_schedule"] .mission-row-select')
+  const waitMark = (expected: string) => page.waitForFunction(expected =>
+    document.querySelector('[data-mission-key="scheduled:msn_schedule"] .mission-row-flag')?.getAttribute("data-mark") === expected, expected)
+  const refresh = () => page.evaluate(() => (window as any).missionFixture.refresh())
+  const success = async (requestID: string) => {
+    await f.change(doc => {
+      changes.reserve(doc, { kind: "manual", requestID }, Date.now(), [])
+      changes.admitted(doc, doc.pending!.id, Date.now())
+      changes.settle(doc, doc.pending!.id, "completed", Date.now())
+    })
+    await refresh(); await waitMark("done")
+  }
+  try {
+    await entry.waitFor(); await waitMark("prepared")
+    assert.equal(await entry.locator(".mission-row-mark").evaluate(element => getComputedStyle(element, "::after").content), "none")
+    await select(page); await click(page, "Play"); await waitMark("waiting")
+    assert.match(await entry.getAttribute("title") ?? "", /Waiting for scheduled run/)
+    await click(page, "Pause"); await waitMark("paused")
+    await click(page, "Resume"); await waitMark("waiting")
+    await success("first-result")
+    const first = f.doc.history.at(-1)!.id
+    await entry.click(); await waitMark("waiting")
+    await success("second-result")
+    assert.notEqual(f.doc.history.at(-1)!.id, first)
+    await page.locator('[data-mission-key="scheduled:msn_schedule"] .session-item-expander').click({ button: "right" })
+    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
+    await waitMark("waiting")
+    await f.change(doc => { doc.state = "finished" }); await refresh(); await waitMark("idle")
+    await f.change(doc => { doc.state = "running" })
+    await page.route(url => url.pathname.endsWith("/missions/scheduled"), route => {
+      const doc = f.result().document!
+      return route.fulfill({ json: { version: 1, projectID: "project", schedules: [{ ...doc,
+        observation: { ...doc.observation, state: "unknown", nativeStatus: null, nextDueAt: null } }] } })
+    })
+    await refresh(); await waitMark("unconfirmed")
+    assert.match(await entry.getAttribute("title") ?? "", /State unconfirmed/)
+    assert.equal(await entry.locator(".mission-row-mark").evaluate(element => getComputedStyle(element, "::after").content), "none")
+    await f.change(doc => { doc.state = "stopped" }); await refresh(); await waitMark("idle")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
 async function select(page: Page) {
   const entry = page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inspect local changes" })
   await entry.click()

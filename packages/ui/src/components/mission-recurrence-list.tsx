@@ -1,12 +1,12 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack, type JSX } from "solid-js"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
-import { scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { missionMarkStateKey, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
-import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
+import { markScheduleSuccessSeen, missionProjectView, scheduleSuccessSeen, seedScheduleSuccessSeen, updateMissionProjectView } from "../stores/mission-view-state"
 import { showSessionChatFor } from "../stores/session-previews"
 import { activeSessionId } from "../stores/sessions"
 import { getPermissionQueue, instances } from "../stores/instances"
@@ -21,9 +21,13 @@ import { createRecurrenceControlIntent, completedRecurrenceControl, completedRec
 // Lost replies survive remounts. Only an exact status read releases the hold.
 const unresolved = new Map<string, RecurrenceControlIntent>()
 const partialResults = new Map<string, RecurrenceControlStatus>()
-// Bumped on each exact release, so every mounted control drops that request
-// even when the release lands after its context changed.
+// Retained requests also fence visual marks while their native outcome is unknown.
+// Exact releases reach mounted controls even after their context changed.
 const [releases, setReleases] = createSignal(0)
+const holdIntent = (key: string, intent: RecurrenceControlIntent) => {
+  if (unresolved.get(key) === intent) return
+  unresolved.set(key, intent); setReleases(value => value + 1)
+}
 const sameIntent = (a: RecurrenceControlIntent, b: RecurrenceControlIntent) => a.scheduleID === b.scheduleID && a.requestID === b.requestID
   && a.expectedRevision === b.expectedRevision && a.action === b.action && a.directory === b.directory
 const PRIMARY: RecurrenceAction[] = ["resume", "play", "pause"]
@@ -110,7 +114,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     if (retry ? !retryCapable() : !capable(action)) return
     const identity = key(), captured = generation, instanceId = props.instanceId
     const intent = retry ?? createRecurrenceControlIntent(props.schedule.id, props.schedule.revision, action, props.directory)
-    unresolved.set(identity, intent); setHeld(intent); setBusy(true); setRefusal(undefined)
+    holdIntent(identity, intent); setHeld(intent); setBusy(true); setRefusal(undefined)
     try {
       if (action === "run-now") {
         const result = await serverApi.runMissionRecurrenceNow(instanceId, intent)
@@ -136,7 +140,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     witness = undefined
     // A refresh's own row read must not skip it; the explicit button keeps the full gate.
     if (!intent || busy() || !(reconcile ? props.retryEnabled() : props.enabled())) return false
-    unresolved.set(identity, intent); setHeld(intent)
+    holdIntent(identity, intent); setHeld(intent)
     setBusy(true)
     try {
       if (intent.action === "run-now") {
@@ -223,6 +227,13 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   // explicit refresh's own in-flight row read must not silently skip it.
   const admissible = () => !error() && props.active() && snapshot()?.projectID === props.projectID && Boolean(props.projectID)
   const valid = () => !loading() && admissible()
+  const seenScope = () => JSON.stringify([props.scope, props.projectID])
+  createEffect(() => {
+    const schedules = snapshot()?.schedules, scope = seenScope()
+    if (!schedules || error()) return
+    untrack(() => { for (const schedule of schedules) seedScheduleSuccessSeen(scope, "daily", schedule.id,
+      schedule.latestResult?.outcome === "completed" ? schedule.latestResult.passageID : undefined) })
+  })
   const text = missionScheduleText(t, locale)
   const { date } = text
   /** One sentence; its action is the row's primary control (Resume). */
@@ -270,10 +281,14 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       + getPermissionQueue(props.instanceId).filter(permission => owned(permission.sessionID)).length
   }
   const entries = createMemo((): MissionPickerEntry[] => (snapshot()?.schedules ?? []).map(schedule => {
+    releases()
+    const held = unresolved.has(JSON.stringify([JSON.stringify([props.instanceId, props.projectID, props.scope]), schedule.id]))
     const state = t(`missions.recurrence.state.${schedule.state}`), next = text.next(schedule)
-    const mark = scheduleMark(schedule, passageRequests(schedule))
+    const mark = scheduleMark(schedule, passageRequests(schedule), !schedule.latestResult
+      || scheduleSuccessSeen(seenScope(), "daily", schedule.id, schedule.latestResult.passageID), !error() && !held)
+    const stateKey = missionMarkStateKey(mark)
     return { key: `schedule:${schedule.id}`, title: schedule.title, mark,
-      status: [t("missionsPanel.dailyBadge"), state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
+      status: [t("missionsPanel.dailyBadge"), stateKey ? t(stateKey) : state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
         .filter(Boolean).join(" · ") }
   }))
   const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined
@@ -305,5 +320,11 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       </section>
     }}</Show>
   </>
-  return { entries, view, listView, loading }
+  const markRead = (key: string) => {
+    const schedule = snapshot()?.schedules.find(item => key === `schedule:${item.id}`), result = schedule?.latestResult
+    const scope = seenScope()
+    return schedule && result?.outcome === "completed" && !scheduleSuccessSeen(scope, "daily", schedule.id, result.passageID)
+      ? () => markScheduleSuccessSeen(scope, "daily", schedule.id, result.passageID) : undefined
+  }
+  return { entries, view, listView, loading, markRead }
 }

@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { ChevronRight, Flag, Plus, Repeat } from "lucide-solid"
+import { AlertTriangle, Flag, Pause, Plus, Repeat } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import SessionExpander from "./session-expander"
 import { preserveListFocus } from "../lib/preserve-list-focus"
@@ -119,7 +119,10 @@ export function MissionRows(props: {
         </Show>
         <button type="button" class="session-item-select mission-row-select" aria-current={highlighted() ? "true" : undefined} title={describe(entry())}
           onClick={() => props.onSelect(entry())}>
-          <Dynamic component={key.startsWith("mission:") ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} aria-hidden="true" />
+          <span class="mission-row-mark" data-mark={entry().mark} aria-hidden="true">
+            <Dynamic component={entry().mark === "paused" ? Pause : entry().mark === "interrupted" ? AlertTriangle
+              : key.startsWith("mission:") ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} />
+          </span>
           <bdi class="session-item-title session-item-title--clamp">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
         </button>
       </div>
