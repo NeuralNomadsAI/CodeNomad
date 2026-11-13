@@ -91,6 +91,12 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
+Für ein ausschließlich über SSH erreichbares Ziel wählen Sie in den experimentellen **Einstellungen → Server** die Aktion **Server hinzufügen**, geben **URL** und **SSH-Host (optional)** ein und wählen **Speichern**. Das Profil wird offline gespeichert; die Verbindung nutzt das SSH-Relay des Backends.
+
+Mit der experimentellen Multi-Backend-Einstellung verwenden Sie **Einstellungen → Server**: Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein oder bestätigen Sie mit Enter. Das Hinzufügen speichert ein Profil auf dem Host, ohne ein Projekt zu öffnen. **Server bearbeiten** ändert **URL** oder den optionalen **Name**; Umbenennen bei gleicher URL und TLS-Richtlinie funktioniert offline. **Gespeicherten Server entfernen** fragt nach Bestätigung, vergisst die Verbindung und speichert die Entfernung; bei einem Speicherfehler bleibt das Profil für einen neuen Versuch erhalten. Andere Verbindungen bleiben bestehen.
+
+**TLS-Prüfung überspringen** erscheint nach einem Zertifikatsfehler für diese Adresse; eine neue Adresse löscht die Zustimmung. Kopplung prüft TLS immer. **Öffnen** ist in diesen experimentellen Einstellungen deaktiviert. Die folgenden Schritte gelten für den Standardmodus.
+
 Bei aktiviertem experimentellem Multi-Backend speichert **SSH-Host (optional)** einen OpenSSH-Host oder Alias für das Backend-Relay. Vorschläge stammen aus `~/.ssh/config` des lokalen Backend-Kontos. Geben Sie die CodeNomad-Adresse aus Sicht dieses Hosts ein (etwa `https://127.0.0.1:9898` mit dem tatsächlichen Port) und wählen Sie **Speichern**. SSH-Profile nutzen das Relay; **Verbinden** öffnet direkte Serverfenster und ist für diese Profile deaktiviert. CodeNomad muss dort bereits installiert sein und laufen. Lokal werden OpenSSH, Schlüsselauthentifizierung und ein geprüfter Hostschlüssel in `known_hosts` benötigt; CodeNomad-Authentifizierung und HTTPS-Zertifikatsprüfungen gelten weiterhin.
 
 1. Wählen Sie auf der Desktop-Startseite **CodeNomad-Server verbinden**. Dieselbe Schaltfläche erscheint auf einem leeren Tab **Server** und unter **Einstellungen → Remote-Zugriff → Server**.

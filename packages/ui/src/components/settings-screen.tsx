@@ -34,6 +34,9 @@ import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
 import { createSettingsScrollRestoration } from "./settings/settings-scroll-restoration"
+import { Server } from "lucide-solid"
+import { ServersSettingsSection } from "./settings/servers-settings-section"
+import { useConfig } from "../stores/preferences"
 import { createPreferencesProjectContext } from "./settings/preferences-project-context"
 import { activeInstanceId, instances } from "../stores/instances"
 import { getActiveCatalogLocation } from "../stores/sessions"
@@ -56,6 +59,8 @@ interface SettingsScreenProps {
 export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const { t } = useI18n()
   const phoneQuery = useMediaQuery("(max-width: 640px)")
+  const config = useConfig()
+  const serversEnabled = () => config.preferences().multiBackend === true
   const embeddedProject = createPreferencesProjectContext(() => {
     const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
     return { section: "general", instanceId, workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
@@ -80,6 +85,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
     items.splice(5, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
+    if (serversEnabled()) items.splice(6, 0, { id: "servers", icon: Server, label: t("settings.nav.servers") })
     return items
   })
 
@@ -100,13 +106,15 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
           <div class="settings-section-stack">
             <RemoteControlSettingsSection />
             <RemoteAccessSettingsSection />
-            <Show when={canOpenRemoteWindows()}>
+            <Show when={canOpenRemoteWindows() && !serversEnabled()}>
               <SavedRemoteServersCard />
             </Show>
           </div>
         )
       case "opencode":
         return <OpenCodeSettingsSection />
+      case "servers":
+        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} />}><ServersSettingsSection /></Show>
       case "providers":
         return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
       case "missions":

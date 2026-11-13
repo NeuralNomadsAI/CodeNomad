@@ -75,6 +75,7 @@ test("Preferences registry guards native close only after the renderer is ready"
 
 test("Preferences sections and backend URLs are constrained", () => {
   assert.equal(requirePreferencesSection("config-files"), "config-files")
+  assert.equal(requirePreferencesSection("servers"), "servers")
   assert.deepEqual(requirePreferencesRequest("providers", { instanceId: "workspace-1", location: { directory: "C:\\repo", workspaceID: "worktree-1" } }), {
     section: "providers", instanceId: "workspace-1", location: { directory: "C:\\repo", workspaceID: "worktree-1" },
   })
