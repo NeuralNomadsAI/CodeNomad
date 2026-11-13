@@ -1,5 +1,5 @@
 import { batch } from "solid-js"
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore, produce, reconcile, unwrap } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
 import { getCacheRetainedEntriesForSession } from "../../lib/global-cache"
@@ -462,22 +462,36 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if ((!session || (session.messageIds.length === 0 && !session.revert)) && !renderCache && globalCacheEntries.length === 0) {
       return Promise.resolve(0)
     }
+    // Walk the store's raw data: unwrap() on a store proxy returns the
+    // underlying target through its $RAW fast path, so the byte estimate does
+    // not pay Solid's per-access proxy traps for every field of every resident
+    // record — a proxied pass over one long-context transcript cost seconds of
+    // main-thread time, and the measurement runs after every session revision
+    // change (open, hydrate, delete).
+    const rawSession = session ? unwrap(session) : undefined
+    const rawMessages = unwrap(state.messages)
+    const rawMessageInfoVersion = unwrap(state.messageInfoVersion)
+    const rawPermissions = unwrap(state.permissions)
+    const rawUsage = unwrap(state.usage)
+    const rawSessionRevisions = unwrap(state.sessionRevisions)
+    const rawLastAssistantMessageIds = unwrap(state.lastAssistantMessageIds)
+    const rawLatestTodos = unwrap(state.latestTodos)
     function* retainedValues(): Generator<unknown> {
-      if (session) yield session
-      for (const messageId of session?.messageIds ?? []) {
-        yield state.messages[messageId]
+      if (rawSession) yield rawSession
+      for (const messageId of rawSession?.messageIds ?? []) {
+        yield rawMessages[messageId]
         yield messageInfoCache.get(messageId)
-        yield state.messageInfoVersion[messageId]
+        yield rawMessageInfoVersion[messageId]
       }
-      for (const entry of state.permissions.queue) if (entry.permission.sessionID === sessionId) yield entry
-      if (session) {
-        yield state.usage[sessionId]
-        yield state.sessionRevisions[sessionId]
-        yield state.lastAssistantMessageIds[sessionId]
-        yield state.latestTodos[sessionId]
+      for (const entry of rawPermissions.queue) if (entry.permission.sessionID === sessionId) yield entry
+      if (rawSession) {
+        yield rawUsage[sessionId]
+        yield rawSessionRevisions[sessionId]
+        yield rawLastAssistantMessageIds[sessionId]
+        yield rawLatestTodos[sessionId]
       }
       yield renderCache
-      if (session) yield* getRecordDisplayCacheEntries(instanceId, session.messageIds)
+      if (rawSession) yield* getRecordDisplayCacheEntries(instanceId, rawSession.messageIds)
       for (const entry of globalCacheEntries) yield entry.value
     }
     if (globalCacheKeyBytes > MAX_TRANSCRIPT_MEASUREMENT_BYTES) return Promise.resolve(Number.POSITIVE_INFINITY)
