@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { chromium, type Browser } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
 let browser: Browser, url: string
 before(async () => {
@@ -9,6 +10,7 @@ before(async () => {
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/opencode-setup.tsx"></script></body></html>' }] })
   url = fixture.url + "?settings"
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close() })
 

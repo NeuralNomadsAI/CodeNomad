@@ -12,7 +12,7 @@ import { isMissionActivityEvent } from "./missions"
 export type UnifiedMissionSchedule = NonNullable<MissionScheduleRead["document"]>
 export type UnifiedScheduleAction = Parameters<typeof serverApi.controlMissionSchedule>[2]["action"]
 export type UnifiedScheduleHold = { phase: "control" | "activation" | "publication"; requestID: string; expectedRevision: number;
-  action: UnifiedScheduleAction; partial: boolean; document: UnifiedMissionSchedule; original?: UnifiedScheduleHold; minimumRevision?: number }
+  action: UnifiedScheduleAction; partial: boolean; document: UnifiedMissionSchedule; minimumRevision?: number }
 export const unifiedScheduleHolds = new Map<string, UnifiedScheduleHold>()
 const [holdVersion, setHoldVersion] = createSignal(0)
 export const changedUnifiedScheduleHolds = () => setHoldVersion(value => value + 1)

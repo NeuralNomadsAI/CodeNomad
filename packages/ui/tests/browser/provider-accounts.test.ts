@@ -60,6 +60,43 @@ test("native account dropdown activates by identity and preserves failed rename 
   } finally { await page.close() }
 })
 
+test("OAuth Copy link uses the text fallback when the Clipboard API is unavailable", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US" }), errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined })
+    window.open = () => null
+    ;(window as any).oauthCopies = []
+    document.execCommand = command => {
+      ;(window as any).oauthCopies.push({ command, text: (document.activeElement as HTMLTextAreaElement)?.value })
+      return true
+    }
+  })
+  try {
+    await page.goto(`${url}?parent&unconnected`)
+    await page.getByRole("button", { name: "Add account", exact: true }).waitFor()
+    await page.evaluate(async () => {
+      const { sdkManager } = await import("/src/lib/sdk-manager.ts" as string)
+      const client = (sdkManager as any).clients.get("accounts:/workspaces/accounts/instance")
+      client.integration.oauth.connect = async () => ({ data: {
+        attemptID: "http-copy", url: "https://authorization.invalid/login", instructions: "Enter code", mode: "code",
+      } })
+    })
+    await page.getByRole("button", { name: "Add account", exact: true }).click()
+    const panel = page.locator(".providers-connect-panel")
+    await panel.locator(".providers-method-trigger").click()
+    await page.getByRole("option", { name: "OpenCode Console account", exact: true }).click()
+    await panel.getByRole("button", { name: "Continue", exact: true }).click()
+    await panel.getByRole("button", { name: "Copy link", exact: true }).click()
+    await panel.getByRole("button", { name: "Link copied", exact: true }).waitFor()
+    assert.deepEqual(await page.evaluate(() => (window as any).oauthCopies), [
+      { command: "copy", text: "https://authorization.invalid/login" },
+    ])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("provider manager keeps per-account drafts across dropdown and external switches", async () => {
   const page = await browser.newPage({ viewport: { width: 380, height: 900 }, locale: "en-US" })
   const errors: string[] = []

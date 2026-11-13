@@ -13,7 +13,8 @@ import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnershi
 import { createNativeScheduleTransport } from "./native-schedule-transport"
 import { nativeScheduleWakeIdentity, type NativeScheduleWake } from "./native-schedule-transport-contract"
 import { assertNativeSchedulePreflight } from "./native-mission-schedule-preflight"
-import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, parseNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
+import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, parseNativeMissionScheduleClaim,
+  recoverNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
 
 /** One local technical turn only retains public facade closures between HTTP
  * calls. Every native preflight/wake is reacquired by the receiving RPC. */
@@ -54,7 +55,7 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
           if (!doc) return true
           return nativeMissionSchedulePriorHeld(parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, doc.id))), doc.id), doc, wake)
         },
-        claim: async (incarnation, preflight) => {
+        claim: async (incarnation, preflight, retry) => {
           assertNativeSchedulePreflight(preflight, wake, incarnation.id)
           const readAuxiliaryIntent = async (): Promise<NativeScheduleCarrierBinding | undefined> => {
             assertNativeSchedulePreflight(preflight, wake, incarnation.id); current()
@@ -68,7 +69,7 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
             return { document: doc, calendar: doc.calendars.find(item => item.sessionID === wake.sessionID) ?? { role: "reconciliation", slot: 0,
               timeGeneration: wake.generation, sessionID: wake.sessionID, scheduleID: wake.scheduleID, highWater: 0, pendingWake: null, wakePreparing: null } }
           }
-          return claimNativeScheduleCarrierWake(ctx, wake, incarnation, run, current, readAuxiliaryIntent)
+          return claimNativeScheduleCarrierWake(ctx, wake, incarnation, run, current, readAuxiliaryIntent, retry)
         } })
     }
     const descriptor = original.calendarOwner.slots.find(item => item.sessionID === event.sessionID && item.timeGeneration === original.timeGeneration)
@@ -91,6 +92,9 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
     const candidate = candidates[0] ?? { ...mapping, run: next + 1, messageID: `msg_${scheduleID}_${next + 1}` }
     yield* Effect.promise(async () => {
       try {
+        current()
+        const prior = parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, original.id))), original.id)
+        if (!await recoverNativeMissionScheduleClaim(prior, nativeScheduleWakeIdentity(candidate), dispatch)) return
         const proof = await reader.message(candidate)
         if (!proof) return
         if (descriptor.role === "principal") await prepare(candidate, proof)

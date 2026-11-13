@@ -16,7 +16,6 @@ export const missionsPanelMessages = {
   "missionsPanel.action.interruptNow": "Jetzt unterbrechen",
   "missionsPanel.action.resume": "Fortsetzen",
   "missionsPanel.action.runNow": "Jetzt ausführen",
-  "missionsPanel.action.checkPassage": "Durchlauf prüfen",
   "missionsPanel.action.checkStatus": "Status prüfen",
   "missionsPanel.action.stop": "Stoppen…",
   "missionsPanel.action.openConversation": "Unterhaltung öffnen",

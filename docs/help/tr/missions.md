@@ -4,6 +4,8 @@ Bir Görev; hedefi, koordinatör konuşmasını, işleri ve sonuçlarını birli
 
 ## Görev oluşturma {#create}
 
+Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak için HTTPS tercih edin.
+
 **Görev oluştur**, oluşturana veya iptal edene kadar ağacın yerine formu gösterir. Gruplar aşağıdaki sıradadır.
 
 ### Yapılandırma {#saved-briefs}

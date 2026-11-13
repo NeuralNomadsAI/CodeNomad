@@ -4,6 +4,8 @@ A Mission keeps an objective, a coordinator conversation, tasks and their result
 
 ## Create a Mission {#create}
 
+Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.
+
 Choose **Create mission**. The form replaces the tree until you create or cancel. Its groups follow the order below.
 
 ### Configuration {#saved-briefs}

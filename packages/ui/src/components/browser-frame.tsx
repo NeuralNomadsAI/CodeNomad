@@ -3,6 +3,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup, untrack, type 
 import { isNativeApplicationWindow, isTauriHost, runtimeEnv } from "../lib/runtime-env"
 import { installExternalLinkClicks } from "../lib/native/external-link-clicks"
 import { useI18n } from "../lib/i18n"
+import { generateUUID } from "../lib/client-identity"
 import emulationProfiles from "../lib/native/browser-emulation.json"
 import type { BrowserEmulationPreset } from "../lib/native/browser-emulation"
 import {
@@ -158,8 +159,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let cleanupWebviewListeners: (() => void) | null = null
   let cleanupTauriTarget: (() => void) | null = null
   let tauriRegistered = false
-  // Iframe previews also run on HTTP LAN origins without crypto.randomUUID.
-  let browserRegistrationId = nativeBrowserAvailable ? crypto.randomUUID() : ""
+  let browserRegistrationId = nativeBrowserAvailable ? generateUUID() : ""
   let disposed = false
   let appliedEmulation: { registrationId: string; preset: BrowserEmulationPreset } | undefined
   let emulationGeneration = 0
@@ -478,7 +478,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (registered && registeredSessionId !== sessionId) {
         setRegistrationReady(false)
         const previousId = browserRegistrationId
-        browserRegistrationId = crypto.randomUUID()
+        browserRegistrationId = generateUUID()
         registering = true
         registered = false
         registeredSessionId = ""
@@ -614,7 +614,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       }
       if (registered && registeredSessionId !== sessionId) {
         const previousId = browserRegistrationId
-        browserRegistrationId = crypto.randomUUID()
+        browserRegistrationId = generateUUID()
         registering = true
         unlistenNavigation()
         unlistenNavigation = () => {}

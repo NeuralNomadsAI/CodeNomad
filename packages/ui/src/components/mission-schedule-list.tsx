@@ -71,10 +71,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
           onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}
           onOpenConversation={doc().pendingPassage ? () => props.onOpenConversation(doc().pendingPassage!.coordinatorSessionID) : undefined}
-          secondary={<>
-            <button type="button" class="window-action" disabled={!controls.capable("check")} onClick={() => void controls.act("check")}>{controls.label("check")}</button>
-            <Show when={controls.held()}><button type="button" class="window-action" disabled={controls.busy()} onClick={() => void controls.reconcile()}>{t("missions.scheduling.readReceipt")}</button></Show>
-          </>}
+          secondary={<Show when={controls.held()}><button type="button" class="window-action" disabled={controls.busy()} onClick={() => void controls.reconcile()}>{t("missions.scheduling.readReceipt")}</button></Show>}
           feedback={<>
             <Show when={controls.held()}><p role="status">{t(controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain")}</p></Show>
             <Show when={controls.feedback()}>{key => <p role="status">{t(key())}</p>}</Show>
