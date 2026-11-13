@@ -1,5 +1,6 @@
 import { executionSchema } from "./execution"
 import { missionProfilesSchema } from "./playbook-profiles"
+import { missionCreationDefaultsWire } from "./creation-defaults"
 import { missionTaskModeSchema } from "./task-execution-mode"
 import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
@@ -84,6 +85,7 @@ const mission = {
     notes: { type: "string" },
     template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
     profiles: missionProfilesSchema,
+    creationDefaults: missionCreationDefaultsWire,
     taskMode: missionTaskModeSchema,
     status: { type: "string", enum: ["active", "completed", "failed", "stopped"] },
     runState: { type: "string", enum: ["prepared", "running", "paused", "stopped"] },
@@ -463,6 +465,7 @@ export const CODENOMAD_MISSIONS_RPC = {
             coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
             required: ["missionID", "coordinatorSessionID"], additionalProperties: false },
           profiles: missionProfilesSchema,
+          creationDefaults: missionCreationDefaultsWire,
           taskMode: missionTaskModeSchema,
         }, required: ["requestID", "objective", "template"], additionalProperties: false,
       },

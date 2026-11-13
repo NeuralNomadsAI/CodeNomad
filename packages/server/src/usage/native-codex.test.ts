@@ -181,18 +181,22 @@ test("token-sharing diagnosis follows the selected account and revokes cached Co
     assert.equal(unavailable?.ok, false)
     assert.equal(unavailable?.configured, true)
     assert.equal(unavailable?.unavailableReason, "openai-token-sharing-unsupported")
+    assert.equal(unavailable?.unavailableAction, "chatgpt-usage")
     assert.deepEqual(unavailable?.windows, {})
     assert.equal(calls, 1, "no request with the sharing token or fallback to the other account")
-    assert.doesNotMatch(JSON.stringify(unavailable), /secret|private-client/)
+    assert.doesNotMatch(JSON.stringify(unavailable), /secret|private-client|https?:/)
 
     f.state.entries = [{ ...sharing, active: false }]
-    assert.equal((await usage(f.connection, scope, AbortSignal.timeout(2000)))?.unavailableReason, undefined,
+    const unselected = await usage(f.connection, scope, AbortSignal.timeout(2000))
+    assert.equal(unselected?.unavailableReason, undefined,
       "an unselected credential cannot determine the displayed reason")
+    assert.equal(unselected?.unavailableAction, undefined)
     f.state.selected.id = "selected"
     f.state.entries = [credential(), { ...sharing, active: false }]
     const restored = await usage(f.connection, scope, AbortSignal.timeout(2000))
     assert.equal(restored?.ok, true)
     assert.equal(restored?.unavailableReason, undefined)
+    assert.equal(restored?.unavailableAction, undefined)
     assert.equal(calls, 2, "the old snapshot was discarded")
   } finally { globalThis.fetch = previousFetch; await f.close() }
 })

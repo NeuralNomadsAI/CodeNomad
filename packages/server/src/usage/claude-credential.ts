@@ -59,6 +59,7 @@ export function claudeCodeSecureStorage(host: ClaudeCodeHost): { directory: stri
 
 async function readKeychain(service: string, signal?: AbortSignal): Promise<ClaudeCredential | null> {
   try {
+    // console-window: macOS Keychain only.
     const { stdout } = await execute("security", ["find-generic-password", "-s", service, "-w"], {
       encoding: "utf8", timeout: 10_000, signal,
     })

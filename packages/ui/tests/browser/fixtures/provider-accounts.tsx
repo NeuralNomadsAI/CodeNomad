@@ -10,10 +10,15 @@ import { serverEvents } from "../../../src/lib/server-events"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 const [directory, setDirectory] = createSignal("/a")
-let connections: any[] = [{ type: "credential", id: "one", label: "First", method: "key" }, { type: "credential", id: "two", label: "Second", method: "oauth" }, { type: "env", name: "PROVIDER_KEY" }]
+const unconnected = new URLSearchParams(location.search).has("unconnected")
+let connections: any[] = unconnected ? [] : [{ type: "credential", id: "one", label: "First", method: "key" }, { type: "credential", id: "two", label: "Second", method: "oauth" }, { type: "env", name: "PROVIDER_KEY" }]
 const writes: any[] = []
 const external = new URLSearchParams(location.search).has("external")
-const integrationId = new URLSearchParams(location.search).get("integration") ?? "provider"
+const integrationId = new URLSearchParams(location.search).get("integration") ?? (unconnected ? "opencode" : "provider")
+const otherIntegrations = unconnected ? [
+  { id: "env-only", name: "Environment only", methods: [{ type: "env", names: ["ENV_KEY"] }], connections: [{ type: "env", name: "ENV_KEY" }] },
+  { id: "no-methods", name: "No connect methods", methods: [], connections: [] },
+] : []
 let fail = false, reads = 0
 let deferParent = false, releaseParent: (() => void) | undefined
 const mutate = async (action: string, input: any) => {
@@ -26,18 +31,26 @@ const mutate = async (action: string, input: any) => {
 }
 const client: any = { provider: { list: async () => {
   if (deferParent) { deferParent = false; await new Promise<void>(resolve => { releaseParent = resolve }) }
-  return { data: [{ id: "provider", name: "Fixture provider", activation: "enabled", package: "fixture" }] }
+  return { data: unconnected
+    ? [{ id: "opencode", name: "OpenCode Console", integrationID: "opencode" }, ...otherIntegrations.map(item => ({ id: item.id, name: item.name }))]
+    : [{ id: "provider", name: "Fixture provider", activation: "enabled", package: "fixture" }] }
 } },
   model: { list: async () => ({ data: [] }) },
   websearch: { providers: async () => ({ data: [] }) },
-  integration: { list: async () => { reads++; return { data: [{ id: integrationId, name: "Fixture provider", methods: external
+  integration: { list: async () => { reads++; return { data: [{ id: integrationId, name: unconnected ? "OpenCode Console" : "Fixture provider", methods: unconnected
+    ? [{ type: "key", label: "API key (service account)" }, { type: "env", names: ["OPENCODE_API_KEY"] }, { type: "oauth", id: "console-device", label: "OpenCode Console account" }]
+    : external
     ? [{ type: "external", id: "fixture-source", label: "Native credential source", form: [{ key: "resource", type: "string", label: "Resource", required: true }] }]
-    : [{ type: "key", label: "API key" }], connections: structuredClone(connections) }] } }, connect: {
+    : [{ type: "key", label: "API key" }], connections: structuredClone(connections) }, ...otherIntegrations] } }, connect: {
       external: async (input: any) => {
         writes.push({ action: "external", ...input })
         if (fail) { fail = false; throw new Error("fixture failure") }
       },
-      key: async () => { throw new Error("External credentials must not use API key auth") },
+      key: async (input: any) => {
+        if (!unconnected) throw new Error("External credentials must not use API key auth")
+        writes.push({ action: "key", ...input })
+        connections = [{ type: "credential", id: "console-key", label: "Console service account", method: "key" }]
+      },
     }, oauth: { connect: async () => { throw new Error("External credentials must not use OAuth") } } },
   credential: { activate: (input: any) => mutate("activate", input), update: (input: any) => mutate("rename", input), remove: (input: any) => mutate("remove", input) } }
 await applyUiSettings({})

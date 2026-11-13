@@ -1,7 +1,8 @@
 import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import { createMissionRecurrenceList } from "../../../src/components/mission-recurrence-list"
-import { MissionPicker } from "../../../src/components/mission-picker"
+import { MissionPanelHeader, MissionRows } from "../../../src/components/mission-picker"
+import { MissionActionBar, MissionActionSlot } from "../../../src/components/mission-action-bar"
 import { MissionReader } from "../../../src/components/mission-reader"
 import { InterruptionDock } from "../../../src/components/interruption-dock"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -27,16 +28,16 @@ function Schedules(props: { projectID: string; scope: string; active: () => bool
     active: props.active, get refresh() { return props.refresh }, get onRead() { return props.onRead },
     get selectedSchedule() { return missionProjectView(props.scope).selectedRecurrence }, detailId: "schedule-detail" })
   const selected = () => missionProjectView(props.scope).selectedRecurrence
-  return <>
+  const [slot, setSlot] = createSignal<HTMLElement>()
+  return <MissionActionSlot.Provider value={slot}>
     <header class="mission-control-header">
-      <MissionPicker entries={list.entries()} selectedKey={selected() ? `schedule:${selected()}` : undefined}
-        expanded={missionProjectView(props.scope).listExpanded === true}
-        onExpandedChange={value => updateMissionProjectView(props.scope, { listExpanded: value || undefined })}
-        onSelect={entry => updateMissionProjectView(props.scope, { selectedRecurrence: entry.key.slice("schedule:".length) })}
-        onCreate={() => {}} createDisabled />
+      <MissionPanelHeader actionSlot={setSlot} idleActions={<MissionActionBar inline label="Mission actions" reading={false} />}
+        query="" onQuery={() => {}} filterable={false} onCreate={() => {}} createDisabled />
     </header>
-    {list.view()}
-  </>
+    <MissionRows entries={list.entries()} query="" selectedKey={selected() ? `schedule:${selected()}` : undefined}
+      onSelect={entry => updateMissionProjectView(props.scope, { selectedRecurrence: entry.key.slice("schedule:".length) })}
+      detail={list.view()} paging={list.listView()} />
+  </MissionActionSlot.Provider>
 }
 
 function Fixture() {

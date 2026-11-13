@@ -1,29 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { filterMissionPickerEntries, missionMark, missionPickerAttention, missionPickerAttentionLabel,
-  scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { filterMissionPickerEntries, missionMark, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 
 const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark })
-
-test("chevron attention ignores the selected entry, interrupted, paused, prepared and idle entries, and keeps the most urgent state", () => {
-  const entries = [entry("mission:a", "permission"), entry("mission:b", "working"), entry("schedule:c", "interrupted"),
-    entry("mission:d", "working"), entry("mission:e", "done"), entry("mission:f", "paused"), entry("mission:g", "prepared")]
-  assert.deepEqual(missionPickerAttention(entries, "mission:a"), { kind: "working", counts: { permission: 0, working: 2, done: 1 } })
-  assert.equal(missionPickerAttention(entries).kind, "permission")
-  assert.equal(missionPickerAttention([entry("mission:a", "interrupted"), entry("mission:b", "paused"), entry("mission:c", "prepared")]).kind, undefined,
-    "like a collapsed session parent, interrupted entries stay on their own rows")
-})
-
-test("attention label counts each state in urgency order", () => {
-  const t = (key: string, params?: Record<string, string>) => `${key}:${params?.count}`
-  assert.equal(missionPickerAttentionLabel(t, { permission: 1, working: 2, done: 1 }),
-    "missionsPanel.attention.permission.one:1, missionsPanel.attention.working.other:2, missionsPanel.attention.done.one:1")
-})
 
 test("a mission's mark: an answer first, then resumable stops, observed work, and unseen completion", () => {
   const unseen = { openRequests: 0, seen: false }, seen = { openRequests: 0, seen: true }
   assert.equal(missionMark({ status: "active" }, { ...seen, openRequests: 1 }), "permission")
-  assert.equal(missionMark({ status: "failed" }, { ...seen, actorStates: ["form"] }), "permission")
+  assert.equal(missionMark({ status: "failed" }, { ...seen, openRequests: 1, actorStates: ["form"] }), "permission")
+  // Activity states cover whole families: without a question its flag carries, never red.
+  assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["permission"], coordinatorState: "form" }), "idle")
   assert.equal(missionMark({ status: "failed" }, seen), "interrupted", "a failed mission can be resumed")
   assert.equal(missionMark({ status: "failed", runState: "stopped" }, seen), "idle", "unless the user stopped it since")
   assert.equal(missionMark({ status: "completed" }, unseen), "done")

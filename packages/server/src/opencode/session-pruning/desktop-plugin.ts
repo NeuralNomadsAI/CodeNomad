@@ -37,7 +37,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
           throw error
         }
         return close
-      })), (stop) => Effect.promise(stop))
+      }, undefined, undefined, ctx.location.directory)), (stop) => Effect.promise(stop))
     }),
   })
 }

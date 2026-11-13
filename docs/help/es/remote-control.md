@@ -56,12 +56,12 @@ Los dispositivos emparejados pueden usar las API normales de proyectos/conversac
 | Inicio/cierre de sesión con contraseña, cambios de contraseña, inicialización local por token | No disponible; se requieren credenciales de dispositivo incluso si la autenticación directa está desactivada. |
 | Estado de Control remoto | Legible para un dispositivo emparejado; la gestión no está disponible. Iniciar/Detener, crear emparejamientos, la lista de dispositivos y la revocación permanecen en la vía de acceso del anfitrión. |
 | Gestión de ventanas remotas/servidores de escritorio y rutas proxy | No disponible (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| **Proxy de contenido** de SideCar | No disponible (`/sidecars/`). Esto **no** significa que todas las API de SideCar estén bloqueadas: los clientes emparejados pueden seguir accediendo a las API de registro `/api/sidecars`. |
+| **Proxy de contenido** de SideCar | Requiere loopback (`/sidecars/`), al igual que los WebSockets de SideCar. Las API de registro `/api/sidecars` están disponibles para dispositivos emparejados y clientes directos de LAN autenticados. |
 | Contenido de vistas previas web | Disponible mientras **Vistas previas web** esté activado (valor predeterminado) en **Configuración → Acceso remoto → Control remoto** en el equipo anfitrión. Cada dirección de vista previa abre su página sin emparejamiento, así que mantenla privada. Desactivar el interruptor detiene las vistas previas servidas y sus WebSockets; los dispositivos emparejados ocultan **Abrir vista previa web** al recargar. |
 | Puente de automatización | No disponible (`/api/opencode-plugin/`). Las capacidades nativas de escritorio no se convierten en capacidades del navegador. |
 | Actualizaciones de conexión a WebSocket | Disponibles solo para vistas previas web. |
 
-Usa una [conexión directa](remote-access.md) debidamente protegida cuando un flujo requiera una superficie proxy/WebSocket bloqueada. Control remoto no cambia automáticamente a esa vía.
+Usa una conexión loopback en el anfitrión para los proxies/WebSockets reservados al anfitrión y la gestión de Control remoto (`/api/remote-control/`). El acceso directo por LAN también requiere loopback para estas operaciones; consulta [Actualizar](remote-access.md#upgrading). Las vistas previas web de Control remoto usan un token de capacidad en su dirección y siguen disponibles mientras estén activadas en el anfitrión; mantén privada esa dirección.
 
 ## Relé y privacidad {#relay-privacy}
 

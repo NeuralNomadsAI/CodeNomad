@@ -42,7 +42,7 @@ Si un worktree détenu ou l’emplacement d’une conversation ne peut être vé
 ## Environnement OpenCode et WSL {#opencode-runtime}
 
 1. Ouvrez **Préférences → OpenCode** et vérifiez la carte **Version d’OpenCode** (version installée et état du service actif), puis l’exécutable sélectionné sous **Binaire OpenCode**.
-2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.2.3** ; version recommandée/qualifiée : **2.2.5**.
+2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.2.3** ; version recommandée/qualifiée : **2.2.7**.
 3. Si la CLI installée diffère du service actif, décidez explicitement s’il faut redémarrer le service partagé.
 
 **Redémarrer le service OpenCode** est disponible sous **Dépannage** et exige confirmation. Cela interrompt le travail actif de tous les clients connectés mais conserve l’historique. Le rechargement de configuration est distinct : il garde le processus mais reconstruit les Locations chargées et annule les questions/autorisations en attente. Aucun n’est une actualisation anodine.
@@ -73,6 +73,8 @@ Les liens d’appairage sont à usage unique et de courte durée ; le mot de pas
 
 ## État des fournisseurs, plugins et extensions {#providers-and-addons}
 
+Si **Timeline complète indisponible** accompagne un échec du plugin `codenomad-session-pruning`, consultez son erreur de chargement dans le journal OpenCode. Ce plugin assure la navigation dans l’historique complet et la récupération des questions et permissions en attente. Réessayez la timeline après son chargement réussi ; conservez vos données de session.
+
 | Problème | Récupération |
 | --- | --- |
 | Mauvais compte/quota fournisseur | Vérifiez le compte natif sélectionné et **Utilisation**. Un quota affiché n’est pas un total de tokens/coût. Actualisez après un changement de compte incertain ; la sélection peut affecter d’autres clients du service. |
@@ -96,7 +98,7 @@ Pour un nettoyage annulé ou partiel, lisez sa progression/ses reçus avant une 
 
 ## Journaux et diagnostics sûrs {#diagnostics}
 
-1. Ouvrez **Infos de l'instance** pour inspecter son état ; **Afficher les journaux du serveur** expose la sortie disponible.
+1. Ouvrez **Paramètres → OpenCode → Afficher les journaux OpenCode**. Le fichier global `opencode.log` de l’hôte d’exécution sélectionné est localisé par `opencode debug paths log`. La fenêtre déplaçable et non modale laisse le reste de l’interface utilisable. Elle affiche au maximum les derniers 128 Kio ; **Actualiser** relit le fichier. Les journaux restent séparés des messages et des requêtes au modèle.
 2. Dans **Préférences → OpenCode**, choisissez la **Verbosite des logs** voulue seulement si davantage de détail est nécessaire. Pour les journaux CodeNomad autonome, utilisez les [options CLI serveur de journalisation](server.md).
 3. Ouvrez **Paramètres → Info → Diagnostics** et utilisez **Signaler un bug**, **Copier dans le presse-papiers** ou **Télécharger .txt**.
 

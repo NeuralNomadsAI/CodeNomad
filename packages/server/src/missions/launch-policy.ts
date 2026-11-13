@@ -6,6 +6,9 @@ import { compareModelError, missionProfileRoles, missionProfilesInputSchema, val
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
 import { missionCriteriaStructure, missionLaunchModel, requiresMissionCalendar } from "./mission-launch-kind"
+import { missionGithubConditions } from "./mission-github-condition"
+import { missionRepositoryConditionSchema } from "./mission-repository-condition"
+import { isReservedMissionScheduleSessionID } from "./mission-schedule-carrier-identity"
 export { missionCriteriaStructure, type MissionCriterionConnector, type MissionCriterionRole, type MissionSchedulePlan, requiresMissionCalendar, missionLaunchLimit, missionLaunchModel, missionEventPrincipal, missionEventPrincipalSlot, missionPrincipalCount,
   missionLaunchesRepeatedly, type MissionLaunchModel, type MissionLaunchSchedule } from "./mission-launch-kind"
 export { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
@@ -52,6 +55,8 @@ export const missionConditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("conversation-message"), conversationID: nativeDocumentID }).strict(),
   z.object({ kind: z.literal("files-changed"), paths: z.array(relativePath).min(1).max(128)
     .refine(paths => new Set(paths).size === paths.length).transform(paths => [...paths].sort()) }).strict(),
+  ...missionGithubConditions,
+  missionRepositoryConditionSchema,
 ])
 /** Stored documents written before launch criteria; read exactly, never rewritten. */
 export const missionLegacyLaunchPolicySchema = z.object({ timing: missionTimingSchema, condition: missionConditionSchema.nullable(),
@@ -67,13 +72,13 @@ const scheduleCriterion = z.object({ kind: z.literal("cron"), expression: z.stri
 /** One ordered list read as groups (`missionCriteriaStructure`): leading events trigger,
  * leading schedules trigger at their slots, events after schedules are their "if"
  * conditions, and schedules after events are an "else" fallback of everything above.
- * An empty list launches once at Play. */
+ * An empty list or sole now launches once through journal admission at Play. */
 export const missionCriteriaLaunchPolicySchema = z.object({
-  when: z.array(z.union([scheduleCriterion, missionConditionSchema])).max(MISSION_CALENDAR_LIMIT * 2),
+  when: z.array(z.union([z.object({ kind: z.literal("now") }).strict(), scheduleCriterion, missionConditionSchema])).max(MISSION_CALENDAR_LIMIT * 2),
 }).strict().superRefine((policy, context) => {
-  const schedules = policy.when.filter(item => item.kind === "cron"), events = policy.when.filter(item => item.kind !== "cron")
+  const schedules = policy.when.filter(item => item.kind === "cron" || item.kind === "now"), events = policy.when.filter(item => item.kind !== "cron" && item.kind !== "now")
   const { roles } = missionCriteriaStructure(policy.when)
-  const triggerEvents = policy.when.filter((item, index) => item.kind !== "cron" && roles[index] === "trigger")
+  const triggerEvents = policy.when.filter((item, index) => item.kind !== "cron" && item.kind !== "now" && roles[index] === "trigger")
   const unique = (items: unknown[]) => new Set(items.map(item => canonicalAuthority(item))).size === items.length
   const principals = schedules.length + (triggerEvents.length ? 1 : 0)
   if (!unique(schedules) || !unique(events) || events.length > MISSION_CALENDAR_LIMIT || principals > MISSION_CALENDAR_LIMIT)
@@ -94,13 +99,16 @@ export const missionConfigurationSchema = z.object({
   profileID: nativeDocumentID.nullable(), executionHost: nativeDocumentID.nullable(),
   roots: z.array(authorityRootSchema).min(1).max(32).refine(roots => new Set(roots.map(item => item.directory)).size === roots.length),
   watchedConversationIDs: z.array(nativeDocumentID).max(64).refine(ids => new Set(ids).size === ids.length),
+  coordinatorSessionID: nativeDocumentID.refine(id => !isReservedMissionScheduleSessionID(id)).optional(),
   launch: missionLaunchPolicySchema,
 }).strict().refine(config => {
   try {
     canonicalAuthority(config, MISSION_CONFIGURATION_MAX_BYTES)
     validateMissionProfiles(config.template, config.profiles)
     if (config.template === "compare" && compareModelError(config.profiles)) return false
-    if (!requiresMissionCalendar(config.launch)) return true
+    if (!requiresMissionCalendar(config.launch)) return config.coordinatorSessionID === undefined
+    if (config.coordinatorSessionID && (config.watchedConversationIDs.includes(config.coordinatorSessionID)
+      || missionLaunchModel(config.launch).events.some(item => item.kind === "conversation-message" && item.conversationID === config.coordinatorSessionID))) return false
     const profiles = config.profiles
     return !!config.profileID && !!config.executionHost && !!profiles?.coordinator && missionProfileRoles[config.template].every(role => !!profiles.roles?.[role])
       && [profiles.coordinator, ...Object.values(profiles.roles ?? {})].every(selection =>

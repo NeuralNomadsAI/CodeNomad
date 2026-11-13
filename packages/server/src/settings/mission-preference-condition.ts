@@ -10,7 +10,7 @@ const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.c
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() => z.union([
   z.null(), z.boolean(), z.number().finite(), z.string(),
-  z.array(JsonValueSchema), z.record(JsonValueSchema),
+  z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema),
 ]))
 
 const ExpectedSchema = z.object({

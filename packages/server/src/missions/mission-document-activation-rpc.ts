@@ -11,7 +11,7 @@ const target = { scope: z.enum(["global", "project"]), resultDigest: z.string().
 export const missionDocumentActivationRequest = z.discriminatedUnion("action", [
   z.object({ ...common, action: z.literal("read") }).strict(),
   z.object({ ...common, action: z.literal("prepare"), authority: z.string().regex(/^[a-f0-9]{64}$/),
-    targets: missionScheduleActivationSchema.innerType().shape.targets }).strict(),
+    targets: missionScheduleActivationSchema.shape.targets }).strict(),
   z.object({ ...common, ...target, action: z.literal("attempting") }).strict(),
   z.object({ ...common, ...target, action: z.literal("acknowledged") }).strict(),
   z.object({ ...common, action: z.literal("ready"), effectiveOrigin: z.string().min(1).max(4096).nullable() }).strict(),

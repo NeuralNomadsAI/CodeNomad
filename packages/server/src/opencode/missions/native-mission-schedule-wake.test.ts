@@ -10,7 +10,8 @@ import { readNativeScheduleAuxiliaryWakeBinding } from "./native-schedule-owner-
 import { missionCalendarOwnerReady } from "./native-schedule-owner"
 import { nativeSchedulePreflight } from "./native-mission-schedule-preflight"
 import { nativeScheduleWakeKey } from "./native-schedule-transport-contract"
-import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, parseNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
+import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, parseNativeMissionScheduleClaim,
+  recoverNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
 import { receiveNativeMissionScheduleWake, type NativeMissionScheduleWakePorts } from "./native-mission-schedule-wake-rpc"
 import type { createNativeScheduleTransport } from "./native-schedule-transport"
 
@@ -45,7 +46,19 @@ async function receiver(t: test.TestContext, role: "principal" | "reconciliation
     close: async locked => { calls.push("close"); return closeNativeScheduleCarrierClaimLocked(f.ctx, doc.id, Effect.runPromise, f.current, locked) },
   }
   const claim = () => claimNativeScheduleCarrierWake(f.ctx, wake, incarnation, Effect.runPromise, f.current, loseAuxiliary ? preflight : undefined)
-  return { ...f, doc, slot, info, wake, input, entry, ports, calls, claim }
+  const retry = () => claimNativeScheduleCarrierWake(f.ctx, wake, incarnation, Effect.runPromise, f.current, undefined, true)
+  // Business admission of this wake: one reservation consumes its technical run.
+  const reserve = async () => {
+    calls.push("business-wake")
+    const current = await f.read()
+    await f.store.change(current.id, current.revision, f.current, value => {
+      const proof = { scheduleID: wake.scheduleID, run: 1, messageID: wake.messageID, dueAt: f.now }
+      missionDocumentChanges.prepareWake(value, proof)
+      missionDocumentChanges.reserve(value, { kind: "wake", wakes: [proof] }, f.now, [])
+    })
+    return "started" as const
+  }
+  return { ...f, doc, slot, info, wake, input, entry, ports, calls, claim, retry, reserve }
 }
 
 test("receiver status freezes cutoff and native message readiness without any document/claim/native mutation", async t => {
@@ -183,4 +196,84 @@ test("cancellation after preflight cannot publish a claim or dispatch a mutation
     transport, current: () => true, held: async () => false, claim: async () => { calls.push("claim"); return true },
   })
   assert.equal(result.state, "not-dispatched"); assert.deepEqual(calls, [])
+})
+
+test("a receiver that ended without consuming its run leaves an abandoned claim, replayed once under the same identity", async t => {
+  const f = await receiver(t)
+  assert.equal(await f.claim(), true)
+  assert.equal(await f.claim(), false, "a plain repeat never claims its own identity again")
+  // The HTTP caller gave up at its deadline while the receiver was still reading sources.
+  let release!: () => void
+  const reading = new Promise<void>(resolve => { release = resolve })
+  f.ports.runtime.wake = async () => { f.calls.push("business-wake"); await reading; throw new Error("cancelled source read") }
+  const aborted = receiveNativeMissionScheduleWake("wake", f.input, f.entry, f.ports)
+  const live = await receiveNativeMissionScheduleWake("status", f.input, f.entry, f.ports)
+  assert.equal(live.state, "pending"); assert.equal(live.abandoned, undefined)
+  assert.equal(await f.retry(), false, "a receiver still running keeps its claim")
+  release()
+  await assert.rejects(aborted, /cancelled source read/)
+  const before = await f.read()
+  const status = await receiveNativeMissionScheduleWake("status", f.input, f.entry, f.ports)
+  assert.equal(status.state, "pending"); assert.equal(status.abandoned, true); assert(status.preflight)
+  assert.equal((await f.read()).revision, before.revision, "status stays read-only")
+  assert.equal(await f.claim(), false)
+  assert.equal(await f.retry(), true)
+  f.ports.runtime.wake = f.reserve
+  const reply = await receiveNativeMissionScheduleWake("wake", { ...f.input, preflight: status.preflight! }, f.entry, f.ports)
+  assert.equal(reply.state, "applied")
+  const doc = await f.read()
+  assert(doc.pending); assert.equal(doc.calendars.find(item => item.scheduleID === f.wake.scheduleID)!.highWater, 1)
+  assert.equal((await f.ports.claim())!.settled!.highWater, 1)
+  assert.deepEqual(f.calls.filter(call => call === "business-wake"), ["business-wake", "business-wake"])
+  assert.equal(await f.retry(), false, "a consumed run is never replayed")
+  const applied = await receiveNativeMissionScheduleWake("status", f.input, f.entry, f.ports)
+  assert.equal(applied.state, "applied"); assert.equal(applied.abandoned, undefined)
+})
+
+test("a claim left by another service incarnation is abandoned; the replay takes the current incarnation", async t => {
+  const f = await receiver(t), previous = { ...f.input.incarnation, id: "previous_service" }
+  assert.equal(await claimNativeScheduleCarrierWake(f.ctx, f.wake, previous, Effect.runPromise, f.current), true)
+  const status = await receiveNativeMissionScheduleWake("status", f.input, f.entry, f.ports)
+  assert.equal(status.state, "unknown"); assert.equal(status.abandoned, true)
+  assert.equal(await f.claim(), false)
+  assert.equal(await f.retry(), true)
+  assert.equal((await f.ports.claim())!.incarnation.id, f.input.incarnation.id)
+})
+
+test("dispatch replays only an abandoned original, passing retry to its claim", async () => {
+  const wake = { missionID: "mission", generation: 1, scheduleID: "sch_main", sessionID: "ses_main", run: 1, messageID: "msg_sch_main_1" }
+  for (const abandoned of [false, true]) {
+    const calls: unknown[] = []
+    const transport: ReturnType<typeof createNativeScheduleTransport> = {
+      status: async () => ({ state: "received", reply: { key: nativeScheduleWakeKey(wake), state: "pending", messagePresent: true, ready: true,
+        ...(abandoned ? { abandoned: true } : {}), preflight: nativeSchedulePreflight(wake, "native", Date.now()) } }),
+      wake: async input => {
+        calls.push("wake")
+        assert.equal(await input.claim({ id: "native", pid: process.pid, url: "http://127.0.0.1:1" }), true)
+        return { state: "received", reply: { key: nativeScheduleWakeKey(wake), state: "applied" } }
+      },
+    }
+    await dispatchNativeMissionScheduleWake({ wake, registrationFile: "/owned/service.json", directory: "/owned" }, {
+      transport, current: () => true, held: async () => { calls.push("held"); return true },
+      claim: async (_incarnation, _preflight, retry) => { calls.push(["claim", retry]); return true },
+    })
+    assert.deepEqual(calls, abandoned ? ["wake", ["claim", true]] : ["held"])
+  }
+})
+
+test("a carrier turn reconciles another occurrence's unsettled claim before its own wake", async () => {
+  const wake = { missionID: "mission", generation: 1, scheduleID: "sch_main", sessionID: "ses_main", run: 1, messageID: "msg_sch_main_1" }
+  const next = { ...wake, run: 2, messageID: "msg_sch_main_2" }, dispatched: string[] = []
+  const claim = { version: 1 as const, key: nativeScheduleWakeKey(wake), wake, incarnation: { id: "native", pid: process.pid, url: "http://127.0.0.1:1" } }
+  const answer = (state: "applied" | "pending") => async (value: typeof wake) => {
+    dispatched.push(nativeScheduleWakeKey(value))
+    return { state: "received" as const, reply: { key: nativeScheduleWakeKey(value), state } }
+  }
+  assert.equal(await recoverNativeMissionScheduleClaim(undefined, next, answer("pending")), true)
+  assert.equal(await recoverNativeMissionScheduleClaim({ ...claim, settled: { revision: 3, highWater: 1 } }, next, answer("pending")), true)
+  assert.equal(await recoverNativeMissionScheduleClaim(claim, wake, answer("pending")), true, "its own dispatch reconciles the same identity")
+  assert.deepEqual(dispatched, [])
+  assert.equal(await recoverNativeMissionScheduleClaim(claim, next, answer("pending")), false)
+  assert.equal(await recoverNativeMissionScheduleClaim(claim, next, answer("applied")), true)
+  assert.deepEqual(dispatched, [claim.key, claim.key])
 })

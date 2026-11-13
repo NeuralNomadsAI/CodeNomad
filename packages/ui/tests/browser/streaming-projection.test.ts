@@ -31,6 +31,10 @@ async function open(run: (page: Page) => Promise<void>) {
   await page.route("**/*", route => {
     const request = new URL(route.request().url())
     if (request.hostname !== "127.0.0.1") return route.abort()
+    if (request.pathname === "/api/workspaces/streaming-fixture/session-history/outline") {
+      errors.push("projection fixture attempted an outline HTTP read")
+      return route.abort()
+    }
     if (request.pathname === "/workspaces/streaming-fixture/yolo/sessions/active" && route.request().method() === "GET") {
       return route.fulfill({ json: { enabled: false } })
     }

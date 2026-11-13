@@ -224,6 +224,9 @@ anonymously. CLIs run without a shell, with prompts, pagers, colour, update
 checks and telemetry disabled, a 15-second limit and a 4 MiB output budget;
 anonymous bodies are bounded to 4 MiB while streaming. CodeNomad stores no token.
 Private repositories without a sign-in report `sign_in`.
+`ForgeWorkItems.openRepository` shares this detection and bounded transport with
+Missions repository-activity reads. Remote discovery ignores inherited Git redirection,
+checks cancellation between Git reads and uses one ten-second discovery deadline.
 
 Repository discovery and page reads are shared loads (`forge/shared-loads.ts`):
 identical callers join one load, which is cancelled (CLI process or fetch) once
@@ -454,8 +457,9 @@ fails unless the probe detects both.
 
 The macOS (WKWebView) and Linux (WebKitGTK) runs are manual, on the macOS and
 Ubuntu test VMs, after each change to the frame document, bridge, panel iframe or
-desktop hosts. Each host needs a checkout of the change with `npm ci` (Electron's
-binary included), Node 22, Rust's `cargo` on `PATH` and Tauri 2's platform
+desktop hosts. Each host needs a checkout of the change with `npm ci` and
+`npx --no install-electron` (Electron's binary), the Node release pinned in
+`.node-version`, Rust's `cargo` on `PATH` and Tauri 2's platform
 prerequisites (Xcode Command Line Tools; WebKitGTK 4.1 and libsoup 3 development
 packages). Both webviews need the desktop session of a logged-in user:
 

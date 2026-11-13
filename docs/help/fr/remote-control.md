@@ -56,12 +56,12 @@ Les appareils appairés peuvent utiliser les API ordinaires de projet/conversati
 | Connexion/déconnexion par mot de passe, changements de mot de passe, initialisation locale par jeton | Indisponibles ; les identifiants d’appareil sont requis même si l’authentification directe est désactivée. |
 | État du Contrôle à distance | Lisible par un appareil appairé ; la gestion est indisponible. Démarrage/arrêt, création d’appairage, liste et révocation des appareils restent sur le chemin d’accès de l’hôte. |
 | Gestion des fenêtres distantes/serveurs de bureau et routes proxy | Indisponibles (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| **Proxy de contenu** SideCar | Indisponible (`/sidecars/`). Cela ne signifie **pas** que toutes les API SideCar sont bloquées : les clients appairés peuvent toujours accéder aux API d’enregistrement `/api/sidecars`. |
+| **Proxy de contenu** SideCar | Exige la boucle locale (`/sidecars/`), comme les WebSockets SideCar. Les API d’enregistrement `/api/sidecars` sont accessibles aux appareils appairés et aux clients LAN directs authentifiés. |
 | Contenu des aperçus web | Disponible tant que **Aperçus web** est activé (par défaut) dans **Paramètres → Accès distant → Contrôle à distance** sur l’hôte. Chaque adresse d’aperçu ouvre sa page sans appairage : gardez-la privée. Désactiver l’interrupteur arrête les aperçus servis et leurs WebSockets ; les appareils appairés masquent **Ouvrir l'aperçu web** une fois rechargés. |
 | Pont d’automatisation | Indisponible (`/api/opencode-plugin/`). Les capacités natives de bureau ne deviennent pas des capacités navigateur. |
 | Mises à niveau WebSocket | Disponibles pour les aperçus web uniquement. |
 
-Utilisez une [connexion directe](remote-access.md) convenablement protégée si un parcours nécessite une surface proxy/WebSocket bloquée. Le Contrôle à distance ne bascule pas automatiquement vers ce chemin.
+Utilisez une connexion en boucle locale sur l’hôte pour les proxys/WebSockets réservés à l’hôte et la gestion du Contrôle à distance (`/api/remote-control/`). L’accès LAN direct exige lui aussi la boucle locale pour ces opérations ; voir [Mise à niveau](remote-access.md#upgrading). Les aperçus web du Contrôle à distance utilisent un jeton de capacité dans leur adresse et restent disponibles lorsqu’ils sont activés sur l’hôte ; gardez cette adresse privée.
 
 ## Relais et confidentialité {#relay-privacy}
 

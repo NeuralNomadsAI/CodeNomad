@@ -1,0 +1,1 @@
+Native browser file drop fixture.

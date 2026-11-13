@@ -43,7 +43,7 @@ export const PreferencesWindow: Component = () => {
     await flushScroll(generation)
   }
 
-  const projectDemand = createMemo(() => ["providers", "missions", "usage"].includes(activeSettingsSection()))
+  const projectDemand = createMemo(() => ["general", "providers", "missions", "usage"].includes(activeSettingsSection()))
   const project = createPreferencesProjectContext(request, projectDemand, (context, current) => {
     // Share the native request queue: an explicit newer opener always wins over a late restore read.
     requestQueue = requestQueue.catch(() => undefined).then(async () => {

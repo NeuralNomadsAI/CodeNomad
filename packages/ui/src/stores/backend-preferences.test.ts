@@ -284,6 +284,127 @@ test("real preference consumers isolate host, server, fallback, instance data an
     await rejected
   })
 
+  await t.test("cold catalogs preserve each remote owner's saved and recent identities through real creation and send", async () => {
+    const { addInstance, removeInstance } = await import("./instances")
+    const { clearInstanceConfig, getInstanceConfig } = await import("./instance-config")
+    const { getDefaultModel, isModelValid } = await import("./session-models")
+    const { createSession } = await import("./session-api")
+    const { sendMessage } = await import("./session-actions")
+    const { setAgents, setProviders, sessions } = await import("./session-state")
+    const { messageStoreBus } = await import("./message-v2/bus")
+    const setup = (id: string) => {
+      const saved = { providerId: `${id}-provider`, modelId: `${id}-saved` }
+      const recent = { providerId: `${id}-recent-provider`, modelId: `${id}-recent` }
+      const nativeDefault = { providerId: `${id}-native-provider`, modelId: `${id}-native-default` }
+      const data = fixture({}, { ui: { models: { recents: [recent] } } })
+      data.instances.set("same", { messageHistory: [], agentModelSelections: { build: saved } })
+      const created: any[] = [], switched: any[] = [], prompts: any[] = [], defaults: any[] = []
+      const storageFetch = data.fetcher
+      data.fetcher = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input))
+        if (url.pathname.startsWith("/api/storage/")) return storageFetch(input, init)
+        assert.equal(url.origin, `https://${id.toLowerCase()}.invalid`)
+        assert.ok(url.pathname.startsWith("/workspaces/same/instance/api/"), "native API retains the owner's raw workspace route")
+        const body = JSON.parse(String(init?.body ?? (input instanceof Request ? await input.clone().text() : "null")) || "null")
+        if (url.pathname.endsWith("/api/session")) {
+          created.push(body)
+          return Response.json({ data: { ...body, id: `${id}-${created.length}`, title: "New", parentID: null, time: { created: 1, updated: 1 } } })
+        }
+        const sessionID = url.pathname.split("/session/")[1]?.split("/")[0]
+        if (url.pathname.endsWith("/model/default")) { defaults.push(url.pathname); return Response.json({ data: { providerID: nativeDefault.providerId, id: nativeDefault.modelId } }) }
+        if (url.pathname.endsWith("/model")) { switched.push({ ...body, sessionID }); return new Response(null, { status: 204 }) }
+        if (url.pathname.endsWith("/prompt")) { prompts.push({ ...body, sessionID }); return Response.json({ data: { id: body.id } }) }
+        assert.ok(url.pathname.endsWith("/agent") || url.pathname.includes("/instructions/entries/"), "no provider or unrelated API request")
+        return new Response(null, { status: 204 })
+      }
+      const owner = attach(id, data), instanceId = `${id}~same`
+      const client = owner.backend.sdk.createClient(instanceId, "/workspaces/same/instance")
+      addInstance({ id: instanceId, folder: "/same", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+      setAgents(previous => new Map(previous).set(instanceId, [{ id: "build", name: "Build", description: "", mode: "primary" }]))
+      assert.equal(isModelValid(instanceId, saved), false, "picker validation stays strict even without a catalog")
+      return { ...owner, data, instanceId, saved, recent, nativeDefault, created, switched, prompts, defaults }
+    }
+    const owners = [setup("coldOwnerA"), setup("coldOwnerB")]
+    const beforeHost = host.calls.length
+    try {
+      for (const owner of owners) {
+        let release!: () => void
+        owner.data.hold(new Promise<void>(resolve => { release = resolve }))
+        let settled = false
+        const creating = createSession(owner.instanceId, "build").finally(() => { settled = true })
+        await new Promise<void>(resolve => setImmediate(resolve))
+        try {
+          assert.equal(settled, false, "creation waits for the private saved-model document")
+          assert.equal(owner.created.length, 0)
+        } finally { release() }
+        const savedSession = await creating
+        await sendMessage(owner.instanceId, savedSession.id, "saved choice")
+        const recent = await getDefaultModel(owner.instanceId)
+        assert.deepEqual(recent, owner.recent, "cold server preferences win over host recents")
+        setAgents(previous => new Map(previous).set(owner.instanceId, []))
+        const recentSession = await createSession(owner.instanceId)
+        await sendMessage(owner.instanceId, recentSession.id, "recent choice")
+        const expected = [owner.saved, owner.recent].map(model => ({ providerID: model.providerId, id: model.modelId }))
+        assert.deepEqual(owner.created.map(input => input.model), expected)
+        assert.deepEqual(owner.created.map(input => input.location), [{ directory: "/same" }, { directory: "/same" }])
+        assert.deepEqual(owner.switched.map(input => input.model), expected)
+        assert.deepEqual(owner.switched.map(input => input.sessionID), [savedSession.id, recentSession.id])
+        assert.deepEqual(owner.prompts.map(input => [input.sessionID, input.text]), [[savedSession.id, "saved choice"], [recentSession.id, "recent choice"]])
+        assert.equal(owner.defaults.length, 0)
+        setAgents(previous => new Map(previous).set(owner.instanceId, [{ id: "configured", name: "Configured", description: "", mode: "primary", model: owner.saved }]))
+        assert.deepEqual(await getDefaultModel(owner.instanceId, "configured"), owner.saved)
+        assert.ok(owner.data.calls.some(call => call.url === `https://${owner.backend.id.toLowerCase()}.invalid/api/storage/instances/same`))
+        assert.ok(owner.data.calls.some(call => call.url.endsWith("/api/storage/state/ui")))
+      }
+      const owner = owners[0]
+      setProviders(previous => new Map(previous).set(owner.instanceId, []))
+      setAgents(previous => new Map(previous).set(owner.instanceId, [{ id: "build", name: "Build", description: "", mode: "primary", model: owner.saved }]))
+      assert.deepEqual(await getDefaultModel(owner.instanceId, "build"), owner.nativeDefault, "published empty catalog rejects configured, saved and recent choices")
+      assert.equal(owner.defaults.length, 1, "only the owning native fallback is consulted")
+      setProviders(previous => { const next = new Map(previous); next.delete(owner.instanceId); return next })
+      clearInstanceConfig(owner.instanceId)
+      await owner.backend.storage.saveInstanceData("same", { messageHistory: [], agentModelSelections: { build: { providerId: "", modelId: "partial-saved" } } })
+      setAgents(previous => new Map(previous).set(owner.instanceId, [{ id: "build", name: "Build", description: "", mode: "primary", model: { providerId: "partial-configured", modelId: "" } }]))
+      assert.deepEqual(await getDefaultModel(owner.instanceId, "build"), owner.recent, "incomplete choices are rejected even while cold")
+      assert.equal(owner.defaults.length, 1)
+
+      const revoked = setup("coldRevokedSaved")
+      owners.push(revoked)
+      let release!: () => void
+      revoked.data.hold(new Promise<void>(resolve => { release = resolve }))
+      const resolving = getDefaultModel(revoked.instanceId, "build")
+      const creating = createSession(revoked.instanceId, "build")
+      const rejections = [assert.rejects(resolving, /Backend unavailable|abort/i), assert.rejects(creating, /Backend unavailable|abort/i)]
+      await new Promise<void>(resolve => setImmediate(resolve))
+      revoked.detach()
+      const detachFresh = backendEvents.attach(revoked.backend.id, revoked.backend.events)
+      try {
+        assert.ok(revoked.data.calls.some(call => call.url.endsWith("/api/storage/instances/same")), "revocation occurs during the actual saved-model read")
+        release()
+        await Promise.all(rejections)
+        assert.deepEqual(getInstanceConfig(revoked.instanceId).agentModelSelections, {}, "revoked saved read never publishes into the same-client replacement")
+        assert.equal(revoked.created.length, 0)
+        assert.equal(revoked.prompts.length, 0)
+        assert.equal(revoked.switched.length, 0)
+        assert.equal(sessions().get(revoked.instanceId)?.size ?? 0, 0, "revoked creation never publishes a session")
+        assert.equal(revoked.defaults.length, 0, "revoked resolution never reaches native fallback")
+      } finally { release(); detachFresh() }
+      const sent = owner.prompts.length
+      owner.detach()
+      await assert.rejects(sendMessage(owner.instanceId, `${owner.backend.id}-1`, "revoked send"), /Backend unavailable|abort/i)
+      assert.equal(owner.prompts.length, sent, "the real send entry refuses a revoked owner before dispatch")
+      assert.equal(host.calls.length, beforeHost, "remote model resolution, creation and send perform zero host storage or default I/O")
+    } finally {
+      for (const owner of owners) {
+        owner.detach()
+        messageStoreBus.unregisterInstance(owner.instanceId)
+        clearInstanceConfig(owner.instanceId)
+        removeInstance(owner.instanceId, { authoritative: false })
+        owner.backend.sdk.destroyClientsForInstance(owner.instanceId)
+      }
+    }
+  })
+
   await t.test("persisted thinking variants reset through Merge Patch on host and server", async () => {
     const model = { providerId: "p", modelId: "variant" }
     for (const [prefs, backend, data] of [[hostPrefs, localBackend, host], [prefsB, ownerB.backend, b]] as const) {

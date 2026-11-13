@@ -11,13 +11,14 @@ const entry = fileURLToPath(new URL("../index.ts", import.meta.url))
 
 // The real entry point as a standalone server (no desktop host). No OpenCode is
 // started: only listener and bridge setup run, in an isolated profile.
-async function startStandalone(t: TestContext, listenerArgs: string[]) {
+async function startStandalone(t: TestContext, listenerArgs: string[], skipAuth = true) {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-standalone-bridge-"))
   const env: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(process.env)) if (!/^(CODENOMAD_|CLI_|OPENCODE_|XDG_)/i.test(key)) env[key] = value
   Object.assign(env, { HOME: root, USERPROFILE: root, APPDATA: root, LOCALAPPDATA: root, XDG_RUNTIME_DIR: root, XDG_CONFIG_HOME: root })
+  if (!skipAuth) env.CODENOMAD_SERVER_PASSWORD = "fixture-memory-only-password"
   const child = spawn(process.execPath, ["--import", "tsx", entry, ...listenerArgs,
-    "--config", path.join(root, "config", "config.yaml"), "--workspace-root", root, "--ui-no-update", "--dangerously-skip-auth"],
+    "--config", path.join(root, "config", "config.yaml"), "--workspace-root", root, "--ui-no-update", ...(skipAuth ? ["--dangerously-skip-auth"] : [])],
   { cwd: path.dirname(entry), env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
   let output = ""
   child.stdout.on("data", chunk => { output += chunk })
@@ -56,6 +57,17 @@ async function startStandalone(t: TestContext, listenerArgs: string[]) {
     headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ mode: "unknown" }) })
   assert.equal((await post({})).status, 401)
   assert.equal((await post({ "x-codenomad-automation-token": registration.token })).status, 400)
+  if (!skipAuth) {
+    const settings = await fetch(new URL("/api/memory/settings", bridge))
+    assert.equal(settings.status, 401, "memory UI settings require the ordinary authenticated session")
+    const operation = await fetch(new URL("/api/memory", bridge), { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: { action: "list", scope: "global" } }) })
+    assert.equal(operation.status, 401, "memory UI operations require the ordinary authenticated session")
+    const native = await fetch(bridge, { method: "POST", headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
+      body: JSON.stringify({ mode: "memory-input", sessionID: "ses_test", command: { action: "invalid" } }) })
+    assert.equal(native.status, 400, "the authenticated memory bridge reaches strict validation without a browser login")
+    assert.equal((await native.json() as { code: string }).code, "invalid")
+  }
 
   return {
     output: () => output,
@@ -82,5 +94,10 @@ test("an HTTP-only IPv6 server still publishes a reachable IPv4 loopback bridge"
   if (!ipv6) return t.skip("IPv6 loopback is unavailable")
   const server = await startStandalone(t, ["--host", "::1", "--https", "false", "--http", "true", "--http-port", "0"])
   assert.deepEqual(server.announced, { protocol: "http", host: "[::1]" })
+  await server.stop()
+})
+
+test("memory UI routes require browser authentication while the local token admits only the native bridge", { timeout: 90_000 }, async t => {
+  const server = await startStandalone(t, ["--host", "127.0.0.1", "--https", "true", "--http", "false"], false)
   await server.stop()
 })

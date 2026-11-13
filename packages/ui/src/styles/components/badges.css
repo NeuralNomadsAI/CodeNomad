@@ -106,3 +106,9 @@
 .status-dot.stopped {
   background-color: var(--status-stopped-fg);
 }
+.agent-memory-badge {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.7rem;
+  color: var(--text-primary);
+  background: var(--surface-inset);
+}

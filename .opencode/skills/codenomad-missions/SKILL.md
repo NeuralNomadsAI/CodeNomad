@@ -16,9 +16,11 @@ Prefer ordinary native delegation for bounded work. Use a mission only when the 
 7. Finish through `mission.report({ final: true, ... })` only when the objective is actually met. Retired work never counts as success; retiring does not interrupt admitted native execution, which can finish on its own or be stopped with `mission.interrupt` when eligible; playbook proof requirements still apply. A retired native task takes no coordinator readout; record what it returned under its replacement or in the final report. Admitted retired work settles through its actor's terminal report or an observed native end.
 
 Use `mission.inspect({ catalog: true })` before selecting a native execution profile.
+Follow the [creation and retry discipline](../../../dev-docs/MISSIONS.md#mission-profile-selection-and-creation-recovery).
+
 The mission `role` is independent of `execution.agent`. To pin execution, pass
 `execution: { agent: "catalog-agent-id", model: { providerID: "catalog-provider", id: "catalog-model", variant: "optional-catalog-variant" } }`.
-Repeat the same selection when retrying a task. Omitted fields use native defaults.
+Repeat the same selection when retrying a task. Omitted task execution fields use native defaults.
 Native tasks accept subagent/all agents; independent roots and tasks stored
 without an execution mode accept primary/all agents. Each child owns its bounded assignment and
 may recursively decompose independent subtasks when useful, integrating actual returned

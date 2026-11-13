@@ -1,6 +1,7 @@
 import Switch from "@suid/material/Switch"
 import { Show, type Component } from "solid-js"
 import { SettingsInfoTip } from "./settings-info-tip"
+import type { HelpDestination } from "../../lib/help-url"
 
 interface SettingsSwitchProps {
   checked: boolean
@@ -33,6 +34,7 @@ interface SettingsChoiceRowProps {
   caption?: string
   /** Secondary explanation behind an "i" beside the title instead of a caption. */
   info?: string
+  help?: HelpDestination
   disabled?: boolean
   onChange: (checked: boolean) => void
 }
@@ -41,7 +43,7 @@ interface SettingsChoiceRowProps {
 export const SettingsChoiceRow: Component<SettingsChoiceRowProps> = (props) => (
   <label class="settings-toggle-row settings-choice-row" classList={{ "opacity-60": Boolean(props.disabled) }}>
     <span>
-      <span class="settings-toggle-title">{props.title}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} />}</Show></span>
+      <span class="settings-toggle-title">{props.title}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} help={props.help} />}</Show></span>
       <Show when={props.caption}><span class="settings-toggle-caption">{props.caption}</span></Show>
     </span>
     <input

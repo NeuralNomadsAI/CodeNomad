@@ -11,7 +11,7 @@ import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-r
 import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
 import { captureMissionView } from "./mission-view-capture"
 import { clickMissionAction, inlineMissionEntry, missionDetail, missionEntryStatus, missionPicker, missionRefresh, missionToolbarAction,
-  missionPickerField, selectMission, selectedMissionTitle } from "./mission-actions"
+  missionRow, selectMission, selectedMissionTitle } from "./mission-actions"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -37,12 +37,12 @@ function scheduleFixture(): RecurrenceSchedule {
 }
 const TITLE = "Daily source review"
 const CHECK = `Check control outcome for ${TITLE}`, RESUME = `Resume schedule ${TITLE}`, STOP = `Stop schedule ${TITLE}`, RUN_NOW = `Run ${TITLE} now`
-/** The selected item's lifecycle buttons (before the separator): [label, enabled]. Inapplicable ones stay, disabled. */
+/** The selected item's lifecycle buttons (before the Summary eye): [label, enabled]. Inapplicable ones stay, disabled. */
 async function lifecycleButtons(page: Page) {
-  return missionDetail(page).locator(".mission-action-bar").evaluate(bar => {
+  return page.locator(".mission-picker-selection-actions .mission-action-bar").evaluate(bar => {
     const result: Array<[string | null, boolean]> = []
     for (const node of bar.children) {
-      if (node.classList.contains("mission-action-separator")) break
+      if (node.classList.contains("mission-overview-toggle")) break
       if (node instanceof HTMLButtonElement) result.push([node.getAttribute("aria-label"), !node.disabled])
     }
     return result
@@ -105,7 +105,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 })
     // The open conversation is the one-time coordinator, yet only the picker selects a Mission.
     await (await inlineMissionEntry(page, "One-time review")).waitFor()
-    assert.equal(await missionPickerField(page).locator(".mission-picker-placeholder").innerText(), "No mission selected")
+    assert.equal(await selectedMissionTitle(page).count(), 0, "no row is selected")
     assert.equal(await missionDetail(page).count(), 0, "the open coordinator conversation does not select its Mission")
     await selectMission(page, "One-time review")
     await captureMissionView(page, "unified-list-desktop")
@@ -119,7 +119,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     assert.equal(await entry.getAttribute("aria-current"), "true")
     const detail = missionDetail(page)
     await detail.waitFor()
-    assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is a separate section, not inside the picker")
+    assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")
     assert.equal(await detail.getByText(/Next: /).count(), 0, "the entry alone says when the next run is")
     await captureMissionView(page, "schedule-detail-next-passage")
     for (const state of ["paused", "stopped"] as const) {
@@ -158,14 +158,14 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     // The held request is the primary; every other control waits for its outcome.
     await check.click({ trial: true }) // enabled once the lost reply settles
     assert.deepEqual(await lifecycleButtons(page), [[CHECK, true], [STOP, false], [RUN_NOW, false]])
-    await detail.locator(".mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.").waitFor()
+    await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.").waitFor()
     assert.equal(posts.length, 1)
     assert.deepEqual(Object.keys(posts[0].body).sort(), ["action", "directory", "expectedRevision", "requestID", "scheduleID"])
     await check.click()
     await missionToolbarAction(page, RESUME).waitFor({ state: "visible" })
     // Without an admitted passage, the detail lists past runs directly; no result prose or More.
     assert.equal(await detail.locator(".mission-result-text, .mission-more").count(), 0)
-    assert.equal(await detail.locator(".mission-overview-toggle").count(), 1)
+    assert.equal(await page.locator(".mission-picker-selection-actions .mission-overview-toggle").count(), 1)
     assert.match(await detail.locator("button.mission-past-run").innerText(), /^Oct 8, 2026, 8:15 AM · Completed/)
     await captureMissionView(page, "schedule-history")
     await page.setViewportSize({ width: 390, height: 850 })
@@ -211,16 +211,19 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     assert.equal(await missionDetail(page).count(), 0, "the open coordinator conversation does not select its Mission")
     await once.click()
     const detail = missionDetail(page)
-    await detail.waitFor()
+    // Prepared, it has no tasks yet: a leaf row without chevron, its detail folded.
+    await detail.waitFor({ state: "attached" })
+    assert.equal(await missionRow(page, "One-time review").locator("button.session-item-expander").count(), 0)
     assert.equal(await once.getAttribute("aria-current"), "true")
     assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
     const scoped = await page.locator(".mission-control").evaluate(panel => {
       const picker = panel.querySelector(".mission-picker")!, detail = panel.querySelector("section.mission-detail")!
-      const entries = [...picker.querySelectorAll(".mission-picker-inline button.mission-picker-option")]
-      return entries.length === 2 && !picker.contains(detail)
-        && Boolean(picker.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
+      const entries = [...panel.querySelectorAll(".mission-rows button.mission-row-select")]
+      const selected = panel.querySelector(".mission-row:has(.mission-row-select[aria-current=true])")!
+      return entries.length === 2 && !picker.contains(detail) && selected.parentElement!.contains(detail)
+        && Boolean(selected.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
     })
-    assert.equal(scoped, true, "the selected one-time detail follows the whole list")
+    assert.equal(scoped, true, "the selected one-time detail is its row's children")
     assert.equal(await detail.getByRole("button", { name: "Technical details", exact: true }).count(), 0, "identifiers live in readers")
     await captureMissionView(page, "one-time-scoped")
     await selectMission(page, schedule.title)
@@ -241,20 +244,21 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     await detail.locator(".mission-schedule-notice").getByText("This passage's start was accepted, but its end cannot be confirmed. Its original identity is preserved and another passage stays blocked.", { exact: true }).waitFor()
     assert.equal(await detail.getByText("Resume checks the running passage; it never sends it twice.", { exact: true }).count(), 0)
     assert.equal(await missionToolbarAction(page, RUN_NOW).isEnabled(), false, "unknown terminal evidence never offers another passage")
-    // Without a live observer the sentence names the one action that reconciles it.
+    // Without a live observer the sentence names Resume; a native Check is never offered as a control.
     schedule.state = "paused"; schedule.nextDueAt = null; schedule.lastError = undefined
     schedule.pending = { passageID: "pas_stuck", status: "uncertain", trigger: "daily", reason: "not-observed" }
     schedule.actions = ["resume", "check", "stop"]
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
-    await page.getByText("This passage is not being observed. Check passage reconciles it without sending it again.", { exact: true }).waitFor()
-    assert.equal(await page.getByRole("button", { name: "Check the pending passage of Daily source review", exact: true }).count(), 1)
+    await page.getByText("Resume checks the running passage; it never sends it twice.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Check the pending passage of Daily source review", exact: true }).count(), 0)
+    await missionToolbarAction(page, RESUME).waitFor()
     assert.equal(await page.getByText(/last scheduled check failed/).count(), 0)
-    await captureMissionView(page, "uncertain-check-passage")
+    await captureMissionView(page, "uncertain-paused-passage")
     assert.deepEqual(errors, [])
   } catch (error) { console.error(errors, await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
-test("paused pending passage exposes a labelled reconcile-only Check passage control sent once", async () => {
+test("paused pending passage offers Resume as its primary and never a Check passage control", async () => {
   const page = await browser.newPage({ locale: "en-US" }), posts: any[] = [], errors: string[] = []
   page.setDefaultTimeout(10_000)
   page.on("pageerror", error => errors.push(error.message))
@@ -270,29 +274,31 @@ test("paused pending passage exposes a labelled reconcile-only Check passage con
     if (path.endsWith("/control")) {
       const input = recurrenceControlHttpSchema.parse(request.postDataJSON()); posts.push(input)
       const { directory: _directory, ...identity } = input
+      // Resume restarts the daily Job, whose observer then follows the pending passage.
       const status = recurrenceControlStatusSchema.parse({ version: 1, ...identity, revision: input.expectedRevision + 1,
-        state: "paused", outcome: "committed", controlsComplete: true, targets: [] })
-      schedule.revision = status.revision!; schedule.actions = ["resume", "stop"]; schedule.controls = [status]
+        state: "running", outcome: "committed", controlsComplete: true, targets: [] })
+      schedule.revision = status.revision!; schedule.state = "running"; schedule.nextDueAt = Date.UTC(2026, 9, 9, 8, 15)
+      schedule.actions = ["pause", "stop"]; schedule.controls = [status]
       const { outcome: _outcome, ...record } = status
       return route.fulfill({ json: { ...record, targetsKnown: true } })
     }
     return route.fulfill({ json: {} })
   })
+  const PAUSE = `Pause schedule ${TITLE}`
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
     await selectMission(page, schedule.title)
-    const check = missionToolbarAction(page, `Check the pending passage of ${TITLE}`)
-    await check.waitFor()
-    // Check passage is the primary; Stop stays available and Run now stays in place, disabled.
-    assert.deepEqual(await lifecycleButtons(page), [[`Check the pending passage of ${TITLE}`, true], [STOP, true], [RUN_NOW, false]])
-    await captureMissionView(page, "paused-check-passage")
-    await check.click()
-    await check.waitFor({ state: "hidden" })
+    const resume = missionToolbarAction(page, RESUME)
+    await resume.waitFor()
+    // Resume is the primary even though native still offers check; Stop stays available and Run now in place, disabled.
+    assert.deepEqual(await lifecycleButtons(page), [[RESUME, true], [STOP, true], [RUN_NOW, false]])
+    assert.equal(await page.getByRole("button", { name: `Check the pending passage of ${TITLE}`, exact: true }).count(), 0)
+    await captureMissionView(page, "paused-pending-passage")
+    await resume.click()
+    await missionToolbarAction(page, PAUSE).waitFor()
+    assert.equal(await missionToolbarAction(page, CHECK).count(), 0, "a committed Resume is not held")
     assert.equal(posts.length, 1)
-    assert.equal(posts[0].action, "check")
-    await missionToolbarAction(page, CHECK).waitFor({ state: "hidden" })
-    await missionToolbarAction(page, RESUME).waitFor()
-    assert.equal(posts.length, 1, "refresh never resends")
+    assert.equal(posts[0].action, "resume")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -325,7 +331,7 @@ test("proven no-effect refusals release the control and refresh the row; uncerta
     return route.fulfill({ json: {} })
   })
   const PAUSE = `Pause schedule ${TITLE}`
-  const feedback = () => missionDetail(page).locator(".mission-action-feedback [role=status]")
+  const feedback = () => page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]")
   // A proven refusal shows its message, refreshes the row and re-enables the controls.
   const released = async (message: string, before: number) => {
     await feedback().getByText(message, { exact: true }).waitFor()
@@ -384,7 +390,6 @@ const notDispatched = (status: 409 | 503) => ({ status, json: { error: "Recurren
 const variants = [
   { action: "play", state: "paused", actions: ["play", "stop", "run-now"], label: `Play schedule ${TITLE}`, status: 503 },
   { action: "resume", state: "paused", actions: ["resume", "stop", "run-now"], label: RESUME, status: 409 },
-  { action: "check", state: "paused", actions: ["check", "stop"], label: `Check the pending passage of ${TITLE}`, status: 503 },
   { action: "pause", state: "running", actions: ["pause", "stop", "run-now"], label: `Pause schedule ${TITLE}`, status: 409 },
   { action: "stop", state: "paused", actions: ["play", "stop", "run-now"], label: STOP, status: 503 },
   { action: "run-now", state: "paused", actions: ["play", "stop", "run-now"], label: RUN_NOW, status: 409 },
@@ -395,8 +400,7 @@ for (const variant of variants) test(`a ${variant.action} refused before dispatc
   page.on("pageerror", error => errors.push(error.message))
   // Paused schedules make no daily writes: the revision never moves on its own.
   const schedule: RecurrenceSchedule = { ...scheduleFixture(), state: variant.state, actions: [...variant.actions],
-    nextDueAt: variant.state === "running" ? Date.UTC(2026, 9, 9, 8, 15) : null,
-    pending: variant.action === "check" ? { passageID: "pas_manual", status: "running" } : null }
+    nextDueAt: variant.state === "running" ? Date.UTC(2026, 9, 9, 8, 15) : null, pending: null }
   let snapshots = 0
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
@@ -419,11 +423,11 @@ for (const variant of variants) test(`a ${variant.action} refused before dispatc
     const initial = await lifecycleButtons(page), before = snapshots
     await clickMissionAction(page, variant.label)
     if (variant.action === "stop") await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click()
-    await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText(NOT_SENT, { exact: true }).waitFor()
+    await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText(NOT_SENT, { exact: true }).waitFor()
     for (let attempt = 0; snapshots <= before && attempt < 100; attempt++) await page.waitForTimeout(50)
     assert.ok(snapshots > before, "the row revalidates after the refusal")
     // Released: the same controls as before, nothing held, nothing to check.
-    await page.waitForFunction(expected => JSON.stringify([...document.querySelector(".mission-detail .mission-action-bar")!.children]
+    await page.waitForFunction(expected => JSON.stringify([...document.querySelector(".mission-picker-selection-actions .mission-action-bar")!.children]
       .filter(node => node instanceof HTMLButtonElement).slice(0, expected.length)
       .map(node => [node.getAttribute("aria-label"), !(node as HTMLButtonElement).disabled])) === JSON.stringify(expected), initial)
     assert.equal(await missionToolbarAction(page, CHECK).count(), 0)
@@ -470,7 +474,7 @@ for (const action of ["pause", "stop"] as const) test(`a refused partial ${actio
   })
   const held = async () => {
     await missionToolbarAction(page, CHECK).click({ trial: true }) // enabled once row reads settle
-    await missionDetail(page).locator(".mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).waitFor()
+    await page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]").getByText("Control outcome unconfirmed; check status before another action.", { exact: true }).waitFor()
     // Row reads briefly disable Check; the held layout itself never changes.
     const expected = [[CHECK, true], [STOP, false], [RUN_NOW, false]]
     let buttons = await lifecycleButtons(page)

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { stableToken } from "../../missions/receipt-identity"
 
 export interface MissionCreationOperation {
   key: string
@@ -22,6 +23,14 @@ const CAPACITY = 128
 // retry runner. Creation has no terminal mutation receipt; a separate fixed
 // human-answer consumer may settle only its exact original native receipt.
 const held = new WeakMap<WorktreeDeletionFence, Map<string, HeldCreation>>()
+
+/** A later preflight refusal cannot settle this earlier native write. */
+export function hasMissionPreparationHold(fence: WorktreeDeletionFence, requestID: string): boolean {
+  return [...held.get(fence)?.values() ?? []].some(({ binding }) => {
+    const missionID = `msn_${stableToken(`${binding.projectID}\0${requestID}`, 24)}`
+    return binding.missionID === missionID && binding.key === `human:${binding.projectID}:${missionID}`
+  })
+}
 
 export class MissionCreationHoldError extends Error {
   constructor(readonly code: "creation-uncertain" | "creation-conflict" | "creation-capacity") {

@@ -10,11 +10,11 @@
 
 | プラットフォーム | Electron リリース | Tauri リリース | 注意事項 |
 | --- | --- | --- | --- |
-| macOS | ZIP、Intel または Apple Silicon | ZIP、Intel または Apple Silicon | 同梱ランタイムには macOS 13.5 以降が必要です。 |
+| macOS | ZIP、Intel または Apple Silicon | ZIP、Intel または Apple Silicon | Tauri：macOS 14 以降。Electron：macOS 13.5 以降。 |
 | Windows | ZIP、x64 | インストーラー、x64 | Windows 10 以降。Tauri は WebView2 を使用します。 |
 | Linux | Debian パッケージ、x64 | AppImage、x64 | Ubuntu 24.04 でビルド・テスト済み。古いディストリビューションとの互換性は保証されません。 |
 
-デスクトップリリースには、バックエンドと OpenCode インストーラーに必要なランタイムリソースが含まれるため、別途 Node.js/npm をインストールする必要はありません。Git は同梱されません。ネイティブのブラウザー自動操作は Electron と Windows Tauri でサポートされ、その他の Tauri 環境は iframe プレビューを使用します。
+デスクトップリリースには、バックエンドと OpenCode インストーラーに必要なランタイムリソースが含まれるため、別途 Node.js/npm をインストールする必要はありません。Git は同梱されません。Electron と Tauri は Windows、macOS、Linux でエージェントによるネイティブのブラウザー自動操作をサポートします。macOS/Linux の Tauri は WebKit プレビューとネイティブのモバイルプロファイルを使用し、密度と入力にはエンジン固有の制限があります。[ブラウザープレビュー](browser-sidecars.md#signins-automation)を参照してください。
 
 確認済みのダウンロードが起動時にブロックされる場合は、[プラットフォーム別のトラブルシューティング](troubleshooting.md#desktop-launch)を参照してください。警告を回避するためだけに、信頼できないアーカイブを実行しないでください。
 
@@ -45,9 +45,9 @@ Electron の Debian インストールでは Chromium のサンドボックス�
 
 | 要件 | 必要な場所 | 現在の要件 |
 | --- | --- | --- |
-| OpenCode CLI | 該当する場合は選択した WSL ディストリビューションを含む、選択した実行ホスト | 最低 **2.2.3**。推奨／検証済みの対象は **2.2.5**。新しいバージョンやカスタム版は、未テストという理由で禁止せず、契約を検証します。 |
+| OpenCode CLI | 該当する場合は選択した WSL ディストリビューションを含む、選択した実行ホスト | 最低 **2.2.3**。推奨／検証済みの対象は **2.2.7**。新しいバージョンやカスタム版は、未テストという理由で禁止せず、契約を検証します。 |
 | Git | CodeNomad バックエンドのアカウントの `PATH` | リポジトリの識別、Git 操作、ワークツリーに必要です。 |
-| Node.js/npm | スタンドアロンサーバーおよびソースビルドのホスト | Node.js 24 LTS。再現可能なソースビルドは `.node-version`（**24.20.0**）を使用します。デスクトップのランタイム／インストールリソースに同梱されています。 |
+| Node.js/npm | スタンドアロンサーバーおよびソースビルドのホスト | Node.js 24 LTS。再現可能なソースビルドは `.node-version` に固定されたバージョンを使用します。デスクトップリリースは独自のものを含みます（Electron 内蔵の Node または Tauri 同梱の Node、いずれも npm 付き）。 |
 | ワークスペースフォルダー | バックエンドからアクセスできるディスク | 明示的に開いた物理フォルダー。リモートブラウザーから推測した端末ローカルのフォルダーではありません。 |
 
 Windows では、コマンドライン／サードパーティーからのアクセスを有効にして [Git for Windows](https://gitforwindows.org/) をインストールしてください。ユーザーが書き込めるユーザー単位のインストールで十分です。macOS/Linux では、[Git のプラットフォーム別手順](https://git-scm.com/downloads)を使用してください。

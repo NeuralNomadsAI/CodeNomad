@@ -1,0 +1,85 @@
+{
+  "functions": {
+    "option-click": {
+      "plain": "90863b0a65aa2a1c497b545245a8296ad2cfeeab813547ede451d490e2632b1d",
+      "marked": "0a881e6b538aa589f0d895558513d6a2e1d94cbb793f1339d6f0751fefa2cfcf"
+    },
+    "programmatic-click": {
+      "plain": "734dbde138679fda25063747d26b0ffa822061aea13db26ed32e8288dcb1980f",
+      "marked": "80870581fdc8a5751f5da969309b20cbdf0ac425aefc5c9432f3afb9c14b35bd"
+    },
+    "select": {
+      "plain": "7444c1f9021566b13311d45daf37c2ab866a1c74dbe5783529317d6491a4941c",
+      "marked": "a141bc08c8d7c5bff6e6f019dc12ef0a75720e69f4e895437cb1d19b077b149a"
+    },
+    "focus": {
+      "plain": "6fb37154d05f9387248ef22993ebcb95a850c49b561a5627ebaf36ad5854228f",
+      "marked": "eb92152919a890f84e4073024c27ef00bbfd268f532208fcaa839f9bc6cc6683"
+    },
+    "describe": {
+      "plain": "dd657dd6820c450f57e498a8a77f1ff0e8b6db40715891a65438462f1dff309e",
+      "marked": "dd7eed3b51f7a978ef2794caa3a4fad7cf66d817e699de3d3e8dfef056889f39"
+    },
+    "field": {
+      "plain": "1900b6d0121b51cf4a5d29fc605e8b6434250bc0cc77f65c57c2abe83c10e81d",
+      "marked": "87931b63b8dc16dfd5d8b5679f39f49c053f6c7de4193349a987315032712c66"
+    },
+    "prepare": {
+      "plain": "60813db3ea35c405aede8f2509f9d9da1142d1b319615f6fc5c72fa40c0db951",
+      "marked": "7e204012fa0990c918217f010ed84209bfc6eef3c609bac9af12cdc2e4db661c"
+    },
+    "set-value": {
+      "plain": "b942b3037f70886892efd5f5e79e8fb1a123f24983bf225cf90c72be25425873",
+      "marked": "38b3b9535b7269be7352cec9b41603ac88ae9750cc7b58f9b428a4e459d4cd75"
+    },
+    "delete-selection": {
+      "plain": "708ed8fe629bf30c23328f99a7f0c4f41189e709cde4c533465404797b1e6e9d",
+      "marked": "e329fbbc7e98ad022fc462f3bf5c4782dec9ddc2dd28ec2133f82e5d55b63da2"
+    },
+    "read-value": {
+      "plain": "5e2558dd3d0f32375fb371b7f7a9e3244fb4b51e78d601add2b4881d9ad88e5b",
+      "marked": "6ea9a054e607c5153a2075b502c0518f22c4bbb8c4118d1b9d7fae2b143f96b6"
+    },
+    "receives": {
+      "plain": "49653a8b7ef3dfd00a12239165d2f5724f21ae04984360dd1129ed117642787d",
+      "marked": "e82e4bdb6c7e188a3ca8b40c3926de1b1e1e29c432eddbb7d789286925526fcf"
+    },
+    "contains": {
+      "plain": "5d62cfc6187d07d0a964a1eb3db5f6a49a84f375c437d3f606d3e7b07460ed80",
+      "marked": "7c9d1e411468befe4839f1c066446cc828617a04f0e3c8f7c4db01b2f74b5f8a"
+    }
+  },
+  "globals": {
+    "active-element": "07828a2500ef731867740e4ab46774880eac064611688e422bcecb71c6cdc849",
+    "document-root": "59531dfec0550e8542be5b831f2a3e873ea10ea2ee64d665ffb016f2e2222394",
+    "input-acceptance": "bb376d5fec62936887da6418209b9be305b372aff93cbd98adb2edaf013a0b67",
+    "mark-input": "c14fcf467ef073e1b4f0619e60795fa63e3bb17a406f55dcbf75f04b4bc6fb90",
+    "unmark-input": "c0280c55c747c4208020d8463caf9ce044e3ab36310b09f9ef1b2bb89897469c"
+  },
+  "snapshots": {
+    "all": {
+      "text": "- heading \"Checkout\" [b1e1] level=2\n- button \"Save\" [b1e2]\n- textbox \"Name\" [b1e3] value=\"é漢🙂\" focused\n- checkbox \"Remember\" [b1e4] checked=mixed\n- combobox \"Plan\" [b1e5]\n  - option \"Pro\" [b1e6] selected disabled\n- spinbutton \"Quantity\" [b1e7] value=\"3\"",
+      "collapsed": 0,
+      "total": 7,
+      "shown": 7
+    },
+    "query": {
+      "text": "- combobox \"Plan\" [b1e1]\n  - option \"Pro\" [b1e2] selected disabled",
+      "collapsed": 0,
+      "total": 2,
+      "shown": 2
+    },
+    "scoped": {
+      "text": "- combobox \"Plan\" [b1e1]\n  - option \"Pro\" [b1e2] selected disabled",
+      "collapsed": 0,
+      "total": 2,
+      "shown": 2
+    },
+    "bounded": {
+      "text": "- heading \"Checkout\" [b1e1] level=2\n- button \"Save\" [b1e2]\n- (+2 more)\n- combobox \"Plan\" [b1e3] (+1 hidden)\n- spinbutton \"Quantity\" [b1e4] value=\"3\"",
+      "collapsed": 2,
+      "total": 7,
+      "shown": 4
+    }
+  }
+}

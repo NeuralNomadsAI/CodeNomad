@@ -2,8 +2,6 @@
 
 Rehber, bir görevin koordinatörünün izlediği çalışma yöntemidir: adımlar, işlere verebileceği roller ve her ajanın aldığı talimatlar. Bu sayfa her rehberi, CodeNomad'in kendisinin neyi zorunlu kıldığını ve neyin modelden uyması istenen bir talimat olarak kaldığını açıklar.
 
-Bir rehberin tam tanımını okumak için görev oluşturma formunda **Seçenekler** bölümünü açın, bir **Rehber** seçin ve açıklamasının altındaki **Ayrıntıları gör** seçeneğini seçin. Merkezi okuyucu adımlarını ve rollerini gösterir; **Ajanların aldığı talimatlar (İngilizce istem metni)** bölümü, seçili **Görev oturumları** politikası için koordinatörün her turda aldığı metnin tamamını ve her rolün atama mesajının tamamını (**Bağımsız oturumlar** ile, işin oturumunun her turunun eklediği bağlamı da) katlanmış olarak içerir. [objective] gibi köşeli parantez içindeki alanlar her görevin kendi verilerini temsil eder; ayrı mesajlar görevi başlatır veya sürdürür ve iş sonuçlarını iletir. Bu talimatlarda Keşif *Wayfinder Map* olarak adlandırılır.
-
 ## Rehber seçin {#choose}
 
 | Rehber | Ne zaman seçilir |
@@ -45,9 +43,9 @@ Bunlar talimattır. Bir ajanın gerçekte ne yapabileceğini, ajanının ve proj
 
 ### Size sorulan sorular {#questions}
 
-Size yalnızca koordinatör soru sorar. İşler ve yardımcıları kendi sorularını, onları başlatan konuşmaya seçenekler, kanıtlar, sonuçlar, geri alınabilirlik ve bir öneriyle geri gönderir ve yanıta bağlı olmayan işe devam eder. Koordinatör önce yapabildiğini çözer ve kalan soruları **Yanıtınız gerekiyor** altında tek bir formda toplar; neleri sorduğunu ve kararların nasıl etiketlendiğini [Sorular ve kararlar](missions.md#questions) açıklar. Tek seferlik veya zamanlanmış her koordinatör ve her iş ataması bu kuralı talimat olarak alır; Keşif [aşağıdaki](#wayfinder-checks) karar denetimlerini ekler.
+Size yalnızca koordinatör soru sorar. İşler ve yardımcıları kendi sorularını, onları başlatan konuşmaya seçenekler, kanıtlar, sonuçlar, geri alınabilirlik ve bir öneriyle geri gönderir ve yanıta bağlı olmayan işe devam eder. Koordinatör önce yapabildiğini çözer ve kalan soruları görevin kırmızı satırından açılan tek bir formda toplar; neleri sorduğunu ve kararların nasıl etiketlendiğini [Sorular ve kararlar](missions.md#questions) açıklar. Tek seferlik veya zamanlanmış her koordinatör ve her iş ataması bu kuralı talimat olarak alır; Keşif [aşağıdaki](#wayfinder-checks) karar denetimlerini ekler.
 
-İstek panelinde yanıtlayın (**Yanıtınız gerekiyor** altında **Yanıtla**): yalnızca bu sizin yanıtınız sayılır. Sohbete yazılan bir yanıt sıradan bir mesajdır.
+Kırmızı görevi veya işi seçerek açılan istek panelinde yanıtlayın: yalnızca bu sizin yanıtınız sayılır. Sohbete yazılan bir yanıt sıradan bir mesajdır.
 
 ### Durum özetleri ve son rapor {#briefings}
 
@@ -125,7 +123,7 @@ Başarısız bir yeniden üretim kurulamadığında tanı uzmanı tahmin etmek y
 - Yalnızca Hata ayıklama'nın altı rolü kabul edilir.
 - Sıra: uygulayıcı bir tanıya, her inceleyici bir uygulamaya, devam iki incelemeye ve doğrulayıcı devama bağlı olmalıdır. Bir adım ancak bağlı olduğu adım tamamlandığında başlar.
 - İnceleyiciler ve doğrulayıcı yeni konuşmalarda çalışmalıdır; devam, tamamlanmış uygulayıcının konuşmasını sürdürmelidir.
-- Tamamlanan her rol raporu, rolünün yapılandırılmış raporunu tam biçiminde (**Ayrıntıları gör** gösterir) içermelidir; aksi halde reddedilir. Örneğin düzeltme, regresyon testinin başarısız ve başarılı görüldüğünü belirtmeli; doğrulama dört denetim türünün hepsini hiçbiri başarısız olmadan listelemelidir.
+- Tamamlanan her rol raporu, rolünün yapılandırılmış raporunu gereken biçimde içermelidir; aksi halde reddedilir. Örneğin düzeltme, regresyon testinin başarısız ve başarılı görüldüğünü belirtmeli; doğrulama dört denetim türünün hepsini hiçbiri başarısız olmadan listelemelidir.
 - Görev ancak en son uygulamanın öncesinde tamamlanmış bir tanı, sonrasında iki inceleme, bir devam ve bir doğrulama varsa, hepsi bağımlılıklarla bağlıysa ve geçerli yapılandırılmış raporlara sahipse yeşil biter.
 
 Yalnızca talimat olanlar: tanının kalitesi, inceleyicilerin ve doğrulayıcının dosya düzenlememesi ve bir raporun iddialarının doğruluğu. CodeNomad, düzeltmenin testin kırmızıdan yeşile geçtiğini beyan ettiğini denetler; testi gerçekten çalıştırdığını değil.
@@ -165,7 +163,7 @@ Sorumlular size asla sormaz; özetleri ve hazır soruları koordinatöre döndü
 
 - Kanıt yeterli ve seçimin geri alınması ucuzsa **kendisi karar verir**.
 - Henüz gerekmeyen bir kararı **erteler**: işi geri çeker ve soruyu notlarda sis olarak tutar.
-- **Size sorar**; bekleyen kararları **Yanıtınız gerekiyor** altında tek bir formda toplar.
+- **Size sorar**; bekleyen kararları görevin kırmızı satırından açılan tek bir formda toplar.
 
 Yanıtınızı asla kendisi yazmaz ve kendi kararını sizinki gibi sunmaz. Sonucu nerede okuyacağınız **Görev oturumları** ayarına bağlıdır:
 
@@ -187,7 +185,7 @@ Yalnızca talimat olanlar: bir seçimin ne zaman geri alınması ucuz sayılaca�
 Bir harita alırsınız: varış noktası, kimin verdiğiyle birlikte kayıtlı kararlar, araştırma bulguları, prototipler, notlarda kalan sis ve bir son rapor. Tek seferlik bir görevin koordinatörü ayrıca sizin başlatacağınız bir devam görevi hazırlayabilir. Tuzaklar:
 
 - Keşif planlar; varış noktasını inşa etmez. Uygulamak için başka bir rehber veya hazırlanan devam görevini kullanın.
-- Sohbette değil, **Yanıtınız gerekiyor** altında yanıtlayın: yalnızca istek panelinde verilen yanıt sizinki sayılır.
+- Sohbette değil, kırmızı satırdan açılan istek panelinde yanıtlayın: yalnızca istek panelinde verilen yanıt sizinki sayılır.
 - **Yerel alt ajanlar** ile **Koordinatör kararı** etiketli sonuçları, **Bağımsız oturumlar** ile **Notlar** içindeki sonuçları okuyun. Bir kararı değiştirmek için **Konuşmayı aç** üzerinden koordinatöre yazın.
 - Belirsiz ifade edilmiş bir varış noktası haritanın çoğunu siste bırakır.
 
@@ -258,7 +256,7 @@ Koordinatör tam olarak iki farklı modeli karşılaştırır. Başarısızlıkl
 
 ### CodeNomad'in denetledikleri {#compare-checks}
 
-- Oluşturma sırasında **Model A** ve **Model B** zorunludur ve farklı modeller olmalıdır; yalnızca farklı bir **Düşünme** düzeyi farklı bir model sayılmaz. Siz bir model seçmedikçe hakem, oluşturma sırasında sabitlenen koordinatör modelini kullanır; bu model A veya B ile aynıysa form uyarır.
+- Oluşturma sırasında **Model A** ve **Model B** zorunludur ve farklı modeller olmalıdır; yalnızca farklı bir **Düşünme** düzeyi farklı bir model sayılmaz. Siz bir model seçmedikçe hakem, oluşturma sırasında sabitlenen koordinatör modelini kullanır.
 - Yalnızca İki modeli karşılaştır rehberinin üç rolü kabul edilir. Her çalıştırma ve hakem yeni bir konuşmada başlamalıdır, bir çalıştırma rolünün modelini değiştiremez, model başına tek bir etkin çalıştırma vardır ve iki özet bayt bayt aynı olmalıdır.
 - Yapılandırılmış rapor yalnızca hakem ekleyebilir; rapor tamamlanmış A ve B çalıştırmalarına bu sırayla başvurmalı, her ölçütü en az bir kanıtla 0'dan 10'a kadar bir kez puanlamalı ve dört karardan birini vermelidir.
 - Görev yalnızca tamamlanmış A, B ve hakem işleri ve geçerli bir karşılaştırmayla biter.

@@ -5,12 +5,14 @@ import path from "node:path"
 import os from "node:os"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
-import { chromium, type Browser, type Locator, type Page } from "playwright"
+import { chromium, type Browser, type Locator, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
-import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionPopupOption,
-  missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
+import { clickMissionAction, inlineMissionEntry, missionEntryStatus, missionGeneralAction, missionRow, missionMenuTrigger, missionPicker, missionRows, missionToolbar,
+  missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle, depthInfo, depthMenu, waitForDepthInfo, waitForDepthReady,
+  routeUiSettings, waitForMissionDeleteSessions, openTaskReader, selectMissionTask, selectTaskMission, expandRow } from "./mission-actions"
 
 import { borrowFixture } from "./fixture-borrow"
+import { createMissionFailureDiagnostics } from "./mission-failure-diagnostics"
 import { isMissionContentRequest, listedMissions, panelMissions, routeMissionContent } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -56,7 +58,10 @@ async function setup(page: Page, windowContext: "local" | "remote" = "local") {
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } }))
   await routeMissionContent(page, listedMissions)
 }
-const fixtureCall = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+const fixtureCall = async (page: Page, method: string, arg?: unknown) => {
+  await page.waitForFunction(method => typeof (window as any).missionFixture?.[method] === "function", method)
+  return page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+}
 /** Polls a condition on test-process state, such as what a route handler recorded. */
 async function until(condition: () => boolean, timeout = 5_000) {
   for (const start = Date.now(); !condition();) {
@@ -66,20 +71,22 @@ async function until(condition: () => boolean, timeout = 5_000) {
 }
 /** The selected Mission's detail: a separate section below the picker. */
 const selectedCard = (page: Page) => page.locator("section.mission-detail")
-/** Screen-reader status ("State · time") of the Mission shown in the current-mission field. */
-const selectedStatus = (page: Page, state: string) => missionPickerField(page).locator(".sr-only").filter({ hasText: new RegExp(`^${state} · `) })
+/** Screen-reader status ("State · time") of the selected Mission's row. */
+const selectedStatus = (page: Page, state: string) => page.locator(".mission-row-select[aria-current=true] .sr-only").filter({ hasText: new RegExp(`^${state} · `) })
 /** The selected Mission's contextual Play/Pause/Check control: the toolbar's first button. */
-const primaryControl = (page: Page) => selectedCard(page).locator(".mission-action-bar > button").first()
-const taskRow = (page: Page, key: string) => page.locator(`.mission-tree li[data-task-key="${key}"]`)
+const primaryControl = (page: Page) => missionToolbar(page).locator("button").first()
+const taskRow = (page: Page, key: string) => page.locator(`.mission-tree .mission-tree-node[data-task-key="${key}"]`)
 const taskButton = (page: Page, key: string) => taskRow(page, key).locator(".mission-tree-task")
-const taskState = (page: Page, key: string, state: string) => page.locator(`.mission-tree li[data-task-key="${key}"][data-state="${state}"]`)
-const readAll = (page: Page) => selectedCard(page).locator(".mission-overview-toggle")
+const taskState = (page: Page, key: string, state: string) => page.locator(`.mission-tree .mission-tree-node[data-task-key="${key}"][data-state="${state}"]`)
+const readAll = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const fixtureText = (page: Page, key: string) => fixtureCall(page, "text", key) as Promise<string>
-/** Locale-neutral explicit picker choice (the field's accessible name is localized). */
+/** Locale-neutral explicit choice of a row by its title. */
 async function pickLocalized(page: Page, title: string) {
-  await missionPicker(page).locator("button.mission-picker-field").click()
-  await missionPopupOption(page, title).click()
+  const entry = await inlineMissionEntry(page, title)
+  await entry.click()
+  // A click only selects the row; its chevron shows the detail.
+  await expandRow(entry)
   await selectedCard(page).waitFor()
 }
 async function localizedPreferences(page: Page, name: string) {
@@ -108,6 +115,9 @@ const settingsFits = (page: Page) => page.locator(".settings-screen-scroll").eva
 /** Plan changes, reports, cleanup history and identifiers are folded at the
  * bottom of the central overview reader; the panel keeps none of them. */
 async function openOverviewFold(page: Page, label: string) {
+  // A selected task holds the toolbar and its eye: selecting its Mission row gives the eye
+  // back to the overview (an open task reader follows to it).
+  await selectTaskMission(page)
   if (await readAll(page).getAttribute("aria-pressed") !== "true") await readAll(page).click()
   const fold = page.locator(".mission-reader details.mission-report-technical").filter({ has: page.locator(":scope > summary", { hasText: new RegExp(`^${label}$`) }) })
   if (!await fold.evaluate(element => (element as HTMLDetailsElement).open)) await fold.locator(":scope > summary").click()
@@ -292,7 +302,7 @@ for (const failBeforeRelease of [false, true]) test(`localized Missions preferen
   assert.equal(page.isClosed(), true)
 })
 
-test("Delegation depth reads only on demand, saves zero/inherit on Enter without native reload or global preference writes and keeps a rejected draft's original Location", async () => {
+test("Delegation depth is one labelled menu, read only on demand: Inherit then 1 to 10 within the contract, each choice saved at once without native reload or global preference writes", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
   const mutations: Array<{ url: string; body: any }> = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -303,7 +313,7 @@ test("Delegation depth reads only on demand, saves zero/inherit on Enter without
     await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
       if (route.request().method() === "GET") {
         reads++
-        return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0, maximum: 4 }, effectiveDepth: null,
+        return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0, maximum: 4 }, effectiveDepth: depth ?? 3,
           project: { path: "fixture/opencode.jsonc", depth, expectation } } })
       }
       const body = route.request().postDataJSON(); mutations.push({ url: route.request().url(), body })
@@ -314,51 +324,47 @@ test("Delegation depth reads only on demand, saves zero/inherit on Enter without
     await page.waitForFunction(() => (window as any).missionFixture.loaded())
     assert.equal(reads, 0)
     await openMissionSettings(page)
-    const controls = page.locator(".mission-depth"), input = controls.getByRole("spinbutton", { name: "Depth override for the project", exact: true })
-    await controls.getByText("fixture/opencode.jsonc", { exact: true }).waitFor()
-    assert.equal(await input.getAttribute("min"), "0")
-    assert.equal(await input.getAttribute("max"), "4")
-    await controls.getByText("OpenCode effective depth unknown", { exact: true }).waitFor()
-    assert.equal(await controls.getByRole("button", { name: /^(Save|Refresh project depth)$/ }).count(), 0, "no save step; refreshing is only a recovery")
-    const rejected = controls.getByText(await fixtureText(page, "missions.depth.invalidValue"), { exact: true })
-    for (const value of ["-1", "5", "1.5", "9007199254740992"]) {
-      await input.fill(value); await input.press("Enter")
-      await rejected.waitFor()
-    }
-    await input.fill(""); await input.press("-"); await input.press("Enter")
-    await rejected.waitFor()
-    assert.equal(mutations.length, 0, "invalid or incomplete numeric input is never written, nor read as inherit")
-    await input.fill("5"); await input.press("Enter")
-    await closeMissionSettings(page); await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true); await openMissionSettings(page)
-    assert.equal(await input.inputValue(), "5")
-    assert.equal(reads, 1, "a rejected draft never rebases the saved file expectation")
+    const controls = page.locator(".mission-depth"), menu = controls.getByRole("combobox", { name: "Subagent depth", exact: true })
+    await waitForDepthReady(page)
+    // The inherited depth names Inherit; the contract's maximum bounds the choices.
+    assert.deepEqual(await menu.locator("option").allInnerTexts(), ["Inherit (3)", "1", "2", "3", "4"])
+    assert.equal(await menu.inputValue(), "")
+    // One row: the label and its menu. Everything else is behind the one info tip.
+    assert.equal(await controls.locator(".settings-info-tip").count(), 1)
+    assert.equal(await controls.locator("p:not(.sr-only)").count(), 0, "no prose under the row")
+    assert.equal(await controls.locator("button:not(.settings-info-tip)").count(), 0, "the information trigger is the only button; refreshing is only a recovery")
+    assert.deepEqual(await depthInfo(page), [await fixtureText(page, "missions.depth.hint"), await fixtureText(page, "missions.depth.nesting.rule"),
+      "OpenCode effective depth: 3", "Project write target: fixture/opencode.jsonc", "OpenCode configuration file: No document path"])
     for (const width of [1100, 640, 390]) {
       await page.setViewportSize({ width, height: 850 })
       await controls.scrollIntoViewIfNeeded()
       assert.equal(await settingsFits(page), true)
+      // Label and menu share one line at every width.
+      const [label, box] = [await controls.locator("label > span").boundingBox(), await menu.boundingBox()]
+      assert.ok(label && box && label.y < box.y + box.height && box.y < label.y + label.height && label.x + label.width <= box.x + 1,
+        `one line at ${width}px: ${JSON.stringify([label, box])}`)
       await page.screenshot({ path: screenshotPath(`mission-delegation-depth-${width}`) })
     }
     await page.setViewportSize({ width: 1100, height: 850 })
-    await input.fill("0"); await input.press("Enter")
-    await controls.getByText("Configuration saved. OpenCode was not reloaded.", { exact: true }).waitFor()
-    assert.equal(await input.evaluate(element => element === document.activeElement), true, "saving keeps keyboard focus in the field")
-    assert.deepEqual(mutations[0].body, { location: { directory: "fixture" }, depth: 0, expectation: "original-file" })
-    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
-    // Typing then pressing Inherit inherits; leaving the field for the button does not save the typed value first.
-    await input.fill("3")
-    await controls.getByRole("button", { name: "Inherit", exact: true }).click()
-    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".mission-depth input")?.value === "")
+    await menu.selectOption("4")
+    await controls.getByRole("status").filter({ hasText: "Configuration saved. OpenCode was not reloaded." }).waitFor({ state: "attached" })
+    assert.deepEqual(mutations[0].body, { location: { directory: "fixture" }, depth: 4, expectation: "original-file" })
+    await waitForDepthInfo(page, "OpenCode effective depth: 4")
+    await waitForDepthReady(page)
+    // With a project depth set, Inherit no longer knows the value it would restore.
+    assert.deepEqual(await menu.locator("option").allInnerTexts(), ["Inherit", "1", "2", "3", "4"])
+    await menu.selectOption("")
     await until(() => mutations.length === 2)
-    await page.waitForTimeout(100)
-    assert.equal(mutations.length, 2, "the abandoned typed value is never written")
     assert.equal(mutations[1].body.depth, null)
     assert.equal(mutations[1].body.expectation, "saved-1")
+    await waitForDepthInfo(page, "OpenCode effective depth: 3")
+    assert.equal(await menu.locator("option").first().innerText(), "Inherit (3)")
     assert.ok(mutations.every(item => item.url.includes("/subagent-depth")))
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
 
-test("a depth write acknowledged after leaving Settings is accepted and reread on return, and Escape discards an unsaved value", async () => {
+test("a depth write acknowledged after leaving Settings is accepted and reread on return", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let reads = 0, writes = 0, depth: number | null = 1, expectation = "e1", release!: () => void, reached!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { reached = resolve })
@@ -377,24 +383,22 @@ test("a depth write acknowledged after leaving Settings is accepted and reread o
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await openMissionSettings(page)
-    const input = page.locator(".mission-depth input")
-    await page.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
-    await input.fill("4"); await input.press("Escape")
-    assert.equal(await input.inputValue(), "1", "Escape restores the saved value")
-    assert.equal(await page.locator(".settings-screen-shell").count(), 1, "and keeps Settings open")
-    await input.fill("2"); await input.press("Enter"); await started
+    const menu = depthMenu(page)
+    await waitForDepthInfo(page, "OpenCode effective depth: 1")
+    await waitForDepthReady(page)
+    await menu.selectOption("2"); await started
     await closeMissionSettings(page)
     release()
     await until(() => depth === 2)
     await openMissionSettings(page)
-    await page.getByText("OpenCode effective depth: 2", { exact: true }).waitFor()
-    assert.equal(await page.getByText("Save not confirmed. Your draft is kept; refresh before another change. No automatic retry.", { exact: true }).count(), 0)
-    assert.equal(await input.isEditable(), true)
+    await waitForDepthInfo(page, "OpenCode effective depth: 2")
+    assert.equal(await page.getByText("Save not confirmed. Your choice is kept; refresh before another change. No automatic retry.", { exact: true }).count(), 0)
+    await waitForDepthReady(page)
     assert.equal(writes, 1); assert.equal(reads, 2, "the acknowledged write is reread once the section is visible again")
   } finally { release(); await page.close() }
 })
 
-test("Inherit repairs an existing empty project experimental block and displays the effective origin separately from its write target", async () => {
+test("Inherit repairs an existing empty project experimental block and the info names the effective origin separately from its write target", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let empty = true, expectation = "empty-block"
   const writes: unknown[] = []
@@ -410,19 +414,24 @@ test("Inherit repairs an existing empty project experimental block and displays 
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await openMissionSettings(page)
-    const controls = page.locator(".mission-depth")
-    await controls.getByText("OpenCode effective depth unknown", { exact: true }).waitFor()
-    await controls.getByText("Project write target: fixture/opencode.jsonc", { exact: true }).waitFor()
-    await controls.getByText("OpenCode configuration file: fixture/opencode.jsonc", { exact: true }).waitFor()
-    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
-    assert.equal(await controls.locator("input").inputValue(), "", "no override is set")
-    await controls.getByRole("button", { name: "Inherit", exact: true }).click()
-    await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
-    await controls.getByText("OpenCode configuration file: /global/opencode.jsonc", { exact: true }).waitFor()
-    await controls.getByText("Project write target: fixture/opencode.jsonc", { exact: true }).waitFor()
-    assert.equal(await controls.locator('code[title="/global/opencode.jsonc"]').getAttribute("dir"), "ltr")
+    const menu = depthMenu(page)
+    await waitForDepthInfo(page, "OpenCode effective depth unknown")
+    await waitForDepthInfo(page, "Project write target: fixture/opencode.jsonc")
+    await waitForDepthInfo(page, "OpenCode configuration file: fixture/opencode.jsonc")
+    await waitForDepthReady(page)
+    // No override is set, but the empty block hides the inherited depth: the menu shows
+    // OpenCode's default, and Inherit (a change) repairs it.
+    assert.equal(await menu.inputValue(), "masked")
+    assert.deepEqual((await menu.locator("option").allInnerTexts()).slice(0, 2), ["Inherit", "OpenCode default (?)"])
+    await menu.selectOption("")
+    await waitForDepthInfo(page, "OpenCode effective depth: 5")
+    await waitForDepthInfo(page, "OpenCode configuration file: /global/opencode.jsonc")
+    await waitForDepthInfo(page, "Project write target: fixture/opencode.jsonc")
+    // Paths stay left-to-right inside right-to-left text.
+    assert.match(await page.locator(".mission-depth .settings-info-tip").getAttribute("aria-label") ?? "", /: \u2066\/global\/opencode\.jsonc\u2069/)
     assert.deepEqual(writes, [{ location: { directory: "fixture" }, depth: null, expectation: "empty-block" }])
-    assert.equal(await controls.getByRole("button", { name: "Inherit", exact: true }).isDisabled(), true, "nothing left to inherit")
+    assert.equal(await menu.inputValue(), "")
+    assert.deepEqual((await menu.locator("option").allInnerTexts()).slice(0, 2), ["Inherit (5)", "1"], "repaired, the default is no longer offered")
   } finally { await page.close() }
 })
 
@@ -441,8 +450,6 @@ test("the depth editor states the nesting rule and whether General subagents can
     "7": { effectiveDepth: 7, depth: 7, nesting: { effect: "deny", hidden: true }, nestingSkipped: true },
     // The rule is written with a depth of 1 too, but OpenCode's depth limit still stops nesting.
     "1": { effectiveDepth: 1, depth: 1, nesting: { effect: "allow" } },
-    // 0 keeps OpenCode's meaning: no subagents at all.
-    "0": { effectiveDepth: 0, depth: 0, nesting: { effect: "allow" } },
   }
   let state = states.initial
   const writes: unknown[] = []
@@ -460,36 +467,34 @@ test("the depth editor states the nesting rule and whether General subagents can
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await openMissionSettings(page)
-    const controls = page.locator(".mission-depth"), input = controls.locator("input"), note = controls.locator(".mission-depth-nesting")
+    const controls = page.locator(".mission-depth"), menu = depthMenu(page)
+    // The info's nesting line follows the effective depth's line.
+    const note = async () => { const lines = await depthInfo(page); return lines[lines.findIndex(line => line.startsWith("OpenCode effective depth")) + 1] }
     const save = async (value: string, effective: number) => {
-      await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
-      await input.fill(value); await input.press("Enter")
-      await controls.getByText(`OpenCode effective depth: ${effective}`, { exact: true }).waitFor()
+      await waitForDepthReady(page)
+      await menu.selectOption(value)
+      await waitForDepthInfo(page, `OpenCode effective depth: ${effective}`)
     }
-    await controls.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
-    assert.equal(await controls.locator(".mission-depth-rule").innerText(), "Setting a project depth also lets subagents launch their own subagents in this project, up to that depth; at 1, OpenCode's own limit still stops nesting. This project rule takes precedence over General's restrictions from other config files.")
-    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.")
+    await waitForDepthInfo(page, "OpenCode effective depth: 1")
+    assert.ok((await depthInfo(page)).includes("Setting a project depth also lets subagents launch their own subagents in this project, up to that depth; at 1, OpenCode's own limit still stops nesting. This project rule takes precedence over General's restrictions from other config files."))
+    assert.equal(await note(), "At this depth, OpenCode's own depth limit stops nesting.")
     await save("3", 3)
-    assert.equal(await note.innerText(), "General subagents can launch their own subagents here, so they nest up to this depth.")
+    assert.equal(await note(), "General subagents can launch their own subagents here, so they nest up to this depth.")
     await save("2", 2)
-    assert.equal(await note.innerText(), "General subagents ask before launching other General subagents here.")
+    assert.equal(await note(), "General subagents ask before launching other General subagents here.")
     await save("4", 4)
-    assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest.")
+    assert.equal(await note(), "General subagents cannot launch subagents here, so they do not nest.")
     await save("6", 6)
-    assert.equal(await note.innerText(), "General subagents cannot launch other General subagents here; launching other agents depends on their permissions.")
+    assert.equal(await note(), "General subagents cannot launch other General subagents here; launching other agents depends on their permissions.")
     assert.equal(await controls.getByText("Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.", { exact: true }).count(), 0, "the rule was written")
     await save("7", 7)
     assert.equal(await controls.getByRole("alert").filter({ hasText: "Only the depth was saved" }).innerText(), "Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.")
-    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
-    await controls.getByRole("button", { name: "Inherit", exact: true }).click()
-    await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
-    assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest.")
+    await save("", 5)
+    assert.equal(await note(), "General subagents cannot launch subagents here, so they do not nest.")
     await save("1", 1)
-    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.",
+    assert.equal(await note(), "At this depth, OpenCode's own depth limit stops nesting.",
       "General may launch subagents, but a depth of 1 still stops nesting")
-    await save("0", 0)
-    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.")
-    assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, 6, 7, null, 1, 0], "only depth writes")
+    assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, 6, 7, null, 1], "only depth writes")
     assert.equal(await controls.getByText("Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.", { exact: true }).count(), 0, "no warning without the depth-only save")
   } finally { await page.close() }
 })
@@ -509,7 +514,6 @@ test("the mission editor's Scheduling never displays an OpenCode configuration p
       origin = path
       await missionGeneralAction(page, "Create mission").click()
       const editor = page.locator("form.mission-editor"), scheduling = editor.locator(".mission-scheduling")
-      await scheduling.locator("summary").click()
       await page.waitForFunction(() => !document.querySelector<HTMLOptionElement>('form.mission-editor .mission-scheduling option[value="daily"]')?.disabled)
       assert.equal(await scheduling.getByText(/OpenCode configuration file:|No document path|opencode\.jsonc/).count(), 0)
       assert.equal(await scheduling.locator("code").count(), 0)
@@ -519,10 +523,11 @@ test("the mission editor's Scheduling never displays an OpenCode configuration p
   } finally { await page.close() }
 })
 
-test("a depth read only makes the field read-only; only a write announces Saving", async () => {
+test("a depth read only locks the menu; only a write announces Saving", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const read = Promise.withResolvers<void>(), write = Promise.withResolvers<void>(), reading = Promise.withResolvers<void>(), writing = Promise.withResolvers<void>()
   let depth = 2
+  const writes: number[] = []
   try {
     await setup(page, "remote")
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
@@ -533,30 +538,43 @@ test("a depth read only makes the field read-only; only a write announces Saving
           project: { path: "fixture/opencode.jsonc", depth, expectation: `e${depth}` } } })
       }
       writing.resolve(); await write.promise
-      depth = route.request().postDataJSON().depth
+      depth = route.request().postDataJSON().depth; writes.push(depth)
       return route.fulfill({ status: 204, body: "" })
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await missionGeneralAction(page, "Create mission").click()
-    await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
-    const controls = page.locator("form.mission-editor .mission-depth"), input = controls.locator("input")
+    const form = page.locator("form.mission-editor"), controls = form.locator(".mission-depth"), menu = depthMenu(form)
+    const locked = () => menu.evaluate(element => element.getAttribute("aria-disabled") === "true")
     await reading.promise
-    assert.equal(await input.evaluate(element => (element as HTMLInputElement).readOnly), true, "a read locks the field")
-    assert.deepEqual(await controls.getByRole("status").allInnerTexts(), [], "and announces no save")
+    assert.equal(await locked(), true, "a read locks the menu")
+    assert.equal(await controls.getByRole("status").count(), 0, "and announces no save")
     read.resolve()
-    await controls.getByText("OpenCode effective depth: 2", { exact: true }).waitFor()
-    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
-    await input.fill("3"); await input.press("Enter")
+    await waitForDepthInfo(form, "OpenCode effective depth: 2")
+    await waitForDepthReady(form)
+    await menu.selectOption("3")
     await writing.promise
-    await controls.getByRole("status").filter({ hasText: "Saving…" }).waitFor()
-    assert.equal(await input.evaluate(element => (element as HTMLInputElement).readOnly), true, "a write locks the field too")
+    await controls.getByRole("status").filter({ hasText: "Saving…" }).waitFor({ state: "attached" })
+    assert.equal(await locked(), true, "a write locks the menu too")
+    assert.equal(await menu.evaluate(element => (element as HTMLSelectElement).disabled), false, "and keeps it focusable")
+    // Choices made during the write (a native closed select's arrow keys fire one change
+    // per step) are kept, shown, and the latest is written once the first write's read has
+    // settled; the intermediate one is never written.
+    await menu.focus()
+    for (const value of ["4", "5"]) await menu.evaluate((element, value) => {
+      (element as HTMLSelectElement).value = value; element.dispatchEvent(new Event("change", { bubbles: true }))
+    }, value)
+    assert.equal(await menu.inputValue(), "5")
+    assert.deepEqual(writes, [], "the first write is still held, and nothing else is sent")
     write.resolve()
-    await controls.getByText("OpenCode effective depth: 3", { exact: true }).waitFor()
-    assert.equal(await controls.getByText("Saving…", { exact: true }).count(), 0)
+    await waitForDepthInfo(form, "OpenCode effective depth: 5")
+    assert.deepEqual(writes, [3, 5])
+    assert.equal(await menu.inputValue(), "5")
+    assert.equal(await menu.evaluate(element => element === document.activeElement), true, "focus stays on the menu")
+    await page.waitForFunction(() => !document.querySelector(".mission-depth [role=status]")?.textContent?.includes("Saving…"))
   } finally { read.resolve(); write.resolve(); await page.close() }
 })
 
-test("Enter in the creation form's depth field saves the depth without creating the mission", async () => {
+test("choosing a depth in the creation form, then Enter on its menu, saves the depth without creating the mission", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let depth = 2, expectation = "e1"
   const writes: Array<{ path: string; body: unknown }> = []
@@ -577,17 +595,20 @@ test("Enter in the creation form's depth field saves the depth without creating 
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await missionGeneralAction(page, "Create mission").click()
     const form = page.locator("form.mission-editor")
-    await form.getByLabel("What should the mission do?", { exact: true }).fill("Do not create until I press Create")
-    await form.locator("summary").filter({ hasText: /^Options$/ }).click()
-    const input = form.locator(".mission-depth input")
-    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".mission-depth input")?.value === "2"
-      && !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
-    await input.fill("3")
-    await input.press("Enter")
-    await form.locator(".mission-depth").getByText("OpenCode effective depth: 3", { exact: true }).waitFor()
-    await input.press("Enter")
+    await form.getByLabel("Objective", { exact: true }).fill("Do not create until I press Create")
+    // The footer names the action; the configuration picker carries the bookmark.
+    const brief = form.locator(".window-footer").getByRole("button", { name: "Save configuration", exact: true })
+    assert.equal(await brief.innerText(), "Save configuration")
+    assert.equal(await form.locator(".mission-brief-picker > label > svg").count(), 1)
+    // The depth is a row of the Delegation group, under Task sessions.
+    const delegation = form.getByRole("group", { name: "Delegation", exact: true }), menu = depthMenu(delegation)
+    await waitForDepthReady(form)
+    assert.equal(await menu.inputValue(), "2")
+    await menu.selectOption("3")
+    await waitForDepthInfo(form, "OpenCode effective depth: 3")
+    await menu.press("Enter")
     assert.deepEqual(writes, [{ path: "depth", body: { location: { directory: "fixture" }, depth: 3, expectation: "e1" } }], "no mission write")
-    assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Do not create until I press Create")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Do not create until I press Create")
   } finally { await page.close() }
 })
 
@@ -617,25 +638,25 @@ test("visible clean depth revalidates after config and connection changes while 
       return route.fulfill({ status: 503, json: { error: "Acknowledgement unknown" } })
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
-    const input = page.locator(".mission-depth input")
-    await openMissionSettings(page); await page.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
+    const menu = depthMenu(page)
+    await openMissionSettings(page); await waitForDepthInfo(page, "OpenCode effective depth: 1")
     depth = 4; expectation = "changed"
-    await invalidate(); await page.getByText("OpenCode effective depth: 4", { exact: true }).waitFor()
+    await invalidate(); await waitForDepthInfo(page, "OpenCode effective depth: 4")
     assert.equal(reads, 2)
-    depth = 3; await invalidate(true); await page.getByText("OpenCode effective depth: 3", { exact: true }).waitFor()
+    depth = 3; await invalidate(true); await waitForDepthInfo(page, "OpenCode effective depth: 3")
     assert.equal(reads, 3)
-    await input.fill("2"); depth = 5; await invalidate(true); await page.waitForTimeout(150)
-    assert.equal(await input.inputValue(), "2"); assert.equal(reads, 3, "dirty file expectation is not rebased")
-    await input.press("Enter")
-    await page.getByText("Save not confirmed. Your draft is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
-    await invalidate(); await page.waitForTimeout(150)
-    assert.equal(reads, 3); assert.equal(writes, 1, "unknown admission is not retried or silently refreshed")
+    await waitForDepthReady(page)
+    await menu.selectOption("2")
+    await page.getByText("Save not confirmed. Your choice is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
+    depth = 5; await invalidate(true); await invalidate(); await page.waitForTimeout(150)
+    assert.equal(await menu.inputValue(), "2", "the unconfirmed choice is kept")
+    assert.equal(reads, 3, "its file expectation is not rebased"); assert.equal(writes, 1, "unknown admission is not retried or silently refreshed")
     await closeMissionSettings(page); await invalidate(true); await page.waitForTimeout(150)
     assert.equal(reads, 3, "hidden preference demand stays closed")
   } finally { await page.close() }
 })
 
-test("config invalidation fences an admitted stale depth response and keeps the field read-only through its trailing refresh", async () => {
+test("config invalidation fences an admitted stale depth response and keeps the menu locked through its trailing refresh", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let reads = 0, depth = 1, release!: () => void, reached!: () => void
   const held = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { reached = resolve })
@@ -655,23 +676,67 @@ test("config invalidation fences an admitted stale depth response and keeps the 
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await openMissionSettings(page)
-    await page.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
+    await waitForDepthInfo(page, "OpenCode effective depth: 1")
     await page.evaluate(() => {
       const bad: string[] = []; (window as any).staleDepthPublications = bad
       new MutationObserver(() => {
-        const effective = document.querySelector(".mission-depth-effective")?.textContent
-        if (effective === "OpenCode effective depth: 2") bad.push(effective)
-        const input = document.querySelector<HTMLInputElement>(".mission-depth input")
-        if (effective === "OpenCode effective depth: 1" && input && !input.readOnly) bad.push("old snapshot unlocked")
+        const info = document.querySelector(".mission-depth .settings-info-tip")?.getAttribute("aria-label")?.split("\n") ?? []
+        if (info.includes("OpenCode effective depth: 2")) bad.push("stale snapshot published")
+        const menu = document.querySelector<HTMLSelectElement>(".mission-depth select")
+        if (info.includes("OpenCode effective depth: 1") && menu && !menu.hasAttribute("aria-disabled")) bad.push("old snapshot unlocked")
       }).observe(document.querySelector(".mission-depth")!, { subtree: true, childList: true, characterData: true, attributes: true })
     })
+    const locked = () => depthMenu(page).evaluate(menu => menu.getAttribute("aria-disabled") === "true")
     depth = 2; await invalidate(); await started
-    assert.equal(await page.locator(".mission-depth input").isEditable(), false)
+    assert.equal(await locked(), true)
     depth = 4; await invalidate(); release()
-    await page.getByText("OpenCode effective depth: 4", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-depth input").isEditable(), true)
+    await waitForDepthInfo(page, "OpenCode effective depth: 4")
+    await waitForDepthReady(page)
     assert.equal(reads, 3)
     assert.deepEqual(await page.evaluate(() => (window as any).staleDepthPublications), [])
+  } finally { release(); await page.close() }
+})
+
+for (const foreign of [false, true]) test(`a depth chosen during a held refresh is written after it ${foreign ? "only if no other writer changed the depth" : "against its fresh expectation"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let reads = 0, depth = 2, expectation = "e-2", release!: () => void, reached!: () => void
+  const held = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { reached = resolve })
+  const writes: unknown[] = []
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/subagent-depth*", async route => {
+      if (route.request().method() !== "GET") {
+        writes.push(route.request().postDataJSON()); depth = route.request().postDataJSON().depth; expectation = `e-${depth}`
+        return route.fulfill({ status: 204, body: "" })
+      }
+      if (++reads === 2) { reached(); await held }
+      return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 }, effectiveDepth: depth,
+        project: { path: "fixture/opencode.jsonc", depth, expectation } } })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await openMissionSettings(page)
+    const menu = depthMenu(page)
+    await waitForDepthInfo(page, "OpenCode effective depth: 2")
+    await page.evaluate(async () => {
+      const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
+      serverEvents.dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "config.updated" } } as any])
+    })
+    await started
+    await menu.evaluate(element => { (element as HTMLSelectElement).value = "5"; element.dispatchEvent(new Event("change", { bubbles: true })) })
+    assert.equal(await menu.inputValue(), "5", "the choice is shown while the refresh is held")
+    if (foreign) { depth = 7; expectation = "e-foreign" }
+    release()
+    if (foreign) {
+      await waitForDepthInfo(page, "OpenCode effective depth: 7")
+      await waitForDepthReady(page)
+      await page.waitForTimeout(150)
+      assert.deepEqual(writes, [], "another writer's depth wins over the queued choice")
+      assert.equal(await menu.inputValue(), "7")
+    } else {
+      await waitForDepthInfo(page, "OpenCode effective depth: 5")
+      assert.deepEqual(writes, [{ location: { directory: "fixture" }, depth: 5, expectation: "e-2" }])
+    }
   } finally { release(); await page.close() }
 })
 
@@ -693,37 +758,73 @@ test("depth uncertainty stays at its original Location through pending navigatio
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await openMissionSettings(page)
-    const input = page.locator(".mission-depth input"), refresh = page.getByRole("button", { name: "Refresh project depth", exact: true })
-    const target = page.locator(".mission-depth-path").filter({ hasText: /^Project write target:/ })
-    const origin = page.locator(".mission-depth-path").filter({ hasText: /^OpenCode configuration file:/ })
-    await target.getByText("fixture/opencode.jsonc", { exact: true }).waitFor()
-    await origin.getByText("OpenCode configuration file: No document path", { exact: true }).waitFor()
-    await input.fill("2")
-    await input.press("Enter"); await started
+    const menu = depthMenu(page), refresh = page.getByRole("button", { name: "Refresh project depth", exact: true })
+    await waitForDepthInfo(page, "Project write target: fixture/opencode.jsonc")
+    await waitForDepthInfo(page, "OpenCode configuration file: No document path")
+    await waitForDepthReady(page)
+    await menu.selectOption("2"); await started
     assert.equal(await refresh.count(), 0, "no refresh while the save is still pending")
     // The open Settings section follows the project's Location while the save is still pending.
     await fixtureCall(page, "directory", "other")
-    await target.getByText("other/opencode.jsonc", { exact: true }).waitFor()
-    await origin.getByText("OpenCode configuration file: No document path", { exact: true }).waitFor()
-    assert.equal(await input.inputValue(), "9", "the new Location cannot inherit the old dirty draft")
+    await waitForDepthInfo(page, "Project write target: other/opencode.jsonc")
+    await waitForDepthInfo(page, "OpenCode configuration file: No document path")
+    assert.equal(await menu.inputValue(), "9", "the new Location cannot inherit the old pending choice")
     release()
     await fixtureCall(page, "directory", "fixture")
-    await page.getByText("Save not confirmed. Your draft is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
+    await page.getByText("Save not confirmed. Your choice is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
     await closeMissionSettings(page)
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
     await openMissionSettings(page)
-    assert.equal(await input.inputValue(), "2")
-    assert.equal(await input.isDisabled(), true, "an unconfirmed save locks the field until an explicit refresh")
-    await input.evaluate(element => element.dispatchEvent(new Event("change", { bubbles: true })))
+    assert.equal(await menu.inputValue(), "2")
+    assert.equal(await menu.isDisabled(), true, "an unconfirmed save locks the menu until an explicit refresh")
+    await menu.evaluate(element => { (element as HTMLSelectElement).value = "4"; element.dispatchEvent(new Event("change", { bubbles: true })) })
+    assert.equal(await menu.inputValue(), "2", "a forced change is refused")
     assert.equal(writes, 1)
     assert.equal(reads, 2)
     await refresh.click()
     assert.equal(await page.getByRole("button", { name: "Refresh project depth", exact: true, includeHidden: true }).isDisabled(), true)
     await page.getByRole("dialog").getByRole("button", { name: "Discard changes", exact: true }).click()
-    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".mission-depth input")?.value === "1")
+    await page.waitForFunction(() => document.querySelector<HTMLSelectElement>(".mission-depth select")?.value === "1")
     assert.equal(writes, 1)
     assert.equal(reads, 3)
   } finally { release(); await page.close() }
+})
+
+for (const close of [false, true]) test(`an open task reader's native task reads ${close ? "stop when it closes" : "go on while it stays open"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  try {
+    await setup(page)
+    const value = mission("reader-demand")
+    value.coordinatorSessionId = "ses_reader_root"
+    value.tasks[0].status = "dispatching"
+    await page.route("**/api/workspaces/fixture/missions**", route => {
+      if (isMissionContentRequest(route.request().url())) return route.fallback()
+      return route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: value.revision, discardedEvents: 0 } })
+    })
+    // Hold the coordinator's message read: the children read only follows it.
+    let held: Route | undefined
+    const children: string[] = []
+    page.on("request", request => { if (request.url().includes("parentID=ses_reader_root")) children.push(request.url()) })
+    await page.route(target => target.href.includes("ses_reader_root") && target.pathname.includes("/message"), route => {
+      if (!held) { held = route; return }
+      return route.fulfill({ json: { data: [] } })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await selectMission(page, "Objective reader-demand")
+    await until(() => Boolean(held), 15_000)
+    await openTaskReader(taskButton(page, "task-one"))
+    await page.locator(".mission-reader").getByRole("heading", { name: "Inspect evidence", level: 2 }).waitFor()
+    // The hidden panel's tree releases its demand; the open reader is the last owner.
+    await fixtureCall(page, "active", false)
+    if (close) {
+      await page.getByRole("button", { name: "Back to chat", exact: true }).click()
+      await page.locator(".mission-reader").waitFor({ state: "detached" })
+    }
+    await held!.fulfill({ json: { data: [] } })
+    if (close) await page.waitForTimeout(1_000)
+    else await until(() => children.length > 0).catch(() => undefined)
+    assert.equal(children.length > 0, !close, close ? `a closed reader reads nothing further: ${children.join(", ")}` : "an open reader lists the coordinator's children")
+  } finally { await page.close() }
 })
 
 test("reader toggles highlight the exact visible content and toggle it off without navigation or writes", async () => {
@@ -746,15 +847,22 @@ test("reader toggles highlight the exact visible content and toggle it off witho
     await overview.click()
     assert.equal(await page.locator(".mission-reader").count(), 0)
     await fixtureCall(page, "panelWidth", "280px")
-    await task.click()
-    assert.equal(await task.getAttribute("aria-pressed"), "true")
-    assert.equal(await overview.getAttribute("aria-pressed"), "false")
+    // Selecting the task gives the eye to it; pressing the eye opens the task's reader.
+    await selectMissionTask(task)
+    assert.equal(await overview.getAttribute("aria-pressed"), "false", "selecting a task opens no reader")
+    await overview.click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Inspect evidence", level: 2 }).waitFor()
+    assert.equal(await task.getAttribute("aria-current"), "true")
+    assert.equal(await overview.getAttribute("aria-pressed"), "true", "the eye shows the task's open reader")
     await fixtureCall(page, "refresh")
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
-    assert.equal(await task.getAttribute("aria-pressed"), "true")
-    await task.click()
-    assert.equal(await task.getAttribute("aria-pressed"), "false")
+    await expandRow(await inlineMissionEntry(page, "Objective toggle"))
+    assert.equal(await task.getAttribute("aria-current"), "true", "the task selection survives a remount")
+    assert.equal(await overview.getAttribute("aria-pressed"), "true")
+    await overview.click()
+    assert.equal(await overview.getAttribute("aria-pressed"), "false")
     assert.equal(await page.locator(".mission-reader").count(), 0)
+    assert.equal(await task.getAttribute("aria-current"), "true", "closing the reader keeps the selection")
     // Reports and plan changes are reached from the overview reader, never from the panel.
     assert.equal(await page.locator(".mission-control").getByRole("button", { name: /^(Reports|Plan changes|More)$/ }).count(), 0)
     await (await openResultHistory(page)).getByRole("button", { name: "Inspect evidence", exact: true }).click()
@@ -827,7 +935,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
       await page.waitForFunction(revision => (window as any).missionFixture.snapshot().missions[0]?.revision === revision
         && (window as any).missionFixture.snapshot().status === "ready", value.revision)
     }
-    const card = selectedCard(page), checklist = card.locator(".mission-tree")
+    const card = selectedCard(page)
     const capture = async (name: string, width: number, panelWidth: string, mobile = false) => {
       const target = mobile ? await browser.newPage({ locale: "en-US", viewport: { width, height: 844 }, isMobile: true, hasTouch: true }) : page
       try {
@@ -841,7 +949,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
           if (name.includes("human-request")) {
             await fixtureCall(target, "seedActor")
             await fixtureCall(target, "event", { type: "form.created", data: { form: { id: "form-mobile", sessionID: "ses_background", title: "Choose a supported build route", fields: [{ type: "text", name: "route", label: "Build route" }] } } })
-            await target.locator(".mission-attention-list").getByText("Choose a supported build route", { exact: true }).waitFor()
+            await taskState(target, "inspect", "input").waitFor()
           }
         } else await target.setViewportSize({ width, height: 900 })
         await fixtureCall(target, "panelWidth", panelWidth)
@@ -854,10 +962,13 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await page.goto(url)
     await selectMission(page, value.objective)
     await selectedStatus(page, "Prepared").waitFor({ state: "attached" })
-    await checklist.getByText("Ready to start. Start the mission to build its plan.", { exact: true }).waitFor()
+    // Without a plan the row is a leaf, like a session without children: no chevron, no line.
+    const journeyRow = missionRow(page, value.objective)
+    assert.equal(await journeyRow.locator("button.session-item-expander").count(), 0)
+    assert.equal(await journeyRow.locator(".session-item-expander--spacer").count(), 1)
+    assert.equal(await page.locator(".mission-control").getByText(/Ready to start|no plan/i).count(), 0, "no prepared or no-plan line")
     assert.equal(await card.locator("form, textarea, .mission-disclosure:not(.mission-tree)").count(), 0, "no coordinator field or secondary disclosure besides the task tree")
     assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
-    assert.equal(await page.locator(".mission-needs").count(), 0)
     await capture("before-wide", 1280, "440px")
 
     value.runState = "running"
@@ -869,6 +980,9 @@ test("mission journey exposes honest progress, real human requests and result-fi
     value.actors = [{ sessionId: "ses_background", title: "Navigation investigator", kind: "specialist", managed: false, roles: ["research"], location: { directory: "fixture" }, joinedAt: 1 }]
     await fixtureCall(page, "seedActor")
     await refresh()
+    // Its plan now holds tasks: the row gains its chevron, which shows them.
+    await journeyRow.locator("button.session-item-expander").waitFor()
+    await expandRow(await inlineMissionEntry(page, value.objective))
     await taskState(page, "inspect", "assigned").waitFor()
     assert.equal(await taskRow(page, "inspect").locator(".sr-only").textContent(), "Assigned", "admission is not evidence of running work")
     assert.equal(await taskRow(page, "verify").getAttribute("data-state"), "waiting")
@@ -888,12 +1002,12 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await taskState(page, "inspect", "blocked").waitFor()
     assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).filter({ visible: true }).count(), 0,
       "source prose belongs in the central reader, not duplicated in the tree")
-    assert.equal(await page.locator(".mission-needs").count(), 0, "a reported blockage is not a human request")
+    assert.equal(await missionRow(page, value.objective).locator(".session-item-expander").getAttribute("data-child-activity"), null, "a reported blockage is not a human request")
     await capture("technical-blocked-narrow", 1100, "280px")
     await capture("technical-blocked-mobile", 390, "390px", true)
     await page.setViewportSize({ width: 1280, height: 900 })
     await fixtureCall(page, "panelWidth", "440px")
-    await taskButton(page, "inspect").click()
+    await openTaskReader(taskButton(page, "inspect"))
     const reader = page.locator(".mission-task-reader")
     await reader.getByText(blocked.summary, { exact: true }).waitFor()
     await reader.locator(".markdown-body p").filter({ hasText: blocked.summary }).waitFor()
@@ -907,31 +1021,28 @@ test("mission journey exposes honest progress, real human requests and result-fi
     assert.ok(await page.locator(".mission-reader .window-body").evaluate(element => element.scrollTop) > 0)
     await page.screenshot({ path: screenshotPath("mission-journey-full-evidence") })
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
-    await taskButton(page, "verify").click()
+    await openTaskReader(taskButton(page, "verify"))
     await page.locator(".mission-reader").getByText("No result recorded for this task yet.", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-reader").getByRole("button", { name: /^Open / }).count(), 0, "an unbound task must not route to a generic coordinator")
     await page.getByRole("button", { name: "Back to chat", exact: true }).click()
 
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "form-journey", sessionID: "ses_background", title: "Choose a supported build route", fields: [{ type: "text", name: "route", label: "Build route" }] } } })
-    const attention = card.locator(".mission-needs")
-    await attention.waitFor()
-    assert.equal(await attention.evaluate(element => Boolean(element.compareDocumentPosition(document.querySelector(".mission-tree")!) & Node.DOCUMENT_POSITION_FOLLOWING)), true,
-      "human decisions precede the tasks")
-    const needs = attention.locator(".mission-needs-item")
-    assert.equal(await needs.count(), 1)
-    assert.equal(await needs.evaluate(element => element.getBoundingClientRect().height <= 44), true, "one compact line per request")
-    await page.locator(".mission-attention-list").getByText("Choose a supported build route", { exact: true }).waitFor()
+    // The asking task turns red and opens its question; the chevron carries it, the flag stays the mission's own.
+    const row = missionRow(page, value.objective)
+    await taskState(page, "inspect", "input").waitFor()
+    assert.equal(await taskButton(page, "inspect").getAttribute("aria-description"), "Opens its question")
+    assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), "permission")
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0, "a task's question is never the mission's flag")
+    assert.equal(await card.locator(".mission-needs, .mission-attention-list").count(), 0, "questions live on their rows")
     await capture("human-request-mobile", 390, "390px", true)
     await fixtureCall(page, "event", { type: "permission.asked", data: { id: "permission-journey", sessionID: "ses_background", action: "shell", resources: ["npm run verify"] } })
-    await page.waitForFunction(() => document.querySelectorAll(".mission-needs-item").length === 2)
-    await page.locator(".mission-attention-list .sr-only", { hasText: "npm run verify" }).waitFor({ state: "attached" })
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "unrelated-form", sessionID: "ses_unrelated", title: "Unrelated request", fields: [] } } })
-    assert.equal(await page.locator(".mission-attention-list").getByText("Unrelated request", { exact: true }).count(), 0)
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-journey", sessionID: "ses_background", answers: { route: "Windows" } } })
-    await page.waitForFunction(() => document.querySelectorAll(".mission-needs-item").length === 1)
+    await taskState(page, "inspect", "input").waitFor()
+    assert.equal(await row.locator('.mission-row-flag[data-mark="permission"]').count(), 0, "an unrelated request belongs to no mission")
     await fixtureCall(page, "event", { type: "permission.replied", data: { requestID: "permission-journey", sessionID: "ses_background", response: "once" } })
-    await attention.waitFor({ state: "detached" })
     await taskState(page, "inspect", "blocked").waitFor()
+    assert.equal(await row.locator(".session-item-expander").getAttribute("data-child-activity"), null)
     assert.equal(await page.locator(".mission-control").getByText(blocked.summary, { exact: true }).filter({ visible: true }).count(), 0)
 
     const old = { ...blocked, id: "old-report", taskKey: "retired", summary: "Obsolete failure from the cancelled build.", createdAt: 100 }
@@ -1029,14 +1140,15 @@ test("paginated evidence copies its entire unchanged source without touching the
   } finally { await page.close() }
 })
 
-test("one Play control starts and resumes; partial Pause survives remount and Stop stays terminal", async () => {
+test("one Play control starts and resumes; partial Pause survives remount and Stop stays terminal", async t => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  const diagnostics = createMissionFailureDiagnostics(), calls: any[] = []
+  let current!: MissionMap
+  let failPause = true, failMap = false
   try {
+    await diagnostics.observe(page)
     await setup(page)
-    let current: MissionMap = { ...mission("lifecycle"), runState: "prepared" }
-    const calls: any[] = []
-    let failPause = true
-    let failMap = false
+    current = { ...mission("lifecycle"), runState: "prepared" }
     await page.route("**/api/workspaces/fixture/missions**", async route => {
       if (isMissionContentRequest(route.request().url())) return route.fallback()
       if (route.request().method() === "GET") return failMap
@@ -1053,8 +1165,10 @@ test("one Play control starts and resumes; partial Pause survives remount and St
       if (input.action === "pause" && failPause) {
         failPause = false
         current.control!.pending = ["ses_fixture"]
+        diagnostics.record("fixture-control", { input, status: 503, revision: current.revision, control: current.control })
         return route.fulfill({ status: 503, json: { code: "control-pending" } })
       }
+      diagnostics.record("fixture-control", { input, status: 200, revision: current.revision, control: current.control })
       return route.fulfill({ json: { mission: current } })
     })
     await page.goto(url)
@@ -1103,9 +1217,13 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     await fixtureCall(page, "mount", true)
     assert.equal(await play.isDisabled(), true)
     assert.equal(await stop.isDisabled(), true)
-    assert.equal(await page.getByRole("button", { name: "More actions", exact: true }).count(), 0, "no overflow menu in the panel")
+    assert.equal(await missionMenuTrigger(page).count(), 1, "secondary actions live in the selection's overflow menu")
     await page.screenshot({ path: screenshotPath("mission-lifecycle-stopped") })
     assert.deepEqual(calls.map(call => call.action), ["start", "pause", "pause", "start", "stop"])
+  } catch (error) {
+    await diagnostics.dump(t, { calls, failMap, failPause, current: current && { id: current.id, revision: current.revision,
+      status: current.status, runState: current.runState, control: current.control } })
+    throw error
   } finally { await page.close() }
 })
 
@@ -1135,7 +1253,8 @@ test("mission selection, focus and reader survive native invalidations, remount 
     await fixtureCall(page, "flush")
     await page.reload()
     await page.locator(".mission-reader").waitFor()
-    await selectedCard(page).waitFor()
+    // The selection is restored; the row's expansion is the panel's own (its chevron).
+    await selectedCard(page).waitFor({ state: "attached" })
     assert.equal(await selectedMissionTitle(page).innerText(), "Objective two")
     assert.equal(await (await inlineMissionEntry(page, "Objective two")).getAttribute("aria-current"), "true")
     assert.equal(await (await inlineMissionEntry(page, "Objective one")).getAttribute("aria-current"), null)
@@ -1149,6 +1268,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
   const page = await browser.newPage({ locale: "en-US" })
   try {
     await setup(page)
+    await routeUiSettings(page, { missionDeleteSessions: true })
     let revision = 1, failCreate = true, failDelete = true
     const creates: any[] = [], updates: any[] = [], deletions: any[] = []
     let list = [mission("one")]
@@ -1194,20 +1314,19 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await selectedMissionTitle(page).filter({ hasText: "New mission objective" }).waitFor()
     assert.equal(creates.length, 2)
     assert.equal(creates[0].requestId, creates[1].requestId)
+    // The trash deletes at once, taking the Preferences' choice for task conversations;
+    // its form appears only for the failed deletion, offering nothing but its retry.
+    await waitForMissionDeleteSessions(page, true)
     await clickMissionAction(page, "Delete selected mission…", "New mission objective")
-    await page.getByText("Delete this mission? The coordinator and reused conversations will be kept.").waitFor()
-    const cleanup = page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" })
-    assert.equal(await cleanup.isChecked(), false)
-    await cleanup.check()
-    await page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
     await page.getByRole("alert").getByText("Deletion could not be completed. Retry to finish the remaining cleanup.").waitFor()
-    assert.equal(await cleanup.isDisabled(), true)
+    assert.equal(deletions.length, 1)
+    assert.equal(await page.locator("form.mission-editor").getByRole("checkbox").count(), 0)
     await fixtureCall(page, "refresh")
     await page.locator("form").getByRole("button", { name: "Try again", exact: true }).click()
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
     // Only the picker selects: deleting the selected Mission never falls back to
     // another one, even the current conversation's coordinator Mission.
-    await missionPickerField(page).locator(".mission-picker-placeholder").waitFor()
+    await selectedMissionTitle(page).waitFor({ state: "detached" })
     assert.equal(await selectedCard(page).count(), 0)
     await (await inlineMissionEntry(page, "Objective one")).waitFor()
     assert.equal(deletions.length, 2)
@@ -1255,7 +1374,7 @@ test("dependency navigation reveals the linked task and revised plans retain rea
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, value.objective)
-    await taskButton(page, "task-next").click()
+    await openTaskReader(taskButton(page, "task-next"))
     await page.getByRole("button", { name: "Depends on Inspect evidence", exact: true }).click()
     await page.locator('.mission-task-reader[data-task-id="task-plan"]').waitFor()
     assert.equal(await taskRow(page, "task-one").locator(".mission-disclosure-trigger").count(), 0)
@@ -1289,21 +1408,29 @@ test("background native questions settle and requested execution remains distinc
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, value.objective)
-    await taskButton(page, "task-one").click()
+    await openTaskReader(taskButton(page, "task-one"))
     await openTaskTechnicalDetails(page)
     await fixtureCall(page, "seedActor")
     await page.locator(".mission-execution-cell", { hasText: "requested/chosen" }).waitFor()
     await page.locator(".mission-execution-cell", { hasText: "native/observed" }).waitFor()
     await page.locator('.mission-execution-cell[data-state="unknown"]', { hasText: "Unknown" }).waitFor()
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "form-background", sessionID: "ses_background", title: "Choose the scope", fields: [{ type: "text", name: "scope", label: "Scope" }] } } })
-    await page.getByText("Choose the scope", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-attention-list").getByRole("button", { name: "Answer", exact: true }).getAttribute("aria-description"), "Open Background assistant")
+    // Its only task is done: no live task row carries the actor's question, so the flag does.
+    const flag = missionRow(page, value.objective).locator('.mission-row-flag[data-mark="permission"]')
+    await flag.waitFor()
+    assert.match(await missionEntryStatus(page, value.objective), /Awaiting your input/)
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-background", sessionID: "ses_background", answers: {} } })
-    await page.getByText("Choose the scope", { exact: true }).waitFor({ state: "detached" })
-    assert.equal(await page.locator(".mission-needs").count(), 0)
+    await flag.waitFor({ state: "detached" })
+    // Closing the reader keeps the task selected (its toolbar); selecting the Mission row
+    // gives the toolbar back to the mission, whose conversation is the coordinator's.
+    await page.getByRole("button", { name: "Back to chat" }).click()
+    assert.equal(await missionToolbarAction(page, "Open the task's conversation").count(), 1)
+    await selectTaskMission(page)
     await clickMissionAction(page, "Open conversation")
     await page.getByRole("alert").getByText("Unable to reload session").waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+    await openTaskReader(taskButton(page, "task-one"))
+    await openTaskTechnicalDetails(page)
     await page.locator(".mission-execution").scrollIntoViewIfNeeded()
     await page.screenshot({ path: screenshotPath("mission-execution-browser"), fullPage: true })
   } finally { await page.close() }
@@ -1369,18 +1496,17 @@ test("compact mission rows retain a completed branching plan, direct readers and
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, "Ship the Mission Centre")
-    assert.deepEqual(await page.locator(".mission-tree li").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)), ["research", "design", "implement", "review", "verify", "publish"])
+    assert.deepEqual(await page.locator(".mission-tree .mission-tree-node").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)), ["research", "design", "implement", "review", "verify", "publish"])
     // The tree is the dependency graph: its edges are drawn with the single task view, not behind a disclosure.
     await page.locator('.mission-graph path[data-from="review"][data-to="publish"]').waitFor()
     assert.equal(await page.locator(".mission-graph path[data-from]").count(), 6)
     assert.equal(await page.locator(".mission-checklist, .mission-route-task, .mission-detail .mission-disclosure:not(.mission-tree)").count(), 0, "no duplicate task list")
-    const lastTask = await page.locator(".mission-tree li").last().boundingBox()
+    const lastTask = await page.locator(".mission-tree .mission-tree-node").last().boundingBox()
     assert.ok(lastTask && lastTask.y + lastTask.height < 800, "the complete plan fits at a normal panel height")
     await inlineMissionEntry(page, "Ship the Mission Centre")
-    const indexRows = await missionPicker(page).locator(".mission-picker-inline button.mission-picker-option").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
+    const indexRows = await missionRows(page).locator("button.mission-row-select").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
     assert.equal(indexRows.length, 2)
     assert.ok(indexRows[1].top >= indexRows[0].bottom)
-    await missionPickerExpander(page).click()
     assert.equal(await page.locator(".mission-control-metrics").count(), 0)
     // Creation is a labelled icon in the general toolbar (accessible name and tooltip).
     const create = missionGeneralAction(page, "Create mission")
@@ -1394,10 +1520,28 @@ test("compact mission rows retain a completed branching plan, direct readers and
     await page.getByRole("button", { name: "Back to chat" }).click()
     const edge = page.locator('.mission-graph path[data-from="review"][data-to="publish"]')
     const compactPath = await edge.getAttribute("d")
-    await taskButton(page, "review").click()
+    await openTaskReader(taskButton(page, "review"))
     await page.locator(".mission-reader").getByRole("heading", { name: "Independent review", exact: true }).waitFor()
     assert.equal(await edge.getAttribute("d"), compactPath, "reading no longer expands task rows or changes graph geometry")
+    // The selected task takes the header toolbar; its Mission row hands it back to the mission.
+    assert.equal(await taskRow(page, "review").locator("button").count(), 1, "task rows carry no per-row controls")
+    await missionToolbar(page).getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
+    assert.equal(await missionToolbar(page).locator(".action-overflow-trigger").isDisabled(), true, "the mission's menu actions do not apply to a task")
+    assert.equal(await missionToolbar(page).getByRole("button", { name: "Delete selected mission…", exact: true }).isDisabled(), true)
+    // The task's eye closes its reader; the task stays selected with its toolbar.
+    await missionToolbar(page).locator(".mission-overview-toggle").click()
+    await page.locator(".mission-reader").waitFor({ state: "detached" })
+    assert.equal(await missionToolbar(page).locator(".mission-overview-toggle").getAttribute("aria-pressed"), "false")
+    assert.equal(await taskButton(page, "review").getAttribute("aria-current"), "true")
+    await selectTaskMission(page)
+    await missionToolbar(page).getByRole("button", { name: "Open conversation", exact: true }).waitFor()
+    assert.equal(await taskButton(page, "review").getAttribute("aria-current"), null)
+    await openTaskReader(taskButton(page, "review"))
+    await page.locator(".mission-reader").getByRole("heading", { name: "Independent review", exact: true }).waitFor()
     await page.getByRole("button", { name: "Back to chat" }).click()
+    await selectTaskMission(page)
+    await missionToolbar(page).getByRole("button", { name: "Open conversation", exact: true }).waitFor()
     await page.evaluate(() => { document.querySelector<HTMLElement>(".mission-control")!.style.zoom = "1.25" })
     // At fractional zoom an edge still ends on its dependent's status icon.
     await page.waitForFunction(() => {
@@ -1445,26 +1589,27 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     assert.equal(await selectedCard(page).count(), 0, "no detail until a Mission is selected")
     assert.equal(await selectedMissionTitle(page).count(), 0)
     // Each entry is one line: a status mark and the title; the state · time stays in the tooltip and screen-reader text.
-    const parts = await rows[0].evaluate(el => [...el.children].map(child => child.className))
-    assert.deepEqual(parts, ["mission-picker-mark", "mission-picker-title", "sr-only"])
+    const parts = await rows[0].evaluate(el => [...el.children].map(child => child.getAttribute("class")!.split(" ")[0]))
+    assert.deepEqual(parts, ["lucide", "session-item-title", "sr-only"])
     assert.match(await rows[0].locator(".sr-only").textContent() ?? "", /^In progress · /)
     assert.match(await rows[0].getAttribute("title") ?? "", new RegExp(`^${titleOf(0).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} — In progress · `))
-    const title = await rows[0].locator(".mission-picker-title").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))
+    const title = await rows[0].locator(".session-item-title").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))
     assert.deepEqual(title, { overflow: "ellipsis", wrap: "nowrap" })
-    assert.equal(await rows[0].locator(".mission-picker-title").evaluate(el => el.scrollWidth > el.clientWidth), true, "the long title is visually shortened")
+    assert.equal(await rows[0].locator(".session-item-title").evaluate(el => el.scrollWidth > el.clientWidth), true, "the long title is visually shortened")
     const heights = await Promise.all(rows.map(row => row.evaluate(el => el.getBoundingClientRect().height)))
-    const titleHeight = await rows[0].locator(".mission-picker-title").evaluate(el => el.getBoundingClientRect().height)
+    const titleHeight = await rows[0].locator(".session-item-title").evaluate(el => el.getBoundingClientRect().height)
     assert.ok(heights.every(height => height < titleHeight * 2), "single-line rows")
-    const marks = await Promise.all(rows.map(row => row.locator(".mission-picker-mark").getAttribute("data-mark")))
+    const marks = await Promise.all(rows.map(row => row.locator(".mission-row-flag").getAttribute("data-mark")))
     assert.deepEqual(marks, ["idle", "idle", "interrupted"], "only the resumable failure needs attention; history already present reads as seen")
-    const colors = await missionPicker(page).locator(".mission-picker-inline .mission-picker-mark").evaluateAll(items => items.map(el => getComputedStyle(el).backgroundColor))
+    const colors = await missionRows(page).locator(".mission-row-flag").evaluateAll(items => items.map(el => getComputedStyle(el).color))
     assert.equal(new Set(colors).size, 2, "idle rows share the neutral mark")
     await rows[1].click()
+    await expandRow(rows[1])
     await selectedCard(page).waitFor()
-    // The detail follows the whole picker as its own section, never inside the selected row.
+    // The detail is the selected row's children: right after it in the tree, before the next row.
     assert.equal(await page.locator(".mission-control").evaluate(panel => {
-      const index = panel.querySelector(".mission-picker")!, detail = panel.querySelector("section.mission-detail")!
-      return !index.contains(detail) && Boolean(index.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
+      const selected = panel.querySelector(".mission-row:has(.mission-row-select[aria-current=true])")!, detail = panel.querySelector("section.mission-detail")!
+      return selected.parentElement!.contains(detail) && Boolean(selected.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
     }), true)
     assert.equal(await selectedCard(page).locator("form, textarea, .mission-disclosure:not(.mission-tree), .mission-result").count(), 0)
     assert.equal(await rows[1].getAttribute("aria-current"), "true")
@@ -1472,14 +1617,15 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     const highlight = await page.evaluate(() => { const probe = document.createElement("div"); probe.style.background = "var(--list-item-highlight-bg)"; document.body.append(probe)
       const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color })
     // Rows animate their background; compare settled values, with and without the pointer over the row.
+    const rowBase = rows[1].locator("xpath=ancestor::div[contains(@class, 'session-item-base')]")
     const settledBackground = async () => {
-      await rows[1].evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
-      return rows[1].evaluate(el => getComputedStyle(el).backgroundColor)
+      await rowBase.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
+      return rowBase.evaluate(el => getComputedStyle(el).backgroundColor)
     }
     await page.mouse.move(0, 0)
     assert.equal(await settledBackground(), highlight, "selection uses the shared list highlight, never the input-field surface")
     await rows[1].hover()
-    await page.waitForFunction(() => Boolean(document.querySelector("button.mission-picker-option-selected:hover")))
+    await page.waitForFunction(() => Boolean(document.querySelector(".mission-row-select[aria-current=true]:hover")))
     assert.equal(await settledBackground(), highlight, "rollover overlays the selected highlight instead of replacing it")
     await readAll(page).click()
     await page.locator(".mission-reader").getByText("Full context for mission 1", { exact: true }).waitFor()
@@ -1522,11 +1668,11 @@ test("native activity stays separate from the plan and refreshes only while a Mi
     await page.goto(url)
     await selectMission(page, value.objective)
     // Observed native activity colours the tree's status icons; the declared plan stays the same rows.
-    const states = () => page.locator(".mission-tree li").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.state))
+    const states = () => page.locator(".mission-tree .mission-tree-node").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.state))
     await taskState(page, "task-0", "active").waitFor()
     assert.deepEqual(await states(), ["active", "active", "assigned", "assigned"], "only observed running/background work is active")
     await taskRow(page, "task-2").getByText("Verify current native state", { exact: true }).waitFor()
-    await taskButton(page, "task-2").click()
+    await openTaskReader(taskButton(page, "task-2"))
     await openTaskTechnicalDetails(page)
     assert.equal(await page.getByText("Assignment admitted", { exact: true }).count() > 0, true)
 
@@ -1552,6 +1698,8 @@ test("native activity stays separate from the plan and refreshes only while a Mi
     const visibleRefresh = waitForMissionPanelRefresh(page)
     await fixtureCall(page, "mount", true)
     await visibleRefresh
+    // The remounted panel's row starts folded: its chevron shows the tasks again.
+    await expandRow(await inlineMissionEntry(page, value.objective))
     await taskState(page, "task-0", "active").waitFor()
     await page.screenshot({ path: screenshotPath("mission-native-activity") })
   } finally { await page.close() }

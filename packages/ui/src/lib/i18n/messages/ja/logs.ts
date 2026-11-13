@@ -1,4 +1,10 @@
 export const logMessages = {
+  "settings.opencode.logs.title": "OpenCode ログ",
+  "settings.opencode.logs.open": "OpenCode ログを表示",
+  "settings.opencode.logs.info": "選択した OpenCode ホストのグローバルログです。個人情報が含まれる場合があります。開くと末尾の 128 KiB を読み込み、更新で再読込します。",
+  "settings.opencode.logs.failed": "OpenCode ログを読み込めません。実行ファイルとファイルへのアクセスを確認して更新してください。",
+  "settings.opencode.logs.empty": "ログは空です。",
+  "settings.opencode.logs.truncated": "ログの末尾を表示しています（最大 128 KiB）。",
   "logsView.title": "サーバーログ",
   "logsView.actions.show": "サーバーログを表示",
   "logsView.actions.hide": "サーバーログを非表示",

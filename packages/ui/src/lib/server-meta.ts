@@ -51,6 +51,8 @@ export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
 export type ServerMetaCache = ReturnType<typeof createServerMetaCache>
 
 export const localServerMeta = createServerMetaCache(serverApi)
+/** Host authority is derived exclusively from the local transport's metadata. */
+export const localRequest = () => localServerMeta.meta()?.localRequest === true
 
 /** Whether this client reaches the server through Remote Control while its host keeps web previews off. */
 export const previewsUnavailable = localServerMeta.previewsUnavailable

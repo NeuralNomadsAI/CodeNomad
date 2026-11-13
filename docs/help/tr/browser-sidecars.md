@@ -18,18 +18,27 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 
 | İstemci | Önizleme uygulaması | Ajan tarayıcı otomasyonu | Mobil şablonlar |
 | --- | --- | --- | --- |
-| Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
-| Windows Tauri | Yerel WebView2 alt öğesi | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
-| macOS/Linux Tauri | Korumalı alana alınmış iframe | Yerel tarayıcı otomasyonu yok | Yalnızca boyutlar |
+| Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
+| Windows Tauri | Yerel WebView2 alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
+| macOS Tauri (14+) | Yerel WKWebView alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | WebKit mobil kimliği ve CSS görünümü; yerel giriş sınırları |
+| Linux Tauri | Yerel WebKitGTK alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | WebKit mobil kimliği ve CSS görünümü; yerel yoğunluk/giriş sınırları |
 | Normal tarayıcı/uzak görünüm | Alternatif iframe görünümü | Yerel native önizleme hedefi yok | Yalnızca boyutlar |
 
-Yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anlık görüntü, ekran görüntüsü ve sayfa eylemleri için oturuma bağlı `codenomad.browser` aracını kullanır: tıklama, yazma, seçme, üzerine gelme, sürükleme, kaydırma, tuşa basma ve metin bekleme. Aracın kullanılabilirliği her pencere için yetkilendirme değildir: yürütme, sahip olunan arka ucu, yerel yetenekleri, oturumu ve görünür hedefi kontrol eder. Sayfası bu arada gizlenmiş, değiştirilmiş veya başka bir adrese gitmiş bir eylem başka bir sayfaya gönderilmek yerine reddedilir ve hiçbir eylem otomatik olarak tekrarlanmaz. Sayfa içerikleri güvenilmez durumda kalıyor. Hedef yerleştirmeyi yasakladığından iframe başarısız olabilir; korumalarını zayıflatmak yerine harici bir tarayıcı kullanın.
+Tüm yerel masaüstü sunucularında oturuma bağlı `codenomad.browser`, önizlemeyi açar, gezinir, görüntüler ve tıklama, yazma, seçme, üzerine gelme, sürükleme, kaydırma, tuş ve metin bekleme eylemlerini yürütür. Sahip arka uç, yerel yetenekler, oturum ve görünür hedef kontrol edilir. Gizlenmiş, değiştirilmiş veya gezinmiş hedefler reddedilir; eylemler otomatik tekrarlanmaz. Sayfa içeriği güvenilmez kalır. iframe engelleyen siteler için harici tarayıcı kullanın.
+
+Yerel önizlemeler elle veya ajan tarafından açılır, oturum açmayı yeniden başlatmalarda korur ve yerel Geri/İleri geçmişini kullanır. Yerel menü ve iletişim kutuları önizlemeyi gizler. Yerel modda öğe yorumları kullanılamaz. WebKit, betikle oluşturulan kapalı shadow root'ları okur; bildirimsel kapalı kökler opak kalır. macOS ilk hover'da pointerenter atlayabilir; ⌘A, A keydown olmadan yerel seçim yapar. GTK pano okuması açık Ctrl+V ile yapılır; yazma ve yerel kopyala/yapıştır çalışır.
+
+Yerel açılır pencereler önizleme oturumlarını paylaşır, `opener`/`postMessage` ilişkisini korur ve açan sayfayla kapanır. Yazılan veya geri yüklenen adresler kimlik bilgisiz HTTP(S) ile sınırlıdır; siteler boş ve aynı kökenli blob belgeleri de açabilir. Dosya ve uygulama şemaları engellenir. İndirmeler temizlenmiş benzersiz adlarla İndirilenler'e kaydedilir; üzerine yazılmaz ve otomatik açılmaz. Kamera, mikrofon, konum ve bildirimler reddedilir; sınıflandırılmış izinler onay ister, bilinmeyen istekler hata gösterir. Tauri ve Electron `alert`/`confirm`/`prompt` destekler; Electron'un prompt iletişim kutusu önizlemenin ana sayfalarında, açılır pencerelerde ve alt çerçevelerde kullanılabilir. Aygıt ve ekran seçicilerinde mevcut girdiler arasında kaydırma yapılabilir. Diğer API'ler motora ve donanıma bağlıdır.
+
+Siteler yerel açılır pencere kapanırken onay isteyebilir. Linux'ta işaretçi kilidi onayı ilgili pencerenin üstünde görünür. 2.52.6 dahil [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) sorunundan etkilenen WebKitGTK sürümlerinde, bırakılan dosyalara erişim güvenlik nedeniyle engellendiği için yüklemelerde sayfanın dosya seçicisini kullanın. İlgili CodeNomad penceresini kapatmadan veya yeniden yüklemeden önce sayfadaki çalışmanızı kaydedin.
+
+Tauri macOS/Linux'ta önizlemeye odaklanıp ⌘/Ctrl ile +, − veya 0 tuşlarını ya da uygulamanın yakınlaştırma menüsünü kullanın. Odak başka yerdeyse bu menü eylemleri uygulamayı yakınlaştırır.
 
 ## Altı görünüm alanı şablonundan birini seçin {#templates}
 
 1. Önizlemenin görünüm menüsünü açın.
 2. Aşağıdan bir şablon seçin. Portre/manzara girişlerini doğrudan kullanın; ayrı bir döndürme kontrolü yoktur.
-3. Mobil öykünmeyi girerken/değiştirirken veya yalnızca boyut içeren bir şablona geri dönerken yerel bir yeniden yükleme beklenebilir.
+3. Electron ve Windows Tauri'de mobil öykünmeyi girerken/değiştirirken veya yalnızca boyut içeren bir şablona geri dönerken yerel bir yeniden yükleme beklenebilir.
 
 | Şablon | CSS görünüm alanı |
 | --- | --- |
@@ -40,7 +49,7 @@ Yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anl
 | Mobil dikey | 390 × 844 |
 | Mobil yatay | 844 × 390 |
 
-Yerel mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve DPR 2.75'i yalnızca sahip olunan misafir için ayarlar. Duyarlı/masaüstü/tablete geri dönmek, bu geçersiz kılmaları temizler ve sayfayı yeniden yükler. Iframe geri dönüşü yalnızca yeniden boyutlandırılır. Bunlar tekrarlanabilir düzen referanslarıdır; Safari/Firefox emülasyonu veya telefon klavyelerinin, tarayıcı/sistem çubuklarının veya mobil işletim sistemi metin ayarlarının simülasyonları değildir. Yeniden yükleme gönderilmemiş sayfa durumunu atabileceği için şablonları değiştirmeden önce sayfa çalışmasını kaydedin.
+Electron ve Windows Tauri'de mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve DPR 2.75'i yalnızca sahip olunan misafir için ayarlar. Duyarlı/masaüstü/tablete geri dönmek, bu geçersiz kılmaları temizler ve sayfayı yeniden yükler. Tauri macOS/Linux, HTTP ve JavaScript için genel WebKit mobil kimliğini uygular ve CSS görünümünü uygulama yakınlaştırması/DPI'dan bağımsız ayarlar; şablon değişimi ve sıfırlama sayfayı yeniden yükler. macOS desteklendiğinde yerel DPR 2,75 kullanır; GTK yoğunluğu sığdırma yakınlaştırmasına ve monitöre bağlıdır. Ekran, platform, işaretçi/üzerine gelme medyası ve en fazla dokunma noktası yerel masaüstü değerlerini korur. GTK mobil tıklamaları yerel dokunma ve fare uyumluluk olayları üretir; macOS fare girişini korur. iframe yalnızca boyutlandırılır. Profiller düzen referansıdır; telefon klavyeleri, sistem çubukları ve mobil metin ayarları kapsam dışındadır. Yeniden yükleme gönderilmemiş sayfa durumunu atabileceği için şablonları değiştirmeden önce sayfa çalışmasını kaydedin.
 
 ## SideCar kaydedin {#register-sidecar}
 
@@ -60,7 +69,9 @@ Kayıt, istemcilerin paylaştığı sunucu yapılandırmasıdır; hizmeti yükle
 
 Ulaşılamıyorsa arka uçtaki işlemi ve bağlantı noktasını kontrol edin. HTML yüklenir ancak asset/WebSockets başarısız olursa, aracın temel yolunu ve önek modunu kontrol edin. Yanlış bir kaydı amaçlanan ayarlarla yeniden oluşturun; Proxy hatasını geçici olarak çözmek için yukarı akışı herkese açık şekilde göstermeyin. SideCar uygulamaları, sunucu hesabının yetkisine sahip bir terminali veya dosyaları açığa çıkarabilir; kullanıcılarına ve yapılandırmalarına güvenin.
 
-SideCar, korumalı alana alınmış bir önizleme değil, CodeNomad'ın güvenilir bir uzantısıdır: sayfası CodeNomad'ın kendi kaynağıyla (origin) çalışır, bu nedenle betikleri oturum açmış erişiminizle CodeNomad'ı kullanabilir. Yalnızca koduna güvendiğiniz hizmetleri kaydedin. CodeNomad kendi oturum açma çerezlerini hizmete iletmez; hizmetin kendi çerezleri ise korunur. Uzaktan Kontrol, SideCar uygulama proxy trafiğini açığa çıkarmaz; [Uzaktan erişim](remote-access.md) ve [Uzaktan Kontrol](remote-control.md)'de açıklanan uygun doğrudan erişim yolunu kullanın.
+SideCar, korumalı alana alınmış bir önizleme değil, CodeNomad'ın güvenilir bir uzantısıdır: sayfası CodeNomad'ın kendi kaynağıyla (origin) çalışır, bu nedenle betikleri oturum açmış erişiminizle CodeNomad'ı kullanabilir. Yalnızca koduna güvendiğiniz hizmetleri kaydedin. CodeNomad kendi oturum açma çerezlerini hizmete iletmez; hizmetin kendi çerezleri ise korunur.
+
+SideCar içeriği (`/sidecars/`) ve SideCar WebSocket'leri, ana bilgisayarda loopback bağlantısı gerektirir. `/api/sidecars` üzerinden kayıt, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. Etkin önizleme içeriği (`/previews/`), geçerli bir yetenek belirteciyle doğrudan LAN erişiminde kullanılabilir; [Uzaktan Kontrol](remote-control.md#remote-surface) web önizlemeleri etkin oldukları sürece yetenek belirteçleriyle kullanılabilir kalır. Doğrudan erişim gereksinimleri için bkz. [Yükseltme](remote-access.md#upgrading).
 
 ## OpenVSCode Sunucu tarifi {#openvscode}
 

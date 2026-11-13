@@ -135,7 +135,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       write(`event: codenomad.client.ping\ndata: ${JSON.stringify(ping)}\n\n`)
     }, 15000)
 
-    unregister = deps.registerClient(close)
+    unregister = deps.registerClient(() => handleClose(backpressured))
     unregisterConnection = deps.connectionManager.register({
       ...connection,
       close,

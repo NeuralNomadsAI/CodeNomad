@@ -5,6 +5,7 @@ import { captureBackendOperation } from "../../lib/backend-operation"
 import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, X } from "lucide-solid"
 import type { ConnectionInfo, FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client"
 import { openExternalUrl } from "../../lib/external-url"
+import { copyToClipboard } from "../../lib/clipboard"
 import { useI18n } from "../../lib/i18n"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { isLocalTauriHost } from "../../lib/runtime-env"
@@ -263,14 +264,14 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   async function copyAuthorizationUrl(): Promise<void> {
     const url = authorization()?.url
-    if (!url || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    if (!url) {
       return
     }
 
     try {
-      await navigator.clipboard.writeText(url)
-      setAuthorizationLinkCopied(true)
-      setTimeout(() => setAuthorizationLinkCopied(false), 1500)
+      const copied = await copyToClipboard(url)
+      setAuthorizationLinkCopied(copied)
+      if (copied) setTimeout(() => setAuthorizationLinkCopied(false), 1500)
     } catch {
       setAuthorizationLinkCopied(false)
     }
@@ -885,7 +886,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                               }}
                             >{t("settings.providers.actions.manageModels")}</button>
                           </div>
-                          <Show when={client() && (provider().credentialIds.length > 0 || provider().source === "env")}>
+                          <Show when={client() && (provider().connections.length > 0 || provider().canConnect)}>
                             <ProviderAccounts instanceId={props.instanceId} integrationId={providerId} client={client()!}
                               initialConnections={provider().connections}
                               onAdd={provider().canConnect ? () => {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, rm, stat, writeFile, utimes } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { fileURLToPath, pathToFileURL } from "node:url"
+import { pathToFileURL } from "node:url"
 import { PRESENCE_INTERVAL_MS, PRESENCE_READY_SUFFIX } from "./desktop-plugin-presence"
 
 // Two presence checks plus a scan. Paid in full only when no marker can come:
@@ -10,9 +10,11 @@ import { PRESENCE_INTERVAL_MS, PRESENCE_READY_SUFFIX } from "./desktop-plugin-pr
 export const PRESENCE_READY_WAIT_MS = 5_000
 const PRESENCE_READY_POLL_MS = 100
 import { isLegacyAutomationPlugin } from "./automation-plugin"
-import { assertNativePluginPath, type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
+import { type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
 import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
+import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
 import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
+import { ownReadiness } from "./desktop-plugin-readiness"
 
 export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "provider" | "runtime">>
 
@@ -23,50 +25,14 @@ export interface DesktopPluginPaths {
   nativeData?: string
   resolveNativePath?: (directory: string, assertCurrent: () => void) => Promise<DesktopPluginNativePath>
 }
-export type DesktopPluginFeature = "session-pruning" | "automation" | "missions"
+export type DesktopPluginFeature = "session-pruning" | "automation" | "missions" | "memory"
 
 // Only parse our exact generated entry shape. Older backend leases remain
 // readable during migration, but new heartbeats must leave the watched root.
 async function managedStorage(feature: DesktopPluginFeature, existing: string | undefined, marker: string, paths: DesktopPluginPaths, assertCurrent: () => void) {
   if (!existing?.startsWith(marker)) return undefined
-  const match = /^import \{ desktopPlugin \} from ("(?:[^"\\]|\\.)*")\nexport default desktopPlugin\((.+)\)\n$/.exec(existing.slice(marker.length))
-  if (!match) throw new Error("Invalid managed CodeNomad plugin entry")
-  const url = new URL(JSON.parse(match[1]) as string)
-  const arguments_: unknown[] = JSON.parse(`[${match[2]}]`)
-  if (!arguments_.length || arguments_.length > 2) throw new Error("Invalid managed CodeNomad plugin arguments")
-  const [argument, artifacts] = arguments_
-  const presenceDirectories = typeof argument === "string" ? [argument] : argument
-  const nativePaths = paths.nativeData ? path.posix : path
-  if (!Array.isArray(presenceDirectories) || !presenceDirectories.length || presenceDirectories.length > 8
-    || !presenceDirectories.every(directory => typeof directory === "string" && nativePaths.isAbsolute(directory)
-      && !directory.includes("\0") && nativePaths.basename(directory) === "presence"
-      && nativePaths.basename(nativePaths.dirname(directory)) === feature)) {
-    throw new Error("Invalid managed CodeNomad plugin presence")
-  }
-  const nativeLeases = presenceDirectories[0] as string
-  const nativeDirectory = nativePaths.dirname(nativeLeases)
-  const plugin = paths.nativeData ? decodeURIComponent(url.pathname) : fileURLToPath(url)
-  if (url.protocol !== "file:" || url.search || url.hash || (paths.nativeData && url.hostname)
-    || !nativePaths.isAbsolute(nativeDirectory) || nativePaths.basename(nativeDirectory) !== feature
-    || nativePaths.basename(nativeLeases) !== "presence" || nativePaths.dirname(plugin) !== nativeDirectory
-    || !/^[a-f\d]{64}\.mjs$/.test(nativePaths.basename(plugin))) {
-    throw new Error("Invalid managed CodeNomad plugin storage")
-  }
-  if (arguments_.length === 2) {
-    if (feature !== "missions" || !artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)
-      || Object.keys(artifacts).sort().join(",") !== "provider,runtime") throw new Error("Invalid managed Missions artifacts")
-    for (const role of ["provider", "runtime"] as const) {
-      const artifact = (artifacts as DesktopMissionArtifacts)[role]
-      if (!artifact || Object.keys(artifact).sort().join(",") !== "file,sha256"
-        || typeof artifact.file !== "string" || typeof artifact.sha256 !== "string" || !/^[a-f\d]{64}$/.test(artifact.sha256)
-        || nativePaths.dirname(artifact.file) !== nativeDirectory
-        || nativePaths.basename(artifact.file) !== `${artifact.sha256}${role === "provider" ? ".provider" : ""}.mjs`
-        || role === "runtime" && artifact.file !== plugin) throw new Error("Invalid managed Missions artifacts")
-      if (paths.nativeData) assertNativePluginPath(artifact.file)
-    }
-  }
+  const { nativeDirectory, presenceDirectories } = parseManagedDesktopPluginEntry(feature, existing, paths.nativeData ? path.posix : path)!
   if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
-  for (const directory of presenceDirectories) assertNativePluginPath(directory)
   if (!paths.resolveNativePath) throw new Error("Missing managed WSL plugin path resolver")
   const resolved = await paths.resolveNativePath(nativeDirectory, assertCurrent)
   return { directory: resolved.host, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
@@ -147,6 +113,7 @@ export async function installDesktopPluginPresence(
   await assertBundlePath()
   assertCurrent()
   const lease = path.join(leases, `${randomUUID()}.lease`)
+  const readiness = ownReadiness(lease)
   let written = leaseContent()
   try {
     await writeLease(lease, written)
@@ -186,18 +153,23 @@ export async function installDesktopPluginPresence(
   // follower in the daemon process has observed this lease while registered.
   // Bounded: an older plugin without markers only delays the first RPC.
   const readyMarker = `${lease}${PRESENCE_READY_SUFFIX}`
+  const readyStop = new AbortController()
   const ready = (async () => {
     for (const deadline = Date.now() + PRESENCE_READY_WAIT_MS; !disposed && Date.now() < deadline;) {
       if (await stat(readyMarker).then(() => true, () => false)) return true
-      await delay(PRESENCE_READY_POLL_MS, undefined, { ref: false })
+      await delay(PRESENCE_READY_POLL_MS, undefined, { ref: false, signal: readyStop.signal })
+        .catch(error => { if (!readyStop.signal.aborted) throw error })
     }
     return false
   })()
   return Object.assign(async () => {
     disposed = true
+    readyStop.abort()
     clearInterval(timer)
+    await readiness.close()
+    await ready
     await pending
     await rm(lease, { force: true })
     await rm(readyMarker, { force: true })
-  }, { ready, sync: () => sync(false) })
+  }, { ready, sync: () => sync(false), prepare: readiness.prepare })
 }

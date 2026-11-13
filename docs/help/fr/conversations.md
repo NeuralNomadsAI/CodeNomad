@@ -6,10 +6,14 @@ Les messages affichent du Markdown, du code, des diffs et les images de résulta
 
 Les en-têtes de raisonnement et d’outils indiquent la durée de chaque étape, comptée en direct pendant son exécution ; les durées inférieures à une seconde ne sont pas affichées. Lorsque **Tokens** est affiché dans **Contenu des messages** (le préréglage **Tout** l’affiche), chaque message d’agent se termine par une seule ligne de tokens et de coût après son texte final. Cette ligne additionne le message et les messages contenant les outils et raisonnements que couvre son action **Supprimer les outils et raisonnements de cette réponse**, dans la transcription chargée ; dépliez-la pour les comptes de raisonnement et de cache. Les étapes qui n’ont exécuté que des outils n’ont pas de ligne propre.
 
+## Diagrammes Mermaid {#mermaid}
+
+Les blocs `mermaid` et `mmd` sont rendus avec Mermaid Tiny après la fin du flux. Utilisez **Afficher la source** / **Afficher le diagramme** dans l’en-tête du code ; Copier conserve le texte source. Tiny exclut les mindmaps, les diagrammes d’architecture et KaTeX. Un diagramme invalide, non pris en charge ou trop volumineux garde sa source avec une erreur. Le rendu est local, sans réseau, limité à 50 000 caractères et 500 arêtes.
+
 ## Trouver des conversations et naviguer {#navigate-conversations}
 
 1. Sélectionnez une ligne sous **Sessions**, ou utilisez **Nouvelle session** pour démarrer une conversation parente.
-2. Cliquez sur le chevron d’un parent pour déplier ou replier ses sous-sessions en conservant leurs badges. Un chevron replié affiche l’état le plus urgent de ses descendants : en attente de saisie, actif, en compactage ou inactif ; son libellé accessible les compte.
+2. Cliquez sur le chevron d’un parent pour déplier ou replier ses sous-sessions en conservant leurs badges. Déplié ou replié, le chevron affiche l’état le plus urgent de ses descendants : en attente de saisie, actif, en compactage ou inactif ; son libellé accessible les compte. Faites un clic droit dessus et choisissez **Marquer comme lu** pour effacer d’un coup les badges **Inactif** et **Interrompu** de la conversation et de toutes ses sous-sessions.
 3. Utilisez **Rechercher des sessions…**, **Sessions principales** / **Sous-sessions**, le filtre de worktree et le tri **Activité**, **Nom** ou **Worktree** pour réduire la liste. Dans les résultats de recherche, faites glisser le pointeur sur les cases des lignes pour sélectionner ou désélectionner plusieurs conversations d'un coup.
 4. Utilisez **Retour** et **Avancer** dans la barre latérale pour revisiter les conversations affichées.
 
@@ -18,6 +22,12 @@ Cliquez sur un badge **Inactif** ou **Interrompu** (**Effacer**) pour l’acquit
 La navigation normale est hiérarchique ; les résultats de recherche/filtre sont des entrées à plat avec l’identité et le worktree propres à chaque conversation. Dans **Réglages → Général**, **Déplier automatiquement les sous-sessions** est activé par défaut. Une ligne visible et repliée ouvre les chemins vers ses sous-sessions actives lorsque son chevron passe en activité, en compactage ou en attente de réponse, si elle est sélectionnée ou descend de la conversation sélectionnée. La règle s’applique à chaque profondeur. Faire défiler une ligne déjà active dans la zone visible la laisse fermée jusqu’à une nouvelle transition. Désactivez l’option pour empêcher l’activité d’ouvrir des branches ; le dépliage manuel et la navigation explicite restent disponibles. Les branches ouvertes, y compris automatiquement, sont mémorisées pour la restauration.
 
 Retour/Avancer est un historique de visites par onglet de projet et par fenêtre, pas l’ordre de la liste. Il reste en mémoire, ignore les conversations indisponibles/supprimées et n’est pas restauré après redémarrage. Sélectionner une nouvelle conversation après un retour remplace le parcours suivant. **Session précédente** / **Session suivante** dans la palette parcourent plutôt la liste visible.
+
+## Archiver et restaurer {#archive}
+
+Choisissez **Archiver la session** dans les actions d’une ligne pour conserver son historique tout en retirant sa branche inactive de la navigation normale. La conversation sélectionnée et les conversations en cours de travail ou attendant une réponse restent accessibles. L’archivage n’arrête pas le travail, ne supprime aucun message et ne change pas l’état d’archivage propre aux sous-sessions.
+
+Ouvrez la recherche de sessions et choisissez **Sessions archivées** ou **Toutes les sessions**. Les lignes portent la mention **Archivée** et proposent **Restaurer la session**. Activez le filtre des sous-sessions pour trouver les enfants indépendamment, y compris sous un parent archivé. **Sessions non archivées** filtre selon l’état propre à chaque conversation. Restaurez un ancêtre archivé pour retrouver sa branche inactive dans la navigation normale. Si une action n’est pas confirmée, actualisez la liste avant de réessayer.
 
 ## Choisir Agent, Modèle et Réflexion {#agent-model-thinking}
 

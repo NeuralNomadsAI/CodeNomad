@@ -24,6 +24,7 @@ import { parseExecutionMode } from "./task-execution-mode"
 import { hasInvalidReportNotificationHistory, parseNativeBinding, parseNativeCall } from "./native-report-provenance"
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { parseMissionProfiles, validateMissionProfiles } from "./playbook-profiles"
+import { parseMissionCreationDefaults } from "./creation-defaults"
 import { parseMissionTitle } from "./mission-title"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
@@ -524,8 +525,11 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (preparedBy !== undefined && (!record(preparedBy) || !onlyFields(preparedBy, ["missionID", "coordinatorSessionID"])
         || !text(preparedBy.missionID, MAX_SHORT_TEXT) || !text(preparedBy.coordinatorSessionID, MAX_SHORT_TEXT))) return undefined
       if (input.taskMode !== undefined && !missionTaskModeInputSchema.safeParse(input.taskMode).success) return undefined
-      let profiles
-      try { profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(templateID, profiles) }
+      let profiles, creationDefaults
+      try {
+        profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(templateID, profiles)
+        if (input.creationDefaults !== undefined) creationDefaults = parseMissionCreationDefaults(templateID, input.creationDefaults)
+      }
       catch { return undefined }
       return {
         ...eventBase(input),
@@ -537,6 +541,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         template: templateID,
         ...(input.taskMode === undefined ? {} : { taskMode: missionTaskModeInputSchema.parse(input.taskMode) }),
         ...(profiles === undefined ? {} : { profiles }),
+        ...(creationDefaults === undefined ? {} : { creationDefaults }),
         coordinator: {
           sessionID: input.coordinator.sessionID,
           title: input.coordinator.title,
