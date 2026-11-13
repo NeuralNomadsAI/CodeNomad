@@ -51,7 +51,7 @@ export function IntegrationLinkButton(props: { binding: IntegrationRowBinding })
         <DropdownMenu.Group>
           <DropdownMenu.GroupLabel class="action-overflow-info">{t("integrations.attachChoose")}</DropdownMenu.GroupLabel>
           <For each={props.binding.choices() ?? []}>{offer => (
-            <DropdownMenu.Item class="action-overflow-item" onSelect={() => void props.binding.attach(offer.offerID)}>
+            <DropdownMenu.Item class="action-overflow-item" onSelect={() => void offer.attach()}>
               <span class="action-overflow-item-icon" aria-hidden="true"><Link2 class="h-3.5 w-3.5" /></span>
               <span class="action-overflow-item-label"><bdi>{offer.label}</bdi></span>
             </DropdownMenu.Item>

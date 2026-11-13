@@ -98,7 +98,7 @@ const event = (type: string, data: unknown = {}) => (serverEvents as any).dispat
   packageRequests: () => packageRequests,
   toasts: getToastHistory,
   /** Replaces the plugin inventory, then notifies like OpenCode does. */
-  plugins: (next: PluginControlsSnapshot) => { snapshot = next; event("plugin.updated") },
+  plugins: (next: PluginControlsSnapshot, notify = true) => { snapshot = next; if (notify) event("plugin.updated") },
   base: baseSnapshot,
   active: setActivePanel,
   select: (id: string | null) => setActiveSession(instanceId, id ?? "info"),

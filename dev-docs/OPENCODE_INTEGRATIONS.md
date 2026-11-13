@@ -298,6 +298,9 @@ instance/Location/conversation. Errors publish `unknown`; releasing the last dem
 Attach and detach send one request for the displayed conversation, then invalidate and reconcile their captured
 target in `finally`, including uncertain outcomes, which show a fixed error toast and are never replayed; `busy`,
 `gone` and `refused` attach outcomes have their own message.
+Attach intent captures the exact target and integration epoch. Navigation, deactivation, row disposal and native
+invalidations/reconnect revoke its cancellable hosts read and document choices. Each choice retains its gesture's
+target and offer; dispatch rechecks that intent, and only its own read may clear its busy state.
 
 `components/integration-host-installation.ts` owns the application part's trusted shared confirmation for a fresh
 active native integration reporting `host.action: "install" | "update"`: application name, integration package

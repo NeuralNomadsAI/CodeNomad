@@ -23,7 +23,7 @@ type Routes = Awaited<ReturnType<typeof routeIntegrations>>
 const fx = (page: Page, method: string, ...args: unknown[]) =>
   page.evaluate(([name, values]) => (window as any).integrationRow[name as string](...(values as unknown[])), [method, args] as const)
 
-async function open(prepare?: (routes: Routes) => void, options: { dark?: boolean; locale?: string; clock?: boolean } = {}) {
+async function open(prepare?: (routes: Routes) => void, options: { dark?: boolean; locale?: string; clock?: boolean; captureChoice?: boolean } = {}) {
   const page = await browser.newPage({ viewport: { width: 420, height: 1000 }, colorScheme: options.dark ? "dark" : "light" })
   page.setDefaultTimeout(10_000)
   const errors: string[] = []
@@ -32,6 +32,22 @@ async function open(prepare?: (routes: Routes) => void, options: { dark?: boolea
   // Native events are dispatched explicitly; tsx names page functions with a page-absent `__name`.
   await page.addInitScript("window.__name = f => f")
   await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+  if (options.captureChoice) {
+    // Retain the real menu callback, without its DOM lifetime, to exercise late delivery after navigation.
+    await page.addInitScript(() => {
+      ;(window as any).integrationChoices = []
+      ;(window as any).captureIntegrationChoice = (callback: () => void) => {
+        ;(window as any).integrationChoices.push(callback)
+        return callback
+      }
+    })
+    await page.route("**/src/components/integration-row-indicators.tsx", async route => {
+      const response = await route.fetch(), source = await response.text()
+      const handler = /onSelect: (\(\) => void (?:props\.binding\.attach\(offer\.offerID\)|offer\.attach\(\)))/
+      assert.match(source, handler, "capture the production choice callback")
+      await route.fulfill({ response, body: source.replace(handler, "onSelect: window.captureIntegrationChoice($1)") })
+    })
+  }
   if (options.clock) await page.clock.install()
   const routes = await routeIntegrations(page)
   readCounts.set(page, () => routes.count("read") + routes.count("binding"))
@@ -251,6 +267,141 @@ test("the chain button offers the choice between several open documents", async 
     await page.keyboard.press("Escape")
     await menu.waitFor({ state: "hidden" })
     assert.equal(count("attach"), 1)
+  } finally { await page.close() }
+})
+
+const intentChanges = ["plugin.updated", "config.updated", "rpc.neuralnomads.blender.hosts_changed",
+  "rpc.neuralnomads.blender.status_changed", "reconnect", "session-aba", "inactive", "disposed"] as const
+type IntentChange = typeof intentChanges[number]
+async function revokeAttachIntent(page: Page, change: IntentChange) {
+  if (change === "session-aba") {
+    await fx(page, "select", "second")
+    await waitLink(page, "none", "No conversation attached")
+    await fx(page, "select", "first")
+  } else if (change === "inactive") await fx(page, "active", false)
+  else if (change === "disposed") {
+    await fx(page, "plugins", await page.evaluate(() => {
+      const snapshot = (window as any).integrationRow.base()
+      snapshot.controls = snapshot.controls.filter((entry: any) => entry.id !== "neuralnomads.blender")
+      snapshot.runtime = snapshot.runtime.filter((entry: any) => entry.id !== "neuralnomads.blender")
+      snapshot.configured.sources = snapshot.configured.sources.filter((entry: any) => entry.pluginId !== "neuralnomads.blender")
+      return snapshot
+    }), false)
+    await page.locator("[data-plugin-refresh]").click()
+  }
+  else if (change === "reconnect") await fx(page, "reconnect")
+  else await fx(page, "event", change)
+  if (change === "inactive" || change === "disposed") await row(page).waitFor({ state: "detached" })
+}
+
+for (const change of intentChanges) test(`attach intent: ${change} revokes held hosts without submitting or showing an error`, async () => {
+  const { page, model, count } = await open(routes => { routes.model.hold.add("hosts") })
+  try {
+    await waitLink(page, "none", "No conversation attached")
+    await link(page).click()
+    await waitFor(() => model.held.some(call => call.action === "hosts"), "the held hosts read")
+    const read = model.held.find(call => call.action === "hosts")!
+    const aborted = page.waitForEvent("requestfailed", { predicate: request => request.url() === read.route.request().url()
+      && request.failure()?.errorText === "net::ERR_ABORTED", timeout: 2_000 }).then(() => true, () => false)
+    await revokeAttachIntent(page, change)
+    await read.route.fulfill({ json: { offers: model.offers } })
+    const cancelled = await aborted
+    if (change !== "inactive" && change !== "disposed") {
+      await page.waitForFunction(() => document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-integration-link]')?.getAttribute("aria-busy") === "false")
+    }
+    assert.equal(count("attach"), 0)
+    assert.equal(cancelled, true, "revocation aborts its own enumeration read")
+    assert.equal(count("hosts"), 1, "revocation never replays enumeration")
+    assert.equal(await page.locator("[data-integration-offers]").count(), 0)
+    assert.equal(await page.evaluate(() => JSON.stringify((window as any).integrationRow.toasts()).includes("Not confirmed.")), false)
+  } finally { await page.close() }
+})
+
+for (const change of ["plugin.updated", "rpc.neuralnomads.blender.hosts_changed", "reconnect", "session-aba"] as const)
+  test(`attach intent: ${change} closes an open document choice`, async () => {
+    const { page, count } = await open(routes => {
+      routes.model.offers.push({ offerID: "offer-0002", label: "second document", protocol: "ok" })
+    })
+    try {
+      await waitLink(page, "none", "No conversation attached")
+      await link(page).click()
+      const menu = page.locator("[data-integration-offers]")
+      await menu.waitFor()
+      await revokeAttachIntent(page, change)
+      await menu.waitFor({ state: "hidden", timeout: 2_000 })
+      assert.equal(count("attach"), 0)
+    } finally { await page.close() }
+  })
+
+test("attach intent: a retained document callback cannot attach a newly displayed conversation", async () => {
+  const { page, calls, count } = await open(routes => {
+    routes.model.offers.push({ offerID: "offer-0002", label: "second document", protocol: "ok" })
+  }, { captureChoice: true })
+  try {
+    await waitLink(page, "none", "No conversation attached")
+    await link(page).click()
+    await page.locator("[data-integration-offers]").waitFor()
+    await fx(page, "select", "second")
+    await waitLink(page, "none", "No conversation attached")
+    await link(page).click()
+    const menu = page.locator("[data-integration-offers]")
+    await menu.waitFor()
+    await page.evaluate(() => (window as any).integrationChoices[0]())
+    await page.waitForTimeout(150)
+    assert.equal(count("attach"), 0, "selection retains the original gesture, target and offer")
+    assert.equal(await menu.isVisible(), true, "the stale selection leaves the new intent intact")
+    await menu.getByRole("menuitem", { name: "second document", exact: true }).click()
+    await waitFor(() => count("attach") === 1, "the current choice still works")
+    assert.deepEqual(calls.find(call => call.action === "attach")!.body, { sessionID: "second", offerID: "offer-0002" })
+  } finally { await page.close() }
+})
+
+test("attach intent: an old hosts finally cannot clear the next conversation's busy state", async () => {
+  const { page, model, calls, count } = await open(routes => { routes.model.hold.add("hosts") })
+  try {
+    await waitLink(page, "none", "No conversation attached")
+    await link(page).click()
+    await waitFor(() => model.held.length === 1, "first hosts")
+    await fx(page, "select", "second")
+    await waitLink(page, "none", "No conversation attached")
+    await link(page).click()
+    await waitFor(() => model.held.length === 2, "second hosts")
+    await model.held[0]!.route.fulfill({ json: { offers: model.offers } })
+    assert.equal(await link(page).getAttribute("aria-busy"), "true")
+    assert.equal(count("attach"), 0)
+    await model.held[1]!.route.fulfill({ json: { offers: model.offers } })
+    await waitLink(page, "attached", "Attached to: Scene")
+    assert.deepEqual(calls.find(call => call.action === "attach")!.body, { sessionID: "second", offerID: "offer-0001" })
+  } finally { await page.close() }
+})
+
+test("attach intent: an admitted uncertain mutation survives invalidation and navigation without replay", async () => {
+  const { page, model, calls, count } = await open(routes => {
+    routes.model.hold.add("hosts")
+    routes.model.hold.add("attach")
+  })
+  try {
+    await waitLink(page, "none", "No conversation attached")
+    await link(page).focus()
+    await page.keyboard.press("Space")
+    await waitFor(() => count("hosts") === 1, "one enumeration")
+    await link(page).click({ force: true })
+    await page.keyboard.press("Enter")
+    assert.equal(count("hosts"), 1)
+    await model.held.find(call => call.action === "hosts")!.route.fulfill({ json: { offers: model.offers } })
+    await waitFor(() => model.held.some(call => call.action === "attach"), "the admitted attach")
+    const mutation = model.held.find(call => call.action === "attach")!
+    await fx(page, "event", "rpc.neuralnomads.blender.hosts_changed")
+    await fx(page, "select", "second")
+    await waitLink(page, "none", "No conversation attached")
+    assert.equal(mutation.route.request().failure(), null, "revocation leaves the admitted mutation alone")
+    model.bindings["first:blender"] = { state: "attached", label: "Scene" }
+    await mutation.route.abort("connectionfailed")
+    await fx(page, "select", "first")
+    await waitLink(page, "attached", "Attached to: Scene")
+    assert.equal(count("attach"), 1)
+    assert.equal(count("detach"), 0)
+    assert.deepEqual(calls.find(call => call.action === "attach")!.body, { sessionID: "first", offerID: "offer-0001" })
   } finally { await page.close() }
 })
 
