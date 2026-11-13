@@ -1,6 +1,7 @@
 import { createEffect, For, Show } from "solid-js"
 import { render } from "solid-js/web"
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
+import { useRelayServerProfiles } from "../../../src/lib/hooks/use-remote-server-profiles"
 import { initializeClientState, loadedRestorableSession, setRestorePreviousStateEnabled } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { activeAppTabId, appTabs, closeInstanceTab, ensureActiveAppTab, moveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
@@ -25,10 +26,16 @@ function close(id: string) {
   else if (tab?.kind === "instance") closeInstanceTab(tab.instance.id)
   ensureActiveAppTab()
 }
+let relayProfiles: ReturnType<typeof useRelayServerProfiles>
+function RelayProfiles() {
+  relayProfiles = useRelayServerProfiles()
+  return null
+}
 function Fixture() {
   useAppSessionRestore()
   createEffect(() => { appTabs(); appSessionRestoreGateActive(); ensureActiveAppTab() })
   return <ConfigProvider><I18nProvider>
+    <RelayProfiles />
     <div data-restoring={appSessionRestoreGateActive()}>
       <InstanceTabs tabs={appTabs()} activeTabId={activeAppTabId()} onSelect={selectAppTab} onClose={close} onNew={() => {}} onMoveTab={moveAppTab} />
       <For each={appTabs()}>{tab => <Show when={activeAppTabId() === tab.id}>
@@ -52,5 +59,9 @@ function Fixture() {
   snapshot: loadedRestorableSession,
   saved: async () => { const value = (window as any).committedState; return value && decodeClientSnapshotV2(value.snapshot, 1, async key => value.partitions[key] ?? null) },
   removeServer: () => preferencesForBackend("local").removeRemoteServerProfile("a"),
+  removeServerQueued: () => relayProfiles.removeServer(preferencesForBackend("local").remoteServers().find(profile => profile.id === "a")!),
+  retargetServerQueued: () => preferencesForBackend("local").saveRemoteServerProfile({
+    ...preferencesForBackend("local").remoteServers().find(profile => profile.id === "a")!, baseUrl: "https://changed.test",
+  }, () => true),
 }
 ;(window as any).disposeRestoreFixture = render(() => <Fixture />, document.getElementById("root")!)

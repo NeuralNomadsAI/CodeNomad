@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Серверы",
+  "settings.servers.open": "Открыть",
+  "settings.servers.dialog.name": "Имя",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Отключает проверку сертификата этого сервера. Его подлинность нельзя проверить.",
+  "settings.servers.dialog.errorRequired": "Требуется URL сервера.",
   "settings.preferenceSaveFailed": "Не удалось сохранить настройку.",
   "settings.behavior.keepComputerAwake.title": "Не переводить компьютер в спящий режим, пока работает CodeNomad",
   "settings.behavior.keepComputerAwake.info": "Предотвращает переход системы в спящий режим, пока открыто локальное окно CodeNomad (в том числе свёрнутое); экран по-прежнему может выключаться. Если параметр отключён, CodeNomad предотвращает переход в спящий режим только во время работы сессии.",

@@ -810,16 +810,17 @@ async function patchConfigOwner(owner: string, patch: unknown) {
 }
 
 let stateWrite: Promise<void> = Promise.resolve()
-function patchStateOwner(owner: string, patch: unknown): Promise<void> {
-  stateWrite = writeStateOwner(owner, patch)
+function patchStateOwner(owner: string, patch: unknown, admitted?: () => boolean): Promise<void> {
+  stateWrite = writeStateOwner(owner, patch, admitted)
   return stateWrite
 }
-async function writeStateOwner(owner: string, patch: unknown) {
+async function writeStateOwner(owner: string, patch: unknown, admitted?: () => boolean) {
   await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
   assertCurrent()
   if (!local && owner === "ui" && patch && typeof patch === "object" && "opencodeBinaries" in patch) {
     throw new Error("Binary administration requires its local host")
   }
+  if (admitted && !admitted()) throw new DOMException("Obsolete server edit", "AbortError")
   const updated = await storage.patchStateOwner(owner, patch)
   assertCurrent()
   if (owner === "ui") setUiStateBucket(updated as any)
@@ -1243,15 +1244,39 @@ async function renameRecentFolderProject(folderPath: string, projectName: string
   }
 }
 
-async function saveRemoteServerProfile(input: RemoteServerProfileInput): Promise<RemoteServerProfile> {
+let remoteServerEdits = Promise.resolve<unknown>(undefined)
+function queueRemoteServerEdit<T>(current: () => boolean, edit: () => Promise<T>): Promise<T> {
+  const write = remoteServerEdits.catch(() => {}).then(async () => {
+    await ensureLoaded()
+    if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
+    return edit()
+  })
+  remoteServerEdits = write
+  return write
+}
+async function saveRemoteServerProfile(input: RemoteServerProfileInput, current?: () => boolean): Promise<RemoteServerProfile> {
+  if (current) return queueRemoteServerEdit(current, async () => {
+    const duplicate = !input.id && remoteServers().find(entry => entry.baseUrl === input.baseUrl && entry.ssh?.host === input.ssh?.host)
+    if (duplicate && duplicate.skipTlsVerify !== input.skipTlsVerify) throw new DOMException("Changed server policy", "AbortError")
+    const profile = buildRemoteServerProfile({ ...input, id: input.id ?? (duplicate ? duplicate.id : undefined) }, remoteServers())
+    const cancelled = await confirmRemoteServerPolicy(profile)
+    if (cancelled) return cancelled
+    await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) }, current)
+    return profile
+  })
   const profile = buildRemoteServerProfile(input, remoteServers())
+  const cancelled = await confirmRemoteServerPolicy(profile)
+  if (cancelled) return cancelled
+  await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) })
+  return profile
+}
+
+async function confirmRemoteServerPolicy(profile: RemoteServerProfile): Promise<RemoteServerProfile | undefined> {
   const previous = remoteServers().find(value => value.id === profile.id)
   if (preferences().multiBackend === true && previous && (previous.baseUrl !== profile.baseUrl
     || previous.skipTlsVerify !== profile.skipTlsVerify || previous.ssh?.host !== profile.ssh?.host)) {
     if (!await (await import("./remote-server-usage")).confirmRemoteServerChange(profile.id)) return previous
   }
-  await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) })
-  return profile
 }
 
 async function markRemoteServerConnected(id: string): Promise<void> {
@@ -1270,6 +1295,15 @@ async function removeRemoteServerProfile(id: string): Promise<void> {
   if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
   const next = remoteServers().filter((entry) => entry.id !== id)
   await patchStateOwner("ui", { remoteServers: next })
+}
+
+function removeRemoteServerProfileAsync(id: string, current: () => boolean, beforeRemove?: () => Promise<void>): Promise<void> {
+  return queueRemoteServerEdit(current, async () => {
+    if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
+    if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
+    await beforeRemove?.()
+    await patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, current)
+  })
 }
 
 function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
@@ -1517,6 +1551,7 @@ interface ConfigContextValue {
   saveRemoteServerProfile: typeof saveRemoteServerProfile
   markRemoteServerConnected: typeof markRemoteServerConnected
   removeRemoteServerProfile: typeof removeRemoteServerProfile
+  removeRemoteServerProfileAsync: typeof removeRemoteServerProfileAsync
   recordWorkspaceLaunch: typeof recordWorkspaceLaunch
   addRecentModelPreference: typeof addRecentModelPreference
   isFavoriteModelPreference: typeof isFavoriteModelPreference
@@ -1598,6 +1633,7 @@ const configContextValue: ConfigContextValue = {
   saveRemoteServerProfile,
   markRemoteServerConnected,
   removeRemoteServerProfile,
+  removeRemoteServerProfileAsync,
   recordWorkspaceLaunch,
   addRecentModelPreference,
   isFavoriteModelPreference,
@@ -1659,7 +1695,7 @@ const hostPreferenceMethods = [
   "customColorSchemePreference", "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId",
   "setColorSchemePreference", "selectColorSchemePreset", "saveColorSchemeOverride", "resetColorSchemeOverride",
   "saveColorSchemePreset", "deleteColorSchemePreset", "remoteServers", "saveRemoteServerProfile",
-  "markRemoteServerConnected", "removeRemoteServerProfile", "patchHotkeyPreferences", "setUpdateFeed",
+  "markRemoteServerConnected", "removeRemoteServerProfile", "removeRemoteServerProfileAsync", "patchHotkeyPreferences", "setUpdateFeed",
   "toggleShowThinkingBlocks", "toggleShowMessageTimeline", "toggleUsageMetrics", "toggleAutoCleanupBlankSessions",
   "toggleShowPromptVoiceInput", "setDiffViewMode", "setToolOutputExpansion", "setDiagnosticsExpansion",
   "setThinkingBlocksExpansion", "setToolInputsVisibility",

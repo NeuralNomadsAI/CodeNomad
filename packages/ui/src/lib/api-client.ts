@@ -97,6 +97,7 @@ import { validMissionContentSlice } from "./mission-content-slice"
 import { assertTaskReadLive, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
+import { remoteServerRequest, type RemoteServerConnectInput } from "./remote-server-request"
 
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
@@ -415,17 +416,24 @@ export function createServerApi(ctx: BackendHttp) {
     fetchServerMeta(): Promise<ServerMeta> {
       return request<ServerMeta>("/api/meta")
     },
-    probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
+    connectRemoteServer(id: string, input: RemoteServerConnectInput, signal?: AbortSignal) {
+      return remoteServerRequest(ctx, id, "connect", input, signal)
+    },
+    forgetRemoteServer(id: string, signal?: AbortSignal) {
+      return remoteServerRequest(ctx, id, "forget", {}, signal)
+    },
+    probeRemoteServer(payload: RemoteServerProbeRequest, signal?: AbortSignal): Promise<RemoteServerProbeResponse> {
       return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
         method: "POST",
         body: JSON.stringify(payload),
+        signal,
       })
     },
     connectRemoteBackend(id: string, payload: { username?: string; password?: string; pairingLink?: string }, signal?: AbortSignal): Promise<{ ok: boolean }> {
       return request(`/api/backends/${encodeURIComponent(id)}/api/auth/login`, { method: "POST", body: JSON.stringify(payload), signal })
     },
-    listSshHosts(): Promise<{ hosts: string[] }> {
-      return request("/api/remote-servers/ssh-hosts")
+    listSshHosts(signal?: AbortSignal): Promise<{ hosts: string[] }> {
+      return request("/api/remote-servers/ssh-hosts", { signal })
     },
     createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
       return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {

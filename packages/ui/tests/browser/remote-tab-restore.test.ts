@@ -50,6 +50,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
     let healthy = !["offline", "auth", "pairing", "refused"].includes(mode)
     let generation = 0
     let profileWrites = 0
+    let forgets = 0
     const projects: any[] = mode === "reuse" ? [0, 1].map(index => descriptor(`existing-${index}`, "/same")) : []
     let releaseCreate!: () => void
     const createGate = new Promise<void>(resolve => { releaseCreate = resolve })
@@ -60,6 +61,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       const remote = pathname.startsWith("/api/backends/a/")
       const path = remote ? pathname.slice("/api/backends/a".length) : pathname
       let body: any = {}
+      if (path === "/api/remote-servers/a/forget") forgets++
       if (path.startsWith("/api/storage/")) {
         if (!remote && path.endsWith("/state/ui") && request.method() !== "GET") profileWrites++
         body = remote ? {} : path.endsWith("/config/ui") ? { settings: { multiBackend: mode !== "disabled" } }
@@ -125,6 +127,13 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.equal(await page.locator('[data-remote-restore="a"]').count(), 1)
         const snapshot = await page.evaluate(() => (window as any).restoreFixture.snapshot())
         assert.equal(snapshot.tabs[2].drafts.__no_session_draft__, "draft-2")
+        if (mode === "offline") {
+          const writes = profileWrites
+          assert.equal(await page.evaluate(() => (window as any).restoreFixture.removeServerQueued().then(() => false, () => true)), true)
+          assert.equal(forgets, 0, "queued removal must reject occupied tabs before Forget")
+          assert.equal(await page.evaluate(() => (window as any).restoreFixture.retargetServerQueued().then(() => false, () => true)), true)
+          assert.equal(profileWrites, writes, "queued retarget/removal must preserve the saved profile")
+        }
         if (mode === "auth" || mode === "pairing") {
           await page.getByRole("button", { name: "Connect", exact: true }).click()
           if (mode === "pairing") await page.getByLabel("Pairing link", { exact: true }).fill(`https://a.test/remote-pair#${"p".repeat(32)}`)

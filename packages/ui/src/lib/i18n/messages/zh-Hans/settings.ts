@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "服务器",
+  "settings.servers.open": "打开",
+  "settings.servers.dialog.name": "名称",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "禁用此服务器的证书检查，将无法验证其身份。",
+  "settings.servers.dialog.errorRequired": "服务器 URL 为必填项。",
   "settings.preferenceSaveFailed": "无法保存偏好设置。",
   "settings.behavior.keepComputerAwake.title": "CodeNomad 运行时保持电脑唤醒",
   "settings.behavior.keepComputerAwake.info": "本地 CodeNomad 窗口打开时（包括最小化状态）阻止系统进入睡眠；屏幕仍可能自动关闭。禁用此选项时，CodeNomad 仅在会话工作期间保持电脑唤醒。",
