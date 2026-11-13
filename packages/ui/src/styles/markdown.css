@@ -261,6 +261,7 @@
     line-height: var(--message-part-header-title-line-height);
   }
 
+  .code-block-diagram,
   .code-block-copy,
   .code-block-wrap {
     display: inline-flex;

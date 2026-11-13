@@ -67,7 +67,7 @@ async function fixture(label: string) {
   const manager = {
     list: () => [{ id: "workspace" }], getSharedServiceClient: async () => client,
     getSharedServiceConnection: async () => { acquisitions++; return connection },
-    ownsLocation: async (_id: string, location: { directory: string }, ownedClient?: unknown, signal?: AbortSignal) => {
+    ownsLocation: async (_id: string, location: { directory: string }, ownedClient?: unknown, { signal }: { signal?: AbortSignal } = {}) => {
       if (ownedClient) assert.equal(ownedClient, client)
       await state.ownerHook(location.directory)
       signal?.throwIfAborted()

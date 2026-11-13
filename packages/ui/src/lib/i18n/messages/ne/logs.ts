@@ -1,4 +1,10 @@
 export const logMessages = {
+  "settings.opencode.logs.title": "OpenCode लगहरू",
+  "settings.opencode.logs.open": "OpenCode लगहरू हेर्नुहोस्",
+  "settings.opencode.logs.info": "छानिएको OpenCode होस्टका विश्वव्यापी लगहरू। निजी डेटा हुन सक्छ। खोल्दा अन्तिम 128 KiB पढिन्छ; रिफ्रेसले फेरि पढ्छ।",
+  "settings.opencode.logs.failed": "OpenCode लगहरू पढ्न सकिएन। कार्यान्वयन फाइल र फाइल पहुँच जाँचेर रिफ्रेस गर्नुहोस्।",
+  "settings.opencode.logs.empty": "लग खाली छ।",
+  "settings.opencode.logs.truncated": "लगको अन्त्य देखाइएको छ (अधिकतम 128 KiB)।",
   "logsView.title": "सर्भर लगहरू",
   "logsView.actions.show": "सर्भर लगहरू देखाउनुहोस्",
   "logsView.actions.hide": "सर्भर लगहरू लुकाउनुहोस्",

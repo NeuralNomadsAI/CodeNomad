@@ -6,9 +6,9 @@ Aynı kullanıcı arayüzü [çoklu proje sekmeleri ve çalışma ağaçları](p
 
 ## Ana bilgisayarı hazırlayın {#prerequisites}
 
-1. Node.js 24 LTS ve npm'yi yükleyin; havuzun sabitlenmiş derleme çalışma zamanı 24.20.0'dır. Masaüstü paketleri Node/npm'yi içerir.
+1. Node.js 24 LTS ve npm'yi yükleyin; havuzun derleme çalışma zamanı `.node-version` dosyasında sabitlenmiştir. Masaüstü paketleri kendi çalışma zamanlarını sağlar: Electron yerleşik Node'unu kullanır, Tauri Node'u paketler ve ikisi de npm içerir.
 2. Git'i **arka uç sürecinin PATH** değişkenine ekleyin. Yalnızca WSL içindeki Git, Windows arka ucu için yeterli değildir.
-3. OpenCode'u yükleyin veya seçin: **2.2.3** gerekli minimum değer, **2.2.5** ise önerilen yeterlilik hedefidir. Daha yeni veya özel derlemeler, test edilmiş sürüm izin verilenler listesine değil, uyumluluk denetimlerine tabi tutulur. Bkz. [OpenCode kurulumu](opencode.md).
+3. OpenCode'u yükleyin veya seçin: **2.2.3** gerekli minimum değer, **2.2.7** ise önerilen yeterlilik hedefidir. Daha yeni veya özel derlemeler, test edilmiş sürüm izin verilenler listesine değil, uyumluluk denetimlerine tabi tutulur. Bkz. [OpenCode kurulumu](opencode.md).
 4. Sunucunun başlatılacağı klasörü seçin veya `--workspace-root`'yi açıkça iletin.
 
 Git olmadan, konuşmalar yalnızca açıkça açılan fiziksel klasörde kullanılabilir durumda kalır; Git ve çalışma ağacı işlemleri başarısız oluyor. Git'i yükleyin ve PATH değişikliğinden sonra arka ucu yeniden başlatın. Çalışma alanı kökü, aracının yürütülmesini değil, açmayı/göz atmayı sınırlar: bkz. [Güvenlik](security.md).
@@ -58,6 +58,8 @@ Arka uç, Görevler gibi kendi OpenCode eklentileri için rastgele bir `127.0.0.
 Dinleyicinin erişimi, sertifikalar, VPN/SSH ve ters proxy'ler için [Doğrudan uzaktan erişim](remote-access.md) kullanın. Gelen bağlantı noktası olmadan erişim için [Uzaktan Kontrol](remote-control.md) kullanın.
 
 ## Genel CLI referansı {#cli-reference}
+
+Tauri veya Electron başlatmak için [Masaüstü başlatma argümanlarına](desktop.md#desktop-cli) bakın: `--connect-server`, `--folder`, `--new-window` ve komut/kısayol örnekleri. Aşağıdaki tablo bağımsız sunucu çalıştırılabilir dosyasına aittir.
 
 Bayraklar karşılık gelen ortam değişkenlerini geçersiz kılar. Değer alan bayraklar gösterilen argümanı kullanır; anahtarlar değer almaz. HTTPS/HTTP değerleri büyük/küçük harfe duyarsız olarak `1`, `true`, `yes`, `y` ve `on` değerlerini etkin sayar; açıklık için `true`/`false` kullanın. Arayüzün otomatik güncellemesi `1`, `true` ve `yes` değerlerini tanır.
 

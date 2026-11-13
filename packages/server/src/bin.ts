@@ -11,6 +11,7 @@ const loaderFileUrl = pathToFileURL(path.join(__dirname, "loader.js")).href
 const registerScript = `import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("${encodeURI(loaderFileUrl)}", pathToFileURL("./"));`
 const loaderArg = `data:text/javascript,${registerScript}`
 
+// console-window: the runtime child shares this launcher's stdio and console.
 const child = spawn(process.execPath, ["--import", loaderArg, cliEntry, ...process.argv.slice(2)], {
   stdio: "inherit",
 })

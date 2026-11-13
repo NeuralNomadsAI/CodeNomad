@@ -64,7 +64,11 @@ test("normal global-user npm install publishes terminal command and retries PATH
       }
       assert.ok(args.includes("--global"))
       assert.equal(args[args.indexOf("--prefix") + 1], prefix)
-      await npmFixture(prefix, args.at(-1)!.split("@").at(-1)!)
+      // npm (12+) blocks unlisted install scripts: allow exactly the installed OpenCode's postinstall.
+      const spec = args.at(-1)!
+      assert.match(spec, /^@opencode\/cli@\d+\.\d+\.\d+$/)
+      assert.deepEqual(args.filter(arg => /scripts/.test(arg)), [`--allow-scripts=${spec}`])
+      await npmFixture(prefix, spec.split("@").at(-1)!)
     },
     probe: async (binary: string) => {
       try { return { valid: true, version: await readFile(binary, "utf8") } } catch { return { valid: false, missing: true } }

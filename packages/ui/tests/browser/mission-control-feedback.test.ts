@@ -11,6 +11,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-navigation"
 import { panelMissions } from "./mission-content-fixture"
+import { expandRow, inlineMissionEntry, missionMenuItem, missionMenuItemState } from "./mission-actions"
 
 // Real MissionControl/RightPanel fixtures for feedback that must survive hidden
 // views: certified lifecycle rejection, superseded exact briefing responses and
@@ -49,8 +50,11 @@ const select = (page: Page, id: string, scope = "/fixture") => page.evaluate(asy
   ;(await import(view)).updateMissionProjectView(scope, { selected: id })
 }, { id, scope })
 const detail = (page: Page) => page.locator("section.mission-detail")
-const toolbar = (page: Page) => detail(page).getByRole("toolbar")
-const alerts = (page: Page) => detail(page).locator(".mission-action-feedback [role=alert]")
+const toolbar = (page: Page) => page.locator(".mission-picker-selection-actions .mission-action-bar")
+// Command feedback is announced, not shown: it stays in the DOM, visually hidden (so waits
+// need `state: "attached"`), and its text joins the primary toolbar button's tooltip.
+const alerts = (page: Page) => page.locator(".mission-picker-selection-actions .mission-action-feedback [role=alert]")
+const primaryTitle = (page: Page) => toolbar(page).locator("button").first().getAttribute("title")
 const toasts = (page: Page) => page.evaluate(async () => {
   const path = "/src/lib/notifications.tsx"
   return (await import(path)).getToastHistory().map((item: { title?: string; message: string; variant: string }) => ({ title: item.title, message: item.message, variant: item.variant }))
@@ -102,13 +106,15 @@ test("a certified Pause rejection while hidden is announced once and explained i
     assert.deepEqual(await toasts(page), [{ title: "Feedback one", variant: "error",
       message: "Pause was not applied: the mission changed first. Nothing was resent; review it and try again." }])
     await visibility(page, "activate", true)
-    await alerts(page).getByText("Pause was not applied", { exact: false }).waitFor()
+    await alerts(page).getByText("Pause was not applied", { exact: false }).waitFor({ state: "attached" })
+    assert.equal(await primaryTitle(page), "Pause mission — Pause was not applied: the mission changed first. Nothing was resent; review it and try again.")
     await page.waitForFunction(() => (window as any).missionVisibility.state().missions[0]?.revision === 2)
     assert.equal(await toolbar(page).getByRole("button", { name: "Check control status", exact: true }).count(), 0, "rejection is not an unresolved retry")
     assert.equal(calls.length, 1)
     await toolbar(page).getByRole("button", { name: "Pause mission", exact: true }).click()
     await toolbar(page).getByRole("button", { name: "Resume mission", exact: true }).waitFor()
     assert.equal(await alerts(page).count(), 0, "a new explicit action supersedes the explanation")
+    assert.equal(await primaryTitle(page), "Resume mission", "the tooltip drops the superseded explanation")
     assert.deepEqual(calls.map(call => call.expectedRevision), [1, 2]); assert.notEqual(calls[0].requestId, calls[1].requestId)
     assert.equal((await toasts(page)).length, 1, "announced once per exact request")
     assert.deepEqual(errors, [])
@@ -129,7 +135,8 @@ test("revision drift during Stop confirmation sends nothing and asks to review a
     await visibility(page, "event", "session.execution.started"); await refreshed
     await page.waitForFunction(() => (window as any).missionVisibility.state().missions[0]?.revision === 2)
     await dialog.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
-    await alerts(page).getByText("Stop was not sent; review it and confirm again.", { exact: false }).waitFor()
+    await alerts(page).getByText("Stop was not sent; review it and confirm again.", { exact: false }).waitFor({ state: "attached" })
+    assert.match(await primaryTitle(page) ?? "", /^Pause mission — .*Stop was not sent; review it and confirm again\./)
     assert.deepEqual(calls, [], "a stale confirmation never reaches the server")
     assert.equal(await toolbar(page).getByRole("button", { name: "Stop mission permanently", exact: true }).isEnabled(), true)
     assert.deepEqual(errors, [])
@@ -192,7 +199,11 @@ async function navigable(values: MissionMap[]) {
   })
   await page.goto(`${base}/navigation`, { timeout: 60_000 })
   await page.waitForFunction(() => Boolean(window.missionNavigation))
-  await select(page, "A"); await detail(page).waitFor()
+  // Selecting only highlights the row; its chevron shows the detail, as in the session list.
+  // A has no tasks, so no chevron: its detail stays folded and its feedback is announced.
+  await select(page, "A")
+  const leaf = await expandRow(await inlineMissionEntry(page, "Feedback A")) === "leaf"
+  await detail(page).waitFor({ state: leaf ? "attached" : "visible" })
   return { page, errors, prompts, counter }
 }
 function publish(value: MissionMap, requestID: string) {
@@ -207,10 +218,12 @@ for (const exact of [true, false]) {
   test(`${exact ? "an exact" : "a foreign"} briefing response superseded by an automatic milestone while hidden ${exact ? "resolves" : "keeps"} the request after activation`, async () => {
     const values = [mission("A", "project")]
     const { page, errors, prompts, counter } = await navigable(values)
-    const request = detail(page).locator(".mission-action-request"), feedback = detail(page).locator(".mission-briefing-feedback")
+    const feedback = page.locator(".mission-picker-selection-actions .mission-briefing-feedback")
+    const requestEnabled = async () => (await missionMenuItemState(page, "request")).enabled
     try {
-      await request.click()
-      await feedback.getByText("Request sent.", { exact: false }).waitFor()
+      await (await missionMenuItem(page, "request")).click()
+      await feedback.getByText("Request sent.", { exact: false }).waitFor({ state: "attached" })
+      assert.match(await primaryTitle(page) ?? "", / — .*Request sent\./, "the request's state joins the primary button's tooltip")
       const requestID = /Request ID: ([^\n]+)/.exec(prompts[0].text)![1]
       await page.evaluate(() => window.missionNavigation.activate(false)); await frames(page)
       const before = counter.reads
@@ -222,7 +235,7 @@ for (const exact of [true, false]) {
       await page.evaluate(() => window.missionNavigation.activate(true)); await revalidated
       if (exact) {
         await feedback.waitFor({ state: "detached" })
-        assert.equal(await request.isEnabled(), true)
+        assert.equal(await requestEnabled(), true)
         const stored = await page.evaluate(async () => {
           const path = "/src/stores/mission-briefing-request.ts"
           return (await import(path)).missionBriefingRequest(JSON.stringify(["fixture", "/fixture", "project", "project", "A", "ses_A"]))
@@ -230,8 +243,8 @@ for (const exact of [true, false]) {
         assert.equal(stored?.briefingId, `briefing-${requestID}`, "acknowledged by exact request identity only")
       } else {
         await frames(page)
-        await feedback.getByText("Request sent.", { exact: false }).waitFor()
-        assert.equal(await request.isDisabled(), true, "an automatic or foreign briefing never answers the request")
+        await feedback.getByText("Request sent.", { exact: false }).waitFor({ state: "attached" })
+        assert.equal(await requestEnabled(), false, "an automatic or foreign briefing never answers the request")
       }
       assert.equal(prompts.length, 1, "never resent")
       assert.deepEqual(errors, [])

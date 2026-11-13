@@ -31,7 +31,11 @@ Komut bağımsız değişkenlerine veya kabuk geçmişine parola eklemek yerine 
 
 Doğrudan giriş, arka uç belleğinde opak bir oturum ve `codenomad_session` çerezi (veya yapılandırılan adla çerez) oluşturur. Çerezler `HttpOnly`, `SameSite=Lax` özelliklerine sahiptir, `/` kapsamındadır ve HTTPS üzerinden verildiğinde `Secure` olarak işaretlenir. Bunlar tarayıcı oturumu çerezleridir; arka ucun yeniden başlatılması bellekteki oturumları geçersiz kılar. Başarısız değişiklik işlemlerini yeniden göndermek yerine istendiğinde aynı sayfada yeniden kimlik doğrulayın.
 
-Parolayı değiştirmek sonraki kimlik bilgisi kontrollerini değiştirir; önceden verilmiş doğrudan oturumları veya Uzaktan Kontrol cihazlarını **geçersiz kılmaz**. Yetkisiz erişimden şüpheleniyorsanız:
+Çıkış, mevcut doğrudan oturumu iptal eder. Ana bilgisayarda başarılı parola değişikliği, mevcut oturum dahil kullanıcının tüm doğrudan oturumlarını iptal eder; yeniden giriş yapın. Oturumlar, kimliği doğrulanmış istek olmadan 24 saat veya oluşturulduktan yedi gün sonra sona erer. Sınırları değiştirmek için arka uç başlamadan `CODENOMAD_SESSION_IDLE_SECONDS` ve `CODENOMAD_SESSION_ABSOLUTE_SECONDS` değişkenlerini pozitif tam sayı saniye olarak ayarlayın. Uzaktan Kontrol cihazları ayrı iptal edilir.
+
+LAN istemcileri giriş, çıkış ve proje işlemlerini kullanabilir. Parola değişikliği, Uzaktan Kontrol yönetimi, uzak sunucu/proxy araçları ve SideCars, ana bilgisayarın loopback bağlantısından yönetilir. Tarayıcı değişiklikleri izin verilen Origin veya yoksa Referer gerektirir. Sunucunun duyurulan kaynaklarına izin verilir; DNS takma adları, ters proxy veya ayrı barındırılan arayüz için `CODENOMAD_ALLOWED_ORIGINS` değişkenine `https://code.example.test,https://ui.example.test:8443` gibi tam HTTP(S) kaynaklarını virgülle ayırarak yazıp yeniden başlatın. Yol veya joker karakter kullanmayın. Bu, tarayıcı erişimi verir; ana bilgisayar yetkisi vermez. Yerel LAN istemcileri de değişikliklerde izin verilen Origin göndermelidir. Loopback üzerinden bağlanan güvenilir proxy, ana bilgisayar yetkisine sahiptir ve kendi erişim denetimlerine ihtiyaç duyar. Sunucu loopback veya tüm arayüzlerde dinlediğinde, ana bilgisayarda aynı şema ve bağlantı noktasıyla `localhost` olarak açılan arayüz de çalışır.
+
+Yetkisiz erişimden şüpheleniyorsanız:
 
 1. Ağ erişimini kısıtlayın ve ana bilgisayarda yeni bir parola belirleyin veya çalışma zamanı sırrınızı değiştirin ve yeniden başlatın.
 2. Mevcut doğrudan oturumlarını geçersiz kılmak için arka ucu yeniden başlatın.

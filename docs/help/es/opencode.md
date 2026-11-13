@@ -9,7 +9,7 @@ CodeNomad se conecta a un servicio compartido de OpenCode en el equipo de ejecuc
 3. Usa **Comprobar estado y actualizaciones**. Si falta OpenCode, elige **Instalar e iniciar OpenCode**; revisa primero el equipo y el ámbito de instalación.
 4. Si la configuración inicial ofrece **Conectar y continuar**, úsalo tras resolver el problema indicado.
 
-La instalación usa Node/npm incluidos para una instalación de usuario estándar compartida con otros clientes. **Instalar para el usuario y configurar PATH** cambia la configuración de terminal de ese usuario; abre una terminal nueva después. Un navegador se conecta al servidor de CodeNomad: su selector de archivos y selección de ejecutable se refieren a ese servidor, no al dispositivo que navega.
+La instalación usa el entorno Node en el que se ejecuta el servidor de CodeNomad y su npm (en escritorio, el Node integrado de Electron o el Node que incluye Tauri) para una instalación de usuario estándar compartida con otros clientes. **Instalar para el usuario y configurar PATH** cambia la configuración de terminal de ese usuario; abre una terminal nueva después. Un navegador se conecta al servidor de CodeNomad: su selector de archivos y selección de ejecutable se refieren a ese servidor, no al dispositivo que navega.
 
 Cuando un OpenCode anterior aparece primero en el PATH, la acción ofrecida depende de cómo se instaló. Para OpenCode 1.x instalado con npm, **Reemplazar OpenCode {version} por OpenCode 2** pide confirmación, elimina ese paquete npm e instala OpenCode 2 en la misma carpeta npm; la carpeta de datos de OpenCode se conserva, y OpenCode 2 importa por sí mismo las conversaciones de 1.x. Un OpenCode anterior o inutilizable instalado de otra forma (winget, Homebrew, manual) nunca se modifica: **Instalar OpenCode 2 para CodeNomad** instala OpenCode 2 en la carpeta npm del usuario junto a él, y CodeNomad usa después esa copia. Si ese comando anterior está en la propia carpeta npm del usuario (por ejemplo, un enlace en `~/.local/bin`), o no se puede escribir en esa carpeta, la configuración explica el motivo en lugar de ofrecer la acción: mueve el comando o cámbiale el nombre, o corrige los permisos de la carpeta, y luego elige **Comprobar estado y actualizaciones**. El comando `opencode` de una terminal puede seguir iniciando la versión anterior. Un ejecutable personalizado seleccionado explícitamente nunca se reemplaza.
 
@@ -20,7 +20,7 @@ El ejecutable instalado y el servicio en ejecución pueden tener versiones disti
 | Clasificación | Requisito actual | Significado |
 | --- | --- | --- |
 | Mínima | OpenCode **2.2.3** | La herramienta de generación de imágenes que usan los ajustes de **Imágenes** y la extensión Design, además del orden correcto de las tareas JavaScript en Code Mode y el formato nativo de reproducción y compactación; las conversaciones guardadas con versiones anteriores siguen siendo legibles tras actualizar. |
-| Recomendada | OpenCode **2.2.5** | Objetivo verificado, distinto del mínimo técnico. |
+| Recomendada | OpenCode **2.2.7** | Objetivo verificado, distinto del mínimo técnico. |
 | No verificada | Una versión más nueva o personalizada no validada por completo | No se rechaza simplemente por no estar probada; se comprueban los contratos API reales del servicio conectado. |
 
 El servicio conectado debe exponer los contratos requeridos de sesiones, permisos, formularios, bandeja de entrada y entorno de sesión. La programación nativa de Misiones también comprueba las API de programación, el paquete de plugin/proveedor y el ajuste efectivo `experimental.schedules`. La disponibilidad depende de esas capacidades utilizadas, también en versiones futuras compatibles. Si la configuración inicial informa de un servicio en ejecución no compatible, selecciona/instala una CLI compatible y usa el reinicio explícito del servicio compartido cuando estés listo.
@@ -49,6 +49,8 @@ Desactivarlo solo retira esa tarea, ese LaunchAgent o ese servicio; un OpenCode 
 2. Para reemplazar los archivos de la CLI instalada, elige **Actualizar a OpenCode {version}** cuando se ofrezca. Espera a que termine.
 3. Revisa el estado del servicio en ejecución. Usa **Reiniciar servicio compartido** solo cuando quieras activar la instalación seleccionada para todos los clientes conectados.
 4. Para reiniciar el proceso sin instalar nada, expande **Solución de problemas**, elige **Reiniciar servicio OpenCode** y confirma.
+
+El reinicio sigue disponible durante una actualización del estado en segundo plano. Cada solicitud vuelve a comprobar el estado actual antes de modificar el servicio; una comprobación fallida bloquea el reinicio.
 
 | Acción | Ámbito y efecto | Recuperación segura |
 | --- | --- | --- |

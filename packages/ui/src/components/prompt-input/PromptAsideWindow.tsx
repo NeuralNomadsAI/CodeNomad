@@ -62,7 +62,7 @@ export default function PromptAsideWindow(props: {
         <Show when={aside.error()}><p role="alert">{aside.error()}</p></Show>
         <Show when={aside.answer()}>
           <section class="session-aside-answer" aria-label={t("promptInput.btw.answer")} tabindex="0">
-            <Markdown part={{ type: "text", text: aside.answer() }} escapeRawHtml />
+            <Markdown instanceId={aside.instanceId()} part={{ type: "text", text: aside.answer() }} escapeRawHtml />
           </section>
         </Show>
       </div>

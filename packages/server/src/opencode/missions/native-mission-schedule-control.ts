@@ -172,7 +172,7 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
     if (deleting && !("deletedAt" in deleting) && deleting.deletion) {
       const deletion = deleting.deletion
       const managedCleanup = deletion.deleteManagedSessions && deleting.launchedCount > 0
-      if (managedCleanup) actorPending = true
+      if (managedCleanup || deleting.coordinatorReleases.length) actorPending = true
       else if (!actorPending && !deleting.pending && !deleting.calendarOwner?.operation.pending
         && !deleting.calendarOwner?.slots.length && !deleting.calendarOwner?.retired.length) {
         yield* Effect.tryPromise(() => store.withExclusion(async locked => {

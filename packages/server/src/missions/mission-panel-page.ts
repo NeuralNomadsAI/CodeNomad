@@ -24,6 +24,7 @@ export const missionPanelPageRequestSchema = z.discriminatedUnion("source", [
   z.object({ source: z.literal("activity"), missionID: z.string().min(1).max(100), actorOffset: number.optional(),
     actorOrder: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
   z.object({ source: z.literal("marks"), missionOffset: number.optional(), missionOrder: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
+  z.object({ source: z.literal("task-marks"), missionID: z.string().min(1).max(100), window, cursor: missionPanelCursorSchema.optional() }).strict(),
 ]).refine(value => value.source !== "mission" || !value.header || value.field === undefined && value.window === undefined,
   "A header has no field/window").refine(value => value.source !== "mission" || value.part === undefined || value.field === "control" && !value.header,
   "Control parts belong to the control field").refine(value => value.source !== "mission" || !value.text || value.field !== undefined && value.window !== undefined && !value.header,
@@ -104,7 +105,7 @@ const windowInput = { type: "object", properties: { offset: count, order: { type
 const windowOutput = { type: "object", properties: { offset: count, end: count, total: count, order: { type: "string", minLength: 43, maxLength: 43 } }, required: ["order", "offset", "end", "total"], additionalProperties: false } as const
 export const missionPanelPageInputSchema = {
   type: "object", properties: {
-    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks"] }, cursor, window: windowInput, initial: { type: "boolean", const: true }, header: { type: "boolean", const: true }, text: { type: "boolean", const: true }, actorOffset: count, missionOffset: count,
+    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks", "task-marks"] }, cursor, window: windowInput, initial: { type: "boolean", const: true }, header: { type: "boolean", const: true }, text: { type: "boolean", const: true }, actorOffset: count, missionOffset: count,
     actorOrder: { type: "string", minLength: 43, maxLength: 43 }, missionOrder: { type: "string", minLength: 43, maxLength: 43 },
     missionID: { type: "string", minLength: 1, maxLength: 100 }, field: { type: "string", minLength: 1, maxLength: 64 }, part: { type: "string", enum: ["receipts", "pending"] },
     task: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
@@ -122,9 +123,10 @@ export const missionPanelPageOutputSchema = {
   oneOf: [{ type: "object", properties: {
     available: { type: "boolean", const: true }, version: { type: "integer", const: 1 }, projectID: { type: "string", maxLength: 240 },
     passage: missionCurrentSourceWire,
-    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks"] }, missionID: { type: "string", maxLength: 100 },
+    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks", "task-marks"] }, missionID: { type: "string", maxLength: 100 },
     field: { type: "string", maxLength: 64 }, part: { type: "string", enum: ["receipts", "pending"] }, text: { type: "boolean", const: true }, revision: count, discardedEvents: count, window: windowOutput, header: { type: "boolean", const: true }, finishHighWater: count,
     phase: { type: "string", enum: ["context", "observed"] }, observedAt: { type: "number" },
+    taskMarksThrough: { type: "number", minimum: 0 },
     controlUnavailable: { type: "boolean" }, notificationUnavailable: { type: "boolean" }, cleanupUnavailable: { type: "boolean" },
     page: { type: "object", properties: { digest: { type: "string", minLength: 43, maxLength: 43 }, total: count, next: cursor,
       pieces: { type: "array", maxItems: MISSION_PANEL_PAGE_ROWS, items: { type: "object", properties: {

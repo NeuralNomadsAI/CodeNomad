@@ -207,7 +207,8 @@ export function createMissionEditorScheduling(props: {
       retainMissionScheduleEditor(scope, request.requestID)
     }
   }
-  async function save(configuration: MissionEditorConfiguration, requestID: string) {
+  async function save(configuration: MissionEditorConfiguration, requestID: string,
+    onCreated?: (document: Document) => Promise<void>) {
     if (held()) return "uncertain" as const
     const scope = props.scope(), current = capture()
     if (!current()) return "stale" as const
@@ -230,6 +231,11 @@ export function createMissionEditorScheduling(props: {
       const result = await backendOf(props.instanceId).api.saveMissionSchedule(props.instanceId, request)
       if (!exactMissionScheduleEditorReceipt(request, result)) throw new Error("Unconfirmed Mission schedule receipt")
       releaseMissionScheduleEditor(scope, requestID)
+      // Only the direct create ACK may continue the captured user intention.
+      // Receipt recovery and partial preparation retries stay observation-only.
+      if (request.action === "create" && current() && onCreated) {
+        try { await onCreated(result.document!) } catch { /* Creation is already confirmed; its start has its own holder. */ }
+      }
       if (current()) props.onSaved(undefined, result.document?.id)
       return "saved" as const
     } catch (error) {

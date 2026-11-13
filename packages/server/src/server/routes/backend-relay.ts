@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify"
 import { ConnectBody, type RemoteServerBrowseManager } from "../../codenomad-servers/browse-manager"
 import { endpointErrorCode } from "../../codenomad-servers/client"
 import { guardLocalBackendCaller } from "../../codenomad-servers/local-caller"
-import { isLocalOnly } from "../../remote-control/gate"
+import { isHostOnlyPath } from "../../remote-control/gate"
 import { routedPath } from "../routed-path"
 import { isRelayAuthority, RELAY_AUTHORITY_HEADER, RELAY_AUTHORITY_QUERY, RELAY_BOOTSTRAP } from "../../codenomad-servers/relay-authority"
 
@@ -65,7 +65,8 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: { manager
         let normalized: string | null = null
         try { normalized = routedPath(new URL(target, "http://relay.invalid").pathname) } catch { /* Refuse malformed targets. */ }
         if (!pathname || pathname !== normalized || (!pathname.startsWith("/api/") && !pathname.startsWith("/workspaces/"))
-          || isLocalOnly(pathname) || pathname.startsWith("/api/backends/") || pathname === "/api/backends"
+          || isHostOnlyPath(pathname, request.method) || pathname.startsWith("/api/backends/") || pathname === "/api/backends"
+          || pathname === "/api/remote-control/status"
           || (pathname.startsWith("/api/auth/") && pathname !== "/api/auth/status")) {
           return reply.code(404).send({ error: "unreachable" })
         }

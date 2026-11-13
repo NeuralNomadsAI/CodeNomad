@@ -9,8 +9,8 @@ import { MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-w
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
 import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
-import { setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
-import { waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
+import { sessionTranscriptBinding, setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
+import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
 import { useActiveSessionMessageLoad } from "../../../lib/hooks/use-active-session-message-load"
 import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
@@ -219,18 +219,26 @@ export const taskRenderer: ToolRenderer = {
         return id ? sessions().get(instanceId)?.get(id) : undefined
       },
       shouldLoad: () => !childSessionLoaded(),
+      // Activation transitions authorize an authoritative read: a load error
+      // latched mid-stream must not dead-lock the transcript until a manual
+      // retry. The forced read is bounded by binding transitions, not a loop.
+      forceLoad: true,
       loadMessages: (childInstanceId, id, options) => loadMessages(childInstanceId, id, {
+        force: options?.force,
         signal: options?.signal,
         registerInvalidation: options?.registerInvalidation,
       }),
       waitForHydration: waitForInstanceWorkspaceMetadataHydration,
     })
 
+    const childTranscriptBinding = createMemo(() => sessionTranscriptBinding(instanceId, childSessionId()))
+    const childOwner = createMemo(() => instances().get(instanceId)?.client)
     createEffect(() => {
       const id = childSessionId()
-      if (!id || isActive?.() === false) return
-      untrack(() => setSessionTranscriptVisible(instanceId, id, true))
-      onCleanup(() => setSessionTranscriptVisible(instanceId, id, false))
+      const client = childOwner()
+      if (!id || !client || !childTranscriptBinding() || isActive?.() === false) return
+      const operation = captureBackendOperation(instanceId, undefined, () => instances().get(instanceId)?.client === client)
+      onCleanup(untrack(() => setSessionTranscriptVisible(instanceId, id, operation)))
     })
 
     const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])

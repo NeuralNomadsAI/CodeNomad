@@ -97,6 +97,37 @@ async function fixture(conflictingActorLocation = false) {
     hook: (value: () => Promise<void>) => { hook = value }, stale: () => { current = false }, close: async () => { await app.close(); await plugin.dispose() } }
 }
 
+test("directory task marks use exact fifty-row windows without bodies, native observation or warm range reads", async () => {
+  const f = await fixture()
+  try {
+    await new Promise(resolve => setImmediate(resolve))
+    await f.plugin.rpc("panelPage", { source: "marks" })
+    f.scans.length = 0; f.calls.length = 0
+    const tasks: Array<{ key: string }> = []
+    let offset = 0, order: string | undefined
+    do {
+      const result = await f.read({ source: "task-marks", missionID: "msn_activity_0", window: { offset, order } })
+      assert.ok(result.available)
+      assert.equal(result.phase, undefined)
+      assert.equal(typeof result.taskMarksThrough, "number")
+      assert.equal(result.window!.offset, offset)
+      assert.ok(result.page.total <= 50)
+      for (const piece of result.page.pieces) {
+        assert.equal(piece.offset, 0); assert.equal(piece.text.length, piece.characters)
+        const task = JSON.parse(piece.text)
+        assert.ok(task.updatedAt <= result.taskMarksThrough!)
+        assert.deepEqual(Object.keys(task).sort(), ["actorSessionId", "id", "key", "status", "updatedAt"])
+        tasks.push(task)
+      }
+      offset = result.window!.end; order = result.window!.order
+      if (offset === result.window!.total) break
+    } while (true)
+    assert.equal(new Set(tasks.map(task => task.key)).size, 190)
+    assert.deepEqual(f.calls, []); assert.deepEqual(f.scans, [])
+    assert.deepEqual(await f.read({ source: "task-marks", missionID: "msn_activity_0", window: { offset: 50, order: "x".repeat(43) } }), { available: false, reason: "changed" })
+  } finally { await f.close() }
+})
+
 test("marks traverse open and closed missions from warm hints without range fan-out; off-page actor attention is reachable within native budgets", async t => {
   const f = await fixture()
   try {

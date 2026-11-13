@@ -3,6 +3,7 @@ import { test } from "node:test"
 import Fastify from "fastify"
 import { registerSessionPruningRoutes } from "./session-pruning"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { brokerIdentities, brokerConnection } from "./rpc-broker-test-fixture"
 
 const payload = { sessionID: "s", messageID: "m", revision: "a".repeat(64), indexes: [0] }
 const url = "/api/workspaces/w/session-pruning/prune"
@@ -12,9 +13,9 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; w
   const app = Fastify()
   const fence = new WorktreeDeletionFence()
   registerSessionPruningRoutes(app, { worktreeDeletionFence: fence, workspaceManager: {
-    getServiceLocation: () => ({ directory: "/owned/worktree" }),
+    ...brokerIdentities("/owned/worktree"),
     getWorktrees: async () => ({ isGitRepo: false, worktrees: [] }),
-    getSharedServiceClient: async () => ({
+    ...brokerConnection({
       session: { get: async () => ({ id: "s", location: { directory: "/owned/worktree", workspaceID: options.workspaceID } }) },
       rpc: Object.assign(() => ({ scheduleCarrierRead: async () => ({ owned: options.carrier === true }) }), { call: async (input: unknown, opts: any) => {
         assert(opts.signal instanceof AbortSignal)
@@ -23,7 +24,7 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; w
         if (options.fail) throw new Error("plugin unavailable")
         return { output: options.output ?? { status: "blocked", reason: "maintenance_required" } }
       } }),
-    }) as any,
+    } as any),
     ownsLocation: async () => options.owned !== false,
     desktopPluginsReady: async () => {},
     getWorktreeIdentityForPath: async () => "/owned/worktree",

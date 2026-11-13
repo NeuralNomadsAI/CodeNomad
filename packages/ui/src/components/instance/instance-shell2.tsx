@@ -20,7 +20,6 @@ import type { Command } from "../../lib/commands"
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette, getCommandPaletteFocusRequest } from "../../stores/command-palette"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
 import InstanceWelcomeView from "../instance-welcome-view"
-import InfoView from "../info-view"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import { InterruptionDock } from "../interruption-dock"
@@ -166,6 +165,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     sessionThreads,
     activeSessions,
     activeSessionIdForInstance,
+    parentSessionIdForInstance,
     activeSessionForInstance,
     tokenStats,
     handleSessionSelect,
@@ -1066,7 +1066,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   /** Return to the last conversation */
   const handleBackToConversation = () => {
-    const sessionIds = cachedSessionIds()
+    const parent = parentSessionIdForInstance()
+    const sessionIds = parent && allInstanceSessions().has(parent) ? [parent] : cachedSessionIds()
     if (sessionIds.length > 0) {
       handleSessionSelect(sessionIds[0])
     } else {
@@ -1206,9 +1207,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
           class="content-area"
         >
-          <Show
-            when={showingInfoView()}
-            fallback={
               <Show when={cachedSessionIds().length === 0 || !activeSessionIdForInstance()}>
                   <Show when={!activeSessionIdForInstance()} fallback={
                     <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
@@ -1279,17 +1277,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </div>
                   </Show>
               </Show>
-            }
-          >
-            <div class="info-view-pane mission-transcript-surface flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <InfoView
-                instanceId={props.instance.id}
-                active={Boolean(props.isActiveInstance) && showingInfoView()}
-                onBackToConversation={handleBackToConversation}
-              />
-              <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={projectScope(props.instance)} /></Show>
-            </div>
-          </Show>
           <For each={mountedSessionIds()}>
             {(sessionId) => {
               const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId

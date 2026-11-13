@@ -58,7 +58,7 @@ export function OpenCodeLoginStartCard() {
   useSettingsRowTarget("opencode-login-start", card, () => !!status() || !!failure())
   return <section ref={setCard} id="opencode-login-start" class="settings-card" aria-labelledby={titleID} tabindex="-1">
     <div class="settings-card-header">
-      <h3 id={titleID} class="settings-card-title">{t("settings.loginStart.title")}<SettingsInfoTip text={t("settings.loginStart.info")} /></h3>
+      <h3 id={titleID} class="settings-card-title">{t("settings.loginStart.title")}<SettingsInfoTip text={t("settings.loginStart.info")} help={{ page: "opencode", anchor: "login-start" }} /></h3>
       <SettingsSwitch label={t("settings.loginStart.title")} checked={status()?.state === "on"}
         disabled={busy() || !status() || unavailable()} onChange={enabled => void change(enabled)} />
     </div>

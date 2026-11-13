@@ -4,7 +4,7 @@ import { createEffect, createRoot } from "solid-js"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, observeNonEventSettlement, projectOpenCodeMessages, seedOpenCodeSessionMessages, syncOpenCodeSessionInbox } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, invalidateOpenCodeSessionContent, observeNonEventSettlement, projectOpenCodeMessages, seedOpenCodeSessionMessages, syncOpenCodeSessionInbox } from "./opencode-data.ts"
 import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
@@ -1602,26 +1602,52 @@ describe("OpenCode data projection", () => {
     }
   })
 
-  it("projects native inbox delivery order", () => {
+  it("reconciles delivered prompts to the authoritative page order", async () => {
     const instanceId = "opencode-data-delivery-order"
     const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // Native storage, oldest first; the daemon appends a prompt's row at its
+    // delivery, so the page owns the delivered prompt's position.
+    const stored: any[] = []
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [...stored].reverse(), cursor: {} }))
     const apply = (event: any) => {
       const data = applyOpenCodeDataEvent(instanceId, "/work", event)
       projectOpenCodeMessages(instanceId, sessionId, data)
     }
     try {
-      apply({ id: "queued", type: "session.inbox.enqueued", created: 1, data: {
-        sessionID: sessionId, inboxID: "queued", item: { type: "user", payload: { text: "queued" }, delivery: "queue" },
+      apply({ id: "enqueue-1", type: "session.inbox.enqueued", created: 1, data: {
+        sessionID: sessionId, inboxID: "q1", item: { type: "user", payload: { text: "first" }, delivery: "steer" },
       } })
-      apply({ id: "other", type: "session.inbox.enqueued", created: 2, data: {
-        sessionID: sessionId, inboxID: "other", item: { type: "user", payload: { text: "other" }, delivery: "queue" },
+      apply({ id: "enqueue-2", type: "session.inbox.enqueued", created: 2, data: {
+        sessionID: sessionId, inboxID: "q2", item: { type: "user", payload: { text: "second" }, delivery: "steer" },
       } })
-      apply({ id: "delivered", type: "session.inbox.delivered", created: 3, data: { sessionID: sessionId, inboxID: "queued" } })
+      apply({ id: "enqueue-3", type: "session.inbox.enqueued", created: 3, data: {
+        sessionID: sessionId, inboxID: "q3", item: { type: "user", payload: { text: "third" }, delivery: "steer" },
+      } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3"])
 
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["other", "queued"])
+      for (const [index, id] of ["q1", "q2", "q3"].entries()) {
+        stored.push({ id, type: "user", text: `${["first", "second", "third"][index]} prompt`, time: { created: 10 + index } })
+        apply({ id: `deliver-${id}`, type: "session.inbox.delivered", created: 10 + index, data: { sessionID: sessionId, inboxID: id } })
+      }
+      await waitForReplay(() => messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).join() === "q1,q2,q3")
+
+      apply({ id: "reply", type: "session.step.started", created: 20, data: {
+        sessionID: sessionId, assistantMessageID: "reply", agent: "build", model: { providerID: "provider", id: "model" }, started: 20,
+      } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3", "reply"],
+        "the burst's steers keep the authoritative page order above the reply")
+
+      // An authoritative content replacement (pruning shape) carries no
+      // ordering side state into the next projection.
+      invalidateOpenCodeSessionContent(instanceId, sessionId)
+      apply({ id: "after-replacement", type: "session.text.started", created: 21, data: { sessionID: sessionId, assistantMessageID: "reply" } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3", "reply"],
+        "an authoritative replacement keeps the reconciled order")
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
     }
   })
 })

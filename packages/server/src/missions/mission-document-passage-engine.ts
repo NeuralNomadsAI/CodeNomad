@@ -22,8 +22,10 @@ export interface DocumentPassagePorts {
   coverage(doc: MissionDocument, window: DocumentFanInWindow): Promise<{ complete: boolean; wakes: MissionWake[]; current(): true }>
   snapshot(doc: MissionDocument): Promise<{ news: MissionEventNews; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }>
   admit(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<DocumentPassageAdmission>
-  observe(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<{ outcome: "completed" | "failed" | "ended-without-report"; current(): true } | undefined>
-  retired?(doc: MissionDocument): void
+  observe(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<{ outcome: "completed" | "failed" | "ended-without-report";
+    proof?: { revision: number; familyDigest: string }; current(): true } | undefined>
+  retired?(doc: MissionDocument): void | Promise<void>
+  cleanup?(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<void>
 }
 
 /** Business state machine only. All native I/O runs while holding the same
@@ -213,6 +215,10 @@ export class MissionDocumentPassageEngine {
 
   private async reconcileLocked(locked: NativeMissionDocumentStore, id: string): Promise<DocumentPassageResult> {
     let doc = await this.read(locked, id)
+    if (doc?.coordinatorReleases.length && this.ports.cleanup) {
+      await this.ports.cleanup(doc, locked)
+      doc = await this.read(locked, id)
+    }
     if (!doc?.pending) return "idle"
     let admission: DocumentPassageAdmission
     try { admission = await this.ports.admit(doc, locked) } catch { return "unknown" }
@@ -223,8 +229,9 @@ export class MissionDocumentPassageEngine {
     if (!doc?.pending || doc.pending.id !== passageID) throw new Error("Passage changed during admission")
     if (admission.kind === "not-started") {
       if (doc.pending.admittedAt !== null || doc.pending.admissionAttempted) return "unknown"
-      await this.change(locked, doc, next => changes.settle(next, doc!.pending!.id, "failed", this.ports.now(), true), admission.current)
-      this.ports.retired?.(doc)
+      const settled = await this.change(locked, doc, next => changes.settle(next, doc!.pending!.id, "failed", this.ports.now(), true), admission.current)
+      await this.ports.retired?.(doc)
+      await this.ports.cleanup?.(settled, locked)
       return "settled"
     }
     if (admission.passageID !== doc.pending.id || admission.messageID !== doc.pending.messageID
@@ -236,13 +243,15 @@ export class MissionDocumentPassageEngine {
     if (!observed) return "pending"
     const at = Math.max(this.ports.now(), doc.pending!.createdAt, doc.pending!.admittedAt ?? 0, doc.history.at(-1)?.settledAt ?? 0)
     const settled = await this.change(locked, doc, next => {
-      changes.settle(next, next.pending!.id, observed!.outcome, at)
+      changes.settle(next, next.pending!.id, observed!.outcome, at, false, observed!.proof)
       // Persist the end-of-flight cutoff in the archive CAS: even a passage that
       // finishes before sibling hooks run turns an overlap into at most one deferred passage.
       if (next.calendars.some(item => item.role === "principal")) next.fanIn = this.windowValue(next, at, true)
     }, observed.current)
     await this.closeSuppressedWindow(locked, settled)
-    this.ports.retired?.(doc)
+    await this.ports.retired?.(doc)
+    const latest = await this.read(locked, id)
+    if (latest) await this.ports.cleanup?.(latest, locked)
     return await this.launchDeferred(locked, id) ?? "settled"
   }
   /** Launch the one passage owed to triggers consumed during the previous one.

@@ -42,7 +42,7 @@ If an owned worktree or conversation placement cannot be verified, open its phys
 ## OpenCode runtime and WSL {#opencode-runtime}
 
 1. Open **Preferences → OpenCode** and check the **OpenCode version** card (installed version and running service status), then the selected executable under **OpenCode Binary**.
-2. Use the supported installation/update action when the required runtime is missing. Current minimum: **2.2.3**; recommended/qualified version: **2.2.5**.
+2. Use the supported installation/update action when the required runtime is missing. Current minimum: **2.2.3**; recommended/qualified version: **2.2.7**.
 3. If the installed CLI differs from the running service, decide explicitly whether to restart the shared service.
 
 **Restart OpenCode service** is available under **Troubleshooting** and requires confirmation. It interrupts active work in every connected client, but retains session history. Configuration reload is a separate action: it keeps the process but rebuilds loaded Locations and cancels pending questions/permissions. Neither is a harmless refresh.
@@ -73,6 +73,8 @@ Pairing links are single-use and short-lived; the direct-access password is not 
 
 ## Provider, plugin and extension state {#providers-and-addons}
 
+If **Full timeline unavailable** accompanies a failed `codenomad-session-pruning` plugin, inspect its load error in the OpenCode log. This plugin supplies full-history navigation and pending-question/permission recovery. Retry the timeline after the plugin loads successfully; preserve your session data.
+
 | Problem | Recovery |
 | --- | --- |
 | Wrong provider account/quota | Check the selected native account and **Usage**. A quota display is not a token/cost total. Refresh after an uncertain account change; selection can affect other clients of that service. |
@@ -96,7 +98,7 @@ For cancelled or partial cleanup, read its progress/receipts before starting ano
 
 ## Logs and safe diagnostics {#diagnostics}
 
-1. Open **Instance Info** to inspect its status; **Show server logs** exposes the available output.
+1. Open **Settings → OpenCode → View OpenCode logs**. This reads the selected execution host’s global `opencode.log`, located with `opencode debug paths log`. The movable, non-modal window leaves the rest of the interface usable. It shows at most the last 128 KiB; **Refresh** rereads the file. Logs stay separate from messages and model requests.
 2. In **Preferences → OpenCode**, choose the intended **Default log level** only when more detail is needed. For standalone CodeNomad logging, use the [server CLI logging options](server.md).
 3. Open **Settings → Info → Diagnostics** and use **Report a bug**, **Copy to clipboard** or **Download .txt**.
 

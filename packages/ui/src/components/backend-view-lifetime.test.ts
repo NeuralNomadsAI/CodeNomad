@@ -142,7 +142,7 @@ test("providers: an old quota response cannot publish or perform its coalesced f
   const backend = attachment(), response = deferred<any>(), published: unknown[] = []
   let reads = 0
   const { createProviderUsageState } = view("./session/provider-usage-state.ts", {})
-  const state = createProviderUsageState(() => { reads++; return response.promise }, (value: unknown) => published.push(value), () => backend.capture("i"))
+  const state = createProviderUsageState(() => { reads++; return response.promise }, (value: unknown) => published.push(value), Date.now, () => backend.capture("i"))
   state.select({ instanceId: "i", sessionId: "s", directory: "/repo", providerId: "p", modelId: "m" })
   const pending = state.refresh(); state.refresh()
   backend.revoke(); response.resolve({ account: "old" }); await pending
@@ -182,13 +182,15 @@ test("extensions: a late forge address cannot open a browser or answer a replace
 
 test("sessions: hydration from the old attachment cannot start a message read", async () => {
   const backend = attachment(), hydration: ReturnType<typeof deferred<void>>[] = [], reads: AbortSignal[] = []
+  const forces: boolean[] = []
   let close!: () => void
   const { useActiveSessionMessageLoad } = view("../lib/hooks/use-active-session-message-load.ts", solid)
   createRoot(dispose => {
     close = dispose
     useActiveSessionMessageLoad({ isActive: () => true, instanceId: () => "i", session: () => ({ id: "s" }),
+      forceLoad: true,
       captureOperation: backend.capture, waitForHydration: () => { const gate = deferred<void>(); hydration.push(gate); return gate.promise },
-      loadMessages: (_id: string, _session: string, options: { signal: AbortSignal }) => { reads.push(options.signal) },
+      loadMessages: (_id: string, _session: string, options: { signal: AbortSignal; force: boolean }) => { reads.push(options.signal); forces.push(options.force) },
     })
   })
   backend.replace()
@@ -197,5 +199,6 @@ test("sessions: hydration from the old attachment cannot start a message read", 
   assert.equal(reads.length, 0)
   hydration[1].resolve(); await flush()
   assert.equal(reads.length, 1); assert.equal(reads[0].aborted, false)
+  assert.deepEqual(forces, [true])
   close()
 })

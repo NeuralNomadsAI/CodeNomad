@@ -1,7 +1,24 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { buildSpeechPatch } from "../lib/speech-patch"
-import { buildBinaryList, normalizeServerConfig, type SpeechSettingsUpdate } from "./preferences"
+import { buildBinaryList, normalizeServerConfig, preferences, updatePreferences, type SpeechSettingsUpdate } from "./preferences"
+import { storage } from "../lib/storage"
+
+it("keep-awake defaults off and normalizes saved values to strict booleans", async (context) => {
+  assert.equal(preferences().keepComputerAwake, false)
+  context.mock.method(storage, "revalidateUiConfigOwner", async () => ({ settings: { keepComputerAwake: "true" } }))
+  context.mock.method(storage, "loadConfigOwner", async () => ({}))
+  context.mock.method(storage, "loadStateOwner", async () => ({}))
+  const patch = context.mock.method(storage, "patchConfigOwner", async (_owner: string, value: { settings: object }) =>
+    ({ settings: { keepComputerAwake: "true", ...value.settings } }))
+  await updatePreferences({})
+  assert.equal(preferences().keepComputerAwake, false)
+  for (const value of [true, false, "true", 1, null]) {
+    assert.equal(await updatePreferences({ keepComputerAwake: value as boolean }), true)
+    assert.equal(preferences().keepComputerAwake, value === true)
+    assert.deepEqual(patch.mock.calls.at(-1)?.arguments, ["ui", { settings: { keepComputerAwake: value === true } }])
+  }
+})
 
 describe("buildBinaryList", () => {
   it("does not add built-in commands to custom binary history", () => {

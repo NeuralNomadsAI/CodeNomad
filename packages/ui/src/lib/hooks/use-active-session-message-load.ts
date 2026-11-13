@@ -16,11 +16,17 @@ export interface ActiveSessionMessageLoadDeps {
   session: () => { id: string } | undefined
   /** Optional reactive gate. Each false-to-true transition reloads the same session. */
   shouldLoad?: () => boolean
+  /** Loads bypass the store's loaded/error dedupe guards. For callers whose
+   * binding transitions alone authorize a fresh authoritative read (a visible
+   * child transcript reactivation) — a latched load error must not dead-lock
+   * them out of their own retry-on-activation semantics. */
+  forceLoad?: boolean
   /** Loads the messages for a session. */
   loadMessages: (
     instanceId: string,
     sessionId: string,
     options?: {
+      force?: boolean
       signal?: AbortSignal
       registerInvalidation?: (invalidate: () => void) => void
     },
@@ -99,6 +105,7 @@ export function useActiveSessionMessageLoad(deps: ActiveSessionMessageLoadDeps):
           || deps.session()?.id !== sessionId
           || (deps.shouldLoad && !untrack(deps.shouldLoad))) return
         return Promise.resolve(deps.loadMessages(instanceId, sessionId, {
+          ...(deps.forceLoad === true ? { force: true as const } : {}),
           signal, registerInvalidation: callback => { invalidate = callback },
         }))
       })

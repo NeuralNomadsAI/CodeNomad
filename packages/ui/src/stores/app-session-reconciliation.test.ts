@@ -42,7 +42,8 @@ describe("app session reconciliation", () => {
   const selectionCases = [
     ["falls back to a valid parent when the active session is stale", [{ id: "parent", parentId: null }, { id: "child", parentId: "parent" }], "parent", "deleted-child", { parentSessionId: "parent", activeSessionId: "parent" }],
     ["restores a grandchild under its root session", [{ id: "root", parentId: null }, { id: "child", parentId: "root" }, { id: "grandchild", parentId: "child" }], "root", "grandchild", { parentSessionId: "root", activeSessionId: "grandchild" }],
-    ["keeps the special info selection without requiring a session", [], null, "info", { parentSessionId: null, activeSessionId: "info" }],
+    ["drops a non-session selection once parent hydration confirms absence", [], null, "info", null],
+    ["restores the parent from a saved info selection", [{ id: "parent" }], "parent", "info", { parentSessionId: "parent", activeSessionId: "parent" }],
   ] as const
   for (const [label, sessions, parent, active, expected] of selectionCases) it(label, () => assert.deepEqual(
     resolveRestoredSessionSelection([...sessions], parent, active), expected,

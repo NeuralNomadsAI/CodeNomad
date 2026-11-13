@@ -9,7 +9,7 @@ import { nativePassageMessageDigest } from "./native-service-adapter"
 test("source projections use the document transaction graph and reject changed messages, placement, families and journals", async t => {
   const db = new DatabaseSync(":memory:"); t.after(() => db.close())
   db.exec(`CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE session_v2(id TEXT PRIMARY KEY,parent_id TEXT,project_id TEXT,
-    directory TEXT,workspace_id TEXT,metadata TEXT,revert TEXT,time_suspended INTEGER); CREATE TABLE session_inbox(session_id TEXT);
+    directory TEXT,workspace_id TEXT,metadata TEXT,revert TEXT,time_suspended INTEGER,time_updated INTEGER DEFAULT 0); CREATE TABLE session_inbox(session_id TEXT);
     CREATE TABLE session_message(id TEXT,seq INTEGER,type TEXT,data TEXT,session_id TEXT);
     CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT)`)
   const nativeKey = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
@@ -32,12 +32,13 @@ test("source projections use the document transaction graph and reject changed m
   db.prepare("UPDATE kv SET value=? WHERE key=?").run('{"revision":2}', nativeKey("source"))
   assert.throws(document.current, /changed during preparation/)
   const conversation = factory(); conversation.conversation("source")
+  const selected = factory(); selected.selectedSession({ id: "source", projectID: "project", location: { directory: "/project" } })
   const prefix = factory(); prefix.message("source", message.id, nativePassageMessageDigest(Schema.decodeUnknownSync(SessionMessage.Info)(message)))
   const family = factory(); family.family("source")
   const assistant = { type: "assistant", id: "msg_assistant", time: { created: 1001, completed: 1002 }, agent: "worker",
-    model: { providerID: "fixture", id: "fixture" }, content: [{ type: "text", text: "split source" }],
+    model: { providerID: "fixture", id: "fixture" }, content: [{ type: "text", text: "split source" }, { type: "text", text: "inline tail" }],
     cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, finish: "stop" }
-  db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(assistant.id, 0, "assistant", JSON.stringify({ ...assistant, content: [] }), "source")
+  db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(assistant.id, 0, "assistant", JSON.stringify({ ...assistant, content: assistant.content.slice(1) }), "source")
   db.prepare("INSERT INTO session_part VALUES(?,?,?,?,?)").run(assistant.id, "source", 0, "text", JSON.stringify(assistant.content[0]))
   const split = factory(); split.message("source", assistant.id, nativePassageMessageDigest(Schema.decodeUnknownSync(SessionMessage.Info)(assistant)))
   assert.equal(split.current(), true)
@@ -46,8 +47,12 @@ test("source projections use the document transaction graph and reject changed m
   db.prepare("UPDATE session_message SET data=? WHERE id=?").run(JSON.stringify({ ...message, text: "rewritten" }), message.id)
   assert.throws(prefix.current, /changed during preparation/)
   db.exec("UPDATE session_v2 SET time_suspended=1000 WHERE id='source'")
+  assert.equal(selected.current(), true, "adoption placement fences never veto ordinary activity/claims")
   assert.throws(family.current, /changed during preparation/)
   assert.throws(conversation.current, /changed during preparation/)
+  db.exec("UPDATE session_v2 SET directory='/moved' WHERE id='source'")
+  assert.throws(selected.current, /changed during preparation/)
+  db.exec("UPDATE session_v2 SET directory='/project' WHERE id='source'")
   db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run("msg_origin", 2, "synthetic", '{"text":"original admission"}', "source")
   db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run("msg_terminal", 3, "idle", '{"outcome":"succeeded"}', "source")
   for (const id of ["msg_origin", "msg_terminal"]) {

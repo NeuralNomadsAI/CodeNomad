@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { ProviderUsageResponse } from "../../../../server/src/api-types"
-import { createProviderUsageState, providerUsageKey, type ProviderUsageSource } from "./provider-usage-state"
+import { createProviderUsageState, isFreeUsageSource, nextUtcMidnight, providerUsageKey, type ProviderUsageSource } from "./provider-usage-state"
 
 const source: ProviderUsageSource = { instanceId: "instance", sessionId: "session", directory: "/repo", providerId: "openai", modelId: "gpt-5" }
 const response = (used: number): ProviderUsageResponse => ({ requestedProviderId: "openai", providerId: "codex", providerName: "Codex",
@@ -89,4 +89,43 @@ test("failed quota refresh does not retain a possibly different account's old re
   fail = true
   await state.refresh()
   assert.equal(displayed, null)
+})
+
+test("UTC rollover immediately expires free usage, shares the read and rejects yesterday's late exhaustion", async () => {
+  let now = Date.UTC(2026, 10, 5, 23, 59, 59)
+  const midnight = nextUtcMidnight(now)
+  assert.equal(midnight, Date.UTC(2026, 10, 6))
+  const free = { ...source, providerId: "opencode", modelId: "big-pickle" }
+  assert.equal(isFreeUsageSource(free), true)
+  assert.equal(isFreeUsageSource({ ...free, modelId: "other-free" }), true)
+  assert.equal(isFreeUsageSource(source), false)
+  const requests: Array<(value: ProviderUsageResponse) => void> = []
+  let displayed: ProviderUsageResponse | null | undefined
+  const snapshot = () => displayed
+  const state = createProviderUsageState(() => new Promise(resolve => requests.push(resolve)), value => { displayed = value }, () => now)
+  const exhausted = { ...response(100), freeEstimate: { requests: null, reference: 200, exhausted: true },
+    windows: { daily: { usedPercent: 100, remainingPercent: 0, resetAt: midnight, windowSeconds: 86400 } } }
+  state.select(free)
+  const initial = state.refresh()
+  requests[0](exhausted); await initial
+  assert.equal(snapshot()?.freeEstimate?.exhausted, true)
+  const pending = state.refresh()
+  now = midnight
+  state.expireUtcDay()
+  assert.equal(snapshot(), undefined)
+  assert.equal(state.refresh(), pending)
+  requests[1](exhausted); await Promise.resolve()
+  assert.equal(snapshot(), undefined)
+  assert.equal(requests.length, 3)
+  requests[2]({ ...exhausted, freeEstimate: { requests: 0, reference: 200, exhausted: false },
+    windows: { daily: { usedPercent: 0, remainingPercent: 100, resetAt: nextUtcMidnight(now), windowSeconds: 86400 } } })
+  await pending
+  assert.equal(snapshot()?.freeEstimate?.exhausted, false)
+  const stale = state.refresh()
+  requests[3](exhausted); await stale
+  assert.equal(snapshot()?.freeEstimate?.exhausted, false)
+  state.select(null)
+  now += 86400000
+  state.expireUtcDay(); await state.refresh()
+  assert.equal(requests.length, 4, "hidden panels never refresh at midnight")
 })

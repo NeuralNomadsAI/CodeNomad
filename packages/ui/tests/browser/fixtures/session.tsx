@@ -9,6 +9,7 @@ import { addInstance } from "../../../src/stores/instances"
 import { sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
+import { serverApi } from "../../../src/lib/api-client"
 import { loadMessages } from "../../../src/stores/session-api"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
@@ -50,8 +51,17 @@ const client: any = {
   },
   model: { default: async () => ({ data: model }) },
   permission: { list: async () => [] },
-  message: { list: async ({ cursor, limit = 200 }: { cursor?: string; limit?: number } = {}) => {
+  message: { list: async ({ cursor, limit = 200, order }: { cursor?: string; limit?: number; order?: "asc" | "desc" } = {}) => {
     calls++
+    // The oldest window reads forward from the first record, like the native
+    // ascending page, whose boundary cursor promises no older page.
+    if (order === "asc" || cursor?.startsWith("asc:")) {
+      const offset = Number(cursor?.slice(4) ?? 0)
+      return { data: nativeMessages.slice(offset, offset + limit), cursor: {
+        previous: "asc-boundary",
+        ...(offset + limit < nativeMessages.length ? { next: `asc:${offset + limit}` } : {}),
+      } }
+    }
     const offset = Number(cursor ?? 0), messages = nativeMessages.slice().reverse()
     return { data: messages.slice(offset, offset + limit), cursor: offset + limit < messages.length ? { next: String(offset + limit) } : {} }
   } },
@@ -69,6 +79,34 @@ setActiveSession(instanceId, sessionId)
 const [visible, setVisible] = createSignal(true)
 const [active, setActive] = createSignal(true)
 const store = messageStoreBus.getOrCreate(instanceId)
+
+// The receipts cache cancels its own in-flight reads (a joining read aborts
+// the one it replaces; the last subscriber releasing aborts its read). Tag
+// each read's fetch and record whether its own AbortSignal fired, so tests
+// can tell an owned cancellation from a foreign failure.
+const receiptsOutcomes = new Map<string, Promise<boolean>>()
+{
+  const original = serverApi.fetchPermissionReceipts.bind(serverApi)
+  let readSequence = 0
+  serverApi.fetchPermissionReceipts = ((instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal) => {
+    const id = String(++readSequence)
+    const originalFetch = window.fetch
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      headers.set("x-codenomad-fixture-receipts-read", id)
+      return originalFetch.call(window, input, { ...init, headers })
+    }) as typeof window.fetch
+    try {
+      const result = original(instanceId, sessionId, scope, cursor, signal)
+      receiptsOutcomes.set(id, result.then(() => false, error =>
+        signal?.aborted === true && error instanceof DOMException && error.name === "AbortError"))
+      return result
+    } finally {
+      window.fetch = originalFetch
+    }
+  }) as typeof serverApi.fetchPermissionReceipts
+}
+;(window as any).fixtureReceiptsReadCancelled = async (id: string) => await receiptsOutcomes.get(id) ?? false
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={visible()}><SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={active()} /></Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
@@ -87,6 +125,33 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   queueFollowUp: (id: string, text: string) => {
     nativeInbox.push({ id, sessionID: sessionId, type: "user", payload: { text }, delivery: "queue", time: { created: ++time } })
     emit("session.inbox.enqueued", { inboxID: id, item: { type: "user", payload: { text }, delivery: "queue" } })
+  },
+  /** Another client sends to the idle session: the daemon parks the prompt in
+   * the inbox (delivery steer) and the execution starts before admission, so
+   * `session.inbox.delivered` lands only once the engine admits the prompt. */
+  remoteEnqueue: (id: string, text: string) => {
+    nativeInbox.push({ id, sessionID: sessionId, type: "user", payload: { text }, delivery: "steer", time: { created: ++time } })
+    emit("session.inbox.enqueued", { inboxID: id, item: { type: "user", payload: { text }, delivery: "steer" } })
+    emit("session.execution.started", {})
+  },
+  /** The engine admits the parked prompt: it leaves the inbox and its row persists. */
+  remoteDeliver: (id: string) => {
+    const [item] = nativeInbox.splice(nativeInbox.findIndex(entry => entry.id === id), 1)
+    nativeMessages.push({ type: "user", text: item.payload.text, id, time: { created: ++time } })
+    emit("session.inbox.delivered", { inboxID: id })
+  },
+  /** Streams a reply whose native row is stored from its first step, as the
+   * daemon stores it: an authoritative read mid-stream still serves the row. */
+  startStored: () => {
+    nativeMessages.push({ id: assistantId, type: "assistant", agent: "build", model, time: { created: ++time }, content: [{ type: "text", text: "" }] })
+    emit("session.step.started", { assistantMessageID: assistantId, agent: "build", model })
+    emit("session.text.started", { assistantMessageID: assistantId })
+  },
+  /** Streams text into the stored reply row alongside the live delta. */
+  deltaStored: (delta: string) => {
+    const row = nativeMessages.find(message => message.id === assistantId)
+    if (row) row.content[0].text += delta
+    emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 0, delta })
   },
   /** The engine starts the parked follow-up: its native row persists and it leaves the inbox. */
   deliverQueued: (id: string) => {

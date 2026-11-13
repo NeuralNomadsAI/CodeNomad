@@ -118,6 +118,14 @@ async function until(predicate, timeout = 90_000, interval = 250) {
   }
   throw new Error(`Timeout: ${stage}`)
 }
+async function waitForMissions() {
+  await until(async () => {
+    const { data } = await client.plugin.list({ location: { directory: project } })
+    const missions = data.find(plugin => plugin.id === "codenomad.missions")
+    if (missions?.state.status === "failed") throw new Error("Native Missions fixture plugin failed to activate")
+    return missions?.state.status === "active"
+  })
+}
 async function start() {
   output = ""
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { env, cwd: root, windowsHide: true })
@@ -131,6 +139,7 @@ async function start() {
   // Fixture-owned read-only observer bound to this exact service; independent of the backend.
   client = OpenCode.make({ baseUrl: endpoint.url, headers: { Authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })
   evidence.serviceStarts ??= []; evidence.serviceStarts.push({ pid: info.pid, version: info.version })
+  if (evidence.serviceStarts.length > 1) await waitForMissions()
 }
 async function stop() {
   assert.equal((await client.server.info()).pid, child.pid, "Exact owned PID before stop")
@@ -168,7 +177,7 @@ async function openBackend() {
   registration.url = `http://127.0.0.1:${bridge.server.address().port}/api/opencode-plugin/automation`
   removeBridge = await publishAutomationBridge(registration)
   plugin = new DesktopPluginLifecycle("missions"); await plugin.start(paths)
-  await until(async () => (await client.plugin.list({ location: { directory: project } })).data.some(p => p.id === "codenomad.missions" && p.state.status === "active"))
+  await waitForMissions()
 }
 async function closeBackend() {
   await plugin?.stop(); plugin = undefined

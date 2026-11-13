@@ -47,7 +47,7 @@ async function fixture() {
       inbox: 0, suspended: false, runningTools: 0, failed: false, messagePresent: true,
       terminal: { inputMessageID: states.get(id)?.message ?? "msg_first", messageID: "msg_idle", outcome: "succeeded" } }),
     children: async () => [], requests: async () => false }
-  const fence = (): NativeSourceFence => ({ document() {}, journal() {}, conversation() {}, message() {}, family() {}, current })
+  const fence = (): NativeSourceFence => ({ document() {}, journal() {}, conversation() {}, message() {}, family() { return [] }, current })
   const reader = () => sole(createMissionConditionReader({ store, storage, native, observation, fence, signal: new AbortController().signal, current }))
   const read = async (id: string) => (await store.read(id)) as MissionDocument
   const mutate = async (id: string, use: (doc: MissionDocument) => void) => { const doc = await read(id); return store.change(id, doc.revision, current, use) }
@@ -145,7 +145,7 @@ test("journal-only completion resolves its authorized linked placement and pins 
   f.states.set(sessionID, { active: false, message: inputID })
   const reader = sole(createMissionConditionReader({ store: f.store, storage: f.storage, native: f.native, observation: f.observation,
     observationFor: async placement => { assert.equal(placement.directory, "/linked"); borrowed++; return f.observation },
-    fence: () => ({ document() {}, journal() {}, conversation() {}, message() {}, family() {}, current }),
+    fence: () => ({ document() {}, journal() {}, conversation() {}, message() {}, family() { return [] }, current }),
     signal: new AbortController().signal, current }))
   doc.configuration.roots.push({ mode: "directory-only", directory: "/linked" })
   legacyLaunch(doc.configuration).condition = { kind: "mission-completed", missionID }
@@ -208,7 +208,7 @@ test("conversation exclusion walks passage ancestry, rejects cycles and recogniz
   await assert.rejects(prepareNativeDocumentSources(doc, f.native, signal, current), /excluded/)
   let parentsPinned = 0
   f.native.get = async input => ({ ...await get(input), ...(input.sessionID === "ses_grandchild" ? { parentID: "ses_foreign_root" } : {}) })
-  const fence: NativeSourceFence = { document() {}, journal() {}, message() {}, family() {}, current,
+  const fence: NativeSourceFence = { document() {}, journal() {}, message() {}, family() { return [] }, current,
     conversation(id) { if (id === "ses_foreign_root") parentsPinned++ } }
   assert.equal(anyNews(await prepareNativeDocumentSources(doc, f.native, signal, current, undefined, fence)), false)
   assert.equal(parentsPinned, 1, "allowed ancestry remains pinned against moves before CAS")

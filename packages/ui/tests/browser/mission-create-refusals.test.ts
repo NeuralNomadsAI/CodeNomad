@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); })
 
-const OBJECTIVE = "What should the mission do?"
+const OBJECTIVE = "Objective"
 const UNCONFIRMED = "native creation result is unconfirmed"
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
@@ -40,6 +40,8 @@ async function setup(page: Page, answer: (route: Route, attempt: number, body: R
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
+    location: { directory: "/fixture" }, capability: null, effectiveDepth: null, project: null } }))
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }))
   await page.route("**/api/workspaces/fixture/missions**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
@@ -99,8 +101,7 @@ async function setupDaily(page: Page, answer: (route: Route, attempt: number) =>
     return answer(route, attempts.length)
   })
   await fixture.objective.fill("Review merged changes daily")
-  await fixture.form.locator(".mission-scheduling > summary").click()
-  await fixture.form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+  await fixture.form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
   await fixture.form.getByLabel("Criterion 1 time", { exact: true }).fill("07:30")
   return { ...fixture, attempts }
 }
@@ -189,7 +190,7 @@ test("a newer editor whose adopted pending hold becomes uncertain keeps its unse
     assert.doesNotMatch(await alert.innerText(), /exactly as sent/)
     assert.equal(await fixture.objective.inputValue(), "Newer unsent draft", "the unsent draft is not replaced or misattributed")
     assert.equal(await fixture.submit.isDisabled(), true)
-    assert.equal(await fixture.form.getByRole("button", { name: "Save as brief", exact: true }).isDisabled(), false, "the unsent draft can still be kept as a brief")
+    assert.equal(await fixture.form.getByRole("button", { name: "Save configuration", exact: true }).isDisabled(), false, "the unsent draft can still be kept as a configuration")
     assert.equal((await page.evaluate(() => window.missionEditorLifetime.held()))?.objective, "First pending create")
     await page.waitForTimeout(200)
     assert.equal(fixture.attempts.length, 1, "the newer draft was never sent")
