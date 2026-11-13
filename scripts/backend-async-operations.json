@@ -129,6 +129,7 @@
   "lib/api-client.ts": ["continuation:delegated x13","delegated:backend x134","network:fetch x7"],
   "lib/auth-recovery.ts": ["delegated:backend x2","network:fetch x5"],
   "lib/backend-client.ts": ["delegated:backend x2"],
+  "lib/backend-relay-authority.ts": ["network:fetch x2"],
   "lib/backend-events.ts": ["backend-events:on x1","backend-events:onOpen x1","backend-events:onTransportStatus x1","server-events:on x1","server-events:onDispose x1","server-events:onOpen x1","server-events:onTransportStatus x1"],
   "lib/backend-transport.ts": ["network:new EventSource x1"],
   "lib/contexts/instance-metadata-context.tsx": ["continuation:createEffect x1","delegated:backend x4"],

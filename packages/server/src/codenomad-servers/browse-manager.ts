@@ -1,4 +1,5 @@
 import path from "node:path"
+import { randomBytes } from "node:crypto"
 import { z } from "zod"
 import type { SettingsService } from "../settings/service"
 import type { RemoteServerBrowseResponse } from "../api-types"
@@ -6,6 +7,7 @@ import { normalizeExplicitOrigin } from "../opencode/servers/endpoint"
 import { CodeNomadServerClient, CodeNomadServerError } from "./client"
 import { CodeNomadServerCredentials, type CodeNomadServerSecret } from "./credentials"
 import { relayedFolderListing } from "./folders"
+import { isRelayAuthority, RELAY_AUTHORITY_HEADER, RELAY_BOOTSTRAP } from "./relay-authority"
 
 const Profile = z.object({ id: z.string(), baseUrl: z.string(), skipTlsVerify: z.boolean().default(false) })
 const Recent = z.object({ path: z.string().min(1).max(8192), projectName: z.string().max(1024).optional(), lastAccessed: z.number().finite() })
@@ -22,13 +24,14 @@ export const BrowseBody = z.object({ path: z.string().max(8192).optional() }).st
 export const ConnectBody = z.object({ username: z.string().min(1).max(1024).optional(), password: z.string().min(1).max(8192).optional(),
   pairingLink: z.string().max(8192).optional() }).strict()
 
-type ProfileAuthority = Readonly<{ id: string; origin: string; skipTlsVerify: boolean; key: string }>
+type ProfileAuthority = Readonly<{ id: string; origin: string; skipTlsVerify: boolean; key: string; proof: string }>
 type ConnectionState = {
   credentials?: CodeNomadServerCredentials
   clients: Map<string, { authority: ProfileAuthority; client: CodeNomadServerClient }>
   pending: Map<CodeNomadServerClient, ProfileAuthority>
   queues: Map<string, Promise<unknown>>
   authorities: Map<string, ProfileAuthority>
+  serverIds: Map<ProfileAuthority, string>
   owners: number
 }
 // Listeners of one backend share the SettingsService and one revocable authority.
@@ -42,7 +45,7 @@ export class RemoteServerBrowseManager {
   constructor(private readonly settings: Pick<SettingsService, "getOwner" | "configYamlPathForAuthority">) {
     let state = connections.get(settings)
     if (!state) {
-      state = { clients: new Map(), pending: new Map(), queues: new Map(), authorities: new Map(), owners: 0 }
+      state = { clients: new Map(), pending: new Map(), queues: new Map(), authorities: new Map(), serverIds: new Map(), owners: 0 }
       connections.set(settings, state)
     }
     this.#state = state
@@ -71,7 +74,7 @@ export class RemoteServerBrowseManager {
     // Disk identities also belong to this exact policy, including before a replacement login.
     this.credentials.read(id, profile.origin, profile.skipTlsVerify)
     if (!authority) {
-      authority = Object.freeze({ id, origin: profile.origin, skipTlsVerify: profile.skipTlsVerify, key: profile.key })
+      authority = Object.freeze({ id, origin: profile.origin, skipTlsVerify: profile.skipTlsVerify, key: profile.key, proof: randomBytes(32).toString("base64url") })
       this.#state.authorities.set(id, authority)
     }
     return authority
@@ -83,6 +86,15 @@ export class RemoteServerBrowseManager {
       this.remove(authority.id)
       throw new CodeNomadServerError("unreachable")
     }
+  }
+
+  /** Resolve only an existing exact generation: never recapture on failure. */
+  assertProof(id: string, proof: unknown) {
+    if (this.#closed) throw new CodeNomadServerError("unreachable")
+    const authority = this.#state.authorities.get(id)
+    if (!isRelayAuthority(proof) || !authority || authority.proof !== proof) throw new CodeNomadServerError("unreachable")
+    this.assertCurrent(authority)
+    return authority
   }
 
   private serial<T>(authority: ProfileAuthority, run: () => Promise<T>): Promise<T> {
@@ -124,6 +136,13 @@ export class RemoteServerBrowseManager {
         this.assertCurrent(profile)
         if (this.#closed || client.closed) throw new CodeNomadServerError("unknown_server")
         // Publish only under the still-current authority after remote authentication.
+        const previous = this.credentials.read(id, profile.origin, profile.skipTlsVerify)
+        // Cookie rotation of one password principal preserves its generation; an explicit
+        // replacement login/pairing revokes operations admitted under another identity.
+        if (this.#state.serverIds.has(profile) && secret && (code || body.password && (previous?.kind !== "password" || previous.username !== body.username || previous.password !== body.password))) {
+          this.remove(id)
+          this.capture(id)
+        }
         if (secret) this.credentials.set(id, profile.origin, secret, profile.skipTlsVerify)
         this.#state.clients.get(id)?.client.close()
         this.#state.clients.delete(id)
@@ -179,8 +198,27 @@ export class RemoteServerBrowseManager {
       return entry
   }
 
-  relay(id: string, target: string, init: RequestInit): Promise<Response> {
-    return this.client(this.capture(id)).client.fetch(target, init)
+  async relay(id: string, target: string, init: RequestInit, proof?: unknown): Promise<Response> {
+    const bootstrap = proof === RELAY_BOOTSTRAP
+    const method = init.method ?? "GET"
+    const metadata = target === "/api/meta" && method === "GET"
+    if (bootstrap && !metadata && !(target === "/api/auth/status" && method === "GET")) throw new CodeNomadServerError("unreachable")
+    const authority = proof === undefined || bootstrap ? this.capture(id) : this.assertProof(id, proof)
+    const client = this.client(authority).client
+    if (proof === undefined || !metadata) return client.fetch(target, init)
+    // Reuse the bounded JSON reader: identity is observed before a local proof is published.
+    const result = await client.json<{ serverId?: unknown }>(target, init)
+    this.assertCurrent(authority)
+    if (result.status !== 200 || typeof result.body?.serverId !== "string" || !result.body.serverId.trim()) {
+      return new Response(result.body === undefined ? null : JSON.stringify(result.body), { status: result.status, headers: { "content-type": "application/json" } })
+    }
+    const known = this.#state.serverIds.get(authority)
+    if (known && known !== result.body.serverId) {
+      this.remove(id)
+      throw new CodeNomadServerError("unknown_server")
+    }
+    this.#state.serverIds.set(authority, result.body.serverId)
+    return Response.json(result.body, { headers: { [RELAY_AUTHORITY_HEADER]: authority.proof } })
   }
 
   /** Settings commits synchronously revoke removed or retargeted owners. */
@@ -197,6 +235,8 @@ export class RemoteServerBrowseManager {
   }
 
   private remove(id: string) {
+    const authority = this.#state.authorities.get(id)
+    if (authority) this.#state.serverIds.delete(authority)
     this.#state.authorities.delete(id)
     for (const [client, owner] of this.#state.pending) if (owner.id === id) client.close()
     this.#state.clients.get(id)?.client.close()
@@ -216,6 +256,7 @@ export class RemoteServerBrowseManager {
     if (--this.#state.owners) return
     connections.delete(this.settings)
     this.#state.authorities.clear()
+    this.#state.serverIds.clear()
     for (const { client } of this.#state.clients.values()) client.close()
     for (const client of this.#state.pending.keys()) client.close()
     this.#state.clients.clear()

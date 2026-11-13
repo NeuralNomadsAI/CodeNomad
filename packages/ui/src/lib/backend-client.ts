@@ -6,6 +6,7 @@ import { createServerMetaCache, localServerMeta, type ServerMetaCache } from "./
 import { ServerEvents, serverEvents } from "./server-events"
 import { ServerStorage, storage } from "./storage"
 import { parseInstanceKey } from "./backend-identity"
+import { bindBackendRelayAuthority } from "./backend-relay-authority"
 
 export type { BackendId }
 
@@ -22,6 +23,7 @@ export interface BackendClient {
   readonly storage: ServerStorage
   readonly meta: ServerMetaCache
   readonly sdk: SDKManager
+  readonly admitRelayAuthority?: (proof: string | null) => boolean
 }
 
 export interface BackendClientOptions extends BackendTransportOptions {
@@ -29,6 +31,8 @@ export interface BackendClientOptions extends BackendTransportOptions {
   baseUrl: string
   /** Replaces the global fetch, resolved per request when omitted. */
   fetcher?: typeof fetch
+  /** Registry-owned candidates require a locally issued, immutable relay generation. */
+  bindRelayAuthority?: boolean
 }
 
 function assertAbsoluteHttpUrl(baseUrl: string) {
@@ -42,21 +46,26 @@ function assertAbsoluteHttpUrl(baseUrl: string) {
 /** A client of another backend. Its events stream connects only when `events.start()` is called. */
 export function createBackendClient(options: BackendClientOptions): BackendClient {
   assertAbsoluteHttpUrl(options.baseUrl)
-  const transport = createBackendTransport(options)
-  const auth = createAuthRecovery(transport, options.fetcher)
-  const fetch = createAuthenticatedFetch(auth, options.fetcher)
+  const rawTransport = createBackendTransport(options)
+  if (options.bindRelayAuthority && options.relayProfileId === undefined) throw new TypeError("Relay profile required")
+  const authority = options.bindRelayAuthority ? bindBackendRelayAuthority(rawTransport, options.fetcher) : undefined
+  const transport = authority?.transport ?? rawTransport
+  const fetcher = authority?.fetch ?? options.fetcher
+  const auth = createAuthRecovery(transport, fetcher)
+  const fetch = createAuthenticatedFetch(auth, fetcher)
   const api = createServerApi({ ...transport, fetch })
   const events = new ServerEvents({ api, auth })
   return Object.freeze({
     id: transport.id, baseUrl: transport.baseUrl, eventsUrl: transport.eventsUrl, url: transport.url, fetch, auth, api, events,
     storage: new ServerStorage({ api, events }),
     meta: createServerMetaCache(api),
-    sdk: new SDKManager({ url: transport.url, fetch }),
+    sdk: new SDKManager({ url: rawTransport.url, fetch }),
+    ...(authority ? { admitRelayAuthority: authority.admitRelayAuthority } : {}),
   })
 }
 
 /** An unregistered remote client; the local backend owns its relay credentials. */
-export function createRemoteBackendClient(profileId: string, options: Pick<BackendClientOptions, "fetcher" | "eventSource"> = {}): BackendClient {
+export function createRemoteBackendClient(profileId: string, options: Pick<BackendClientOptions, "fetcher" | "eventSource" | "bindRelayAuthority"> = {}): BackendClient {
   const baseUrl = new URL(localHttp.url("/"), window.location.origin).origin
   return createBackendClient({ ...options, id: profileId, baseUrl, relayProfileId: profileId })
 }

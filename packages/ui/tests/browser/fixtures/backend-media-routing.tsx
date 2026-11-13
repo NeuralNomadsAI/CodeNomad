@@ -16,7 +16,7 @@ canvas.width = 8; canvas.height = 8
 canvas.getContext("2d")!.fillRect(0, 0, 8, 8)
 const data = canvas.toDataURL("image/png")
 const bytes = Uint8Array.from(atob(data.split(",")[1]), char => char.charCodeAt(0))
-const calls: { url: string; credentials?: RequestCredentials; signal?: AbortSignal }[] = []
+const calls: { url: string; credentials?: RequestCredentials; signal?: AbortSignal; authority?: string | null }[] = []
 const plainCalls: { url: string; credentials?: RequestCredentials }[] = []
 const plainFetch = globalThis.fetch.bind(globalThis)
 globalThis.fetch = (input, init) => { plainCalls.push({ url: String(input), credentials: init?.credentials }); return plainFetch(input, init) }
@@ -30,14 +30,18 @@ let held: "fetch" | "blob" | undefined
 const pending: (() => void)[] = []
 const wait = async (phase: typeof held) => { if (held === phase) await new Promise<void>(resolve => pending.push(resolve)) }
 const relay = new URLSearchParams(location.search).has("relay")
+const bindRelayAuthority = new URLSearchParams(location.search).has("authority")
 const fetcher: typeof fetch = async (input, init) => {
-  calls.push({ url: String(input), credentials: init?.credentials, signal: init?.signal ?? undefined })
+  calls.push({ url: String(input), credentials: init?.credentials, signal: init?.signal ?? undefined,
+    authority: new Headers(init?.headers).get("X-CodeNomad-Backend-Authority") })
   await wait("fetch")
+  if (bindRelayAuthority) return plainFetch(input, init)
   const response = new Response(bytes, { headers: { "Content-Type": "image/png" } })
   response.blob = async () => { await wait("blob"); return new Blob([bytes], { type: "image/png" }) }
   return response
 }
-const remote = relay ? createRemoteBackendClient("lab", { fetcher }) : createBackendClient({ id: "lab", baseUrl: "https://media.example.invalid", fetcher })
+const remote = relay ? createRemoteBackendClient("lab", { fetcher, bindRelayAuthority }) : createBackendClient({ id: "lab", baseUrl: "https://media.example.invalid", fetcher })
+if (bindRelayAuthority && !remote.admitRelayAuthority!("a".repeat(43))) throw new Error("Fixture authority admission failed")
 const registry = backends as Map<string, BackendClient>
 registry.set("lab", remote)
 remote.api.fetchServerMeta = async () => ({}) as any
