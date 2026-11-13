@@ -443,7 +443,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId, props.instance.folder) : null
+    return sessionId ? getSessionPreview(sessionId, props.instance.id) : null
   })
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
@@ -462,10 +462,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
     try {
-      const restored = await restoreSessionPreview(sessionId, props.instance.folder)
+      const restored = await restoreSessionPreview(sessionId, props.instance.id)
       if (restored) showSessionPreview(restored.storageKey)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.folder)
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id)
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -720,7 +721,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // still unmount and remain subject to the existing transcript memory budget.
   const mountedSessionIds = createMemo<string[]>((previous) => {
     const wanted = new Set([
-      ...getPreviewSessionIds(props.instance.folder).filter((id) => allInstanceSessions().has(id)),
+      ...getPreviewSessionIds(props.instance.id).filter((id) => allInstanceSessions().has(id)),
       ...cachedSessionIds(),
     ])
     // Reordering an Electron webview in the DOM can recreate its guest.

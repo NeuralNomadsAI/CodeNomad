@@ -104,7 +104,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
-  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
+  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceId))
   const missionReader = () => props.isActive ? missionProjectView(props.instanceFolder).reader : undefined
   const readingMission = () => Boolean(missionReader())
   // A layout-restored reader for a one-time Mission the loaded map no longer

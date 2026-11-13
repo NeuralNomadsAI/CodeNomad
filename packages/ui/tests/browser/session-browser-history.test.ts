@@ -66,6 +66,113 @@ async function prepare(page: Page, host: string, query = "") {
 }
 const preview = (page: Page, sessionId: string) => page.evaluate(id => (window as any).fixture.preview(id), sessionId)
 
+for (const host of ["web", "tauri", "electron"]) {
+  test(`${host}: duplicate occurrences own independent previews, history, restoration and cleanup`, { timeout: 120_000 }, async () => {
+    const native = host === "electron" ? await launchHistoryElectron() : undefined
+    const page = native?.page ?? await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 1400, height: 900 } })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    const a = "header-windows", b = "header-duplicate"
+    const rootA = page.locator(`[data-occurrence="${a}"]`), rootB = page.locator(`[data-occurrence="${b}"]`)
+    const paneA = rootA.locator('[data-session-id="session"] .window-shell')
+    const paneB = rootB.locator('[data-session-id="session"] .window-shell')
+    const read = (id: string) => page.evaluate(id => (window as any).fixture.preview("session", id), id)
+    const select = (id: string) => page.evaluate(id => (window as any).fixture.selectOccurrence(id), id)
+    const navigate = async (url: string) => {
+      await paneA.locator("input").fill(url)
+      await paneA.locator("input").press("Enter")
+      await page.waitForFunction(({ id, url }) => (window as any).fixture.preview("session", id)?.targetUrl === url, { id: a, url })
+    }
+    try {
+      await prepare(page, host, "&duplicate=1")
+      await page.evaluate(url => (window as any).fixture.openPreview("session", url), `${base}/page/a`)
+      await paneA.waitFor({ state: "visible" })
+      if (host !== "web") {
+        await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
+        if (host === "electron") await page.waitForFunction(url => {
+          const guest = document.querySelector("webview") as any
+          return guest?.getURL() === url && !guest.isLoading()
+        }, `${base}/page/a`)
+      }
+      await select(b)
+      assert.equal(await read(b), null)
+      await rootB.locator(".message-stream-container").waitFor({ state: "visible" })
+      await select(a)
+      await navigate(`${base}/page/b`)
+      await page.waitForFunction(url => {
+        const history = (window as any).fixture.preview("session").history
+        return history.index === 1 && history.urls[1] === url
+      }, `${base}/page/b`)
+      await paneA.getByRole("button", { name: "Viewport size", exact: true }).click()
+      await paneA.getByRole("menuitemradio", { name: "Mobile viewport (390 x 844)", exact: true }).click()
+      await page.waitForFunction(() => (window as any).fixture.savedPreview("session")?.viewport === "mobile")
+      assert.equal(await read(b), null)
+      await rootA.getByRole("button", { name: "Back to chat", exact: true }).click()
+      await rootA.getByRole("button", { name: "Open web preview", exact: true }).click()
+      await paneA.getByRole("button", { name: "Close", exact: true }).click()
+      assert.equal(await read(b), null)
+      await rootA.getByRole("button", { name: "Open web preview", exact: true }).click()
+      await paneA.getByRole("button", { name: "Back", exact: true }).click()
+      await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, `${base}/page/a`)
+      await paneA.getByRole("button", { name: "Forward", exact: true }).click()
+      await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, `${base}/page/b`)
+      await select(b)
+      await page.evaluate(({ url, id }) => (window as any).fixture.openPreview("session", url, id), { url: `${base}/page/c`, id: b })
+      await paneB.waitFor({ state: "visible" })
+      assert.equal((await read(a)).targetUrl, `${base}/page/b`)
+      await paneB.getByRole("button", { name: "Close", exact: true }).click()
+      assert.equal((await read(a)).mode, "preview")
+      // Actual occurrence envelopes are restored lazily; A and B keep different
+      // saved URLs and display choices, with no guest allocated during hydration.
+      await page.reload()
+      await page.waitForFunction(() => (window as any).browserHistoryReady)
+      assert.equal(await page.locator(".window-shell").count(), 0)
+      const saved = await page.evaluate(() => [
+        (window as any).fixture.savedPreview("session", "header-windows"),
+        (window as any).fixture.savedPreview("session", "header-duplicate"),
+      ])
+      assert.equal(saved[0].mode, "preview")
+      assert.equal(saved[1].mode, "chat")
+      assert.equal(saved[0].targetUrl, `${base}/page/b`)
+      assert.equal(saved[1].targetUrl, `${base}/page/c`)
+      assert.equal(saved[0].viewport, "mobile")
+      assert.equal(saved[1].viewport, undefined)
+      await rootA.getByRole("button", { name: "Open web preview", exact: true }).click()
+      if (host !== "web") await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
+      await paneA.getByRole("button", { name: "Viewport size", exact: true }).click()
+      assert.equal(await paneA.getByRole("menuitemradio", { name: "Mobile viewport (390 x 844)", exact: true }).getAttribute("aria-checked"), "true")
+      await paneA.getByRole("button", { name: "Viewport size", exact: true }).click()
+      await select(b)
+      await rootB.locator(".message-stream-container").waitFor({ state: "visible" })
+      await rootB.getByRole("button", { name: "Open web preview", exact: true }).click()
+      await paneB.waitFor({ state: "visible" })
+      if (host !== "web") await page.waitForFunction(() => (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register").length >= 2)
+      const tokenA = (await read(a)).token, tokenB = (await read(b)).token
+      await page.evaluate(id => (window as any).fixture.closeOccurrence(id), a)
+      await rootA.locator(".session-shell-frame").waitFor({ state: "detached" })
+      assert.equal(await read(a), null)
+      assert.equal((await read(b)).targetUrl, `${base}/page/c`)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.deletedPreviews), [tokenA])
+      assert.notEqual(tokenA, tokenB)
+      if (host === "tauri") {
+        await page.waitForFunction(() => (window as any).fixture.native.listenerCount() === 1)
+        const calls = await page.evaluate(() => (window as any).fixture.native.calls)
+        const registrationA = calls.find((call: any) => call.command === "browser_target_register" && call.payload.url.endsWith("/page/b")).payload.registrationId
+        const registrationB = calls.find((call: any) => call.command === "browser_target_register" && call.payload.url.endsWith("/page/c")).payload.registrationId
+        assert.ok(calls.some((call: any) => call.command === "browser_target_unregister" && call.registrationId === registrationA))
+        assert.ok(!calls.some((call: any) => call.command === "browser_target_unregister" && call.registrationId === registrationB))
+      }
+      await paneB.getByRole("button", { name: "Close", exact: true }).click()
+      await rootB.getByRole("button", { name: "Open web preview", exact: true }).click()
+      await paneB.waitFor({ state: "visible" })
+      assert.deepEqual(errors, [])
+    } finally {
+      if (native) { await native.app.close(); await rm(native.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+      else await page.close()
+    }
+  })
+}
+
 async function launchHistoryElectron(existingProfile?: string) {
   const temp = process.env.CODENOMAD_TEST_TEMP || (process.platform === "win32" ? join(process.env.LOCALAPPDATA!, "Temp", "opencode") : tmpdir())
   await mkdir(temp, { recursive: true })
@@ -242,7 +349,7 @@ test("hidden Electron navigation persists before reveal and restores only its co
       const preview = (window as any).fixture.preview("session")
       return preview.mode === "chat" && preview.targetUrl === url && preview.history.index === 1
     }, b)
-    const saved = await page.evaluate(() => JSON.parse((window as any).fixture.readLayout("opencode-session-previews-v1"))[JSON.stringify(["/repo", "session"])])
+    const saved = await page.evaluate(() => (window as any).fixture.savedPreview("session"))
     assert.deepEqual(saved, { targetUrl: b, mode: "chat", history: { urls: [a, b], index: 1 } })
     const beforeRestart = pageRequests.length
     await page.reload() // Restart before the hidden guest has ever been revealed.
@@ -299,7 +406,7 @@ for (const action of ["Go", "Refresh"]) {
       assert.equal(await pane.locator("iframe").getAttribute("src"), expectedUrl)
       assert.equal(await pane.getByRole("button", { name: "Back", exact: true }).isDisabled(), false)
       assert.equal(await pane.getByRole("button", { name: "Forward", exact: true }).isDisabled(), true)
-      const saved = await page.evaluate(() => JSON.parse((window as any).fixture.readLayout("opencode-session-previews-v1"))[JSON.stringify(["/repo", "session"])])
+      const saved = await page.evaluate(() => (window as any).fixture.savedPreview("session"))
       assert.equal(saved.targetUrl, expectedUrl)
       assert.deepEqual(saved.history, expectedHistory)
       assert.deepEqual(errors, [])
@@ -435,7 +542,7 @@ test("Tauri captures navigation while hidden and persists its history through re
       const preview = (window as any).fixture.preview("session")
       return preview.mode === "chat" && preview.targetUrl === url && preview.history.index === 1
     }, b)
-    const saved = await page.evaluate(() => JSON.parse((window as any).fixture.readLayout("opencode-session-previews-v1"))[JSON.stringify(["/repo", "session"])])
+    const saved = await page.evaluate(() => (window as any).fixture.savedPreview("session"))
     assert.deepEqual(saved, { targetUrl: b, mode: "chat", history: { urls: [a, b], index: 1 } }, "hidden navigation is persisted before revealing the guest")
     await page.getByRole("button", { name: "Open web preview", exact: true }).click()
     await pane.waitFor({ state: "visible" })
@@ -467,7 +574,8 @@ test("the legacy project URL is adopted once and the cross only hides its retain
     assert.equal(await preview(page, "second"), null)
     const persisted = await page.evaluate(() => JSON.parse((window as any).fixture.readLayout("opencode-session-previews-v1")))
     assert.equal(persisted["/repo"], undefined)
-    assert.equal(Object.keys(persisted).length, 1)
+    assert.equal(Object.keys(persisted).length, 0)
+    assert.equal((await page.evaluate(() => (window as any).fixture.savedPreview("session"))).targetUrl, `${base}/page/legacy`)
     await page.evaluate(() => (window as any).fixture.selectSession("session"))
     // The previously opened browser is shown again when selecting its session.
     const pane = page.locator('[data-session-id="session"] .window-shell')

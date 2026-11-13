@@ -8,13 +8,15 @@
 
 कुराकानीमा `localhost` वा `127.0.0.1` लिङ्क क्लिक गर्दा वेब पूर्वावलोकन उपलब्ध भएका client मा त्यही सत्रको वेब पूर्वावलोकनमा खुल्छ। Remote Control मा host ले वेब पूर्वावलोकन बन्द राखेको अवस्थामा, वा अन्य कारणले वेब पूर्वावलोकन उपलब्ध नभएको client मा, यस्ता लिङ्कले सामान्य browser व्यवहार नै राख्छन्। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले लिङ्क browser मा खोल्छ। वास्तविक भण्डारण उपलब्ध नहुने sandbox पूर्वावलोकन फ्रेमभित्र पेजले हालको पेज लोडका लागि मेमोरीमा `localStorage`, `sessionStorage` र `document.cookie` पाउँछ; आफैँ खोलिएको प्रति-टोकन पूर्वावलोकन host ले आफ्नो वास्तविक भण्डारण राख्छ।
 
-प्रत्येक पूर्वावलोकन आफ्नो परियोजना फोल्डर र सत्रको हो। कुराकानी, परियोजना, Info वा chat बदल्दा स्पष्ट खोलिएको नेटिभ guest को live document/history नहटाई लुक्छ। लुकेका guest automation target होइनन्। परियोजना/विन्डो बन्द वा renderer restart गर्दा live document सकिन्छ।
+प्रत्येक पूर्वावलोकन परियोजना ट्याबको एउटा विशेष प्रतिलिपि र सत्रको हो। एउटै सत्रका दोहोरिएका ट्याबमा chat र पूर्वावलोकन वा फरक पृष्ठ देखाउन सकिन्छ; सन्देश र execution साझा रहन्छन्। पूर्वावलोकन खोल्ने, लुकाउने वा बन्द गर्ने कार्यले आफ्नै ट्याबलाई मात्र असर गर्छ। कुराकानी, परियोजना, Info वा chat बदल्दा नेटिभ document र history रहन्छन्। त्यो ट्याब वा विन्डो बन्द गर्दा वा renderer restart गर्दा त्यसको live document सकिन्छ।
 
-सुरक्षित इतिहास startup/session चयनमा होइन, त्यस सत्रको ब्राउजर स्पष्ट फेरि खोल्दा मात्र फर्किन्छ। यसले URL र cursor राख्छ, नपठाइएका form, DOM, POST body वा JavaScript memory होइन। इतिहास प्रति सत्र 32 URL र साझा layout budget मा सीमित छ; पुराना प्रविष्टि काटिन सक्छन्। URL पुनर्स्थापनाले नयाँ page load गर्न सक्छ; यो transaction replay होइन।
+प्रत्येक ट्याबले URL, chat/पूर्वावलोकनको छनोट, viewport template र इतिहास छुट्टाछुट्टै राख्छ। सुरक्षित पृष्ठ त्यो ट्याबको सत्र ब्राउजर स्पष्ट फेरि खोल्दा मात्र लोड हुन्छ। URL र cursor सुरक्षित हुन्छन्; live form, DOM, POST body र JavaScript memory document सँगै सकिन्छन्। इतिहास प्रति ट्याब/सत्र 32 URL र विन्डोको साझा budget मा सीमित छ; पुराना प्रविष्टि काटिन सक्छन्। URL पुनर्स्थापनाले पृष्ठ फेरि लोड गर्न सक्छ।
 
 ## साझा sign-in र automation सीमा {#signins-automation}
 
-एउटै desktop engine र profile/configuration दायरामा नेटिभ पूर्वावलोकनले project/session भर cookie, sign-in र site storage साझा गर्छन्, trusted CodeNomad renderer बाट अलग। एउटामा site logout गर्दा त्यही store का अरू पूर्वावलोकन प्रभावित हुन्छन्। document, form, session storage, navigation history र automation attachment सत्रकै स्वामित्वमा रहन्छन्। iframe पूर्वावलोकन पूर्ण साझा native browser profile होइनन्।
+एउटै desktop engine र profile/configuration दायरामा नेटिभ पूर्वावलोकनले project/session भर cookie, sign-in र site storage साझा गर्छन्, trusted CodeNomad renderer बाट अलग। एउटामा site logout गर्दा त्यही store का अरू पूर्वावलोकन प्रभावित हुन्छन्। document, form, session storage, navigation history र automation attachment प्रत्येक ट्याब/सत्र जोडीको स्वामित्वमा रहन्छन्। iframe पूर्वावलोकन पूर्ण साझा native browser profile होइनन्।
+
+Agent ले browser खोल्दा आफ्नो सत्र भएको सक्रिय ट्याब वा त्यसको एक मात्र खुला स्वामीलाई लक्ष्य बनाउँछ। अस्पष्ट स्वामित्व अस्वीकार हुन्छ। खोल्ने क्रममा छानिएको ट्याब स्थिर रहन्छ; त्यो बन्द गर्दा उक्त खोलाइ रद्द हुन्छ। Page action का लागि सत्रको ठीक एउटा देखिने नेटिभ पूर्वावलोकन चाहिन्छ; लुकेका पूर्वावलोकन समावेश हुँदैनन्।
 
 | क्लाइन्ट | पूर्वावलोकन कार्यान्वयन | Agent browser automation | Mobile template |
 | --- | --- | --- | --- |

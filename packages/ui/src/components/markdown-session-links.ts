@@ -5,7 +5,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { instances } from "../stores/instances"
 import { openFilePreview } from "../stores/files-preview"
 import { getWorktreeForDirectory } from "../stores/worktrees"
-import { openSessionPreview, getSessionPreview, showSessionChat } from "../stores/session-previews"
+import { openSessionPreview, showSessionChatFor } from "../stores/session-previews"
 import { sessions } from "../stores/session-state"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 
@@ -33,8 +33,8 @@ export function warmLoopbackPreviewMeta(instanceId: string | undefined, sessionI
 // A loopback link click opens the session preview on the instance owning
 // the session; failures surface through the shared alert dialog.
 const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
-  const folder = instances().get(instanceId)?.folder ?? ""
-  void openSessionPreview(sessionId, url, folder).catch((error) => {
+  void openSessionPreview(sessionId, url, instanceId).catch((error) => {
+    if (error instanceof Error && error.name === "AbortError") return
     showAlertDialog(tGlobal("sessionPreview.open.title"), {
       title: tGlobal("sessionPreview.open.title"),
       detail: error instanceof Error ? error.message : String(error),
@@ -100,9 +100,7 @@ export function routeSessionLink(instanceId: string, sessionId: string, href: st
   const resolution = resolveSessionProjectLink(instanceId, sessionId, href)
   if (resolution) {
     // A browser preview owning the central surface steps aside for the reader.
-    const instanceFolder = instances().get(instanceId)?.folder ?? ""
-    const preview = getSessionPreview(sessionId, instanceFolder)
-    if (preview) showSessionChat(preview.storageKey)
+    showSessionChatFor(sessionId, instanceId)
     openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution })
     return true
   }

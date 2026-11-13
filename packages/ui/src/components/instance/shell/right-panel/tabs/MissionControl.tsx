@@ -165,14 +165,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // in-flight conversation navigation (conversationEpoch).
   const showPlaybook = (template: MissionPanelMap["template"], taskMode: "native" | "independent") => {
     batch(() => {
-      showSessionChatFor(props.activeSessionId() ?? "", scope())
+      showSessionChatFor(props.activeSessionId() ?? "", props.instanceId)
       updateMissionProjectView(scope(), { reader: { missionId: template, kind: "playbook", taskMode } })
     })
     props.onRevealConversation?.()
   }
 
   const conversation = () => ({ session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
-    preview: getSessionPreview(props.activeSessionId() ?? "", scope()), reader: missionProjectView(scope()).reader })
+    preview: getSessionPreview(props.activeSessionId() ?? "", props.instanceId), reader: missionProjectView(scope()).reader })
   let conversationEpoch = 0, previousConversation = conversation()
   createComputed(() => {
     const next = conversation()
@@ -299,7 +299,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     }
     batch(() => {
       setActiveSessionFromList(origin.instanceId, sessionId)
-      showSessionChatFor(sessionId, origin.scope)
+      showSessionChatFor(sessionId, origin.instanceId)
       updateMissionProjectView(origin.scope, { reader: undefined })
     })
      origin.adoptConversation()
@@ -320,7 +320,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const read = async (target: MissionReaderTarget) => {
     if (isReading(target)) {
       intent++
-      batch(() => { showSessionChatFor(props.activeSessionId() ?? "", scope()); updateMissionProjectView(scope(), { reader: undefined }) })
+      batch(() => { showSessionChatFor(props.activeSessionId() ?? "", props.instanceId); updateMissionProjectView(scope(), { reader: undefined }) })
       return
     }
     const origin = navigationOrigin()
@@ -336,7 +336,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     }
     if (!origin.current()) return
     batch(() => {
-      showSessionChatFor(props.activeSessionId() ?? "", origin.scope)
+      showSessionChatFor(props.activeSessionId() ?? "", origin.instanceId)
       updateMissionProjectView(origin.scope, { reader: readerTarget(target) })
     })
     origin.adoptConversation()
@@ -606,7 +606,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       try {
         await hydrateRestoredSessionChain(instanceId, [id], undefined, current)
         if (!current() || !sessions().get(instanceId)?.has(id)) return
-        batch(() => { setActiveSessionFromList(instanceId, id); showSessionChatFor(id, scope()); updateMissionProjectView(scope(), { reader: undefined }) })
+        batch(() => { setActiveSessionFromList(instanceId, id); showSessionChatFor(id, instanceId); updateMissionProjectView(scope(), { reader: undefined }) })
         props.onRevealConversation?.()
       } catch { if (current()) setNavigationError(true) }
     })() })

@@ -75,10 +75,10 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   // The destination was last left on its browser preview.
   showDestinationPreview: async () => {
     serverApi.createPreview = async () => ({ token: "fixture", sessionId: "other-session-2", targetUrl: "https://example.com", url: "/preview/fixture" }) as any
-    await openSessionPreview("other-session-2", "https://example.com", "/repo")
-    return getSessionPreview("other-session-2", "/repo")?.mode
+    await openSessionPreview("other-session-2", "https://example.com", instanceId)
+    return getSessionPreview("other-session-2", instanceId)?.mode
   },
   opened: () => ({ active: activeSessionId().get(instanceId) ?? null,
     anchor: store.getScrollSnapshot("other-session-2", MESSAGE_STREAM_SCROLL_SCOPE)?.anchorKey ?? null,
-    surface: getSessionPreview("other-session-2", "/repo")?.mode ?? null }),
+    surface: getSessionPreview("other-session-2", instanceId)?.mode ?? null }),
 }

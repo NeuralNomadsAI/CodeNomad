@@ -123,7 +123,7 @@ export async function openHistoryMatchSession(instanceId: string, sessionId: str
   batch(() => {
     if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
     setActiveSessionFromList(instanceId, sessionId)
-    showSessionChatFor(sessionId, instances().get(instanceId)?.folder ?? "")
+    showSessionChatFor(sessionId, instanceId)
   })
   return true
 }

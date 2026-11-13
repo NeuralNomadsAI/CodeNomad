@@ -83,6 +83,19 @@ const [menuInstance, setMenuInstance] = createSignal<string | undefined>(id)
 let viewAction: (action: string) => boolean
 const [immersive, setImmersive] = createSignal(false)
 const [active, setActive] = createSignal(true)
+const duplicateId = "header-duplicate"
+const duplicate = new URLSearchParams(location.search).has("duplicate")
+const [selectedOccurrence, setSelectedOccurrence] = createSignal(id)
+if (duplicate) {
+  addInstance({ ...instances().get(id)!, id: duplicateId, proxyPath: `/workspaces/${duplicateId}/instance` })
+  ;(sdkManager as any).clients.set(`${duplicateId}:/workspaces/${duplicateId}/instance`, client)
+  setSessions(previous => new Map(previous).set(duplicateId, new Map([[sessionId, { ...session, instanceId: duplicateId }]])))
+  setProviders(previous => new Map(previous).set(duplicateId, [{ id: "fixture", name: "Fixture", models: [] }]))
+  setActiveSession(duplicateId, sessionId)
+  setActiveParentSession(duplicateId, sessionId)
+  setSessionPage(duplicateId, [sessionId], false, true)
+  await ensureWorktreesLoaded(duplicateId)
+}
 function Fixture() {
   const instance = instances().get(id)!
   viewAction = useViewMenu(menuInstance)
@@ -99,11 +112,20 @@ function Fixture() {
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <button id="outside">Outside target</button>
     <AlertDialog />
-    <Show when={instances().has(id)}><InstanceShell instance={instance} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
+    <div data-occurrence={id} style={{ display: selectedOccurrence() === id ? "contents" : "none" }}>
+    <Show when={instances().has(id)}><InstanceShell instance={instance} isActiveInstance={active() && selectedOccurrence() === id} escapeInDebounce={escapeInDebounce()}
       paletteCommands={() => [{ id: "fixture", label: "Fixture command", description: "Execute the fixture", category: "System", action: () => {} }]}
       onExecuteCommand={() => { executions++ }} onCloseSession={() => {}} onNewSession={() => {}}
       handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0}
-      mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} /></Show>
+       mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} /></Show>
+    </div>
+    <Show when={duplicate && instances().has(duplicateId)}>
+      <div data-occurrence={duplicateId} style={{ display: selectedOccurrence() === duplicateId ? "contents" : "none" }}>
+        <InstanceShell instance={instances().get(duplicateId)!} isActiveInstance={active() && selectedOccurrence() === duplicateId} escapeInDebounce={escapeInDebounce()}
+          paletteCommands={() => []} onExecuteCommand={() => {}} onCloseSession={() => {}} onNewSession={() => {}}
+          handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0} />
+      </div>
+    </Show>
   </div>
   )
 }
@@ -115,6 +137,7 @@ await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
   runtimeEnv, replies, deletedSessions, setImmersive, setActive,
+  selectOccurrence: (instanceId: string) => { setSelectedOccurrence(instanceId); setActiveInstanceId(instanceId) },
   readLayout: readClientLayoutValue,
   addSession: (sid: string, parentId: string | null = null) => {
     fixtureSessions.set(sid, { ...session, id: sid, parentId, title: `Fixture ${sid}` })

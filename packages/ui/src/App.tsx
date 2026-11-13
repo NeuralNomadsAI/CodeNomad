@@ -261,7 +261,8 @@ const App: Component = () => {
       }
     }, 30_000)
     const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      const findOwners = () => appTabs().flatMap(tab => tab.kind === "instance"
+        && getSessions(tab.instance.id).some(session => session.id === sessionID) ? [tab.instance] : [])
       let owners = findOwners()
       if (owners.length === 0) {
         await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
@@ -283,8 +284,9 @@ const App: Component = () => {
       if (!await claimNativeBrowserOpen(requestID)) return
       try {
         const instance = owner
-        await openSessionPreview(sessionID, url, instance.folder, async () => !disposed && await claimNativeBrowserOpen(requestID))
-        if (disposed) {
+        const stillOwned = () => !disposed && findOwners().some(candidate => candidate.id === instance.id)
+        await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned())
+        if (!stillOwned()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }

@@ -1,11 +1,13 @@
 import { historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
 import type { MissionReaderTarget, MissionTaskSelectionKey } from "./mission-view-state"
 import type { FilesPanelMode } from "../components/instance/shell/right-panel/files-panel-state"
+import type { BrowserViewportPreset } from "../components/browser-frame"
 
 export interface RestorableTabPreview {
   targetUrl: string
   mode: "preview" | "chat"
   history?: BrowserHistory
+  viewport?: BrowserViewportPreset
 }
 export interface RestorableTabMissionView {
   selected?: string
@@ -37,7 +39,9 @@ export function normalizeTabPreview(value: unknown): RestorableTabPreview | unde
   const parsedHistory = parseBrowserHistory(value.history, targetUrl)
   const history = parsedHistory.urls.every(url => url.length <= 2048) ? parsedHistory : { urls: [targetUrl], index: 0 }
   return { targetUrl, mode: value.mode,
-    ...(value.history === undefined ? {} : { history }) }
+    ...(value.history === undefined ? {} : { history }),
+    ...(["responsive", "desktop", "tablet", "tabletLandscape", "mobile", "mobileLandscape"].includes(String(value.viewport))
+      ? { viewport: value.viewport as BrowserViewportPreset } : {}) }
 }
 
 export function parseLegacySessionPreviews(value: string | null): Array<[string, RestorableTabPreview]> {

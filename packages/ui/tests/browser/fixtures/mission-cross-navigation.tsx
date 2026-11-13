@@ -39,11 +39,11 @@ seedRestoredSessionSelection(id, "ses_initial", "ses_initial")
 markSessionListsRestored(id)
 setMessagesLoaded(previous => new Map(previous).set(id, new Set(initial.map(session => session.id))))
 await ensureWorktreesLoaded(id)
-await openSessionPreview("ses_initial", "https://example.invalid/", scope)
-showSessionChatFor("ses_initial", scope)
+await openSessionPreview("ses_initial", "https://example.invalid/", id)
+showSessionChatFor("ses_initial", id)
 
 // Previews are per conversation; follow the one opened for the initial conversation.
-const initialPreview = () => getSessionPreview("ses_initial", scope)
+const initialPreview = () => getSessionPreview("ses_initial", id)
 const snapshot = () => ({ session: activeSessionId().get(id) ?? null, mode: initialPreview()?.mode ?? null,
   previewSession: initialPreview()?.sessionId, previewUrl: initialPreview()?.targetUrl,
   reader: missionProjectView(scope).reader ?? null })

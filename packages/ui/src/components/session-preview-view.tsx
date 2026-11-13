@@ -1,7 +1,7 @@
 import { createSignal, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
+import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
@@ -34,6 +34,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
   const { t } = useI18n()
   const [commentMode, setCommentMode] = createSignal(false)
   function showNavigationError(error: unknown) {
+    if (error instanceof Error && error.name === "AbortError") return
     showAlertDialog(t("sessionPreview.open.title"), {
       title: t("sessionPreview.open.title"),
       detail: error instanceof Error ? error.message : String(error),
@@ -66,11 +67,13 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         initialUrl={frameSource()}
         initialAddress={props.preview.targetUrl}
         initialHistory={props.preview.history}
+        initialViewport={props.preview.viewport}
+        onViewportChange={viewport => updateSessionPreviewViewport(props.preview.storageKey, viewport)}
         onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
-        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder))}
+        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceId))}
         onNavigationError={showNavigationError}
         onFrameLocation={(path) => {
           const target = new URL(path, props.preview.targetUrl)

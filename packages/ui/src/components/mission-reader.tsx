@@ -290,7 +290,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const captureNavigation = createMissionViewFence(() => JSON.stringify([
     props.instanceId, props.scope, target(), instances().get(props.instanceId)?.folder,
     instances().get(props.instanceId)?.metadata?.project?.id, missionStore.state(props.instanceId).projectID,
-    activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId), getSessionPreview(activeSessionId().get(props.instanceId) ?? "", props.scope),
+    activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId), getSessionPreview(activeSessionId().get(props.instanceId) ?? "", props.instanceId),
   ]), () => Boolean(target()))
   let navigationIntent = 0
   const taskConversation = () => {
@@ -329,7 +329,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
     batch(() => {
       setActiveSessionFromList(instanceId, sessionId)
-      showSessionChatFor(sessionId, scope)
+      showSessionChatFor(sessionId, instanceId)
       updateMissionProjectView(scope, { reader: undefined })
     })
   }
@@ -460,7 +460,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     closeButton?.focus()
   })
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
-  const close = () => { showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.scope); updateMissionProjectView(props.scope, { reader: undefined }) }
+  const close = () => { showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.instanceId); updateMissionProjectView(props.scope, { reader: undefined }) }
    return <MissionPanelScope value={panel}><section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">

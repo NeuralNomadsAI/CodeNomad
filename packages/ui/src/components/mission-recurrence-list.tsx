@@ -253,7 +253,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   }
   const read = (id: string, passageID?: string) => {
     const wasReading = reading(id, passageID)
-    showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.scope)
+    showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.instanceId)
     updateMissionProjectView(props.scope, { reader: wasReading ? undefined : { kind: "recurrence", missionId: id,
       instanceId: props.instanceId, projectID: props.projectID, ...(passageID ? { itemId: passageID } : {}) } })
     if (!wasReading) props.onRead?.()
