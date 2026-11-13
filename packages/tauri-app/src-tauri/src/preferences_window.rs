@@ -92,6 +92,7 @@ struct PreferencesTransitionRequest {
 }
 
 pub(crate) struct PreferencesWindow {
+    selection: server_selection::SelectionCommands,
     cleanup: memory_cleanup::CleanupCommands,
     operation: Mutex<()>,
     state: Mutex<PreferencesState>,
@@ -100,6 +101,7 @@ pub(crate) struct PreferencesWindow {
 impl Default for PreferencesWindow {
     fn default() -> Self {
         Self {
+            selection: server_selection::SelectionCommands::default(),
             cleanup: memory_cleanup::CleanupCommands::default(),
             operation: Mutex::new(()),
             state: Mutex::new(PreferencesState {

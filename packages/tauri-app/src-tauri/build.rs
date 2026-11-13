@@ -65,6 +65,7 @@ fn main() {
             "preferences_opener_startup_state",
             "preferences_memory_cleanup",
             "preferences_select_server",
+            "server_selection_result",
             "memory_cleanup_result",
             "memory_cleanup_claim",
             "window_control",

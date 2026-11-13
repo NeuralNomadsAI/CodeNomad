@@ -4,6 +4,8 @@ Closing project tabs, temporary workspaces, the new-instance launcher and the Gi
 
 ## Agent conventions
 
+- Selecting the current saved-server policy preserves the picker intent and its in-flight opening. A changed origin, TLS or SSH policy creates a new selection; the picker lifetime and workspace receipt own cancellation.
+
 - Experimental multi-backend opening uses `remote-project-open.ts` and `remote-server-browser.tsx`: the host's saved policy is captured as an immutable selection, rechecked before admission and publication, then `backendRegistry.ensure` supplies the exact client to `createInstance`. Caller cancellation owns only that creation receipt. The main renderer selects an ordinary instance tab; its server icon and visible server name distinguish remote projects, including duplicate server labels. Browse, typed paths and remote recents share this flow. Clone and temporary actions retain their local home-page owner. Explicit Retry and successful authentication recover a retained inventory through `retryWorkspaces`; incompatible metadata and HTTP 426 refuse admission.
 
 - Restore claim settlement uses the receipt's exact attachment/request key, including terminal events and delayed callbacks. A confirmed release, cancellation or stop drops the descriptor and its client/API/attachment references; explicit create-route rejection ends its receipt, while transport failures, aborted requests and uncertain server errors retain their captured responsibility. Settled requests keep primitive identity fences for duplicate responses, and cancelled occurrences keep lightweight event tombstones until an explicit user opening. Unsettled and revoked claims retain their full owner for settlement retries, independently of replacement occurrences.

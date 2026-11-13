@@ -17,7 +17,8 @@ export function selectedRemoteProfile(intent = selection()) {
 export function selectRemoteServer(value: unknown): void {
   const intent = normalizeServerSelection(value)
   if (!intent || !selectedRemoteProfile(intent)) throw new Error("Server selection changed")
-  setSelection(intent)
+  // Same-policy reselection keeps the mounted browser's opening authority.
+  if (selectedRemoteProfile() !== selectedRemoteProfile(intent)) setSelection(intent)
   closeSettings()
 }
 export const closeRemoteServer = () => setSelection(undefined)

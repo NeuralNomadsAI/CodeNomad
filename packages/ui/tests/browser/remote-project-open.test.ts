@@ -185,6 +185,32 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     }
     refusal = undefined
   })
+  await t.test("same-policy reselection retains its in-flight opening and releases the selected occurrence", async () => {
+    const page = await prepare(), before = mutations.length
+    holdCreate = true
+    const entered = new Promise<void>(resolve => { createEntered = resolve })
+    try {
+      await select(page, "a")
+      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await entered
+      await select(page, "a")
+      const released = page.waitForResponse(response => response.url().includes("/w/creation/release"))
+      void released.catch(() => undefined)
+      const send = hold; hold = undefined; send?.()
+      await dialog(page).waitFor({ state: "detached", timeout: 3000 })
+      await released
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
+        tabs: [{ id: "instance:w", kind: "instance" }, { id: "instance:a~w", kind: "instance" }],
+        active: "instance:a~w",
+      })
+      assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST"])
+    } finally {
+      holdCreate = false
+      const send = hold; hold = undefined; send?.()
+      createEntered = undefined
+      await page.close()
+    }
+  })
   await t.test("Preferences sends only the selection through each native adapter", async () => {
     for (const host of ["electron", "tauri"] as const) {
       const page = await prepare(host, true)
