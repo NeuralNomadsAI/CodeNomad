@@ -277,7 +277,8 @@ test("paused pending passage offers Resume as its primary and never a Check pass
       // Resume restarts the daily Job, whose observer then follows the pending passage.
       const status = recurrenceControlStatusSchema.parse({ version: 1, ...identity, revision: input.expectedRevision + 1,
         state: "running", outcome: "committed", controlsComplete: true, targets: [] })
-      schedule.revision = status.revision!; schedule.state = "running"; schedule.actions = ["pause", "stop"]; schedule.controls = [status]
+      schedule.revision = status.revision!; schedule.state = "running"; schedule.nextDueAt = Date.UTC(2026, 9, 9, 8, 15)
+      schedule.actions = ["pause", "stop"]; schedule.controls = [status]
       const { outcome: _outcome, ...record } = status
       return route.fulfill({ json: { ...record, targetsKnown: true } })
     }
