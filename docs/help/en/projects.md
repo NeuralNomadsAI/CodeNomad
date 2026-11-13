@@ -36,6 +36,12 @@ If another window displays the same project connection, its tab closes too and t
 
 Closing a whole window, quitting or reloading does not close its project connections; normal startup restoration still applies. Stop relevant runs explicitly if you need to verify execution ended. CodeNomad never unloads native Locations; shared-service maintenance is described in [OpenCode setup](opencode.md).
 
+## Restore remote tabs {#restore-remote-tabs}
+
+With multi-backend enabled, saved remote projects return in their tab order with their drafts and selection. An unavailable server keeps a waiting tab: use **Retry** when it returns, or **Connect** with its username/password or a fresh **Pairing link**. Other servers remain usable. Recovery reads state; send any unconfirmed conversation action yourself only after checking its outcome.
+
+Close this server’s project tabs in every window before removing it or changing its address. An unreachable inventory keeps that change blocked until it can be checked.
+
 ## Temporary workspaces {#temporary-workspaces}
 
 1. Choose **Temporary** in the launcher or **New temporary instance** on the home page.

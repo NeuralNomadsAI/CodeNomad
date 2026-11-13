@@ -1245,6 +1245,11 @@ async function renameRecentFolderProject(folderPath: string, projectName: string
 
 async function saveRemoteServerProfile(input: RemoteServerProfileInput): Promise<RemoteServerProfile> {
   const profile = buildRemoteServerProfile(input, remoteServers())
+  const previous = remoteServers().find(value => value.id === profile.id)
+  if (preferences().multiBackend === true && previous && (previous.baseUrl !== profile.baseUrl
+    || previous.skipTlsVerify !== profile.skipTlsVerify || previous.ssh?.host !== profile.ssh?.host)) {
+    if (!await (await import("./remote-server-usage")).confirmRemoteServerChange(profile.id)) return previous
+  }
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) })
   return profile
 }
@@ -1261,9 +1266,10 @@ async function markRemoteServerConnected(id: string): Promise<void> {
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(updated, remoteServers()) })
 }
 
-function removeRemoteServerProfile(id: string): void {
+async function removeRemoteServerProfile(id: string): Promise<void> {
+  if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
   const next = remoteServers().filter((entry) => entry.id !== id)
-  void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
+  await patchStateOwner("ui", { remoteServers: next })
 }
 
 function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {

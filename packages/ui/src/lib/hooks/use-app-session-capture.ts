@@ -72,14 +72,25 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
   const tabs = appTabs()
   const nextOccurrence = new Map<string, number>()
   const occurrenceByInstance = new Map<string, number>()
+  const reservedOccurrences = new Map<string, Set<number>>()
+  const suspended = new Set(tabs.flatMap(tab => tab.kind === "remote-restore" && tab.instanceId ? [tab.instanceId] : []))
+  for (const tab of tabs) if (tab.kind === "remote-restore") {
+    const key = workspaceIdentity(tab.snapshot.folder, tab.snapshot.backendId)
+    const reserved = reservedOccurrences.get(key) ?? new Set<number>()
+    reserved.add(tab.snapshot.occurrence ?? 0)
+    reservedOccurrences.set(key, reserved)
+  }
   for (const instance of instances().values()) {
+    if (suspended.has(instance.id)) continue
     const path = workspaceIdentity(instance.folder, instance.backendId)
-    const occurrence = nextOccurrence.get(path) ?? 0
+    let occurrence = nextOccurrence.get(path) ?? 0
+    while (reservedOccurrences.get(path)?.has(occurrence)) occurrence++
     nextOccurrence.set(path, occurrence + 1)
     occurrenceByInstance.set(instance.id, occurrence)
   }
   const restorableTabs: RestorableTabState[] = tabs.map((tab) => {
     if (tab.kind === "sidecar") return { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId }
+    if (tab.kind === "remote-restore") return tab.snapshot
     const id = tab.instance.id
     const parentId = activeParentSessionId().get(id)
     const sessionId = activeSessionId().get(id)
@@ -381,6 +392,26 @@ export function useAppSessionCapture() {
     },
     createRestoredTabCommitGuard(index: number) {
       return preservation ? createRestoredTabCommitGuard(preservation, index) : () => false
+    },
+    removeRestoredTab(index: number) {
+      const tab = preservation?.sourceTabs[index]
+      if (!preservation || tab?.kind !== "workspace") return
+      preservation.results[index] = { status: "removed" }
+      preservation.removalRevisions[index] = (preservation.removalRevisions[index] ?? 0) + 1
+      const current = mergedState()
+      nativeFallbackState = current.tabs.length ? current : null
+      schedule()
+    },
+    preserveRemotePlaceholder(tabId: string, snapshot: RestorableWorkspaceTabState) {
+      if (!preservation) return -1
+      let index = preservation.results.findIndex(result => result.runtimeTabId === tabId)
+      if (index < 0) {
+        index = preservation.sourceTabs.length
+        preservation.results.push({ status: "pending" })
+        preservation.removalRevisions.push(0)
+      }
+      preservation.sourceTabs[index] = snapshot
+      return index
     },
     hasRestoredTabBinding(index: number, expectedRuntimeTabId: string) {
       return preservation ? hasRestoredTabBinding(preservation, index, expectedRuntimeTabId) : false

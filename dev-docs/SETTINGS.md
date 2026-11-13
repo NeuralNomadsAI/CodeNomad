@@ -4,6 +4,8 @@ Settings rows and actions, the native Preferences window and its project context
 
 ## Agent conventions
 
+- Multi-backend profile removal and URL/TLS/SSH target edits use `confirmRemoteServerChange`: refuse known tabs/drafts or occupied/unavailable remote inventory, then confirm the connection change for saved tabs in other windows. Rename preserves the connection. Profile operations retain their asynchronous result so callers can display a refused change.
+
 - With `multiBackend` enabled, Add server offers an optional OpenSSH destination and native datalist suggestions. SSH profiles use Save and the backend relay; the direct-window Connect action is disabled. Preserve `ssh.host` through host-owned preference normalization and persistence, and include it in registry target equality. Invalid saved SSH shapes are discarded as whole profiles to preserve their transport authority. SSH saves validate the origin without probing it from the local machine.
 
 - `multiBackend` belongs to the host's `config.ui.settings`, defaults to false and normalizes strictly (`value === true`). Its configuration has no visible toggle. `stores/remote-backends.ts` composes the sole saved-profile registry; admission checks the current flag, and turning it off revokes its candidates and attachments. Server settings targets inherit this flag from the host.

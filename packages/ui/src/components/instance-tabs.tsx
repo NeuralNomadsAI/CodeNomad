@@ -68,7 +68,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           }}
         >
           <span class="tab-pill-button">
-            <span class="truncate max-w-[180px]">{props.tab.sidecarTab.name}</span>
+            <span class="truncate max-w-[180px]">{props.tab.kind === "sidecar" ? props.tab.sidecarTab.name : props.tab.snapshot.projectName ?? props.tab.snapshot.folder}</span>
           </span>
           <button
             class="tab-pill-close"
@@ -77,7 +77,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
               event.stopPropagation()
               props.onClose(props.tab.id)
             }}
-            aria-label={props.tab.sidecarTab.name}
+            aria-label={t("instanceTab.actions.close.ariaLabel")}
             title={props.tab.id === props.activeTabId ? withHotkey(t("instanceTab.actions.close.ariaLabel"), "close-instance") : t("instanceTab.actions.close.ariaLabel")}
           >
             ×

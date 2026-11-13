@@ -213,6 +213,15 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
 
   return {
     ensure, detach, retryWorkspaces,
+    workspaceReadGuard(id: string, signal?: AbortSignal) {
+      const entry = entries.get(id), health = entry?.health
+      return () => {
+        if (!entry || !current(id, entry) || entry.health !== health || !entry.detach
+          || !signal || signal.aborted || events.signal(id) !== signal) return
+        entry.inventoryFailed = false
+        setState(id, "compatible")
+      }
+    },
     state: (id: string): BackendAdmissionState => states[id] ?? "idle",
     dispose() {
       if (disposed) return

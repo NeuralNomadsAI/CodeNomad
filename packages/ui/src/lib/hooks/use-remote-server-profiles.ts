@@ -93,5 +93,10 @@ export function useRemoteServerProfiles() {
     }
   }
 
-  return { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile }
+  return { remoteServers, connectingServerId, saveServer, connectSavedServer,
+    removeRemoteServerProfile: (id: string) => void removeRemoteServerProfile(id).catch(error =>
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("folderSelection.servers.errorTitle"), variant: "warning",
+      })),
+  }
 }

@@ -1372,6 +1372,9 @@ async function refreshWorkspaceList(
   // hydration. Its provider editor receives an explicit location from the host.
   if (!usesClientState()) return false
   if (backendId !== LOCAL_BACKEND_ID && api === serverApi) throw new Error("A non-local workspace list needs its backend API")
+  const inventoryPublished = backendId === LOCAL_BACKEND_ID ? undefined
+    : (await import("./remote-backends")).backendRegistry.workspaceReadGuard(backendId, signal)
+  if (signal?.aborted) return false
   const requestFence = workspaceListReconciliationFence.begin(backendId)
   const removalCandidates = new Set([...instances().values()]
     .filter((instance) => backendIdOf(instance) === backendId).map(({ id }) => id))
@@ -1406,7 +1409,9 @@ async function refreshWorkspaceList(
       releaseInstanceResources(instanceId)
       removeInstance(instanceId, { authoritative: false })
     }
-    return !signal?.aborted && workspaceListReconciliationFence.isCurrent(requestFence)
+    const published = !signal?.aborted && workspaceListReconciliationFence.isCurrent(requestFence)
+    if (published) inventoryPublished?.()
+    return published
   } finally {
     workspaceListReconciliationFence.complete(requestFence)
   }
