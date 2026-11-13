@@ -114,6 +114,17 @@ describe("renderMarkdown bracket math delimiters", () => {
 })
 
 describe("renderMarkdown raw HTML", () => {
+  it("keeps origin-relative policy scoped to sanitized HTML and preserves literal mode", async () => {
+    const source = '<img src="./a.png" alt="image">'
+    const raw = await renderMarkdown(source, { suppressHighlight: true, originRelativeImages: false })
+    assert.match(raw, /<img src="\.\/a.png" alt="image">/)
+    const literal = await renderMarkdown(source, { suppressHighlight: true, originRelativeImages: false, literalRawHtml: true })
+    assert.doesNotMatch(literal, /<img|data-local-image/)
+    assert.match(literal, /&lt;img/)
+    const sanitized = await renderMarkdown(source, { suppressHighlight: true, originRelativeImages: false, escapeRawHtml: true })
+    assert.doesNotMatch(sanitized, /<img/)
+  })
+
   it("renders user HTML as source while preserving Markdown and the default HTML mode", async () => {
     const source = '**Heading**\n\n<div><span className="bold">{unit.name}</span>\n<script>example()</script></div>'
     const literal = await renderMarkdown(source, { suppressHighlight: true, escapeRawHtml: true, literalRawHtml: true })

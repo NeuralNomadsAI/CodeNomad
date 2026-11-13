@@ -95,7 +95,7 @@ export function usePromptAside(options: {
     return true
   }
 
-  return { open, question, setQuestion, answer, error, pending, launch, ask, cancel, close }
+  return { instanceId: options.instanceId, open, question, setQuestion, answer, error, pending, launch, ask, cancel, close }
 }
 
 export type PromptAsideController = ReturnType<typeof usePromptAside>

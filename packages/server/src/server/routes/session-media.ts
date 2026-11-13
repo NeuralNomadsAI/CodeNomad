@@ -1,55 +1,96 @@
 import type { FastifyInstance } from "fastify"
+import { OpenCode } from "@opencode/client"
 import { readLocationRef, sameLocation } from "../../opencode/compatibility/location"
 import { isRenderableToolImage, mediaDigest, toolFile } from "../../opencode/session-media"
-import type { HistoryRouteDeps } from "./session-history"
+import { parseSessionMediaPath } from "../../opencode/session-media-contract"
+import { embeddedImage } from "../../opencode/embedded-asset"
+import { awaitSessionMedia, createSessionMediaFetch } from "../../opencode/session-media-fetch"
+import type { ServiceConnection } from "../../workspaces/opencode-service"
+import type { WorkspaceManager } from "../../workspaces/manager"
 
 type MediaParams = { id: string; sessionId: string; messageId: string; part: string; index: string; digest: string }
-
-const position = (value: string) => (/^\d{1,6}$/.test(value) ? Number(value) : undefined)
 
 /**
  * Serves one tool image that a transcript page deferred (`opencode/session-media.ts`),
  * read from the owned session's native message and pinned by its digest.
  */
-export function registerSessionMediaRoutes(app: FastifyInstance, deps: Pick<HistoryRouteDeps, "workspaceManager">) {
+export function registerSessionMediaRoutes(app: FastifyInstance, deps: { workspaceManager: Pick<WorkspaceManager,
+  "captureWorkspaceOperation" | "getSharedServiceConnection" | "ownsLocation"> }) {
   app.get<{ Params: MediaParams }>("/api/workspaces/:id/session-media/:sessionId/:messageId/:part/:index/:digest", async (request, reply) => {
-    const { id, sessionId, messageId, digest } = request.params
-    const part = position(request.params.part), index = position(request.params.index)
-    if (part === undefined || index === undefined || !/^[a-f0-9]{64}$/.test(digest)) {
-      return reply.code(400).send({ error: "Invalid media reference" })
-    }
     const controller = new AbortController()
-    const abort = () => { if (!reply.raw.writableEnded) controller.abort() }
+    const abort = () => controller.abort()
     reply.raw.once("close", abort)
+    const deadline = setTimeout(() => controller.abort(new DOMException("Media deadline", "TimeoutError")), 30_000)
+    let operation: ReturnType<typeof deps.workspaceManager.captureWorkspaceOperation>
+    let connection: ServiceConnection | undefined
+    let signal = controller.signal
+    const current = () => {
+      if (reply.raw.destroyed || reply.raw.closed || request.raw.aborted || request.raw.socket?.destroyed) controller.abort()
+      signal.throwIfAborted()
+      operation?.current()
+      connection?.assertCurrent()
+    }
+    const wait = async <T>(pending: Promise<T>) => {
+      current()
+      const value = await awaitSessionMedia(pending, signal)
+      current()
+      return value
+    }
+    const sendError = (code: number, error: string) => { current(); return reply.code(code).send({ error }) }
     try {
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
-      const client = await deps.workspaceManager.getSharedServiceClient()
-      const session = await client.session.get({ sessionID: sessionId }, { signal })
-      if (!await deps.workspaceManager.ownsLocation(id, session.location, client)) {
-        return reply.code(403).send({ error: "Session does not belong to workspace" })
+      current()
+      const reference = parseSessionMediaPath(request.url)
+      if (!reference) return sendError(400, "Invalid media reference")
+      const { workspaceId: id, sessionId, messageId, digest, part, index } = reference
+      operation = deps.workspaceManager.captureWorkspaceOperation(id)
+      if (!operation) return sendError(404, "Media not found")
+      signal = AbortSignal.any([controller.signal, operation.signal])
+      current()
+      connection = await wait(deps.workspaceManager.getSharedServiceConnection(id))
+      current()
+      if (!connection) return sendError(502, "Media unavailable")
+      const client = OpenCode.make({ baseUrl: connection.endpoint.url, fetch: createSessionMediaFetch(connection, signal, current) })
+      current()
+      const session = await wait(client.session.get({ sessionID: sessionId }, { signal }))
+      current()
+      const location = readLocationRef(session.location)
+      if (session.id !== sessionId || !await wait(deps.workspaceManager.ownsLocation(id, location, client, signal, "request", { current }))) {
+        return sendError(403, "Session does not belong to workspace")
       }
-      const message = await client.session.message.get({ sessionID: sessionId, messageID: messageId }, { signal })
+      current()
+      const message = await wait(client.session.message.get({ sessionID: sessionId, messageID: messageId }, { signal }))
       // As for history reads: a session that moved during the read is refused,
       // and messages at or after an undo boundary are no longer its history.
-      const current = await client.session.get({ sessionID: sessionId }, { signal })
-      if (!sameLocation(readLocationRef(session.location), readLocationRef(current.location))
-        || !await deps.workspaceManager.ownsLocation(id, current.location, client)) {
-        return reply.code(409).send({ error: "Session location changed" })
+      current()
+      const latest = await wait(client.session.get({ sessionID: sessionId }, { signal }))
+      current()
+      if (latest.id !== sessionId || !sameLocation(location, readLocationRef(latest.location))
+        || !await wait(deps.workspaceManager.ownsLocation(id, latest.location, client, signal, "request", { current }))) {
+        return sendError(409, "Session location changed")
       }
-      const boundary = (current.revert as { messageID?: unknown } | null | undefined)?.messageID
+      current()
+      const boundary = (latest.revert as { messageID?: unknown } | null | undefined)?.messageID
       const file = toolFile(message, part, index)
-      if ((typeof boundary === "string" && messageId >= boundary) || !isRenderableToolImage(file) || mediaDigest(file.uri) !== digest) {
-        return reply.code(404).send({ error: "Media not found" })
+      if (message.id !== messageId || (typeof boundary === "string" && messageId >= boundary) || !isRenderableToolImage(file)) {
+        return sendError(404, "Media not found")
       }
+      current()
+      if (mediaDigest(file.uri) !== digest) return sendError(404, "Media not found")
+      current()
+      const image = embeddedImage(file)
+      current()
+      if (!image) return sendError(404, "Media not found")
+      current()
       return reply
-        .header("content-type", file.mime.toLowerCase())
+        .header("content-type", image.mime)
         // The digest in the path pins these bytes.
         .header("cache-control", "private, max-age=31536000, immutable")
         .header("x-content-type-options", "nosniff")
         .header("content-security-policy", "default-src 'none'; sandbox")
-        .send(Buffer.from(file.uri.slice(file.uri.indexOf(",") + 1), "base64"))
+        .send(image.bytes)
     } catch {
-      return reply.code(502).send({ error: "Media unavailable" })
-    } finally { reply.raw.removeListener("close", abort) }
+      try { return sendError(502, "Media unavailable") }
+      catch { reply.hijack(); reply.raw.destroy(); return reply }
+    } finally { clearTimeout(deadline); reply.raw.removeListener("close", abort) }
   })
 }
