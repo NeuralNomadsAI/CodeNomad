@@ -41,10 +41,16 @@ export function registerDirectOriginPolicy(app: FastifyInstance, options: {
       const protocol = request.raw.socket && "encrypted" in request.raw.socket ? "https" : "http"
       candidates.push(`${protocol}://${host}:${address.port}`)
       // A page on this machine reaches this socket under the loopback names its bind
-      // address covers, including all interfaces; other loopback addresses and other
-      // ports can belong to other listeners.
+      // address covers, including all interfaces. Other loopback addresses and ports, or
+      // the same name resolved to a sibling listener, can belong to other servers: an alias
+      // is admitted only for a request that targets that very alias (same-origin).
       if (isLocalRequest(request)) {
-        for (const name of LOOPBACK_ALIASES[address.address] ?? []) candidates.push(`${protocol}://${name}:${address.port}`)
+        let target: string | undefined
+        try { target = new URL(`${protocol}://${request.headers.host}`).origin } catch { target = undefined }
+        for (const name of LOOPBACK_ALIASES[address.address] ?? []) {
+          const alias = `${protocol}://${name}:${address.port}`
+          if (alias === target) candidates.push(alias)
+        }
       }
     }
     if (isLocalRequest(request) && options.devServerUrl) candidates.push(options.devServerUrl)
