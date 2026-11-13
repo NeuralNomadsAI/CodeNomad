@@ -387,7 +387,7 @@ Commands:
   visibility, Cancel-first shared confirmation with machine/package-version text, preconsent navigation/event fences,
   all projected outcomes, unsupported WSL and uncertain errors without automatic replay.
 - `node --import tsx scripts/test-integrations-attachments-native.mjs <absolute-cli> [pilot-checkout] [blender-executable]`:
-  OpenCode 2.2.5 with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
+  A supported OpenCode runtime (at or above the minimum) with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
   `IntegrationCatalogSource`, and the real relay feeding `createIntegrationsStore` through SSE. Checks a 60-second
   event-free demand and ten native plugin events inside 300 ms, strict inputs and cross-Location refusals. The
   Blender pilot extracts the immutable pin recorded in `VENDORED.json` from the supplied checkout read-only,
@@ -400,7 +400,7 @@ Commands:
    logger and an adversarial opaque session ID.
   Every child uses the fixture environment. Manual AC-B4 has its own acceptance run.
 - `node --import tsx scripts/test-integrations-host-install-native.mjs <absolute-cli> [integration-checkout]`:
-  actual Fastify installation route and OpenCode 2.2.5 RPCs using the real built integration kit. Environment and
+  actual Fastify installation route and a supported OpenCode runtime's RPCs using the real built integration kit. Environment and
   kernel WSL detections run with and without authenticated validated offers; selected/backend WSL refuses before
   catalog or native RPC reads. Mirrored-offer kit refusals preserve every protected fixture file, including the
   preloaded catalog. A Linux positive control invokes exactly one installer callback and private sentinel write.
