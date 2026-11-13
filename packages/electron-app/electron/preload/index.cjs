@@ -124,6 +124,7 @@ const preferencesElectronAPI = {
   resolvePreferencesTransition: (id, approved) => ipcRenderer.invoke("preferences:resolveTransition", id, approved),
   openerStartupState: (command, epoch) => ipcRenderer.invoke("preferences:openerStartupState", command, epoch),
   memoryCleanup: (request) => ipcRenderer.invoke("preferences:memoryCleanup", request),
+  selectServer: (intent) => ipcRenderer.invoke("preferences:selectServer", intent),
   listOtherDataProfiles: localElectronAPI.listOtherDataProfiles,
   deleteOtherDataProfiles: localElectronAPI.deleteOtherDataProfiles,
   setNextLaunchDataProfile: localElectronAPI.setNextLaunchDataProfile,

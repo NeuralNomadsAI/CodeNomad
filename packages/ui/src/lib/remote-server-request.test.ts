@@ -28,3 +28,22 @@ test("connect/forget are host-only, cancellable and return only reviewed errors"
   await assert.rejects(remote.forgetRemoteServer("a"), { message: "unknown_server" })
   assert.equal(calls.length, before)
 })
+
+test("browse uses the host transport, retains cancellation and sanitizes refused reads", async () => {
+  const controller = new AbortController(), calls: RequestInit[] = []
+  let body: unknown = { listing: { entries: [], metadata: { currentPath: "/same" } }, recents: [] }, status = 200
+  const api = createServerApi({ ...createBackendTransport({ id: "local", baseUrl: "http://127.0.0.1:1234" }),
+    fetch: async (url, init) => {
+      assert.equal(String(url), "http://127.0.0.1:1234/api/remote-servers/a/browse")
+      calls.push(init!); return Response.json(body, { status })
+    } })
+  assert.deepEqual(await api.browseRemoteServer("a", "/same", controller.signal), body)
+  assert.deepEqual(JSON.parse(calls[0].body as string), { path: "/same" })
+  assert.equal(calls[0].signal, controller.signal)
+  body = { error: "auth", password: "secret" }; status = 409
+  await assert.rejects(api.browseRemoteServer("a"), { message: "auth" })
+  body = { cookie: "secret" }; status = 200
+  await assert.rejects(api.browseRemoteServer("a"), { message: "unreachable" })
+  controller.abort()
+  await assert.rejects(api.browseRemoteServer("a", undefined, controller.signal), { name: "AbortError" })
+})

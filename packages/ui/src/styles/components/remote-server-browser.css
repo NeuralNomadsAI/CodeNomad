@@ -1,0 +1,15 @@
+.remote-server-project-window {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(36rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  z-index: 1000;
+}
+.remote-server-browser { display: flex; flex-direction: column; min-height: 0; }
+.remote-server-browser .window-body { overflow: auto; display: flex; flex-direction: column; gap: var(--space-sm); }
+.remote-server-signin, .remote-server-signin label { display: flex; flex-direction: column; gap: var(--space-sm); }
+.remote-server-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm); text-align: start; }
+.remote-server-row:hover, .remote-server-row:focus-visible { background: var(--menu-item-hover-bg); }
+.remote-server-row:disabled { opacity: 0.5; }

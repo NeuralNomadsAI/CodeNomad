@@ -458,10 +458,10 @@ test("failed inventory recovery composes with restore cancellation and user open
       if (order === "cancel-before-observation") {
         assert.equal(await page.evaluate(() => (window as any).registryFixture.workspaces().includes("a~w")), false)
         assert.equal(await page.evaluate(() => (window as any).registryFixture.tabs().includes("a~w")), false)
-        assert.equal(await page.locator('[role="tab"][title="/same"]').count(), 0)
+        assert.equal(await page.locator('[role="tab"][title$="/same"]').count(), 0)
       } else {
         assert.equal(await page.evaluate(() => (window as any).registryFixture.details("a~w").binaryLabel), "user")
-        assert.equal(await page.locator('[role="tab"][title="/same"]').count(), 1)
+        assert.equal(await page.locator('[role="tab"][title$="/same"]').count(), 1)
       }
       assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("title")), "/local")
       json(postResponse!, descriptor); postResponse = undefined
@@ -528,7 +528,7 @@ test("failed inventory recovery composes with restore cancellation and user open
         assert.equal((await page.evaluate(() => (window as any).registryFixture.create("a"))).instanceId, "a~w")
         assert.equal((await page.evaluate(() => (window as any).registryFixture.create("b"))).instanceId, "b~w")
         assert.equal(await page.evaluate(() => (window as any).registryFixture.workspaces().includes("a~obsolete")), false)
-        await page.locator('[role="tab"][title="/same"]').first().waitFor()
+        await page.locator('[role="tab"][title$="/same"]').first().waitFor()
         expectedAborts.add("GET /api/backends/a/api/events"); expectedAborts.add("GET /api/backends/b/api/events")
       }
       await page.screenshot({ path: path.join(evidence, `${change}.png`) })

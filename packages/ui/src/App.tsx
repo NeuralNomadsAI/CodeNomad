@@ -6,6 +6,8 @@ import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
+import RemoteServerProjectDialog from "./components/remote-server-browser"
+import { selectRemoteServer } from "./stores/remote-project-open"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { useDesktopConnectionLaunch } from "./lib/hooks/use-desktop-connection-launch"
@@ -138,6 +140,10 @@ async function withForegroundRefreshTimeout<T>(
 }
 
 const App: Component = () => {
+  onMount(() => {
+    window.__CODENOMAD_SELECT_SERVER__ = selectRemoteServer
+    onCleanup(() => { delete window.__CODENOMAD_SELECT_SERVER__ })
+  })
   onMount(() => onCleanup(startNotificationIconBadge()))
   useAppSessionRestore()
   const { t } = useI18n()
@@ -915,6 +921,7 @@ const App: Component = () => {
           onSelectExistingInstance={handleSelectExistingInstance}
           onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
         />
+        <RemoteServerProjectDialog onOpened={() => setShowFolderSelection(false)} />
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />

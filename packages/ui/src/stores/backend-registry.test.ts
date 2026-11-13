@@ -276,8 +276,8 @@ test("missing, mismatched or empty metadata refuses without SSE, attachment or w
   }
 })
 
-test("absent metadata endpoint and non-JSON metadata refuse without attachment", async () => {
-  for (const response of [new Response("missing", { status: 404 }), new Response("<html>old server</html>")]) {
+test("absent, upgrade-required and non-JSON metadata refuse without attachment", async () => {
+  for (const response of [new Response("missing", { status: 404 }), new Response("upgrade required", { status: 426 }), new Response("<html>old server</html>")]) {
     const h = harness()
     h.read(async () => response)
     try {

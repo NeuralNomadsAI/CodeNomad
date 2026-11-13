@@ -36,9 +36,10 @@ test("20 consumed messages match P2 in ten locales and four legacy values stay u
     const read = (text: string) => new Map([...text.matchAll(/"([\w.]+)":\s*("(?:[^"\\]|\\.)*"),/g)].map(m => [m[1], JSON.parse(m[2])]))
     const current = read(readFileSync(new URL("folderSelection.ts", directory), "utf8") + readFileSync(new URL("settings.ts", directory), "utf8"))
     const variants = ["name", "url", "skipTls", "errorRequired"]
-    const keys = [...current.keys()].filter(key => /^(remoteBrowse\.|folderSelection\.browseMenu\.|folderSelection\.remoteProject\.)/.test(key)).sort()
+    const keys = [...current.keys()].filter(key => key !== "remoteBrowse.incompatible" && /^(remoteBrowse\.|folderSelection\.browseMenu\.|folderSelection\.remoteProject\.)/.test(key)).sort()
       .concat(["settings.nav.servers", "settings.servers.open", ...variants.map(key => `settings.servers.dialog.${key}`)])
     assert.equal(keys.length, 20)
+    assert.ok(current.get("remoteBrowse.incompatible")?.trim(), `${locale}/incompatible server`)
     assert(keys.every(key => typeof current.get(key) === "string"))
     assert.equal(hash(keys.map(key => current.get(key))), snapshots[locale][0], `${locale}/P2`)
     assert.equal(hash(variants.map(key => current.get(`folderSelection.servers.dialog.${key}`))), snapshots[locale][1], `${locale}/legacy`)

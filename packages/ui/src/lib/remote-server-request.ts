@@ -1,4 +1,5 @@
 import type { BackendHttp } from "./backend-transport"
+import type { RemoteServerBrowseResponse } from "../../../server/src/api-types"
 
 const codes = ["unknown_server", "needs_credentials", "auth", "pairing_unavailable", "pairing_expired", "pairing_rate_limited", "tls_error", "unreachable"] as const
 export type RemoteServerErrorCode = typeof codes[number]
@@ -7,8 +8,10 @@ export class RemoteServerRequestError extends Error {
 }
 export type RemoteServerConnectInput = { username?: string; password?: string; pairingLink?: string }
 
-/** Host-only credential operations: response bodies and transport exceptions never reach presentation or logs. */
-export async function remoteServerRequest(ctx: BackendHttp, id: string, action: "connect" | "forget", body: RemoteServerConnectInput, signal?: AbortSignal): Promise<{ ok: boolean }> {
+/** Host-only browsing and credential operations; failures expose only stable codes. */
+export function remoteServerRequest(ctx: BackendHttp, id: string, action: "browse", body: { path?: string }, signal?: AbortSignal): Promise<RemoteServerBrowseResponse>
+export function remoteServerRequest(ctx: BackendHttp, id: string, action: "connect" | "forget", body: RemoteServerConnectInput, signal?: AbortSignal): Promise<{ ok: boolean }>
+export async function remoteServerRequest(ctx: BackendHttp, id: string, action: "browse" | "connect" | "forget", body: RemoteServerConnectInput | { path?: string }, signal?: AbortSignal): Promise<RemoteServerBrowseResponse | { ok: boolean }> {
   signal?.throwIfAborted()
   if (ctx.id !== "local" || !id || id.length > 256) throw new RemoteServerRequestError("unknown_server")
   try {
@@ -21,6 +24,10 @@ export async function remoteServerRequest(ctx: BackendHttp, id: string, action: 
     if (!response.ok) {
       const code = codes.find(code => code === value?.error) ?? "unreachable"
       throw new RemoteServerRequestError(code)
+    }
+    if (action === "browse") {
+      if (!value?.listing?.metadata || !Array.isArray(value.listing.entries) || !Array.isArray(value.recents)) throw new RemoteServerRequestError("unreachable")
+      return value
     }
     if (value?.ok !== true) throw new RemoteServerRequestError("unreachable")
     return { ok: true }

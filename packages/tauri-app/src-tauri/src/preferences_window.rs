@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 pub(crate) mod memory_cleanup;
+pub(crate) mod server_selection;
 
 pub(crate) const LABEL: &str = "preferences";
 pub(crate) const SECTION_EVENT: &str = "preferences:section";

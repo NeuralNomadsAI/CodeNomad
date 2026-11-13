@@ -2042,6 +2042,7 @@ fn main() {
             preferences_window::preferences_resolve_transition,
             preferences_window::preferences_opener_startup_state,
             preferences_window::memory_cleanup::preferences_memory_cleanup,
+            preferences_window::server_selection::preferences_select_server,
             preferences_window::memory_cleanup::memory_cleanup_result,
             preferences_window::memory_cleanup::memory_cleanup_claim,
             window_control,

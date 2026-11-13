@@ -1,5 +1,7 @@
 # Projects and worktrees
 
+With multi-backend enabled, choose a saved server on the home page or use **Open** in **Settings → Servers**. The main window shows that server's folders and recent projects; navigate folders or enter a path and press Enter to open an ordinary project tab. Remote tabs show a server icon and name. Close the browser to cancel; incompatible servers require a compatible CodeNomad server. Clone and temporary-project actions on the home page use this computer.
+
 A project tab connects CodeNomad to a folder on the backend computer. Opening a tab, browsing a checkout and moving a conversation family are different operations.
 
 ## Open a project {#open-project}

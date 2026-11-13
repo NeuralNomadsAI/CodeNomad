@@ -8,7 +8,8 @@ import { showConfirmDialog } from "../../stores/alerts"
 import { RemoteServerDialog } from "../remote-server-dialog"
 import ServerAddField from "../server-add-field"
 
-export type ServerSelectionIntent = Readonly<Pick<RemoteServerProfile, "id" | "baseUrl" | "skipTlsVerify" | "ssh">>
+import type { ServerSelectionIntent } from "../../lib/native/server-selection-intent"
+export type { ServerSelectionIntent } from "../../lib/native/server-selection-intent"
 export const ServersSettingsSection: Component<{ onSelectServer?: (profile: ServerSelectionIntent) => void }> = (props) => {
   const { t } = useI18n()
   const { remoteServers, enabled, capture, submitServer, removeServer } = useRelayServerProfiles()

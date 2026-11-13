@@ -38,6 +38,7 @@ function harness(request: PreferencesRequest = { section: "speech" }) {
       },
       getRequest: () => request,
       memoryCleanup: async (_window, input) => { calls.push(`cleanup:${input.scope}:${input.workspaceId}:${input.directory}`) },
+      selectServer: async (_window, input) => { calls.push(`server:${input.id}:${input.baseUrl}`) },
       markReady: () => { calls.push("ready") },
       acceptRequest: (_window, request) => { calls.push(`accept:${request.section}`) },
       resolveTransition: (_window, id, approved) => { calls.push(`transition:${id}:${approved}`) },
@@ -51,7 +52,7 @@ function harness(request: PreferencesRequest = { section: "speech" }) {
 test("Preferences IPC separates local open authority and controls registered app windows", async () => {
   const h = harness()
   assert.deepEqual([...h.handlers.keys()], [
-    "preferences:open", "preferences:openerStartupState", "preferences:memoryCleanup", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
+    "preferences:open", "preferences:openerStartupState", "preferences:memoryCleanup", "preferences:selectServer", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
   ])
 
   assert.deepEqual(await h.handlers.get("preferences:open")!(h.event(h.localContents), "speech", { instanceId: "workspace-1" }, true), { ok: true })
@@ -103,4 +104,17 @@ test("Preferences IPC rejects unregistered, subframe, and cross-origin senders",
   assert.throws(() => minimize(h.event(h.preferencesContents, { url: h.frame.url })), /registered main frame/)
   h.frame.url = "https://outside.example/preferences"
   assert.throws(() => minimize(h.event(h.preferencesContents)), /allowed renderer origin/)
+})
+
+test("server selection requires the current Preferences section, saved policy and trusted frame", async () => {
+  const h = harness({ section: "servers" })
+  const handler = h.handlers.get("preferences:selectServer")!
+  const intent = { id: "a", baseUrl: "https://a.test", skipTlsVerify: false }
+  await handler(h.event(h.preferencesContents), intent)
+  assert.throws(() => handler(h.event(h.localContents), intent), /Preferences window/)
+  assert.throws(() => handler(h.event(h.preferencesContents), { ...intent, password: "secret" }), /Invalid server selection/)
+  assert.throws(() => handler(h.event(h.preferencesContents, { url: h.frame.url }), intent), /registered main frame/)
+  const other = harness({ section: "general" })
+  assert.throws(() => other.handlers.get("preferences:selectServer")!(other.event(other.preferencesContents), intent), /Invalid server selection/)
+  assert.deepEqual(h.calls, ["server:a:https://a.test"])
 })

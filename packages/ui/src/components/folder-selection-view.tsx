@@ -21,6 +21,8 @@ import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import { getServerMeta, localRequest } from "../lib/server-meta"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
+import { preferences } from "../stores/preferences"
+import { selectRemoteServer } from "../stores/remote-project-open"
 
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
@@ -59,7 +61,13 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const folders = () => recentFolders()
   const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
-  const canUseRemoteServerWindows = () => localRequest() && canOpenRemoteWindows()
+  const canUseRemoteServerWindows = () => localRequest() && (preferences().multiBackend === true || canOpenRemoteWindows())
+  const openServer = (id: string) => {
+    const server = serverList().find(p => p.id === id)
+    if (preferences().multiBackend === true && server) selectRemoteServer({ id: server.id, baseUrl: server.baseUrl,
+      skipTlsVerify: server.skipTlsVerify, ...(server.ssh ? { ssh: server.ssh } : {}) })
+    else void connectSavedServer(id)
+  }
   onMount(() => { void getServerMeta().catch(() => {}) })
 
   function getActiveListLength() {
@@ -178,7 +186,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     const server = serverList()[index]
     if (server) {
-      void connectSavedServer(server.id)
+      openServer(server.id)
     }
   }
 
@@ -292,7 +300,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const openCloneDialog = () => dialogs.clone()
 
   function openServerDialog() {
-    if (canUseRemoteServerWindows()) dialogs.addServer()
+    if (preferences().multiBackend === true) void openSettings("servers")
+    else if (canUseRemoteServerWindows()) dialogs.addServer()
   }
 
   async function handleBrowse() {
@@ -554,7 +563,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                   <button
                                     data-list-index={index()}
                                     class="panel-list-item-content flex-1"
-                                    onClick={() => void connectSavedServer(server.id)}
+                                    onClick={() => openServer(server.id)}
                                     onMouseEnter={() => {
                                       setFocusMode("recent")
                                       setSelectedIndex(index())
@@ -575,14 +584,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                       </Show>
                                     </div>
                                   </button>
-                                  <button
+                                  <Show when={preferences().multiBackend !== true}><button
                                     onClick={() => removeRemoteServerProfile(server.id)}
                                     class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100"
                                     title={`${t("folderSelection.servers.remove")}: ${server.name}`}
                                     aria-label={`${t("folderSelection.servers.remove")}: ${server.name}`}
                                   >
                                     <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
-                                  </button>
+                                  </button></Show>
                                 </div>
                               </div>
                             )}

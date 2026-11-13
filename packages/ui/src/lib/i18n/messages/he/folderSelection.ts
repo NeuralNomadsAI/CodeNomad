@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.incompatible": "שרת CodeNomad אינו תואם.",
   "remoteBrowse.unreachable": "השרת אינו נגיש.",
   "remoteBrowse.pairAgain": "{name}: יש להדביק קישור צימוד חדש.",
   "remoteBrowse.pairingLink": "קישור צימוד חדש",

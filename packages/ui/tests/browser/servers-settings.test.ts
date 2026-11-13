@@ -110,7 +110,7 @@ const edit = (page: Page, name: string) => page.getByRole("button", { name: `Edi
 test("Preferences CRUD uses host profiles; rename offline, normalized duplicate, no implicit open, observable removal failure", { timeout: 90_000 }, async t => {
   const f = await fixture(t), { page } = f
   await page.locator('[data-remote-server="a"]').waitFor()
-  assert.equal(await page.getByRole("button", { name: "Open: Alpha", exact: true }).isDisabled(), true)
+  assert.equal(await page.getByRole("button", { name: "Open: Alpha", exact: true }).isDisabled(), false)
   const probes = () => f.calls.filter(call => call.url.endsWith("/probe")).length
   const aCalls = f.a.state.requests.length
   await edit(page, "Alpha")

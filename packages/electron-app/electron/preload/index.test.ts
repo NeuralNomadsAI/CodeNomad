@@ -60,7 +60,7 @@ test("Preferences preload exposes only section and frame controls", () => {
   assert.deepEqual(Object.keys(api), [
     "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow", "getZoomFactor",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
-    "openerStartupState", "memoryCleanup", "listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile",
+    "openerStartupState", "memoryCleanup", "selectServer", "listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile",
     "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
     "minimizeWindow", "toggleMaximizeWindow", "closeWindow",
   ])
@@ -74,6 +74,7 @@ test("Preferences preload exposes only section and frame controls", () => {
   api.resolvePreferencesTransition(4, true)
   api.openerStartupState("read")
   api.memoryCleanup({ id: "one", scope: "global", workspaceId: "a", directory: "/repo" })
+  api.selectServer({ id: "a", baseUrl: "https://a.test", skipTlsVerify: false })
   api.listOtherDataProfiles()
   api.deleteOtherDataProfiles(["default"])
   api.setNextLaunchDataProfile("dev")
@@ -82,7 +83,7 @@ test("Preferences preload exposes only section and frame controls", () => {
   api.toggleMaximizeWindow()
   api.closeWindow()
   assert.deepEqual(invoked, [
-    "preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState", "preferences:memoryCleanup",
+    "preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState", "preferences:memoryCleanup", "preferences:selectServer",
     "data-profiles:listOthers", "data-profiles:deleteOthers", "data-profiles:setNextLaunch", "data-profiles:relaunch",
     "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
   ])

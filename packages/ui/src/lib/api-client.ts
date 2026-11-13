@@ -419,6 +419,9 @@ export function createServerApi(ctx: BackendHttp) {
     connectRemoteServer(id: string, input: RemoteServerConnectInput, signal?: AbortSignal) {
       return remoteServerRequest(ctx, id, "connect", input, signal)
     },
+    browseRemoteServer(id: string, path?: string, signal?: AbortSignal) {
+      return remoteServerRequest(ctx, id, "browse", { path }, signal)
+    },
     forgetRemoteServer(id: string, signal?: AbortSignal) {
       return remoteServerRequest(ctx, id, "forget", {}, signal)
     },
