@@ -333,11 +333,11 @@ test("a stopped pending passage offers no Check passage control and sends nothin
   await f.store.recordControl(scheduleID, { ...begun.controls.at(-1)!, controlsComplete: true, targetsKnown: true }, current)
   const { page, errors } = await open(f)
   try {
-    // Native offers check here; the terminal toolbar keeps only its disabled Stop and Run now.
-    await expectLifecycle(page, [[STOP, false], [RUN_NOW, false]])
+    // Native offers check here; the terminal toolbar keeps only its disabled placeholder, Stop and Run now.
+    await expectLifecycle(page, [["Start", false], [STOP, false], [RUN_NOW, false]])
     assert.equal(await page.getByRole("button", { name: PASSAGE, exact: true }).count(), 0)
     await refresh(page)
-    await expectLifecycle(page, [[STOP, false], [RUN_NOW, false]])
+    await expectLifecycle(page, [["Start", false], [STOP, false], [RUN_NOW, false]])
     assert.equal((await f.read()).state, "stopped")
     assert.deepEqual(f.native.writes, [], "nothing is sent for a stopped pending passage")
     assert.deepEqual(errors, [])

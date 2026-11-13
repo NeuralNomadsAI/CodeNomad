@@ -274,14 +274,16 @@ test("paused pending passage offers Resume as its primary and never a Check pass
     if (path.endsWith("/control")) {
       const input = recurrenceControlHttpSchema.parse(request.postDataJSON()); posts.push(input)
       const { directory: _directory, ...identity } = input
+      // Resume restarts the daily Job, whose observer then follows the pending passage.
       const status = recurrenceControlStatusSchema.parse({ version: 1, ...identity, revision: input.expectedRevision + 1,
-        state: "paused", outcome: "committed", controlsComplete: true, targets: [] })
-      schedule.revision = status.revision!; schedule.actions = ["resume", "stop"]; schedule.controls = [status]
+        state: "running", outcome: "committed", controlsComplete: true, targets: [] })
+      schedule.revision = status.revision!; schedule.state = "running"; schedule.actions = ["pause", "stop"]; schedule.controls = [status]
       const { outcome: _outcome, ...record } = status
       return route.fulfill({ json: { ...record, targetsKnown: true } })
     }
     return route.fulfill({ json: {} })
   })
+  const PAUSE = `Pause schedule ${TITLE}`
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
     await selectMission(page, schedule.title)
@@ -292,7 +294,8 @@ test("paused pending passage offers Resume as its primary and never a Check pass
     assert.equal(await page.getByRole("button", { name: `Check the pending passage of ${TITLE}`, exact: true }).count(), 0)
     await captureMissionView(page, "paused-pending-passage")
     await resume.click()
-    await missionToolbarAction(page, CHECK).waitFor({ state: "hidden" })
+    await missionToolbarAction(page, PAUSE).waitFor()
+    assert.equal(await missionToolbarAction(page, CHECK).count(), 0, "a committed Resume is not held")
     assert.equal(posts.length, 1)
     assert.equal(posts[0].action, "resume")
     assert.deepEqual(errors, [])
