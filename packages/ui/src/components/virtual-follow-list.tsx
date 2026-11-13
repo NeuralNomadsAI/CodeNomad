@@ -1,6 +1,7 @@
 import { Show, batch, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup, untrack } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { trackHeightDelta } from "../lib/height-delta"
+import { flushFrameBatchedMounts } from "../lib/frame-batch-schedule"
 import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
@@ -554,6 +555,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const select = keyJumpSelect
     const index = findLiveIndex(key)
     if (index === -1) return
+    // The jump lands on final layout: deferred mounts still queued around the
+    // target would drift it while the settlement holds it.
+    flushFrameBatchedMounts()
     // The jump lands at once on Virtua's estimate; the reader settlement then
     // holds the row (or its selected block) at the top once it is measured, for
     // the alignment window only, like an in-place reveal.
@@ -1136,6 +1140,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const key = target.closest<HTMLElement>("[data-virtual-follow-key]")?.dataset.virtualFollowKey
     if (!element || !element.contains(target) || key === undefined) return
     supersedePositioning()
+    // The alignment targets final layout: deferred mounts still queued in the
+    // target's row would move the held element over the following frames.
+    flushFrameBatchedMounts()
     dispatchFollowEvent({ type: "set-follow", enabled: false }, "align-element")
     // The virtualizer's resize compensation and late layout (fonts, lazy cards) can move
     // the target after this correction: the reader settlement re-measures it on every
