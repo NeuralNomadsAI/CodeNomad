@@ -66,6 +66,46 @@ it("keeps flag-off admission remote-free and the default owner strictly local", 
   assert.equal(instances().get("local-default")?.backendId, undefined)
 })
 
+it("flag-off local restore waits for commit, releases once and coalesces close without qualifying ids", async t => {
+  const previous = preferences().multiBackend
+  preferences().multiBackend = false
+  t.after(() => { preferences().multiBackend = previous; removeInstance("local-restored", { authoritative: false }) })
+  const commit = deferred<void>(), posted = deferred<void>(), deleted = deferred<void>()
+  const releases: Array<[string, string]> = [], closes: string[] = [], callbacks: string[] = []
+  t.mock.method(serverApi, "createWorkspace", async (body: Parameters<typeof serverApi.createWorkspace>[0]) => {
+    assert.equal(body.path, "C:\\physical\\restore")
+    assert.ok(body.requestId)
+    posted.resolve()
+    return { id: "local-restored", requestId: body.requestId, path: body.path, status: "starting" as const,
+      proxyPath: "/workspaces/local-restored/instance", createdAt: "", updatedAt: "" }
+  })
+  t.mock.method(serverApi, "releaseWorkspaceCreation", async (id: string, requestId: string) => { releases.push([id, requestId]) })
+  t.mock.method(serverApi, "deleteWorkspace", async (id: string) => { closes.push(id); await deleted.promise })
+  t.after(() => { commit.resolve(); deleted.resolve() })
+  const restoring = createInstance("C:\\physical\\restore", "Restored", {
+    signal: new AbortController().signal, waitForCreateCommit: () => commit.promise,
+    onBeforeCreateCommit: id => callbacks.push(`before:${id}`),
+    onCreateCommit: id => callbacks.push(`after:${id}`),
+  })
+  await posted.promise
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(instances().has("local-restored"), false)
+  assert.deepEqual(callbacks, [])
+  commit.resolve()
+  const restored = await restoring
+  assert.equal(restored.instanceId, "local-restored")
+  assert.equal(instances().get(restored.instanceId)?.backendId, undefined)
+  assert.deepEqual(callbacks, ["before:local-restored", "after:local-restored"])
+  await releaseRestoreCreatedInstance(restored.instanceId, restored.requestId!)
+  await releaseRestoreCreatedInstance(restored.instanceId, restored.requestId!)
+  assert.deepEqual(releases, [["local-restored", restored.requestId]])
+  const first = closeWorkspace(restored.instanceId), second = closeWorkspace(restored.instanceId)
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(closes, ["local-restored"])
+  deleted.resolve()
+  await Promise.all([first, second])
+})
+
 it("captures create/close/release owner, converges qualified identities and fences a queued close", async t => {
   const previous = preferences().multiBackend
   preferences().multiBackend = true
