@@ -1,11 +1,24 @@
 import assert from "node:assert/strict"
-import { test } from "node:test"
+import { afterEach, test } from "node:test"
 import { scheduleDeferredHighlight } from "./markdown-highlight-schedule"
+
+const globalScope = globalThis as unknown as Record<string, unknown>
+let hadIdle = false
+let originalIdle: unknown
+
+afterEach(() => {
+  // Node has no idle callbacks: restore the original state exactly,
+  // including absence, so later tests in this process pick their own path.
+  if (hadIdle) globalScope.requestIdleCallback = originalIdle
+  else delete globalScope.requestIdleCallback
+})
 
 /** Installs a capturing idle scheduler; returns the queued drains. */
 function captureIdle(): { drains: Array<() => void> } {
   const drains: Array<() => void> = []
-  ;(globalThis as { requestIdleCallback?: unknown }).requestIdleCallback = (callback: () => void) => {
+  hadIdle = "requestIdleCallback" in globalScope
+  originalIdle = globalScope.requestIdleCallback
+  globalScope.requestIdleCallback = (callback: () => void) => {
     drains.push(callback)
     return drains.length
   }
