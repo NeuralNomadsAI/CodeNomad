@@ -1395,9 +1395,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     if (!options?.preservePromptDisplayOverrides) clearPromptDisplayOverridesForSession(instanceId, sessionId)
 
-    const messageIds = Object.values(state.messages)
-      .filter((record) => record.sessionId === sessionId)
-      .map((record) => record.id)
+    // The session record owns its message ids (insertMessageIntoSession keeps
+    // record and list in sync). Reading them from the record keeps clearing one
+    // session linear in its own size; scanning every resident message of the
+    // instance through store proxies made an N-session deletion burst
+    // quadratic. The scan remains the fallback for a session without a record.
+    const sessionRecord = state.sessions[sessionId]
+    const messageIds = sessionRecord
+      ? sessionRecord.messageIds.filter((id) => Boolean(state.messages[id]))
+      : Object.values(state.messages)
+        .filter((record) => record.sessionId === sessionId)
+        .map((record) => record.id)
     const messageIdSet = new Set(messageIds)
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
