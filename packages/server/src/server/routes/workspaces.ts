@@ -11,7 +11,7 @@ import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
 import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
-import { GitRequiredError } from "../../workspaces/git-requirement"
+import { GitProbeUnavailableError, GitRequiredError } from "../../workspaces/git-requirement"
 import { getGitHistory, getGitCommit, getGitCommitDiff } from "../../workspaces/git-history"
 import { getLocalGitBranches } from "../../workspaces/git-branches"
 
@@ -471,7 +471,7 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
-  if (error instanceof GitRequiredError || error instanceof GitInitError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
+  if (error instanceof GitRequiredError || error instanceof GitProbeUnavailableError || error instanceof GitInitError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (isGitCloneError(error)) {
     reply.code(error.statusCode)
     return { error: error.message }

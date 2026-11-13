@@ -17,13 +17,15 @@ export function historyScopeSQL(scope: HistoryScope) {
 }
 
 // Retain original part positions while materializing only readable fields.
+// A scalar subquery's JSON subtype is not guaranteed to survive (SQLite 3.54 drops
+// it), so json() re-marks the array before json_object embeds it.
 export const textProjection = `CASE WHEN json_valid(m.data) THEN CASE WHEN json_type(m.data) = 'object' THEN
-  CASE WHEN json_type(m.data, '$.content') = 'array' THEN json_object('content', (
+  CASE WHEN json_type(m.data, '$.content') = 'array' THEN json_object('content', json((
     SELECT json_group_array(CASE WHEN p.type = 'object' THEN
       CASE WHEN json_extract(p.value, '$.type') = 'text' AND json_type(p.value, '$.text') = 'text'
         THEN json_object('type', 'text', 'text', json_extract(p.value, '$.text')) END END)
     FROM json_each(m.data, '$.content') p
-  )) WHEN m.type != 'assistant' THEN json_object(
+  ))) WHEN m.type != 'assistant' THEN json_object(
     'text', CASE WHEN json_type(m.data, '$.text') = 'text' THEN json_extract(m.data, '$.text') END,
     'summary', CASE WHEN json_type(m.data, '$.summary') = 'text' THEN json_extract(m.data, '$.summary') END,
     'command', CASE WHEN json_type(m.data, '$.command') = 'text' THEN json_extract(m.data, '$.command') END,

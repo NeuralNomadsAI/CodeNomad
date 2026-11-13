@@ -20,8 +20,8 @@ markSessionListsRestored("fixture")
 addInstance({ id: "fixture", folder: directory, port: 0, pid: 0, proxyPath: "/workspaces/fixture/instance", status: "ready",
   client: sdkManager.createClient("fixture", "/workspaces/fixture/instance", () => true),
   metadata: { project: { id: "project", directory, canonical: directory } } })
-setSessions(previous => new Map(previous).set("fixture", new Map(["ses_task", "ses_coordinator"].map(id => [id, {
-  id, instanceId: "fixture", parentId: id === "ses_task" ? "ses_coordinator" : null, title: id, status: "idle", runtimeStatusKnown: true,
+setSessions(previous => new Map(previous).set("fixture", new Map(["ses_task", "ses_coordinator", "ses_child"].map(id => [id, {
+  id, instanceId: "fixture", parentId: id === "ses_task" ? "ses_coordinator" : id === "ses_child" ? "ses_task" : null, title: id, status: "idle", runtimeStatusKnown: true,
   agent: "build", model: { providerId: "fixture", modelId: "fixture" }, projectID: "project", cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, location: { directory: "/fixture" }, time: { created: 1, updated: 1 },
 }]))))

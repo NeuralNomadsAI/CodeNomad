@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createNativeScheduleCarrierProvider, nativeScheduleCarrierHooks, nativeScheduleCarrierWakes, nativeScheduleCarrierNonWakeMessageIDs,
+import { createNativeScheduleCarrierProvider, nativeScheduleCarrierHooks, nativeScheduleCarrierWakes,
   NATIVE_SCHEDULE_CARRIER_MODEL, NATIVE_SCHEDULE_CARRIER_TITLE } from "./native-schedule-carrier"
 import { nativeScheduleWakeKey } from "./native-schedule-transport-contract"
 
 const mapping = { missionID: "msn_owned", generation: 3, scheduleID: "sch_owned", sessionID: "ses_owned" }
-const message = (run: number, dueAt = run * 90 * 60_000) => ({ id: `msg_sch_owned_${run}`, role: "user",
+const message = (run: number, dueAt = run * 90 * 60_000) => ({ id: `msg_sch_owned_${run}`, type: "user",
   content: [{ type: "text", text: "wake" }], metadata: { schedule: { id: "sch_owned", run, dueAt, late: false } } })
 
 test("concurrent cold language hooks install one stateless local language with both local execution modes", async () => {
@@ -61,7 +61,7 @@ test("exact carrier hooks keep title/compaction local, reject altered selection 
 })
 
 test("two wakes on one carrier preserve exact keys and order independently of cached language", () => {
-  const messages = [message(2), { role: "assistant", content: [] }, message(1)]
+  const messages = [message(2), message(1)]
   const candidates = nativeScheduleCarrierWakes(mapping, 0, messages)
   assert.deepEqual(candidates.map(item => item.run), [1, 2])
   assert.notEqual(nativeScheduleWakeKey(candidates[0]), nativeScheduleWakeKey(candidates[1]))
@@ -74,14 +74,14 @@ test("two wakes on one carrier preserve exact keys and order independently of ca
 test("durable high-water fences replay past the result window without treating compacted prose as authority", () => {
   const context = Array.from({ length: 50 }, (_, index) => message(index + 1))
   assert.deepEqual(nativeScheduleCarrierWakes(mapping, 50, [context[0], context[49]]), [])
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 50, [{ role: "assistant", content: "run 51 was successful" }, message(51)]).map(item => item.run), [51])
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 50, [{ role: "assistant", content: "run 51 was successful" }]), [])
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 50, [{ role: "assistant", content: "run 51 was successful" }]), /coverage/)
   // Losing an unconsumed wake in compaction requires native point-read reconciliation.
   assert.throws(() => nativeScheduleCarrierWakes(mapping, 49, [message(51)]), /coverage/)
   const checkpoint = { id: "msg_completed_compaction", role: "user", content: "<conversation-checkpoint>run 999</conversation-checkpoint>" }
   assert.throws(() => nativeScheduleCarrierWakes(mapping, 50, [checkpoint, message(51)]), /carrier-wake/)
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 50, [checkpoint, message(51)], [checkpoint.id]).map(item => item.run), [51])
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 50, [checkpoint], [checkpoint.id]), [])
+  const native = { id: checkpoint.id, type: "compaction", status: "completed" }
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 50, [native, message(51)]).map(item => item.run), [51])
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 50, [native]), [])
 })
 
 test("wrong mapping, forged/missing metadata, run gaps and context bounds fail closed", () => {
@@ -104,20 +104,17 @@ test("native restart notices do not poison later exact wakes; model prose and pa
   const notice = { id: "msg_18a887377001lkZ72OqxlMaUdw", role: "user", content: [{ type: "text",
     text: "The server restarted while you were working. Continue from where you left off without repeating completed work." }] }
   const native = { id: notice.id, type: "synthetic", metadata: { notice: "restart" }, description: "Continuing after restart" }
-  const ids = nativeScheduleCarrierNonWakeMessageIDs([native])
-  const context = [message(1), notice, { role: "assistant", content: [] }, message(2)]
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 1, context, ids).map(item => item.run), [2])
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 2, context, ids), [])
-  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 0, [notice], ids), [])
-  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, context), /carrier-wake/)
+  const context = [message(1), native, message(2)]
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 1, context).map(item => item.run), [2])
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 2, context), [])
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 0, [native]), [])
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [notice, message(2)]), /carrier-wake/)
   for (const forged of [{ ...native, type: "user" }, { ...native, metadata: {} }, { ...native, metadata: { notice: "other" } },
     { ...native, metadata: { notice: "restart", schedule: {} } }]) {
-    const invalidIDs = nativeScheduleCarrierNonWakeMessageIDs([forged])
-    assert.deepEqual(invalidIDs, [])
-    assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, context, invalidIDs), /carrier-wake/)
+    assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [forged, message(2)]), /carrier-wake/)
   }
-  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [{ ...notice, metadata: { schedule: { run: 2 } } }, message(2)], ids), /carrier-wake/)
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [{ ...native, metadata: { schedule: { run: 2 } } }, message(2)]), /carrier-wake/)
   const partial = { ...message(2), metadata: {} }
-  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [partial], [partial.id]), /carrier-wake/)
-  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [notice, message(3)], ids), /coverage/)
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [partial]), /carrier-wake/)
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [native, message(3)]), /coverage/)
 })

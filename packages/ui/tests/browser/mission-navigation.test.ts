@@ -10,7 +10,7 @@ import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { clickMissionAction, missionPickerField, selectMission, toggleMissionOverview } from "./mission-actions"
+import { clickMissionAction, missionRows, selectMission, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
 import { panelMissions } from "./mission-content-fixture"
 import { collectMissionReadFailures, MISSION_READ_HEADER } from "./mission-read-observation-fixture"
@@ -124,6 +124,8 @@ async function setup(missing = false, holdSchedule = false) {
     const pathname = new URL(route.request().url()).pathname
     requests.push(`${route.request().method()} ${pathname}`)
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
+    if (pathname.endsWith("/subagent-depth")) return route.fulfill({ json: { location: { directory: "/fixture" },
+      capability: { minimum: 0 }, effectiveDepth: 1, project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } })
     if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname.endsWith("/missions/A/schedule") && holdSchedule) {
       scheduleReached.release(); await scheduleHeld.promise
@@ -147,7 +149,7 @@ async function setup(missing = false, holdSchedule = false) {
     navigationStartedAt = Date.now(); documentBaseline = ownedHTTP.documentArrivals
     await page.goto(url)
     // Loaded Missions enable the current-mission field (nothing is selected by default).
-    await missionPickerField(page).and(page.locator(":enabled")).waitFor()
+    await missionRows(page).locator("button.mission-row-select").first().waitFor()
   } catch (error) {
     failedSetupHeld = held.promise
     try {
@@ -236,7 +238,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
         await page.waitForFunction(() => { const value = window.missionNavigation.snapshot(); return value.view.selected === "B" && value.selectedSession === "ses_B" })
         await settled(page)
       }
-      else if (change === "editor") { await page.getByRole("button", { name: "Create mission", exact: true }).click(); await page.getByLabel("What should the mission do?", { exact: true }).fill("New editor intent") }
+      else if (change === "editor") { await page.getByRole("button", { name: "Create mission", exact: true }).click(); await page.getByLabel("Objective", { exact: true }).fill("New editor intent") }
       else await read(page, "B")
       const before = await page.evaluate(() => window.missionNavigation.snapshot())
       await page.evaluate(() => window.missionNavigation.created("ses_A"))
@@ -250,7 +252,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
         await page.screenshot({ path: path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.png`) })
       }
       assert.deepEqual(after, before, "stale navigation must not activate, clear/install readers or reveal")
-      if (change === "editor") assert.equal(await page.getByLabel("What should the mission do?", { exact: true }).inputValue(), "New editor intent")
+      if (change === "editor") assert.equal(await page.getByLabel("Objective", { exact: true }).inputValue(), "New editor intent")
       assert.equal(await page.getByRole("alert").count(), 0)
       assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
       assert.ok(requests.every(request => request.startsWith("GET ")), "navigation is read-only")

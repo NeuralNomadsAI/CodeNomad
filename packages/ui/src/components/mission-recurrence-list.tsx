@@ -27,9 +27,10 @@ const partialResults = new Map<string, RecurrenceControlStatus>()
 const [releases, setReleases] = createSignal(0)
 const sameIntent = (a: RecurrenceControlIntent, b: RecurrenceControlIntent) => a.scheduleID === b.scheduleID && a.requestID === b.requestID
   && a.expectedRevision === b.expectedRevision && a.action === b.action && a.directory === b.directory
-const PRIMARY: RecurrenceAction[] = ["check", "resume", "play", "pause"]
+const PRIMARY: RecurrenceAction[] = ["resume", "play", "pause"]
+// A Check recorded by native (from an earlier client) still classifies as a start intent.
 const START_INTENTS: RecurrenceAction[] = ["play", "resume", "check", "run-now"]
-const SUPERSEDING: RecurrenceAction[] = ["resume", "pause", "stop", "check"]
+const SUPERSEDING: RecurrenceAction[] = ["resume", "pause", "stop"]
 
 /** Schedule controls for one row: a single contextual primary action, Stop,
  * the remaining available actions for a secondary menu, and the explicit
@@ -78,7 +79,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   }
   /** The held request is an unknown start intent (Play, Resume, Check or Run now) that
    * the native snapshot records as incomplete, with no Pause/Stop partial. Native then
-   * offers and admits a new explicit Resume/Pause/Stop/Check that supersedes it; the
+   * offers and admits a new explicit Resume/Pause/Stop that supersedes it; the
    * original is never resent and its own exact status still settles it. */
   const supersedable = () => {
     const intent = heldIntent()
@@ -178,11 +179,10 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     // The confirmation described this exact schedule revision.
     if (operation.current() && confirmed && captured === generation && key() === identity && props.schedule.revision === revision) await act("stop")
   }
-  // "check" reconciles a paused pending passage; its label differs from the control-outcome status check.
-  const label = (action: RecurrenceAction) => t(action === "check" ? "missionsPanel.action.checkPassage" : action === "run-now"
+  const label = (action: RecurrenceAction) => t(action === "run-now"
     ? "missionsPanel.action.runNow" : action === "play" ? "missionsPanel.action.start" : action === "stop" ? "missionsPanel.action.stop"
     : `missionsPanel.action.${action}`)
-  const description = (action: RecurrenceAction) => t(action === "check" ? "missions.recurrence.checkPassage" : `missions.recurrence.${action}`, { id: props.schedule.title })
+  const description = (action: RecurrenceAction) => t(`missions.recurrence.${action}`, { id: props.schedule.title })
   const primaryAction = () => !heldIntent() ? PRIMARY.find(action => props.schedule.actions.includes(action))
     : supersedable() ? PRIMARY.find(action => SUPERSEDING.includes(action) && props.schedule.actions.includes(action)) : undefined
   const statusAction = (): MissionPrimaryAction => ({ key: "status", label: t("missionsPanel.action.checkStatus"),
@@ -205,7 +205,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   const feedback = <Show when={heldIntent()} fallback={<Show when={refusal()}>{message => <small role="status">{t(message())}</small>}</Show>}>
     <small role="status">{t("missions.recurrence.uncertain")}</small></Show>
   // While a superseding action holds the primary place, the unknown intent's exact status read stays one click away.
-  const statusButton = <button type="button" class="window-text-button" title={statusAction().ariaLabel} aria-label={statusAction().ariaLabel}
+  const statusButton = <button type="button" class="window-action" title={statusAction().ariaLabel} aria-label={statusAction().ariaLabel}
     disabled={statusAction().disabled} onClick={() => statusAction().onSelect()}>{statusAction().label}</button>
   const superseding = createMemo(() => Boolean(heldIntent() && primaryAction()))
   const secondary = () => superseding() ? statusButton : undefined
@@ -232,11 +232,10 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   const valid = () => !loading() && admissible()
   const text = missionScheduleText(t, locale)
   const { date } = text
-  /** One sentence; its action is the row's primary control (Check passage or Resume). */
+  /** One sentence; its action is the row's primary control (Resume). */
   const notice = (schedule: RecurrenceSchedule) => {
     if (schedule.pending?.status === "uncertain" && schedule.pending.conversationID) return "missions.recurrence.pending.terminalUnknown"
     if (schedule.pending?.status === "uncertain") return schedule.pending.reason === "admission-failing" ? "missions.recurrence.pending.retrying"
-      : schedule.actions.includes("check") ? "missions.recurrence.pending.checkNeeded"
       : schedule.interruptionReason === "service-restart" ? "missions.simple.restart" : "missions.simple.resumeExplanation"
     if (schedule.state !== "interrupted") return undefined
     return schedule.interruptionReason === "service-restart" ? "missions.simple.restart"
@@ -264,7 +263,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
         </button></li>}</For></ol>
     </section></Show>
   // Open Forms/permissions of a passage. The selected schedule's read live passage
-  // counts its actors and observed family (as under Needs you), zero included; other
+  // counts its actors and observed family (like a Mission's questions), zero included; other
   // rows rely on the live passage's conversation and its loaded descendants.
   const passageRequests = (schedule: RecurrenceSchedule) => {
     const selected = schedule.id === props.selectedSchedule ? props.selectedRequests : undefined
@@ -285,10 +284,11 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
         .filter(Boolean).join(" · ") }
   }))
   const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined
+  /** Inventory-wide notice, independent of the selection. */
+  const listView = () => <Show when={error()}><p role="status">{t(snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
   const view = () => <>
-    <Show when={error()}><p role="status">{t(snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-    {/* Separate detail below the list: actions, a stuck schedule's one sentence,
-        the current passage's tree and the compact list of past runs. */}
+    {/* The selected schedule's detail (its row's children): actions, a stuck
+        schedule's one sentence, the current passage's tree and the compact list of past runs. */}
     <Show when={selectedId()} keyed>{id => {
       // Keyed by identity: a refreshed snapshot keeps the controls and their focus.
       const schedule = createMemo<RecurrenceSchedule>(previous => snapshot()?.schedules.find(item => item.id === id) ?? previous!)
@@ -312,5 +312,5 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       </section>
     }}</Show>
   </>
-  return { entries, view, loading }
+  return { entries, view, listView, loading }
 }

@@ -1,11 +1,11 @@
-// PREPARED ONLY: build/run after the parent's explicit integrated final-ready message.
+// Isolated retained-product qualification: private service, storage and local provider.
 // node --import tsx scripts/test-native-mission-schedule-product.mjs <cli> <fresh-scratch> --parent-ready --kinds=at,in
 // --kinds=every --natural-every uses the real >=15-minute product interval.
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -13,10 +13,14 @@ import { setTimeout as delay } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
+import { collectColdFailure } from "./native-fixture-cold-diagnostics.mjs"
+import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: true, options: {
   "parent-ready": { type: "boolean" }, kinds: { type: "string", default: "at,in" }, "natural-every": { type: "boolean" },
-  "delay-ms": { type: "string", default: "30000" }, "grace-ms": { type: "string", default: "45000" },
+  // Cold recovery can wait for the native 60-second leader lease and 30-second loop.
+  "delay-ms": { type: "string", default: "30000" }, "grace-ms": { type: "string", default: "120000" },
   "controlled-settlement": { type: "boolean" },
   "arm-only": { type: "boolean" },
   "first-admission-race": { type: "boolean" }, "crash-pending": { type: "boolean" },
@@ -24,12 +28,14 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "diagnose-stop": { type: "boolean" },
   "diagnose-product-stop": { type: "boolean" },
   "convert-preparation": { type: "boolean" },
+  "existing-coordinator": { type: "boolean" },
 } })
-assert(values["parent-ready"], "Wait for the parent's explicit final-ready message, then pass --parent-ready")
+assert(values["parent-ready"], "Explicit product qualification requires --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
-const approved = ["impl/core/product-native", "impl/fix-core/native", "impl/fix-core-2/native", "impl/adopt-223/native", "impl/ui-convert/native"].map(part => path.resolve(process.env.LOCALAPPDATA, `codenomad-agent-scratch/issue-926/${part}`))
+const approved = [path.resolve(process.env.TEMP, "opencode")]
 assert(approved.some(base => { const relative = path.relative(base, path.resolve(scratch)); return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) }), "Use an approved native scratch child")
 const kinds = values.kinds.split(","), delayMs = Number(values["delay-ms"]), graceMs = Number(values["grace-ms"])
+const cliVersion = await fixtureCliVersion(cli)
 const controlsKinds = ["paused-manual", "stop-pending", "flag-off-pause", "stop-preparing", "delete-preparing"]
 assert(kinds.length && new Set(kinds).size === kinds.length && kinds.every(kind => ["at", "in", "every", ...controlsKinds].includes(kind)))
 assert(!kinds.some(kind => controlsKinds.includes(kind)) || values["controlled-settlement"], "Control journeys require the explicit native Clock observer")
@@ -42,6 +48,7 @@ assert(!values["arm-only"] || !values["first-admission-race"] && !values["crash-
 assert(!values["diagnose-stop"] || kinds.length === 1 && kinds[0] === "stop-pending", "The narrow diagnostic owns one Stop-pending case only")
 assert(!values["diagnose-product-stop"] || kinds.length === 1 && kinds[0] === "stop-pending" && !values["diagnose-stop"], "The product-context trace owns one separate Stop-pending case")
 await mkdir(scratch, { recursive: true })
+if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV, `NATIVE_SCHEDULE_PRODUCT_FIXTURE=${scratch}\n`)
 const originalEnvironment = { ...process.env }, hash = bytes => createHash("sha256").update(bytes).digest("hex")
 const receipt = { preparedContract: 1, cliSHA256: hash(await readFile(cli)), kinds, cases: [], outcome: "running", gates: [
   "No deterministic lost-ACK/admission-before-count fault injection in this natural fixture",
@@ -90,7 +97,7 @@ async function journey(kind) {
   receipt.cases.push(result)
   const prefix = `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const registrationFile = path.join(env.XDG_STATE_HOME, "opencode/service.json"), children = [], releases = new Set()
-  let nativeErrorTail = ""
+  let nativeErrorLength = 0, nativeErrorTruncated = false, credentialsChild, qualificationError
   const maintenanceLog = path.join(root, "maintenance-events.jsonl")
   let ownedTechnical = []
   let controlTrace
@@ -160,12 +167,29 @@ async function journey(kind) {
     assert(Buffer.byteLength(rows[0].value) <= 256 * 1024)
     return JSON.parse(rows[0].value)
   }
-  const snapshot = id => readSQL(db => {
+  const snapshot = (id, failureDetails = false) => readSQL(db => {
     const doc = document(db, id), passage = doc.pending ?? doc.history?.at(-1)
     const start = passage ? db.prepare("SELECT id,type FROM session_message WHERE session_id=? AND type IN ('user','synthetic') ORDER BY seq LIMIT 16").all(passage.coordinatorSessionID) : []
     const sessions = db.prepare("SELECT id,parent_id,metadata,time_suspended FROM session_v2 WHERE json_extract(metadata,'$.\"codenomad.mission\".document.missionID')=? LIMIT 16").all(id)
-    const schedules = (doc.calendarOwner?.slots ?? []).filter(slot => slot.scheduleID).map(slot => ({ role: slot.role,
-      ...db.prepare('SELECT id,session_id,status,next_due_at,run_count,time_created,"when" AS native_when FROM schedule WHERE id=?').get(slot.scheduleID) }))
+    const schedules = (doc.calendarOwner?.slots ?? []).filter(slot => slot.scheduleID).map(slot => {
+      const schedule = { role: slot.role,
+        ...db.prepare('SELECT id,session_id,status,next_due_at,run_count,time_created,"when" AS native_when FROM schedule WHERE id=?').get(slot.scheduleID) }
+      if (failureDetails) {
+        Object.assign(schedule, db.prepare("SELECT last_outcome,retry_at,time_updated,last_message_id FROM schedule WHERE id=?").get(slot.scheduleID))
+        const proof = row => {
+          if (!row) return null
+          const { body, ...status } = row, data = body === null ? null : JSON.parse(body), text = data?.text
+          return { ...status, bodyOmitted: body === null, schedule: data?.metadata?.schedule ?? null,
+            textBytes: typeof text === "string" ? Buffer.byteLength(text) : null, textSHA256: typeof text === "string" ? hash(text) : null }
+        }
+        schedule.carrier = { sessionID: slot.sessionID,
+          session: db.prepare("SELECT id,time_suspended,time_busy,time_idle,idle_outcome FROM session_v2 WHERE id=?").get(slot.sessionID) ?? null,
+          messages: Array.from(new Set([schedule.last_message_id, ...(schedule.id ? [`msg_${schedule.id}_${schedule.run_count + 1}`] : [])].filter(Boolean)), messageID => ({ messageID,
+            message: proof(db.prepare("SELECT type,seq,time_created,time_updated,length(CAST(data AS BLOB)) AS bytes,CASE WHEN length(CAST(data AS BLOB))<=262144 THEN data END AS body FROM session_message WHERE id=? AND session_id=?").get(messageID, slot.sessionID)),
+            inbox: proof(db.prepare("SELECT type,delivery,enqueued_seq,time_created,length(CAST(payload AS BLOB)) AS bytes,CASE WHEN length(CAST(payload AS BLOB))<=262144 THEN payload END AS body FROM session_inbox WHERE id=? AND session_id=?").get(messageID, slot.sessionID)) })) }
+      }
+      return schedule
+    })
     const startDetails = passage ? db.prepare("SELECT id,type,data FROM session_message WHERE session_id=? AND type IN ('user','synthetic') ORDER BY seq LIMIT 64").all(passage.coordinatorSessionID)
       .map(row => { const data = JSON.parse(row.data); return { id: row.id, type: row.type, textSHA256: hash(data.text ?? ""),
         metadataKeys: Object.keys(data.metadata ?? {}), missionDocument: data.metadata?.["codenomad.mission"]?.document,
@@ -203,9 +227,15 @@ async function journey(kind) {
   }
   const launch = async (cold = false) => {
     assert(!child || child.exitCode !== null || child.signalCode !== null, "Never run two service incarnations against this DB")
+    credentialsChild = undefined; nativeErrorLength = 0; nativeErrorTruncated = false
     child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     const current = { child, closed: new Promise(resolve => child.once("close", resolve)) }; children.push(current)
-    child.stdout.resume(); child.stderr.on("data", bytes => { nativeErrorTail = (nativeErrorTail + bytes.toString()).slice(-32000) })
+    child.stdout.resume(); child.stderr.on("data", bytes => {
+      // Retain only bounded diagnostic bookkeeping, never credential fragments.
+      nativeErrorLength += bytes.toString().length
+      nativeErrorTruncated ||= nativeErrorLength > 32000
+      nativeErrorLength = Math.min(nativeErrorLength, 32000)
+    })
     const publicInfo = await until(async () => {
       try { const info = readNativeScheduleIncarnation(registrationFile); return info.pid === child.pid ? info : false } catch { return false }
     }, 40000)
@@ -215,13 +245,19 @@ async function journey(kind) {
     if (!cold) await connect()
   }
   const connect = async signal => {
-    signal?.throwIfAborted()
-    endpoint = await Service.discover({ file: registrationFile })
+    // Registration can precede HTTP readiness. Retry only discovery of our own
+    // process; native mutations and the cold no-client window keep their gates.
+    endpoint = await until(async () => {
+      signal?.throwIfAborted()
+      assert.equal(readNativeScheduleIncarnation(registrationFile).pid, child.pid)
+      return Service.discover({ file: registrationFile })
+    }, 40000)
     signal?.throwIfAborted()
     assert(endpoint && endpoint.url === readNativeScheduleIncarnation(registrationFile).url)
     client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
-    const info = await client.server.info({ signal }); assert.equal(info.version, "2.2.3"); assert.equal(info.pid, child.pid)
+    const info = await client.server.info({ signal }); assert.equal(info.version, cliVersion); assert.equal(info.pid, child.pid)
+    if (endpoint.auth?.password) credentialsChild = child
     rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
   const stop = async () => {
@@ -251,23 +287,28 @@ async function journey(kind) {
     try { body = JSON.parse(raw) } catch { throw Error(`Product HTTP ${response.status}: non-json-response`) }
     if (!body || typeof body !== "object" || Array.isArray(body)) throw Error(`Product HTTP ${response.status}: non-object-response`)
     const code = typeof body.code === "string" && /^[a-z0-9-]{1,80}$/.test(body.code) ? body.code : undefined
+    const reason = typeof body.refusal?.reason === "string" && /^[a-z0-9-]{1,120}$/.test(body.refusal.reason) ? body.refusal.reason : undefined
+    if (code === "schedule-refused") assert(reason, "Schedule refusal requires its native reason")
     result.http.push({ suffix, action: payload.action ?? "activate", requestID: payload.requestID,
-      expectedRevision: payload.expectedRevision ?? payload.expectedDocumentRevision, status: response.status, ...(code ? { code } : {}), pending: body.pending,
+      expectedRevision: payload.expectedRevision ?? payload.expectedDocumentRevision, status: response.status, ...(code ? { code } : {}), reason, pending: body.pending,
       document: body.document && { id: body.document.id, revision: body.document.revision, state: body.document.state,
         launchedCount: body.document.launchedCount, pending: body.document.pending, activation: body.document.scheduleActivation?.state } })
-    assert(response.status === 200 || allowPending && response.status === 503 && body.pending === true, `Product HTTP ${response.status}: ${code ?? "unconfirmed"}`)
+    assert(response.status === 200 || allowPending && response.status === 503 && body.pending === true, `Product HTTP ${response.status}: ${code ?? "unconfirmed"}; reason=${reason ?? "missing"}`)
     return body
   }
   const create = async (label, timing, maxLaunches = 1) => {
     const selected = { agent: "fixture-worker", model: { providerID: "fixture", id: "fixture" } }
+    const existing = values["existing-coordinator"] ? await client.session.create({ location: { directory: project },
+      title: `Existing ${label}`, agent: "build", model: { providerID: "fixture", id: "fixture" }, metadata: { unrelated: "preserve" } }) : undefined
     const configuration = {
       title: `Native ${label}`, objective: "Use the actual mission_report tool to finalize this owned fixture passage. No helpers or other effects.",
       template: "custom", taskMode: "native", profiles: { coordinator: selected, roles: { specialist: selected } }, watchedConversationIDs: [],
       launch: { timing, condition: null, ends: { at: null, afterMs: null, maxLaunches } },
+      ...(existing ? { coordinatorSessionID: existing.id } : {}),
     }
     let response
     if (values["convert-preparation"]) {
-      const { launch: _launch, watchedConversationIDs: _watched, ...fields } = configuration
+      const { launch: _launch, watchedConversationIDs: _watched, coordinatorSessionID: _coordinator, ...fields } = configuration
       const original = await http("", { ...fields, requestId: `create_${label}_${randomUUID().replaceAll("-", "")}`, directory: project })
       const before = snapshot(original.mission.id)
       assert(before.document.oneTime && before.document.firstPlayedAt === null && before.schedules.length === 0)
@@ -282,6 +323,7 @@ async function journey(kind) {
       result.conversions ??= []; result.conversions.push({ id: original.mission.id, before, converted })
     } else response = await http("/scheduled", { requestID: `create_${label}_${randomUUID().replaceAll("-", "")}`, expectedRevision: 0, action: "create", configuration })
     assert.equal(response.document.state, "paused"); assert.equal(response.document.launchedCount, 0)
+    if (existing) { result.existingCoordinators ??= []; result.existingCoordinators.push({ missionID: response.document.id, id: existing.id, title: existing.title }) }
     return response.document.id
   }
   const activate = async id => {
@@ -434,7 +476,17 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       result.deletedConvertedID = deletedID
     }
     const timing = kind === "every" ? { kind, intervalMs: 900000 } : kind === "at" ? { kind, at: Date.now() + delayMs, zone: "UTC" } : { kind, delayMs }
-    const id = await create(kind, timing); await activate(id); await control(id, "play")
+    const id = await create(kind, timing); await activate(id)
+    if (kind === "at") {
+      // Creation and activation may take longer than the actual wake delay.
+      timing.at = Date.now() + delayMs
+      const before = snapshot(id).document
+      const { roots: _roots, profileID: _profileID, executionHost: _host, ...configuration } = before.configuration
+      await http(`/${id}/schedule`, { requestID: `configure_${randomUUID().replaceAll("-", "")}`, expectedRevision: before.revision,
+        action: "configure", configuration: { ...configuration, launch: { ...configuration.launch, timing } } })
+    }
+    result.stage = "play"
+    await control(id, "play")
     const armed = snapshot(id), principal = armed.schedules.find(item => item.role === "principal"), auxiliary = armed.schedules.find(item => item.role === "reconciliation")
     assert(armed.document.calendarOwner.auxiliaryReady && !armed.document.calendarOwner.operation.pending)
     assert(auxiliary?.status === "active" && principal?.status === "active")
@@ -508,6 +560,16 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     })
     assert.equal(positive.sessions.length, 1); assert.equal(positive.sessions[0].id, positive.document.pending.coordinatorSessionID)
     assert.equal(positive.start[0].id, positive.document.pending.messageID)
+    if (values["existing-coordinator"]) {
+      const existing = result.existingCoordinators.find(item => item.missionID === id)
+      assert.equal(positive.document.pending.coordinatorSessionID, existing.id)
+      assert.equal(positive.document.pending.coordinatorReused, true)
+      assert(positive.document.pending.coordinatorBaseline.some(row => row[0] === existing.id))
+      const adopted = readSQL(db => db.prepare("SELECT title,metadata,agent FROM session_v2 WHERE id=?").get(existing.id))
+      assert.equal(adopted.title, existing.title); assert.equal(JSON.parse(adopted.metadata).unrelated, "preserve")
+      assert.equal(adopted.agent, "fixture-worker")
+      result.existingCoordinatorAdopted = true
+    }
     if (values["convert-preparation"]) {
       assert.deepEqual(positive.document.pending.configuration.launch.timing, timing)
       assert.equal(positive.document.pending.configurationGeneration, armed.document.configurationGeneration)
@@ -615,31 +677,67 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     const deduped = snapshot(id); assert.equal(deduped.document.launchedCount, 1); assert.deepEqual(deduped.start, completedStarts)
     result.calls = calls; result.status = "passed"; result.stage = "completed"
   } catch (error) {
-    const redact = input => { let text = String(input ?? ""); for (const secret of secrets) text = text.replaceAll(secret, "<redacted>"); return text.slice(0, 64000) }
-    const detail = item => item && { name: redact(item.name), type: redact(item.type ?? item._tag), message: redact(item.message), stack: redact(item.stack) }
-    result.status = "failed"; result.error = redact(error?.message ?? "qualification-failed")
-    await save("failure-diagnostic", { stage: result.stage, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause), nativeErrorTail: redact(nativeErrorTail) })
-    if (result.documentID) try { await save("failure-sql", snapshot(result.documentID)) } catch { /* Preserve the original failure. */ }
-    throw Error(`Native product qualification failed at ${result.stage ?? "setup"}; private redacted diagnostic saved`)
+    result.status = "failed"
+    qualificationError = error
+    const failureAt = Date.now(), cold = result.stage === "natural-cold-first-admission"
+    let coldFailure, privateEvidenceAvailable = credentialsChild === child && !!child
+    if (cold) {
+      try {
+        const collected = await collectColdFailure({ status: result.status, stage: result.stage, failureAt,
+          root, registrationFile, databaseFile, documentID: result.documentID, prefix, secrets: [...secrets],
+          onSecrets: learned => { for (const secret of learned) secrets.add(secret); privateEvidenceAvailable = true },
+          child, expected: result.serviceStarts.at(-1), diagnostic: { stage: result.stage, nativeErrorTruncated,
+            error: { message: error?.message === "bounded-product-qualification-deadline" ? error.message : "private-text-omitted" } } })
+        coldFailure = collected?.evidence ?? { error: collected?.error ?? "cold-failure-diagnostic-unavailable" }
+        if (collected?.saveError) result.storageError = "diagnostic-save-unavailable"
+      } catch { coldFailure = { error: "cold-failure-diagnostic-unavailable" } }
+    }
+    const detail = item => item && "private-text-omitted"
+    result.status = "failed"; result.error = error?.message === "bounded-product-qualification-deadline" ? error.message : "private-text-omitted"
+    if (!cold) try {
+      const diagnostic = { stage: result.stage, failureAt, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause),
+        nativeErrorTail: "private-text-omitted", nativeErrorTruncated, coldFailure }
+      const json = JSON.stringify(diagnostic)
+      await save("failure-diagnostic", Buffer.byteLength(json) <= 512 * 1024 ? diagnostic : { stage: result.stage, failureAt, error: "failure-diagnostic-overflow" })
+    } catch { result.storageError = "diagnostic-save-unavailable" }
+    if (!cold && privateEvidenceAvailable && result.documentID) try {
+      const state = projectFailureSQL(snapshot(result.documentID, true))
+      state.maintenance = await maintenanceEvents().then(events => ({ count: events.length }),
+      () => ({ error: "maintenance-events-unavailable" }))
+      const json = JSON.stringify(state)
+      await writeFile(path.join(root, "failure-sql.json"), Buffer.byteLength(json) <= 512 * 1024 ? json : '{"error":"failure-sql-bound"}')
+    } catch { result.storageError = "sql-save-unavailable" }
+    throw error
   }
   finally {
-    releaseBarrier("fixture-finally")
-    holdBusiness = false; for (const release of releases) release(); releases.clear()
-    try { await closeBackend() } finally {
+    let cleanupError
+    try {
+      releaseBarrier("fixture-finally")
+      holdBusiness = false; for (const release of releases) release(); releases.clear()
+      await closeBackend()
+    } catch (error) { cleanupError = error; result.cleanupError = "backend-cleanup-failed" }
+    try {
       const stopped = await Promise.allSettled(children.map(entry => entry.child.exitCode === null && entry.child.signalCode === null ? stopFixtureChild(entry.child, entry.closed) : entry.closed))
       provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
       barrier.closeAllConnections(); if (barrier.listening) await new Promise(resolve => barrier.close(resolve))
       result.calls = calls
-      result.allOwnedServicesStopped = stopped.every(entry => entry.status === "fulfilled"); await save("receipt", result)
+      result.allOwnedServicesStopped = stopped.every(entry => entry.status === "fulfilled")
       assert(result.allOwnedServicesStopped, "An owned native process failed cleanup")
-    }
+    } catch (error) { cleanupError ??= error; result.cleanupError = "owned-cleanup-failed" }
+    if (cleanupError) result.status = "failed"
+    try { await save("receipt", result) }
+    catch (error) { result.status = "failed"; result.storageError = "receipt-save-unavailable"; if (!qualificationError && !cleanupError) throw error }
+    if (!qualificationError && cleanupError) throw cleanupError
   }
 }
 
+let qualificationError
 try { for (const kind of kinds) await journey(kind); receipt.outcome = values["diagnose-stop"] || values["diagnose-product-stop"] ? "diagnostic-only" : "passed" }
-catch (error) { receipt.outcome = "failed"; throw error }
+catch (error) { qualificationError = error; receipt.outcome = "failed" }
 finally {
   for (const name of Object.keys(process.env)) if (!(name in originalEnvironment)) delete process.env[name]
   Object.assign(process.env, originalEnvironment)
-  await writeFile(path.join(scratch, "receipt.json"), JSON.stringify(receipt, null, 2))
+  try { await writeFile(path.join(scratch, "receipt.json"), JSON.stringify(receipt, null, 2)) }
+  catch (error) { qualificationError ??= error; receipt.outcome = "failed"; receipt.storageError = "receipt-save-unavailable" }
 }
+if (qualificationError) { console.error("Native product qualification failed; see receipt"); process.exitCode = 1 }

@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
+import { ChevronRight } from "lucide-solid"
 import { toggleSweepGroup } from "../../../../lib/toggle-sweep"
 import { ExtensionManager } from "../../../panel-extensions/extension-manager"
 import type { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
@@ -30,6 +31,7 @@ interface RightPanelCustomizationPopoverProps {
 export function RightPanelCustomizationPopover(props: RightPanelCustomizationPopoverProps) {
   let popover: HTMLDivElement | undefined
   const [extensionsExpanded, setExtensionsExpanded] = createSignal(false)
+  const [statusExpanded, setStatusExpanded] = createSignal(true)
   const extensionForTab = (id: string) => props.extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
 
   createEffect(() => {
@@ -80,6 +82,13 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
             return (
               <>
                 <div class="right-panel-customization-row">
+                  <Show when={tab.id !== "status"} fallback={
+                    <button type="button" class="right-panel-customization-label right-panel-customization-status"
+                      aria-expanded={statusExpanded()} onClick={() => setStatusExpanded(open => !open)}>
+                      <ChevronRight class="disclosure-chevron w-3.5 h-3.5" aria-hidden="true" />
+                      <span>{label()}</span>
+                    </button>
+                  }>
                   <label class="right-panel-customization-label">
                     <input
                       type="checkbox"
@@ -103,8 +112,9 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                     />
                     <span>{label()}</span>
                   </label>
+                  </Show>
                 </div>
-                <Show when={tab.id === "status"}>
+                <Show when={tab.id === "status" && statusExpanded()}>
                   <For each={props.statusSections()}>
                     {(section) => {
                       const sectionLabel = () => section.label ?? props.t(section.labelKey)

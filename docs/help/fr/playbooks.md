@@ -2,8 +2,6 @@
 
 Un scénario est la méthode de travail que suit le coordinateur d’une mission : les étapes, les rôles qu’il peut attribuer aux tâches et les instructions que reçoit chaque agent. Cette page décrit chaque scénario, ce que CodeNomad impose lui-même et ce qui reste une instruction que le modèle doit suivre.
 
-Pour lire la définition exacte d’un scénario, ouvrez **Options** dans le formulaire de création de mission, choisissez un **Scénario** et sélectionnez **Voir les détails** sous sa description. Le lecteur central affiche ses étapes et ses rôles ; **Instructions reçues par les agents (texte du prompt en anglais)** replie, pour la politique **Sessions des tâches** choisie, le texte complet que reçoit le coordinateur à chaque tour et le message d’affectation complet de chaque rôle (avec **Sessions indépendantes**, aussi le contexte qu’ajoute chaque tour de la session de la tâche). Les champs entre crochets, comme [objective], représentent les données propres à chaque mission ; des messages distincts démarrent ou reprennent la mission et transmettent les résultats des tâches. Dans ces instructions, Exploration s’appelle *Wayfinder Map*.
-
 ## Choisir un scénario {#choose}
 
 | Scénario | Choisissez-le quand |
@@ -45,9 +43,9 @@ Ce sont des instructions. Ce qu’un agent peut réellement faire dépend des au
 
 ### Questions qui vous sont posées {#questions}
 
-Seul le coordinateur vous pose des questions. Les tâches et leurs aides renvoient les leurs à la conversation qui les a lancées, avec les options, les éléments à l’appui, les conséquences, la réversibilité et une recommandation, et poursuivent le travail qui ne dépend pas de la réponse. Le coordinateur tranche d’abord ce qu’il peut et regroupe les questions restantes dans un seul formulaire sous **Votre réponse est attendue** ; [Questions et décisions](missions.md#questions) explique ce qu’il demande et comment les décisions sont libellées. Chaque coordinateur, ponctuel ou programmé, et chaque affectation de tâche reçoivent cette règle comme instruction ; Exploration ajoute les vérifications de décision [ci-dessous](#wayfinder-checks).
+Seul le coordinateur vous pose des questions. Les tâches et leurs aides renvoient les leurs à la conversation qui les a lancées, avec les options, les éléments à l’appui, les conséquences, la réversibilité et une recommandation, et poursuivent le travail qui ne dépend pas de la réponse. Le coordinateur tranche d’abord ce qu’il peut et regroupe les questions restantes dans un seul formulaire, ouvert depuis la ligne rouge de la mission ; [Questions et décisions](missions.md#questions) explique ce qu’il demande et comment les décisions sont libellées. Chaque coordinateur, ponctuel ou programmé, et chaque affectation de tâche reçoivent cette règle comme instruction ; Exploration ajoute les vérifications de décision [ci-dessous](#wayfinder-checks).
 
-Répondez dans le dock d’interruption (**Répondre** sous **Votre réponse est attendue**) : seule cette réponse compte comme la vôtre. Une réponse tapée dans le chat est un message ordinaire.
+Répondez dans le dock d’interruption, ouvert en sélectionnant la mission ou la tâche en rouge : seule cette réponse compte comme la vôtre. Une réponse tapée dans le chat est un message ordinaire.
 
 ### Points de situation et rapport final {#briefings}
 
@@ -125,7 +123,7 @@ Quand aucune reproduction en échec ne peut être construite, le diagnosticien s
 - Seuls les six rôles de Débogage sont acceptés.
 - Ordre : un implémenteur doit dépendre d’un diagnostic, chaque réviseur d’une implémentation, la reprise des deux revues et le validateur de la reprise. Une étape ne démarre qu’une fois terminée l’étape dont elle dépend.
 - Les réviseurs et le validateur doivent s’exécuter dans de nouvelles conversations ; la reprise doit poursuivre la conversation de l’implémenteur terminé.
-- Chaque rapport de rôle terminé doit contenir le rapport structuré de son rôle dans son format exact (affiché par **Voir les détails**), sinon il est refusé. Par exemple, la correction doit indiquer que le test de régression a été vu en échec puis en succès, et la validation doit lister les quatre types de vérification sans aucun échec.
+- Chaque rapport de rôle terminé doit contenir le rapport structuré de son rôle au format requis, sinon il est refusé. Par exemple, la correction doit indiquer que le test de régression a été vu en échec puis en succès, et la validation doit lister les quatre types de vérification sans aucun échec.
 - La mission ne se termine au vert que si la dernière implémentation a un diagnostic terminé avant elle et deux revues, une reprise et une validation après elle, toutes reliées par des dépendances et avec des rapports structurés valides.
 
 Simples instructions : la qualité du diagnostic, le fait que les réviseurs et le validateur ne modifient pas de fichiers, et la véracité de ce qu’affirme un rapport. CodeNomad vérifie que la correction déclare que le test est passé du rouge au vert, pas qu’elle l’a exécuté.
@@ -165,7 +163,7 @@ Les responsables ne vous interrogent jamais ; ils renvoient au coordinateur des 
 
 - **Il décide lui-même** quand les preuves suffisent et que le choix est peu coûteux à annuler.
 - **Il reporte** une décision dont on n’a pas encore besoin : il retire la tâche et garde la question dans les notes comme brouillard.
-- **Il vous la pose**, en regroupant les décisions en attente dans un seul formulaire sous **Votre réponse est attendue**.
+- **Il vous la pose**, en regroupant les décisions en attente dans un seul formulaire, ouvert depuis la ligne rouge de la mission.
 
 Il n’écrit jamais votre réponse lui-même et ne présente jamais sa propre décision comme la vôtre. L’endroit où lire l’issue dépend de **Sessions des tâches** :
 
@@ -187,7 +185,7 @@ Simples instructions : quand un choix est considéré comme peu coûteux à annu
 Vous obtenez une carte : la destination, les décisions enregistrées avec leur auteur, les résultats de recherche, les prototypes, le brouillard restant dans les notes et un rapport final. Un coordinateur de mission ponctuelle peut aussi préparer une mission de suite que vous démarrez vous-même. Pièges :
 
 - Exploration planifie ; elle ne construit pas la destination. Utilisez un autre scénario, ou la mission de suite préparée, pour implémenter.
-- Répondez sous **Votre réponse est attendue**, pas dans le chat : seule une réponse donnée dans le dock d’interruption compte comme la vôtre.
+- Répondez dans le dock d’interruption ouvert depuis la ligne rouge, pas dans le chat : seule une réponse donnée dans le dock d’interruption compte comme la vôtre.
 - Avec **Sous-agents natifs**, lisez les résultats libellés **Décision du coordinateur** ; avec **Sessions indépendantes**, lisez les issues dans les **Notes**. Pour modifier une décision, écrivez au coordinateur depuis **Ouvrir la conversation**.
 - Une destination formulée vaguement laisse l’essentiel de la carte dans le brouillard.
 
@@ -258,7 +256,7 @@ Le coordinateur compare exactement deux modèles différents. Il enregistre les 
 
 ### Ce que CodeNomad vérifie {#compare-checks}
 
-- À la création, **Modèle A** et **Modèle B** sont obligatoires et doivent être des modèles différents ; un niveau de **Réflexion** différent ne suffit pas à en faire un autre modèle. Sauf si vous en choisissez un, le juge utilise le modèle du coordinateur, fixé à la création ; le formulaire avertit lorsqu’il correspond à A ou B.
+- À la création, **Modèle A** et **Modèle B** sont obligatoires et doivent être des modèles différents ; un niveau de **Réflexion** différent ne suffit pas à en faire un autre modèle. Sauf si vous en choisissez un, le juge utilise le modèle du coordinateur, fixé à la création.
 - Seuls les trois rôles de Comparer deux modèles sont acceptés. Chaque exécution et le juge doivent démarrer dans une nouvelle conversation, une exécution ne peut pas changer le modèle de son rôle, il y a une seule exécution active par modèle, et les deux consignes doivent être identiques octet pour octet.
 - Seul le juge peut joindre un rapport structuré, qui doit désigner les exécutions A et B terminées dans cet ordre, noter chaque critère une fois de 0 à 10 avec au moins une preuve et donner l’un des quatre verdicts.
 - La mission ne se termine qu’avec des tâches A, B et juge terminées et une comparaison valide.

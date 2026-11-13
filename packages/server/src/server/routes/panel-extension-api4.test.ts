@@ -9,6 +9,7 @@ import { readPanelExtensionArchive } from "../../panel-extensions/archive"
 import { fixtureArchive } from "../../panel-extensions/archive-fixture"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerPanelExtensionApi4Routes } from "./panel-extension-api4"
+import { brokerIdentities } from "./rpc-broker-test-fixture"
 
 const target = { messageID: "msg_a", part: 1, index: 0, digest: "a".repeat(64) }
 const marked = { "codenomad.companion": "images" }
@@ -62,7 +63,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
     imageReference: { status: "path", path: ".codenomad/design/icon/icon-a.png" },
     imagesConversation: { status: "found", sessionID: "ses_images", created: false },
   } as Record<string, unknown>)[method]
-  const app = Fastify()
+  const app = Fastify(), identities = brokerIdentities()
   registerPanelExtensionApi4Routes(app, { store, worktreeDeletionFence: options.fence ?? new WorktreeDeletionFence(),
     excludeDesignFolder: async value => { excluded.push(value.directory); return "excluded" },
     checkDesignFolderExclusion: async value => { checked.push(value.directory); return excluded.includes(value.directory) ? "excluded" : "missing" },
@@ -73,10 +74,10 @@ async function fixture(t: TestContext, permissions: string[], options: {
         generation: options.generation === undefined ? { global: true, effective: true, models: [{ ref: "p/img", name: "Img" }] } : options.generation as any }
     } },
     workspaceManager: {
-      get: (id: string) => id === "i" ? { id, path: "/repo" } as any : undefined,
+      get: (id: string) => id === "i" ? identities.get() : undefined,
+      getServiceLocation: identities.getServiceLocation,
       getSharedServiceConnection: async (id: string) => id === "i" ? { client,
         assertCurrent() { if (!connection.current) throw new Error("Superseded connection") } } as any : undefined,
-      getSharedServiceClient: async () => client,
       ownsLocation: async (id: string, location: { directory: string }) => id === "i" && owned.has(location.directory),
       desktopPluginsReady: async () => {},
       getWorktreeIdentityForPath: async () => "/repo",
@@ -277,7 +278,7 @@ test("a conversation route stopped at its deadline releases the worktree-deletio
     const fence = new WorktreeDeletionFence(300)
     let readSignal: AbortSignal | undefined, entered = false
     const held = await fixture(t, ["session.context", "images.conversation"], { fence, routeBudgetMs: 200,
-      onLocationGet: signal => { entered = true; readSignal = signal; return never() } })
+      onLocationGet: signal => { entered = true; readSignal = signal; return new Promise((_resolve, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), { once: true })) } })
     const answer = await within(held.post(method, method === "conversationStatus" ? { directory: "/repo" } : { directory: "/repo", title: "Images" }), 2000)
     assert.notEqual(answer, "hung", `${method} answered`)
     assert.equal(entered, true, `${method}: the held Location read was reached inside the fence`)

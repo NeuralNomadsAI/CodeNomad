@@ -150,7 +150,7 @@ async function assertReachable(control: Locator) {
 
 for (const mobile of [false, true]) {
   for (const owner of ["unrelated", "global"]) {
-    test(`Info badge opens the ${owner} request on the conversation surface without owner navigation on ${mobile ? "mobile" : "desktop"}`, async () => {
+    test(`project badge opens the ${owner} request without owner navigation from no-session on ${mobile ? "mobile" : "desktop"}`, async () => {
       const page = await browser.newPage(mobile ? { ...devices["Pixel 5"] } : { viewport: { width: 1400, height: 900 } })
       const errors: string[] = []
       page.on("pageerror", error => errors.push(error.message))
@@ -163,13 +163,12 @@ for (const mobile of [false, true]) {
           const f = (window as any).fixture
           if (owner !== "global") f.addSession(owner)
           f.nativeQuestion(owner)
-          f.showInfo()
+          f.selectSession(null)
         }, owner)
-        assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "info")
-        assert.equal(await page.locator('.interruption-dock:visible').count(), 0)
+        assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), null)
+        assert.equal(await page.locator('.interruption-dock input[type="text"]:visible').count(), 0)
         await page.locator('.session-header-indicators .permission-center-trigger:visible').click()
-        // The existing Back to conversation behavior uses the no-session surface
-        // when Info has no mounted conversation pane; never infer the request owner.
+        // Opening a project request keeps the no-session surface, never its owner's conversation.
         assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), null)
         const answer = page.locator('.interruption-dock input[type="text"]:visible')
         await answer.waitFor()
@@ -178,7 +177,7 @@ for (const mobile of [false, true]) {
           name: owner === "global" ? "Project request" : "Other conversation · Fixture unrelated", exact: true,
         }).isVisible(), true)
         assert.equal(await page.getByRole('button', { name: 'View conversation', exact: true }).count(), owner === "global" ? 0 : 1)
-        await answer.fill("Answer from Info")
+        await answer.fill("Answer from project badge")
         await page.getByRole('button', { name: 'Submit', exact: true }).click()
         assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].sessionID), owner)
         assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), null)

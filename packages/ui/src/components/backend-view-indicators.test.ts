@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
+import { generateUUID } from "../lib/client-identity"
 import ts from "typescript"
-import { createEffect, createMemo, createRoot, createSignal, mapArray, onCleanup, untrack } from "solid-js"
+import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { createEffect, createMemo, createRoot, createSignal, createUniqueId, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Execute production AST, including the actual finally/cleanup branches. Imports
 // and JSX are outside these indicator tests; request and view owners are explicit.
@@ -10,6 +12,7 @@ function source(path: string) {
   return ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 }
 function compile(text: string, scope: Record<string, any>) {
+  scope.generateUUID ??= generateUUID
   scope.backendOf ??= () => ({ api: scope.serverApi })
   const code = ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
   return new Function("scope", `with (scope) { return ${code} }`)(scope)
@@ -63,7 +66,7 @@ function attachment() {
     replace: () => { controller.abort(); controller = new AbortController(); setSignal(controller.signal) },
   }
 }
-const solid = { createEffect, createMemo, createSignal, mapArray, onCleanup, untrack }
+const solid = { createEffect, createMemo, createSignal, createUniqueId, mapArray, on, onCleanup, untrack }
 
 for (const outcome of ["success", "failure", "cancellation"] as const) {
   for (const successor of [false, true]) {
@@ -163,7 +166,7 @@ for (const outcome of ["success", "failure", "cancellation"] as const) {
   test(`editor source retained view: ${outcome}, hidden cancellation then active B`, async () => {
     const backend = attachment(), requests: ReturnType<typeof deferred>[] = []
     const [active, setActive] = createSignal(true)
-    const client = {}, scope = { ...solid, ...backend, getOpenCodeInstanceGeneration: () => 1,
+    const client = {}, scope = { ...solid, ...backend, isMissionGithubKind, getOpenCodeInstanceGeneration: () => 1,
       getRootClient: () => client, serverApi: { fetchMissionScheduleSourcePage: () => {} } }
     // Branch sources avoid loading unrelated native session/cursor adapters.
     Object.assign(scope.serverApi, { fetchLocalGitBranches: () => { const request = deferred(); requests.push(request); return request.promise } })
@@ -171,12 +174,13 @@ for (const outcome of ["success", "failure", "cancellation"] as const) {
     const create = method("./mission-editor-sources.ts", "createMissionEditorSources", scope)
     let dispose!: () => void
     const reader = createRoot(close => { dispose = close; return create({ instanceId: "i", projectID: "p", directory: () => "/repo",
-      kinds: () => ["branch-commits"], active, captureView: () => () => active() }) })
+      kinds: () => ["branch-commits"], selected: () => [], active, captureView: () => () => active() }) })
     // Assert the fixture reaches production dispatch, rather than merely its cleanup.
-    reader.loading(); assert.equal(requests.length, 1)
+    reader.loading(); await new Promise(resolve => setTimeout(resolve, 0)); assert.equal(requests.length, 1)
     backend.revoke(); setActive(false)
     assert.equal(reader.loading(), false)
     backend.replace(); setActive(true)
+    await new Promise(resolve => setTimeout(resolve, 0))
     assert.equal(requests.length, 2); assert.equal(reader.loading(), true)
     if (outcome === "success") requests[0].resolve({ branches: [] })
     else requests[0].reject(new DOMException(outcome, outcome === "cancellation" ? "AbortError" : "Error"))
@@ -225,9 +229,12 @@ for (const kind of ["create", "edit", "delete"] as const) {
       let pending = false, dispatched = 0, errors = 0
       const dispatch = () => { dispatched++; return request.promise }
       const scope = { kind, action, original: { id: "m", revision: 1 }, lastPayload: "", requestId: "r",
+        coordinatorReady: method("./mission-editor.tsx", "coordinatorReady", { coordinatorSessionID: () => undefined }),
         props: { instanceId: "i", directory: "/repo", action, onSaved: () => { throw new Error("stale publication") } },
         locked: () => pending, isActive: () => true, setFieldError: () => {}, structuralLocked: () => true,
         immediateCreationFollowed: () => false, mode: () => "immediate", textLocked: () => false,
+        startOnCreation: () => false,
+        captureStart: () => async () => assert.fail("stale creation must not start"),
         captureView: () => backend.captureBackendOperation("i").current, objective: () => "draft", notes: () => "notes",
         template: () => "custom", identity: () => "view", taskMode: () => undefined, effectiveProfiles: () => undefined,
         submittedTitle: () => "title", selectedModel: () => undefined, deleteManagedSessions: () => false, deleteAttempted: () => false,
@@ -250,28 +257,6 @@ for (const kind of ["create", "edit", "delete"] as const) {
     })
   }
 }
-
-test("conversation picker: cancelled debounce has no stranded flag, and A cannot clear B", async () => {
-  const backend = attachment(), requests: ReturnType<typeof deferred>[] = [], timers = new Map<number, () => void>()
-  let nextTimer = 0, dispose!: () => void
-  const create = component("./mission-conversation-picker.tsx", "MissionConversationPicker", "{ loading, setOpen }", { ...solid, ...backend,
-    useI18n: () => ({ t: (key: string) => key }), getOpenCodeInstanceGeneration: () => 1,
-    setTimeout: (callback: () => void) => { timers.set(++nextTimer, callback); return nextTimer }, clearTimeout: (id: number) => timers.delete(id),
-    buildProjectSessionListOptions: (value: unknown) => value, isReservedMissionScheduleSessionID: () => false,
-    getRootClient: () => ({ session: { list: () => { const request = deferred(); requests.push(request); return request.promise } } }),
-  })
-  const reader = createRoot(close => { dispose = close; return create({ instanceId: "i", active: () => true, disabled: false }) })
-  reader.setOpen(true); assert.equal(reader.loading(), true)
-  reader.setOpen(false); assert.equal(reader.loading(), false); assert.equal(timers.size, 0)
-  reader.setOpen(true); timers.get(nextTimer)!()
-  backend.replace(); timers.get(nextTimer)!()
-  assert.equal(requests.length, 2)
-  requests[0].resolve({ data: [] }); await flush(); assert.equal(reader.loading(), true)
-  backend.revoke(); requests[1].reject(new DOMException("cancelled", "AbortError")); await flush()
-  assert.equal(reader.loading(), false)
-  reader.setOpen(false); reader.setOpen(true); assert.equal(reader.loading(), false)
-  dispose()
-})
 
 test("history preview: cancelled old read cannot clear B; revoked B settles its flag", async () => {
   const backend = attachment(), requests: ReturnType<typeof deferred>[] = []

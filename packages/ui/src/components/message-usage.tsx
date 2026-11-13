@@ -1,9 +1,10 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
+import { Show, createEffect, createMemo, createSignal } from "solid-js"
 import { ChevronRight } from "lucide-solid"
 import type { MessageInfo } from "../types/message"
 import type { VisibilityPreference } from "../stores/preferences"
 import { formatTokenTotal } from "../lib/formatters"
 import { useI18n } from "../lib/i18n"
+import { UsageMetricChips } from "./usage-metric-chips"
 
 interface MessageUsageProps {
   /** An agent message's usage, added up with its "delete tools and reasoning" selection's messages. */
@@ -47,9 +48,7 @@ export function MessageUsage(props: MessageUsageProps) {
   const summaryLabel = () => labelList(summaryEntries())
   const fullLabel = () => labelList(entries())
   const renderEntries = (metrics: ReturnType<typeof entries>) => (
-    <For each={metrics}>
-      {(entry) => <span class="message-step-usage-chip" data-label={entry.label} title={`${entry.label}: ${entry.full}`}>{entry.value}</span>}
-    </For>
+    <UsageMetricChips metrics={metrics} class="message-step-usage-chip" />
   )
   const style = () => props.borderColor ? { "border-left-color": props.borderColor } : undefined
 

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
+pub(crate) mod memory_cleanup;
 
 pub(crate) const LABEL: &str = "preferences";
 pub(crate) const SECTION_EVENT: &str = "preferences:section";
@@ -89,6 +90,7 @@ struct PreferencesTransitionRequest {
 }
 
 pub(crate) struct PreferencesWindow {
+    cleanup: memory_cleanup::CleanupCommands,
     operation: Mutex<()>,
     state: Mutex<PreferencesState>,
 }
@@ -96,6 +98,7 @@ pub(crate) struct PreferencesWindow {
 impl Default for PreferencesWindow {
     fn default() -> Self {
         Self {
+            cleanup: memory_cleanup::CleanupCommands::default(),
             operation: Mutex::new(()),
             state: Mutex::new(PreferencesState {
                 request: PreferencesRequest {

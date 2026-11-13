@@ -36,6 +36,8 @@ check busy भए अर्को window को कार्य पर्खन�
 
 ## standalone server update {#standalone-update}
 
+1.1 इन्टरफेसका Missions API का लागि CodeNomad server **1.1.0 वा पछिल्लो** चाहिन्छ। 1.0.x server ले नमिल्ने इन्टरफेस डाउनलोड गर्नुको सट्टा cache मा भएको वा साथमा आएको इन्टरफेस राख्छन्।
+
 1. CodeNomad कसरी launch भयो पहिचान गरी backend मा निर्भर काम बचत गर्नुहोस्।
 2. सामान्य process/service नियन्त्रणबाट त्यो CodeNomad server process रोक्नुहोस्।
 3. उही package installation update गरी अभिप्रेत configuration र flag सहित restart गर्नुहोस्।
@@ -54,6 +56,6 @@ npm ले स्थापना गर्‍यो भन्दै चलिर
 
 CodeNomad update चयनित OpenCode CLI update होइन। CLI update चलिरहेको shared daemon restart होइन। native configuration reload आफ्नै loaded Location/request असर भएको अर्को स्पष्ट कार्य हो।
 
-desktop Node/npm resource app सँगै आउँछन्; application release ले तिनको update दिन्छ। system Node/npm, Electron internal runtime, platform webview वा स्वतन्त्र व्यवस्थापित OpenCode सेवा बदल्दैन।
+desktop runtime app सँगै update हुन्छन्: Electron ले यसको integrated Node प्रयोग गर्छ, Tauri ले Node समावेश गर्छ र दुवैमा npm हुन्छ। system Node/npm, platform webview र OpenCode सेवा स्वतन्त्र रूपमा व्यवस्थापन गरिन्छन्।
 
 runtime चयन, installation/update र explicit service नियन्त्रणका लागि **सेटिङहरू → OpenCode** प्रयोग गर्नुहोस्। restart/reload अघि, विशेष गरी अन्य window/user वा Mission ले daemon साझा गर्दा, [OpenCode सेटअप](opencode.md) जाँच्नुहोस्। update/reconnect सकियो भन्दै अनिश्चित prompt वा mutation नदोहोर्‍याउनुहोस्।

@@ -40,6 +40,7 @@ async function withPage(run: (page: Page) => Promise<void>, actions = false) {
       available: speechAvailable, configured: true, provider: "fixture", supportsStt: false, supportsTts: true,
       supportsStreamingTts: true, ttsFormats: ["mp3"], streamingTtsFormats: ["mp3"], ttsConfigured: true,
     } })
+    if (request.pathname.endsWith("/session-history/outline")) return route.abort()
     if (request.pathname.startsWith("/api/")) return route.fulfill({ json: {} })
     return route.continue()
   })

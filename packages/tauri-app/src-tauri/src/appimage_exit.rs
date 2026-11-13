@@ -166,11 +166,50 @@ mod tests {
         assert_eq!(parent_from_stat("garbage"), None);
     }
 
-    fn sleeper(program: &Path) -> Child {
-        Command::new(program)
+    struct TestChild(Child);
+
+    impl std::ops::Deref for TestChild {
+        type Target = Child;
+        fn deref(&self) -> &Child {
+            &self.0
+        }
+    }
+
+    impl std::ops::DerefMut for TestChild {
+        fn deref_mut(&mut self) -> &mut Child {
+            &mut self.0
+        }
+    }
+
+    impl Drop for TestChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+            }
+            let _ = self.0.wait();
+        }
+    }
+
+    fn sleeper(program: &Path) -> TestChild {
+        TestChild(Command::new(program)
             .arg("30")
             .spawn()
-            .expect("spawn sleeper")
+            .expect("spawn sleeper"))
+    }
+
+    #[test]
+    fn test_child_is_reaped_on_panic() {
+        let mut pid = None;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let child = sleeper(Path::new("/bin/sleep"));
+            pid = Some(child.id() as i32);
+            panic!("exercise TestChild unwind");
+        }));
+        assert!(result.is_err());
+        // SAFETY: waitpid with WNOHANG only observes our child's reap state.
+        let waited = unsafe { libc::waitpid(pid.expect("spawned child"), std::ptr::null_mut(), libc::WNOHANG) };
+        assert_eq!(waited, -1);
+        assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ECHILD));
     }
 
     fn exited_within(child: &mut Child, limit: Duration) -> bool {
@@ -188,7 +227,12 @@ mod tests {
     fn only_children_running_from_the_mount_are_stopped() {
         let mount = tempfile::tempdir().expect("mount directory");
         let mounted = mount.path().join("sleep");
-        std::fs::copy("/bin/sleep", &mounted).expect("copy sleep into the mount");
+        assert!(Command::new("/bin/cp")
+            .arg("/bin/sleep")
+            .arg(&mounted)
+            .status()
+            .expect("copy sleep into the mount")
+            .success());
         let mount = std::fs::canonicalize(mount.path()).expect("canonical mount");
 
         let mut inside = sleeper(&mounted);

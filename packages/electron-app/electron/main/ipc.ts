@@ -1,5 +1,6 @@
-import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron"
+import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent } from "electron"
 import fs from "node:fs"
+import { setupDialogIPC } from "./dialog-ipc"
 import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
@@ -30,19 +31,6 @@ interface CliIPCDependencies {
   nextConnection(windowId: string): { target: string; failure?: string; hidden: boolean } | null
   acknowledgeConnection(windowId: string, target: string, failure: string | null, handOff: boolean): void
   browserController: BrowserController
-}
-
-interface DialogOpenRequest {
-  mode: "directory" | "file"
-  title?: string
-  defaultPath?: string
-  filters?: Array<{ name?: string; extensions: string[] }>
-  multiple?: boolean
-}
-
-interface DialogOpenResult {
-  canceled: boolean
-  paths: string[]
 }
 
 async function resolveLocalWorkspaceFolder(window: BrowserWindow, cliManager: CliProcessManager, instanceId: string, worktreeSlug: string): Promise<string> {
@@ -162,19 +150,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
 
-  ipcMain.handle("dialog:open", async (event, request: DialogOpenRequest): Promise<DialogOpenResult> => {
-    const window = settings(event)
-    if (!request || (request.mode !== "directory" && request.mode !== "file")) throw new Error("Invalid dialog request")
-    const properties: OpenDialogOptions["properties"] = request.mode === "directory" ? ["openDirectory", "createDirectory"] : ["openFile"]
-    if (request.mode === "file" && request.multiple) properties.push("multiSelections")
-    const result = await dialog.showOpenDialog(window, {
-      title: request.title,
-      defaultPath: request.defaultPath,
-      properties,
-      filters: request.filters?.map((filter) => ({ name: filter.name ?? "Files", extensions: filter.extensions })),
-    })
-    return { canceled: result.canceled, paths: result.filePaths }
-  })
+  setupDialogIPC(ipcMain, { resolveWindow: settings, showOpenDialog: (window, options) => dialog.showOpenDialog(window, options) })
 
   ipcMain.handle("filesystem:getDirectoryPaths", async (event, paths: unknown): Promise<string[]> => {
     local(event)

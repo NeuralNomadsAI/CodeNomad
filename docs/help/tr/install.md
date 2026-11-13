@@ -10,11 +10,11 @@ Yerel bir masaüstü ana bilgisayarı seçin veya [bağımsız sunucu](server.md
 
 | Platform | Electron sürümü | Tauri sürümü | Platform notları |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel veya Apple Silicon | ZIP, Intel veya Apple Silicon | Paket çalışma zamanı için macOS 13.5 veya üzeri gereklidir. |
+| macOS | ZIP, Intel veya Apple Silicon | ZIP, Intel veya Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Yükleyici, x64 | Windows 10 veya sonrası; Tauri WebView2 kullanır. |
 | Linux | Debian paketi, x64 | AppImage, x64 | Ubuntu 24.04'te oluşturulmuş ve test edilmiştir; eski dağıtımlarla uyumluluk garanti edilmez. |
 
-Masaüstü sürümleri, arka uç ve OpenCode yükleyicisinin ihtiyaç duyduğu çalışma zamanı kaynaklarını içerir; dolayısıyla bunları kullanmak için ayrı bir Node.js/npm kurulumuna ihtiyacınız yoktur. Git pakete dahil değildir. Yerel tarayıcı otomasyonu Electron ve Windows Tauri'de desteklenir; diğer Tauri platformları iframe önizlemelerini kullanır.
+Masaüstü sürümleri, arka uç ve OpenCode yükleyicisinin ihtiyaç duyduğu çalışma zamanı kaynaklarını içerir; dolayısıyla bunları kullanmak için ayrı bir Node.js/npm kurulumuna ihtiyacınız yoktur. Git pakete dahil değildir. Ajanlar için yerel tarayıcı otomasyonu Windows, macOS ve Linux'ta Electron ve Tauri'de desteklenir. macOS/Linux'ta Tauri, motora özgü yoğunluk ve girdi sınırları olan WebKit önizlemelerini ve yerel mobil profilleri kullanır; [tarayıcı önizlemelerine](browser-sidecars.md#signins-automation) bakın.
 
 Başlatma sırasında engellenen doğrulanmış bir indirme için, bkz. [platform sorunlarını giderme](troubleshooting.md#desktop-launch). Asla güvenilmeyen bir arşivi yalnızca bir uyarıyı atlamak için çalıştırmayın.
 
@@ -45,9 +45,9 @@ Electron Debian kurulumu, Chromium'un korumalı alanını yapılandırır. Kurul
 
 | Gereksinim | Nerede bulunması gerektiği | Mevcut gereksinim |
 | --- | --- | --- |
-| OpenCode CLI | Geçerli olduğu yerde seçilen WSL dağıtımı da dahil olmak üzere seçilen yürütme ana bilgisayarı | Minimum **2.2.3**; **2.2.5** önerilen/uygun hedeftir. Daha yeni veya özel sürümler, test edilmemiş sürüm yasağı yerine sözleşme doğrulamasından geçer. |
+| OpenCode CLI | Geçerli olduğu yerde seçilen WSL dağıtımı da dahil olmak üzere seçilen yürütme ana bilgisayarı | Minimum **2.2.3**; **2.2.7** önerilen/uygun hedeftir. Daha yeni veya özel sürümler, test edilmemiş sürüm yasağı yerine sözleşme doğrulamasından geçer. |
 | Git | CodeNomad arka uç hesabının `PATH`'si | Depo kimliği, Git işlemleri ve çalışma ağaçları için gereklidir. |
-| Node.js/npm | Bağımsız sunucu ve kaynak derleme ana bilgisayarı | Node.js 24 LTS; tekrarlanabilir kaynak derlemeleri `.node-version` (**24.20.0**) kullanır. Masaüstü çalışma zamanı/kurulum kaynaklarına dahildir. |
+| Node.js/npm | Bağımsız sunucu ve kaynak derleme ana bilgisayarı | Node.js 24 LTS; tekrarlanabilir kaynak derlemeleri `.node-version` dosyasında sabitlenen sürümü kullanır. Masaüstü sürümleri kendi çalışma zamanlarını içerir: Electron'un yerleşik Node'u veya Tauri'nin paketlediği Node, npm ile. |
 | Çalışma alanı klasörü | Arka uçtan erişilebilen disk | Uzak bir tarayıcı tarafından çıkarılan yerel cihaz klasörü değil, açıkça açılmış bir fiziksel klasör. |
 
 Windows'ta, komut satırı/üçüncü taraf erişimi etkinleştirilmiş olarak [Windows için Git](https://gitforwindows.org/)'yi yükleyin. Kullanıcı tarafından yazılabilen, kullanıcı başına kurulum yeterlidir. MacOS/Linux'ta [Git'in platform talimatlarını](https://git-scm.com/downloads) kullanın.

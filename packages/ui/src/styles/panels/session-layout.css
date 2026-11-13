@@ -68,16 +68,22 @@
   padding: 0 var(--space-md);
 }
 
-/* One action row centred on the shared header action line. */
+/* One action row centred on the shared header action line: history
+ * navigation at the start, the centred title, session actions at the end. */
 .session-sidebar-header-row {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
+  align-items: center;
+  gap: var(--space-sm);
   height: calc(2 * var(--panel-header-action-center));
 }
 
-.session-sidebar-header-actions {
-  flex-shrink: 0;
+.session-sidebar-header-end {
+  justify-content: flex-end;
 }
 
 .session-sidebar-title {
+  text-align: center;
   /* Narrow sidebars keep every header action; only the label truncates. */
   min-width: 0;
   overflow: hidden;

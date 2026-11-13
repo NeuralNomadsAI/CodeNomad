@@ -4,7 +4,7 @@ import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
-import { missionGeneralAction, missionPickerField, selectMission } from "./mission-actions"
+import { missionGeneralAction, missionRows, revealMissionTask, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -17,15 +17,14 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-function mission(grown = false): MissionMap {
+function mission(): MissionMap {
   const tasks: MissionTask[] = Array.from({ length: 30 }, (_, index) => ({ id: `task-${index}`, key: `t${index}`, title: `Migration step ${index + 1}`,
-    brief: "Inspect the migration", role: "worker", status: "dispatching", blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1,
-    ...(grown && index < 20 ? { actorSessionId: "ses_worker", admissionId: `admission-${index}` } : {}) }))
+    brief: "Inspect the migration", role: "worker", status: "dispatching", blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 }))
   return { version: 1, id: "focus", projectID: "project", projectCanonical: "/fixture", objective: "Focus migration", template: "custom",
     coordinatorSessionId: "ses_focus", status: "active", runState: "running", actors: [
       { sessionId: "ses_focus", kind: "coordinator", managed: true, title: "Coordinator", roles: ["coordinator"], location: { directory: "fixture" }, joinedAt: 1 },
       { sessionId: "ses_worker", kind: "specialist", managed: true, title: "Worker", roles: ["worker"], location: { directory: "fixture" }, joinedAt: 1 }],
-    frontier: [], claims: [], revision: grown ? 4 : 3, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, tasks, reports: [] }
+    frontier: [], claims: [], revision: 3, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, tasks, reports: [] }
 }
 
 async function open(consumer: "creation" | "tree", viewport = { width: 1000, height: 600 }, holdDepth = false) {
@@ -34,35 +33,34 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript("globalThis.__name ??= target => target")
   await page.addInitScript(installAudit)
-  let grown = false, depthRoute: Route | undefined
+  let depthRoute: Route | undefined
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
     if (holdDepth && path.endsWith("/subagent-depth")) { depthRoute = route; return }
-    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission(grown)]), generatedAt: 1, discardedEvents: 0,
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission()]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: "focus", actors: [{ sessionId: "ses_worker", state: "idle-without-report" }] }] } } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
     return route.fulfill({ json: {} })
   })
   try {
     await page.goto(url, { timeout: 60_000 })
-    await missionPickerField(page).waitFor()
-    if (consumer === "tree") await selectMission(page, "Focus migration")
+    await missionRows(page).locator("button.mission-row-select").first().waitFor()
+    if (consumer === "tree") { await selectMission(page, "Focus migration"); await revealMissionTask(target(page, consumer)) }
     else {
-      await missionGeneralAction(page, "Create mission").click()
-      await page.locator("form.mission-editor").getByLabel("What should the mission do?", { exact: true }).fill("Inspect focus ownership")
-      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('form.mission-editor button[type="submit"]')?.disabled)
       const requested = holdDepth ? page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/subagent-depth")) : undefined
-      await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
+      await missionGeneralAction(page, "Create mission").click()
+      await page.locator("form.mission-editor").getByLabel("Objective", { exact: true }).fill("Inspect focus ownership")
+      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('form.mission-editor button[type="submit"]')?.disabled)
       if (requested) await requested
       else await page.waitForFunction(() => Boolean(document.querySelector(".mission-depth [role=alert]")))
     }
-    return { page, context, errors, grow: async () => { grown = true; await page.evaluate(() => (window as any).missionHost.refresh()) },
+    return { page, context, errors,
       releaseDepth: async () => { assert(depthRoute); await depthRoute.fulfill({ json: {} }); depthRoute = undefined }, close: () => context.close() }
   } catch (error) { await context.close(); throw error }
 }
 
 const region = (consumer: string) => consumer === "tree" ? ".mission-tree" : "form.mission-editor > .window-body"
-const target = (page: Page, consumer: string) => page.locator(consumer === "tree" ? '.mission-tree-node[data-task-key="t20"] .mission-tree-task' : ".mission-scheduling > summary")
+const target = (page: Page, consumer: string) => page.locator(consumer === "tree" ? '.mission-tree-node[data-task-key="t20"] .mission-tree-task' : '.mission-create-autostart input[type="checkbox"]')
 const frames = (page: Page) => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))))
 const visible = (page: Page) => page.evaluate(() => {
   const focused = document.activeElement!, box = focused.getBoundingClientRect(), hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
@@ -128,7 +126,9 @@ for (const consumer of ["creation", "tree"] as const) {
           // Real consumer observation, while its active focus/lifetime guards decide ownership.
           node.append(document.createElement("span"))
         }, { condition, selector: region(consumer) })
-        if (condition !== "visible") await f.page.setViewportSize({ width: 1000, height: 420 })
+        // The native blur case needs an actually clipped target, wherever this layout puts it.
+        const shrunk = condition === "window-unfocused" ? Math.max(160, Math.floor((await focus.boundingBox())!.y) - 4) : 420
+        if (condition !== "visible") await f.page.setViewportSize({ width: 1000, height: shrunk })
         await frames(other ?? f.page)
         assert.equal(await f.page.evaluate(() => (window as any).focusAudit.writes.length), 0, `${condition} view leaves every scroll owner alone`)
         if (condition === "window-unfocused") {
@@ -139,8 +139,11 @@ for (const consumer of ["creation", "tree"] as const) {
           assert.equal(await focus.evaluate(element => element === document.activeElement), true, "native refocus restores the same control")
           await f.page.evaluate(selector => document.querySelector(selector)!.append(document.createElement("span")), region(consumer))
           await frames(f.page)
-          assert(await f.page.evaluate(() => (window as any).focusAudit.writes.length > 0), "the same observation repairs the control after native focus returns")
-          assert.equal(await visible(f.page), true)
+          const writes = await f.page.evaluate(() => (window as any).focusAudit.writes.length)
+          if (consumer === "creation") {
+            assert(writes > 0, "the form repairs its control after native focus returns")
+            assert.equal(await visible(f.page), true)
+          } else assert.equal(writes, 0, "the task tree never snaps back to an old focused task")
         }
         assert.deepEqual(f.errors, [])
       } finally { await other?.close(); await f.close() }
@@ -164,12 +167,13 @@ for (const consumer of ["creation", "tree"] as const) {
         const state = (window as any).focusAudit
         return { queued: state.queuedBeforeDispose, cancelled: state.cancelled.length, ran: state.ran.length, writes: state.writes.length }
       })
-      assert.equal(disposed.queued, 1, "one callback owns the entire mutation burst")
-      assert.equal(disposed.cancelled, 1, "disposing the old view cancels its queued callback")
+      assert.equal(disposed.queued, consumer === "creation" ? 1 : 0, "only form focus repair schedules a mutation callback")
+      assert.equal(disposed.cancelled, consumer === "creation" ? 1 : 0, "disposing the old form cancels its queued callback")
       assert.equal(disposed.ran, 0); assert.equal(disposed.writes, 0)
       await f.page.evaluate(() => (window as any).missionHost.mount(true))
       await frames(f.page)
       assert.equal(await f.page.evaluate(() => (window as any).focusAudit.writes.length), 0, "the replacement view never revives the old focus target")
+      if (consumer === "tree") await revealMissionTask(target(f.page, consumer))
       await target(f.page, consumer).focus(); await frames(f.page)
       await f.page.evaluate(selector => {
         const state = (window as any).focusAudit
@@ -179,34 +183,14 @@ for (const consumer of ["creation", "tree"] as const) {
       }, region(consumer))
       await frames(f.page)
       const burst = await f.page.evaluate(() => ({ scheduled: (window as any).focusAudit.scheduled.length, ran: (window as any).focusAudit.ran as number[] }))
-      assert(burst.scheduled > 0 && burst.scheduled <= burst.ran.length + 1, "a live mutation burst keeps at most one pending callback")
+      if (consumer === "creation") assert(burst.scheduled > 0 && burst.scheduled <= burst.ran.length + 1, "a live mutation burst keeps at most one pending callback")
+      else assert.equal(burst.scheduled, 0, "task mutations never create focus-repair work")
       assert.equal(new Set(burst.ran).size, burst.ran.length, "at most one consumer callback runs in each animation frame")
       assert.deepEqual(f.errors, [])
     } finally { await f.close() }
   })
 }
 
-for (const viewport of [{ width: 1000, height: 600 }, { width: 260, height: 300 }]) {
-  test(`task HTTP refresh grows nested recovery rows without changing its scroll policy at ${viewport.width}×${viewport.height}`, async () => {
-    const f = await open("tree", viewport)
-    try {
-      const task = target(f.page, "tree"), identity = await task.elementHandle()
-      await task.focus(); await frames(f.page)
-      assert.equal(await visible(f.page), true)
-      const before = await f.page.locator(".mission-tree").getAttribute("data-scroller")
-      const size = await f.page.locator(".mission-tree-list").evaluate(element => element.getBoundingClientRect().height)
-      await audit(f.page)
-      await f.grow()
-      await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-recovery").length === 20)
-      await frames(f.page)
-      assert.equal(await identity!.evaluate(element => element === document.activeElement), true, "HTTP publication retains the exact DOM focus target")
-      assert.equal(await f.page.locator(".mission-tree").getAttribute("data-scroller"), before, "the existing vertical owner is unchanged")
-      assert(await f.page.locator(".mission-tree-list").evaluate(element => element.getBoundingClientRect().height) > size, "real recovery controls grew the nested list")
-      assert.equal(await visible(f.page), true, "the same task stays hit-testable after nested HTTP growth")
-      assert.deepEqual(f.errors, [])
-    } finally { await f.close() }
-  })
-}
 
 test("an oversized focused creation textarea moves only the nearer vertical edge and preserves horizontal position", async () => {
   const f = await open("creation")
@@ -244,8 +228,8 @@ test("a depth reply preserves horizontal owners and the original native Create p
       window.scrollTo(200, 0) // Initial non-zero horizontal owner, before the focus/HTTP transition.
     })
     const form = f.page.locator("form.mission-editor")
-    await form.getByRole("button", { name: "Save as brief", exact: true }).click()
-    await form.getByRole("textbox", { name: "Brief name", exact: true }).waitFor()
+    await form.getByRole("button", { name: "Save configuration", exact: true }).click()
+    await form.getByRole("textbox", { name: "Configuration name", exact: true }).waitFor()
     await target(f.page, "creation").focus(); await frames(f.page)
     const position = await f.page.evaluate(() => ({ x: scrollX, owners: Array.from(document.querySelectorAll(".mission-control, #tab-body, form.mission-editor > .window-body"), element => element.scrollLeft) }))
     assert(position.x > 0, "the outer horizontal owner starts away from its origin")

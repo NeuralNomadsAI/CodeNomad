@@ -301,39 +301,20 @@ test(`late ${positive ? "positive" : "negative"} receipt after ${change} only se
   } finally { c.dispose(); h.dispose() }
 })
 
-test("a cold chained Check reads the original identity before publication releases its hold", async () => {
-  const h = setup(), original = h.hold, check = { ...original, action: "check" as const, requestID: "check_request", original }
-  holds.set(key(), check); bump()
-  const c = controlsFor(h), requests: string[] = []
+test("a held partial control offers no further mutation; only its exact receipt read settles it", async () => {
+  const h = setup(), original = { ...h.hold, partial: true }
+  holds.set(key(), original); bump()
+  const c = controlsFor(h), controls: unknown[] = []
   try {
-    await until(() => !h.store.loading())
-    fixture.detail = async (_id, _signal, input) => {
-      if (!input?.requestID) return { pending: false, document: running }
-      requests.push(input.requestID)
-      return { pending: false, document: { ...running, control: { action: input.requestID === check.requestID ? "check" : "play",
-        requestID: input.requestID, expectedRevision: 7, pending: false } } }
-    }
-    await c.controls()!.reconcile(); await until(() => h.store.fresh(selected.id))
-    assert.deepEqual(requests, [check.requestID, original.requestID]); assert.equal(holds.has(key()), false)
-    assert.equal(c.controls()!.capable("pause"), true); assert.equal(h.store.next(), "aaa_7")
-  } finally { c.dispose(); h.dispose() }
-})
-
-for (const replaced of [false, true]) test(`a stale chained positive Check ${replaced ? "preserves a newer hold" : "retains its original without dispatching a new read"}`, async () => {
-  const h = setup(), original = h.hold, check = { ...original, action: "check" as const, requestID: "check_request", original }
-  holds.set(key(), check); bump()
-  const c = controlsFor(h), gate = deferred<MissionScheduleRead>(), started = deferred()
-  let requests = 0
-  try {
-    await until(() => !h.store.loading())
-    fixture.detail = async () => { requests++; started.resolve(); return gate.promise }
-    const read = c.controls()!.reconcile(); await started.promise
-    c.dispose()
-    const newer = { ...original, requestID: "newer_request" }
-    if (replaced) { holds.set(key(), newer); bump() }
-    gate.resolve({ pending: false, document: { ...running, control: { action: "check", requestID: check.requestID, expectedRevision: 7, pending: false } } })
-    await read
-    assert.equal(holds.get(key()), replaced ? newer : original); assert.equal(requests, 1); assert.equal(c.calls.refresh, 0)
+    fixture.control = async (_instance, _id, input) => { controls.push(input); throw new Error("must not dispatch") }
+    fixture.detail = async (_id, _signal, input) => input?.requestID ? confirmed(original)
+      : { pending: false, document: { ...running, availableActions: ["check", "pause", "stop"] as typeof running.availableActions } }
+    await until(() => !h.store.loading() && c.controls()?.capability() === "available")
+    const owner = c.controls()!
+    for (const action of ["check", "pause", "stop"] as const) { assert.equal(owner.capable(action), false); await owner.act(action) }
+    assert.deepEqual(controls, [])
+    await owner.reconcile()
+    assert.equal(holds.get(key())?.phase, "publication"); assert.equal(holds.get(key())?.requestID, original.requestID)
   } finally { c.dispose(); h.dispose() }
 })
 
@@ -394,15 +375,15 @@ test(`late ${positive ? "positive" : "negative"} ${action} confirmation after ${
   } finally { c.dispose(); h.dispose() }
 })
 
-for (const action of ["pause", "check", "activation"] as const) for (const positive of [false, true])
+for (const action of ["pause", "activation"] as const) for (const positive of [false, true])
 test(`late ${positive ? "positive" : "negative"} ${action} POST cannot start receipt reads or another control on a replaced client`, async () => {
-  const h = setup(action === "check"), c = controlsFor(h), gate = deferred<any>(), started = deferred()
+  const h = setup(false), c = controlsFor(h), gate = deferred<any>(), started = deferred()
   const calls = { control: 0, settings: 0, detail: 0 }
   try {
-    fixture.detail = async () => ({ pending: false, document: action === "pause" ? running : { ...selected, availableActions: ["play", "check"] } })
+    fixture.detail = async () => ({ pending: false, document: action === "pause" ? running : { ...selected, availableActions: ["play"] } })
     await until(() => h.store.fresh(selected.id) && c.controls()?.capability() === "available")
     if (action === "activation") fixture.enabled = false
-    fixture.detail = async () => { calls.detail++; return { pending: false, document: action === "pause" ? running : { ...selected, availableActions: ["play", "check"] } } }
+    fixture.detail = async () => { calls.detail++; return { pending: false, document: action === "pause" ? running : { ...selected, availableActions: ["play"] } } }
     fixture.control = async () => { calls.control++; started.resolve(); return gate.promise }
     fixture.settings = async (_instance, _id, _input, write) => { assert.equal(write, true); calls.settings++; started.resolve(); return gate.promise }
     const pending = c.controls()!.act(action === "activation" ? "play" : action)
@@ -419,7 +400,7 @@ test(`late ${positive ? "positive" : "negative"} ${action} POST cannot start rec
     assert.deepEqual(calls, before); assert.deepEqual(c.calls, effects)
     assert.equal(calls.control, action === "activation" ? 0 : 1); assert.equal(calls.settings, action === "activation" ? 1 : 0)
     assert.equal(holds.has(key()), true)
-    assert.equal(holds.get(key())?.phase, positive && action !== "check" ? "publication" : request.phase)
+    assert.equal(holds.get(key())?.phase, positive ? "publication" : request.phase)
     assert.equal(holds.get(key())?.requestID, request.requestID)
   } finally { c.dispose(); h.dispose() }
 })
@@ -473,50 +454,6 @@ test("a direct ACK blocks every new mutation through failed, partial and older d
     assert.equal(h.store.rows().find(row => row.id === selected.id)?.revision, 10)
     assert.equal(owner.capable("stop"), true)
     assert.equal(requests.length, 1); assert.equal(receiptReads, 0); assert.equal(settings, 0)
-  } finally { c.dispose(); h.dispose() }
-})
-
-test("a completed Check transfers its maximum publication revision to an original that is still unknown", { timeout: 10_000 }, async () => {
-  const h = setup(), original = { ...h.hold, minimumRevision: 10 }
-  holds.set(key(), original); bump()
-  const c = controlsFor(h), requests: string[] = []
-  let originalReady = false, displayRevision = 11, controlCalls = 0, checkID: string | undefined
-  try {
-    const checkReceipt = (): MissionScheduleRead => ({ pending: false, document: { ...running, revision: 12,
-      control: { action: "check", requestID: checkID!, expectedRevision: 11, pending: false } } })
-    fixture.control = async (_instance, id, input) => {
-      controlCalls++; assert.equal(id, selected.id); assert.equal(input.action, "check"); assert.equal(input.expectedRevision, 11)
-      checkID = input.requestID; assert.notEqual(checkID, original.requestID)
-      return checkReceipt()
-    }
-    fixture.detail = async (_id, _signal, input) => {
-      if (!input?.requestID) return { pending: false, document: { ...running, revision: displayRevision, availableActions: ["check", "pause", "stop"] } }
-      requests.push(input.requestID)
-      if (input.requestID === checkID) return checkReceipt()
-      assert.equal(input.requestID, original.requestID)
-      return originalReady ? { ...confirmed(original), document: { ...confirmed(original).document!, revision: 9 } }
-        : { pending: true, document: null }
-    }
-    await until(() => h.store.fresh(selected.id) && c.controls()?.capability() === "available")
-    const owner = c.controls()!
-    assert.equal(owner.capable("check"), true)
-    await owner.act("check")
-    assert.equal(holds.get(key()), original); assert.equal(original.minimumRevision, 12)
-    assert.equal(original.phase, "control"); assert.equal(original.expectedRevision, 7)
-    await until(() => h.store.fresh(selected.id))
-    assert.equal(holds.get(key()), original, "display publication cannot settle an unknown original receipt")
-    assert.equal(owner.capable("check"), false)
-    originalReady = true
-    await owner.reconcile()
-    const publication = holds.get(key())!
-    assert.equal(publication.phase, "publication"); assert.equal(publication.minimumRevision, 12)
-    assert.equal(publication.requestID, original.requestID); assert.equal(publication.expectedRevision, 7)
-    await until(() => h.store.loading()); await until(() => !h.store.loading())
-    assert.equal(holds.get(key()), publication, "the older original ACK cannot lower Check's publication obligation")
-    displayRevision = 12
-    await owner.reconcile(); await until(() => !held(key()) && h.store.fresh(selected.id))
-    assert.equal(c.controls(), owner); assert.equal(owner.capable("pause"), true)
-    assert.deepEqual(requests, [checkID, original.requestID, original.requestID]); assert.equal(controlCalls, 1)
   } finally { c.dispose(); h.dispose() }
 })
 

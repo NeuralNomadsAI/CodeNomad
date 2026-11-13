@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
+import { isSessionNotFoundError } from "@opencode/client"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
@@ -10,16 +11,20 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
+import { readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
-import { missionRecoveryRejection } from "../../missions/recovery-error"
+import { missionRecoveryControlError, missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
 import type { SettingsService } from "../../settings/service"
 import type { RemoteControlManager } from "../../remote-control/manager"
+import type { MemoryService } from "../../memory/service"
+import { memoryErrorReply } from "./memory"
+import { prepareSessionMemoryContext } from "../../workspaces/session-memory-context"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -28,8 +33,9 @@ interface AutomationPluginRouteDeps {
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
   worktreeDeletionFence?: WorktreeDeletionFence
-  settings?: Pick<SettingsService, "getProfileScope">
+  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner">>
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
+  memory?: MemoryService
 }
 
 interface DeveloperNativeStatus {
@@ -78,13 +84,39 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
-    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
+    }
+    if (body.mode === "memory-probe" || body.mode === "memory-input" || body.mode === "memory-context") {
+      if (!deps.memory) return reply.code(503).send({ code: "unreadable", error: "Memory is unavailable" })
+      try {
+        if (body.mode === "memory-probe") {
+          await deps.memory.probe(body.sessionID)
+          return reply.send({ result: { available: true } })
+        }
+        if (body.mode === "memory-context") {
+          await deps.memory.probe(body.sessionID)
+          const connection = await Promise.any(deps.workspaceManager.list().map(async workspace => {
+            const connection = await deps.workspaceManager.getSharedServiceConnection(workspace.id)
+            if (!connection) throw new Error("Memory connection is unavailable")
+            return connection
+          }))
+          return reply.send({ result: await prepareSessionMemoryContext(connection, deps.memory, body.sessionID, lifetime.signal) })
+        }
+        return reply.send({ result: await deps.memory.executeAgent(body.sessionID, body.command) })
+      } catch (error) { return memoryErrorReply(reply, error) }
     }
     // Lifecycle Pause/Stop and a retired task's interrupt walk and interrupt whole native
     // subagent families; they stay below the plugin's 95 s bridge timeout.
     const commandKind = body?.command && typeof body.command === "object" && "kind" in body.command ? body.command.kind : undefined
+    const preferenceProbe = body.mode === "browser-claim" && (body.purpose === "mission-preferences" || body.purpose === "mission-prepare")
+      || body.mode === "mission-input" && commandKind === "profile-defaults"
+    const preferenceUnavailable = () => {
+      const failure = missionRecoveryControlError("mission-preferences-unavailable")
+      return reply.code(503).send({ error: failure.message, code: failure.code })
+    }
+    const notOwner = (error: string) => reply.code(404).send({ error, ...(preferenceProbe ? { code: "mission-not-owner" } : {}) })
     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt"
     const signal = body.mode === "mission-input"
       ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
@@ -95,20 +127,31 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient())
       signal.throwIfAborted()
       location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }))).location
-    } catch {
-      return reply.code(404).send({ error: "Session not found" })
+    } catch (error) {
+      if (preferenceProbe && (signal.aborted || !isSessionNotFoundError(error))) return preferenceUnavailable()
+      return notOwner("Session not found")
     }
     // One validated owner is sufficient. Waiting for every unrelated inventory
     // can exceed the plugin's discovery deadline despite a ready local owner.
-    const owned = await lifetime.wait(Promise.any(deps.workspaceManager.list().map(async workspace => {
-      if (!await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, signal)) throw new Error("Not an owner")
-      return true
-    }))).catch(() => false)
-    if (!owned) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
+    let owned: boolean, ownershipReadFailed = false
+    try {
+      const workspaces = deps.workspaceManager.list()
+      owned = await lifetime.wait(Promise.any(workspaces.map(async workspace => {
+        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe })) return true }
+        catch { ownershipReadFailed = true }
+        throw new Error("Not an owner")
+      }))).catch(() => false)
+    } catch (error) {
+      if (preferenceProbe) return preferenceUnavailable()
+      throw error
+    }
+    if (preferenceProbe && (signal.aborted || !owned && ownershipReadFailed)) return preferenceUnavailable()
+    if (!owned) return notOwner("Session is not owned by this CodeNomad instance")
 
     if (body.mode === "mission-input") {
-      if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
       try {
+        if (commandKind === "profile-defaults") return reply.send({ result: readMissionProfileDefaults(deps.settings, body.command) })
+        if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
         // Journal-keyed creation capability of the owning backend. Durable
         // admission does not use this bridge or gain a new native API fallback.
         const fence = deps.worktreeDeletionFence
@@ -117,7 +160,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
-          : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal)
+          : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory)
         return reply.send({ result })
       } catch (error) {
         if (error instanceof MissionCreationHoldError) {
@@ -130,14 +173,19 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
     }
 
+    if (["browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode)) && !preferenceProbe && !(body.mode === "browser-claim" && body.purpose === "mission")
+      && deps.nativeParent.browserAutomationUnavailable) {
+      return reply.code(409).send({ code: "unsupported", error: "Browser automation is unavailable in this host" })
+    }
+
     if (body.mode === "browser-claim") {
       // Without a desktop host this backend owns sessions only for Mission
       // dispatch; claiming browsers too would hand the browser tools an owner
       // that cannot open a page, or make a desktop owner ambiguous.
-      if (!deps.nativeParent.available && body.purpose !== "mission") {
+      if (!deps.nativeParent.available && body.purpose !== "mission" && !preferenceProbe) {
         return reply.code(404).send({ error: "Browser automation is unavailable in this host" })
       }
-      return reply.send({ result: { available: true } })
+      return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true } : {}) } })
     }
     if (body.mode === "browser-probe") {
       try {

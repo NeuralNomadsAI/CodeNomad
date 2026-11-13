@@ -106,7 +106,7 @@ const readCurrent = Effect.fn("missions.readNativeRecurrenceCurrent")(function* 
     [{ available: true, ...readMissionContent(mission.projectID, pageInput!.body, mission, () => missionPlanChanges(view.events, mission.id)) }], pageInput!.selector.cursor)
     else {
       const selector = pageInput!.selector
-      if (selector.source === "summaries" || selector.source === "cleanups" || selector.source === "marks") throw new Error("Current passage selector differs")
+      if (selector.source === "summaries" || selector.source === "cleanups" || selector.source === "marks" || selector.source === "task-marks") throw new Error("Current passage selector differs")
       answer = projectMissionPanel(mission, selector, { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }, { passage: source })
     }
   }

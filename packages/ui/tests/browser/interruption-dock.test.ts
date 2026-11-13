@@ -437,8 +437,8 @@ test("failed native questions use the shared error shell, never an answered rece
   const { page, errors } = await fixture()
   try {
     await page.evaluate(() => { (window as any).fixture.liveAsk(); (window as any).fixture.toolError() })
-    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().question?.parts["question-tool"]?.data?.state?.status), "error")
     await page.locator(".tool-call-error-content").filter({ hasText: "Question cancelled" }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().question?.parts["question-tool"]?.data?.state?.status), "error")
     assert.equal(await page.locator(".question-receipt").count(), 0)
     assert.deepEqual(errors, [])
   } finally { await page.close() }

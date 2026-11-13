@@ -83,6 +83,7 @@ void app.whenReady().then(() => {
 `)
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
+  delete env.ELECTRON_NO_ASAR
   delete env.NODE_OPTIONS
   // Some Linux test hosts disable unprivileged user namespaces; opt-in only.
   const sandboxArgs = process.platform === "linux" && process.argv.includes("--no-sandbox") ? ["--no-sandbox"] : []

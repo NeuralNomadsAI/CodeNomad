@@ -1,12 +1,11 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
+import type { ServerMeta } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
 let browser: Browser, url: string
-let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "new-instance-launcher",
@@ -18,7 +17,7 @@ before(async () => {
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await cache?.dispose() })
+after(async () => { await browser?.close() })
 
 async function prepare(width = 1100, home = false) {
   const page = await browser.newPage({ viewport: { width, height: 760 }, locale: "en-US" })
@@ -33,7 +32,10 @@ async function prepare(width = 1100, home = false) {
     (window as any).__CODENOMAD_RUNTIME_HOST__ = "electron"
     window.__CODENOMAD_WINDOW_CONTEXT__ = "local"
   })
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/meta" ? {
+    localRequest: true, localUrl: new URL(url).origin, eventsUrl: "/api/events", host: "127.0.0.1",
+    listeningMode: "local", localPort: Number(new URL(url).port), hostLabel: "Fixture", workspaceRoot: "D:/", addresses: [],
+  } satisfies ServerMeta : {} }))
   await page.goto(home ? `${url}?home` : url)
   await page.waitForFunction(() => Boolean((window as any).launcherFixture))
   return { page, errors, remoteRequests, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }

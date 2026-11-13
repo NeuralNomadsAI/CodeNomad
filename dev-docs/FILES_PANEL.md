@@ -77,6 +77,10 @@ project ID is `global`.
 
 `files-preview-view.tsx` selects the shared diff reader or the editable workspace
 reader (source, rendered Markdown, raster/vector image, or binary fallback).
+Workspace `.mmd` files share the bounded Mermaid Tiny renderer used by fenced
+message diagrams. Show source opens the existing editable Monaco source; Show
+diagram renders the current draft, with explicit Save and existing conflict and
+refresh fences. Tiny's unsupported formats retain an error and source fallback.
 The composer stays mounted below it. Selections are bound to the originating
 project/session and cleared on session/worktree changes. The instance shell owns
 that lifetime (`instance/shell/file-preview-lifetime.ts`): it closes the reader

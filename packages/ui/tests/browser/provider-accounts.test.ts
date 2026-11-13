@@ -60,6 +60,43 @@ test("native account dropdown activates by identity and preserves failed rename 
   } finally { await page.close() }
 })
 
+test("OAuth Copy link uses the text fallback when the Clipboard API is unavailable", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US" }), errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined })
+    window.open = () => null
+    ;(window as any).oauthCopies = []
+    document.execCommand = command => {
+      ;(window as any).oauthCopies.push({ command, text: (document.activeElement as HTMLTextAreaElement)?.value })
+      return true
+    }
+  })
+  try {
+    await page.goto(`${url}?parent&unconnected`)
+    await page.getByRole("button", { name: "Add account", exact: true }).waitFor()
+    await page.evaluate(async () => {
+      const { sdkManager } = await import("/src/lib/sdk-manager.ts" as string)
+      const client = (sdkManager as any).clients.get("accounts:/workspaces/accounts/instance")
+      client.integration.oauth.connect = async () => ({ data: {
+        attemptID: "http-copy", url: "https://authorization.invalid/login", instructions: "Enter code", mode: "code",
+      } })
+    })
+    await page.getByRole("button", { name: "Add account", exact: true }).click()
+    const panel = page.locator(".providers-connect-panel")
+    await panel.locator(".providers-method-trigger").click()
+    await page.getByRole("option", { name: "OpenCode Console account", exact: true }).click()
+    await panel.getByRole("button", { name: "Continue", exact: true }).click()
+    await panel.getByRole("button", { name: "Copy link", exact: true }).click()
+    await panel.getByRole("button", { name: "Link copied", exact: true }).waitFor()
+    assert.deepEqual(await page.evaluate(() => (window as any).oauthCopies), [
+      { command: "copy", text: "https://authorization.invalid/login" },
+    ])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("provider manager keeps per-account drafts across dropdown and external switches", async () => {
   const page = await browser.newPage({ viewport: { width: 380, height: 900 }, locale: "en-US" })
   const errors: string[] = []
@@ -117,6 +154,52 @@ test("external provider auth preserves failed form drafts and never falls back o
     await panel.getByRole("button", { name: "Continue", exact: true }).click()
     await panel.waitFor({ state: "detached" })
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [expected, expected])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("configured providers without a connection can add their first account using native methods", async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${url}?parent&unconnected`)
+    const card = page.locator(".providers-card").filter({ has: page.getByRole("heading", { name: "OpenCode Console", exact: true }) })
+    const add = card.getByRole("button", { name: "Add account", exact: true })
+    await add.waitFor()
+    assert.equal(await card.getByRole("combobox", { name: "Active account" }).isDisabled(), true)
+    for (const name of ["Environment only", "No connect methods"]) {
+      const other = page.locator(".providers-card").filter({ has: page.getByRole("heading", { name, exact: true }) })
+      await other.waitFor()
+      assert.equal(await other.getByRole("button", { name: "Add account", exact: true }).count(), 0)
+    }
+    await add.click()
+    const panel = page.locator(".providers-connect-panel")
+    await panel.getByRole("heading", { name: "Connect OpenCode Console", exact: true }).waitFor()
+    await panel.locator(".providers-method-trigger").click()
+    const methods = page.getByRole("listbox")
+    await methods.waitFor()
+    assert.deepEqual(await methods.getByRole("option").allTextContents(), ["API key (service account)", "OpenCode Console account"])
+    await methods.getByRole("option", { name: "OpenCode Console account", exact: true }).click()
+    assert.equal(await panel.locator('input[type="password"]').count(), 0)
+    assert.equal(await panel.getByRole("button", { name: "Continue", exact: true }).isEnabled(), true)
+    await panel.getByRole("button", { name: "Close", exact: true }).click()
+    await add.click()
+    await panel.locator('input[type="password"]').fill("synthetic-console-key")
+    await panel.getByRole("button", { name: "Continue", exact: true }).click()
+    await panel.waitFor({ state: "detached" })
+    const select = card.getByRole("combobox", { name: "Active account" })
+    await card.locator("select:not(:disabled)").waitFor()
+    assert.equal(await select.inputValue(), "credential:console-key")
+    assert.equal(await select.isEnabled(), true)
+    assert.equal(await add.isEnabled(), true)
+    assert.equal(await card.getByRole("button", { name: "Rename account", exact: true }).count(), 1)
+    assert.equal(await card.getByRole("button", { name: "Remove account", exact: true }).count(), 1)
+    assert.equal(await card.evaluate(el => el.scrollWidth <= el.clientWidth), true)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [
+      { action: "key", integrationID: "opencode", answer: undefined, key: "synthetic-console-key", location: { directory: "/a" } },
+    ])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

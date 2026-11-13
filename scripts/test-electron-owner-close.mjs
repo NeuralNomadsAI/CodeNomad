@@ -62,6 +62,7 @@ try {
   })
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
+  delete env.ELECTRON_NO_ASAR
   // Some Linux test hosts disable unprivileged user namespaces. This opt-in
   // only affects this empty-window fixture, which loads no page or backend.
   const sandboxArgs = process.platform === "linux" && process.argv.includes("--no-sandbox") ? ["--no-sandbox"] : []

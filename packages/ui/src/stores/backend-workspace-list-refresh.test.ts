@@ -5,7 +5,7 @@ import type { Instance } from "../types/instance.ts"
 import { attachInstanceTab } from "./app-tabs.ts"
 import { appTabs } from "./app-tabs.ts"
 import { onInstanceLifecycleAuthority, type InstanceLifecycleAuthorityEvent } from "./instance-lifecycle-authority.ts"
-import { addInstance, getExistingInstanceForFolder, instances, refreshWorkspaceList, removeInstance } from "./instances.ts"
+import { addInstance, getExistingInstanceForFolder, instances, refreshWorkspaceList, removeInstance, updateInstance } from "./instances.ts"
 import { captureState } from "../lib/hooks/use-app-session-capture.ts"
 import { renameProject } from "./project-names"
 import { projectScope } from "../lib/backend-identity"
@@ -14,6 +14,7 @@ import { closeSessionPreview, getSessionPreview, openSessionPreview, showSession
 import { serverApi } from "../lib/api-client"
 import { backends, createBackendClient, type BackendClient } from "../lib/backend-client"
 import { backendEvents } from "../lib/backend-events"
+import { preferencesForBackend } from "./preferences"
 
 const instance = (id: string, backendId?: string): Instance => ({
   id, ...(backendId ? { backendId } : {}), folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}`,
@@ -25,6 +26,28 @@ const descriptor = (id: string): WorkspaceDescriptor => ({
 })
 
 describe("workspace lists of two backends", () => {
+  it("reconciles cold and loaded environment from the workspace's own backend", async t => {
+    let release!: () => void
+    const loading = new Promise<void>(resolve => { release = resolve })
+    const environmentVariables = { SHARED: "remote-secret", REMOTE_ONLY: "remote-only" }
+    const backend = createBackendClient({ id: "envRemote", baseUrl: "https://env.invalid", fetcher: async input => {
+      if (String(input).endsWith("/config/server")) { await loading; return Response.json({ environmentVariables, secureEnvVars: ["SHARED"] }) }
+      return Response.json({})
+    } })
+    ;(backends as Map<string, BackendClient>).set(backend.id, backend)
+    const detach = backendEvents.attach(backend.id, backend.events)
+    t.after(() => { detach(); backend.events.dispose(); (backends as Map<string, BackendClient>).delete(backend.id) })
+    try {
+      await refreshWorkspaceList(backend.id, { fetchWorkspaces: async () => [descriptor("env")] })
+      assert.deepEqual(instances().get("envRemote~env")?.environmentVariables, {})
+      release()
+      await preferencesForBackend(backend.id).ensureLoaded()
+      updateInstance("envRemote~env", { environmentVariables: { HOST_ONLY: "host-secret" } })
+      await refreshWorkspaceList(backend.id, { fetchWorkspaces: async () => [descriptor("env")] })
+      assert.deepEqual(instances().get("envRemote~env")?.environmentVariables, environmentVariables)
+      assert.deepEqual(preferencesForBackend(backend.id).serverSettings().secureEnvVars, ["SHARED"])
+    } finally { release(); removeInstance("envRemote~env", { authoritative: false }) }
+  })
   it("refuses a non-local refresh without that backend's API", async () => {
     await assert.rejects(refreshWorkspaceList("lab"), /needs its backend API/)
   })

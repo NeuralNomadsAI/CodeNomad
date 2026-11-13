@@ -13,7 +13,7 @@ import { missionLifecycleSource } from "../../src/stores/mission-lifecycle-inten
 import { missionFinishedSeen, markMissionsFinishedSeen } from "../../src/stores/mission-view-state"
 import { panelCleanupSchema, panelHistorySchema } from "../../src/lib/mission-panel-schema"
 import { preparationFixture, scheduledPreparation } from "../../../server/src/missions/mission-preparation-test-fixture"
-import { missionActivityContext } from "../../../server/src/missions/mission-activity-context"
+import { activityActorWindow, missionActivityContext } from "../../../server/src/missions/mission-activity-context"
 
 function seeded(count = 120, actors = 0) {
   const f = fixture(4264)
@@ -236,7 +236,7 @@ test("observation cycles retire old family membership without synthesizing whole
   const store = createMissionPanelInventory({ scope: () => "observation-cycle", tasks: async () => { throw new Error("No tasks") },
     read: (instanceId, selector, scope) => {
       if (selector.source !== "activity") return f.read(selector)
-      const context = missionActivityContext(map, { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false })
+      const context = activityActorWindow(missionActivityContext(map, { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }), 0, 160)
       const observed = { context, coverage: unknown ? "unknown" : "observed", requests: { state: unknown ? "unknown" : "observed", items: [] },
         activity: { actors: [{ sessionId: map.coordinatorSessionId, state: "idle-without-report" }], family: { state: unknown ? "unknown" : "observed", members: [{ sessionId: "child", parentSessionId: map.coordinatorSessionId, actorSessionId: map.coordinatorSessionId, kind: "ordinary" }] } } }
       return readMissionPanelWindow(selector, { ...scope, runTransfer: read => read(), exchange: async body => new Response(JSON.stringify(missionPanelPage({ source: "activity", missionID: map.id, projectID: map.projectID, revision: map.revision,

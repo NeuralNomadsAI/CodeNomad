@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, shell, dialog, type MenuItemConstructorOptions } from "electron"
+import { app, BrowserWindow, Menu, shell, dialog, webContents, type MenuItemConstructorOptions } from "electron"
+import { browserGuestOwner, focusedBrowserGuest } from "./browser-guests"
 import { NEW_WINDOW_ACCELERATOR } from "./menu-target"
 import { setWindowZoomLevel } from "./window-state"
 import { nativeMenuLabels, setViewMenuState, updateViewMenu, viewMenuItems } from "./view-menu"
@@ -23,7 +24,8 @@ let builtLabels: string | undefined
 export type TitlebarMenu = "file" | "edit" | "view" | "window" | "help"
 
 function target(local: boolean): BrowserWindow | null {
-  const window = (local ? actions?.getLocalTarget() : actions?.getWindowTarget()) ?? null
+  const window = (!local ? browserGuestOwner(webContents.getFocusedWebContents()) : undefined)
+    ?? (local ? actions?.getLocalTarget() : actions?.getWindowTarget()) ?? null
   return window && !window.isDestroyed() ? window : null
 }
 
@@ -91,6 +93,13 @@ function buildApplicationMenu() {
     const window = target(false)
     if (window) operation(window)
   }
+  const withGuest = (guestAction: (guest: Electron.WebContents) => void, appAction: (window: BrowserWindow) => void) => withTarget(window => {
+    const guest = focusedBrowserGuest(window, webContents.getFocusedWebContents())
+    if (guest) guestAction(guest)
+    else appAction(window)
+  })
+  const zoom = (change: number | null) => withGuest(guest => guest.setZoomLevel(change === null ? 0 : guest.getZoomLevel() + change),
+    window => setWindowZoomLevel(window, change === null ? 0 : window.webContents.getZoomLevel() + change))
 
   const template: MenuItemConstructorOptions[] = [
     ...(isMac ? [{ label: "CodeNomad", submenu: [
@@ -122,13 +131,13 @@ function buildApplicationMenu() {
     { id: "menu-view", label: l.view, submenu: [
       ...viewMenuItems(sendCommand, target(true)),
       { type: "separator" },
-      { label: l.reload, accelerator: "CmdOrCtrl+R", click: withTarget((window) => actions?.reload(window)) },
-      { label: l.forceReload, accelerator: "CmdOrCtrl+Shift+R", click: withTarget((window) => actions?.forceReload(window)) },
-      { label: l.devTools, accelerator: isMac ? "Alt+Command+I" : "Ctrl+Shift+I", click: withTarget((window) => window.webContents.toggleDevTools()) },
+      { label: l.reload, accelerator: "CmdOrCtrl+R", click: withGuest(guest => guest.reload(), window => actions?.reload(window)) },
+      { label: l.forceReload, accelerator: "CmdOrCtrl+Shift+R", click: withGuest(guest => guest.reloadIgnoringCache(), window => actions?.forceReload(window)) },
+      { label: l.devTools, accelerator: isMac ? "Alt+Command+I" : "Ctrl+Shift+I", click: withGuest(guest => guest.toggleDevTools(), window => window.webContents.toggleDevTools()) },
       { type: "separator" },
-      { label: l.actualSize, accelerator: "CmdOrCtrl+0", click: withTarget((window) => setWindowZoomLevel(window, 0)) },
-      { label: l.zoomIn, accelerator: "CmdOrCtrl+Plus", click: withTarget((window) => setWindowZoomLevel(window, window.webContents.getZoomLevel() + 0.5)) },
-      { label: l.zoomOut, accelerator: "CmdOrCtrl+-", click: withTarget((window) => setWindowZoomLevel(window, window.webContents.getZoomLevel() - 0.5)) },
+      { label: l.actualSize, accelerator: "CmdOrCtrl+0", click: zoom(null) },
+      { label: l.zoomIn, accelerator: "CmdOrCtrl+Plus", click: zoom(0.5) },
+      { label: l.zoomOut, accelerator: "CmdOrCtrl+-", click: zoom(-0.5) },
       { type: "separator" },
       { label: l.fullScreen, accelerator: isMac ? "Ctrl+Command+F" : "F11", click: withTarget((window) => window.setFullScreen(!window.isFullScreen())) },
     ] },

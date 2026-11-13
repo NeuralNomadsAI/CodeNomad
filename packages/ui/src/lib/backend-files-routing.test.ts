@@ -59,6 +59,7 @@ async function fixture(t: TestContext, id: string) {
 const cases: { path: string; method?: string; body?: string; call: (api: ServerApi, id: string) => Promise<unknown> }[] = [
   { path: "/worktrees?fresh=true", call: (a, id) => a.fetchWorktrees(id, true) },
   { path: "/git-branches?directory=%2Frepo", call: (a, id) => a.fetchLocalGitBranches(id, directory) },
+  { path: "/repository-source?directory=%2Frepo", call: (a, id) => a.fetchRepositorySource(id, directory) },
   { path: "/worktrees", method: "POST", body: '{"slug":"new","fromSlug":"root"}', call: (a, id) => a.createWorktree(id, { slug: "new", fromSlug: "root" }) },
   { path: "/worktrees/new?force=true", method: "DELETE", call: (a, id) => a.deleteWorktree(id, "new", { force: true }) },
   { path: "/worktrees/feature%2Fa%20b%25", method: "DELETE", call: (a, id) => a.deleteWorktree(id, "feature/a b%") },

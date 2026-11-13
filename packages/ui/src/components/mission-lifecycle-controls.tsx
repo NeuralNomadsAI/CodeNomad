@@ -1,4 +1,5 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { generateUUID } from "../lib/client-identity"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
@@ -84,7 +85,7 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     const mission = props.mission
     if (!replay && full()) return
     const input = replay ? durableRequest() ?? retry()?.input
-      : { action, expectedRevision: mission.revision, requestId: crypto.randomUUID(), ...(graceful ? { graceful: true as const } : {}) }
+      : { action, expectedRevision: mission.revision, requestId: generateUUID(), ...(graceful ? { graceful: true as const } : {}) }
     if (!input) return
     const intent = missionLifecycleIntents.reserve(scope, mission.id, input)
     if (!intent || !missionLifecycleIntents.start(intent)) return

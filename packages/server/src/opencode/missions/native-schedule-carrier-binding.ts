@@ -14,6 +14,7 @@ import { assertNativeScheduleWake, nativeScheduleWakeIdentity, nativeScheduleWak
 import type { NativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import { assertNativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
+import { nativeScheduleClaimAbandoned } from "./native-mission-schedule-wake-flight"
 import { z } from "zod"
 import { documentCounter, documentID, nativeDocumentID, MISSION_DOCUMENT_MAX_BYTES } from "../../missions/launch-policy"
 
@@ -227,9 +228,10 @@ export async function closeNativeScheduleCarrierClaimLocked(ctx: Context, missio
 
 /** One durable unresolved dispatch slot per Mission. Public KV publication is
  * serialized with document mutations across bundle incarnations in this service.
- * Native SQL CAS in the receiver owns high-water advancement. */
+ * Native SQL CAS in the receiver owns high-water advancement. `retry` replaces an
+ * exact prior claim only when it is still abandoned on its unconsumed run. */
 export function claimNativeScheduleCarrierWake(ctx: Context, wake: NativeScheduleWake, incarnation: NativeScheduleIncarnation,
-  run: Run, current: () => true, readAuxiliaryIntent?: () => Promise<NativeScheduleCarrierBinding | undefined>): Promise<boolean> {
+  run: Run, current: () => true, readAuxiliaryIntent?: () => Promise<NativeScheduleCarrierBinding | undefined>, retry = false): Promise<boolean> {
   return runMissionExclusive(`document-mutation:${nativeScheduleProjectToken(ctx)}`, async () => {
     assertNativeScheduleWake(wake)
     current()
@@ -242,8 +244,9 @@ export function claimNativeScheduleCarrierWake(ctx: Context, wake: NativeSchedul
       || binding.calendar.scheduleID !== wake.scheduleID || binding.calendar.highWater >= wake.run) return false
     const previous = await readClaim(ctx, wake.missionID, run)
     if (previous) {
-      if (previous.key === nativeScheduleWakeKey(wake)) return false
-      if (!await closeClaim(ctx, binding.document, previous, run, current)) return false
+      if (previous.key === nativeScheduleWakeKey(wake)) {
+        if (!retry || !nativeScheduleClaimAbandoned(previous, wake, incarnation)) return false
+      } else if (!await closeClaim(ctx, binding.document, previous, run, current)) return false
     }
     await publishClaim(ctx, { version: 1, key: nativeScheduleWakeKey(wake), wake: nativeScheduleWakeIdentity(wake), incarnation }, run, current)
     return true

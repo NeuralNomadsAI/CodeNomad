@@ -25,6 +25,12 @@ Si aucun serveur n’apparaît, vérifiez la Location active et sa configuration
 
 ## Activer les plugins à la portée Global ou Projet {#plugins}
 
+Les plugins gérés par CodeNomad restent hors de la liste ordinaire et de ses contrôles d’activation, de mise à jour et de retrait. CodeNomad les reconnaît à leur entrée d’installation validée et à l’emplacement de leur code identifié par son empreinte de contenu ; un plugin tiers de même nom ou ID conserve ses contrôles ordinaires.
+
+Si un plugin géré est désactivé, échoue au chargement ou reste sans confirmation de chargement, **Les plugins CodeNomad nécessitent votre attention** apparaît au-dessus de la liste Plugins. Ouvrez son bouton **i** (**Détails de** ce plugin) pour consulter l’erreur disponible et sa référence dans le journal OpenCode. Seul un plugin désactivé propose **Réactiver** : cette action ajoute une règle d’activation positive pour son ID exact, en conservant la règle de désactivation. Elle écrit dans la portée **Global** ou **Projet** de la règle de désactivation si elle est modifiable, sinon dans **Projet**. OpenCode continue de fonctionner ; l’avertissement reste jusqu’à ce que les événements natifs ou **Actualiser les contrôles des plugins** confirment que le plugin est actif.
+
+L’avertissement et ses détails indiquent l’origine de configuration **Héritée / externe** ou **Configuration virtuelle** selon le cas. Un libellé **Projet** distinct indique la destination de réactivation lorsqu’elle diffère de l’origine de la règle de désactivation.
+
 1. [Ajoutez le plugin](#plugin-sources) ou déclarez-le dans la configuration d’OpenCode ; puis ouvrez **Statut → Plugins**.
 2. Survolez ou focalisez son nom pour inspecter source, échec d’exécution et détails de cible de configuration.
 3. Basculez délibérément **Global** ou **Projet**. Attendez l’écriture et utilisez **Actualiser les contrôles des plugins** si l’état est incertain.
