@@ -117,7 +117,13 @@ reverse-proxy public origins and separately hosted UIs here, then restart.
 Forwarding headers grant neither origins nor local privileges; a proxy connected
 over loopback has the privileges of its loopback transport and needs an enforcing
 trusted perimeter. The configured UI development origin is admitted for local
-requests. CORS for opaque preview documents is scoped to live preview capabilities.
+requests. A same-origin local request (Origin equal to the targeted Host) also
+reaches the listening socket under the loopback names its bind address covers,
+with the socket's protocol and port: `localhost` for `127.0.0.1` and `::1`, plus
+`127.0.0.1` for `0.0.0.0`, plus `[::1]` for `::`. An alias page targeting another
+authority stays cross-origin, since the name can resolve to a sibling listener.
+Configured and development origins stay exact; their ports open no loopback
+alias. CORS for opaque preview documents is scoped to live preview capabilities.
 Preview capability admission requires the matched route's `previewCapability`
 configuration; a capability Host on an ordinary application route retains that
 route's authentication, origin and host-only checks.

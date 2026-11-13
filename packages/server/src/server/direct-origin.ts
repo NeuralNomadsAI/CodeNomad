@@ -4,6 +4,28 @@ import type { ServerMeta } from "../api-types"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
 
 type OriginRequest = Pick<FastifyRequest, "raw" | "headers">
+/** Loopback names that reach a socket bound to each address. */
+const LOOPBACK_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "127.0.0.1": ["localhost"],
+  "0.0.0.0": ["127.0.0.1", "localhost"],
+  "::1": ["localhost"],
+  "::": ["[::1]", "127.0.0.1", "localhost"],
+}
+
+/**
+ * Loopback aliases of a listening socket admitted for one request: only the alias the request
+ * itself targets (same-origin), compared as normalized origins so default ports match.
+ */
+export function sameOriginLoopbackAliases(socket: { address: string; port: number }, protocol: "http" | "https", host: string | undefined): string[] {
+  // A Host header is a bare authority: anything URL parsing would drop (path, userinfo, query) fails closed.
+  if (!host || /[\s/\\@?#]/.test(host)) return []
+  let target: string
+  try { target = new URL(`${protocol}://${host}`).origin } catch { return [] }
+  return (LOOPBACK_ALIASES[socket.address] ?? []).flatMap(name => {
+    const alias = new URL(`${protocol}://${name}:${socket.port}`).origin
+    return alias === target ? [alias] : []
+  })
+}
 
 /** Explicit origins only: credentials, paths, wildcards and opaque origins fail startup. */
 export function parseAllowedOrigins(value = ""): string[] {
@@ -33,9 +55,11 @@ export function registerDirectOriginPolicy(app: FastifyInstance, options: {
       const host = address.address.includes(":") ? `[${address.address}]` : address.address
       const protocol = request.raw.socket && "encrypted" in request.raw.socket ? "https" : "http"
       candidates.push(`${protocol}://${host}:${address.port}`)
-      if (isLocalRequest(request) && (address.address === "127.0.0.1" || address.address === "::1")) {
-        candidates.push(`${protocol}://localhost:${address.port}`)
-      }
+      // A page on this machine reaches this socket under the loopback names its bind
+      // address covers, including all interfaces. Other loopback addresses and ports, or
+      // the same name resolved to a sibling listener, can belong to other servers: an alias
+      // is admitted only for a request that targets that very alias (same-origin).
+      if (isLocalRequest(request)) candidates.push(...sameOriginLoopbackAliases(address, protocol, request.headers.host))
     }
     if (isLocalRequest(request) && options.devServerUrl) candidates.push(options.devServerUrl)
     return candidates.some(candidate => {
