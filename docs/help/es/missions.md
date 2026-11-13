@@ -56,6 +56,8 @@ El primer criterio es **Una vez, ahora**. **Añadir un criterio** agrega otro. E
 
 Hay una vez ahora, cada N horas, diario, días de semana, día del mes y cron. Se usa la zona guardada; su campo aparece si difiere de la del sistema. Los meses sin el día elegido se omiten. Una vez ahora fija su instante al iniciar y ofrece una sola oportunidad, que una condición puede consumir sin lanzar. Se necesitan OpenCode y el equipo de ejecución disponibles.
 
+Al iniciar o reanudar, la programación se prepara automáticamente en la configuración OpenCode del proyecto. Se conserva un OFF explícito: **Abrir los ajustes de programación**, cuando esté disponible, abre el archivo responsable; **i** muestra el origen o los detalles del entorno. El botón pulsado indica carga solo durante la solicitud. Un resultado sin confirmar permite verificarlo; recuperar la activación deja el inicio como acción explícita.
+
 ### Eventos y combinaciones {#scheduling-conditions}
 
 Elige **Actividad del repositorio → Evento** y los filtros opcionales en la misma tarjeta. Los commits de Git comparten este menú con los eventos del repositorio GitHub, GitLab o Gitea detectado automáticamente, como en Contribute (`upstream`, luego `origin`). Los tres admiten nuevas PR/MR, PR/MR fusionadas y nuevas issues, con **Autor (opcional)**, incluido `dependabot[bot]`. Elegir un evento fija su repositorio; los criterios guardados conservan su destino.

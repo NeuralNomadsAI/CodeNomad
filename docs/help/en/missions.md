@@ -62,6 +62,8 @@ Schedules include Once, now, Every N hours, Every day, Selected weekdays, Day of
 
 **Once, now** takes its instant at Start, rather than when the form opens. It offers one opportunity, which a condition can consume without launching. Choose a repeating schedule for later opportunities. Scheduling runs while its OpenCode service and execution host are available.
 
+Starting or resuming prepares scheduling in the project's OpenCode configuration automatically. An explicit OFF is preserved: use **Open scheduling settings** when offered to open the responsible file, and the **i** tip for its source or environment details. The clicked button shows loading only during the request. An unconfirmed result offers verification; recovered activation leaves Start explicit.
+
 ### Events and combinations {#scheduling-conditions}
 
 Choose **Repository activity → Event**, then any optional filters in the same card. Git branch commits share this menu with events from the automatically detected GitHub, GitLab or Gitea repository, using the same detection as Contribute (`upstream`, then `origin`). All three support new PRs/MRs, merged PRs/MRs and new issues, with optional **Author**, including `dependabot[bot]`. Choosing an event fixes its repository; saved criteria retain their targets.

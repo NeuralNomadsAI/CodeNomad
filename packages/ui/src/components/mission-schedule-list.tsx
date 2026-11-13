@@ -8,6 +8,7 @@ import { MissionActionBar } from "./mission-action-bar"
 import { missionLaunchLimit, missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
 import { MissionScheduleDiagnostics } from "./mission-schedule-diagnostics"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { openSettingsConfigFile } from "../stores/settings-screen"
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
@@ -61,7 +62,12 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const [expanded, expand] = createSignal(false)
       const primary = () => (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
       const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
-        disabled: !controls.capable(name), onSelect: () => controls.act(name) })
+        disabled: !controls.capable(name), busy: controls.pendingAction() === name, onSelect: () => controls.act(name) })
+      const status = () => controls.progress() ?? (controls.held() ? controls.busy() ? undefined
+        : controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain"
+        : controls.feedback() ?? (controls.refusal() ? "missions.scheduleList.activationRefused"
+        : controls.capability() === "missing" ? "missions.scheduling.capability.missing"
+        : controls.capability() === "activatable" ? "missions.scheduleList.runNowRequiresEnabled" : undefined))
       const zone = () => zoneOf(doc()), model = createMemo(() => missionLaunchModel(doc().configuration.launch))
       const editable = () => props.active() && props.enabled() && !list.error() && list.fresh(id)
         && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
@@ -69,14 +75,17 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? props.overview?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : props.overview ? props.overview.onToggle() : expand(value => !value)}
           primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
           onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
-          onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}
+          onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")} deleteBusy={controls.pendingAction() === "delete"}
           onOpenConversation={doc().pendingPassage ? () => props.onOpenConversation(doc().pendingPassage!.coordinatorSessionID) : undefined}
           secondary={<Show when={controls.held()}><button type="button" class="window-action" disabled={controls.busy()} onClick={() => void controls.reconcile()}>{t("missions.scheduling.readReceipt")}</button></Show>}
           feedback={<>
-            <Show when={controls.held()}><p role="status">{t(controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain")}</p></Show>
-            <Show when={controls.feedback()}>{key => <p role="status">{t(key())}</p>}</Show>
-            <Show when={controls.capability() === "missing"}><p role="status">{t("missions.scheduling.capability.missing")}</p></Show>
-            <Show when={controls.capability() === "activatable"}><p role="status">{t("missions.scheduleList.runNowRequiresEnabled")}</p></Show>
+            <p role="status">{status() ? t(status()!) : ""}</p>
+            <Show when={controls.refusal()}>{refusal => <>
+              <Show when={refusal().openable && refusal().configFileID}><button type="button" class="window-action"
+                onClick={() => void openSettingsConfigFile(refusal().configFileID!)}>{t("missionsPanel.action.openSchedulingSettings")}</button></Show>
+              <SettingsInfoTip text={`${t(refusal().layer === "environment" ? "missions.scheduleList.activationRefused.environment"
+                : "missions.scheduleList.activationRefused.document", { layer: refusal().layer })}${refusal().path ? `\n${refusal().path}` : ""}`} />
+            </>}</Show>
           </>} />
         <dl class="mission-schedule-facts">
           <dt>{t("missions.scheduling.when")}</dt><dd><bdi>{criteria(doc())}</bdi></dd>

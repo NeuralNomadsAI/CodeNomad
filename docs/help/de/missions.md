@@ -58,6 +58,8 @@ Verfügbar sind einmal jetzt, alle N Stunden, täglich, ausgewählte Wochentage,
 
 Einmal jetzt erhält seinen Zeitpunkt beim Start und bietet nur eine Gelegenheit; eine nicht erfüllte Bedingung kann diese verbrauchen. Zeitplanung benötigt den verfügbaren OpenCode-Dienst und Ausführungshost.
 
+Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet. Ein ausdrückliches OFF bleibt erhalten: **Zeitplanungseinstellungen öffnen** öffnet, wenn angeboten, die zuständige Datei; **i** zeigt Herkunft oder Umgebungsdetails. Nur während der Anfrage zeigt die betätigte Schaltfläche den Ladevorgang. Ein unbestätigtes Ergebnis bietet eine Prüfung; nach wiederhergestellter Aktivierung starten Sie ausdrücklich selbst.
+
 ### Ereignisse und Kombinationen {#scheduling-conditions}
 
 Wählen Sie **Repository-Aktivität → Ereignis**, danach optionale Filter in derselben Karte. Git-Commits teilen dieses Menü mit Ereignissen des automatisch erkannten GitHub-, GitLab- oder Gitea-Repositorys, wie in Contribute (`upstream`, dann `origin`). Alle drei unterstützen neue und zusammengeführte PRs/MRs sowie neue Issues mit optionalem **Autor**, einschließlich `dependabot[bot]`. Die Ereignisauswahl legt das Repository fest; gespeicherte Kriterien behalten ihr Ziel.

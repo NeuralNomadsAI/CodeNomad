@@ -62,6 +62,8 @@ Les horaires proposent Une fois, maintenant, Toutes les N heures, Tous les jours
 
 **Une fois, maintenant** prend son instant au démarrage, pas à l’ouverture du formulaire. Il offre une seule occasion, qu’une condition peut consommer sans lancement. Choisissez une récurrence pour des occasions ultérieures. La programmation fonctionne tant que son service OpenCode et son hôte d’exécution sont disponibles.
 
+Le démarrage ou la reprise prépare automatiquement la programmation dans la configuration OpenCode du projet. Un OFF explicite est conservé : **Ouvrir les réglages de programmation**, lorsque proposé, ouvre le fichier responsable ; le **i** révèle sa provenance ou les détails d’environnement. Le bouton sollicité affiche le chargement pendant la requête seulement. Un résultat non confirmé propose une vérification ; l’activation récupérée laisse le démarrage explicite.
+
 ### Événements et combinaisons {#scheduling-conditions}
 
 Choisissez **Activité du dépôt → Événement**, puis les filtres éventuels dans la même carte. Les commits Git partagent ce menu avec les événements du dépôt GitHub, GitLab ou Gitea détecté automatiquement, comme dans Contribute (`upstream`, puis `origin`). Les trois proposent les nouvelles PR/MR, les PR/MR fusionnées et les nouvelles issues, avec un **Auteur (facultatif)**, y compris `dependabot[bot]`. Choisir un événement fixe son dépôt ; les critères enregistrés conservent leur cible.

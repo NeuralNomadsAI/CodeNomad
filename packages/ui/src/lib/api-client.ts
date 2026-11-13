@@ -837,12 +837,13 @@ export const serverApi = {
   controlMissionSchedule(instanceId: string, missionID: string, input: { action: "play" | "resume" | "pause" | "stop" | "check" | "run-now" | "delete";
     requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
-      method: "POST", body: JSON.stringify(input) })
+      method: "POST", body: JSON.stringify(input), signal: AbortSignal.timeout(30_000) })
   },
   missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
     const url = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
-    return apply ? request(url, { method: "POST", body: JSON.stringify(input) })
-      : secondaryRead(undefined, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`))
+    const signal = AbortSignal.timeout(30_000)
+    return apply ? request(url, { method: "POST", body: JSON.stringify(input), signal })
+      : secondaryRead(signal, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`, { signal }))
   },
   /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
   fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {

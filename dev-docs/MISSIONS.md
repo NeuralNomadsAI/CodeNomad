@@ -474,7 +474,7 @@ Scheduling. Agents and models uses the shared Settings disclosure with an inline
 requested-profile summary and Agent / Model / Thinking columns. Its fold state
 survives editor drafts; catalog demand follows its visibility. Options and Scheduling
 stay open. Notes begins at one line and grows with its content. Blocking profile
-errors remain beside the disclosure; scheduling activation is confirmed at Play.
+errors remain beside the disclosure; scheduling activation is prepared at Play.
 Objective, Title and Notes share the instructions group. The footer names Save
 configuration with a text button; the Configuration picker uses the bookmark glyph.
 Catalog reads use the panel's existing read indicator and preserve form geometry.
@@ -585,12 +585,18 @@ last capability display during same-owner revalidation, so a passive
 refresh preserves an in-flight pointer click; control dispatch rereads capability.
 `MissionActionBar` retains its primary glyph for an unchanged action key, preserving
 the native pointer target while a fresh action object updates its other fields.
-Play and Resume use informed native activation. Run now requires an enabled
+Play and Resume prepare native activation without a confirmation dialog when a ready
+receipt is missing, including with an already enabled effective setting. Run now requires an enabled
 effective native setting, with an explicit disabled explanation and a fresh
 capability check before reservation. Its click preserves settings activation.
-First native activation
-asks for confirmation with the exact configuration paths; an uncertain activation
-keeps Play unsent. A direct positive activation acknowledgement may continue the
+Explicit OFF exposes a scheduling-settings action only for a server-openable configuration
+ID; the responsible layer/path or environment explanation stays behind a keyboard-focusable
+information tip. The existing configuration editor selects that exact catalogued file.
+The requested action alone shows a full-opacity 14px loading glyph and `aria-busy`
+during its bounded HTTP requests, with one persistent external status announcement;
+confirmation dialogs and uncertain or confirmed-publication waits keep their ordinary glyphs.
+Reduced motion uses the shared animation limit. An uncertain activation keeps Play
+unsent and exposes the original receipt read. A direct positive activation acknowledgement may continue the
 same user intention under its original view fences. Read-only recovery of activation
 retains the publication barrier and leaves the next Play explicit. Never replay an
 action or continue Play automatically from recovered activation or display publication.

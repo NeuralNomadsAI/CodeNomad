@@ -56,6 +56,8 @@ Alt ajan derinliği bilgileri etkin kaynağı **OpenCode yapılandırma dosyası
 
 Bir kez şimdi, N saatte bir, günlük, haftanın günleri, ayın günü ve cron seçenekleri vardır. Kayıtlı saat dilimi kullanılır; sistemden farklıysa dilim alanı görünür. Seçilen günün bulunmadığı ay atlanır. Bir kez şimdi, zamanı Başlat'ta alır; koşul bu tek fırsatı çalıştırmadan tüketebilir. OpenCode hizmeti ve yürütme makinesi kullanılabilir olmalıdır.
 
+Başlatma veya sürdürme sırasında zamanlama projenin OpenCode yapılandırmasında otomatik hazırlanır. Açık OFF korunur: sunulduğunda **Zamanlama ayarlarını aç** sorumlu dosyayı açar; **i** kaynak veya ortam ayrıntılarını gösterir. Tıklanan düğme yalnızca istek sırasında yükleniyor durumunu gösterir. Onaylanmamış sonuç doğrulanabilir; etkinleştirme kurtarıldıktan sonra başlatma açık bir işlem olarak kalır.
+
 ### Olaylar ve birleşimler {#scheduling-conditions}
 
 **Depo etkinliği → Olay** seçin, ardından aynı karttaki isteğe bağlı filtreleri kullanın. Git commit’leri, otomatik algılanan GitHub, GitLab veya Gitea deposunun olaylarıyla aynı menüdedir. Algılama Contribute ile ortaktır: önce `upstream`, sonra `origin`. Üçü de yeni ve birleştirilmiş PR/MR ile yeni issue olaylarını ve `dependabot[bot]` dahil isteğe bağlı **Yazar** filtresini destekler. Olay seçimi depoyu sabitler; kayıtlı ölçütler hedeflerini korur.
