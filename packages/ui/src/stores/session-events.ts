@@ -24,8 +24,10 @@ import {
   getRequestIdFromPermissionReply,
 } from "../types/permission"
 import type { PermissionRequest } from "../types/permission"
-import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
-import { preferences } from "./preferences"
+import { showToastNotification, type ToastHandle, ToastVariant, type ToastPayload } from "../lib/notifications"
+import { uiState } from "./preferences"
+import { getInstanceLabel } from "../lib/instance-label"
+import { setActiveSessionFromList } from "./session-state"
 import {
   instances,
   markPermissionReplied,
@@ -77,7 +79,7 @@ const pendingSessionFetches = new Map<string, {
 const nativeLifecycleGenerations = new Map<string, number>()
 // The live backoff countdown of one session; it ends when that session's next
 // attempt starts or its run settles.
-let activeRetryToast: { key: string; handle: ToastHandle } | null = null
+const activeRetryToasts = new Map<string, { key: string; handle: ToastHandle }>()
 const movedSessionRefreshTimers = new Map<string, () => void>()
 
 function captureEventAuthority(instanceId: string) {
@@ -100,9 +102,11 @@ function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generat
 }
 
 function dismissRetryToast(instanceId: string, sessionId: string): void {
-  if (activeRetryToast?.key !== `${instanceId}\0${sessionId}`) return
-  activeRetryToast.handle.dismiss()
-  activeRetryToast = null
+  const backendId = parseInstanceKey(instanceId).backendId
+  const active = activeRetryToasts.get(backendId)
+  if (active?.key !== `${instanceId}\0${sessionId}`) return
+  active.handle.dismiss()
+  activeRetryToasts.delete(backendId)
 }
 
 function speakCompletedAssistantText(instanceId: string, sessionId: string): void {
@@ -362,9 +366,30 @@ function isNotifiableSession(instanceId: string, sessionId: string | undefined |
   return true
 }
 
-function getInstanceDisplayName(instanceId: string): string {
-  const instanceFolder = instances().get(instanceId)?.folder ?? instanceId
-  return instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
+function getInstanceDisplayName(instanceId: string, detail?: string): string {
+  const instance = instances().get(instanceId)
+  const label = detail || (instance ? getInstanceLabel(instance) : instanceId)
+  const { backendId } = parseInstanceKey(instanceId)
+  if (backendId === "local") return label
+  const server = uiState().remoteServers.find(profile => profile.id === backendId)?.name ?? backendId
+  return tGlobal("sessionEvents.notify.serverTitle", { server, label })
+}
+
+/** Keep navigation and displayed notices on the exact event attachment. */
+function showInstanceToast(instanceId: string, sessionId: string | undefined | null, payload: ToastPayload): ToastHandle {
+  const authority = captureEventAuthority(instanceId)
+  const target = { backendId: parseInstanceKey(instanceId).backendId, instanceId, ...(sessionId ? { sessionId } : {}) }
+  return showToastNotification({ ...payload, signal: authority.signal, action: {
+    label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"), target,
+    onClick: async () => {
+      if (!authority.current()) return
+      const { selectInstanceTab } = await import("./app-tabs")
+      if (!authority.current() || !instances().has(instanceId)) return
+      if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
+      selectInstanceTab(instanceId)
+      if (sessionId) setActiveSessionFromList(instanceId, sessionId)
+    },
+  } })
 }
 
 function getSessionTitle(instanceId: string, sessionId: string | undefined | null): string {
@@ -381,7 +406,7 @@ function notifySessionAttention(category: "needsInput" | "sessionDone", instance
   const message = label
     ? tGlobal(category === "needsInput" ? "sessionEvents.notify.needsInput" : "sessionEvents.notify.done", { label })
     : tGlobal(`settings.notifications.category.${category}`)
-  showToastNotification({ category, title: getInstanceDisplayName(instanceId), message, variant: "info" })
+  showInstanceToast(instanceId, sessionId, { category, title: getInstanceDisplayName(instanceId), message, variant: "info" })
 }
 
 queueMicrotask(() => {
@@ -640,10 +665,11 @@ function showRetryToast(instanceId: string, sessionId: string, retry: SessionRet
       ? tGlobal("sessionList.status.retryingIn", { seconds: String(remainingSeconds) })
       : tGlobal("sessionList.status.retrying")
   const label = getSessionTitle(instanceId, sessionId)
-  activeRetryToast?.handle.dismiss()
+  const backendId = parseInstanceKey(instanceId).backendId
+  activeRetryToasts.get(backendId)?.handle.dismiss()
   // A live retry status replaced by the next attempt, not an event to keep.
-  activeRetryToast = { key: `${instanceId}\0${sessionId}`, handle: showToastNotification({ category: "sessions", transient: true,
-    title: label || getInstanceDisplayName(instanceId),
+  activeRetryToasts.set(backendId, { key: `${instanceId}\0${sessionId}`, handle: showInstanceToast(instanceId, sessionId, { category: "sessions", transient: true,
+    title: getInstanceDisplayName(instanceId, label),
     message: tGlobal("sessionList.status.retryToast", {
       countdown,
       message: retry.message,
@@ -651,7 +677,7 @@ function showRetryToast(instanceId: string, sessionId: string, retry: SessionRet
     }),
     variant: "error",
     duration: 7000,
-  }) }
+  }) })
 }
 
 function handleSessionCompacted(instanceId: string, event: SessionCompactionEnded): void {
@@ -680,15 +706,15 @@ function announceCompaction(instanceId: string, event: SessionCompactionEnded): 
   const sessionID = event.data.sessionID
   // Announced by the project whose list shows the session, not by an owning parent.
   if (sessions().get(instanceId)?.has(sessionID) && !isSessionInWorkspaceScope(instanceId, sessionID)) return
-  if (!claimCompactionNotice(event)) return
+  const { backendId } = parseInstanceKey(instanceId)
+  if (!claimCompactionNotice(event, backendId)) return
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
   const label = session?.title?.trim() ? session.title : sessionID
-  const instanceFolder = instances().get(instanceId)?.folder ?? instanceId
-  const instanceName = instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
+  const instanceName = getInstanceDisplayName(instanceId)
   const displayLabel = label ? `"${label}"` : sessionID
 
-  compactionBubbles.show(sessionID, COMPACTION_TOAST_MS, () => showToastNotification({ category: "sessions",
+  compactionBubbles.show(`${backendId}\0${sessionID}`, COMPACTION_TOAST_MS, () => showInstanceToast(instanceId, sessionID, { category: "sessions",
     title: instanceName,
     message: tGlobal("sessionEvents.sessionCompactedToast", { label: displayLabel }),
     variant: "info",
@@ -717,7 +743,7 @@ function handleSessionError(instanceId: string, event: SessionExecutionFailed): 
   })
 }
 
-function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
+function handleTuiToast(instanceId: string, event: TuiToastShow): void {
   const payload = event.data
   if (!payload || typeof payload.message !== "string" || typeof payload.variant !== "string") return
   if (!payload.message.trim()) return
@@ -726,8 +752,10 @@ function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
     ? (payload.variant as ToastVariant)
     : "info"
 
-  showToastNotification({ category: "opencode",
-    title: typeof payload.title === "string" ? payload.title : undefined,
+  showInstanceToast(instanceId, undefined, { category: "opencode",
+    title: parseInstanceKey(instanceId).backendId === "local"
+      ? typeof payload.title === "string" ? payload.title : undefined
+      : getInstanceDisplayName(instanceId, typeof payload.title === "string" ? payload.title : undefined),
     message: payload.message,
     variant,
     duration: typeof payload.duration === "number" ? payload.duration : undefined,

@@ -87,6 +87,8 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 
 ## Notifications et badges {#notifications}
 
+Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiquent le nom du serveur. **Voir la conversation** ouvre ce projet et cette conversation précis ; détacher le serveur efface ses notifications. Les réglages Images et Recherche web suivent le serveur du projet, y compris ses valeurs globales.
+
 1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.
 2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander** relance la demande tant que l’autorisation manque.
 3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est au premier plan. Sinon, elles s’affichent dès qu’elle ne l’est pas, même si elle reste ouverte à l’écran.
