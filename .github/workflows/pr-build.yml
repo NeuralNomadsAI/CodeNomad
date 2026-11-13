@@ -396,6 +396,9 @@ jobs:
       - name: Test CI fixture diagnostics and artifact announcements
         run: node --test scripts/native-fixture-diagnostics.test.mjs scripts/native-pruning-ready.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs .github/scripts/download-cache.test.cjs
 
+      - name: Test built sandboxed Electron preloads
+        run: xvfb-run -a npm run test:preloads --workspace @neuralnomads/codenomad-electron-app
+
       - name: Test Electron client state
         env:
           CODENOMAD_TEST_ZSH: /bin/zsh

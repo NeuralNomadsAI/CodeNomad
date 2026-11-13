@@ -21,7 +21,7 @@ const TOKEN = "22222222-2222-4222-8222-222222222222"
 async function appServer(t: TestContext, label: string) {
   const sockets = new Set<Socket>(), streams = new Set<http.ServerResponse>(), upgrades = new Set<Socket>()
   const probes: string[] = []
-  let document = 0
+  let documentCount = 0
   const server = http.createServer((request, reply) => {
     if (request.url === "/probe") { probes.push(request.headers.referer ?? ""); return reply.end("") }
     if (request.url === "/app.css") return reply.writeHead(200, { "content-type": "text/css" }).end("h1 { color: rgb(10,20,30) }")
@@ -43,7 +43,7 @@ async function appServer(t: TestContext, label: string) {
     `)
     reply.writeHead(200, { "content-type": "text/html", "set-cookie": `app=${label}; HttpOnly` }).end(`
       <!doctype html><html><head><link rel="stylesheet" href="/app.css"></head><body>
-      <h1 data-page="${++document}">App ${label}</h1><output id="asset"></output><output id="fetch"></output><output id="ws"></output>
+      <h1 data-page="${++documentCount}">App ${label}</h1><output id="asset"></output><output id="fetch"></output><output id="ws"></output>
       <a href="/next?q=1#part">Next</a><script src="/app.js"></script></body></html>`)
   })
   server.on("connection", socket => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)) })
@@ -145,16 +145,18 @@ test("two real remote apps load HTML/assets/fetch/WS and retain only logical add
   assert.match(initial!, /\.preview\.localhost:\d+\/previews\//)
   assert.equal(await section(f.page, "a").locator("input").inputValue(), `${f.apps[0]!.origin}/start`)
   await appFrame(f.page, "a").locator("a").click()
-  await f.page.waitForFunction(() => document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/next?q=1#part"))
+  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/next?q=1#part"))
   await section(f.page, "a").getByRole("button", { name: "Back", exact: true }).click()
-  await f.page.waitForFunction(() => document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/start"))
+  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/start"))
   await section(f.page, "a").getByRole("button", { name: "Forward", exact: true }).click()
-  await f.page.waitForFunction(() => document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/next?q=1#part"))
-  const document = await appFrame(f.page, "a").locator("h1").getAttribute("data-page")
+  await f.page.waitForFunction(() => globalThis.document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/next?q=1#part"))
+  const documentId = await appFrame(f.page, "a").locator("h1").getAttribute("data-page")
   await section(f.page, "a").getByRole("button", { name: "Refresh", exact: true }).click()
-  await appFrame(f.page, "a").locator(`h1:not([data-page="${document}"])`).waitFor()
+  await appFrame(f.page, "a").locator(`h1:not([data-page="${documentId}"])`).waitFor()
   assert.ok((await section(f.page, "a").locator("input").inputValue()).endsWith("/next?q=1#part"))
   const history = await f.page.evaluate(() => (window as any).remotePreviews.history("a"))
+  assert.deepEqual(history.urls, [`${f.apps[0]!.origin}/start`, `${f.apps[0]!.origin}/next?q=1#part`])
+  assert.equal(history.index, 1)
   assert.ok(history.urls.every((url: string) => !url.includes(".preview.localhost")))
   assert.deepEqual(f.errors, [])
 })
@@ -206,10 +208,10 @@ test("shared native remote guards remove URL-exporting browser actions while ord
   assert.deepEqual(f.apps[1]!.probes, [""])
   await f.page.context().addInitScript(program)
   await frame.evaluate(url => {
-    const nested = document.createElement("iframe")
+    const nested = globalThis.document.createElement("iframe")
     nested.dataset.nativeAudit = "true"
     nested.src = `${url}/start`
-    document.body.append(nested)
+    globalThis.document.body.append(nested)
   }, f.apps[1]!.origin)
   await appFrame(f.page, "a").frameLocator('iframe[data-native-audit]').locator("h1").waitFor()
   const nested = f.page.frames().find(frame => frame.url() === `${f.apps[1]!.origin}/start`)!
