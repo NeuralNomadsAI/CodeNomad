@@ -7,13 +7,27 @@ const globalScope = globalThis as unknown as Record<string, unknown>
 
 const armed: Array<() => void> = []
 const cancelled: number[] = []
+let originalRequest: unknown
+let hadRequest = false
+let originalCancel: unknown
+let hadCancel = false
 
 afterEach(() => {
   armed.length = 0
   cancelled.length = 0
+  // Node has no animation frames: restore the original state exactly,
+  // including absence, so later tests in this process pick their own path.
+  if (hadRequest) globalScope.requestAnimationFrame = originalRequest
+  else delete globalScope.requestAnimationFrame
+  if (hadCancel) globalScope.cancelAnimationFrame = originalCancel
+  else delete globalScope.cancelAnimationFrame
 })
 
 function installFrameScheduler() {
+  hadRequest = "requestAnimationFrame" in globalScope
+  originalRequest = globalScope.requestAnimationFrame
+  hadCancel = "cancelAnimationFrame" in globalScope
+  originalCancel = globalScope.cancelAnimationFrame
   globalScope.requestAnimationFrame = (callback: () => void) => {
     armed.push(callback)
     return armed.length
