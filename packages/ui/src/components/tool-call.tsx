@@ -321,15 +321,16 @@ function ToolCallDetails(props: {
   const renderError = () => {
     const state = props.toolState()
     if (state?.status === "error" && state.error) {
-      const truncated = state.error.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
+      const error = renderer().getErrorText?.(rendererContext) ?? state.error
+      const truncated = error.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
       return (
         <div class="tool-call-error-content">
-          <BoundedText source={state.error} revealTarget={textRevealTarget("error")}>
+          <BoundedText source={error} revealTarget={textRevealTarget("error")}>
             {(text) => (
               <div>
                 <strong>{props.t("toolCall.error.label")}</strong> {text()}
                 <Show when={truncated}>
-                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
+                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
                     <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
