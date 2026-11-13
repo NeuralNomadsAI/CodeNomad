@@ -16,6 +16,7 @@ let isInitialized = false
 let highlightSuppressed = false
 let escapeRawHtmlEnabled = false
 let literalRawHtmlEnabled = false
+let originRelativeImagesEnabled = true
 let defaultCodeBlockWrapEnabled = true
 let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
@@ -126,6 +127,17 @@ function sanitizeRawHtmlFragment(html: string): string {
 
     if (!ALLOWED_RAW_HTML_TAGS.has(tagName)) {
       element.replaceWith(...Array.from(element.childNodes))
+      return
+    }
+
+    const source = element.getAttribute("src")?.trim() ?? ""
+    if (tagName === "img" && !originRelativeImagesEnabled && /^(\/|\.\/|\.\.\/)/.test(source)) {
+      const label = document.createElement("span")
+      label.className = "markdown-local-image"
+      label.dataset.localImage = source
+      label.title = source
+      label.textContent = element.getAttribute("alt")?.trim() || source.split("/").filter(Boolean).at(-1) || source
+      element.replaceWith(label)
       return
     }
 
@@ -660,6 +672,7 @@ export async function renderMarkdown(
     suppressHighlight?: boolean
     escapeRawHtml?: boolean
     literalRawHtml?: boolean
+    originRelativeImages?: boolean
     defaultCodeBlockWrap?: boolean
   },
 ): Promise<string> {
@@ -682,10 +695,12 @@ export async function renderMarkdown(
   const previousSuppressed = highlightSuppressed
   const previousEscapeRawHtml = escapeRawHtmlEnabled
   const previousLiteralRawHtml = literalRawHtmlEnabled
+  const previousOriginRelativeImages = originRelativeImagesEnabled
   const previousDefaultCodeBlockWrap = defaultCodeBlockWrapEnabled
   highlightSuppressed = suppressHighlight
   escapeRawHtmlEnabled = escapeRawHtml
   literalRawHtmlEnabled = literalRawHtml
+  originRelativeImagesEnabled = options?.originRelativeImages ?? true
   defaultCodeBlockWrapEnabled = defaultCodeBlockWrap
 
   try {
@@ -697,6 +712,7 @@ export async function renderMarkdown(
     highlightSuppressed = previousSuppressed
     escapeRawHtmlEnabled = previousEscapeRawHtml
     literalRawHtmlEnabled = previousLiteralRawHtml
+    originRelativeImagesEnabled = previousOriginRelativeImages
     defaultCodeBlockWrapEnabled = previousDefaultCodeBlockWrap
   }
 }
