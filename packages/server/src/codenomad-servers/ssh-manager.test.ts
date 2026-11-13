@@ -57,6 +57,26 @@ test("SSH host retargeting revokes credentials and the old tunnel", async t => {
   assert.equal(f.remote.state.logins, 1)
 })
 
+test("SSH relay proof survives tunnel recovery and same-principal login but retargeting revokes it before dialing", async t => {
+  const f = await fixture(t)
+  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "ssh-server" } })
+  await f.login()
+  const metadata = await f.manager.relay("saved", "/api/meta", {}, RELAY_BOOTSTRAP)
+  const proof = metadata.headers.get(RELAY_AUTHORITY_HEADER)
+  assert.ok(proof)
+  f.forwards[0]!.die()
+  assert.equal((await f.manager.relay("saved", "/api/auth/status", {}, proof)).status, 200)
+  await f.login()
+  assert.equal((await f.manager.relay("saved", "/api/meta", {}, proof)).headers.get(RELAY_AUTHORITY_HEADER), proof)
+  const requests = f.remote.state.requests.length, forwards = f.forwards.length
+  f.profiles[0]!.ssh.host = "other"
+  f.manager.reconcile()
+  await assert.rejects(f.manager.relay("saved", "/api/auth/status", {}, proof), { code: "unreachable" })
+  assert.equal(f.remote.state.requests.length, requests)
+  assert.equal(f.forwards.length, forwards)
+  assert.equal(f.forwards.at(-1)!.closed, true)
+})
+
 test("SSH failure never falls back to the profile's local loopback address", async t => {
   const f = await fixture(t)
   f.profiles[0]!.baseUrl = f.remote.origin

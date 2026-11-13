@@ -1,5 +1,5 @@
 {
-  "stores/backend-registry.ts": ["continuation:delegated x1","delegated:backend x6","network:fetch x1"],
+  "stores/backend-registry.ts": ["continuation:delegated x1","delegated:backend x9","network:fetch x1"],
   "stores/remote-backends.ts": ["delegated:backend x2"],
   "App.tsx": ["continuation:createEffect x2","continuation:delegated x5","continuation:map x2","continuation:onMount x2","continuation:setInterval x1","delegated:backend x58"],
   "components/agent-selector.tsx": ["continuation:createEffect x1","continuation:then x1","delegated:backend x1"],
