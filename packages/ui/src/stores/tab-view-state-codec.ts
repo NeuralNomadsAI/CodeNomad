@@ -2,6 +2,7 @@ import { historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/bro
 import type { MissionReaderTarget, MissionTaskSelectionKey } from "./mission-view-state"
 import type { FilesPanelMode } from "../components/instance/shell/right-panel/files-panel-state"
 import type { BrowserViewportPreset } from "../components/browser-frame"
+import { missionProfileRoles } from "../../../server/src/missions/playbook-profiles"
 
 export interface RestorableTabPreview {
   targetUrl: string
@@ -16,6 +17,7 @@ export interface RestorableTabMissionView {
   selectedTask?: MissionTaskSelectionKey
   reader?: MissionReaderTarget
   expanded?: readonly string[]
+  disclosures?: Record<string, boolean>
 }
 export interface RestorableTabViewState {
   version: 1
@@ -59,6 +61,8 @@ export function parseLegacySessionPreviews(value: string | null): Array<[string,
 function normalizeMissionView(value: unknown): RestorableTabMissionView | undefined {
   if (!record(value)) return
   const result: RestorableTabMissionView = {}
+  if (record(value.disclosures)) result.disclosures = Object.fromEntries(Object.entries(value.disclosures)
+    .filter((entry): entry is [string, boolean] => /^[a-zA-Z0-9_-]{11}$/.test(entry[0]) && typeof entry[1] === "boolean").slice(-160))
   for (const key of ["selected", "selectedRecurrence", "selectedScheduled"] as const) {
     if (id(value[key])) result[key] = value[key]
   }
@@ -73,6 +77,7 @@ function normalizeMissionView(value: unknown): RestorableTabMissionView | undefi
     || (r.kind === "recurrence" && (!id(r.instanceId) || !id(r.projectID)))
     || (r.taskMode !== undefined && r.taskMode !== "native" && r.taskMode !== "independent")
     || (r.scheduleOwner !== undefined && r.scheduleOwner !== "scheduled")) return result
+  if (r.kind === "playbook" && !Object.prototype.hasOwnProperty.call(missionProfileRoles, r.missionId)) return result
   const reader: MissionReaderTarget = { missionId: r.missionId, kind: r.kind as MissionReaderTarget["kind"] }
   for (const key of ["itemId", "instanceId", "projectID"] as const) if (id(r[key])) reader[key] = r[key]
   if (r.taskMode === "native" || r.taskMode === "independent") reader.taskMode = r.taskMode
@@ -125,6 +130,12 @@ export function normalizeTabViewState(
     }
   }
   const missions = normalizeMissionView(value.missions)
+  if (missions?.disclosures) {
+    for (const key of Object.keys(missions.disclosures)) {
+      if (JSON.stringify(missions).length <= 4096) break
+      delete missions.disclosures[key]
+    }
+  }
   if (missions && JSON.stringify(missions).length <= 4096) result.missions = missions
   if (id(value.rightPanelTab)) result.rightPanelTab = value.rightPanelTab
   if (value.filesMode === "workspace" || value.filesMode === "changes" || value.filesMode === "history") result.filesMode = value.filesMode

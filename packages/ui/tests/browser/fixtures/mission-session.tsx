@@ -19,6 +19,6 @@ Object.assign(fixture, {
   readMission: async () => {
     await missionStore.ensure("browser-instance")
     showSessionChatFor("browser-session", "browser-instance")
-    updateMissionProjectView("/fixture", { reader: { missionId: "reader", kind: "report", itemId: "report-reader" } })
+    updateMissionProjectView("browser-instance", { reader: { missionId: "reader", kind: "report", itemId: "report-reader" } })
   },
 })

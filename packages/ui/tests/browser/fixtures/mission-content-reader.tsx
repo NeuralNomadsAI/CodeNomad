@@ -19,11 +19,11 @@ addInstance({ id: instanceId, folder: scope, port: 0, pid: 0, status: "ready", p
   metadata: { project: { id: "project", directory: scope, canonical: scope } } })
 ;(window as any).contentReader = {
   show: (missionId: string, kind: "overview" | "report" | "task" | "change" = "overview", itemId?: string) =>
-    updateMissionProjectView(scope, { reader: { missionId, kind, itemId } }),
+    updateMissionProjectView(instanceId, { reader: { missionId, kind, itemId } }),
   refresh: () => missionStore.refresh(instanceId),
 }
 render(() => <ConfigProvider><I18nProvider>
   <main class="mission-transcript-surface" style={{ height: "760px" }}>
-    <Show when={missionProjectView(scope).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
+    <Show when={missionProjectView(instanceId).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
   </main>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)

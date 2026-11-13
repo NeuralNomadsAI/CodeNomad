@@ -12,6 +12,9 @@ import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { build } from "esbuild"
+import type { MissionMap } from "../../../server/src/api-types"
+import { missionPanelRoute } from "./mission-panel-route"
+import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 
 let server: ViteDevServer, browser: Browser, base: string
 const pageRequests: string[] = []
@@ -165,6 +168,81 @@ for (const host of ["web", "tauri", "electron"]) {
       await paneB.getByRole("button", { name: "Close", exact: true }).click()
       await rootB.getByRole("button", { name: "Open web preview", exact: true }).click()
       await paneB.waitFor({ state: "visible" })
+      assert.deepEqual(errors, [])
+    } finally {
+      if (native) { await native.app.close(); await rm(native.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+      else await page.close()
+    }
+  })
+}
+
+for (const host of ["web", "tauri", "electron"]) {
+  test(`${host}: mission readers, selection and files arbitrate only their own occurrence`, { timeout: 120_000 }, async () => {
+    const native = host === "electron" ? await launchHistoryElectron() : undefined
+    const page = native?.page ?? await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 1400, height: 900 } })
+    const errors: string[] = [], writes: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    const a = "header-windows", b = "header-duplicate"
+    const rootA = page.locator(`[data-occurrence="${a}"]`), rootB = page.locator(`[data-occurrence="${b}"]`)
+    const select = (id: string) => page.evaluate(id => (window as any).fixture.selectOccurrence(id), id)
+    const state = (id: string) => page.evaluate(id => (window as any).fixture.presentation(id), id)
+    const maps: MissionMap[] = ["a", "b"].map(id => ({
+      version: 1, id: `mission-${id}`, projectID: "fixture", projectCanonical: "/repo", objective: `Objective ${id}`, title: `Mission ${id}`,
+      template: "custom", coordinatorSessionId: "session", status: "active", runState: "running",
+      actors: [], tasks: [], frontier: [], claims: [], history: [], historyTruncated: false, revision: 1, createdAt: 1, updatedAt: 1,
+      reports: [{ id: `report-${id}`, taskKey: "", sessionId: "session", outcome: "completed", summary: `Independent report ${id}`,
+        evidence: [], next: [], createdAt: 1 }],
+    }))
+    try {
+      await prepare(page, host, "&duplicate=1&missions=1")
+      const routeMissions = missionPanelRoute(async route => {
+        const request = route.request(), path = new URL(request.url()).pathname
+        if (path.endsWith("/content")) return route.fulfill({ json: missionContentFixture(request.url(), request.method(), maps) })
+        if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "fixture", missions: panelMissions(maps), generatedAt: 1, discardedEvents: 0 } })
+        if (request.method() !== "GET") writes.push(path)
+        return route.fulfill({ json: {} })
+      })
+      await page.route("**/api/workspaces/*/missions**", routeMissions)
+      await page.evaluate(id => (window as any).fixture.readMission(id, "report", "report-a"), a)
+      await rootA.locator(".mission-reader").getByText("Independent report a", { exact: true }).waitFor()
+      await rootA.locator(".mission-reader details > summary").click()
+      await select(b)
+      await rootB.locator(".message-stream-container").waitFor({ state: "visible" })
+      assert.equal((await state(b)).mission.reader, undefined)
+      await page.evaluate(id => (window as any).fixture.readFile(id, "B.md"), b)
+      await rootB.locator(".workspace-file-view").getByText("Independent file content.", { exact: true }).waitFor()
+      await select(a)
+      // The real Missions panel follows row selection in this reader only.
+      await rootA.locator('[data-mission-key="mission:mission-b"] .mission-row-select').click()
+      await rootA.locator(".mission-reader").getByText("Objective b", { exact: true }).waitFor()
+      assert.equal((await state(b)).file.path, "B.md")
+      assert.equal((await state(b)).mission.reader, undefined)
+      await rootA.locator(".mission-reader").getByRole("button", { name: "Back to chat", exact: true }).click()
+      await select(b)
+      await rootB.locator(".workspace-file-view").getByText("Independent file content.", { exact: true }).waitFor()
+      await select(a)
+      await page.evaluate(id => (window as any).fixture.readFile(id, "A.md"), a)
+      await rootA.locator(".workspace-file-view").getByRole("heading", { name: "A.md", exact: true }).waitFor()
+      await select(b)
+      await page.evaluate(({ id, url }) => (window as any).fixture.openPreview("session", url, id), { id: b, url: `${base}/page/b` })
+      await rootB.locator(".session-preview-view, [data-session-id='session'] .window-shell").waitFor({ state: "visible" })
+      assert.equal((await state(a)).file.path, "A.md")
+      assert.equal((await state(a)).mission.reader, undefined)
+      await select(a)
+      await rootA.locator(".workspace-file-view").getByRole("heading", { name: "A.md", exact: true }).waitFor()
+      // Restore A's report and its disclosure while B keeps its web target.
+      await page.evaluate(id => (window as any).fixture.readMission(id, "report", "report-a"), a)
+      await rootA.locator(".mission-reader").getByText("Independent report a", { exact: true }).waitFor()
+      assert.equal(await rootA.locator(".mission-reader details").evaluate((node: HTMLDetailsElement) => node.open), true)
+      await page.reload()
+      await page.waitForFunction(() => (window as any).browserHistoryReady)
+      await rootA.locator(".mission-reader").getByText("Independent report a", { exact: true }).waitFor()
+      assert.equal(await rootA.locator(".mission-reader details").evaluate((node: HTMLDetailsElement) => node.open), true)
+      assert.equal((await state(b)).mission.reader, undefined)
+      await page.evaluate(id => (window as any).fixture.closeOccurrence(id), a)
+      assert.equal((await state(b)).mission.reader, undefined)
+      assert.equal(await page.evaluate(id => (window as any).fixture.savedPreview("session", id).mode, b), "preview")
+      assert.deepEqual(writes, [])
       assert.deepEqual(errors, [])
     } finally {
       if (native) { await native.app.close(); await rm(native.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }

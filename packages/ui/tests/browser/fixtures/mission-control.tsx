@@ -19,8 +19,10 @@ import { missionStore } from "../../../src/stores/missions"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
+import { restoreFixtureTabView } from "./tab-view-restoration"
 
 await initializeClientState()
+restoreFixtureTabView("fixture")
 markSessionListsRestored("fixture")
 // The real shell opens Settings for the active project; its Missions section reads that Location.
 setActiveInstanceId("fixture")

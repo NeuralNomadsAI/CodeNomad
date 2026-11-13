@@ -142,7 +142,7 @@ test("dependencies, dependents and replacements navigate reader identity without
   try {
     await f.page.locator("#draft").fill("Preserved draft")
     await f.page.locator("#transcript").evaluate(e => { e.scrollTop = 100 })
-    await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("/fixture", {
+    await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("task-reader", {
       selected: "another-mission", selectedRecurrence: "another-daily", selectedScheduled: "another-schedule",
       selectedTask: { missionId: "another-mission", taskId: "another-task" },
     }))
@@ -157,8 +157,9 @@ test("dependencies, dependents and replacements navigate reader identity without
     assert.equal(dependencyView.selected, "mission")
     assert.equal(dependencyView.selectedRecurrence, undefined)
     assert.equal(dependencyView.selectedScheduled, undefined)
-    assert((await f.page.locator(".mission-reader").innerText()).includes("Retired from the plan; native work is still outstanding."))
     assert.equal(await f.page.getByRole("button", { name: "Back to chat", exact: true }).evaluate(e => e === document.activeElement), true)
+    await expand(f.page, "Technical details")
+    assert((await f.page.locator(".mission-reader").innerText()).includes("Retired from the plan; native work is still outstanding."))
     await f.page.getByRole("button", { name: "Replaced by Work title", exact: true }).click()
     assert.deepEqual((await f.page.evaluate(() => (window as any).taskReader.snapshot())).view.selectedTask, { missionId: "mission", taskId: "task" })
     assert.equal(await article(f.page, "Task brief").getByRole("spinbutton").inputValue(), "1")

@@ -149,7 +149,7 @@ async function setupReaderFollow(page: Page, nativePending = true) {
   } }
 }
 
-const readerTarget = (page: Page) => page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").reader)
+const readerTarget = (page: Page) => page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").reader)
 const eye = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const paint = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 
@@ -269,7 +269,7 @@ for (const remount of [false, true]) test(`native settlement retires its selecte
     }
     const assertSettled = async () => {
       await page.locator(".mission-reader").getByText("Saved native instructions", { exact: true }).waitFor()
-      const view = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture"))
+      const view = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture"))
       assert.equal(view.selectedTask, undefined)
       assert.equal(view.selectedScheduled, "msn_native")
       assert.deepEqual(view.reader, { kind: "recurrence", missionId: "msn_native", instanceId: "fixture", projectID: "project", scheduleOwner: "scheduled" })
@@ -380,7 +380,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         const row = await inlineMissionEntry(probe, "Daily commit review")
         await row.locator('.mission-row-flag[data-mark="permission"]').waitFor({ timeout: 30_000 })
         await row.click()
-        await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("/fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
+        await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
         release(); hold = undefined
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)
@@ -494,7 +494,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.locator(".mission-reader").getByText("Exact isolated result", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-reader").getByText("Newer result must not replace the historical body", { exact: true }).count(), 0)
     mission.tasks[0].report = historical
-    const target = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").reader)
+    const target = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").reader)
     assert.deepEqual(target?.recurrence, { instanceId: "fixture", projectID: "project", scheduleID: "rec_current", passageID: "pas_current" })
     assert.ok(sourceReads.some(input => input.kind === "report" && input.reportId === "rpt_first" && input.field === "summary"), "result reader reads the exact isolated report body")
     assert.ok(sourceReads.every(input => input.scheduleID === "rec_current" && input.passageID === "pas_current" && input.missionID === mission.id))
@@ -610,7 +610,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     // Its plan holds no task yet: the row has no chevron, so its detail stays folded.
     await page.locator('section.mission-detail[aria-label="One-shot from recurring"]').waitFor({ state: "attached" })
     assert.equal(await missionRow(page, "One-shot from recurring").locator("button.session-item-expander").count(), 0)
-    const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").selectedRecurrence)
+    const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").selectedRecurrence)
     assert.equal(selected, undefined, "successful one-shot creation clears overriding recurrence selection")
     assert.deepEqual(writes, ["/api/workspaces/fixture/missions"], "only the explicit creation uses a mock mutation")
     assert.deepEqual(errors, [])

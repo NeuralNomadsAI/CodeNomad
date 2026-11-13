@@ -154,7 +154,7 @@ describe("session preview persistence", () => {
       resolve({ token: "stale", targetUrl: "https://example.com" })
       await assert.rejects(pending, /superseded/)
       assert.deepEqual(deleted, ["stale"])
-      assert.equal(missionProjectView("race").reader, reader)
+      assert.deepEqual(missionProjectView("race").reader, reader)
       assert.equal(getSessionPreview("session", "race"), null)
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })

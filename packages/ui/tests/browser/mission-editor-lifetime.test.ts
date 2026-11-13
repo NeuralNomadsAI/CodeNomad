@@ -106,7 +106,7 @@ async function transition(page: Page, change: Transition) {
     // Restore an exact target independently of discovery, without a click-intent fence.
     await page.evaluate(async () => {
       const { updateMissionProjectView } = await import("/src/stores/mission-view-state.ts")
-      updateMissionProjectView("/fixture", { selected: "two" })
+      updateMissionProjectView("fixture", { selected: "two" })
     })
     // (Its plan holds no task: the restored row is a leaf, its detail mounted and folded.)
     if (change.startsWith("project")) await page.locator('section.mission-detail[aria-label="Objective two"]').waitFor({ state: "attached" })

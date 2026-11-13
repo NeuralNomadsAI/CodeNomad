@@ -45,6 +45,7 @@ import { missionBodyPresent, missionOwnBody } from "../lib/mission-bodies"
 import type { MissionPanelMap, MissionReport } from "../../../server/src/api-types"
 import { MissionPanelPaging } from "./mission-panel-paging"
 import { createDocumentAttention } from "./session/session-idle-attention"
+import { createMissionDisclosure } from "./mission-disclosure"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -153,7 +154,8 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
 
 export function MissionReader(props: { instanceId: string; scope: string }) {
   const { t, locale } = useI18n()
-  const target = () => missionProjectView(props.scope).reader
+  const target = () => missionProjectView(props.instanceId).reader
+  const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => target()?.missionId ?? "", () => `report:${target()?.itemId}:technical`)
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? projectMissionStore.state(props.instanceId).projectID
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
     directory: () => props.scope, scheduleID: () => target()?.recurrence?.scheduleID,
@@ -330,7 +332,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     batch(() => {
       setActiveSessionFromList(instanceId, sessionId)
       showSessionChatFor(sessionId, instanceId)
-      updateMissionProjectView(scope, { reader: undefined })
+      updateMissionProjectView(instanceId, { reader: undefined })
     })
   }
   // Compact project and current-passage readers resolve their exact body descriptors.
@@ -460,7 +462,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     closeButton?.focus()
   })
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
-  const close = () => { showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.instanceId); updateMissionProjectView(props.scope, { reader: undefined }) }
+  const close = () => { showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.instanceId); updateMissionProjectView(props.instanceId, { reader: undefined }) }
    return <MissionPanelScope value={panel}><section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">
@@ -491,7 +493,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <Show when={recurrence()} fallback={<p>{t("missions.control.reader.missing")}</p>}>{schedule =>
           <MissionRecurrenceReader instanceId={props.instanceId} scope={props.scope} projectID={recurrenceState.snapshot()!.projectID}
             schedule={schedule()} passageID={target()?.itemId}
-            onSelect={passageID => updateMissionProjectView(props.scope, { reader: { ...target()!, itemId: passageID } })} />}</Show>
+            onSelect={passageID => updateMissionProjectView(props.instanceId, { reader: { ...target()!, itemId: passageID } })} />}</Show>
       </Show>
       <Show when={target()?.kind === "overview" && missionBriefed(mission())}>
         <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(mission()!.briefing!.createdAt).toLocaleString(locale())}</p>
@@ -504,7 +506,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       <Show when={target()?.kind === "report" && report()}>{value =>
         <p>{t(`missions.control.report.outcome.${value().outcome}`)}</p>
       }</Show>
-      <Show when={playbook()}>{id => <MissionPlaybookReader playbook={id()} taskMode={target()?.taskMode ?? "native"} />}</Show>
+      <Show when={playbook()}>{id => <MissionPlaybookReader instanceId={props.instanceId} playbook={id()} taskMode={target()?.taskMode ?? "native"} />}</Show>
       <Show when={target()?.kind !== "recurrence" && target()?.kind === "task" && task() && mission()} fallback={
         <Show when={target()?.kind !== "recurrence" && !playbook()}>
         <Show when={sections().length} fallback={<Show when={targetState() === "failed"} fallback={<p>{t(missionStore.state(props.instanceId).status === "loading"
@@ -540,7 +542,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <MissionComparisonReport artifact={reportBodies.artifact.value()} profiles={mission()?.profiles} identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />
         <Show when={mission()}>{map => <MissionDecisionReport mission={map()} report={value()} artifact={reportBodies.artifact.value()}
           identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />}</Show>
-        <details class="mission-report-technical"><summary>{t("missions.control.task.details")}</summary>
+        <details class="mission-report-technical" open={technicalOpen()} onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
           <MissionReportNotification report={value()} />
           <Show when={missionReportHas(mission(), value(), "artifact")}><MissionReaderSection label="missions.control.artifact" raw
             text={reportBodies.artifact.settled() ? JSON.stringify(reportBodies.artifact.value(), null, 2) : ""} read={reportBodies.artifact.read()}

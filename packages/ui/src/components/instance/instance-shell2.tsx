@@ -909,7 +909,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   // Readers that need no conversation: schedules and playbook details.
   const readingWithoutConversation = () => Boolean(props.isActiveInstance)
-    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.folder).reader?.kind ?? "")
+    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()

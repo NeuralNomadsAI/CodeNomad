@@ -10,6 +10,7 @@ import { missionReportDecisionMaker } from "./mission-decision-report"
 import { missionChangeExcerpt } from "../../../server/src/missions/mission-panel-map"
 import { MissionPanelFields } from "./mission-panel-fields"
 import { MissionPanelPaging } from "./mission-panel-paging"
+import { createMissionDisclosure } from "./mission-disclosure"
 
 /** Secondary overview material, folded at the bottom of the central overview
  * reader: plan changes, reports, conversation cleanup history and identifiers.
@@ -19,8 +20,11 @@ export function MissionOverviewDetails(props: {
 }) {
   const missionStore = useMissionPanelStore()
   const { t, locale } = useI18n()
+  const [historyOpen, setHistoryOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:history")
+  const [reportsOpen, setReportsOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:reports")
+  const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:technical")
   const open = (kind: MissionReaderTarget["kind"], itemId: string) =>
-    updateMissionProjectView(props.scope, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
+    updateMissionProjectView(props.instanceId, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
   const history = () => [...(props.mission.history ?? [])].reverse()
   const reports = createMemo(() => missionReports(props.mission))
   // A compact map holds its rows' reports: the rest belong to tasks it does not hold.
@@ -39,7 +43,8 @@ export function MissionOverviewDetails(props: {
       <p role="status">{t("missions.control.report.notificationPending")}</p>
     </Show>
     <Show when={history().length || props.mission.panelCollections?.history?.total}>
-      <details class="mission-report-technical" onToggle={event => {
+      <details class="mission-report-technical" open={historyOpen()} onToggle={event => {
+        setHistoryOpen(event.currentTarget.open)
         if (event.currentTarget.open && props.mission.panelCollections && missionStore.progress(props.instanceId, `field:${props.mission.id}:history`).total === undefined)
           void missionStore.more(props.instanceId, `field:${props.mission.id}:history`)
       }}><summary>{t("missions.control.history.title")}</summary>
@@ -53,7 +58,8 @@ export function MissionOverviewDetails(props: {
       </details>
     </Show>
     <Show when={reports().length || omittedReports()}>
-      <details class="mission-report-technical" onToggle={event => {
+      <details class="mission-report-technical" open={reportsOpen()} onToggle={event => {
+        setReportsOpen(event.currentTarget.open)
         if (event.currentTarget.open && props.mission.panelCollections && missionStore.progress(props.instanceId, `field:${props.mission.id}:reports`).total === undefined)
           void missionStore.more(props.instanceId, `field:${props.mission.id}:reports`)
       }}><summary>{t("missions.control.reports.title")}</summary>
@@ -72,7 +78,7 @@ export function MissionOverviewDetails(props: {
         disabled={!["ready", "loading"].includes(missionStore.state(props.instanceId).status) || Boolean(missionStore.state(props.instanceId).cleanupUnavailable)}
         refresh={() => missionStore.refresh(props.instanceId)} />
     </Show>
-    <details class="mission-report-technical"><summary>{t("missionsPanel.technical")}</summary>
+    <details class="mission-report-technical" open={technicalOpen()} onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missionsPanel.technical")}</summary>
       <Show when={!props.recurrence || props.mission.panelPassage}><MissionPanelFields instanceId={props.instanceId} mission={props.mission} /></Show>
       <dl class="mission-technical">
         <dt>{t("missionsPanel.technical.mission")}</dt><dd><bdi>{props.mission.id}</bdi></dd>

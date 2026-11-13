@@ -34,11 +34,11 @@ seedRestoredSessionSelection(instanceId, null, "coordinator")
 function Fixture() {
   const [mounted, mount] = createSignal(true)
   const mission = () => missionStore.state(instanceId).missions[0]
-  const show = (itemId: string) => updateMissionProjectView(scope, { reader: { missionId: "mission", kind: "task", itemId } })
+  const show = (itemId: string) => updateMissionProjectView(instanceId, { reader: { missionId: "mission", kind: "task", itemId } })
   // As in the panel, a row selects its task, and an open reader follows the selection.
-  const selected = (task: MissionTask) => { const key = missionProjectView(scope).selectedTask; return key?.missionId === "mission" && key.taskId === task.id }
-  const select = (task: MissionTask) => updateMissionProjectView(scope, { selectedTask: { missionId: "mission", taskId: task.id },
-    ...(missionProjectView(scope).reader ? { reader: { missionId: "mission", kind: "task" as const, itemId: task.id } } : {}) })
+  const selected = (task: MissionTask) => { const key = missionProjectView(instanceId).selectedTask; return key?.missionId === "mission" && key.taskId === task.id }
+  const select = (task: MissionTask) => updateMissionProjectView(instanceId, { selectedTask: { missionId: "mission", taskId: task.id },
+    ...(missionProjectView(instanceId).reader ? { reader: { missionId: "mission", kind: "task" as const, itemId: task.id } } : {}) })
   ;(window as any).taskReader = {
     show, refresh: () => missionStore.refresh(instanceId),
     mount,
@@ -50,7 +50,7 @@ function Fixture() {
       id: "deleted-actor", type: "session.deleted", created: 2, location: { directory: scope }, data: { sessionID: "actor" },
       durable: { aggregateID: "actor", seq: 2, version: 2 },
     } as V2Event),
-    snapshot: () => ({ view: missionProjectView(scope), active: activeSessionId().get(instanceId),
+    snapshot: () => ({ view: missionProjectView(instanceId), active: activeSessionId().get(instanceId),
       actor: sessions().get(instanceId)?.get("actor"), parent: sessions().get(instanceId)?.get("native-parent") }),
   }
    missionStore.setDemand(instanceId, true)
@@ -60,7 +60,7 @@ function Fixture() {
   return <div style={{ display: "grid", "grid-template-columns": "minmax(0, 1fr) 390px", height: "800px" }}>
     <main class="mission-transcript-surface">
       <textarea id="draft" /><div id="transcript" style={{ height: "70px", overflow: "auto" }}><div style={{ height: "500px" }}>Retained transcript</div></div>
-      <Show when={mounted() && missionProjectView(scope).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
+      <Show when={mounted() && missionProjectView(instanceId).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
     </main>
     <aside class="mission-control" style={{ overflow: "auto" }}><Show when={mission()}>{value =>
       <MissionTaskTree mission={value()} instanceId={instanceId} activity={missionStore.state(instanceId).activity?.missions[0]?.actors}

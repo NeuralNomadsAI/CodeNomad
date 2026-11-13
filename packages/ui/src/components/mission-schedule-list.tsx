@@ -11,6 +11,7 @@ import { MissionScheduleDiagnostics } from "./mission-schedule-diagnostics"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { openSettingsConfigFile } from "../stores/settings-screen"
 import { missionPassageRequests } from "./mission-passage-requests"
+import { createMissionDisclosure } from "./mission-disclosure"
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
@@ -72,7 +73,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         get directory() { return props.directory }, document: doc, active: props.active,
         enabled: () => props.enabled() && !list.error() && list.fresh(id), refreshVersion: () => props.refresh + revision(), refresh,
         onDeleted: () => props.onDeleted(id) })
-      const [expanded, expand] = createSignal(false)
+      const [expanded, expand] = createMissionDisclosure(() => props.instanceId, () => id, () => "schedule:instructions")
       const primary = () => (["pause", "resume", "play"] as const).find(action => controls.pendingAction() === action)
         ?? (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
       const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
@@ -86,7 +87,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const editable = () => props.active() && props.enabled() && !list.error() && list.fresh(id)
         && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
-        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? props.overview?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : props.overview ? props.overview.onToggle() : expand(value => !value)}
+        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? props.overview?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : props.overview ? props.overview.onToggle() : expand(!expanded())}
           primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
           onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")} deleteBusy={controls.pendingAction() === "delete"}
@@ -127,7 +128,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
             <button type="button" class="window-action" onClick={() => props.onOpenConversation(item.coordinatorSessionID)}>{t("missionsPanel.action.openConversation")}</button>
           </li>}</For></ol></Show>
         </section>
-        <MissionScheduleDiagnostics document={doc()} />
+        <MissionScheduleDiagnostics instanceId={props.instanceId} document={doc()} />
         {props.tracking}
       </section>
     }}</Show>

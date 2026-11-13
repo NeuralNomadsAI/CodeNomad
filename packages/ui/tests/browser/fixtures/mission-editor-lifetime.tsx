@@ -26,7 +26,7 @@ function Fixture() {
   const [mounted, mount] = createSignal(true), [active, activate] = createSignal(true), [instanceId, instance] = createSignal("fixture")
   const selectedHistory: Array<string | undefined> = []
   createComputed(() => {
-    const selected = missionProjectView(instances().get(instanceId())!.folder).selected
+    const selected = missionProjectView(instanceId()).selected
     if (selectedHistory.at(-1) !== selected) selectedHistory.push(selected)
   })
   window.missionEditorLifetime = {

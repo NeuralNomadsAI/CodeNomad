@@ -46,7 +46,7 @@ showSessionChatFor("ses_initial", id)
 const initialPreview = () => getSessionPreview("ses_initial", id)
 const snapshot = () => ({ session: activeSessionId().get(id) ?? null, mode: initialPreview()?.mode ?? null,
   previewSession: initialPreview()?.sessionId, previewUrl: initialPreview()?.targetUrl,
-  reader: missionProjectView(scope).reader ?? null })
+  reader: missionProjectView(id).reader ?? null })
 const history: ReturnType<typeof snapshot>[] = []
 function Fixture() {
   createComputed(() => {
