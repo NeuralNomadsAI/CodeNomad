@@ -38,7 +38,8 @@ test("Preferences restoration survives final local-window shutdown and clears on
   const request = {
     section: "providers" as const,
     scrollTop: 420,
-    instanceId: "instance-1",
+    instanceId: "remote~instance-1",
+    serverId: "remote-server",
     workspacePath: "C:\\repo",
     location: { directory: "/mnt/c/repo", workspaceID: "workspace-1" },
   }

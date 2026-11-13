@@ -12,6 +12,7 @@ export interface PreferencesRequest {
   section: PreferencesSection
   scrollTop?: number
   instanceId?: string
+  serverId?: string
   workspacePath?: string
   location?: { directory: string; workspaceID?: string }
 }
@@ -36,6 +37,8 @@ export function requirePreferencesRequest(section: unknown, context: unknown): P
   const candidate = context as Record<string, unknown>
   const instanceId = optionalString(candidate.instanceId, "instance ID", 512)
   if (instanceId) request.instanceId = instanceId
+  const serverId = optionalString(candidate.serverId, "server ID", 512)
+  if (serverId) request.serverId = serverId
   const workspacePath = optionalString(candidate.workspacePath, "workspace path", 32768)
   if (workspacePath?.includes("\0")) throw new Error("Invalid Preferences workspace path")
   if (workspacePath) request.workspacePath = workspacePath

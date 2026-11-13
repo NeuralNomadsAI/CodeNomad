@@ -1,5 +1,7 @@
 # Paramètres et disposition
 
+Lorsque le mode multi-serveur expérimental est activé, Preferences utilise le serveur du projet sélectionné pour ses réglages, fournisseurs, statistiques et sa mémoire, y compris **Ranger**. Si le serveur est indisponible, les commandes du projet restent inactives. Les réglages de l’appareil et les SideCars restent locaux.
+
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
 1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets (de la barre de titre dans l’application de bureau macOS) ou de l’accueil. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou l’engrenage **Paramètres** de l’historique des notifications ouvrent directement la section correspondante.

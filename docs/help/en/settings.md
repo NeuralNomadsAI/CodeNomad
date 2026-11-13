@@ -1,5 +1,7 @@
 # Settings and layout
 
+With experimental multi-backend enabled, Preferences uses the selected project's server for project settings, providers, statistics and memory, including **Tidy up**. An unavailable server keeps project controls inactive. Device settings and SideCars stay local.
+
 ## Open settings and identify the scope {#open-settings}
 
 1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar in the macOS desktop app) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.

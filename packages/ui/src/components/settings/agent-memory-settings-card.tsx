@@ -1,8 +1,8 @@
 import type { LocationRef } from "@opencode/client"
-import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from "solid-js"
-import { agentMemoryApi, AgentMemoryError } from "../../lib/agent-memory-api"
+import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js"
+import { agentMemoryFor, AgentMemoryError } from "../../lib/agent-memory-api"
 import { useI18n } from "../../lib/i18n"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { createAgentMemoryReview } from "../../stores/agent-memory"
 import { AgentMemoryEditor } from "./agent-memory-editor"
 import { SettingsInfoTip } from "./settings-info-tip"
@@ -10,17 +10,19 @@ import { SettingsSwitch } from "./settings-switch"
 import { showConfirmDialog } from "../../stores/alerts"
 import { requestMemoryCleanup } from "../../lib/native/memory-cleanup"
 import { generateUUID } from "../../lib/client-identity"
+import { parseInstanceKey } from "../../lib/backend-identity"
 
-export function AgentMemorySettingsCard(props: { instanceId?: string; location?: LocationRef }) {
+export function AgentMemorySettingsCard(props: { instanceId?: string; serverId?: string; location?: LocationRef; unavailable?: boolean }) {
   const { t } = useI18n(), id = createUniqueId()
   const [enabled, setEnabled] = createSignal<boolean>(), [changing, setChanging] = createSignal(false)
   const [settingsError, setSettingsError] = createSignal(false)
   const context = createMemo(() => props.instanceId ? { workspaceId: props.instanceId, ...(props.location?.directory ? { directory: props.location.directory } : {}) } : undefined)
-  const review = createAgentMemoryReview(context, () => enabled() === true)
+  const api = createMemo(() => { serverEvents.signalForInstance(props.instanceId ?? ""); return agentMemoryFor(props.instanceId) })
+  const review = createAgentMemoryReview(context, () => enabled() === true, api, () => parseInstanceKey(props.instanceId ?? "").backendId)
   const [tidying, setTidying] = createSignal(false), [tidyError, setTidyError] = createSignal(false)
   const [admitted, setAdmitted] = createSignal(false)
   let cleanupConsent = new AbortController()
-  const cleanupOwner = createMemo(() => JSON.stringify([context(), review.scope(), enabled()]))
+  const cleanupOwner = createMemo(() => JSON.stringify([context(), props.serverId, review.scope(), enabled()]))
   createEffect(() => { cleanupOwner(); cleanupConsent.abort(); cleanupConsent = new AbortController(); setTidyError(false); setAdmitted(false) })
   onCleanup(() => cleanupConsent.abort())
   const canTidy = () => enabled() === true && !!context()?.directory && review.available() && review.hasSnapshot() &&
@@ -35,36 +37,44 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
         confirmLabel: t("settings.memory.tidy"), cancelLabel: t("settings.memory.cancel"),
       }, cleanupConsent.signal)) || owner !== cleanupOwner() || disposed) return
       setAdmitted(true)
-      await requestMemoryCleanup({ id: generateUUID(), scope, workspaceId: project.workspaceId, directory: project.directory! })
+      await requestMemoryCleanup({ id: generateUUID(), scope, workspaceId: project.workspaceId, directory: project.directory!,
+        ...(props.serverId ? { serverId: props.serverId } : {}) })
     } catch { if (!disposed && owner === cleanupOwner()) setTidyError(true) }
     finally { if (!disposed) setTidying(false) }
   }
   let sequence = 0, disposed = false
   const loadSettings = async () => {
+    if (props.unavailable) return
     const request = ++sequence
     try {
-      const value = await agentMemoryApi.settings()
+      const value = await api().settings()
       if (typeof value.enabled !== "boolean") throw new AgentMemoryError("unreadable")
       if (!disposed && request === sequence) { setEnabled(value.enabled); setSettingsError(false) }
     } catch { if (!disposed && request === sequence) setSettingsError(true) }
   }
   const change = async (next: boolean) => {
-    if (changing() || !(await review.discard()) || disposed) return
+    const owner = api()
+    if (props.unavailable || changing() || !(await review.discard()) || disposed || props.unavailable || owner !== api()) return
     const request = ++sequence
     setChanging(true)
     try {
-      const value = await agentMemoryApi.setEnabled(next)
+      const value = await owner.setEnabled(next)
       if (typeof value.enabled !== "boolean") throw new AgentMemoryError("unreadable")
       if (!disposed && request === sequence) { setEnabled(value.enabled); setSettingsError(false) }
-    } catch { await loadSettings(); if (!disposed) setSettingsError(true) }
+    } catch { if (!disposed && request === sequence) { await loadSettings(); setSettingsError(true) } }
     finally { if (!disposed) setChanging(false) }
   }
-  onMount(() => {
+  createEffect(() => {
+    api()
+    setEnabled(undefined)
+    if (props.unavailable) { sequence++; setSettingsError(false); return }
     const refresh = () => { if (!changing()) void loadSettings() }
-    const reconnect = serverEvents.onOpen(refresh), changed = serverEvents.on("memory.changed", refresh)
+    const events = serverEvents.forInstance(() => props.instanceId ?? "")
+    const reconnect = events.onOpen(refresh), changed = events.on("memory.changed", refresh)
     void loadSettings()
-    onCleanup(() => { disposed = true; sequence++; reconnect(); changed() })
+    onCleanup(() => { sequence++; reconnect(); changed() })
   })
+  onCleanup(() => { disposed = true; sequence++ })
   const readOnly = () => !!review.error() || review.busy() || changing()
   const badge = (createdAt: string, updatedAt: string) => Date.parse(createdAt) > review.baseline() ? "new" : Date.parse(updatedAt) > review.baseline() ? "modified" : undefined
   return <section id="agent-memory" class="settings-card agent-memory" aria-labelledby={`${id}-heading`}>
@@ -73,6 +83,7 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
       <SettingsSwitch label={t("settings.memory.title")} checked={enabled() === true} disabled={enabled() === undefined || changing()} onChange={next => void change(next)} />
     </div>
     <Show when={settingsError()}><div role="alert" class="agent-memory-actions"><span>{t("settings.memory.error.unavailable")}</span><button type="button" class="window-action" disabled={changing()} onClick={() => void loadSettings()}>{t("settings.memory.retry")}</button></div></Show>
+    <Show when={props.unavailable}><p role="status">{t("settings.memory.noProject")}</p></Show>
     <Show when={enabled()}>
       <div class="agent-memory-toolbar">
         <label for={`${id}-scope`} class="sr-only">{t("settings.memory.scope")}</label>

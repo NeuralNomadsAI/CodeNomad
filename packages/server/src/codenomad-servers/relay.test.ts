@@ -20,6 +20,32 @@ import { RELAY_AUTHORITY_HEADER as AUTHORITY, RELAY_AUTHORITY_QUERY, RELAY_BOOTS
 
 const PREFIX = "/api/backends/saved"
 
+test("memory relay requires the current proof and local browser authority before any remote IO", async t => {
+  const f = await fixture(t)
+  await f.connect()
+  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
+  const proof = String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
+  for (const [method, path] of [["POST", "/api/memory"], ["GET", "/api/memory/settings"], ["PUT", "/api/memory/settings"]]) {
+    f.remote.state.overrides.set(path, { status: 200, body: { admitted: true } })
+    const options = { method, headers: { [AUTHORITY]: proof, "content-type": "application/json" }, ...(method === "GET" ? {} : { body: "{}" }) }
+    assert.equal((await f.call(path, options)).status, 200)
+    assert.equal(f.remote.state.requests.at(-1)!.headers[AUTHORITY], undefined)
+    const before = f.remote.state.requests.length
+    for (const value of [undefined, RELAY_BOOTSTRAP, "x".repeat(43)]) {
+      assert.equal((await f.call(path, { ...options, headers: { ...options.headers, [AUTHORITY]: value } })).status, 502)
+    }
+    assert.equal((await f.call(path, { ...options, headers: { ...options.headers, origin: "https://untrusted.test" } })).status, 403)
+    assert.equal(f.remote.state.requests.length, before)
+  }
+  await f.manager.forget("saved")
+  const before = f.remote.state.requests.length
+  assert.equal((await f.call("/api/memory", { method: "POST", headers: { [AUTHORITY]: proof } })).status, 502)
+  assert.equal(f.remote.state.requests.length, before)
+  for (const path of ["/api/memory/other", "/api/memory"]) {
+    assert.equal((await f.call(path, { method: "DELETE", headers: { [AUTHORITY]: proof } })).status, 404)
+  }
+})
+
 for (const operation of ["login", "logout"] as const) {
   for (const carrier of ["stale-query", "malformed-query", "duplicate-query", "conflicting"] as const) {
     test(`auth ${operation} rejects ${carrier} without touching the current connection`, async t => {

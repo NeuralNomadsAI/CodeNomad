@@ -1,5 +1,7 @@
 # Einstellungen und Layout
 
+Bei aktiviertem experimentellem Multi-Backend-Modus verwendet das Einstellungsfenster den Server des ausgewählten Projekts für Projekteinstellungen, Anbieter, Statistiken und Gedächtnis, einschließlich der Bereinigung. Bei einem nicht erreichbaren Server bleiben die Projektaktionen inaktiv. Geräteeinstellungen und SideCars bleiben lokal.
+
 ## Einstellungen öffnen und Geltungsbereich erkennen {#open-settings}
 
 1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste (in der macOS-Desktop-App in der Titelleiste) oder auf der Startseite. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder das Zahnrad **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.

@@ -1,7 +1,8 @@
 import { createEffect, createSignal, onCleanup } from "solid-js"
 import type { IntegrationInfo, LocationRef, WebSearchProvider } from "@opencode/client"
 import type { PluginControlScope, WebSearchSelection, WebSearchSettingsSnapshot } from "../../../../server/src/api-types"
-import { serverApi } from "../../lib/api-client"
+import { backendOf } from "../../lib/backend-client"
+import { parseInstanceKey } from "../../lib/backend-identity"
 import { captureBackendOperation } from "../../lib/backend-operation"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { getRootClient } from "../../stores/opencode-client"
@@ -30,7 +31,8 @@ export function useWebSearchSettings(props: { instanceId: string; location?: Loc
     setError(false); setBusy(false)
     refresh = () => {}
     mutate = async () => false
-    if (!instanceId || !directory) return
+    if (!instanceId || !directory || !current()) return
+    const api = backendOf(instanceId).api, workspaceId = parseInstanceKey(instanceId).workspaceId
     const load = async () => {
       if (!current()) return
       if (reading || writing) { trailing = true; return }
@@ -42,7 +44,7 @@ export function useWebSearchSettings(props: { instanceId: string; location?: Loc
           const client = getRootClient(instanceId)
           const request = { location: toRequestLocation(catalogLocation) }
           const [next, catalog, access] = await Promise.all([
-            serverApi.getWebSearchSettings(instanceId, directory, operation.signal),
+            api.getWebSearchSettings(workspaceId, directory, operation.signal),
             client.websearch.providers(request, { ...requestLocationOptions(catalogLocation), signal: operation.signal }),
             client.integration.list(request, { ...requestLocationOptions(catalogLocation), signal: operation.signal }),
           ])
@@ -82,7 +84,7 @@ export function useWebSearchSettings(props: { instanceId: string; location?: Loc
     refresh: () => refresh(),
     save: (scope: PluginControlScope, provider: WebSearchSelection) => {
       const instanceId = props.instanceId, directory = location().directory
-      return directory ? mutate(signal => serverApi.setWebSearchSettings(instanceId, { location: { directory }, scope, provider }, signal)) : Promise.resolve(false)
+      return directory ? mutate(signal => backendOf(instanceId).api.setWebSearchSettings(parseInstanceKey(instanceId).workspaceId, { location: { directory }, scope, provider }, signal)) : Promise.resolve(false)
     },
     connect: (integrationID: string, key: string) => {
       const client = getRootClient(props.instanceId), catalogLocation = { ...location() }

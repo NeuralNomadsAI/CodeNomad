@@ -1,5 +1,7 @@
 # Configuración y disposición
 
+Con el modo experimental multibackend activado, Preferencias usa el servidor del proyecto seleccionado para sus ajustes, proveedores, estadísticas y memoria, incluida la limpieza. Si el servidor no está disponible, los controles del proyecto permanecen inactivos. Los ajustes del dispositivo y los SideCars siguen siendo locales.
+
 ## Abrir la configuración e identificar el ámbito {#open-settings}
 
 1. Abre **Configuración** con el engranaje **Abrir configuración** de la barra de pestañas (la barra de título en la aplicación de escritorio de macOS) o de la página de inicio. Accesos directos como **Gestionar proveedores** en el selector de modelos, el engranaje del panel Misiones o el engranaje **Configuración** del historial de notificaciones abren directamente la sección correspondiente.

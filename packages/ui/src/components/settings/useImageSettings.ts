@@ -1,7 +1,8 @@
 import { createEffect, createSignal, onCleanup } from "solid-js"
 import type { LocationRef } from "@opencode/client"
 import type { ImageGenerationSelection, ImageSettingsSnapshot } from "../../../../server/src/api-types"
-import { serverApi } from "../../lib/api-client"
+import { backendOf } from "../../lib/backend-client"
+import { parseInstanceKey } from "../../lib/backend-identity"
 import { captureBackendOperation } from "../../lib/backend-operation"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/sessions"
@@ -25,7 +26,8 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
     if (scope !== identity) { scope = identity; setSnapshot(undefined) }
     setError(false); setBusy(false)
     mutate = async () => {}
-    if (!instanceId || !directory) return
+    if (!instanceId || !directory || !current()) return
+    const api = backendOf(instanceId).api, workspaceId = parseInstanceKey(instanceId).workspaceId
     const load = async () => {
       if (!current()) return
       if (reading || writing) { trailing = true; return }
@@ -34,7 +36,7 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
         trailing = false
         const captured = revision
         try {
-          const next = await serverApi.getImageSettings(instanceId, directory, operation.signal)
+          const next = await api.getImageSettings(workspaceId, directory, operation.signal)
           if (current() && captured === revision && !trailing) { setSnapshot(next); setError(false) }
         } catch { if (current() && captured === revision && !trailing) setError(true) }
       } while (current() && !writing && trailing)
@@ -45,7 +47,7 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
       if (!current() || writing || reading) return
       writing = true; revision++; setBusy(true); setError(false)
       let failed = false
-      try { await serverApi.setImageSettings(instanceId, { location: { directory }, ...change }, operation.signal) } catch { failed = true }
+      try { await api.setImageSettings(workspaceId, { location: { directory }, ...change }, operation.signal) } catch { failed = true }
       finally { writing = false; if (current()) setBusy(false) }
       if (current()) await load()
       if (current() && failed) setError(true)

@@ -3,6 +3,12 @@ import test from "node:test"
 import type { BrowserWindow } from "electron"
 import { createPreferencesUrl, PreferencesWindowRegistry, requirePreferencesRequest, requirePreferencesSection } from "./preferences-window"
 
+test("Preferences preserves a remote project's qualified identity across native request validation", () => {
+  const context = { instanceId: "remote~same", serverId: "server-a", workspacePath: "/homonym", location: { directory: "/homonym" } }
+  assert.deepEqual(requirePreferencesRequest("providers", context), { section: "providers", ...context })
+  assert.throws(() => requirePreferencesRequest("providers", { ...context, serverId: "x".repeat(513) }), /server ID/)
+})
+
 function fakeWindow() {
   const windowEvents = new Map<string, Function>()
   const contentEvents = new Map<string, Function>()

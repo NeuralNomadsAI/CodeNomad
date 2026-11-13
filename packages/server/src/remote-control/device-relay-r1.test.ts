@@ -10,6 +10,27 @@ import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
 const origin = `https://${FAKE_TUNNEL_HOST}`
 const headers = { host: FAKE_TUNNEL_HOST, cookie: `${DEVICE_COOKIE_NAME}=credential`, "x-codenomad-server-request": "1" }
 
+test("memory stays host-only on Remote Control ingress and requires authenticated device protocol on direct transport", async t => {
+  for (const ingress of [false, true]) {
+    const app = Fastify()
+    t.after(() => app.close())
+    app.addHook("onRequest", (request, reply, done) => {
+      if (ingress) markRemoteSocket(request.raw.socket)
+      if (!gateRemoteRequest(request, reply, {
+        publicHost: () => FAKE_TUNNEL_HOST,
+        authenticate: token => token === "credential" ? { id: "device" } as never : null,
+        assignDevice() {}, servesPreview: () => false,
+      })) done()
+    })
+    app.all("/*", async () => ({ admitted: true }))
+    for (const [method, url] of [["POST", "/api/memory"], ["GET", "/api/memory/settings"], ["PUT", "/api/memory/settings"]]) {
+      assert.equal((await app.inject({ method: method as "GET", url, headers })).statusCode, ingress ? 404 : 200)
+      assert.equal((await app.inject({ method: method as "GET", url, headers: { ...headers, cookie: "" } })).statusCode, ingress ? method === "GET" ? 404 : 403 : method === "GET" ? 401 : 403)
+      if (ingress) assert.equal((await app.inject({ method: method as "GET", url, headers: { host: FAKE_TUNNEL_HOST, origin, cookie: headers.cookie } })).statusCode, 404)
+    }
+  }
+})
+
 function send(target: string, path: string, requestHeaders: Record<string, string>, body: unknown) {
   return new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }>((resolve, reject) => {
     const request = http.request(`http://${target}${path}`, { method: "POST", agent: false, headers: requestHeaders }, response => {

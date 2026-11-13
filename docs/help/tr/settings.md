@@ -1,5 +1,7 @@
 # Ayarlar ve düzen
 
+Deneysel çoklu arka uç etkin olduğunda Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme için seçili projenin sunucusunu kullanır. Sunucu kullanılamıyorsa proje denetimleri devre dışı kalır. Cihaz ayarları ve SideCars yerel kalır.
+
 ## Ayarları açın ve kapsamını belirleyin {#open-settings}
 
 1. Sekme çubuğundaki (macOS masaüstü uygulamasında başlık çubuğundaki) veya ana sayfadaki **Ayarları aç** dişli simgesiyle **Ayarlar** öğesini açın. Model seçicideki **Provider'ları yönet**, Görevler panelinin dişli simgesi veya bildirim geçmişindeki **Ayarlar** dişli simgesi gibi kısayollar ilgili bölümü doğrudan açar.
