@@ -28,7 +28,10 @@ const session = { id: "ses_link", instanceId: id, parentId: null, title: "Links"
   model: { providerId: "private", modelId: "private" }, projectID: "project", cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, status: "idle", runtimeStatusKnown: true,
   location: { directory: scope }, time: { created: 1, updated: 1 } } satisfies Session
-setSessions(previous => new Map(previous).set(id, new Map([[session.id, session]])))
+// Lives in a worktree the (empty) inventory does not know: links must resolve
+// against this session's directory, not the instance folder.
+const subSession = { ...session, id: "ses_sub", title: "Sub", location: { directory: "/fixture-root/wt-a" } } satisfies Session
+setSessions(previous => new Map(previous).set(id, new Map([[session.id, session], [subSession.id, subSession]])))
 await getServerMeta()
 
 let renderCount = 0
@@ -42,13 +45,22 @@ window.addEventListener("click", (event) => {
 })
 
 const dispose = render(() => <ConfigProvider><I18nProvider>
-  <Markdown part={{ id: "part", type: "text", version: 0,
-      text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x)." }}
-    instanceId={id} sessionId="ses_link" onRendered={() => { renderCount++ }} />
+  <div>
+    <div id="main-root">
+      <Markdown part={{ id: "part", type: "text", version: 0,
+          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x)." }}
+        instanceId={id} sessionId="ses_link" onRendered={() => { renderCount++ }} />
+    </div>
+    <div id="sub-root">
+      <Markdown part={{ id: "sub-part", type: "text", version: 0, text: "See [readme](./README.md)." }}
+        instanceId={id} sessionId="ses_sub" />
+    </div>
+  </div>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 
 ;(window as any).fixture = {
   target: () => getFilePreview(id)?.path ?? null,
+  targetFull: () => { const target = getFilePreview(id); return target ? { path: target.path, directory: target.directory } : null },
   previews: () => [...createPreviewCalls],
   clicks: () => [...clicks],
   rendered: () => renderCount,

@@ -66,7 +66,6 @@ Los borradores son estado de trabajo del cliente, no mensajes nativos compartido
 2. Un clic normal abre el archivo enlazado en la vista previa del archivo, leído del worktree de la conversación.
 3. Los clics con modificadores (Ctrl/⌘-clic, Mayús-clic, clic central) y los enlaces fuera del worktree de la sesión mantienen el comportamiento normal de los enlaces.
 
-
 ## Comandos y modo shell {#commands-shell}
 
 1. Escribe `/` y selecciona un comando personalizado descubierto; después, proporciona sus argumentos.

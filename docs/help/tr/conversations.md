@@ -66,7 +66,6 @@ Taslaklar paylaşılan OpenCode mesajları değil, istemci çalışma durumudur.
 2. Düz bir tıklama, bağlantılı dosyayı sohbetin worktree’sinden okuyarak dosya önizlemesinde açar.
 3. Değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree’si dışındaki bağlantılar normal bağlantı davranışını korur.
 
-
 ## Komutlar ve Shell modu {#commands-shell}
 
 1. `/` yazın ve bulunan özel bir komutu seçin, ardından bağımsız değişkenlerini sağlayın.

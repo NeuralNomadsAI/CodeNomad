@@ -13,7 +13,7 @@ import {
 } from "../lib/render-text-window"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
-import { decorateSessionLinks, routeSessionLink, sessionLinkTitles, warmLoopbackPreviewMeta } from "./markdown-session-links"
+import { decorateSessionLinks, routeSessionLink, sessionLinkBase, sessionLinkTitles, warmLoopbackPreviewMeta } from "./markdown-session-links"
 import { messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useMarkdownMermaid } from "./markdown-mermaid"
@@ -390,14 +390,17 @@ export function Markdown(props: MarkdownProps) {
     html()
     // Decorate exactly the links that intercept (see markdown-session-links):
     // loopback links while previews are known available, and project-file
-    // links; never over an author's own title attribute. The titles are read
-    // synchronously so availability and locale changes re-run this pass.
+    // links; never over an author's own title attribute. The titles and the
+    // resolution base are read synchronously so availability, locale and
+    // worktree-inventory changes re-run this pass.
+    const sessionBound = Boolean(props.instanceId && props.sessionId)
     const titles = sessionLinkTitles(props.instanceId, props.sessionId)
+    const base = sessionBound ? sessionLinkBase(props.instanceId!, props.sessionId!) : undefined
     Promise.resolve().then(() => {
       if (disposed || !containerRef) {
         return
       }
-      decorateSessionLinks(containerRef, titles, props.instanceId, props.sessionId)
+      decorateSessionLinks(containerRef, titles, base)
     })
   })
 

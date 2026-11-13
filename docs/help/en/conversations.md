@@ -66,7 +66,6 @@ Drafts are client-side working state, not shared native messages. Startup restor
 2. A plain click opens the linked file in the file preview, read from the conversation’s worktree.
 3. Modified clicks (Ctrl/Cmd-click, Shift-click, middle-click) and links outside the session’s worktree keep normal link behavior.
 
-
 ## Commands and Shell mode {#commands-shell}
 
 1. Type `/` and select a discovered custom command, then supply its arguments.

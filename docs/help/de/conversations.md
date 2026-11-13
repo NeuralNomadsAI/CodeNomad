@@ -66,7 +66,6 @@ Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrich
 2. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
 3. Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees behalten das normale Linkverhalten.
 
-
 ## Befehle und Shell-Modus {#commands-shell}
 
 1. Geben Sie `/` ein, wählen Sie einen gefundenen benutzerdefinierten Befehl und geben Sie dessen Argumente an.

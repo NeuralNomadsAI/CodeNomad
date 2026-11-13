@@ -6,6 +6,7 @@ import { instances } from "../stores/instances"
 import { openFilePreview } from "../stores/files-preview"
 import { getWorktreeSlugForSession, getWorktrees } from "../stores/worktrees"
 import { openSessionPreview, getSessionPreview, showSessionChat } from "../stores/session-previews"
+import { getSessionRoot } from "../stores/session-state"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 
 // One session-bound Markdown instance asks for the server meta; the answer
@@ -49,16 +50,37 @@ export interface SessionProjectLink {
   path: string
 }
 
+/** Where session links resolve: the session's worktree root, the session's own
+ * directory while the worktree inventory does not know it yet, or the instance
+ * folder. Reads the stores synchronously, so calling it inside an effect also
+ * tracks inventory loads for the decoration pass. */
+export interface SessionLinkBase {
+  slug: string
+  directory: string
+  serviceDirectory?: string
+  /** The root hrefs resolve against: the service namespace path when the
+   * worktree is known (notably WSL), else the directory itself. */
+  base: string
+}
+
+export function sessionLinkBase(instanceId: string, sessionId: string): SessionLinkBase | undefined {
+  const slug = getWorktreeSlugForSession(instanceId, sessionId)
+  const worktree = getWorktrees(instanceId).find(entry => entry.slug === slug)
+  const directory = worktree?.directory
+    ?? getSessionRoot(instanceId, sessionId)?.location.directory
+    ?? instances().get(instanceId)?.folder
+  if (!directory) return undefined
+  return { slug, directory, serviceDirectory: worktree?.serviceDirectory, base: worktree?.serviceDirectory ?? directory }
+}
+
 /** The file-reader target a link href resolves to inside the session's
  * worktree, or undefined when it points anywhere else. */
 export function resolveSessionProjectLink(instanceId: string, sessionId: string, href: string): SessionProjectLink | undefined {
-  const slug = getWorktreeSlugForSession(instanceId, sessionId)
-  const worktree = getWorktrees(instanceId).find(entry => entry.slug === slug)
-  const instanceFolder = instances().get(instanceId)?.folder
-  const base = worktree?.serviceDirectory ?? worktree?.directory ?? instanceFolder ?? ""
-  const path = resolveProjectLinkPath(href, base)
+  const root = sessionLinkBase(instanceId, sessionId)
+  if (root === undefined) return undefined
+  const path = resolveProjectLinkPath(href, root.base)
   if (path === undefined) return undefined
-  return { slug, directory: worktree?.directory ?? instanceFolder ?? "", serviceDirectory: worktree?.serviceDirectory, path }
+  return { slug: root.slug, directory: root.directory, serviceDirectory: root.serviceDirectory, path }
 }
 
 /** The plain-click dispatch for session-bound markdown links: a loopback URL
@@ -97,17 +119,17 @@ export function sessionLinkTitles(instanceId: string | undefined, sessionId: str
 /** Decorates exactly the links that intercept: loopback links while previews
  * are known available, and links resolving inside the session's worktree;
  * never over an author's own title attribute. Pure DOM pass: the caller
- * computes `titles` from `sessionLinkTitles` inside its reactive effect. */
+ * computes `titles` and `base` inside its reactive effect, so availability,
+ * locale and inventory changes re-run it. */
 export function decorateSessionLinks(container: ParentNode, titles: { preview: string; file: string },
-  instanceId: string | undefined, sessionId: string | undefined): void {
+  base: SessionLinkBase | undefined): void {
   const previewTitle = titles.preview
-  const fileTitle = titles.file
+  const fileTitle = Boolean(base) && titles.file
   for (const anchor of container.querySelectorAll<HTMLAnchorElement>("a[href]")) {
     const href = anchor.getAttribute("href") ?? ""
     const loopback = Boolean(previewTitle) && isLoopbackHttpUrl(href)
-    const file = Boolean(fileTitle) && instanceId !== undefined && sessionId !== undefined
-      && resolveSessionProjectLink(instanceId, sessionId, href) !== undefined
-    const title = loopback ? previewTitle : file ? fileTitle : ""
+    const file = Boolean(fileTitle) && resolveProjectLinkPath(href, base!.base) !== undefined
+    const title = loopback ? previewTitle : file ? titles.file : ""
     if (title) {
       if (!anchor.hasAttribute("title")) {
         anchor.setAttribute("title", title)
