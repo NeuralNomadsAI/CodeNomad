@@ -182,6 +182,8 @@ credentials follow their separate registry lifetime and revocation rules.
 
 ## Validation
 
+- `codenomad-servers/ssh-manager.test.ts` exercises private authentication restoration through the owned SSH dial, single business dispatch and stale-proof refusal before IO after SSH retargeting.
+
 - `codenomad-servers/review-regressions.test.ts` covers queued credentials across address/TLS changes, persisted TLS binding, cross-listener Forget, shared-owner shutdown and direct browser-pairing refusal. `remote-control/device-relay-r1.test.ts` exercises the closed route/method catalog and preserves browser pairing on the ingress.
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
