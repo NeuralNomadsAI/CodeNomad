@@ -42,7 +42,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
   let disposed = false
   const profileFor = (id: string) => options.enabled() === true ? options.profiles().find(p => p.id === id) : undefined
   const sameTarget = (a: RemoteServerProfile, b?: RemoteServerProfile) =>
-    b !== undefined && a.baseUrl === b.baseUrl && a.skipTlsVerify === b.skipTlsVerify
+    b !== undefined && a.baseUrl === b.baseUrl && a.skipTlsVerify === b.skipTlsVerify && a.ssh?.host === b.ssh?.host
   const current = (id: string, entry: Entry) => !disposed && !entry.revoked && entries.get(id) === entry
     && !entry.controller.signal.aborted && sameTarget(entry.profile, profileFor(id))
 

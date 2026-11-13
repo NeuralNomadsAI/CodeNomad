@@ -4,6 +4,8 @@ Settings rows and actions, the native Preferences window and its project context
 
 ## Agent conventions
 
+- With `multiBackend` enabled, Add server offers an optional OpenSSH destination and native datalist suggestions. SSH profiles use Save and the backend relay; the direct-window Connect action is disabled. Preserve `ssh.host` through host-owned preference normalization and persistence, and include it in registry target equality. Invalid saved SSH shapes are discarded as whole profiles to preserve their transport authority. SSH saves validate the origin without probing it from the local machine.
+
 - `multiBackend` belongs to the host's `config.ui.settings`, defaults to false and normalizes strictly (`value === true`). Its configuration has no visible toggle. `stores/remote-backends.ts` composes the sole saved-profile registry; admission checks the current flag, and turning it off revokes its candidates and attachments. Server settings targets inherit this flag from the host.
 
 - A refused remote preference edit shows one localized error through the existing Settings toast, including owner reconciliation expiry and revoked attachment authority. Queued edits notify once per action at their user-action boundary for both rejected promises and boolean failure results, preserving the action's return contract. Host-owned updates delegated through a remote target retain local notification behavior; initialization reads only update their existing load state. Sent writes retain their barrier until settlement; retry requires a new explicit edit, which reloads its document. Local preference write paths and documents retain their existing behavior.
