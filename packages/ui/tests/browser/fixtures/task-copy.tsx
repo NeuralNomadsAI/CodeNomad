@@ -30,6 +30,13 @@ function toolMessage(sessionID: string, index: number, target?: string) {
         content: [{ type: "text", text: target ? "Task completed" : `Untruncated ${id}: ${"長い output\n".repeat(500)}` }] } }] }
 }
 
+function subagentReport(created: number, state: string, body: string) {
+  // Native message ids derive from event ids (`evt_…` → `msg_…`), so a reload finds the same row.
+  return { id: `msg_report${created}`, type: "synthetic", time: { created }, description: `Explore ${childId}`,
+    text: `<subagent sessionID="${childId}" state="${state}" description="Explore ${childId}">\n${body}\n</subagent>`,
+    metadata: { source: "subagent", childID: childId, agent: "explore", state: state === "running" ? "completed" : state } }
+}
+
 const scenario = new URLSearchParams(location.search).get("steps")
 const history: Record<string, any[]> = {
   [parentId]: [toolMessage(parentId, 0, childId)],
@@ -44,6 +51,14 @@ if (scenario) {
     const message = toolMessage(childId, 0)
     message.content = Array.from({ length: scenario === "overflow" ? 201 : 200 }, (_, index) => ({ ...message.content[0], id: `overflow-${index}` }))
     history[childId] = [message]
+  }
+  if (scenario === "background") {
+    // A background launch only acknowledges; the child reports through hidden synthetic messages.
+    history[childId] = [toolMessage(childId, 0)]
+    const launch = history[parentId][0].content[0]
+    launch.state.metadata = { sessionID: childId, status: "running" }
+    launch.state.content = [{ type: "text", text: "The subagent is working in the background (sessionID: child). You will receive a <subagent> message when it goes idle." }]
+    history[parentId].push(subagentReport(10, "running", "Partial findings\n\nBackground work still running:\n- subagent (explore, sessionID: grandchild): Deeper"))
   }
   if (scenario === "text-tail") {
     history[childId] = [toolMessage(childId, 0), ...Array.from({ length: 200 }, (_, index) => ({
@@ -100,6 +115,15 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={mounted()}
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   probeOlder: () => loadOlderMessageWindow(instanceId, childId),
+  /** One later idle period's report, delivered as the native event stream does. */
+  report: (state: string, body: string) => {
+    const message = subagentReport(10 + history[parentId].length, state, body)
+    history[parentId].push(message)
+    ;(sseManager as any).handleEvent(instanceId, { id: message.id.replace(/^msg_/, "evt_"), type: "session.synthetic", created: message.time.created,
+      durable: { aggregateID: parentId, seq: history[parentId].length, version: 1 }, location: { directory: "/fixture" },
+      data: { sessionID: parentId, text: message.text, description: message.description, metadata: message.metadata } })
+  },
+  reload: () => loadMessages(instanceId, parentId, { force: true }),
   hold: () => { held = true },
   release: () => { held = false; gates.splice(0).forEach(resolve => resolve()) },
   selectSession: (id: string) => { setSelectedSession(id); setActiveSession(instanceId, id) },

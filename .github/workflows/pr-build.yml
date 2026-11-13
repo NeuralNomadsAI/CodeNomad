@@ -565,6 +565,7 @@ jobs:
           packages/ui/src/components/tool-call/diff-payload.test.ts
           packages/ui/src/components/tool-call/renderers/edit.test.ts
           packages/ui/src/components/tool-call/renderers/task-title.test.ts
+          packages/ui/src/components/tool-call/renderers/subagent-report.test.ts
           packages/ui/src/components/prompt-input/usePromptState.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
