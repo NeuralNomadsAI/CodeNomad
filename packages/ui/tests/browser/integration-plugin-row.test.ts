@@ -246,6 +246,156 @@ test("a lost detach answer is reported and read again, never replayed", async ()
   } finally { await page.close() }
 })
 
+test("header and row Refresh recover unknown bindings without events, for the displayed conversation only", async () => {
+  const { page, model, calls, count } = await open(routes => {
+    routes.model.bindings["first:blender"] = { state: "unknown" }
+    routes.model.bindings["second:blender"] = { state: "unknown" }
+  })
+  try {
+    await waitLink(page, "unknown", "Attachment unknown")
+    await waitFor(() => calls.filter(call => call.action === "binding" && call.sessionID === "first").length === 2,
+      "the initial unknown binding answers")
+    model.bindings["first:blender"] = { state: "attached", label: "first.blend" }
+    await page.locator("[data-plugin-refresh]").click()
+    await waitLink(page, "attached", "Attached to: first.blend")
+    await fx(page, "select", "second")
+    await waitLink(page, "unknown", "Attachment unknown")
+    await waitFor(() => calls.filter(call => call.action === "binding" && call.sessionID === "second").length === 2,
+      "the new conversation's unknown binding answers")
+    const start = calls.length
+    model.bindings["second:blender"] = { state: "attached", label: "second.blend" }
+    await openMenu(page)
+    await page.getByRole("menuitem", { name: "Refresh plugin controls", exact: true }).click()
+    await waitLink(page, "attached", "Attached to: second.blend")
+    const refreshed = calls.slice(start).filter(call => call.action === "binding")
+    assert.deepEqual(refreshed.map(call => [call.sessionID, call.integration]).sort(),
+      [["second", "blender"], ["second", "gaffer"]])
+    assert.equal(count("detach"), 0)
+  } finally { await page.close() }
+})
+
+test("an uncertain detach whose reread fails stays unknown until explicit Refresh, without replay", async () => {
+  const { page, model, count } = await open(routes => {
+    routes.model.bindings["first:blender"] = { state: "attached", label: "first.blend" }
+    routes.model.hold.add("detach")
+  })
+  try {
+    await waitLink(page, "attached", "Attached to: first.blend")
+    const reads = count("binding")
+    await openMenu(page)
+    await page.getByRole("menuitem", { name: "Detach the conversation", exact: true }).click()
+    await waitFor(() => model.held.some(call => call.action === "detach"), "the admitted detach")
+    model.bindings["first:blender"] = { state: "none" }
+    model.fail.set("binding", 503)
+    await model.held.find(call => call.action === "detach")!.route.abort("connectionfailed")
+    await waitFor(() => count("binding") > reads, "the failed authoritative reread")
+    await waitLink(page, "unknown", "Attachment unknown")
+    model.fail.delete("binding")
+    await openMenu(page)
+    await page.getByRole("menuitem", { name: "Refresh plugin controls", exact: true }).click()
+    await waitLink(page, "none", "No conversation attached")
+    assert.equal(count("detach"), 1)
+  } finally { await page.close() }
+})
+
+for (const origin of ["other", "virtual", "runtime-only"] as const) test(`${origin} integrations retain native row actions without writable source authority`, async () => {
+  const pluginId = "acme.render"
+  const { page, model, calls, count } = await open(routes => {
+    routes.model.integrations = [integrationView("blender", {
+      configuredSources: [], configuredRules: [], scopes: [],
+      plugin: { declared: origin !== "runtime-only", runtime: "loaded", runtimeId: pluginId },
+      status: { version: "0.1.0", host: { state: "absent", action: "install" }, connection: { offers: 1 } },
+    })]
+    routes.model.bindings["first:blender"] = { state: "attached", label: "readonly.blend" }
+  })
+  try {
+    await fx(page, "plugins", await page.evaluate(({ pluginId, origin }) => {
+      const snapshot = (window as any).integrationRow.base()
+      const control = snapshot.controls.find((control: any) => control.id === "neuralnomads.blender")
+      control.id = control.runtime.id = pluginId
+      const source = snapshot.configured.sources.find((source: any) => source.pluginId === "neuralnomads.blender")
+      source.pluginId = pluginId
+      source.scope = origin === "virtual" ? "virtual" : "other"
+      source.path = origin === "virtual" ? undefined : "/ancestor/opencode.jsonc"
+      if (origin === "runtime-only") snapshot.configured.sources = snapshot.configured.sources.filter((item: any) => item !== source)
+      snapshot.targets = []
+      return snapshot
+    }, { pluginId, origin }))
+    const integration = page.locator(`[data-plugin-id="${pluginId}"]`)
+    await integration.locator('.plugin-control-name').getByText("OpenCode for Blender", { exact: true }).waitFor()
+    await integration.locator('[data-integration-link="attached"]').waitFor()
+    assert.equal(await page.locator('[data-integration="blender"]').count(), 1)
+    assert.equal(await integration.getByRole("checkbox").count(), 2)
+    for (const checkbox of await integration.getByRole("checkbox").all()) assert.equal(await checkbox.isDisabled(), true)
+    await openMenu(page)
+    assert.equal((await menuItems(page)).some(item => item.startsWith("Remove from")), false)
+    await page.getByRole("menuitem", { name: /^Install in application/ }).click()
+    const dialog = confirmation(page, /^Install in application/)
+    await dialog.waitFor()
+    assert.match(await dialog.innerText(), /OpenCode for Blender 0\.1\.0/)
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    assert.equal(count("install-host"), 0)
+    await openMenu(page)
+    await page.getByRole("menuitem", { name: "Detach the conversation", exact: true }).click()
+    await integration.locator('[data-integration-link="none"]').waitFor()
+    assert.deepEqual(calls.find(call => call.action === "detach")!.body, { sessionID: "first" })
+    assert.equal(count("remove"), 0)
+    assert.equal(model.integrations[0].plugin.runtimeId, pluginId)
+  } finally { await page.close() }
+})
+
+test("ambiguous identities cannot claim a plain row, and inactive panels or unloaded integrations demand no bindings", async () => {
+  const { page, model, count } = await open(routes => {
+    routes.model.integrations[0] = integrationView("blender", { ambiguous: true, configuredSources: [],
+      plugin: { declared: true, runtime: "loaded", runtimeId: "other.plugin" }, state: "non-conforming", status: undefined })
+    routes.model.integrations[1] = integrationView("gaffer", { state: "inactive", status: undefined, plugin: { declared: true } })
+  })
+  try {
+    await page.locator('[data-plugin-id="other.plugin"]').waitFor()
+    await waitFor(() => count("read") > 0, "integration inventory")
+    assert.equal(await page.locator('[data-plugin-id="other.plugin"]').getAttribute("data-integration"), null)
+    assert.equal(count("binding"), 0)
+    await fx(page, "active", false)
+    const reads = count("read")
+    model.integrations[0] = integrationView("blender")
+    await fx(page, "event", "plugin.updated")
+    await page.waitForTimeout(500)
+    assert.equal(count("read"), reads)
+    assert.equal(count("binding"), 0)
+    await fx(page, "active", true)
+    await waitLink(page, "none", "No conversation attached")
+    assert.equal(count("binding"), 1, "only the loaded integration of the active panel")
+  } finally { await page.close() }
+})
+
+test("two scoped declarations keep one integration row and exact scoped removal", async () => {
+  const { page, calls, count } = await open(routes => {
+    routes.model.integrations[0].configuredSources.push({ scope: "project", entryIndex: 4, expectedRevision: "b".repeat(64) })
+  })
+  try {
+    await row(page).waitFor()
+    await fx(page, "plugins", await page.evaluate(() => {
+      const snapshot = (window as any).integrationRow.base()
+      snapshot.configured.sources.push({ ...snapshot.configured.sources[1], scope: "project",
+        path: "/repo/.opencode/opencode.jsonc", entryIndex: 4 })
+      return snapshot
+    }))
+    await waitLink(page, "none", "No conversation attached")
+    assert.equal(await page.locator('[data-integration="blender"]').count(), 1)
+    await openMenu(page)
+    assert.ok((await menuItems(page)).includes("Remove from Global"))
+    await page.getByRole("menuitem", { name: "Remove from Project", exact: true }).click()
+    const dialog = confirmation(page, /^Remove from Project/)
+    await dialog.waitFor()
+    await page.waitForTimeout(650)
+    await dialog.getByRole("button", { name: "Remove from Project", exact: true }).click()
+    await waitFor(() => count("remove") === 1, "one scoped removal")
+    assert.deepEqual(calls.find(call => call.action === "remove")!.body, { location: { directory: "/repo" },
+      scope: "project", target: "@neuralnomads/opencode-blender@^0.1", entryIndex: 4, expectedRevision: "b".repeat(64) })
+    assert.equal(count("detach"), 0)
+  } finally { await page.close() }
+})
+
 test("the row renders in French and right-to-left Hebrew with translated labels", async () => {
   for (const locale of ["fr", "he"] as const) {
     const { page, errors } = await open(routes => { routes.model.bindings["first:blender"] = { state: "attached", label: "western_ia.blend" } }, { locale })

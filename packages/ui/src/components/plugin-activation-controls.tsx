@@ -11,8 +11,8 @@ import type {
 import type { IntegrationView } from "../../../server/src/integration-types"
 import { useI18n } from "../lib/i18n"
 import { integrationAttention, integrationConnection, integrationConnectionMessage } from "../lib/integration-row-state"
-import { integrationPlugin } from "../lib/integration-rows"
-import { integrations } from "../stores/integrations"
+import { integrationDisplayPlugin } from "../lib/integration-rows"
+import { integrationBindings, integrations } from "../stores/integrations"
 import { pluginControlsCache } from "../stores/plugin-controls"
 import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
 import { createIntegrationHostInstallation } from "./integration-host-installation"
@@ -70,7 +70,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const byControl = new Map<string, IntegrationView>(), byTarget = new Map<string, IntegrationView>()
     for (const entry of value.status === "ready" ? value.response.integrations : []) {
       if (entry.ambiguous) continue
-      const plugin = integrationPlugin(snapshot(), entry)
+      const plugin = integrationDisplayPlugin(snapshot(), entry)
       if (plugin.control) byControl.set(plugin.control.id, entry)
       for (const source of plugin.sources) byTarget.set(source.target, entry)
     }
@@ -172,8 +172,12 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     snapshot()?.configured.sources.filter(matches) ?? []
   )
   const refresh = () => {
+    if (props.active === false) return
     void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })
     void integrations.refreshDemanded(props.instanceId)
+    if (props.session) void integrationBindings.refreshDemanded({
+      instanceId: props.instanceId, directory: directory(), sessionID: props.session.id,
+    })
   }
 
   const renderControl = (pluginId: string) => {

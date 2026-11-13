@@ -1,4 +1,5 @@
 import { render } from "solid-js/web"
+import { createSignal } from "solid-js"
 import type { PluginControlsSnapshot } from "../../../../server/src/api-types"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import AlertDialog from "../../../src/components/alert-dialog"
@@ -70,12 +71,13 @@ addInstance({ id: instanceId, folder: directory, port: 0, pid: 0, proxyPath: `/w
 setSessions(previous => new Map(previous).set(instanceId, new Map([["first", session("first", "First conversation")], ["second", session("second", "Second conversation")]])))
 setActiveSession(instanceId, "first")
 
+const [activePanel, setActivePanel] = createSignal(true)
 function Fixture() {
   const { t } = useI18n()
   const active = () => sessions().get(instanceId)?.get(activeSessionId().get(instanceId) ?? "") ?? null
   return <div style={{ width: "380px", height: "900px", display: "flex", "flex-direction": "column" }}>
     <AlertDialog />
-    <RightPanel isActive={() => true} t={t} instanceId={instanceId} instance={instances().get(instanceId)!}
+    <RightPanel isActive={activePanel} t={t} instanceId={instanceId} instance={instances().get(instanceId)!}
       activeSessionId={() => active()?.id ?? null} activeSession={active} isPhoneLayout={() => false}
       rightDrawerWidth={() => 380} rightDrawerWidthInitialized={() => true}
       onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
@@ -98,5 +100,6 @@ const event = (type: string, data: unknown = {}) => (serverEvents as any).dispat
   /** Replaces the plugin inventory, then notifies like OpenCode does. */
   plugins: (next: PluginControlsSnapshot) => { snapshot = next; event("plugin.updated") },
   base: baseSnapshot,
+  active: setActivePanel,
   select: (id: string | null) => setActiveSession(instanceId, id ?? "info"),
 }

@@ -95,7 +95,7 @@ it keeps its recognition ways, but neither those shared or foreign sources nor a
 (no `plugin` fact, `configuredSources` or version from them), and no RPC is called.
 
 `GET /api/workspaces/:id/integrations?directory=[&workspaceID=]` (`server/routes/integrations.ts`,
-`IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's plugin ID, `rpc`,
+`IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's `rpc`,
 `sources` and `package`. `docs` is present only when `isIntegrationDocsUrl` (`opencode/integrations/docs-url.ts`)
 accepts it: the raw canonical `https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/<id>`
 or `…/blob/main/integrations/<id>/plugin/README.md` of the same ID. Each entry carries the installation facts
@@ -259,8 +259,10 @@ and workspace-stop notifications. The event relay projects only the two payload-
 retaining the native Location for ownership routing and dropping plugin-authored envelope fields.
 
 Integrations are managed only from their row in **Status → Plugins** (`components/plugin-activation-controls.tsx`).
-A row whose plugin ID or declared target `integrationPlugin` correlates with an unambiguous catalog entry is that
-integration's single row:
+A row whose plugin ID or declared target correlates with an unambiguous catalog entry is that integration's single
+row. `integrationDisplayPlugin` uses the writable `integrationPlugin` correlations or the projected `plugin.runtimeId`
+of one exact native inventory entry. Inherited, virtual and runtime-only declarations retain their integration
+display and native actions; source mutations keep their writable document/revision checks.
 
 - its `displayName` and installed version (every package row shows its version beside the name);
 - Global/Project switches in the accent colour of Yolo and the settings switches (`ACCENT_SWITCH_SX`,
@@ -286,7 +288,8 @@ Binding reads carry only the session selector and receive only the projected sta
 shared secondary HTTP budget. Relevant integration/plugin/configuration events (`status_changed`, `hosts_changed`)
 and exact-session updates, moves or deletions revoke authority immediately and coalesce reads over 300 ms, with one
 trailing follow-up. Reconnect, native stream-open and renderer stream-open reconcile demanded bindings; disconnect
-revokes them. Errors publish `unknown`; releasing the last demand aborts and drops its state. Detach sends one
+revokes them. Explicit Plugins header or row refresh reconciles only demanded bindings of the displayed
+instance/Location/conversation. Errors publish `unknown`; releasing the last demand aborts and drops its state. Detach sends one
 `detach` request for the displayed conversation, then invalidates and reconciles its captured target in `finally`,
 including uncertain outcomes, which show a fixed error toast and are never replayed.
 
