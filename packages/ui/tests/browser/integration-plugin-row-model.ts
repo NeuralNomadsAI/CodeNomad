@@ -57,7 +57,8 @@ export async function routeIntegrations(page: Page) {
     if (action === "binding") return route.fulfill({ json: model.bindings[key] ?? { state: "none" } })
     if (action === "hosts") return route.fulfill({ json: { offers: model.offers } })
     if (action === "attach") {
-      if (model.outcomes.attach === "attached") model.bindings[key] = { state: "attached", label: model.offers[0].document ?? model.offers[0].label }
+      const offer = model.offers.find(item => item.offerID === body.offerID)
+      if (model.outcomes.attach === "attached" && offer) model.bindings[key] = { state: "attached", label: offer.label }
       return route.fulfill({ json: { outcome: model.outcomes.attach } })
     }
     if (action === "detach") { model.bindings[key] = { state: "none" }; return route.fulfill({ json: { outcome: model.outcomes.detach } }) }

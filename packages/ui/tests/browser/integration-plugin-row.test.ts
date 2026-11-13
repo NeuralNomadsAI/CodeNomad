@@ -53,7 +53,7 @@ async function notify(page: Page, type = "rpc.neuralnomads.blender.status_change
 }
 const waitLink = (page: Page, state: string, label: string) => page.waitForFunction(([expectedState, expectedLabel]) => {
   const element = document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-integration-link]')
-  return element?.getAttribute("data-integration-link") === expectedState && element.getAttribute("aria-label") === expectedLabel
+  return element?.getAttribute("data-integration-link") === expectedState && (element.getAttribute("aria-label") ?? "").startsWith(`${expectedLabel} — `)
 }, [state, label] as const)
 async function openMenu(page: Page, name = "OpenCode for Blender") {
   await page.mouse.move(0, 0)
@@ -112,7 +112,7 @@ test("one Plugins row per integration: display name, version and accent switches
   } finally { await page.close() }
 })
 
-test("the chain icon follows the displayed conversation's attachment, refreshed by hosts_changed and status_changed", async () => {
+test("the chain button follows the displayed conversation's attachment, refreshed by hosts_changed and status_changed", async () => {
   for (const dark of [false, true]) {
     const { page, model, errors } = await open(undefined, { dark })
     try {
@@ -125,7 +125,10 @@ test("the chain icon follows the displayed conversation's attachment, refreshed 
       model.bindings["first:blender"] = { state: "attached", label: "western_ia.blend" }
       await notify(page, "rpc.neuralnomads.blender.hosts_changed")
       await waitLink(page, "attached", "Attached to: western_ia.blend")
-      assert.equal(await link(page).evaluate(element => getComputedStyle(element).color), await resolved(page, "--accent-primary"))
+      // Attached reads as a pressed button: the shared icon-toggle active state.
+      assert.equal(await link(page).getAttribute("aria-pressed"), "true")
+      assert.notEqual(await link(page).evaluate(element => getComputedStyle(element).backgroundColor),
+        await row(page).getByRole("button", { name: "Actions for OpenCode for Blender" }).evaluate(element => getComputedStyle(element).backgroundColor))
       if (screenshots) {
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
         await page.mouse.move(0, 0)
@@ -152,6 +155,103 @@ test("the chain icon follows the displayed conversation's attachment, refreshed 
       assert.deepEqual(errors, [])
     } finally { await page.close() }
   }
+})
+
+test("every row shows its version right after its name, before the row's buttons", async () => {
+  const { page } = await open(routes => { routes.model.bindings["first:blender"] = { state: "attached", label: "Scene" } })
+  try {
+    await waitLink(page, "attached", "Attached to: Scene")
+    for (const id of ["neuralnomads.blender", "other.plugin"]) {
+      const box = (selector: string) => page.locator(`[data-plugin-id="${id}"] ${selector}`).first().boundingBox()
+      const name = (await box(".plugin-control-name"))!, version = (await box(".plugin-control-version"))!
+      const actions = (await box(".plugin-control-identity > button:not(.plugin-control-link)"))!
+      assert.ok(version.x - (name.x + name.width) < 12, `${id}: the version follows the name`)
+      assert.ok(version.x + version.width < actions.x - 4, `${id}: the buttons stay at the end of the row`)
+    }
+    // The chain button has the row's framed square button look.
+    const chain = (await link(page).boundingBox())!, actions = (await row(page).locator(".plugin-control-identity > button:not(.plugin-control-link)").boundingBox())!
+    assert.deepEqual([Math.round(chain.width), Math.round(chain.height)], [Math.round(actions.width), Math.round(actions.height)])
+    assert.equal(await link(page).evaluate(element => getComputedStyle(element).borderTopWidth), "1px")
+  } finally { await page.close() }
+})
+
+test("the chain button: attach to the only open document, detach, or explain why it cannot", async () => {
+  const { page, model, calls, count } = await open()
+  try {
+    await waitLink(page, "none", "No conversation attached")
+    assert.equal(await link(page).getAttribute("aria-pressed"), "false")
+    assert.equal(await link(page).getAttribute("aria-label"), "No conversation attached — Attach the conversation")
+    // One open document: one click attaches it directly, without a menu or confirmation.
+    await link(page).click()
+    await waitLink(page, "attached", "Attached to: Scene")
+    assert.equal(count("hosts"), 1)
+    assert.deepEqual(calls.find(call => call.action === "attach")!.body, { sessionID: "first", offerID: "offer-0001" })
+    assert.equal(await page.locator("[data-integration-offers]").count(), 0)
+    assert.equal(await link(page).getAttribute("aria-pressed"), "true")
+    // Attached: one click detaches, like the row menu.
+    await link(page).click()
+    await waitFor(() => count("detach") === 1, "one detach")
+    await waitLink(page, "none", "No conversation attached")
+
+    // No open document: the button is unavailable and says why; a click reads nothing.
+    model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state: "ok" }, connection: { offers: 0 } } })
+    await notify(page)
+    await page.waitForFunction(() => document.querySelector('[data-integration-link]')?.getAttribute("aria-disabled") === "true")
+    assert.equal(await link(page).getAttribute("aria-label"), "No conversation attached — Blender: no open document")
+    await link(page).focus()
+    await page.locator(".plugin-control-tooltip").getByText("Blender: no open document").waitFor()
+    await link(page).click({ force: true })
+    await page.waitForTimeout(300)
+    assert.equal(count("hosts"), 1)
+    // No conversation displayed: also unavailable.
+    model.integrations[0] = integrationView("blender")
+    await notify(page)
+    await fx(page, "select", null)
+    await page.waitForFunction(() => /No conversation displayed$/.test(document.querySelector('[data-integration-link]')?.getAttribute("aria-label") ?? ""))
+    assert.equal(await link(page).getAttribute("aria-disabled"), "true")
+
+    // A refused attachment is reported; the request is not repeated.
+    await fx(page, "select", "first")
+    await waitLink(page, "none", "No conversation attached")
+    model.outcomes.attach = "busy"
+    await link(page).click()
+    await page.waitForFunction(() => JSON.stringify((window as any).integrationRow.toasts()).includes("This conversation is already attached to another document."))
+    assert.equal(count("attach"), 2)
+  } finally { await page.close() }
+})
+
+test("the chain button offers the choice between several open documents", async () => {
+  const { page, model, calls, count } = await open(routes => {
+    routes.model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state: "ok" }, connection: { offers: 2 } } })
+    routes.model.offers = [
+      { offerID: "offer-0001", label: "Blender: western_ia.blend", document: "western_ia.blend", appVersion: "5.3", protocol: "ok" },
+      { offerID: "offer-0002", label: "Blender: teaser.blend", document: "teaser.blend", appVersion: "5.3", protocol: "ok" },
+      { offerID: "offer-0003", label: "Blender: old.blend", document: "old.blend", appVersion: "4.0", protocol: "incompatible" },
+    ]
+  })
+  try {
+    await waitLink(page, "none", "No conversation attached")
+    await link(page).focus()
+    await page.keyboard.press("Enter")
+    const menu = page.locator("[data-integration-offers]")
+    await menu.waitFor()
+    assert.equal((await menu.locator(".action-overflow-info").innerText()).trim(), "Attach to which document?")
+    assert.deepEqual((await menu.getByRole("menuitem").allInnerTexts()).map(item => item.trim()), ["Blender: western_ia.blend", "Blender: teaser.blend"],
+      "only compatible documents are offered")
+    assert.equal(count("attach"), 0, "opening the choice attaches nothing")
+    await menu.getByRole("menuitem", { name: "Blender: teaser.blend" }).click()
+    await waitLink(page, "attached", "Attached to: Blender: teaser.blend")
+    assert.deepEqual(calls.find(call => call.action === "attach")!.body, { sessionID: "first", offerID: "offer-0002" })
+    // Escape closes the choice without attaching.
+    model.bindings["first:blender"] = { state: "none" }
+    await notify(page, "rpc.neuralnomads.blender.hosts_changed")
+    await waitLink(page, "none", "No conversation attached")
+    await link(page).click()
+    await menu.waitFor()
+    await page.keyboard.press("Escape")
+    await menu.waitFor({ state: "hidden" })
+    assert.equal(count("attach"), 1)
+  } finally { await page.close() }
 })
 
 test("an indicator appears only when the application part needs an action", async () => {
@@ -402,10 +502,10 @@ test("the row renders in French and right-to-left Hebrew with translated labels"
     try {
       await page.waitForFunction(() => document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-integration-link="attached"]'))
       const label = await link(page).getAttribute("aria-label")
-      if (locale === "fr") assert.equal(label, "Rattachée à : western_ia.blend")
-      else assert.notEqual(label, "Attached to: western_ia.blend")
+      if (locale === "fr") assert.equal(label, "Rattachée à : western_ia.blend — Détacher la conversation")
+      else assert.equal(label?.startsWith("Attached to:"), false)
       await page.mouse.move(0, 0)
-      await row(page).locator(".plugin-control-identity button").click()
+      await row(page).locator(".plugin-control-identity > button:not(.plugin-control-link)").click()
       const items = await menuItems(page)
       if (locale === "fr") assert.equal(items[0], "Détacher la conversation")
       assert.equal(items.some(item => /Detach the conversation|Remove from/.test(item)), false, `${locale}: no English fallback`)

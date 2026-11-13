@@ -242,7 +242,7 @@ fails closed. A mirrored compatible application offer must never bypass this che
 
 Installation is Location-scoped and works independently of sessions and offers. The installer acts on the OpenCode
 machine, including a remote machine. Its outcome describes that request; application status establishes application availability, and the integration
-attaches a conversation at its first use. Never retry or replay an installation
+attaches a conversation at its first use or through the row's chain button. Never retry or replay an installation
 request after an uncertain result: check the application, then require a fresh action and confirmation if needed.
 
 ## UI read model
@@ -264,23 +264,28 @@ row. `integrationDisplayPlugin` uses the writable `integrationPlugin` correlatio
 of one exact native inventory entry. Inherited, virtual and runtime-only declarations retain their integration
 display and native actions; source mutations keep their writable document/revision checks.
 
-- its `displayName` and installed version (every package row shows its version beside the name);
+- its `displayName` followed by its muted installed version (every row with a known package version shows it
+  right after the name, its buttons at the row's end);
 - Global/Project switches in the accent colour of Yolo and the settings switches (`ACCENT_SWITCH_SX`,
   `var(--accent-primary)`): `PluginActivationSwitch`'s `integration` flag replaces the green variant that plain
   plugin and MCP rows keep. A native integration's Project switch is locked to Global;
 - the name tooltip's first line reads **Integration: <plugin ID>** where a plain plugin's reads **Plugin: <ID>**;
-- for a loaded native integration, a chain icon (`components/integration-row-indicators.tsx`) for the displayed
-  conversation: linked with **Attached to: <label>**, broken with **No conversation attached** (also without a
-  conversation of this Location), dimmed with **Attachment unknown** when the integration cannot tell. Its text is
-  its accessible name and its keyboard-openable tooltip;
+- for a loaded native integration, a chain button (`IntegrationLinkButton`, `components/integration-row-indicators.tsx`)
+  for the displayed conversation, framed like the row's menu button: linked and pressed (`aria-pressed`, the shared
+  `.icon-toggle` active state) with **Attached to: <label>**, broken with **No conversation attached**, dimmed with
+  **Attachment unknown** when the integration cannot tell. Its accessible name and keyboard-openable tooltip give the
+  state and the action (`integrationChainAction`): attached, it detaches; otherwise it reads the offers
+  (`GET …/hosts`) and attaches the only compatible one or opens a menu of their labels (`integrationAttachChoice`),
+  then sends one `POST …/attach`. Without a conversation of this Location or an open document it stays focusable
+  with `aria-disabled` and its tooltip says why. A click is the user's explicit choice: no confirmation;
 - a warning icon only when the application part is `absent`, `outdated` or `incompatible`
   (`lib/integration-row-state.ts`).
 
 The row's menu (`components/plugin-row-actions.tsx`) is labelled by the connection state (open document count,
 application closed, unsupported machine, or the other families' server/connection state) and lists **Install in
 application…**/**Update application…** for a fresh `host.action`, **Detach the conversation** for an `attached`
-binding, then the ordinary package check/update, removal per scope and refresh. Integrations attach a conversation
-themselves at its first use; CodeNomad offers no attach control.
+binding, then the ordinary package check/update, removal per scope and refresh. A native integration also attaches a
+conversation itself at its first use; both paths coexist.
 
 `createIntegrationBindingsStore` (`stores/integration-bindings-store.ts`) shares reads for the exact instance,
 Location, displayed session and native integration of each shown row (`components/integration-row-binding.ts`).
@@ -289,9 +294,10 @@ shared secondary HTTP budget. Relevant integration/plugin/configuration events (
 and exact-session updates, moves or deletions revoke authority immediately and coalesce reads over 300 ms, with one
 trailing follow-up. Reconnect, native stream-open and renderer stream-open reconcile demanded bindings; disconnect
 revokes them. Explicit Plugins header or row refresh reconciles only demanded bindings of the displayed
-instance/Location/conversation. Errors publish `unknown`; releasing the last demand aborts and drops its state. Detach sends one
-`detach` request for the displayed conversation, then invalidates and reconciles its captured target in `finally`,
-including uncertain outcomes, which show a fixed error toast and are never replayed.
+instance/Location/conversation. Errors publish `unknown`; releasing the last demand aborts and drops its state.
+Attach and detach send one request for the displayed conversation, then invalidate and reconcile their captured
+target in `finally`, including uncertain outcomes, which show a fixed error toast and are never replayed; `busy`,
+`gone` and `refused` attach outcomes have their own message.
 
 `components/integration-host-installation.ts` owns the application part's trusted shared confirmation for a fresh
 active native integration reporting `host.action: "install" | "update"`: application name, integration package
@@ -371,11 +377,14 @@ Commands:
   native error data, concurrent requests and error recovery, with positive ordinary-route diagnostics checks.
 - `packages/ui/tests/browser/integration-plugin-row.test.ts` (fixture `fixtures/integration-plugin-row.tsx`, HTTP
   model `integration-plugin-row-model.ts`) renders the real right panel: one row per integration with its name,
-  version, accent switches equal to the Yolo accent and tooltip kind; the chain icon across `hosts_changed`/`status_changed`,
-  conversation changes and `unknown`; the attention icon per host state; the menu's connection line, guarded
+  version, accent switches equal to the Yolo accent and tooltip kind; the chain button across `hosts_changed`/`status_changed`,
+  conversation changes and `unknown`; the version right after the name; the chain button attaching the only open
+  document, detaching, unavailable without a document or a conversation, choosing between several documents and
+  reporting a `busy` outcome; the attention icon per host state; the menu's connection line, guarded
   application installation, one-click detach with a lost answer read again and never replayed, removal; French
   and Hebrew labels; and the catalog window's install by ID and consent revocation.
-  `packages/ui/src/lib/integration-row-state.test.ts` covers the link, attention and connection derivations.
+  `packages/ui/src/lib/integration-row-state.test.ts` covers the link, attention, connection, chain action and offer
+  choice derivations.
 - `node --import tsx scripts/test-integrations-attachments-native.mjs <absolute-cli> [pilot-checkout] [blender-executable]`:
   A supported OpenCode runtime (at or above the minimum) with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
   `IntegrationCatalogSource`, and the real relay feeding `createIntegrationsStore` through SSE. Checks a 60-second

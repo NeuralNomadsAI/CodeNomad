@@ -1,8 +1,10 @@
-import { Show, splitProps, type JSX } from "solid-js"
+import { For, Show, splitProps, type JSX } from "solid-js"
+import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import { Tooltip } from "@kobalte/core/tooltip"
 import { AlertTriangle, Link2, Unlink2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import type { IntegrationAttention, IntegrationLink } from "../lib/integration-row-state"
+import type { IntegrationAttention } from "../lib/integration-row-state"
+import type { IntegrationRowBinding } from "./integration-row-binding"
 
 /** A focusable icon whose text is its accessible name and its tooltip. */
 function Indicator(props: { label: string; children: JSX.Element } & Record<`data-${string}`, string | undefined>) {
@@ -15,15 +17,49 @@ function Indicator(props: { label: string; children: JSX.Element } & Record<`dat
   </Tooltip>
 }
 
-/** Linked or broken chain: whether the displayed conversation is attached to the integration's application. */
-export function IntegrationLinkIndicator(props: { link: IntegrationLink }) {
+/**
+ * The chain button of a native integration's row: pressed while the displayed conversation is attached. A click
+ * detaches it, or attaches it to the only open document, or opens the choice between several documents.
+ */
+export function IntegrationLinkButton(props: { binding: IntegrationRowBinding }) {
   const { t } = useI18n()
-  const label = () => props.link.state === "attached" ? t("integrations.link.attached", { label: props.link.label }) : t(`integrations.link.${props.link.state}`)
-  return <Indicator label={label()} data-integration-link={props.link.state}>
-    <Show when={props.link.state === "none"} fallback={<Link2 class="h-3.5 w-3.5" aria-hidden="true" />}>
-      <Unlink2 class="h-3.5 w-3.5" aria-hidden="true" />
-    </Show>
-  </Indicator>
+  const link = () => props.binding.link()!
+  const attached = () => link().state === "attached"
+  const state = () => {
+    const value = link()
+    return value.state === "attached" ? t("integrations.link.attached", { label: value.label }) : t(`integrations.link.${value.state}`)
+  }
+  const action = () => {
+    const next = props.binding.chainAction()
+    return next === "detach" ? t("integrations.detachConversation") : next === "attach" ? t("integrations.attachConversation") : props.binding.unavailable() ?? ""
+  }
+  const disabled = () => props.binding.busy() || props.binding.chainAction() === "unavailable"
+  return <DropdownMenu placement="bottom-end" gutter={4} open={props.binding.choices() !== undefined}
+    onOpenChange={open => { if (!open) props.binding.closeChoices(); else if (!disabled()) void props.binding.activate() }}>
+    <Tooltip placement="top" openDelay={300}>
+      <DropdownMenu.Trigger as={Tooltip.Trigger} type="button" class="icon-button-compact icon-toggle plugin-control-link"
+        data-integration-link={link().state} aria-pressed={attached()} aria-disabled={disabled() ? "true" : undefined}
+        aria-busy={props.binding.busy()} aria-label={`${state()} — ${action()}`}>
+        <Show when={link().state === "none"} fallback={<Link2 class="h-3.5 w-3.5" classList={{ "animate-pulse": props.binding.busy() }} aria-hidden="true" />}>
+          <Unlink2 class="h-3.5 w-3.5" classList={{ "animate-pulse": props.binding.busy() }} aria-hidden="true" />
+        </Show>
+      </DropdownMenu.Trigger>
+      <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip"><bdi>{state()}</bdi>{"\n"}{action()}</Tooltip.Content></Tooltip.Portal>
+    </Tooltip>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content class="action-overflow-content" data-integration-offers>
+        <DropdownMenu.Group>
+          <DropdownMenu.GroupLabel class="action-overflow-info">{t("integrations.attachChoose")}</DropdownMenu.GroupLabel>
+          <For each={props.binding.choices() ?? []}>{offer => (
+            <DropdownMenu.Item class="action-overflow-item" onSelect={() => void props.binding.attach(offer.offerID)}>
+              <span class="action-overflow-item-icon" aria-hidden="true"><Link2 class="h-3.5 w-3.5" /></span>
+              <span class="action-overflow-item-label"><bdi>{offer.label}</bdi></span>
+            </DropdownMenu.Item>
+          )}</For>
+        </DropdownMenu.Group>
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu>
 }
 
 /** Shown only when the application part needs an action, named in the row menu. */

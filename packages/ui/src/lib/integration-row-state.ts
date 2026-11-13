@@ -1,4 +1,4 @@
-import type { IntegrationBindingResponse, IntegrationView } from "../../../server/src/integration-types"
+import type { IntegrationBindingResponse, IntegrationHostOffer, IntegrationView } from "../../../server/src/integration-types"
 
 type Entry = Pick<IntegrationView, "family" | "state" | "status">
 
@@ -48,6 +48,22 @@ export function integrationConnection(entry: Entry): IntegrationConnection {
 export function integrationConnectionMessage(connection: IntegrationConnection, app: string): [string, Record<string, string | number>] {
   if (connection.state === "offers") return [`integrations.connection.offers.${connection.count === 1 ? "one" : "other"}`, { app, count: connection.count }]
   return [`integrations.connection.${connection.state}`, { app }]
+}
+
+/** What the chain button does: detach, attach, or nothing with a reason shown instead. */
+export type IntegrationChainAction = "detach" | "attach" | "unavailable"
+
+export function integrationChainAction(link: IntegrationLink, unavailable: string | undefined): IntegrationChainAction {
+  return link.state === "attached" ? "detach" : unavailable ? "unavailable" : "attach"
+}
+
+/** After reading the open documents: attach the only compatible one, choose between several, or none. */
+export type IntegrationAttachChoice = { kind: "attach"; offerID: string } | { kind: "choose"; offers: IntegrationHostOffer[] } | { kind: "none" }
+
+export function integrationAttachChoice(offers: readonly IntegrationHostOffer[]): IntegrationAttachChoice {
+  const compatible = offers.filter(offer => offer.protocol === "ok")
+  if (compatible.length === 0) return { kind: "none" }
+  return compatible.length === 1 ? { kind: "attach", offerID: compatible[0]!.offerID } : { kind: "choose", offers: compatible }
 }
 
 /** The catalogue summary in the current language, else English. */

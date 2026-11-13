@@ -17,7 +17,7 @@ import { pluginControlsCache } from "../stores/plugin-controls"
 import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
 import { createIntegrationHostInstallation } from "./integration-host-installation"
 import { createIntegrationRowBinding } from "./integration-row-binding"
-import { IntegrationAttentionIndicator, IntegrationLinkIndicator } from "./integration-row-indicators"
+import { IntegrationAttentionIndicator, IntegrationLinkButton } from "./integration-row-indicators"
 import { PluginActivationSwitch } from "./plugin-activation-switch"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginAddMenu } from "./plugin-add-menu"
@@ -241,14 +241,14 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const nameId = `${headingId}-name-${pluginId}`
     return (
       <div class="plugin-control-row" data-plugin-id={pluginId} data-integration={integration()?.id} role="group" aria-labelledby={nameId}>
-        <div class="plugin-control-identity"><Tooltip placement="top-start" openDelay={300}>
+        <div class="plugin-control-identity"><span class="plugin-control-title"><Tooltip placement="top-start" openDelay={300}>
           <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{name()}</bdi></Tooltip.Trigger>
           <Tooltip.Portal>
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip>
-          <Show when={version()}>{value => <span class="plugin-control-version"><bdi>{value()}</bdi></span>}</Show>
-          <Show when={binding.link()}>{link => <IntegrationLinkIndicator link={link()} />}</Show>
+          <Show when={version()}>{value => <span class="plugin-control-version"><bdi>{value()}</bdi></span>}</Show></span>
+          <Show when={binding.link()}><IntegrationLinkButton binding={binding} /></Show>
           <Show when={attention()}>{value => <IntegrationAttentionIndicator attention={value()} app={integration()!.app.name} />}</Show>
           {nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={name()}
           source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id}
@@ -268,6 +268,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const nameId = createUniqueId()
     const removable = removableFor(target)
     const integration = () => recognised().byTarget.get(target)
+    const packageVersion = () => { const source = entry()?.source; return source?.type === "package" ? source.version : undefined }
     const details = () => {
       const current = entry()
       const lines = current ? runtimeLines(current) : [target]
@@ -278,10 +279,11 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return <div class="plugin-control-row" data-package-target={entry()?.source.type === "package" ? target : undefined}
       data-local-path={entry()?.source.type === "local" ? target : undefined} data-integration={integration()?.id} role="group" aria-labelledby={nameId}>
       <div class="plugin-control-identity">
-        <Tooltip placement="top-start" openDelay={300}>
+        <span class="plugin-control-title"><Tooltip placement="top-start" openDelay={300}>
           <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{integration()?.displayName ?? target}</bdi></Tooltip.Trigger>
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
+          <Show when={packageVersion()}>{value => <span class="plugin-control-version"><bdi>{value()}</bdi></span>}</Show></span>
         {nonConformingLabel(declarationsFor(source => source.target === target))}
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
           removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} />
@@ -306,10 +308,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return <div class="plugin-control-row" data-source-target={target} data-source-state={state()} data-integration={integration()?.id}
       role="group" aria-labelledby={nameId} aria-busy={state() === "pending"}>
       <div class="plugin-control-identity">
-        <Tooltip placement="top-start" openDelay={300}>
+        <span class="plugin-control-title"><Tooltip placement="top-start" openDelay={300}>
           <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{integration()?.displayName ?? target}</bdi></Tooltip.Trigger>
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
-        </Tooltip>
+        </Tooltip></span>
         <Show when={state() === "pending"} fallback={<span class="plugin-source-state" role="status">{t("instanceServiceStatus.plugins.sources.unconfirmedLabel")}</span>}>
           <span class="plugin-source-state" role="status">
             <Loader2 class="h-3 w-3 animate-spin" aria-hidden="true" />{t("instanceServiceStatus.plugins.sources.pendingLabel")}

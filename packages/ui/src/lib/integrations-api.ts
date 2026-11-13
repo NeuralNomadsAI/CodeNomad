@@ -1,4 +1,4 @@
-import type { IntegrationsResponse, IntegrationDetachResponse, IntegrationInstallHostResponse, IntegrationBindingResponse } from "../../../server/src/integration-types"
+import type { IntegrationsResponse, IntegrationHostsResponse, IntegrationAttachResponse, IntegrationDetachResponse, IntegrationInstallHostResponse, IntegrationBindingResponse } from "../../../server/src/integration-types"
 import type { PluginControlScope } from "../../../server/src/api-types"
 import type { PluginSourceMutationResponse } from "../../../server/src/plugin-source-types"
 import type { IntegrationBindingTarget } from "../stores/integration-bindings-store"
@@ -61,13 +61,13 @@ export async function installIntegration(instanceId: string, directory: string, 
 }
 
 /** Fixed CodeNomad routes only; the server owns RPC identity and placement checks. Never replay mutations. */
-export async function integrationAttachmentRequest<T extends IntegrationDetachResponse | IntegrationInstallHostResponse>(
-  instanceId: string, directory: string, integrationId: string, action: "detach" | "install-host",
-  signal: AbortSignal, body?: { sessionID: string } | Record<string, never>,
+export async function integrationAttachmentRequest<T extends IntegrationHostsResponse | IntegrationAttachResponse | IntegrationDetachResponse | IntegrationInstallHostResponse>(
+  instanceId: string, directory: string, integrationId: string, action: "hosts" | "attach" | "detach" | "install-host",
+  signal: AbortSignal, body?: { sessionID: string; offerID?: string } | Record<string, never>,
 ): Promise<T> {
   const path = `/api/workspaces/${encodeURIComponent(instanceId)}/integrations/${encodeURIComponent(integrationId)}/${action}?${new URLSearchParams({ directory })}`
   const response = await authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
-    signal, credentials: "include", cache: "no-store", method: "POST",
+    signal, credentials: "include", cache: "no-store", method: action === "hosts" ? "GET" : "POST",
     ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
   })
   if (!response.ok) {

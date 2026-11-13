@@ -1,4 +1,4 @@
-/* A Plugins row's version, an integration's link and attention indicators, and its menu's connection line
+/* A Plugins row's version, an integration's chain button and attention indicator, and its menus' information line
    (components/plugin-activation-controls.tsx, integration-row-indicators.tsx, plugin-row-actions.tsx). */
 .plugin-control-version {
   flex-shrink: 0;
@@ -19,11 +19,13 @@
   outline-offset: 2px;
 }
 
-.plugin-control-indicator[data-integration-link="attached"] {
-  color: var(--accent-primary);
+/* The chain button: the row's framed icon button; pressed while attached (shared `.icon-toggle` rule). */
+.plugin-control-link[data-integration-link="unknown"] svg {
+  opacity: 0.5;
 }
 
-.plugin-control-indicator[data-integration-link="unknown"] {
+.plugin-controls .plugin-control-link[aria-disabled="true"] {
+  cursor: not-allowed;
   opacity: 0.5;
 }
 

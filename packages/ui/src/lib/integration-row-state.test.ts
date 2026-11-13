@@ -1,7 +1,15 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { IntegrationView } from "../../../server/src/integration-types"
-import { integrationAttention, integrationConnection, integrationConnectionMessage, integrationLink, integrationSummary } from "./integration-row-state"
+import {
+  integrationAttachChoice,
+  integrationAttention,
+  integrationChainAction,
+  integrationConnection,
+  integrationConnectionMessage,
+  integrationLink,
+  integrationSummary,
+} from "./integration-row-state"
 
 type Entry = Pick<IntegrationView, "family" | "state" | "status">
 const native = (host: NonNullable<NonNullable<Entry["status"]>["host"]>["state"] = "ok", offers = 1, extra: Partial<Entry> = {}): Entry =>
@@ -48,6 +56,23 @@ describe("integration Plugins row state", () => {
     assert.deepEqual(integrationConnectionMessage({ state: "offers", count: 1 }, "Blender"), ["integrations.connection.offers.one", { app: "Blender", count: 1 }])
     assert.deepEqual(integrationConnectionMessage({ state: "offers", count: 3 }, "Blender"), ["integrations.connection.offers.other", { app: "Blender", count: 3 }])
     assert.deepEqual(integrationConnectionMessage({ state: "hostClosed" }, "Blender"), ["integrations.connection.hostClosed", { app: "Blender" }])
+  })
+
+  it("the chain button detaches when attached, else attaches unless a reason is shown", () => {
+    assert.equal(integrationChainAction({ state: "attached", label: "Scene" }, undefined), "detach")
+    assert.equal(integrationChainAction({ state: "attached", label: "Scene" }, "Blender closed"), "detach", "an attached conversation can always detach")
+    assert.equal(integrationChainAction({ state: "none" }, undefined), "attach")
+    assert.equal(integrationChainAction({ state: "unknown" }, undefined), "attach", "the attach outcome tells when the state was unknown")
+    assert.equal(integrationChainAction({ state: "none" }, "Blender: no open document"), "unavailable")
+  })
+
+  it("attaches the only compatible document, offers the choice between several, or none", () => {
+    const offer = (offerID: string, protocol: "ok" | "incompatible" = "ok") => ({ offerID, label: `Blender: ${offerID}.blend`, protocol })
+    assert.deepEqual(integrationAttachChoice([offer("a")]), { kind: "attach", offerID: "a" })
+    assert.deepEqual(integrationAttachChoice([offer("a"), offer("b", "incompatible")]), { kind: "attach", offerID: "a" })
+    assert.deepEqual(integrationAttachChoice([offer("a"), offer("b")]), { kind: "choose", offers: [offer("a"), offer("b")] })
+    assert.deepEqual(integrationAttachChoice([offer("b", "incompatible")]), { kind: "none" })
+    assert.deepEqual(integrationAttachChoice([]), { kind: "none" })
   })
 
   it("reads the catalogue summary in the current language, else English", () => {
