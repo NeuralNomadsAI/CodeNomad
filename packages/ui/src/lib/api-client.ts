@@ -371,6 +371,7 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     releaseWorkspaceCreation(id: string, requestId: string): Promise<void> {
+      id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}/creation/release`, {
         method: "POST",
         body: JSON.stringify({ requestId }),
@@ -528,6 +529,7 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     deleteWorkspace(id: string): Promise<void> {
+      id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
     },
     createTemporaryFolder(): Promise<{ path: string }> {
