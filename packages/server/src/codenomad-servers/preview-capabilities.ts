@@ -12,13 +12,14 @@ import { proxyWebSocket } from "../server/proxy-websocket"
 import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import type { RemoteServerBrowseManager } from "./browse-manager"
 import type { RemotePreviewCapability } from "../api-types"
+import { isLoopbackHost } from "../server/network-host"
 
 const Preview = z.object({
   token: z.string().uuid(), sessionId: z.string().min(1), targetUrl: z.string().url(),
   proxyUrl: z.string(), createdAt: z.string(),
 })
 type Owner = ReturnType<RemoteServerBrowseManager["previewOwner"]>
-type Capability = { id: string; proof: string; preview: z.infer<typeof Preview>; owner: Owner; controller: AbortController; release(): void }
+type Capability = { id: string; proof: string; preview: z.infer<typeof Preview>; owner: Owner; embeddingOrigin?: string; controller: AbortController; release(): void }
 const safeHeaders = ["content-type", "content-disposition", "cache-control", "etag", "last-modified", "content-range", "accept-ranges",
   "content-security-policy", "referrer-policy", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers"]
 
@@ -49,7 +50,11 @@ export class RemotePreviewCapabilities {
     })
   }
 
-  async create(id: string, proof: string, body: { sessionId: string; url: string }, signal?: AbortSignal): Promise<RemotePreviewCapability> {
+  async create(id: string, proof: string, body: { sessionId: string; url: string }, signal?: AbortSignal, embeddingOrigin?: string): Promise<RemotePreviewCapability> {
+    if (embeddingOrigin !== undefined) {
+      const source = new URL(embeddingOrigin)
+      if (!/^https?:$/.test(source.protocol) || source.origin !== embeddingOrigin || !isLoopbackHost(source.hostname)) throw new Error("Invalid embedding origin")
+    }
     const owner = this.manager.previewOwner(id, proof)
     const port = await this.listen()
     if (this.#closed) throw new Error("Preview listener closed")
@@ -86,7 +91,7 @@ export class RemotePreviewCapabilities {
       const controller = new AbortController()
       const revoke = () => this.revoke(capability)
       owner.signal.addEventListener("abort", revoke, { once: true })
-      this.#records.set(capability, { id, proof, preview, owner, controller,
+      this.#records.set(capability, { id, proof, preview, owner, embeddingOrigin, controller,
         release: () => owner.signal.removeEventListener("abort", revoke) })
       return { ...preview, capability, contentUrl: `http://${capability}.preview.localhost:${port}${preview.proxyUrl}` }
     } catch (error) {
@@ -129,23 +134,25 @@ export class RemotePreviewCapabilities {
     const prefix = `/previews/${record.preview.token}`
     const path = pathname === prefix || pathname.startsWith(`${prefix}/`) ? raw : `${prefix}${raw}`
     const source = request.headers.origin
-    if (source !== undefined && source !== "null" && source !== `http://${request.headers.host}`) throw new Error("Foreign origin")
-    return { record, path }
+    const origin = `http://${request.headers.host}`
+    if (source !== undefined && source !== origin) throw new Error("Foreign origin")
+    return { record, path, origin }
   }
 
   private async http(request: IncomingMessage, reply: ServerResponse) {
+    reply.setHeader("cross-origin-resource-policy", "same-origin")
     const disconnect = new AbortController()
     const abort = () => disconnect.abort()
     request.once("aborted", abort)
     reply.once("close", abort)
     try {
-      const { record, path } = this.capture(request)
+      const { record, path, origin } = this.capture(request)
       const signal = AbortSignal.any([record.controller.signal, record.owner.signal, disconnect.signal])
       const requestedMethod = request.headers["access-control-request-method"]
       if (request.method === "OPTIONS" && typeof requestedMethod === "string") {
-        if (!/^[A-Z]{1,20}$/.test(requestedMethod)) throw new Error("Invalid preflight")
+        if (request.headers.origin !== origin || !/^[A-Z]{1,20}$/.test(requestedMethod)) throw new Error("Invalid preflight")
         reply.writeHead(204, {
-          "access-control-allow-origin": "null", "access-control-allow-methods": requestedMethod,
+          "access-control-allow-origin": origin, "access-control-allow-methods": requestedMethod,
           "access-control-allow-headers": request.headers["access-control-request-headers"] ?? "",
           "cache-control": "no-store",
         })
@@ -160,7 +167,6 @@ export class RemotePreviewCapabilities {
         if (/^(?:referer|sec-.*|x-codenomad-.*|x-opencode-.*|content-length|accept-encoding|expect)$/i.test(name)) continue
         if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value)
       }
-      // The upstream path proxy uses opaque documents; preserve its scoped CORS behavior.
       const response = await transport.fetch(new URL(path, record.owner.origin), {
         method: request.method, headers,
         body: ["GET", "HEAD"].includes(request.method ?? "GET") ? undefined : Readable.toWeb(request) as never,
@@ -185,10 +191,11 @@ export class RemotePreviewCapabilities {
       }
       reply.setHeader("cache-control", "no-store")
       reply.setHeader("x-content-type-options", "nosniff")
-      // Content stays opaque even if a remote fixture or older backend omits its sandbox.
-      reply.setHeader("content-security-policy", `sandbox ${PREVIEW_SANDBOX_FLAGS}`)
+      // Each document keeps its own content origin. Only the issuing UI can embed it.
+      reply.setHeader("content-security-policy", `sandbox ${PREVIEW_SANDBOX_FLAGS} allow-same-origin; frame-ancestors 'self'${record.embeddingOrigin ? ` ${record.embeddingOrigin}` : ""}`)
       reply.setHeader("referrer-policy", "same-origin")
-      reply.setHeader("access-control-allow-origin", "null")
+      reply.setHeader("access-control-allow-origin", origin)
+      reply.setHeader("vary", "Origin")
       const revoke = () => reply.destroy()
       signal.addEventListener("abort", revoke, { once: true })
       reply.once("close", () => signal.removeEventListener("abort", revoke))
@@ -209,8 +216,8 @@ export class RemotePreviewCapabilities {
 
   private async upgrade(request: IncomingMessage, socket: Socket, head: Buffer) {
     try {
-      const { record, path } = this.capture(request)
-      if (request.headers.upgrade?.toLowerCase() !== "websocket") throw new Error("Invalid upgrade")
+      const { record, path, origin } = this.capture(request)
+      if (request.headers.origin !== origin || request.headers.upgrade?.toLowerCase() !== "websocket") throw new Error("Invalid upgrade")
       const signal = AbortSignal.any([record.controller.signal, record.owner.signal, AbortSignal.timeout(15_000)])
       const abort = () => socket.destroy()
       signal.addEventListener("abort", abort, { once: true })

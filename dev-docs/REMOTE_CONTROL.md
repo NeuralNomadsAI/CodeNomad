@@ -147,6 +147,11 @@ The backend's private connection identity is used only for preview creation and
 deletion. Content uses the remote preview's existing cookie-free capability
 protocol; Remote Control's preview switch continues to govern ingress content.
 Ingress clients remain subject to the host-only gate for capability management.
+Each content document retains its exclusive origin inside the sandbox. Origin
+carriers and WebSocket handshakes require that exact origin; CORS reflects only
+the owning origin. Same-origin resource policy protects no-CORS sub-resources,
+and frame-ancestor policy restricts embedding to that content origin and its
+issuing local UI.
 See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
 for the API and revocation lifetime.
 

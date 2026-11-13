@@ -152,11 +152,11 @@ function send(source: string, options: { method?: string; body?: string; headers
   }))
 }
 
-async function websocket(source: string) {
+async function websocket(source: string, options: { origin?: string | null } = {}) {
   const url = new URL("/ws", source)
   return bounded(new Promise<{ socket: Socket; headers: IncomingHttpHeaders }>((resolve, reject) => {
     const request = http.request({ hostname: "127.0.0.1", port: url.port, path: url.pathname,
-      headers: { host: url.host, origin: "null", connection: "Upgrade", upgrade: "websocket",
+      headers: { host: url.host, origin: options.origin === null ? undefined : options.origin ?? url.origin, connection: "Upgrade", upgrade: "websocket",
         "sec-websocket-key": randomBytes(16).toString("base64"), "sec-websocket-version": "13", cookie: "ui=secret", authorization: "Basic secret" } })
     request.on("upgrade", (response, socket) => resolve({ socket, headers: response.headers }))
     request.on("response", response => { response.resume(); reject(new Error(`Upgrade ${response.statusCode}`)) })
@@ -240,27 +240,45 @@ test("HTTP navigation and WebSocket echo use only the captured content destinati
   }
 })
 
-test("opaque fetch preflights are capability-scoped and application headers survive without backend markers", async t => {
+test("own-origin fetch preflights are capability-scoped and application headers survive without backend markers", async t => {
   const f = await fixture(t)
   const cap = await f.create()
   const source = new URL("/fetch", cap.contentUrl).href
   const before = f.a.requests.length
   const preflight = await send(source, { method: "OPTIONS", headers: {
-    origin: "null", "access-control-request-method": "POST", "access-control-request-headers": "content-type,x-app",
+    origin: new URL(source).origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type,x-app",
   } })
   assert.equal(preflight.status, 204)
-  assert.equal(preflight.headers["access-control-allow-origin"], "null")
+  assert.equal(preflight.headers["access-control-allow-origin"], new URL(source).origin)
   assert.equal(preflight.headers["access-control-allow-methods"], "POST")
   assert.equal(preflight.headers["access-control-allow-headers"], "content-type,x-app")
   assert.equal(preflight.headers["access-control-allow-credentials"], undefined)
   assert.equal(f.a.requests.length, before)
   assert.equal((await send(source, { method: "POST", body: "{}", headers: {
-    origin: "null", "content-type": "application/json", "x-app": "kept",
+    origin: new URL(source).origin, "content-type": "application/json", "x-app": "kept",
     [AUTHORITY]: f.proofs.a!, "x-codenomad-server-request": "1", referer: cap.contentUrl, cookie: "ui=secret",
   } })).status, 200)
   const headers = f.a.requests.at(-1)!.headers
   assert.equal(headers["x-app"], "kept")
   for (const name of [AUTHORITY, "x-codenomad-server-request", "referer", "origin", "cookie"]) assert.equal(headers[name], undefined)
+})
+
+test("HTTP/preflights and WS reject null, foreign and missing upgrade origins before upstream dispatch", async t => {
+  const f = await fixture(t)
+  const cap = await f.create(), other = await f.create("b")
+  const source = new URL("/data", cap.contentUrl).href
+  const before = f.a.requests.length
+  for (const origin of ["null", new URL(other.contentUrl).origin, f.origin]) {
+    assert.equal((await send(source, { headers: { origin } })).status, 404)
+    assert.equal((await send(source, { method: "OPTIONS", headers: { origin, "access-control-request-method": "POST" } })).status, 404)
+    await assert.rejects(websocket(cap.contentUrl, { origin }))
+  }
+  await assert.rejects(websocket(cap.contentUrl, { origin: null }))
+  assert.equal(f.a.requests.length, before)
+  const own = await send(source, { headers: { origin: new URL(source).origin } })
+  assert.equal(own.status, 200)
+  assert.equal(own.headers["cross-origin-resource-policy"], "same-origin")
+  assert.match(String(own.headers["content-security-policy"]), new RegExp(`frame-ancestors 'self' ${f.origin}`))
 })
 
 for (const action of ["close", "detach", "remove", "retarget", "forget", "shutdown"] as const) {

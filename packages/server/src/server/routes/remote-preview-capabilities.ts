@@ -33,7 +33,7 @@ export function registerRemotePreviewCapabilityRoutes(app: FastifyInstance, deps
       const abort = () => controller.abort()
       reply.raw.once("close", abort)
       try {
-        return await previews.create(request.params.id, proof(request), Body.parse(request.body), controller.signal)
+        return await previews.create(request.params.id, proof(request), Body.parse(request.body), controller.signal, request.headers.origin)
       } catch { return reply.code(404).send({ error: "unreachable" }) }
       finally { reply.raw.off("close", abort) }
     })

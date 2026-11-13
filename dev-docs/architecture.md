@@ -107,7 +107,10 @@ preview under an admitted backend proof and publishes a distinct random
 `preview.localhost` content origin. That listener reserves all HTTP/WS routes for
 the captured backend, generation and preview token. It uses credential-free,
 destination-pinned content transport, the existing remote preview rewriting and
-the shared opaque sandbox. Scoped redirects remain inside that preview.
+an origin-preserving sandbox on its exclusive content origin. Origin carriers
+and CORS/WS admission bind to that exact origin. Same-origin resource policy
+protects no-CORS resources, and frame ancestors bind to the content origin and
+the guarded creation request's local UI origin. Scoped redirects remain inside that preview.
 Capability deletion or backend-generation revocation closes live transfers;
 explicit preview detachment is shared across the backend's listeners. Listener
 shutdown destroys its sockets. The API and lifetime are specified in

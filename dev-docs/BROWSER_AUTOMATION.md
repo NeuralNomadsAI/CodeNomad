@@ -107,8 +107,13 @@ The hidden Electron fixture supplies visible ownership to the controller. Before
 listener. Each remote preview receives a fresh `<capability>.preview.localhost`
 origin on that listener's ephemeral port. Every HTTP path and WebSocket upgrade
 on the listener resolves only through that capability's remote preview token.
-Responses retain the opaque preview sandbox and use the existing remote path
-proxy's asset/runtime rewriting. Request cookies and authorization, response
+Responses use a sandbox with `allow-same-origin` on that capability's exclusive
+content origin and the existing remote path proxy's asset/runtime rewriting.
+HTTP Origin carriers, CORS preflights and WebSocket upgrades bind to that exact
+origin; opaque/null and foreign Origin carriers are refused before upstream
+dispatch. `Cross-Origin-Resource-Policy: same-origin` protects no-CORS resources.
+The sandbox's `frame-ancestors` admits the content origin and its issuing local
+UI origin, captured during guarded creation. Request cookies and authorization, response
 cookies and remote connection credentials stay outside content traffic, matching
 the local path-preview policy.
 
@@ -127,6 +132,9 @@ under that original generation.
 `preview-capabilities.test.ts` covers content-origin reservation, equal remote
 tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
 destination ownership, revocation and the real remote CodeNomad path proxy.
+`tests/browser/remote-preview-origin-isolation.test.ts` drives Chromium against identical remote
+tokens to qualify fetch/XHR/WS, no-CORS scripts/images/fetch, iframe embedding,
+opaque callers and legitimate own-origin resources.
 
 ## Design constraints
 
