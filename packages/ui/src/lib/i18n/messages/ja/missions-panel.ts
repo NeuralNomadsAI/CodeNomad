@@ -16,7 +16,6 @@ export const missionsPanelMessages = {
   "missionsPanel.action.interruptNow": "今すぐ中断",
   "missionsPanel.action.resume": "再開",
   "missionsPanel.action.runNow": "今すぐ実行",
-  "missionsPanel.action.checkPassage": "実行を確認",
   "missionsPanel.action.checkStatus": "状態を確認",
   "missionsPanel.action.stop": "停止…",
   "missionsPanel.action.openConversation": "会話を開く",

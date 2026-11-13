@@ -16,7 +16,6 @@ export const missionsPanelMessages = {
   "missionsPanel.action.interruptNow": "立即中断",
   "missionsPanel.action.resume": "继续",
   "missionsPanel.action.runNow": "立即运行",
-  "missionsPanel.action.checkPassage": "检查本次运行",
   "missionsPanel.action.checkStatus": "检查状态",
   "missionsPanel.action.stop": "停止…",
   "missionsPanel.action.openConversation": "打开对话",
