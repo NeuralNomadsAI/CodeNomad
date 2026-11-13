@@ -52,13 +52,13 @@ if (scenario) {
     message.content = Array.from({ length: scenario === "overflow" ? 201 : 200 }, (_, index) => ({ ...message.content[0], id: `overflow-${index}` }))
     history[childId] = [message]
   }
-  if (scenario === "background") {
+  if (scenario === "background" || scenario === "background-quiet") {
     // A background launch only acknowledges; the child reports through hidden synthetic messages.
     history[childId] = [toolMessage(childId, 0)]
     const launch = history[parentId][0].content[0]
     launch.state.metadata = { sessionID: childId, status: "running" }
     launch.state.content = [{ type: "text", text: "The subagent is working in the background (sessionID: child). You will receive a <subagent> message when it goes idle." }]
-    history[parentId].push(subagentReport(10, "running", "Partial findings\n\nBackground work still running:\n- subagent (explore, sessionID: grandchild): Deeper"))
+    if (scenario === "background") history[parentId].push(subagentReport(10, "running", "Partial findings\n\nBackground work still running:\n- subagent (explore, sessionID: grandchild): Deeper"))
   }
   if (scenario === "text-tail") {
     history[childId] = [toolMessage(childId, 0), ...Array.from({ length: 200 }, (_, index) => ({

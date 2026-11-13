@@ -52,8 +52,9 @@ function readBackgroundReport(context: Pick<import("../types").ToolRendererConte
   const store = messageStoreBus.getOrCreate(context.instanceId)
   // Track the parent session's revision only; the index is shared by its cards.
   const revision = store.getSessionRevision(context.sessionId)
-  const index = untrack(() => cachedSubagentDeliveries(`${context.instanceId}\0${context.sessionId}`, revision,
-    () => indexSubagentDeliveries(store.getSessionMessageIds(context.sessionId), store.getMessage)))
+  const messageIds = store.getSessionMessageIds(context.sessionId)
+  const index = untrack(() => cachedSubagentDeliveries(store, context.sessionId, revision, messageIds,
+    () => indexSubagentDeliveries(messageIds, store.getMessage)))
   const call = context.toolCall()
   const launchedAt = subagentCallTime(call, untrack(() => call.messageID ? store.getMessage(call.messageID)?.createdAt : undefined) ?? 0)
   return latestReportForLaunch(index.get(childId), launchedAt)

@@ -6,12 +6,12 @@ import { cachedSubagentDeliveries, indexSubagentDeliveries, isBackgroundSubagent
 const report = (child: string, state: string, body: string) =>
   `<subagent sessionID="${child}" state="${state}" description="Nest">\n${body}\n</subagent>`
 
-type Entry = { id: string; createdAt: number; text?: string; synthetic?: boolean; launch?: { child: string; created?: number } }
+type Entry = { id: string; createdAt: number; text?: string; synthetic?: boolean; launch?: { child: string; created?: number; ran?: number } }
 
 function session(entries: Entry[]) {
   const messages = new Map(entries.map(entry => {
     const data = entry.launch
-      ? { type: "tool", tool: "subagent", ...(entry.launch.created === undefined ? {} : { time: { created: entry.launch.created } }),
+      ? { type: "tool", tool: "subagent", ...(entry.launch.created === undefined ? {} : { time: { created: entry.launch.created, ...(entry.launch.ran ? { ran: entry.launch.ran } : {}) } }),
         state: { status: "completed", metadata: { sessionID: entry.launch.child, status: "running" } } }
       : entry.text === undefined ? undefined : { type: "text", synthetic: entry.synthetic ?? true, text: entry.text }
     return [entry.id, { createdAt: entry.createdAt, partIds: data ? [`${entry.id}-part`] : [], parts: data ? { [`${entry.id}-part`]: { data } } : {} }]
@@ -72,12 +72,42 @@ describe("background subagent reports", () => {
     assert.equal(latestReportForLaunch(bounded.get("ses_child"), 0), null)
   })
 
-  it("builds one index per session revision", () => {
+  it("bounds a continuation at its execution start, not at its argument streaming", () => {
+    const index = session([
+      { id: "msg_1", createdAt: 1, launch: { child: "ses_child", created: 1 } },
+      // The continuation streamed its arguments from 2 and ran at 4; the child reported at 3.
+      { id: "msg_2", createdAt: 2, launch: { child: "ses_child", created: 2, ran: 4 } },
+      { id: "msg_3", createdAt: 3, text: report("ses_child", "completed", "First period") },
+      { id: "msg_4", createdAt: 5, text: report("ses_child", "completed", "Second period") },
+    ])
+    assert.equal(latestReportForLaunch(index.get("ses_child"), 1)?.body, "First period")
+    assert.equal(latestReportForLaunch(index.get("ses_child"), 4)?.body, "Second period")
+  })
+
+  it("joins a call continued before its first report to the next period that reports", () => {
+    const index = session([
+      { id: "msg_1", createdAt: 1, launch: { child: "ses_child", created: 1 } },
+      { id: "msg_2", createdAt: 2, launch: { child: "ses_child", created: 2 } },
+      { id: "msg_3", createdAt: 3, launch: { child: "ses_child", created: 3 } },
+      { id: "msg_4", createdAt: 4, text: report("ses_child", "completed", "Joined result") },
+    ])
+    assert.equal(latestReportForLaunch(index.get("ses_child"), 1)?.body, "Joined result")
+    assert.equal(latestReportForLaunch(index.get("ses_child"), 3)?.body, "Joined result")
+  })
+
+  it("builds one index per session revision and message list, owned by its store", () => {
     let builds = 0
     const build = () => { builds += 1; return new Map() }
-    const first = cachedSubagentDeliveries("instance\0parent-cache", 1, build)
-    assert.equal(cachedSubagentDeliveries("instance\0parent-cache", 1, build), first)
-    cachedSubagentDeliveries("instance\0parent-cache", 2, build)
-    assert.equal(builds, 2)
+    const store = {}, ids = ["msg_1"]
+    const first = cachedSubagentDeliveries(store, "parent", 1, ids, build)
+    assert.equal(cachedSubagentDeliveries(store, "parent", 1, ids, build), first)
+    assert.equal(builds, 1)
+    // Eviction or reload restarts revisions: a new list, or a list that changed length, rebuilds.
+    cachedSubagentDeliveries(store, "parent", 1, ["msg_1"], build)
+    ids.push("msg_2"); cachedSubagentDeliveries(store, "parent", 1, ids, build)
+    cachedSubagentDeliveries(store, "parent", 2, ids, build)
+    // Another store never shares an index.
+    cachedSubagentDeliveries({}, "parent", 2, ids, build)
+    assert.equal(builds, 5)
   })
 })

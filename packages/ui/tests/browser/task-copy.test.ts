@@ -90,6 +90,18 @@ test("a background subagent card shows the child's latest report instead of its 
   assert.equal(await output.getAttribute("data-subagent-report"), "completed")
 }, "background"))
 
+test("a call continued before its first report shares the next report instead of running forever", { timeout: 45_000 }, async () => withPage(async page => {
+  const first = page.locator('.tool-call[data-part-id="parent-task"] section[data-subagent-report]')
+  await first.waitFor()
+  assert.equal(await first.getAttribute("data-subagent-report"), "running")
+  await page.evaluate(() => (window as any).fixture.continueChild("Joined result"))
+  const continued = page.locator('.tool-call[data-part-id="continued-task"] section[data-subagent-report]')
+  await continued.waitFor()
+  await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="parent-task"] section[data-subagent-report]')?.getAttribute("data-subagent-report") === "completed")
+  assert.match(await first.textContent() ?? "", /Joined result/)
+  assert.match(await continued.textContent() ?? "", /Joined result/)
+}, "background-quiet"))
+
 test("exactly 200 observed child rows are not render overflow", { timeout: 45_000 }, async () => withPage(async page => {
   const sections = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-sections').first()
   const steps = sections.locator(':scope > section').filter({ has: page.locator('.tool-call-task-section-title', { hasText: /^Steps$/ }) })

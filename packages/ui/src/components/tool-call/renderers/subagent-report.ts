@@ -5,6 +5,9 @@
  * `<subagent sessionID="…" state="…" description="…">\n<body>\n</subagent>`.
  * A report tagged `running` is intermediate: the child still owns background work.
  */
+import type { ClientPart } from "../../../types/message"
+import { getPartStartedAt } from "../../../lib/message-timing"
+
 export type SubagentReportState = "running" | "completed" | "error" | "cancelled"
 
 export interface SubagentReport {
@@ -51,10 +54,9 @@ type ReportMessage = {
   parts: Record<string, { data?: unknown } | undefined>
 }
 
-/** A call's creation time: its own part time, else its message's. */
+/** When a call started executing (`time.ran`, else its part or message creation): reports before it belong to earlier calls. */
 export function subagentCallTime(part: unknown, messageCreatedAt: number): number {
-  const created = (part as { time?: { created?: unknown } } | null | undefined)?.time?.created
-  return typeof created === "number" ? created : messageCreatedAt
+  return getPartStartedAt(part as ClientPart) ?? messageCreatedAt
 }
 
 /** Every child's reports and launch times in the parent session; listing order is irrelevant. */
@@ -88,31 +90,41 @@ export function indexSubagentDeliveries(
 }
 
 /**
- * The latest report delivered to the call started at `launchedAt`: after it and before the next
- * call continuing the same child, chosen by creation time, then by monotonic message id.
+ * The latest report delivered to the call started at `launchedAt`, chosen by creation time, then
+ * by monotonic message id. A call's period ends at the next call continuing the same child; every
+ * idle period reports, so a period without a report was still running when continued and joins
+ * the next call's period until one reports.
  */
 export function latestReportForLaunch(deliveries: SubagentDeliveries | undefined, launchedAt: number): SubagentReport | null {
   if (!deliveries) return null
-  const end = deliveries.launches.reduce((next, time) => time > launchedAt && time < next ? time : next, Infinity)
-  let latest: SubagentReport | null = null
-  for (const report of deliveries.reports) {
-    if (report.createdAt < launchedAt || report.createdAt >= end) continue
-    if (!latest || report.createdAt > latest.createdAt
-      || (report.createdAt === latest.createdAt && report.messageId > latest.messageId)) latest = report
+  const boundaries = [...deliveries.launches.filter(time => time > launchedAt).sort((left, right) => left - right), Infinity]
+  for (const end of boundaries) {
+    let latest: SubagentReport | null = null
+    for (const report of deliveries.reports) {
+      if (report.createdAt < launchedAt || report.createdAt >= end) continue
+      if (!latest || report.createdAt > latest.createdAt
+        || (report.createdAt === latest.createdAt && report.messageId > latest.messageId)) latest = report
+    }
+    if (latest) return latest
   }
-  return latest
+  return null
 }
 
-const indexes = new Map<string, { revision: number; index: Map<string, SubagentDeliveries> }>()
-const INDEX_CACHE_LIMIT = 32
+type IndexOwner = object
+const indexes = new WeakMap<IndexOwner, Map<string, { revision: number; messageIds: readonly string[]; length: number; index: Map<string, SubagentDeliveries> }>>()
 
-/** One index per session revision, shared by every card of that session. */
-export function cachedSubagentDeliveries(key: string, revision: number, build: () => Map<string, SubagentDeliveries>) {
-  const cached = indexes.get(key)
-  if (cached?.revision === revision) return cached.index
+/**
+ * One index per session revision, shared by every card of that session. Owned by the message store
+ * and tied to the session's message-id list, so eviction, reload or store replacement (which can
+ * restart revision numbers) always rebuild it.
+ */
+export function cachedSubagentDeliveries(owner: IndexOwner, sessionId: string, revision: number,
+  messageIds: readonly string[], build: () => Map<string, SubagentDeliveries>) {
+  let sessions = indexes.get(owner)
+  if (!sessions) indexes.set(owner, sessions = new Map())
+  const cached = sessions.get(sessionId)
+  if (cached && cached.revision === revision && cached.messageIds === messageIds && cached.length === messageIds.length) return cached.index
   const index = build()
-  indexes.delete(key)
-  indexes.set(key, { revision, index })
-  if (indexes.size > INDEX_CACHE_LIMIT) indexes.delete(indexes.keys().next().value!)
+  sessions.set(sessionId, { revision, messageIds, length: messageIds.length, index })
   return index
 }
