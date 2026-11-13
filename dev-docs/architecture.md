@@ -101,6 +101,18 @@ Renaming a saved profile retains its client. Address/TLS change, removal, explic
 
 `server/routes/backend-relay.ts` relays `/api/*` and `/workspaces/*` through `codenomad-servers/browse-manager.ts`. The manager resolves the saved `state.ui.remoteServers` profile and owns its client, TLS policy and private credential store. `opencode/servers/transport.ts` validates and pins each DNS answer for the dial, verifies TLS against the saved hostname, refuses redirects, strips caller credentials and browser metadata, and adds only the backend-held identity. Remote mutations use the explicit device protocol described in [REMOTE_CONTROL.md](REMOTE_CONTROL.md#saved-profile-relay). Login and logout at the relay operate on the backend's saved identity. Host-only remote routes and nested relays remain inaccessible.
 
+Remote preview content has its own lazy loopback listener in `codenomad-servers/preview-capabilities.ts`.
+The host-only `server/routes/remote-preview-capabilities.ts` API creates a remote
+preview under an admitted backend proof and publishes a distinct random
+`preview.localhost` content origin. That listener reserves all HTTP/WS routes for
+the captured backend, generation and preview token. It uses credential-free,
+destination-pinned content transport, the existing remote preview rewriting and
+the shared opaque sandbox. Scoped redirects remain inside that preview.
+Capability deletion or backend-generation revocation closes live transfers;
+explicit preview detachment is shared across the backend's listeners. Listener
+shutdown destroys its sockets. The API and lifetime are specified in
+[Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport).
+
 `index.ts` owns one `RemoteServerBrowseManager`, its settings-change subscription and shutdown across HTTP, HTTPS and the private bridge listener. Standalone listener managers sharing the backend's `SettingsService` retain the same connection state: credentials, clients, pending connections, queues and profile authorities. Closing one owner releases its lease; the last owner closes the shared connections. Forget revokes the shared authority immediately, across every listener.
 
 Connection and browse admission captures an immutable profile authority before queueing: profile id, normalized origin, TLS policy and an object-identity generation. Dispatch and credential publication check that captured generation and the current saved profile. Address/TLS changes and removal revoke queued work as well as active connections; queued passwords remain bound to their admitted destination. The private store binds each identity to both origin and TLS policy. An entry without a TLS-policy field binds to verified TLS.

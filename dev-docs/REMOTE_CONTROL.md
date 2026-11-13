@@ -135,6 +135,21 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 
 Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership.
 
+### Isolated remote preview capabilities
+
+Remote preview creation and revocation use the host's
+`/api/backends/:id/preview-capabilities` routes with the same local-origin guard
+and a required current relay-authority header. A separate content-only loopback
+listener maps a random local capability to one backend generation and remote
+preview. Its HTTP and WebSocket transports pin the saved destination, preserve
+TLS hostname verification and borrow the identity-gated SSH forward when present.
+The backend's private connection identity is used only for preview creation and
+deletion. Content uses the remote preview's existing cookie-free capability
+protocol; Remote Control's preview switch continues to govern ingress content.
+Ingress clients remain subject to the host-only gate for capability management.
+See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
+for the API and revocation lifetime.
+
 ## Direct listener origins and password sessions
 
 The direct listener grants credentialed CORS to its advertised local and remote

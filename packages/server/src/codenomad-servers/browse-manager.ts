@@ -27,7 +27,7 @@ export const ConnectBody = z.object({ username: z.string().min(1).max(1024).opti
   pairingLink: z.string().max(8192).optional() }).strict()
 
 /** `origin` is the server's address; over SSH it is resolved on `ssh`, and `scope` binds credentials to both. */
-type ProfileAuthority = Readonly<{ id: string; origin: string; skipTlsVerify: boolean; key: string; proof: string; scope: string; ssh?: string }>
+type ProfileAuthority = Readonly<{ id: string; origin: string; skipTlsVerify: boolean; key: string; proof: string; scope: string; ssh?: string; controller: AbortController }>
 type ConnectionState = {
   credentials?: CodeNomadServerCredentials
   clients: Map<string, { authority: ProfileAuthority; client: CodeNomadServerClient }>
@@ -35,6 +35,7 @@ type ConnectionState = {
   queues: Map<string, Promise<unknown>>
   authorities: Map<string, ProfileAuthority>
   serverIds: Map<ProfileAuthority, string>
+  previews: Map<ProfileAuthority, AbortController>
   tunnels: Map<ProfileAuthority, SshForward>
   owners: number
 }
@@ -50,7 +51,7 @@ export class RemoteServerBrowseManager {
     private readonly openForward: typeof openSshForward = openSshForward) {
     let state = connections.get(settings)
     if (!state) {
-      state = { clients: new Map(), pending: new Map(), queues: new Map(), authorities: new Map(), serverIds: new Map(), tunnels: new Map(), owners: 0 }
+      state = { clients: new Map(), pending: new Map(), queues: new Map(), authorities: new Map(), serverIds: new Map(), previews: new Map(), tunnels: new Map(), owners: 0 }
       connections.set(settings, state)
     }
     this.#state = state
@@ -81,7 +82,7 @@ export class RemoteServerBrowseManager {
     // Disk identities also belong to this exact policy, including before a replacement login.
     this.credentials.read(id, profile.scope, profile.skipTlsVerify)
     if (!authority) {
-      authority = Object.freeze({ id, origin: profile.origin, skipTlsVerify: profile.skipTlsVerify, key: profile.key, scope: profile.scope, ssh: profile.ssh, proof: randomBytes(32).toString("base64url") })
+      authority = Object.freeze({ id, origin: profile.origin, skipTlsVerify: profile.skipTlsVerify, key: profile.key, scope: profile.scope, ssh: profile.ssh, proof: randomBytes(32).toString("base64url"), controller: new AbortController() })
       this.#state.authorities.set(id, authority)
     }
     return authority
@@ -102,6 +103,22 @@ export class RemoteServerBrowseManager {
     if (!isRelayAuthority(proof) || !authority || authority.proof !== proof) throw new CodeNomadServerError("unreachable")
     this.assertCurrent(authority)
     return authority
+  }
+
+  /** Preview capabilities borrow this exact destination generation, never its credentials. */
+  previewOwner(id: string, proof: unknown) {
+    const authority = this.assertProof(id, proof)
+    let previews = this.#state.previews.get(authority)
+    if (!previews) this.#state.previews.set(authority, previews = new AbortController())
+    return { origin: authority.origin, skipTlsVerify: authority.skipTlsVerify,
+      signal: AbortSignal.any([authority.controller.signal, previews.signal]), dial: this.dial(authority),
+      current: () => { this.assertProof(id, proof) } }
+  }
+
+  detachPreviews(id: string, proof: unknown) {
+    const authority = this.assertProof(id, proof)
+    this.#state.previews.get(authority)?.abort()
+    this.#state.previews.delete(authority)
   }
 
   private serial<T>(authority: ProfileAuthority, run: () => Promise<T>): Promise<T> {
@@ -300,9 +317,11 @@ export class RemoteServerBrowseManager {
 
   private remove(id: string) {
     const authority = this.#state.authorities.get(id)
+    this.#state.authorities.delete(id)
+    authority?.controller.abort()
+    if (authority) this.#state.previews.delete(authority)
     if (authority) this.#state.serverIds.delete(authority)
     if (authority) { this.#state.tunnels.get(authority)?.close(); this.#state.tunnels.delete(authority) }
-    this.#state.authorities.delete(id)
     for (const [client, owner] of this.#state.pending) if (owner.id === id) client.close()
     this.#state.clients.get(id)?.client.close()
     this.#state.clients.delete(id)
@@ -320,7 +339,9 @@ export class RemoteServerBrowseManager {
     this.#closed = true
     if (--this.#state.owners) return
     connections.delete(this.settings)
+    for (const authority of this.#state.authorities.values()) authority.controller.abort()
     this.#state.authorities.clear()
+    this.#state.previews.clear()
     this.#state.serverIds.clear()
     for (const { client } of this.#state.clients.values()) client.close()
     for (const client of this.#state.pending.keys()) client.close()

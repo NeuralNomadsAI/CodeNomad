@@ -43,6 +43,7 @@ import { registerRemoteControlRoutes } from "./routes/remote-control"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteServerBrowseRoutes } from "./routes/remote-server-browse"
 import { registerBackendRelayRoutes } from "./routes/backend-relay"
+import { registerRemotePreviewCapabilityRoutes } from "./routes/remote-preview-capabilities"
 import { RemoteServerBrowseManager } from "../codenomad-servers/browse-manager"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
@@ -416,6 +417,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const remoteServerBrowse = deps.remoteServerBrowseManager ?? new RemoteServerBrowseManager(deps.settings)
   registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
   registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
+  registerRemotePreviewCapabilityRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, logger: deps.logger })
   const reconcileBackends = () => remoteServerBrowse.reconcile()
   if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)
   app.addHook("onClose", async () => {

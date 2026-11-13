@@ -101,6 +101,33 @@ Background WKWebView has qualified input limits: an initial standalone hover aft
 
 The hidden Electron fixture supplies visible ownership to the controller. Before input, its preparation waits for the loaded guest's non-empty hidden `capturePage` within one monotonic 10 s load/capture budget, retaining the exact guest while its window stays hidden and unfocused. `automation-preview-preparation.test.ts` executes the fixture against fake Electron objects to check loading, capture errors, guest replacement, owner state, deadlines and timer cleanup.
 
+## Remote preview content transport
+
+`codenomad-servers/preview-capabilities.ts` owns a lazy, content-only IPv4 loopback
+listener. Each remote preview receives a fresh `<capability>.preview.localhost`
+origin on that listener's ephemeral port. Every HTTP path and WebSocket upgrade
+on the listener resolves only through that capability's remote preview token.
+Responses retain the opaque preview sandbox and use the existing remote path
+proxy's asset/runtime rewriting. Request cookies and authorization, response
+cookies and remote connection credentials stay outside content traffic, matching
+the local path-preview policy.
+
+The owning local UI creates a capability with
+`POST /api/backends/:id/preview-capabilities` and `{ sessionId, url }`, carrying its
+current `X-CodeNomad-Backend-Authority` header. The response is
+`RemotePreviewCapability`: the remote preview plus `capability` and `contentUrl`.
+Issuance retains the backend generation through remote creation and publication.
+`DELETE /api/backends/:id/preview-capabilities/:capability` jointly revokes the
+capability and its HTTP/WS transfers; deleting the collection detaches that
+generation's previews across listeners. Both operations retain the original
+authority header. Retargeting, removal, Forget, observed identity change and
+backend shutdown also revoke transfers. Remote token deletion is best-effort
+under that original generation.
+
+`preview-capabilities.test.ts` covers content-origin reservation, equal remote
+tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
+destination ownership, revocation and the real remote CodeNomad path proxy.
+
 ## Design constraints
 
 Browser and developer tools ship together in this one bundled plugin (user decision), every tool available. Execution re-reads session ownership through the shared connection and validated worktree inventory; never let a plugin location or a caller-provided session ID alone grant access. The visible preview, its window, storage partition and permissions stay in the native hosts; the daemon stays independently owned and the connection-scoped compatibility adapter stays.
