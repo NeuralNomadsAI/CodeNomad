@@ -27,14 +27,20 @@ const THROTTLE_RATE = 4
  */
 const FIRST_OPEN_LONGTASK_MS = 4_000
 /**
- * Timing backstop for switching between two long sessions (ms). With scroll
- * observations coalesced to one per animation frame and each deferred
- * highlight render its own idle drain, the worst single longtask there
- * measures about 1.5s at this throttle rate on a loaded host (about 2.8-3.4s
- * before both); this bound backstops gross regressions and stays quiet on a
- * busier machine.
+ * Timing backstop for switching between two long sessions (ms), checked
+ * against that switch's own samples only. With scroll observations coalesced
+ * to one per animation frame and each deferred highlight render its own idle
+ * drain, the worst single longtask there measures about 1.5s at this throttle
+ * rate on a loaded host (about 2.8-3.4s before both). First opens keep their
+ * separate best-of-two policy and never feed this bound.
  */
 const SUBSEQUENT_SWITCH_LONGTASK_MS = 3_000
+/**
+ * Host-tolerant backstop over every sample of the plan: first opens are
+ * allowed one noisy sample under their own policy, so only a catastrophic
+ * regression on any switch should trip this, whatever the host is doing.
+ */
+const OVERALL_SWITCH_LONGTASK_MS = 9_000
 /** A switch counts as settled once no longtask occurred for this long (ms). */
 const QUIET_MS = 1_200
 
@@ -106,8 +112,12 @@ test("a throttled switch to a 120-message session keeps every longtask bounded",
     }
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 })
     const firstOpen = Math.min(...observations.filter(observation => observation.kind === "first-open").map(observation => observation.max))
+    // The long→long bound applies to that switch's own samples: first opens
+    // keep their separate best-of-two policy, and a noisy first-open sample
+    // must not fail the subsequent-switch ratchet.
+    const subsequentSwitch = Math.max(0, ...observations.filter(observation => observation.kind === "big-to-big").map(observation => observation.max))
     const worst = Math.max(...observations.map(observation => observation.max))
-    console.log("mount-longtask", JSON.stringify({ throttle: THROTTLE_RATE, firstOpenBackstop: FIRST_OPEN_LONGTASK_MS, subsequentBackstop: SUBSEQUENT_SWITCH_LONGTASK_MS, firstOpen, worst, observations }))
+    console.log("mount-longtask", JSON.stringify({ throttle: THROTTLE_RATE, firstOpenBackstop: FIRST_OPEN_LONGTASK_MS, subsequentBackstop: SUBSEQUENT_SWITCH_LONGTASK_MS, overallBackstop: OVERALL_SWITCH_LONGTASK_MS, firstOpen, subsequentSwitch, worst, observations }))
     assert.ok(
       observations.every(observation => observation.count >= 1),
       "each measured switch must have observed longtasks (observer wiring)",
@@ -129,8 +139,10 @@ test("a throttled switch to a 120-message session keeps every longtask bounded",
     }
     assert.ok(firstOpen < FIRST_OPEN_LONGTASK_MS,
       `opening a long session from a short one (${firstOpen}ms, better of two samples) must stay under the ${FIRST_OPEN_LONGTASK_MS}ms backstop at ${THROTTLE_RATE}x CPU throttle`)
-    assert.ok(worst < SUBSEQUENT_SWITCH_LONGTASK_MS,
-      `switching between long sessions (${worst}ms worst) must stay under the ${SUBSEQUENT_SWITCH_LONGTASK_MS}ms backstop at ${THROTTLE_RATE}x CPU throttle`)
+    assert.ok(subsequentSwitch < SUBSEQUENT_SWITCH_LONGTASK_MS,
+      `switching between long sessions (${subsequentSwitch}ms worst) must stay under the ${SUBSEQUENT_SWITCH_LONGTASK_MS}ms backstop at ${THROTTLE_RATE}x CPU throttle`)
+    assert.ok(worst < OVERALL_SWITCH_LONGTASK_MS,
+      `every measured switch (${worst}ms worst overall) must stay under the ${OVERALL_SWITCH_LONGTASK_MS}ms host-tolerant backstop at ${THROTTLE_RATE}x CPU throttle`)
     assert.deepEqual(errors, [])
   } finally {
     await page.close()
