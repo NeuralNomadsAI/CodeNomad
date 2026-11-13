@@ -113,12 +113,14 @@ test("a throttled switch to a 120-message session keeps every longtask bounded",
     // The structural guards, load-independent: Shiki highlighting left the
     // mounting task (deferred passes render through idle callbacks, several
     // per callback when the deadline allows) and expanded tool bodies mount
-    // through frame batches instead of all at once. Measured 7-19 idle
-    // callbacks and 4-8 body-mount frames per open, against 0 and at most 1
-    // on the unoptimized baseline, which highlighted and mounted every body
-    // synchronously inside the mounting task.
+    // through frame batches instead of all at once. Measured 4-5 idle
+    // callbacks on a fast CI runner and 7-19 on a loaded host (a faster
+    // machine drains more blocks per callback), with 8 body-mount frames
+    // everywhere, against 0 and at most 1 on the unoptimized baseline, which
+    // highlighted and mounted every body synchronously inside the mounting
+    // task.
     for (const observation of observations.filter(entry => entry.kind === "first-open")) {
-      assert.ok(observation.idleCallbacks >= 5,
+      assert.ok(observation.idleCallbacks >= 2,
         `a long-session open must defer its code highlighting to idle time (${observation.idleCallbacks} deferred callbacks for ${observation.session})`)
       assert.ok(observation.bodyMountFrames >= 3,
         `a long-session open must spread its tool bodies over animation frames (${observation.bodyMountFrames} mount frames for ${observation.session})`)
