@@ -24,6 +24,10 @@ export function projectLinkPath(href: string): string | undefined {
   } catch {
     // A literal percent sign is a legal file name character; keep it.
   }
+  // Decoding can reveal a scheme, a scheme-relative or a UNC value the literal
+  // form hid; such a value is a URL, not a workspace file path.
+  if (path.startsWith("//")) return undefined
+  if (!WINDOWS_DRIVE.test(path) && SCHEME.test(path)) return undefined
   path = path.replace(/^(?:\.\/)+/, "").replace(/\/+$/, "")
   return path || undefined
 }

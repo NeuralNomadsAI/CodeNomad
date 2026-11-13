@@ -12,6 +12,11 @@ describe("project-file link paths", () => {
     assert.equal(projectLinkPath("src/a%20b.md"), "src/a b.md")
     assert.equal(projectLinkPath("C:\\Users\\me\\report.md"), "C:/Users/me/report.md")
     assert.equal(projectLinkPath("/home/me/repo/src/app.ts"), "/home/me/repo/src/app.ts")
+    // Percent-encoded schemes and scheme-relative values must not survive decoding.
+    assert.equal(projectLinkPath("%2F%2Fcdn.example.com/a.png"), undefined)
+    assert.equal(projectLinkPath("javascript%3Aalert(1)"), undefined)
+    assert.equal(projectLinkPath("data%3Atext/plain,x"), undefined)
+    assert.equal(projectLinkPath("C%3A/Users/me/report.md"), "C:/Users/me/report.md")
     for (const source of ["", "#", "#section", "https://example.com/x", "http://x", "mailto:a@b.c",
       "javascript:alert(1)", "data:text/plain,x", "//cdn.example.com/a.png", "\\\\server\\share\\x.png"]) {
       assert.equal(projectLinkPath(source), undefined, source)
@@ -25,6 +30,7 @@ describe("project-file link paths", () => {
     assert.equal(resolveProjectLinkPath("/home/me/repo/src/app.ts", base), "src/app.ts")
     assert.equal(resolveProjectLinkPath("/etc/passwd", base), undefined)
     assert.equal(resolveProjectLinkPath("../outside.md", base), undefined)
+    assert.equal(resolveProjectLinkPath("%2e%2e/outside.md", base), undefined)
     assert.equal(resolveProjectLinkPath("a/../b.md", base), "b.md")
     assert.equal(resolveProjectLinkPath("./", base), undefined)
   })
