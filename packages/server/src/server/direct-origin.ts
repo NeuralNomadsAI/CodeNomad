@@ -12,6 +12,21 @@ const LOOPBACK_ALIASES: Readonly<Record<string, readonly string[]>> = {
   "::": ["[::1]", "127.0.0.1", "localhost"],
 }
 
+/**
+ * Loopback aliases of a listening socket admitted for one request: only the alias the request
+ * itself targets (same-origin), compared as normalized origins so default ports match.
+ */
+export function sameOriginLoopbackAliases(socket: { address: string; port: number }, protocol: "http" | "https", host: string | undefined): string[] {
+  // A Host header is a bare authority: anything URL parsing would drop (path, userinfo, query) fails closed.
+  if (!host || /[\s/\\@?#]/.test(host)) return []
+  let target: string
+  try { target = new URL(`${protocol}://${host}`).origin } catch { return [] }
+  return (LOOPBACK_ALIASES[socket.address] ?? []).flatMap(name => {
+    const alias = new URL(`${protocol}://${name}:${socket.port}`).origin
+    return alias === target ? [alias] : []
+  })
+}
+
 /** Explicit origins only: credentials, paths, wildcards and opaque origins fail startup. */
 export function parseAllowedOrigins(value = ""): string[] {
   return value.split(",").map(value => value.trim()).filter(Boolean).map(value => {
@@ -44,14 +59,7 @@ export function registerDirectOriginPolicy(app: FastifyInstance, options: {
       // address covers, including all interfaces. Other loopback addresses and ports, or
       // the same name resolved to a sibling listener, can belong to other servers: an alias
       // is admitted only for a request that targets that very alias (same-origin).
-      if (isLocalRequest(request)) {
-        let target: string | undefined
-        try { target = new URL(`${protocol}://${request.headers.host}`).origin } catch { target = undefined }
-        for (const name of LOOPBACK_ALIASES[address.address] ?? []) {
-          const alias = `${protocol}://${name}:${address.port}`
-          if (alias === target) candidates.push(alias)
-        }
-      }
+      if (isLocalRequest(request)) candidates.push(...sameOriginLoopbackAliases(address, protocol, request.headers.host))
     }
     if (isLocalRequest(request) && options.devServerUrl) candidates.push(options.devServerUrl)
     return candidates.some(candidate => {

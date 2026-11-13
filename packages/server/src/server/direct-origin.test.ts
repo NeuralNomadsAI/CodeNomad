@@ -3,7 +3,7 @@ import { request } from "node:http"
 import { test } from "node:test"
 import Fastify from "fastify"
 import type { ServerMeta } from "../api-types"
-import { registerDirectOriginPolicy } from "./direct-origin"
+import { registerDirectOriginPolicy, sameOriginLoopbackAliases } from "./direct-origin"
 
 async function serve(host: string, allowedOrigins?: string[], devServerUrl?: string) {
   const app = Fastify()
@@ -55,6 +55,17 @@ test("an alias page targeting another loopback authority stays cross-origin", as
     assert.equal(await post(`http://localhost:${port}`, `localhost:${port + 1}`), 403)
     assert.equal(await post(`http://127.0.0.1:${port}`, `localhost:${port}`), 200, "the published local origin stays exact")
   } finally { await app.close() }
+})
+
+test("same-origin aliases match on default ports and fail closed on odd Host headers", () => {
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "0.0.0.0", port: 80 }, "http", "localhost"), ["http://localhost"])
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "0.0.0.0", port: 80 }, "http", "localhost:80"), ["http://localhost"])
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "::", port: 443 }, "https", "[::1]"), ["https://[::1]"])
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "127.0.0.1", port: 8080 }, "http", "LOCALHOST:8080"), ["http://localhost:8080"])
+  for (const host of [undefined, "", "localhost:81", "127.0.0.2:80", "localhost:80/x", "user@localhost"]) {
+    assert.deepEqual(sameOriginLoopbackAliases({ address: "0.0.0.0", port: 80 }, "http", host), [], String(host))
+  }
+  assert.deepEqual(sameOriginLoopbackAliases({ address: "192.168.1.5", port: 80 }, "http", "localhost"), [])
 })
 
 test("configured and development origins stay exact: their ports open no loopback page", async () => {
