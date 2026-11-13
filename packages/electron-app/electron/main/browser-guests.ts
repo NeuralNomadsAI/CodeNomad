@@ -102,6 +102,6 @@ export function protectBrowserGuest(owner: BrowserWindow, guest: WebContents, in
     Menu.buildFromTemplate(items).popup({ window: BrowserWindow.fromWebContents(guest) ?? owner })
   })
   guest.on("before-input-event", (event, input) => {
-    if (restrictedBrowserGuest(guest) && (input.control || input.meta) && input.key?.toLowerCase() === "p") event.preventDefault()
+    if (restrictedBrowserGuest(guest) && (input.control || input.meta) && ["p", "c", "x"].includes(input.key?.toLowerCase() ?? "")) event.preventDefault()
   })
 }

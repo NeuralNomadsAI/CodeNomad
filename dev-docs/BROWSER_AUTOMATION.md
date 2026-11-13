@@ -142,7 +142,7 @@ host-issued content origin.
 
 Native remote previews pass a logical address with their registration. Their
 native presentation keeps the content capability private: native context menus,
-link dragging, printing, pop-ups, downloads, page dialogs and permission prompts
+clipboard exports, link dragging, printing, pop-ups, downloads, page dialogs and permission prompts
 are suppressed. Electron's guarded before-unload fallback uses the logical
 origin or CodeNomad as its title. WebView2 hides its native status bar; WebKit
 disables link previews/tooltips. The fixed privilege-free

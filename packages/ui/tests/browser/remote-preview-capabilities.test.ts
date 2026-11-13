@@ -189,7 +189,7 @@ test("shared native remote guards remove URL-exporting browser actions while ord
     const prevent = Event.prototype.preventDefault, stop = Event.prototype.stopImmediatePropagation
     Event.prototype.preventDefault = () => {}
     Event.prototype.stopImmediatePropagation = () => {}
-    const actions = ["contextmenu", "dragstart"].map(name => window.dispatchEvent(new Event(name, { cancelable: true })))
+    const actions = ["contextmenu", "dragstart", "copy", "cut"].map(name => window.dispatchEvent(new Event(name, { cancelable: true })))
     let unload = false
     window.addEventListener("beforeunload", () => { unload = true })
     window.dispatchEvent(new Event("beforeunload"))
@@ -201,9 +201,19 @@ test("shared native remote guards remove URL-exporting browser actions while ord
     Event.prototype.stopImmediatePropagation = stop
     return result
   }, program)
-  assert.deepEqual(result, { actions: [false, false], unload: true, confirm: false, prompt: null, immutable: true, print: "function" })
+  assert.deepEqual(result, { actions: [false, false, false, false], unload: true, confirm: false, prompt: null, immutable: true, print: "function" })
   await frame.evaluate(url => fetch(`${url}/probe`, { mode: "no-cors" }).then(() => undefined), f.apps[1]!.origin)
   assert.deepEqual(f.apps[1]!.probes, [""])
+  await f.page.context().addInitScript(program)
+  await frame.evaluate(url => {
+    const nested = document.createElement("iframe")
+    nested.dataset.nativeAudit = "true"
+    nested.src = `${url}/start`
+    document.body.append(nested)
+  }, f.apps[1]!.origin)
+  await appFrame(f.page, "a").frameLocator('iframe[data-native-audit]').locator("h1").waitFor()
+  const nested = f.page.frames().find(frame => frame.url() === `${f.apps[1]!.origin}/start`)!
+  assert.equal(await nested.evaluate(() => window.dispatchEvent(new Event("copy", { cancelable: true }))), false)
 })
 
 for (const action of ["close", "tab", "detach", "remove", "retarget", "shutdown"] as const) {

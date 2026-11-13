@@ -16,7 +16,7 @@ Gespeicherter Verlauf wird nur wiederhergestellt, wenn Sie den Sitzungsbrowser a
 
 Tabs entfernter Projekte laden Vorschauen über den CodeNomad-Server des jeweiligen Projekts. Adressleiste und gespeicherter Verlauf zeigen die Anwendungs-URL. Das Schließen der Vorschau oder des Projekt-Tabs, das Trennen/Entfernen des Servers oder das Beenden schließt die aktive Seite und ihre Verbindungen; erneutes Öffnen lädt die gespeicherte Adresse mit ihrem Verlauf. Server-Anmeldedaten bleiben im Backend; weitergeleitete Anwendungscookies werden gefiltert. Interne Ladeadressen der Vorschau bleiben innerhalb von CodeNomad.
 
-Native entfernte Vorschauen unterdrücken Kontextmenüs, Link-Ziehen, Drucken, Pop-ups, Downloads, Seitendialoge und Berechtigungsabfragen, damit interne Ladeadressen privat bleiben. Speichern Sie die Arbeit der Seite vor dem Schließen.
+Native entfernte Vorschauen unterdrücken Kontextmenüs, Zwischenablageexport, Link-Ziehen, Drucken, Pop-ups, Downloads, Seitendialoge und Berechtigungsabfragen, damit interne Ladeadressen privat bleiben. Speichern Sie die Arbeit der Seite vor dem Schließen.
 
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 

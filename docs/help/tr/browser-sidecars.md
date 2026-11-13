@@ -16,7 +16,7 @@ Kaydedilen geçmiş, başlangıç/oturum seçiminde değil, yalnızca o oturumun
 
 Uzak proje sekmeleri önizlemeleri o projenin CodeNomad sunucusu üzerinden yükler. Adres çubuğu ve kaydedilen geçmiş uygulama URL’sini gösterir. Önizlemeyi veya proje sekmesini kapatmak, sunucunun bağlantısını kesmek/sunucuyu kaldırmak ya da uygulamadan çıkmak canlı sayfayı ve bağlantılarını sonlandırır; yeniden açmak kayıtlı adresi geçmişiyle yükler. Sunucu oturum bilgileri arka uçta kalır; proxy üzerinden geçen uygulama çerezleri filtrelenir. Dahili önizleme yükleme adreslerini CodeNomad içinde tutun.
 
-Yerel motorlu uzak önizlemeler dahili yükleme adreslerini gizli tutmak için bağlam menülerini, bağlantı sürüklemeyi, yazdırmayı, açılır pencereleri, indirmeleri, sayfa iletişim kutularını ve izin istemlerini kapatır. Kapatmadan önce sayfadaki çalışmanızı kaydedin.
+Yerel motorlu uzak önizlemeler dahili yükleme adreslerini gizli tutmak için bağlam menülerini, panoya dışa aktarmayı, bağlantı sürüklemeyi, yazdırmayı, açılır pencereleri, indirmeleri, sayfa iletişim kutularını ve izin istemlerini kapatır. Kapatmadan önce sayfadaki çalışmanızı kaydedin.
 
 ## Paylaşılan oturum açma işlemleri ve otomasyon sınırları {#signins-automation}
 

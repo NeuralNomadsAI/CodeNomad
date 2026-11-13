@@ -16,7 +16,7 @@ Saved history restores only when you explicitly reopen that session's browser, n
 
 Remote project tabs load previews through that project's CodeNomad server. The address bar and saved history show the application URL. Closing the preview or project tab, disconnecting/removing the server, or quitting ends its live page and connections; reopening loads the saved address with its history. Server sign-in credentials stay on the backend; proxied application cookies are filtered. Keep internal preview loading addresses inside CodeNomad.
 
-Native remote previews suppress context menus, link dragging, printing, pop-ups, downloads, page dialogs and permission prompts to keep internal loading addresses private. Save page work before closing.
+Native remote previews suppress context menus, clipboard export, link dragging, printing, pop-ups, downloads, page dialogs and permission prompts to keep internal loading addresses private. Save page work before closing.
 
 ## Shared sign-ins and automation boundaries {#signins-automation}
 

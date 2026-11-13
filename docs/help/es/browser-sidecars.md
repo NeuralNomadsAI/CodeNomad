@@ -16,7 +16,7 @@ El historial guardado solo se restaura cuando vuelves a abrir explícitamente el
 
 Las pestañas de proyectos remotos cargan las vistas previas mediante el servidor CodeNomad del proyecto. La barra de direcciones y el historial guardado muestran la URL de la aplicación. Cerrar la vista previa o la pestaña, desconectar/eliminar el servidor o salir termina la página activa y sus conexiones; al reabrirla se carga la dirección guardada con su historial. Las credenciales del servidor permanecen en el backend; las cookies de aplicación transmitidas se filtran. Mantén las direcciones internas de carga dentro de CodeNomad.
 
-Las vistas previas remotas nativas desactivan menús contextuales, arrastre de enlaces, impresión, ventanas emergentes, descargas, diálogos de página y solicitudes de permisos para mantener privadas las direcciones internas. Guarda el trabajo de la página antes de cerrarla.
+Las vistas previas remotas nativas desactivan menús contextuales, exportación al portapapeles, arrastre de enlaces, impresión, ventanas emergentes, descargas, diálogos de página y solicitudes de permisos para mantener privadas las direcciones internas. Guarda el trabajo de la página antes de cerrarla.
 
 ## Inicios de sesión compartidos y límites de automatización {#signins-automation}
 
