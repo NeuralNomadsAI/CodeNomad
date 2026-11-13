@@ -48,6 +48,7 @@ import { createTextWindow, HiddenTextNotice } from "./hidden-text"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { accountSessionTranscript } from "../stores/session-transcript-memory"
 import { parseReasoningSummary } from "../lib/reasoning-summary"
+import { assistantAgentMeta } from "../lib/assistant-meta"
 import { getFormQueue } from "../stores/forms"
 import { backgroundSession, deleteMessagePart, deleteTechnicalPartGroup } from "../stores/session-actions"
 import { showAlertDialog } from "../stores/alerts"
@@ -1365,6 +1366,9 @@ function ReasoningGroupCard(props: {
   const expanded = () => props.expanded?.() ?? localExpanded()
   const setExpanded = (value: boolean) => props.onExpandedChange ? props.onExpandedChange(value) : setLocalExpanded(value)
   const summaryParts = () => props.summaryParts ?? props.parts
+  const agentMeta = () => assistantAgentMeta(props.instanceId, props.parts[0]?.messageInfo)
+  /** The group header carries the meta itself, so its cards must not repeat it. */
+  const headerShowsMeta = () => summaryParts().length > 1 && props.showHeader !== false && Boolean(props.showAgentMeta)
   const totalDuration = createMemo(() => summaryParts().reduce((total, item) => total + (item.durationMs ?? 0), 0))
   const latestTitle = createMemo(() => {
     const latest = summaryParts().at(-1)
@@ -1418,7 +1422,7 @@ function ReasoningGroupCard(props: {
         sessionId={props.sessionId}
         messageId={item().messageId}
         status={props.status}
-        showAgentMeta={props.showAgentMeta}
+        showAgentMeta={props.showAgentMeta && !headerShowsMeta()}
         defaultExpanded={summaryParts().length > 1 || props.defaultExpanded}
         forceExpanded={props.activePartId === item().partId}
         technicalCleanupSelected={() => props.technicalCleanupPartKeys().has(key)}
@@ -1444,6 +1448,11 @@ function ReasoningGroupCard(props: {
           >
             <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
             <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+            <Show when={headerShowsMeta() && agentMeta()}>
+              <span class="message-technical-group-meta message-technical-group-meta-agent" title={agentMeta()}>
+                · {agentMeta()}
+              </span>
+            </Show>
             <span class="message-reasoning-type">
               {t(props.completed ? "messageBlock.reasoning.thoughtLabel" : "messageBlock.reasoning.thinkingLabel")}
             </span>
@@ -1600,20 +1609,7 @@ function ReasoningCard(props: ReasoningCardProps) {
     }
   })
 
-  const agentIdentifier = () => {
-    const info = props.messageInfo
-    if (!info || info.role !== "assistant") return ""
-    return info.mode || ""
-  }
-
-  const modelIdentifier = () => {
-    const info = props.messageInfo
-    if (!info || info.role !== "assistant") return ""
-    const modelID = info.modelID || ""
-    const providerID = info.providerID || ""
-    if (modelID && providerID) return `${providerID}/${modelID}`
-    return modelID
-  }
+  const agentMeta = () => assistantAgentMeta(props.instanceId, props.messageInfo)
 
   const reasoningText = () => getReasoningText(props.part)
 
@@ -1628,10 +1624,8 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const reasoningMetaTooltip = () => {
     const parts: string[] = [thoughtDurationTitle()]
-    const agent = agentIdentifier()
-    const model = modelIdentifier()
-    if (agent) parts.push(agent)
-    if (model) parts.push(model)
+    const meta = agentMeta()
+    if (meta) parts.push(meta)
     return parts.join("\n")
   }
 
@@ -1705,6 +1699,9 @@ function ReasoningCard(props: ReasoningCardProps) {
               endedAt={getPartEndedAt(props.part)}
               running={props.status === "streaming" || props.status === "sending"}
             />
+            <Show when={props.showAgentMeta && agentMeta()}>
+              <span class="message-reasoning-model" title={agentMeta()}>{agentMeta()}</span>
+            </Show>
           </span>
         </button>
 
