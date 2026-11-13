@@ -73,7 +73,7 @@ const resolved = (page: Page, property: string) => page.evaluate(name => {
   return color
 }, property)
 
-test("one Plugins row per integration: display name, version and blue switches; no Status section of its own", async () => {
+test("one Plugins row per integration: display name, version and accent switches; no Status section of its own", async () => {
   const { page, errors } = await open()
   try {
     await row(page).locator(".plugin-control-name").getByText("OpenCode for Blender", { exact: true }).waitFor()
@@ -86,12 +86,19 @@ test("one Plugins row per integration: display name, version and blue switches; 
     assert.equal(await row(page).getAttribute("data-integration"), "blender")
     await row(page).getByRole("checkbox", { name: "Change activation rule for OpenCode for Blender — Global" }).waitFor()
 
-    const accent = await resolved(page, "--integration-accent")
+    // The default accent switch, exactly like Yolo; only plain plugin and MCP rows use the green variant.
+    const accent = await resolved(page, "--session-yolo-accent")
+    assert.equal(accent, await resolved(page, "--accent-primary"))
     // The track animates its colour: wait for it to settle.
     await page.waitForFunction(expected => getComputedStyle(document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-scope="global"] .MuiSwitch-track')!).backgroundColor === expected, accent)
-      .catch(async () => assert.equal(await trackColor(page, "blender"), accent, "an integration's checked switch is the integration blue"))
-    assert.notEqual(accent, await resolved(page, "--session-yolo-accent"), "distinct from the Yolo accent")
+      .catch(async () => assert.equal(await trackColor(page, "blender"), accent, "an integration's checked switch is the Yolo accent"))
     assert.notEqual(await page.locator('[data-plugin-id="other.plugin"] [data-scope="global"] .MuiSwitch-track').evaluate(element => getComputedStyle(element).backgroundColor), accent)
+    // The real Yolo switch, turned on, has exactly the same colour.
+    await page.locator(".yolo-mode-switch input").click()
+    await page.waitForFunction(expected => getComputedStyle(document.querySelector(".yolo-mode-switch .MuiSwitch-track")!).backgroundColor === expected, accent)
+    assert.equal(await page.locator(".yolo-mode-switch .MuiSwitch-thumb").evaluate(element => getComputedStyle(element).backgroundColor),
+      await row(page).locator('[data-scope="global"] .MuiSwitch-thumb').evaluate(element => getComputedStyle(element).backgroundColor))
+    if (screenshots) await page.screenshot({ path: join(screenshots, "integration-plugins-yolo.png"), fullPage: true })
     // The Project switch of a native integration is locked to Global and stays focusable.
     assert.equal(await row(page).locator('[data-scope="project"]').getAttribute("title"), "Global only")
 
@@ -118,7 +125,7 @@ test("the chain icon follows the displayed conversation's attachment, refreshed 
       model.bindings["first:blender"] = { state: "attached", label: "western_ia.blend" }
       await notify(page, "rpc.neuralnomads.blender.hosts_changed")
       await waitLink(page, "attached", "Attached to: western_ia.blend")
-      assert.equal(await link(page).evaluate(element => getComputedStyle(element).color), await resolved(page, "--integration-accent"))
+      assert.equal(await link(page).evaluate(element => getComputedStyle(element).color), await resolved(page, "--accent-primary"))
       if (screenshots) {
         await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
         await page.mouse.move(0, 0)

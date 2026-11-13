@@ -50,6 +50,8 @@ serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.patchConfigOwner = async (_owner, patch: any) => ({ settings: { locale: "en", ...patch.settings } }) as any
 serverApi.fetchStateOwner = async () => ({} as any)
 serverApi.getPluginControls = async () => { snapshotReads++; return structuredClone(snapshot) }
+// Yolo turns on locally, so its accent switch can be compared with an integration's.
+serverApi.toggleYolo = async () => ({ enabled: true }) as any
 serverApi.setPluginActivation = async (_id: string, request: any) => {
   mutations.push(request)
   const control = snapshot.controls.find(item => item.id === request.pluginId)!

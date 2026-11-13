@@ -263,9 +263,9 @@ A row whose plugin ID or declared target `integrationPlugin` correlates with an 
 integration's single row:
 
 - its `displayName` and installed version (every package row shows its version beside the name);
-- Global/Project switches in `--integration-accent` (`styles/tokens.css`, a sky blue distinct from
-  `--session-yolo-accent`), applied through `PluginActivationSwitch`'s `integration` flag with the shared switch
-  geometry; a plain plugin's switches stay green. A native integration's Project switch is locked to Global;
+- Global/Project switches in the accent colour of Yolo and the settings switches (`ACCENT_SWITCH_SX`,
+  `var(--accent-primary)`): `PluginActivationSwitch`'s `integration` flag replaces the green variant that plain
+  plugin and MCP rows keep. A native integration's Project switch is locked to Global;
 - the name tooltip's first line reads **Integration: <plugin ID>** where a plain plugin's reads **Plugin: <ID>**;
 - for a loaded native integration, a chain icon (`components/integration-row-indicators.tsx`) for the displayed
   conversation: linked with **Attached to: <label>**, broken with **No conversation attached** (also without a
@@ -368,7 +368,7 @@ Commands:
   native error data, concurrent requests and error recovery, with positive ordinary-route diagnostics checks.
 - `packages/ui/tests/browser/integration-plugin-row.test.ts` (fixture `fixtures/integration-plugin-row.tsx`, HTTP
   model `integration-plugin-row-model.ts`) renders the real right panel: one row per integration with its name,
-  version, integration-blue switches and tooltip kind; the chain icon across `hosts_changed`/`status_changed`,
+  version, accent switches equal to the Yolo accent and tooltip kind; the chain icon across `hosts_changed`/`status_changed`,
   conversation changes and `unknown`; the attention icon per host state; the menu's connection line, guarded
   application installation, one-click detach with a lost answer read again and never replayed, removal; French
   and Hebrew labels; and the catalog window's install by ID and consent revocation.

@@ -20,7 +20,7 @@
 }
 
 .plugin-control-indicator[data-integration-link="attached"] {
-  color: var(--integration-accent);
+  color: var(--accent-primary);
 }
 
 .plugin-control-indicator[data-integration-link="unknown"] {

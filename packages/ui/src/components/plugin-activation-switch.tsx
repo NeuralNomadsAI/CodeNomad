@@ -6,13 +6,9 @@ import { getLogger } from "../lib/logger"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { pluginControlsCache } from "../stores/plugin-controls"
+import { ACCENT_SWITCH_SX } from "./settings/settings-switch"
 
 const log = getLogger("session")
-// Like the Yolo switch's accent override, in the integration accent (styles/tokens.css).
-const INTEGRATION_SWITCH_SX = {
-  "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--integration-accent)" },
-  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--integration-accent)" },
-}
 const [pending, setPending] = createSignal<ReadonlySet<string>>(new Set())
 const pendingKey = (instanceId: string, location: PluginControlLocation, scope: PluginControlScope, pluginId: string) =>
   JSON.stringify([instanceId, location.directory, scope, pluginId])
@@ -54,7 +50,7 @@ export function PluginActivationSwitch(props: {
   active?: boolean
   /** Shown but not writable here, with this reason as its tooltip; it stays focusable. */
   lockedReason?: string
-  /** An integration's switch: blue, where a plain plugin's is green. */
+  /** An integration's switch: the accent switch of Yolo and the settings, where a plain plugin's is the green variant. */
   integration?: boolean
 }) {
   const { t } = useI18n()
@@ -84,9 +80,9 @@ export function PluginActivationSwitch(props: {
       <Switch
         checked={props.control ? pluginScopeChecked(props.control, props.scope) : false}
         disabled={!props.available}
-        color="success"
+        color={props.integration ? "primary" : "success"}
         size="small"
-        sx={props.integration ? INTEGRATION_SWITCH_SX : undefined}
+        sx={props.integration ? ACCENT_SWITCH_SX : undefined}
         inputProps={{
           "aria-label": props.label,
           "aria-describedby": props.describedBy,
