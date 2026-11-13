@@ -160,6 +160,10 @@ and attachment revocation. Renderer `pagehide` sends keepalive capability deleti
 under that same proof. Displayed addresses and persisted history use application
 URLs; loading capabilities remain inside the embedded preview.
 
+The isolated listener refuses service-worker script fetches before dispatch and
+keeps scope-widening response headers private. Expired content-origin network
+responses request storage cleanup independently of the host UI's storage.
+
 ## Direct listener origins and password sessions
 
 The direct listener grants credentialed CORS to its advertised local and remote

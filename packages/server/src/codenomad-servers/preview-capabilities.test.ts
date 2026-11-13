@@ -52,6 +52,7 @@ async function remote(t: TestContext, label: string, application = false, tls?: 
     if (url === `/api/previews/${TOKEN}` && request.method === "DELETE") { live = false; return reply.writeHead(204).end() }
     if (!live || !application && !url.startsWith(`/previews/${TOKEN}/`)) return reply.writeHead(404).end()
     reply.setHeader("set-cookie", "appCookie=must-stay-private; HttpOnly")
+    if (url.endsWith("/sw.js")) reply.setHeader("service-worker-allowed", "/")
     if (url.endsWith("/redirect")) return reply.writeHead(302, { location: `/previews/${TOKEN}/next` }).end()
     if (url.endsWith("/foreign-redirect")) return reply.writeHead(302, { location: "http://127.0.0.1:1/api/backends/other" }).end()
     reply.setHeader("content-type", "text/plain")
@@ -279,6 +280,24 @@ test("HTTP/preflights and WS reject null, foreign and missing upgrade origins be
   assert.equal(own.status, 200)
   assert.equal(own.headers["cross-origin-resource-policy"], "same-origin")
   assert.match(String(own.headers["content-security-policy"]), new RegExp(`frame-ancestors 'self' ${f.origin}`))
+})
+
+test("service-worker scripts fail before dispatch, widening stays private and expired origins get storage cleanup", async t => {
+  const f = await fixture(t)
+  const cap = await f.create(), source = new URL("/sw.js", cap.contentUrl).href
+  const before = f.a.requests.length
+  const refused = await send(source, { headers: { "service-worker": "script", origin: new URL(source).origin } })
+  assert.equal(refused.status, 404)
+  assert.equal(refused.headers["clear-site-data"], undefined, "a live origin refusal keeps its storage")
+  assert.equal(f.a.requests.length, before)
+  const ordinary = await send(source)
+  assert.equal(ordinary.status, 200)
+  assert.equal(ordinary.headers["service-worker-allowed"], undefined)
+  const closed = await f.call("a", `/${cap.capability}`, { method: "DELETE", body: undefined })
+  assert.equal(closed.headers["clear-site-data"], undefined, "never clear the trusted UI origin")
+  const expired = await send(cap.contentUrl)
+  assert.equal(expired.status, 404)
+  assert.equal(expired.headers["clear-site-data"], '"storage"')
 })
 
 for (const action of ["close", "detach", "remove", "retarget", "forget", "shutdown"] as const) {
