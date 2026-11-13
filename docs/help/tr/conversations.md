@@ -60,6 +60,13 @@ Masaüstünde gönderme, klavye odağını konuşmaya taşır; böylece oklar, s
 
 Taslaklar paylaşılan OpenCode mesajları değil, istemci çalışma durumudur. Başlangıçta geri yükleme desteklenen ileti düzenleyicisi durumunu koruyabilir; ancak gönderilmemiş taslak veya eki yedek saymayın ve başka cihazda göründüğünü varsaymayın. Başlangıç verilerini temizlemeden veya geri yüklemesi kapalı istemciyi kapatmadan önce önemli metni kaydedin; bkz. [Masaüstü](desktop.md).
 
+## Yanıtlardan dosya açma {#open-files-from-replies}
+
+1. Aracı yanıtları proje dosyalarına göreli ve mutlak yollarla bağlantı verir.
+2. Düz bir tıklama, bağlantılı dosyayı sohbetin worktree’sinden okuyarak dosya önizlemesinde açar.
+3. Değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree’si dışındaki bağlantılar normal bağlantı davranışını korur.
+
+
 ## Komutlar ve Shell modu {#commands-shell}
 
 1. `/` yazın ve bulunan özel bir komutu seçin, ardından bağımsız değişkenlerini sağlayın.

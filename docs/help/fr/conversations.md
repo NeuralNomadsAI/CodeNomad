@@ -60,6 +60,13 @@ Sur ordinateur, l’envoi place le focus clavier sur la conversation : les flèc
 
 Les brouillons sont un état de travail côté client, pas des messages natifs partagés. La restauration au démarrage peut conserver l’état de saisie pris en charge, mais ne considérez pas un brouillon non envoyé ou une pièce jointe comme une sauvegarde, ni comme disponible sur un autre appareil. Enregistrez le texte important avant d’effacer les données de démarrage ou de fermer un client dont la restauration est désactivée ; voir [Bureau](desktop.md).
 
+## Ouvrir des fichiers depuis les réponses {#open-files-from-replies}
+
+1. Les réponses de l’agent lient des fichiers du projet par des chemins relatifs et absolus.
+2. Un clic simple ouvre le fichier lié dans l’aperçu du fichier, lu depuis le worktree de la conversation.
+3. Les clics modifiés (Ctrl/⌘-clic, Maj-clic, clic milieu) et les liens hors du worktree de la session conservent le comportement normal des liens.
+
+
 ## Commandes et mode shell {#commands-shell}
 
 1. Tapez `/` et sélectionnez une commande personnalisée découverte, puis fournissez ses arguments.
