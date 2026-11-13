@@ -165,6 +165,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let tauriRegistered = false
   let browserRegistrationId = nativeBrowserAvailable ? generateUUID() : ""
   let disposed = false
+  const loadFrameSource = (source: string) => {
+    if (props.isolatedSource) {
+      // Site navigation changes the document without changing the iframe's src attribute.
+      if (source === frameSrc() && observedFrameSource !== undefined && observedFrameSource !== source) iframeRef?.setAttribute("src", source)
+      observedFrameSource = source
+    }
+    setFrameSrc(source)
+  }
   let appliedEmulation: { registrationId: string; preset: BrowserEmulationPreset } | undefined
   let emulationGeneration = 0
   const journal = props.onHistoryChange ? new BrowserHistoryJournal(untrack(() => props.initialHistory ?? { urls: [props.initialAddress ?? props.initialUrl], index: 0 })) : undefined
@@ -822,7 +830,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       } else {
         const source = await props.onNavigate!(target.url)
         if (disposed || version !== historyTravelVersion) return
-        setFrameSrc(source)
+        loadFrameSource(source)
         publishHistory(journal.visitUrl(target.url))
       }
       // Committed navigation/load events capture the result, not the early CDP
@@ -863,14 +871,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const version = historyTravelVersion
       const source = await props.onNavigate!(target)
       if (disposed || version !== historyTravelVersion) return
-      observedFrameSource = source
       setPathInput(target)
       if (journal) publishHistory(journal.visitUrl(target))
       if (nativeMode()) {
         requestNativeTarget(source)
         if (browserHost === "tauri" && tauriRegistered) await controlTauriBrowserTarget(browserRegistrationId, "navigate", source)
       } else {
-        setFrameSrc(source)
+        loadFrameSource(source)
         props.onFrameLocation?.(target)
       }
     } catch (error) { if (!disposed) reportNativeError(error) }

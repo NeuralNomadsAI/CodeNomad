@@ -20,6 +20,7 @@ import { startRemoteSurface } from "../../../server/src/remote-control/test-supp
 const TOKEN = "22222222-2222-4222-8222-222222222222"
 async function appServer(t: TestContext, label: string) {
   const sockets = new Set<Socket>(), streams = new Set<http.ServerResponse>(), upgrades = new Set<Socket>()
+  let document = 0
   const server = http.createServer((request, reply) => {
     if (request.url === "/app.css") return reply.writeHead(200, { "content-type": "text/css" }).end("h1 { color: rgb(10,20,30) }")
     if (request.url === "/data") return reply.writeHead(200, { "content-type": "text/plain" }).end(`fetch-${label}`)
@@ -40,7 +41,7 @@ async function appServer(t: TestContext, label: string) {
     `)
     reply.writeHead(200, { "content-type": "text/html", "set-cookie": `app=${label}; HttpOnly` }).end(`
       <!doctype html><html><head><link rel="stylesheet" href="/app.css"></head><body>
-      <h1>App ${label}</h1><output id="asset"></output><output id="fetch"></output><output id="ws"></output>
+      <h1 data-page="${++document}">App ${label}</h1><output id="asset"></output><output id="fetch"></output><output id="ws"></output>
       <a href="/next?q=1#part">Next</a><script src="/app.js"></script></body></html>`)
   })
   server.on("connection", socket => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)) })
@@ -137,6 +138,7 @@ async function until(predicate: () => boolean) {
 test("two real remote apps load HTML/assets/fetch/WS and retain only logical addresses through navigation/history/reload", async t => {
   const f = await fixture(t)
   await ready(f.page)
+  assert.equal(await appFrame(f.page, "a").locator("h1").evaluate(element => getComputedStyle(element).color), "rgb(10, 20, 30)")
   const initial = await section(f.page, "a").locator("iframe").getAttribute("src")
   assert.match(initial!, /\.preview\.localhost:\d+\/previews\//)
   assert.equal(await section(f.page, "a").locator("input").inputValue(), `${f.apps[0]!.origin}/start`)
@@ -146,8 +148,9 @@ test("two real remote apps load HTML/assets/fetch/WS and retain only logical add
   await f.page.waitForFunction(() => document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/start"))
   await section(f.page, "a").getByRole("button", { name: "Forward", exact: true }).click()
   await f.page.waitForFunction(() => document.querySelector<HTMLInputElement>('[data-owner="a"] input')?.value.endsWith("/next?q=1#part"))
+  const document = await appFrame(f.page, "a").locator("h1").getAttribute("data-page")
   await section(f.page, "a").getByRole("button", { name: "Refresh", exact: true }).click()
-  await appFrame(f.page, "a").locator("h1").waitFor()
+  await appFrame(f.page, "a").locator(`h1:not([data-page="${document}"])`).waitFor()
   assert.ok((await section(f.page, "a").locator("input").inputValue()).endsWith("/next?q=1#part"))
   const history = await f.page.evaluate(() => (window as any).remotePreviews.history("a"))
   assert.ok(history.urls.every((url: string) => !url.includes(".preview.localhost")))
