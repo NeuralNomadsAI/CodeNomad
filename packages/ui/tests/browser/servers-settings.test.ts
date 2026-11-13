@@ -21,7 +21,7 @@ import { startFakeCodeNomad } from "../../../server/src/codenomad-servers/test-s
 import type { RemoteServerProfile } from "../../../server/src/api-types"
 
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
-async function fixture(t: TestContext, flag: unknown = true, locale = "en", intent = false) {
+async function fixture(t: TestContext, flag: unknown = true, locale = "en", intent = false, sshOnly = false) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-servers-ui-")), logger = pino({ level: "silent" })
   const a = await startFakeCodeNomad(), b = await startFakeCodeNomad()
   const settings = new SettingsService(resolveConfigLocation(directory), undefined, logger)
@@ -29,7 +29,12 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
   const stamp = new Date().toISOString()
   const rows: RemoteServerProfile[] = [a, b].map((remote, i) => ({ id: i ? "b" : "a", name: i ? "Beta" : "Alpha", baseUrl: remote.origin, skipTlsVerify: false, createdAt: stamp, updatedAt: stamp }))
   settings.mergePatchDoc("state", { ui: { remoteServers: rows } })
-  const manager = new RemoteServerBrowseManager(settings), app = Fastify()
+  const forwards: Array<{ host: string; target: string; closed: boolean }> = []
+  const manager = new RemoteServerBrowseManager(settings, sshOnly ? (host, target) => {
+    const forward = { host, target, closed: false }
+    forwards.push(forward)
+    return { ready: Promise.resolve(Number(new URL(a.origin).port)), close: () => { forward.closed = true } }
+  } : undefined), app = Fastify()
   let origin = "", selfOrigin = "", holdProbe: ReturnType<typeof deferred> | undefined, holdPatch: ReturnType<typeof deferred> | undefined
   let patchStatus = 200, probeFailure: string | undefined
   const gates = new Set<ReturnType<typeof deferred>>()
@@ -93,7 +98,7 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
   await page.waitForFunction(() => (window as any).serversFixture?.config.isLoaded())
   const check = () => { assert.deepEqual(errors, []); assert.deepEqual(forbidden, []); assert.deepEqual(failedRequests, []); assert(consoleErrors.every(message => /Failed to load resource: the server responded with a status of (400|409|502)/.test(message)), httpErrors.join("\n") + "\n" + consoleErrors.join("\n")) }
   const profileRows = () => settings.getOwner("state", "ui").remoteServers as RemoteServerProfile[]
-  return { page, app, origin, manager, a, b, settings, rows, calls, directory, check, profileRows,
+  return { page, app, origin, manager, a, b, settings, rows, calls, directory, check, profileRows, forwards,
     holdProbe: () => { holdProbe = deferred(); gates.add(holdProbe); return holdProbe }, holdPatch: () => { holdPatch = deferred(); gates.add(holdPatch); return holdPatch },
     failPatch: (status: number) => { patchStatus = status }, failProbe: (code?: string) => { probeFailure = code },
     sync: async () => page.evaluate(value => (window as any).serversFixture.dispatch([{ type: "storage.stateChanged", owner: "ui", value }]), settings.getOwner("state", "ui")),
@@ -487,5 +492,32 @@ test("Servers editor preserves SSH policy, suggests aliases, saves offline and f
   assert.equal(sameAddress.length, 2)
   assert.equal(sameAddress.filter(row => row.ssh === undefined).length, 1)
   assert.deepEqual(sameAddress.find(row => row.id === "a")?.ssh, { host: "replacement" })
+  f.check()
+})
+
+test("Add server can save a new SSH-only destination before any direct probe", { timeout: 90_000 }, async t => {
+  const f = await fixture(t, true, "en", false, true), { page } = f
+  await field(page).waitFor()
+  const add = page.locator(".settings-card-header").getByRole("button", { name: "Add server", exact: true })
+  assert.equal(await add.count(), 1, "A new SSH profile must be reachable without saving a direct profile first")
+  await add.click()
+  await page.getByRole("textbox", { name: "URL", exact: true }).fill("http://ssh-only.invalid:9898")
+  await page.getByLabel("SSH host (optional)", { exact: true }).fill("fixture-lab")
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("SSH-only")
+  await page.getByRole("button", { name: "Save", exact: true }).click()
+  await page.getByRole("dialog").waitFor({ state: "hidden" })
+  const profile = f.profileRows().find(row => row.name === "SSH-only")
+  assert.ok(profile)
+  assert.equal(profile.baseUrl, "http://ssh-only.invalid:9898")
+  assert.deepEqual(profile.ssh, { host: "fixture-lab" })
+  assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)
+  assert.equal(f.calls.filter(call => call.url.endsWith("/connect")).length, 0)
+  assert.equal(f.a.state.requests.length + f.b.state.requests.length, 0)
+  const connected = await f.app.inject({ method: "POST", url: `/api/remote-servers/${profile.id}/connect`,
+    headers: { origin: f.origin }, payload: { username: "codenomad", password: "remote-password" } })
+  assert.equal(connected.statusCode, 200)
+  assert.deepEqual(f.forwards, [{ host: "fixture-lab", target: "ssh-only.invalid:9898", closed: false }])
+  assert.equal(f.a.state.logins, 1)
+  assert.equal(f.a.state.requests.at(-1)?.headers.host, "ssh-only.invalid:9898")
   f.check()
 })

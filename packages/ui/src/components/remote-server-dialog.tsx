@@ -97,7 +97,7 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
               if (returnFocus && opener?.isConnected && (document.activeElement === document.body || event.target instanceof Node && event.target.contains(document.activeElement))) opener.focus()
               returnFocus = true
             }} onKeyDown={enter}>
-            <div class="window-header"><Dialog.Title class="window-title">{t("folderSelection.remoteProject.edit")}</Dialog.Title></div>
+            <div class="window-header"><Dialog.Title class="window-title">{t(props.initial?.id ? "folderSelection.remoteProject.edit" : "folderSelection.browseMenu.add")}</Dialog.Title></div>
             <div class="window-body flex flex-col gap-4">
               <div class="flex flex-col gap-2 text-sm text-secondary"><label class="flex flex-col gap-2">
                 <span class="flex items-center gap-2">{t("settings.servers.dialog.url")}<SettingsInfoTip text={t("folderSelection.servers.dialog.urlHint")} /></span>

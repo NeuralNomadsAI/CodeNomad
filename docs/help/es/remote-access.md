@@ -91,6 +91,8 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
+Para un destino accesible solo por SSH en **Ajustes → Servidores** experimental, elija **Añadir servidor**, introduzca su **URL** y **Host SSH (opcional)** y pulse **Guardar**. El perfil se guarda sin conexión; la conexión utiliza el relé SSH del backend.
+
 Con el ajuste multibackend experimental, usa **Configuración → Servidores**: pega una dirección o enlace de vinculación en **Dirección o enlace del servidor**, o pulsa Intro. Añadir guarda un perfil en el anfitrión sin abrir un proyecto. **Editar servidor** cambia la **URL** o el **Nombre** opcional; renombrar con la misma URL y política TLS funciona sin conexión. **Eliminar servidor guardado** pide confirmación, olvida su conexión y guarda la eliminación; si falla el guardado, el perfil permanece para reintentar. Las otras conexiones se mantienen.
 
 **Omitir la verificación TLS** aparece tras un fallo de certificado para esa dirección; cambiar la dirección borra el consentimiento. La vinculación siempre verifica TLS. **Abrir** está desactivado en estos ajustes experimentales. Los pasos siguientes describen el modo predeterminado.

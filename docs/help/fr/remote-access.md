@@ -91,6 +91,8 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
+Pour une destination accessible uniquement par SSH dans les **Paramètres → Serveurs** expérimentaux, choisissez **Ajouter le serveur**, saisissez son **URL** et son **Hôte SSH (facultatif)**, puis **Enregistrer**. Le profil s’enregistre hors ligne ; sa connexion passe par le relais SSH du backend.
+
 Avec le réglage multi-backend expérimental, utilisez **Paramètres → Serveurs** : collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou validez par Entrée. L’ajout enregistre un profil sur l’hôte sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. **Supprimer le serveur enregistré** demande confirmation, oublie sa connexion puis enregistre le retrait ; une erreur de sauvegarde conserve le profil pour réessayer. Les autres connexions restent disponibles.
 
 **Ignorer la vérification TLS** est proposé après un échec de certificat pour cette adresse ; changer d’adresse retire l’accord. L’appairage vérifie toujours TLS. **Ouvrir** est désactivé dans ces réglages expérimentaux. Les étapes ci-dessous décrivent le mode par défaut.

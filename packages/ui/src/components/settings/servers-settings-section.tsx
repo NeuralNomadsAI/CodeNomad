@@ -1,4 +1,4 @@
-import { ExternalLink, Pencil, Server, Trash2 } from "lucide-solid"
+import { ExternalLink, Pencil, Plus, Server, Trash2 } from "lucide-solid"
 import { createSignal, For, Show, type Component } from "solid-js"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
@@ -40,7 +40,12 @@ export const ServersSettingsSection: Component<{ onSelectServer?: (profile: Serv
       <div class="settings-card">
         <div class="settings-card-header"><div class="settings-card-heading-with-icon">
           <Server class="settings-card-heading-icon" /><h3 class="settings-card-title">{t("folderSelection.servers.title")}</h3>
-        </div></div>
+        </div>
+          <button type="button" class="selector-button selector-button-secondary w-auto" disabled={!enabled()}
+            onClick={() => { if (enabled()) setDialog({ initial: { name: "", baseUrl: "", skipTlsVerify: false } }) }}>
+            <Plus class="w-4 h-4" /><span>{t("folderSelection.browseMenu.add")}</span>
+          </button>
+        </div>
         <div class="settings-card-content">
           <ServerAddField />
           <Show when={error()}>{key => <p class="server-add-field-error" role="alert">{t(key())}</p>}</Show>
