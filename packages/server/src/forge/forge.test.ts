@@ -92,6 +92,17 @@ describe("forge remotes", () => {
     assert.equal(forgeWebUrl("gitlab", "gitlab.com", "g/s/p", "pullRequest", 7), "https://gitlab.com/g/s/p/-/merge_requests/7")
     assert.equal(forgeWebUrl("gitea", "codeberg.org", "o/r", "issue", 7), "https://codeberg.org/o/r/issues/7")
   })
+
+  it("repository detection ignores inherited Git directory redirection and observes cancellation", async () => {
+    const root = checkout({ origin: "https://gitlab.com/group/project.git" }), foreign = checkout({ origin: "https://github.com/other/repo.git" })
+    const previous = process.env.GIT_DIR
+    try {
+      process.env.GIT_DIR = path.join(foreign, ".git")
+      assert.deepEqual(await readForgeRemote(root), { host: "gitlab.com", path: "group/project" })
+      const controller = new AbortController(); controller.abort(new Error("cancelled"))
+      await assert.rejects(readForgeRemote(root, controller.signal), /cancelled/)
+    } finally { if (previous === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = previous }
+  })
 })
 
 describe("forge transports", () => {

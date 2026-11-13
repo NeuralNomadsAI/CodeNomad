@@ -178,7 +178,7 @@ authorized workspace spelling before changing UI state.
 - Session-media ownership captures the published workspace occurrence, root scalars,
   connection client and request signal before asynchronous reads. Non-root checks
   scan a private native inventory with physical Git validation and guards between
-  dependent steps. Invalidation restarts at most three times under that capture;
+  dependent steps. Invalidation uses `WORKTREE_OWNERSHIP_RESTART_LIMIT` under that capture;
   retirement, replacement and repeated invalidation refuse the read.
   Missing nested project directories resolve through existing physical ancestors
   and retain the registered checkout's projection. Broken links, indeterminate

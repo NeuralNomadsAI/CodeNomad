@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, createUniqueId, For, Show, on, onCleanup } from "solid-js"
+import { generateUUID } from "../lib/client-identity"
 import { Bookmark } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { MAX_MISSION_MODELS, parseMissionModel, type UserMissionModel } from "../lib/mission-model-library"
@@ -44,7 +45,7 @@ function createMissionModelActions(props: LibraryProps) {
     begin()
     let acknowledged: string | undefined
     try {
-      const record = parseMissionModel({ version: 1, id: crypto.randomUUID(), name, ...draft })
+      const record = parseMissionModel({ version: 1, id: generateUUID(), name, ...draft })
       try { await target.saveUserMissionModel(record) }
       catch (error) {
         if (error instanceof ConfigOwnerReconciliationPendingError) acknowledged = record.id

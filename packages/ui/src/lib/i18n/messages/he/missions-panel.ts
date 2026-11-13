@@ -16,7 +16,6 @@ export const missionsPanelMessages = {
   "missionsPanel.action.interruptNow": "הפסקה עכשיו",
   "missionsPanel.action.resume": "המשך",
   "missionsPanel.action.runNow": "הרצה עכשיו",
-  "missionsPanel.action.checkPassage": "בדיקת ההרצה",
   "missionsPanel.action.checkStatus": "בדיקת מצב",
   "missionsPanel.action.stop": "עצירה…",
   "missionsPanel.action.openConversation": "פתיחת השיחה",

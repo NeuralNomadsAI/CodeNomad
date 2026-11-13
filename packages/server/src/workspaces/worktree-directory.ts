@@ -224,7 +224,7 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   const target = params.strict && !params.media ? await realpath(params.directory) : await resolveDirectoryPath(params.directory, current)
   current?.()
   if (!target) return null
-  const find = (worktrees: WorktreeCacheEntry["worktrees"]) => worktrees
+  const find = <T extends { directoryOnly?: boolean; normalizedDirectory: string }>(worktrees: T[]) => worktrees
     .filter((worktree) => worktree.directoryOnly ? worktree.normalizedDirectory === target : isPathWithinWorktree(worktree.normalizedDirectory, target))
     .sort((left, right) => right.normalizedDirectory.length - left.normalizedDirectory.length)[0]
   const findStrict = async (worktrees: WorktreeCacheEntry["worktrees"]) => {

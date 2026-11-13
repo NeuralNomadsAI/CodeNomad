@@ -51,6 +51,8 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/workspaces/fixture/repository-source?*", route => route.fulfill({ json: {
+    status: "ok", repository: { provider: "github", host: "github.com", repository: "acme/repo" } } }))
   await events.route(page)
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
     location: { directory: "/fixture" }, capability: null, effectiveDepth: null, project: null } }))
@@ -242,8 +244,8 @@ test("an explicitly selected existing root survives remount, refresh and save al
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Handle GitHub changes here")
-    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("github-pull-request")
-    await form(page).getByLabel("Criterion 1 source", { exact: true }).fill("Acme/Repo")
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("repository-activity")
+    await form(page).getByLabel("Criterion 1 event", { exact: true }).selectOption("pull-request-created")
     await form(page).getByLabel("Author (optional)", { exact: true }).fill("@alice")
     await form(page).getByLabel("Coordinator session", { exact: true }).selectOption("existing")
     const picker = form(page).getByRole("button", { name: "Existing conversation", exact: true })
@@ -268,7 +270,8 @@ test("an explicitly selected existing root survives remount, refresh and save al
     await form(page).waitFor({ state: "detached" })
     assert.equal(f.posts.length, 1)
     assert.equal(f.posts[0].configuration.coordinatorSessionID, root.id)
-    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "github-pull-request", repository: "acme/repo", author: "alice" }] })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "repository-activity", provider: "github", host: "github.com",
+      event: "pull-request-created", repository: "acme/repo", author: "alice" }] })
     await page.evaluate(() => window.schedulingEditor.edit())
     await ready(page)
     assert.equal(await picker.getAttribute("data-source-id"), root.id)
@@ -1031,7 +1034,7 @@ test("the real editor selects all five explicit project sources in their own pic
     const condition = form(page).getByLabel("Criterion 1 type", { exact: true })
     for (const [kind, id] of [["schedule-success", "msn_schedule"], ["mission-completed", "msn_once"],
       ["branch-commits", "refs/heads/not-checked-out"], ["conversation-message", "ses_reference"]]) {
-      await condition.selectOption(kind)
+      await condition.selectOption(kind === "branch-commits" ? "repository-activity" : kind)
       await selectMissionSource(page, 1, id); await ready(page)
     }
     assert.equal(schedulePages, 4, "each open schedule source picker follows its own continuation")
@@ -1110,6 +1113,84 @@ for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale
 })
 
 const branches = (page: Page) => page.route("**/api/workspaces/fixture/git-branches?*", route => route.fulfill({ json: { branches: ["refs/heads/main", "refs/heads/dev"] } }))
+for (const provider of ["github", "gitlab", "gitea"] as const) test(`repository activity: ${provider} detection → event → optional filters, without provider navigation`, async () => {
+  const page = await browser.newPage({ viewport: { width: 620, height: 1200 } }), f = await setup(page, true, "fr")
+  const repository = { provider, host: provider === "github" ? "github.com" : provider === "gitlab" ? "gitlab.com" : "codeberg.org",
+    repository: provider === "gitlab" ? "equipe/groupe/projet" : "equipe/projet" }
+  let detections = 0
+  await page.route("**/api/workspaces/fixture/repository-source?*", route => { detections++; return route.fulfill({ json: { status: "ok", repository } }) })
+  await branches(page)
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).locator("textarea").first().fill("Vérifier les demandes fusionnées et signaler les risques")
+    await ready(page); assert.equal(detections, 0, "no detection without repository demand")
+    const kind = form(page).getByLabel("Type du critère 1", { exact: true })
+    assert.equal(await kind.locator('option[value^="github-"]').count(), 0)
+    assert.equal(await kind.locator('option[value="branch-commits"]').count(), 0)
+    await kind.selectOption("repository-activity")
+    const event = form(page).getByLabel("Événement du critère 1", { exact: true })
+    await event.locator('option[value="pull-request-merged"]').waitFor({ state: "attached" })
+    assert.equal(detections, 1)
+    assert.deepEqual(await event.locator("optgroup").evaluateAll(groups => groups.map(group => group.label)), ["Git", provider === "github" ? "GitHub" : provider === "gitlab" ? "GitLab" : "Gitea"])
+    assert.equal(await event.locator('option[value="github-security-alert"]').count(), provider === "github" ? 1 : 0)
+    await event.selectOption("pull-request-merged")
+    await form(page).getByLabel("Auteur (facultatif)", { exact: true }).fill("@alice")
+    await ready(page)
+    const card = scheduling(page).getByRole("group", { name: "Critère 1", exact: true })
+    assert.equal(await card.locator("select").count(), 2, "only criterion and event selects")
+    assert.equal(await card.locator("output").innerText(), `${repository.host}/${repository.repository}`)
+    await page.mouse.move(0, 0); await capture(page, `repository-${provider}-merged-fr.png`)
+    if (process.env.CODENOMAD_MISSION_CAPTURE_DIR) await card.screenshot({ path: path.join(process.env.CODENOMAD_MISSION_CAPTURE_DIR, `repository-${provider}-card-fr.png`) })
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    // Refresh must keep the pinned criterion and author, even when the current remote changes.
+    await page.route("**/api/workspaces/fixture/repository-source?*", route => route.fulfill({ json: { status: "ok", repository: { ...repository, repository: "another/project" } } }))
+    const refreshed = page.waitForResponse(response => response.url().includes("/repository-source?"))
+    await page.evaluate(() => window.schedulingEditor.activate(false)); await page.evaluate(() => window.schedulingEditor.activate(true))
+    await refreshed
+    assert.equal(await form(page).getByLabel("Auteur (facultatif)", { exact: true }).inputValue(), "@alice")
+    assert.equal(await card.locator("output").innerText(), `${repository.host}/${repository.repository}`)
+    await form(page).getByRole("button", { name: "Créer", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "repository-activity", ...repository, event: "pull-request-merged", author: "alice" }] })
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("repository detection failures retry on demand; Git stays usable without a one-option event selector", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  let fails = true, calls = 0
+  await page.route("**/api/workspaces/fixture/repository-source?*", route => { calls++; return route.fulfill(fails ? { status: 503, json: { error: "Unavailable" } }
+    : { json: { status: "unavailable", reason: "no_remote" } }) })
+  await branches(page)
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Watch Git commits")
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("repository-activity")
+    await form(page).getByRole("alert").filter({ hasText: "Repository unavailable" }).waitFor()
+    assert.equal(calls, 1)
+    fails = false
+    await form(page).getByRole("button", { name: "Retry", exact: true }).click()
+    await form(page).getByRole("alert").waitFor({ state: "detached" })
+    assert.equal(calls, 2); assert.equal(await form(page).getByLabel("Criterion 1 event", { exact: true }).count(), 0)
+    await selectMissionSource(page, 1, "refs/heads/main"); await ready(page)
+    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("stored GitHub criteria keep their exact targets and source keys inside the repository activity card", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  try {
+    const when = [{ kind: "github-notification" as const }, { kind: "github-security-alert" as const, repository: "older/repo" },
+      { kind: "github-pull-request" as const, repository: "older/repo", author: "alice" }, { kind: "github-issue" as const, repository: "older/repo" }]
+    f.doc.configuration.launch = { when }
+    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
+    for (let index = 1; index <= when.length; index++)
+      assert.equal(await form(page).getByLabel(`Criterion ${index} type`, { exact: true }).inputValue(), "repository-activity")
+    await form(page).getByRole("button", { name: "Save", exact: true }).click(); await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when }); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
 test("launch criteria journey: an event, a schedule, else, if, or, the approved chain and a drag", async () => {
   const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1400 } }), f = await setup(page)
   await branches(page)
@@ -1117,7 +1198,7 @@ test("launch criteria journey: an event, a schedule, else, if, or, the approved 
   const connectors = () => form(page).locator(".mission-criterion-connector").allInnerTexts()
   const type = (number: number) => form(page).getByLabel(`Criterion ${number} type`, { exact: true })
   const choose = async (number: number, kind: string, id: string) => {
-    await type(number).selectOption(kind)
+    await type(number).selectOption(kind === "branch-commits" ? "repository-activity" : kind)
     await selectMissionSource(page, number, id)
   }
   const time = (number: number, value: string) => form(page).getByLabel(`Criterion ${number} time`, { exact: true }).fill(value)
@@ -1179,7 +1260,7 @@ test("two schedules, then two events: both times launch only if one of the event
     await ready(page)
     await type(1).selectOption("daily"); await time(1, "09:00")
     await addCriterion(page); await time(2, "18:00")
-    await addCriterion(page); await type(3).selectOption("branch-commits")
+    await addCriterion(page); await type(3).selectOption("repository-activity")
     await selectMissionSource(page, 3, "refs/heads/main")
     await addCriterion(page); await type(4).selectOption("files-changed")
     await form(page).getByLabel("Criterion 4 file paths", { exact: true }).fill("package.json")

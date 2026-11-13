@@ -58,9 +58,10 @@ test("the stored list keeps the card order; the connectors between cards come fr
 test("all events map to the native source contract and reject unsafe sources with their row index", () => {
   const sources = { "schedule-success": "msn_source", "mission-completed": "msn_source", "branch-commits": "refs/heads/dev",
     "conversation-message": "ses_source", "files-changed": "", "github-notification": "", "github-security-alert": "acme/repo",
-    "github-pull-request": "acme/repo", "github-issue": "acme/repo" }
+    "github-pull-request": "acme/repo", "github-issue": "acme/repo", "repository-activity": "" }
   for (const kind of missionEventKinds) {
-    const policy = missionSchedulingPolicy(draft([row(kind, { source: sources[kind], files: "src/a.ts\nsrc/b.ts" })]), "/project")
+    const policy = missionSchedulingPolicy(draft([row(kind, { source: sources[kind], files: "src/a.ts\nsrc/b.ts",
+      ...(kind === "repository-activity" ? { repository: { provider: "gitlab", host: "gitlab.com", repository: "group/sub/project" }, event: "pull-request-merged" } : {}) })]), "/project")
     assert.deepEqual(missionLaunchPolicySchema.parse(policy), policy)
   }
   for (const files of ["../secret", "/outside", "a\\b", "a/./b", "a//b", "C:/secret", "a/../b"])
@@ -82,5 +83,5 @@ test("GitHub criteria retain exact repository and optional author filters", () =
     { when: [{ kind: "github-pull-request", repository: "acme/repo", author: "alice" }] })
   assert.deepEqual(missionSchedulingPolicy(draft([row("github-notification")])), { when: [{ kind: "github-notification" }] })
   assert.throws(() => missionSchedulingPolicy(draft([row("github-issue", { source: "../repo" })])), field("source", 0))
-  assert.throws(() => missionSchedulingPolicy(draft([row("github-pull-request", { source: "acme/repo", author: "alice OR bob" })])), field("source", 0))
+  assert.throws(() => missionSchedulingPolicy(draft([row("github-pull-request", { source: "acme/repo", author: "alice OR bob" })])), field("author", 0))
 })

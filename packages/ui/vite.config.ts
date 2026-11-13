@@ -90,6 +90,7 @@ export default defineConfig({
           "**/*.html",
           "**/assets/*worker-*.js",
           "**/assets/editor.api-*.js",
+          "**/assets/mermaid.tiny-*.js",
           "**/monaco/vs/**/*",
         ],
         // Only cache static UI assets; never cache API traffic.

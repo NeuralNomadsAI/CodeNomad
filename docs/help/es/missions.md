@@ -4,6 +4,8 @@ Una Misión reúne un objetivo, una conversación del coordinador, tareas y resu
 
 ## Crear una Misión {#create}
 
+Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.
+
 **Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Los grupos siguen este orden.
 
 ### Configuración {#saved-briefs}
@@ -56,9 +58,9 @@ Hay una vez ahora, cada N horas, diario, días de semana, día del mes y cron. S
 
 ### Eventos y combinaciones {#scheduling-conditions}
 
-Los eventos de GitHub cubren notificaciones de la cuenta conectada, nuevas alertas de Dependabot, pull requests e issues en **github.com**. Introduce el **Repositorio de GitHub** como `owner/repository`; en notificaciones puedes dejarlo vacío para todos los repositorios. Pull requests e issues admiten un **Autor (opcional)**, incluidos bots como `dependabot[bot]`. Las notificaciones incluyen nueva actividad de hilos existentes y conservan su estado de lectura; las alertas incluyen las corregidas o descartadas entre comprobaciones.
+Elige **Actividad del repositorio → Evento** y los filtros opcionales en la misma tarjeta. Los commits de Git comparten este menú con los eventos del repositorio GitHub, GitLab o Gitea detectado automáticamente, como en Contribute (`upstream`, luego `origin`). Los tres admiten nuevas PR/MR, PR/MR fusionadas y nuevas issues, con **Autor (opcional)**, incluido `dependabot[bot]`. Elegir un evento fija su repositorio; los criterios guardados conservan su destino.
 
-Se usa GitHub CLI (`gh`) conectado en el host de ejecución de OpenCode, incluso con CodeNomad cerrado. La cuenta necesita acceso al repositorio, a las [notificaciones](https://docs.github.com/en/rest/activity/notifications) y a la [lectura de alertas Dependabot](https://docs.github.com/en/rest/dependabot/alerts), según los eventos elegidos. El primer inicio fija la referencia; los elementos anteriores quedan fuera de la ventana. Se leen como máximo cuatro páginas de 50 elementos en diez segundos. La falta de permisos, los límites de API y una ventana demasiado grande dejan la fuente no disponible. Los resúmenes observados se incluyen en la entrada del pase.
+Las comprobaciones usan `gh`, `glab` o `tea` en el host OpenCode, incluso con CodeNomad cerrado; los repositorios públicos permiten acceso anónimo. Las forjas autohospedadas requieren una CLI conectada a ese host. **github.com** ofrece además notificaciones y alertas Dependabot mediante `gh` conectado, con acceso a [notificaciones](https://docs.github.com/en/rest/activity/notifications) o [lectura de alertas](https://docs.github.com/en/rest/dependabot/alerts). Las notificaciones conservan su estado de lectura; las alertas incluyen las corregidas o descartadas. Las notificaciones guardadas con **Repositorio de GitHub** vacío cubren la cuenta. El primer inicio fija la referencia. Cada comprobación lee hasta cuatro páginas de 50 elementos en diez segundos; permisos insuficientes, límites de API o ventanas incompletas dejan la fuente no disponible. Los resúmenes entran en el pase y se consumen tras el éxito.
 
 Los eventos siguen el éxito de otra programación o Misión, commits locales, mensajes nuevos o archivos explícitos del proyecto. Elige la fuente dentro del criterio. Sin búsqueda, el selector carga más fuentes al desplazarte; si la lectura falla, ofrece **Intentar de nuevo** allí. La búsqueda ignora mayúsculas y minúsculas, también en letras acentuadas. Durante una búsqueda, usa **Cargar más fuentes** en el selector para continuar, aunque la página ya tenga coincidencias. La conversación elegida para mensajes nuevos también aporta contexto a la ejecución. Cambiar el tipo de criterio borra su fuente. La edición conserva el contexto de conversación guardado.
 

@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, createUniqueId, on, 
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { compareModelError, freezeCompareProfiles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { backendOf } from "../lib/backend-client"
+import { generateUUID } from "../lib/client-identity"
 import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
 import { missionStore } from "../stores/missions"
@@ -41,6 +42,8 @@ import { createMissionCreationStart } from "./mission-creation-start"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { MissionSourceSelect } from "./mission-source-select"
 import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { createMissionEditorRepository } from "./mission-editor-repository"
+import { isRepositoryCriterion } from "./mission-scheduling-data"
 
 export type { MissionEditorAction }
 type FieldError = { field: "objective" | "profiles" | "followed" | "coordinator"; message: string }
@@ -209,9 +212,11 @@ export function MissionEditor(props: {
     target: action.scheduleID ?? original?.id, directory: schedule.directory,
     kinds: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
       ...(coordinatorSessionID() !== undefined && mode() === "recurring" ? ["coordinator-session" as const] : [])],
-    selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && !isMissionGithubKind(row.kind) && row.source
+    selected: () => [...schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) && row.kind !== "files-changed" && row.kind !== "repository-activity" && !isMissionGithubKind(row.kind) && row.source
       ? [{ kind: row.kind, id: row.source }] : []), ...(coordinatorSessionID() ? [{ kind: "coordinator-session" as const, id: coordinatorSessionID()! }] : [])],
     active: isActive, captureView })
+  const repository = createMissionEditorRepository({ instanceId: props.instanceId, directory: schedule.directory, captureView,
+    active: () => isActive() && schedule.scheduling().criteria.some(row => isRepositoryCriterion(row.kind)) })
   const watchedIDs = watched
   const needsSourceLocation = createMemo(() => mode() === "recurring" && watchedIDs().length > 0)
   const sourceIdentity = createMemo(() => JSON.stringify([identity(), props.directory, getOpenCodeInstanceGeneration(props.instanceId)]))
@@ -244,7 +249,7 @@ export function MissionEditor(props: {
     && !!sourceChoices.sources()["coordinator-session"]?.some(row => row.id === coordinatorSessionID())
   const sourceInputBudget = () => recurrenceInputBudget({ consigne: objective().trim(), watchedConversationIDs: watchedIDs(),
     roots: sourceLocation()?.key === sourceIdentity() ? [{ directory: sourceLocation()!.directory }] : [] })
-  let requestId = held?.requestId ?? recurrenceHold?.requestID ?? draft?.requestId ?? crypto.randomUUID(), lastPayload = draft?.lastPayload ?? ""
+  let requestId = held?.requestId ?? recurrenceHold?.requestID ?? draft?.requestId ?? generateUUID(), lastPayload = draft?.lastPayload ?? ""
   const locked = () => !creationReady() || defaultsRefreshing() || busy() || prefilling() || !schedule.ready() || schedule.conflict() || schedule.reading()
   // Only an idle draft is kept: a request in flight or held settles through its own hold.
   const captureDraft = (): MissionEditorDraft => ({ mode: mode(), titleOverride: titleOverride(), time: time(), zone: zone(),
@@ -311,7 +316,7 @@ export function MissionEditor(props: {
         watchedConversationIDs: ids, profiles: selected, taskMode: taskMode() ?? "native", launch: policy()!,
         ...(coordinatorSessionID() ? { coordinatorSessionID: coordinatorSessionID() } : {}) }
       const serialized = JSON.stringify(payload)
-      if (lastPayload && lastPayload !== serialized) requestId = crypto.randomUUID()
+      if (lastPayload && lastPayload !== serialized) requestId = generateUUID()
       lastPayload = serialized
       const currentView = captureView(), operation = props.captureOperation?.() ?? (() => true)
       const current = () => currentView() && operation() && props.action === action
@@ -327,7 +332,7 @@ export function MissionEditor(props: {
     if (kind === "edit") {
       if (textLocked()) return
       const payload = JSON.stringify({ objective: objective().trim(), notes: notes(), revision: schedule.journal()?.revision })
-      if (lastPayload && lastPayload !== payload) requestId = crypto.randomUUID()
+      if (lastPayload && lastPayload !== payload) requestId = generateUUID()
       lastPayload = payload
       const view = captureView(), operation = props.captureOperation?.() ?? (() => true)
       const current = () => view() && operation() && props.action === action
@@ -364,7 +369,7 @@ export function MissionEditor(props: {
       ...(kind === "create" && effectiveProfiles() !== undefined ? { profiles: copyMissionProfiles(effectiveProfiles()) } : {}) }
     const payload = kind === "create" ? missionCreationPayloadIdentity({ ...fields, directory })
       : JSON.stringify(kind === "delete" ? { deleteManagedSessions: deleteManagedSessions() } : fields)
-    if (lastPayload && lastPayload !== payload) requestId = crypto.randomUUID()
+    if (lastPayload && lastPayload !== payload) requestId = generateUUID()
     lastPayload = payload
     const creation = { ...fields, requestId, directory, startOnCreation: startOnCreation() }
     const modelIdentity = selectedModel()
@@ -440,7 +445,7 @@ export function MissionEditor(props: {
   const createBody = () => <>
     <Show when={kind === "create"}><MissionBriefPicker instanceId={props.instanceId} disabled={locked() || !isActive()} active={isActive} value={selectedModel()?.id}
       onUse={model => {
-        requestId = crypto.randomUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
+        requestId = generateUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
         const configurationTitle = model.name.replace(/\s+/g, " ").trim().slice(0, MISSION_TITLE_MAX).replace(/[\uD800-\uDBFF]$/, "").trimEnd()
         setObjective(model.objective); setTitleOverride(configurationTitle); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
         setCustomProfiles(model.profiles !== undefined)
@@ -507,7 +512,7 @@ export function MissionEditor(props: {
       <input type="checkbox" checked={startOnCreation()} disabled={structuralLocked()}
         onChange={event => setStartOnCreation(event.currentTarget.checked)} />{t("missions.scheduling.startOnCreation")}
     </label></Show>
-    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} paging={sourceChoices.reader} active={isActive}
+    <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()} repository={repository()} paging={sourceChoices.reader} active={isActive}
       capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
     <Show when={mode() === "recurring" || coordinatorSessionID() !== undefined}>
       <section class="mission-create-group">

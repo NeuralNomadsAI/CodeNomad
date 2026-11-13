@@ -352,6 +352,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/mission-task-preview.tsx` | P+V | expanded-row map/task/native conversation demand | Exact instance/mission/unique view owner; Mission store and task-session reader own captured attachment, bounded pages, publication and release. |
 | `components/mission-editor-schedule.ts` | A+C | readText/reload/saveJournalEdit/save/reconcile/retryPreparation; capability/detail/content/creation receipt | captureBackendOperation, controller/generation/current/request ID; persisted schedule/Mission mutation retained, continuation follows operation. |
 | `components/mission-editor-sources.ts` | A | read local branches/schedules; cursor/source reload | captureBackendOperation plus view controller/generation/current and signal. |
+| `components/mission-editor-repository.ts` | A | repository discovery/retry | captureBackendOperation, view controller/generation/current and signal. |
 | `components/mission-editor.tsx` | A+C | useSavedDefaults/save/reopen; Mission create/edit/delete/reconcile | captureBackendOperation plus view generation/controller/current/request ID; durable sent mutation and default persistence. |
 | `components/mission-lifecycle-controls.tsx` | A+C | checkStatus/act/confirmStop/reconcile | captureBackendOperation, epoch/current/request ID; lifecycle receipt/transaction retained. |
 | `components/mission-model-library.tsx` | A+C | save/remove/reload/reset/select | captureBackendOperation/current for view work; persisted model preference writes retain storage client. |
@@ -415,7 +416,7 @@ Remote media blobs admit only PNG, JPEG, GIF, WebP, AVIF, BMP and ICO bytes veri
 | Background Shell inventory | fetchBackgroundShells | S; owner backend, raw workspace boundary and public directory; secondary queue and attachment-owned watch/read lane |
 | Transcript mutations/images | pruneSessionMessage, imagesConversation | C; callers fence publication with their operation |
 | Provider usage | fetchProviderUsage | S; usage coalescer/view generation fences publication |
-| Workspace reads/creation | fetchWorkspaces, fetchWorktrees, fetchLocalGitBranches, createWorkspace | S (createWorkspace takes options.signal) |
+| Workspace reads/creation | fetchWorkspaces, fetchWorktrees, fetchLocalGitBranches, fetchRepositorySource, createWorkspace | S (createWorkspace takes options.signal) |
 | Workspace lifecycle | createWorktree, deleteWorktree, moveSessionFamily, cancelWorkspaceCreation, releaseWorkspaceCreation, deleteWorkspace, createTemporaryFolder, abandonTemporaryFolder, keepTemporaryWorkspace, discardTemporaryWorkspace, cloneWorkspaceRepository | C; original mutation/creation request owner |
 | File reads | listWorkspaceFiles, searchWorkspaceFiles, previewWorkspaceFile | S; search retry/queue belongs to supplied signal |
 | Files/config/filesystem | readWorkspaceFile, listConfigFiles, readConfigFile, writeConfigFile, listFileSystem, createFileSystemFolder, readFileSystemFile | C; callers retain selected file/opening generation; sent writes retain client |
@@ -472,6 +473,8 @@ Session Shell and conversation instructions are native features. Session Shell i
 CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is read only as migration input.
 
 Backend shutdown closes SSE and upgraded sockets in Fastify's `preClose` hook and drains accepted local HTTP handlers before releasing workspace and native-parent authority. Completing responses close their keep-alive connection, including streams whose headers preceded shutdown, through a shutdown-only response-finish idle sweep. Permission recovery reads are cancelled; queued receipt writes, dispatched Yolo replies and Yolo persistence settle before workspace cleanup. Plugin leases and workspace cleanup run concurrently, and the success handshake follows resource cleanup. Native-parent responses remain readable through this drain. Mission mutations persist through their native RPC handlers in the shared OpenCode service.
+
+Tauri revokes backend-generation capabilities before requesting shutdown. Its stdout and stderr readers retain their pipes until EOF, recording ordinary output with the launch generation while filtering bootstrap tokens and native-request frames. Revoked generations cannot publish readiness, navigate or dispatch native requests. Confirmed shutdown requires process containment and successful completion of both readers within the same absolute stop deadline (32 seconds on Unix, four seconds on Windows, clipped by the shutdown coordinator's deadline). Reader errors, panics and missing EOF retain ownership for retry and fail shutdown. Server COMPLETE/INCOMPLETE lines remain native diagnostics; process containment and stream completion are tracked separately from the server's functional cleanup status.
 
 ## Implementation Map
 

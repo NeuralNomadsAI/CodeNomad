@@ -38,7 +38,7 @@ In **Settings → General**, **Keep the computer awake while CodeNomad is runnin
 
 Sending continues during a memory outage. CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh. Keep verifying memory claims against current files and commands.
 
-Open **Preferences → General → Memory** (or **Settings → General** in a browser). Memory is off by default. Enable it to let the agent keep useful facts and preferences across conversations. The switch applies to the connected CodeNomad configuration; disabling it retains saved entries and their history.
+Open **Preferences → General → Memory** (or **Settings → General** in a browser). Memory is off by default. Enable it to let the agent keep useful facts and preferences across conversations. The switch applies to the connected CodeNomad configuration; disabling it retains saved entries and their history. While it is off, agents receive no memory tool; switching applies to running conversations within a few seconds, without restarting.
 
 - **About you**: up to 60 entries shared across projects using this configuration.
 - **Project**: up to 200 entries. This interface uses the project selected in Preferences, or the main window's active project in embedded Settings. The agent's `codenomad_memory` tool and session instructions use that session's directory. The server identifies the repository by its normalized Git remote address, falling back to its local repository path; worktrees share this memory. Open a project to select this scope.

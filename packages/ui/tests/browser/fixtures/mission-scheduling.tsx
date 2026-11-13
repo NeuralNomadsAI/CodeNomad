@@ -30,6 +30,7 @@ function Fixture() {
     load: (policy: MissionLaunchPolicy) => change(decodeMissionSchedulingPolicy(policy, "/fixture", "UTC")) }
   return <main class="mission-editor window-shell" style={{ width: "min(420px, 100%)", margin: "auto", color: "var(--text-primary)" }}>
     <div class="window-body"><MissionScheduling draft={draft()} directory="/fixture" sources={sources()}
+      repository={{ repository: { provider: "github", host: "github.com", repository: "acme/repo" }, loading: false, failed: false, retry() {} }}
       capability={capability()} lockReason={lock()}
       onChange={change} onPolicy={setPolicy} /></div>
   </main>

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
+import { generateUUID } from "../lib/client-identity"
 import ts from "typescript"
 import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 import { createEffect, createMemo, createRoot, createSignal, createUniqueId, mapArray, on, onCleanup, untrack } from "solid-js"
@@ -11,6 +12,7 @@ function source(path: string) {
   return ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 }
 function compile(text: string, scope: Record<string, any>) {
+  scope.generateUUID ??= generateUUID
   scope.backendOf ??= () => ({ api: scope.serverApi })
   const code = ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
   return new Function("scope", `with (scope) { return ${code} }`)(scope)

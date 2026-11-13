@@ -6,6 +6,10 @@ Les messages affichent du Markdown, du code, des diffs et les images de résulta
 
 Les en-têtes de raisonnement et d’outils indiquent la durée de chaque étape, comptée en direct pendant son exécution ; les durées inférieures à une seconde ne sont pas affichées. Lorsque **Tokens** est affiché dans **Contenu des messages** (le préréglage **Tout** l’affiche), chaque message d’agent se termine par une seule ligne de tokens et de coût après son texte final. Cette ligne additionne le message et les messages contenant les outils et raisonnements que couvre son action **Supprimer les outils et raisonnements de cette réponse**, dans la transcription chargée ; dépliez-la pour les comptes de raisonnement et de cache. Les étapes qui n’ont exécuté que des outils n’ont pas de ligne propre.
 
+## Diagrammes Mermaid {#mermaid}
+
+Les blocs `mermaid` et `mmd` sont rendus avec Mermaid Tiny après la fin du flux. Utilisez **Afficher la source** / **Afficher le diagramme** dans l’en-tête du code ; Copier conserve le texte source. Tiny exclut les mindmaps, les diagrammes d’architecture et KaTeX. Un diagramme invalide, non pris en charge ou trop volumineux garde sa source avec une erreur. Le rendu est local, sans réseau, limité à 50 000 caractères et 500 arêtes.
+
 ## Trouver des conversations et naviguer {#navigate-conversations}
 
 1. Sélectionnez une ligne sous **Sessions**, ou utilisez **Nouvelle session** pour démarrer une conversation parente.

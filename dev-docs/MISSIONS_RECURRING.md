@@ -342,7 +342,8 @@ explicit unavailable response. UI reads use the shared secondary HTTP budget.
 Explicit events share the native source preparation boundary:
 another schedule's successful passage, a completed one-time Mission, commits on
 a local branch, stable new messages in a followed conversation, and an explicit
-file set; GitHub account notifications, Dependabot alerts, new pull requests and new issues.
+file set; repository pull/merge request creation and merging, issue creation, GitHub account
+notifications and Dependabot alerts.
 One reader call per event key (`native-mission-condition-reader.ts`)
 reads the listed events; within a group, any change is enough. Trigger events are
 checked every 15 minutes; conditions are read at the slots that need them. Mission-source edges are checked
@@ -362,7 +363,30 @@ input/terminal bytes remain fenced synchronously inside the document CAS.
 Bounds, transaction fences and qualification are in the native contracts' event
 source readers section.
 
-GitHub events use `mission-github-condition.ts` and `mission-github-source.ts` with the
+The editor groups Git branch commits and forge events in **Repository activity**. Its
+single **Event** select groups Git and the detected forge with native optgroups;
+event-specific fields stay in that card. `mission-editor-repository.ts` demands the
+owned `repository-source` read only while such a card is shown. Detection never rewrites
+a draft: selecting a forge event pins its provider, authority and repository path.
+Stored GitHub and branch criteria keep their exact policy and source keys on unchanged saves.
+
+`mission-repository-source.ts` reads `repository-activity` through Contribute's
+`ForgeWorkItems.openRepository`: shared remote selection, CLI discovery, anonymous
+public access and request budget. `forge/activity.ts` reads all-state updated windows
+for GitHub issues/PRs, GitLab issues/MRs and Gitea issues/PRs. Creation and merge times
+select occurrences, with a normalized optional author. GitLab nested groups are encoded
+as one project path. GitLab merge windows query `state=merged`, `merged_after` and
+`order_by=merged_at`; their coverage follows merge timestamps independently of updates.
+Gitea issue windows exhaust their unordered pagination; sorted
+windows stop below the reference. All windows refuse incomplete coverage beyond four
+50-item pages and ten seconds. Server Date and timestamp-tie IDs form each checkpoint;
+repository, account and execution directory bind its placement. Revalidation checks
+the fresh remote and account before publication. Summaries are frozen as untrusted
+passage input and consumed only after success.
+Inputs with only GitHub forge criteria keep their exact GitHub heading; configurations
+containing repository-activity criteria use the repository heading.
+
+GitHub account events and stored GitHub criteria use `mission-github-condition.ts` and `mission-github-source.ts` with the
 existing `forge/transport.ts` read-only `gh` adapter. The CLI must be signed in on the
 OpenCode host. `github.com` is the fixed authority; account ID and execution directory
 bind each checkpoint. Notifications optionally select a repository; the other kinds
@@ -565,8 +589,9 @@ it starts from its current revision as the bound.
 A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
 later completed control that restarted or cancelled it. While such an intent, or
 a reserved but unadmitted Run now, stays unknown, the snapshot offers only
-Resume/Pause/Stop/Check and the UI enables exactly those that native offers once
-its snapshot records the intent; the original is never resent. The backend admits
+Resume/Pause/Stop/Check and the UI enables those that native offers once its
+snapshot records the intent, except Check, which it never shows; the original is
+never resent. The backend admits
 that new request with its own permit only after a fresh exact native read through
 the current connection shows the original recorded and incomplete under the same
 owner; a committed superseding control retires the original permit, a no-effect
@@ -705,9 +730,10 @@ of a schedule not desired running; an unknown read of a desired-running schedule
 starts nothing (if its Job is in fact gone it shows Interrupted and Resume
 reconciles the passage), so no second observer runs beside the daily Job. After a
 service restart with a pending passage on a paused or stopped schedule, the
-snapshot offers an explicit **Check passage** (`check`) control, admitted like the
-others (requestID, expectedRevision, authenticated route), which only restarts
-that observer and keeps the schedule paused or stopped.
+snapshot lists a `check` control, admitted like the others (requestID,
+expectedRevision, authenticated route), which only restarts that observer and keeps
+the schedule paused or stopped. The Missions UI does not expose it: a paused
+schedule reconciles its passage through Resume.
 
 A failed wake keeps the Job running: it records a display-only `lastError
 { code, at }` in a sibling kv key (outside the document revision) and retries with

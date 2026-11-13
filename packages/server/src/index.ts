@@ -50,6 +50,7 @@ import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
 import { designRequestRefresher } from "./opencode/design/demand"
+import { followMemoryPreference } from "./opencode/memory/preference"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
 import { provisionDesktopPlugins } from "./opencode/desktop-plugin-provisioning"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
@@ -365,6 +366,9 @@ async function main() {
   const automationLifecycle = new DesktopPluginLifecycle("automation")
   const missionsLifecycle = new DesktopPluginLifecycle("missions")
   const memoryLifecycle = new DesktopPluginLifecycle("memory")
+  // Before any lease is created: the native memory tool follows the preference.
+  followMemoryPreference(settings, eventBus, memoryLifecycle,
+    error => logger.warn({ err: error }, "Failed to publish the memory preference to native plugins"))
   // Missions dispatch through the loopback bridge of the owning backend, desktop or
   // standalone; window/browser automation needs a desktop host. Settles once
   // publication has been attempted, so early connections never skip Missions.

@@ -27,9 +27,10 @@ const partialResults = new Map<string, RecurrenceControlStatus>()
 const [releases, setReleases] = createSignal(0)
 const sameIntent = (a: RecurrenceControlIntent, b: RecurrenceControlIntent) => a.scheduleID === b.scheduleID && a.requestID === b.requestID
   && a.expectedRevision === b.expectedRevision && a.action === b.action && a.directory === b.directory
-const PRIMARY: RecurrenceAction[] = ["check", "resume", "play", "pause"]
+const PRIMARY: RecurrenceAction[] = ["resume", "play", "pause"]
+// A Check recorded by native (from an earlier client) still classifies as a start intent.
 const START_INTENTS: RecurrenceAction[] = ["play", "resume", "check", "run-now"]
-const SUPERSEDING: RecurrenceAction[] = ["resume", "pause", "stop", "check"]
+const SUPERSEDING: RecurrenceAction[] = ["resume", "pause", "stop"]
 
 /** Schedule controls for one row: a single contextual primary action, Stop,
  * the remaining available actions for a secondary menu, and the explicit
@@ -78,7 +79,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   }
   /** The held request is an unknown start intent (Play, Resume, Check or Run now) that
    * the native snapshot records as incomplete, with no Pause/Stop partial. Native then
-   * offers and admits a new explicit Resume/Pause/Stop/Check that supersedes it; the
+   * offers and admits a new explicit Resume/Pause/Stop that supersedes it; the
    * original is never resent and its own exact status still settles it. */
   const supersedable = () => {
     const intent = heldIntent()
@@ -178,11 +179,10 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     // The confirmation described this exact schedule revision.
     if (operation.current() && confirmed && captured === generation && key() === identity && props.schedule.revision === revision) await act("stop")
   }
-  // "check" reconciles a paused pending passage; its label differs from the control-outcome status check.
-  const label = (action: RecurrenceAction) => t(action === "check" ? "missionsPanel.action.checkPassage" : action === "run-now"
+  const label = (action: RecurrenceAction) => t(action === "run-now"
     ? "missionsPanel.action.runNow" : action === "play" ? "missionsPanel.action.start" : action === "stop" ? "missionsPanel.action.stop"
     : `missionsPanel.action.${action}`)
-  const description = (action: RecurrenceAction) => t(action === "check" ? "missions.recurrence.checkPassage" : `missions.recurrence.${action}`, { id: props.schedule.title })
+  const description = (action: RecurrenceAction) => t(`missions.recurrence.${action}`, { id: props.schedule.title })
   const primaryAction = () => !heldIntent() ? PRIMARY.find(action => props.schedule.actions.includes(action))
     : supersedable() ? PRIMARY.find(action => SUPERSEDING.includes(action) && props.schedule.actions.includes(action)) : undefined
   const statusAction = (): MissionPrimaryAction => ({ key: "status", label: t("missionsPanel.action.checkStatus"),
@@ -232,11 +232,10 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   const valid = () => !loading() && admissible()
   const text = missionScheduleText(t, locale)
   const { date } = text
-  /** One sentence; its action is the row's primary control (Check passage or Resume). */
+  /** One sentence; its action is the row's primary control (Resume). */
   const notice = (schedule: RecurrenceSchedule) => {
     if (schedule.pending?.status === "uncertain" && schedule.pending.conversationID) return "missions.recurrence.pending.terminalUnknown"
     if (schedule.pending?.status === "uncertain") return schedule.pending.reason === "admission-failing" ? "missions.recurrence.pending.retrying"
-      : schedule.actions.includes("check") ? "missions.recurrence.pending.checkNeeded"
       : schedule.interruptionReason === "service-restart" ? "missions.simple.restart" : "missions.simple.resumeExplanation"
     if (schedule.state !== "interrupted") return undefined
     return schedule.interruptionReason === "service-restart" ? "missions.simple.restart"

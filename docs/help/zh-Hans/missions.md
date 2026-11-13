@@ -4,6 +4,8 @@
 
 ## 创建任务 {#create}
 
+远程连接使用相同的表单和控件。建议使用 HTTPS 保护网络通信。
+
 选择**创建任务**后，表单会替代任务树，直到创建或取消。各组按以下顺序排列。
 
 ### 配置 {#saved-briefs}
@@ -56,9 +58,9 @@
 
 ### 事件和组合 {#scheduling-conditions}
 
-GitHub 事件涵盖 **github.com** 上已登录账号的通知、新 Dependabot 告警、拉取请求和 Issue。**GitHub 仓库**使用 `owner/repository` 格式；通知的仓库字段留空可覆盖所有仓库。拉取请求和 Issue 支持可选的**作者**，包括 `dependabot[bot]`。通知包括现有讨论的新活动，并保留已读状态；告警包括两次检查之间已修复或忽略的项目。
+选择**仓库活动 → 事件**，再在同一卡片中填写可选筛选条件。Git 提交与自动检测到的 GitHub、GitLab 或 Gitea 仓库事件共用一个菜单，检测方式与 Contribute 相同：先 `upstream`，再 `origin`。三者都支持新建 PR/MR、已合并 PR/MR 和新建 Issue，并可按**作者（可选）**筛选，包括 `dependabot[bot]`。选择事件会固定其仓库；已保存条件保留原目标。
 
-检查使用 OpenCode 执行主机上已登录的 GitHub CLI (`gh`)，CodeNomad 关闭后也能运行。根据所选事件，账号需要仓库访问权、[通知访问权](https://docs.github.com/en/rest/activity/notifications)和 [Dependabot 告警读取权](https://docs.github.com/en/rest/dependabot/alerts)。首次启动建立基准，更早的项目不在触发窗口内。每次检查在十秒内最多读取四页、每页 50 项。权限不足、API 限流或窗口超量时，来源保持不可用。观察到的事件摘要会加入本次执行的输入。
+检查使用 OpenCode 主机上的 `gh`、`glab` 或 `tea`，CodeNomad 关闭后也能运行；公共仓库可以匿名读取。自托管服务需要已登录该主机的 CLI。**github.com** 还通过已登录的 `gh` 提供账号通知与 Dependabot 告警，需要[通知访问权](https://docs.github.com/en/rest/activity/notifications)或[告警读取权](https://docs.github.com/en/rest/dependabot/alerts)。通知保留已读状态；告警包括已修复或忽略的项目。已保存通知的 **GitHub 仓库**留空时覆盖整个账号。首次启动建立基准。每次检查在十秒内最多读取四页、每页 50 项；权限不足、API 限流或窗口不完整时，来源不可用。事件摘要进入本次执行的输入，并在成功后消耗。
 
 事件可跟随其他计划或一次性任务成功、本地提交、新消息或明确列出的项目文件。请在相应条件内选择来源。未搜索时，滚动会加载更多来源；读取失败时，可在同一处**重试**。搜索不区分大小写，包括带变音符号的字母。搜索期间，无论当前页是否已有匹配项，都需在选择器中点击**加载更多来源**继续。为新消息选定的对话也会为运行提供上下文。更改条件类型会清空其来源。编辑时保留已保存的对话上下文。
 

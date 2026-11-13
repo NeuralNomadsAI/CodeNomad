@@ -322,6 +322,11 @@ export function createServerApi(ctx: BackendHttp) {
       id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}/git-branches?${new URLSearchParams({ directory })}`, { signal })
     },
+  fetchRepositorySource(id: string, directory: string, signal?: AbortSignal): Promise<{ status: "ok";
+    repository: import("../../../server/src/missions/mission-repository-condition").MissionRepositoryIdentity } | { status: "unavailable"; reason: string }> {
+    return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(id).workspaceId)}/repository-source?${new URLSearchParams({ directory })}`, { signal })
+  },
+
 
     createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
       id = parseInstanceKey(id).workspaceId

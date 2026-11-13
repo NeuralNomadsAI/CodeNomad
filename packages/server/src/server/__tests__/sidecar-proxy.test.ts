@@ -108,12 +108,12 @@ function webSocketUpgrade(port: number, pathname: string, headers: Record<string
       const key = crypto.randomBytes(16).toString("base64")
       const lines = [
         `GET ${pathname} HTTP/1.1`,
-        "Host: 127.0.0.1",
+        `Host: ${headers.host ?? "127.0.0.1"}`,
         "Upgrade: websocket",
         "Connection: Upgrade",
         `Sec-WebSocket-Key: ${key}`,
         "Sec-WebSocket-Version: 13",
-        ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
+        ...Object.entries(headers).filter(([name]) => name !== "host").map(([name, value]) => `${name}: ${value}`),
         "", "",
       ]
       socket.write(lines.join("\r\n"))
@@ -262,6 +262,8 @@ for (const skipAuth of [false, true]) {
         { origin: "" }, { referer: `${foreign}/page` }, { referer: "malformed" },
         { origin: foreign, referer: `${server.origin}/page` },
         { origin: foreign, "x-forwarded-host": `localhost:${server.port}`, "x-forwarded-proto": "http" },
+        // A loopback alias is same-origin only: a `localhost` page may belong to a sibling `[::1]` listener.
+        { origin: `http://localhost:${server.port}` },
       ]
       for (const headers of denied) {
         for (const auth of skipAuth ? [{}] : [credentials, {}]) {
@@ -272,7 +274,7 @@ for (const skipAuth of [false, true]) {
         }
       }
       const accepted: Record<string, string>[] = [
-        { origin: server.origin }, { origin: `http://localhost:${server.port}` }, { origin: allowed }, { origin: development },
+        { origin: server.origin }, { origin: `http://localhost:${server.port}`, host: `localhost:${server.port}` }, { origin: allowed }, { origin: development },
         {}, { referer: `${server.origin}/page` }, { referer: `${allowed}/page` },
         { origin: server.origin, referer: `${foreign}/page` },
       ]

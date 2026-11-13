@@ -258,12 +258,15 @@ The fixed navigation method adaptation remains conditional on method absence.
 The bundled `codenomad.memory` plugin exposes `codenomad_memory` with `list`,
 `read` (exact ID or title), `save` (title/type/text), and revision-conditional
 `delete`. It uses the native execution session as provenance and the shared
-authenticated memory bridge for every operation. Backend presence admits its
-tool transform in desktop and standalone hosts; the server checks current
-enablement and session ownership on execution. Its payload, shim, leases,
+authenticated memory bridge for every operation. Backend presence admits the
+plugin in desktop and standalone hosts; its tool is registered only while a live
+memory lease requests memory (`opencode/memory/preference.ts` writes
+`server.memoryEnabled` into the leases through `setLeaseContent`), and a change
+reaches running sessions through `ctx.tool.reload()`. The server still checks
+current enablement and session ownership on execution. Its payload, shim, leases,
 integrity repair and WSL translation use the shared lifecycle. Build it with
 `build:memory`; `scripts/test-memory-tool-native.mjs` exercises model-driven
-operations, safe projections, useful disabled/full errors and an uncertain
+operations, safe projections, preference-following registration, useful full errors and an uncertain
 write response with one dispatch. Never automatically replay a memory mutation.
 
 All managed bundle payloads (automation, memory, session-pruning, Missions runtime and

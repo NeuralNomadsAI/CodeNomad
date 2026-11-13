@@ -224,6 +224,9 @@ anonymously. CLIs run without a shell, with prompts, pagers, colour, update
 checks and telemetry disabled, a 15-second limit and a 4 MiB output budget;
 anonymous bodies are bounded to 4 MiB while streaming. CodeNomad stores no token.
 Private repositories without a sign-in report `sign_in`.
+`ForgeWorkItems.openRepository` shares this detection and bounded transport with
+Missions repository-activity reads. Remote discovery ignores inherited Git redirection,
+checks cancellation between Git reads and uses one ten-second discovery deadline.
 
 Repository discovery and page reads are shared loads (`forge/shared-loads.ts`):
 identical callers join one load, which is cancelled (CLI process or fetch) once

@@ -16,7 +16,6 @@ export const missionsPanelMessages = {
   "missionsPanel.action.interruptNow": "Şimdi kes",
   "missionsPanel.action.resume": "Sürdür",
   "missionsPanel.action.runNow": "Şimdi çalıştır",
-  "missionsPanel.action.checkPassage": "Çalıştırmayı denetle",
   "missionsPanel.action.checkStatus": "Durumu denetle",
   "missionsPanel.action.stop": "Durdur…",
   "missionsPanel.action.openConversation": "Konuşmayı aç",

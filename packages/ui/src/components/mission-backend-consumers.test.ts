@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
+import { generateUUID } from "../lib/client-identity"
+import { repositoryIdentitySchema } from "../../../server/src/missions/mission-repository-condition"
 import ts from "typescript"
 import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
@@ -39,7 +41,7 @@ function fixture(api: Record<string, any>, id = "remote~same") {
   let controller = new AbortController()
   const [signal, setSignal] = createSignal(controller.signal)
   const owners: string[] = [], localCalls: string[] = []
-  return { ...solid, owners, localCalls,
+  return { ...solid, generateUUID, owners, localCalls,
     backendOf: (owner: string) => { assert.equal(owner, id); owners.push(owner); return { api } },
     serverApi: new Proxy({}, { get: (_target, method) => () => { localCalls.push(String(method)); assert.fail("local singleton reached") } }),
     captureBackendOperation: (owner: string, parent?: AbortSignal, owns = () => true) => {
@@ -78,6 +80,27 @@ test("lifecycle control uses remote owner; revoked ACK cannot refresh", async ()
   })
   const pending = run("pause"); assert.equal(env.owners.length, 1)
   env.replace(); read.resolve({ mission }); await pending; assert.equal(refreshes, 0)
+})
+
+test("repository discovery selects its backend and fences late replaced reads", async () => {
+  const reads: ReturnType<typeof deferred>[] = []
+  const env = fixture({ fetchRepositorySource: (owner: string, directory: string) => {
+    assert.equal(owner, id); assert.equal(directory, "/repo")
+    const read = deferred(); reads.push(read); return read.promise
+  } })
+  const create = production("./mission-editor-repository.ts", "createMissionEditorRepository", { ...env,
+    backgroundReads, repositoryIdentitySchema, getOpenCodeInstanceGeneration: () => 1,
+  })
+  let dispose!: () => void
+  const props = { instanceId: id, directory: () => "/repo", active: () => true, captureView: () => () => true }
+  const state = createRoot(close => { dispose = close; return create(props) })
+  await flush(); assert.equal(reads.length, 1)
+  env.replace(); reads[0].resolve({ status: "unavailable", reason: "old_error" }); await flush()
+  assert.equal(state().failed, false)
+  state().retry(); await flush(); assert.equal(reads.length, 2)
+  reads[1].resolve({ status: "unavailable", reason: "no_remote" }); await flush()
+  assert.equal(state().failed, false); assert.equal(state().loading, false)
+  assert.deepEqual(env.localCalls, []); dispose()
 })
 
 test("recovery admission is remote; detached completion cannot notify the view", async () => {

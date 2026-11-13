@@ -1,4 +1,5 @@
 import { Show, createEffect } from "solid-js"
+import { generateUUID } from "../lib/client-identity"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
@@ -39,7 +40,7 @@ export function createMissionBriefingRequest(props: {
     const key = identity(), instanceId = props.instanceId, mission = props.mission
     const operation = captureBackendOperation(instanceId)
     if (!operation.current()) return
-    const original = { requestID: crypto.randomUUID(), state: "preparing" as const }
+    const original = { requestID: generateUUID(), state: "preparing" as const }
     const owner = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId), viewCurrent = capture()
     const current = () => operation.current() && viewCurrent() && !props.disabled && missionAcceptsMessage(props.mission)
       && missionBriefingRequest(key)?.requestID === original.requestID

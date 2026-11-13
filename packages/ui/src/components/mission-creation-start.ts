@@ -1,4 +1,5 @@
 import { createRoot, getOwner, onCleanup, runWithOwner } from "solid-js"
+import { generateUUID } from "../lib/client-identity"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
@@ -51,7 +52,7 @@ export function createMissionCreationStart(props: { instanceId: string; projectI
           if (created.status !== "active" || created.runState !== "prepared" || created.control?.pending.length
             || created.panelControl?.pending || missionLifecycleIntents.retry(source) || missionLifecycleIntents.busy(source)) return
           const intent = missionLifecycleIntents.reserve(source, created.id,
-            { action: "start", requestId: crypto.randomUUID(), expectedRevision: created.revision })
+            { action: "start", requestId: generateUUID(), expectedRevision: created.revision })
           if (!intent || !missionLifecycleIntents.start(intent)) return
           let outcome: "acknowledged" | "rejected" | "unknown" = "unknown"
           try {

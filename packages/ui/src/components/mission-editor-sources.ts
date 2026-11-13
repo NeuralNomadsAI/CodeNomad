@@ -32,7 +32,7 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
   selected: () => readonly { kind: Kind; id: string }[]
   captureView: () => (() => boolean) }) {
   const [sources, setSources] = createSignal<MissionSchedulingSourceLists>({})
-  const kinds = createMemo(() => [...new Set(props.kinds().filter((kind): kind is Kind => kind !== "files-changed" && !isMissionGithubKind(kind)))].sort(),
+  const kinds = createMemo(() => [...new Set(props.kinds().filter((kind): kind is Kind => kind !== "files-changed" && kind !== "repository-activity" && !isMissionGithubKind(kind)))].sort(),
     [] as Kind[], { equals: (a, b) => a.join() === b.join() })
   const forget = (kind: Kind) => setSources(previous => { const { [kind]: _removed, ...rest } = previous; return rest })
   const readers = mapArray(kinds, kind => {
