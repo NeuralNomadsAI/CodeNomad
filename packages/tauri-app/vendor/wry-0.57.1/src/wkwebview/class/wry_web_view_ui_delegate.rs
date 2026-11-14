@@ -117,7 +117,7 @@ define_class!(
     #[unsafe(method(_webView:runBeforeUnloadConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
     fn before_unload(&self, webview: &WryWebView, message: &objc2_foundation::NSString,
       frame: &WKFrameInfo, completion: &Block<dyn Fn(objc2::runtime::Bool)>) {
-      if unsafe { frame.securityOrigin().host() }.to_string().ends_with(".preview.localhost") {
+      if crate::preview_origin::private_preview_host(&unsafe { frame.securityOrigin().host() }.to_string()) {
         completion.call((false.into(),));
         return;
       }
@@ -468,7 +468,7 @@ impl WryWebViewUIDelegate {
 fn preview_print(webview: &WryWebView) {
   // Use the same public print operation as Wry's host-initiated printing.
   unsafe {
-    if webview.URL().and_then(|url| url.absoluteString()).is_some_and(|url| url.to_string().contains(".preview.localhost")) {
+    if webview.URL().and_then(|url| url.absoluteString()).is_some_and(|url| crate::preview_origin::private_preview_url(&url.to_string())) {
       return;
     }
     if webview.window().is_none()

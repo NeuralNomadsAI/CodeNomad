@@ -53,8 +53,11 @@ test("production guest protection keeps capability addresses out of native menus
 })
 
 test("ordinary local guests retain their copy-link action", () => {
-  const { guest } = fixture("https://example.com/start")
-  guest.emit("context-menu", {}, { linkURL: "https://example.com/next", isEditable: false, mediaType: "none" })
-  menu.find(item => item.click && /copy.*link/i.test(item.label))!.click()
-  assert.equal(copied, "https://example.com/next")
+  for (const url of ["https://example.com/start", "http://localhost:9999/.preview.localhost/start",
+    "https://example.com/?next=http://cap.preview.localhost/start", "https://x.preview.localhost.evil.test/start"]) {
+    const { guest } = fixture(url)
+    guest.emit("context-menu", {}, { linkURL: "https://example.com/next", isEditable: false, mediaType: "none" })
+    menu.find(item => item.click && /copy.*link/i.test(item.label))!.click()
+    assert.equal(copied, "https://example.com/next", url)
+  }
 })

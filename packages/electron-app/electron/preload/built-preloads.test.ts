@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -8,7 +8,6 @@ import test from "node:test"
 import { fileURLToPath } from "node:url"
 
 test("built preloads run autonomously in sandboxed guests and preserve application context fences", {
-  skip: process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY ? "no display" : false,
   timeout: 60_000,
 }, async t => {
   const scratch = mkdtempSync(join(tmpdir(), "codenomad-built-preloads-"))
@@ -19,7 +18,7 @@ test("built preloads run autonomously in sandboxed guests and preserve applicati
     delete env.ELECTRON_RUN_AS_NODE
     delete env.NODE_OPTIONS
     let output = ""
-    const code = await new Promise<number | null>((resolve, reject) => {
+    const status = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
       const child = spawn(createRequire(import.meta.url)("electron"), [
         ...(process.platform === "linux" ? ["--no-sandbox"] : []),
         fileURLToPath(new URL("./built-preloads.electron-fixture.cjs", import.meta.url)), scratch, resultFile, preloads,
@@ -29,14 +28,20 @@ test("built preloads run autonomously in sandboxed guests and preserve applicati
       child.stderr.on("data", keep)
       const timer = setTimeout(() => child.kill(), 45_000)
       child.once("error", error => { clearTimeout(timer); reject(error) })
-      child.once("exit", code => { clearTimeout(timer); resolve(code) })
+      child.once("close", (code, signal) => { clearTimeout(timer); resolve({ code, signal }) })
     })
+    const diagnostic = `Electron exit=${status.code} signal=${status.signal}\n${output}`
+    t.diagnostic(diagnostic)
+    assert.equal(status.code, 0, diagnostic)
+    assert.ok(existsSync(resultFile), `Electron did not write ${resultFile}\n${diagnostic}`)
     const result = JSON.parse(readFileSync(resultFile, "utf8"))
     t.diagnostic(JSON.stringify(result))
-    assert.equal(code, 0, output)
     assert.equal(result.error, undefined, output)
     assert.deepEqual(result.errors, [], output)
     assert.equal(result.hidden, true)
+    assert.deepEqual(result.security, Array.from({ length: 4 }, () => ({
+      sandbox: true, contextIsolation: true, nodeIntegration: false,
+    })))
     assert.deepEqual(result.remote, {
       copyAllowed: false, printConfigurable: false, prompt: "function", appBridge: "undefined", node: "undefined", promptResult: "native answer",
     })

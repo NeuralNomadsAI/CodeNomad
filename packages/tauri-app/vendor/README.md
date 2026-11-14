@@ -57,6 +57,11 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
      selectors on supported macOS/WebKit updates with the native fixture.
   Private preview origins refuse native printing and beforeunload confirmations;
   the latter cancel navigation and retain the current page.
+  Native menus use an expression-valued nullable `method_id` return for objc2.
+  `src/preview_origin.rs` parses HTTP(S) and blob content origins and checks the
+  isolated host suffix; Tauri shares that predicate. Paths, queries and foreign
+  host suffixes retain ordinary browser actions. The shared cases in
+  `../tests/private-preview-url-cases.json` qualify native and preload predicates.
 - WKWebView's `_webView:contextMenuDidCreateDownload:` callback, declared by
   `WKNavigationDelegatePrivate.h`, attaches the same download delegate as native
   navigation downloads. Both paths use the preview's Downloads-folder policy.

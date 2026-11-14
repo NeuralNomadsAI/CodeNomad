@@ -1,6 +1,12 @@
 // Fixed, privilege-free protection shared by both native hosts.
 function installRemotePreviewGuards() {
-  const privateUrl = value => /\.preview\.localhost(?::\d+)?(?:\/|$)/i.test(String(value))
+  const privateUrl = value => {
+    try {
+      const parsed = new URL(value)
+      const url = parsed.protocol === "blob:" ? new URL(parsed.pathname) : parsed
+      return ["http:", "https:"].includes(url.protocol) && url.hostname.endsWith(".preview.localhost")
+    } catch { return false }
+  }
   if (![location.href, globalThis.origin, document.referrer, ...Array.from(location.ancestorOrigins || [])].some(privateUrl)) return
   const prevent = Function.prototype.call.bind(Event.prototype.preventDefault)
   const stop = Function.prototype.call.bind(Event.prototype.stopImmediatePropagation)

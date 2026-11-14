@@ -3,7 +3,11 @@ const addresses = new WeakMap<WebContents, string>()
 // ponytail: deny private native export surfaces; restore each behind an engine-safe logical-URL presenter.
 
 export function isPrivatePreviewUrl(raw: string): boolean {
-  try { return new URL(raw.startsWith("blob:") ? raw.slice(5) : raw).hostname.endsWith(".preview.localhost") } catch { return false }
+  try {
+    const parsed = new URL(raw)
+    const url = parsed.protocol === "blob:" ? new URL(parsed.pathname) : parsed
+    return ["http:", "https:"].includes(url.protocol) && url.hostname.endsWith(".preview.localhost")
+  } catch { return false }
 }
 export function restrictedBrowserGuest(guest: WebContents): boolean {
   if (addresses.has(guest)) return true

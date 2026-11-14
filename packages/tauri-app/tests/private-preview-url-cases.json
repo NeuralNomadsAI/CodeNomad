@@ -1,0 +1,17 @@
+[
+  { "url": "http://cap.preview.localhost:9999/start", "private": true },
+  { "url": "https://CAP.PREVIEW.LOCALHOST/start", "private": true },
+  { "url": "blob:http://cap.preview.localhost:9999/document", "private": true },
+  { "url": "http://127.0.0.1:9999/start", "private": false },
+  { "url": "http://localhost:9999/start", "private": false },
+  { "url": "https://example.com/.preview.localhost/start", "private": false },
+  { "url": "https://example.com/?next=http://cap.preview.localhost/start", "private": false },
+  { "url": "https://example.com/#http://cap.preview.localhost/start", "private": false },
+  { "url": "https://x.preview.localhost.evil.test/start", "private": false },
+  { "url": "https://notpreview.localhost/start", "private": false },
+  { "url": "https://preview.localhost/start", "private": false },
+  { "url": "blob:https://example.com/.preview.localhost/document", "private": false },
+  { "url": "data:text/plain,http://cap.preview.localhost/start", "private": false },
+  { "url": "file://cap.preview.localhost/start", "private": false },
+  { "url": "not a URL .preview.localhost/start", "private": false }
+]

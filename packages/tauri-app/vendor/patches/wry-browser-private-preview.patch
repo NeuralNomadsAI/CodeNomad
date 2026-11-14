@@ -1,25 +1,50 @@
 --- a/src/wkwebview/class/wry_web_view_ui_delegate.rs
 +++ b/src/wkwebview/class/wry_web_view_ui_delegate.rs
 @@ -119,0 +120,4 @@
-+      if unsafe { frame.securityOrigin().host() }.to_string().ends_with(".preview.localhost") {
++      if crate::preview_origin::private_preview_host(&unsafe { frame.securityOrigin().host() }.to_string()) {
 +        completion.call((false.into(),));
 +        return;
 +      }
 @@ -466,0 +471,3 @@
-+    if webview.URL().and_then(|url| url.absoluteString()).is_some_and(|url| url.to_string().contains(".preview.localhost")) {
++    if webview.URL().and_then(|url| url.absoluteString()).is_some_and(|url| crate::preview_origin::private_preview_url(&url.to_string())) {
 +      return;
 +    }
 --- a/src/wkwebview/class/wry_web_view.rs
 +++ b/src/wkwebview/class/wry_web_view.rs
-@@ -57,0 +58,11 @@
+@@ -57,0 +58,12 @@
 +    #[cfg(target_os = "macos")]
 +    #[unsafe(method_id(menuForEvent:))]
 +    fn menu_for_event(&self, event: &NSEvent) -> Option<Retained<objc2_app_kit::NSMenu>> {
 +      unsafe {
-+        if self.URL().and_then(|url| url.absoluteString()).is_some_and(|url| url.to_string().contains(".preview.localhost")) {
-+          return None;
++        if self.URL().and_then(|url| url.absoluteString()).is_some_and(|url| crate::preview_origin::private_preview_url(&url.to_string())) {
++          None
++        } else {
++          objc2::msg_send![super(self), menuForEvent: event]
 +        }
-+        objc2::msg_send![super(self), menuForEvent: event]
 +      }
 +    }
 +
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -385,0 +386,2 @@
++#[cfg(any(target_os = "macos", target_os = "ios"))]
++mod preview_origin;
+--- /dev/null
++++ b/src/preview_origin.rs
+@@ -0,0 +1,16 @@
++pub(crate) fn private_preview_host(host: &str) -> bool {
++  host.ends_with(".preview.localhost")
++}
++
++pub(crate) fn private_preview_url(raw: &str) -> bool {
++  let Ok(parsed) = url::Url::parse(raw) else { return false };
++  let content = if parsed.scheme() == "blob" {
++    url::Url::parse(parsed.path()).ok()
++  } else {
++    Some(parsed)
++  };
++  content.is_some_and(|url| {
++    matches!(url.scheme(), "http" | "https")
++      && url.host_str().is_some_and(private_preview_host)
++  })
++}

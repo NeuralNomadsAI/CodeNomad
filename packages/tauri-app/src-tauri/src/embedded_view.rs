@@ -74,9 +74,11 @@ pub(crate) fn is_allowed_url(url: &tauri::Url) -> bool {
         && url.password().is_none()
 }
 
+#[path = "../../vendor/wry-0.57.1/src/preview_origin.rs"]
+mod preview_origin;
+
 pub(crate) fn private_preview_url(url: &tauri::Url) -> bool {
-    url.host_str()
-        .is_some_and(|host| host.ends_with(".preview.localhost"))
+    preview_origin::private_preview_url(url.as_str())
 }
 
 fn site_url_allowed(url: &tauri::Url, origin: Option<&str>) -> bool {

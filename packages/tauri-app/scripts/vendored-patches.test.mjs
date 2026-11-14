@@ -93,6 +93,15 @@ test("GTK pointer consent preserves the requesting surface and cancels on naviga
   assert.match(source, /&& answer_policy\.current\(&answer_label, token\)/)
 })
 
+test("WK remote native actions use the shared parsed-origin policy and nullable menu expression", () => {
+  const view = read("vendor/wry-0.57.1/src/wkwebview/class/wry_web_view.rs")
+  const delegate = read("vendor/wry-0.57.1/src/wkwebview/class/wry_web_view_ui_delegate.rs")
+  assert.match(view, /fn menu_for_event[\s\S]*?preview_origin::private_preview_url[\s\S]*?\{\s*None\s*\} else \{/)
+  assert.match(delegate, /preview_origin::private_preview_host/)
+  assert.match(delegate, /preview_origin::private_preview_url/)
+  assert.doesNotMatch(view + delegate, /contains\("\.preview\.localhost"\)/)
+})
+
 test("native popup closure runs each engine's beforeunload path", () => {
   assert.match(read("src-tauri/src/embedded_view/browser.rs"), /CloseRequested \{ api, \.\. \}[\s\S]*?api\.prevent_close\(\)/)
   assert.match(read("src-tauri/src/embedded_view/linux.rs"), /native\.inner\(\)\.try_close\(\)/)
