@@ -4,9 +4,13 @@ import type { MissionTemplateId } from "../../../server/src/missions/model"
 
 export interface MissionProfileSummaryGroup { roles: string[]; execution?: MissionExecution }
 
-/** Requested agent/model/variant text, or undefined for the native default. */
-export function missionExecutionLabel(execution: MissionExecution | undefined): string | undefined {
-  return [execution?.agent, execution?.model && `${execution.model.providerID}/${execution.model.id}`, execution?.model?.variant].filter(Boolean).join(" / ") || undefined
+type ModelName = (model: NonNullable<MissionExecution["model"]>) => string | undefined
+
+/** Requested agent/model/variant text, or undefined for the native default. A model
+ *  shows its display name when `modelName` knows it, else its provider/model ID. */
+export function missionExecutionLabel(execution: MissionExecution | undefined, modelName?: ModelName): string | undefined {
+  const model = execution?.model && (modelName?.(execution.model) ?? `${execution.model.providerID}/${execution.model.id}`)
+  return [execution?.agent, model, execution?.model?.variant].filter(Boolean).join(" / ") || undefined
 }
 
 /** Group effective requested tuples only, without reading catalog or live actors. */

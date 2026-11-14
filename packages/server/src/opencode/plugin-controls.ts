@@ -1,4 +1,5 @@
 import path from "node:path"
+import { createHmac, randomBytes } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { isDeepStrictEqual } from "node:util"
 import type { ConfigEntry, LocationRef, PluginInfo } from "@opencode/client"
@@ -29,9 +30,16 @@ import {
   type PluginConfigEntry,
   type PluginControlDocument,
   type PluginControlDocumentFileSystem,
+  type PluginControlDocumentPrepared,
   PluginControlDocumentError,
 } from "./plugin-control-document"
 import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
+import { nativeSettingExpectation } from "./native-experimental-settings"
+import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
+
+export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
+export type NativeConfigDocuments = { location: PluginControlLocation; entries: ConfigEntry[];
+  documents: Array<{ scope: PluginControlScope; path: string; document: PluginControlDocument }> }
 
 type PluginControlsWorkspaceManager = Pick<WorkspaceManager,
   | "get"
@@ -60,6 +68,7 @@ interface ReadContext {
   globalDirectory: string
   targets: ResolvedTarget[]
   fileSystem: PluginControlDocumentFileSystem
+  managedPlugins: ManagedDesktopPlugin[]
 }
 
 interface ResolvedTarget extends PluginControlTarget {
@@ -87,6 +96,8 @@ export class PluginControlsError extends Error {
 
 export class PluginControls {
   private readonly mutationTails = new Map<string, Promise<void>>()
+  private readonly revisionKey = randomBytes(32)
+  private readonly connectionIdentities = new WeakMap<object, string>()
 
   constructor(private readonly options: {
     workspaceManager: PluginControlsWorkspaceManager
@@ -94,16 +105,30 @@ export class PluginControls {
     logger: Logger
   }) {}
 
-  async read(workspaceId: string, location: PluginControlLocation): Promise<PluginControlsSnapshot> {
-    const context = await this.readContext(workspaceId, location)
-    return buildSnapshot(context)
+  async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
+    const context = await this.readContext(workspaceId, location, signal)
+    const snapshot = buildSnapshot(context)
+    const documents = configDocuments(context).documents
+    await Promise.all(context.targets.map(async target => {
+      try {
+        const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
+        const normalized = documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))
+        // Pair the displayed daemon declaration with the exact raw document. Substitutions and
+        // watcher lag must never authorize removal of different options at the same index.
+        if (!document.exists || !normalized || !isDeepStrictEqual(normalized.plugins, document.plugins)) return
+        snapshot.targets.find(entry => entry.scope === target.scope)!.expectedRevision = this.documentRevision(workspaceId, context, target, document)
+      } catch { /* Inventory remains readable; an unverifiable document has no removal authority. */ }
+    }))
+    assertCurrentConnection(context.connection)
+    signal?.throwIfAborted()
+    return snapshot
   }
 
   // Shared scope acquisition for native settings that have no native write API.
   // Callers receive only the already-authorized documents; path/WSL selection,
   // deletion admission, connection fencing and atomic conflict checks stay here.
-  async readConfigDocuments(workspaceId: string, location: PluginControlLocation) {
-    const context = await this.readContext(workspaceId, location)
+  async readConfigDocuments(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal, strictDocuments = false) {
+    const context = await this.readContext(workspaceId, location, signal, strictDocuments)
     const documents = await Promise.all(context.targets.map(async target => ({
       scope: target.scope, path: target.path,
       document: await readPluginControlDocument(target.ioPath, context.fileSystem),
@@ -116,12 +141,16 @@ export class PluginControls {
     workspaceId: string,
     location: PluginControlLocation,
     scope: PluginControlScope,
-    edit: (document: PluginControlDocument) => string,
+    edit: (document: PluginControlDocument, current: { entries: ConfigEntry[]; path: string; location: PluginControlLocation }) => string | Promise<string>,
+    // Aborts the daemon reads and, re-checked under the lock, the commit itself.
+    signal?: AbortSignal,
+    strictDocuments = false,
+    expectedRevision?: string,
   ): Promise<void> {
     const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
     return this.serializeMutation(key, async () => {
-      const context = await this.readContext(workspaceId, location)
+      const context = await this.readContext(workspaceId, location, signal, strictDocuments)
       const target = context.targets.find(target => target.scope === scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
       const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
@@ -130,12 +159,80 @@ export class PluginControls {
       if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
       try {
         const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
-        const updated = edit(document)
+        if (expectedRevision !== undefined && expectedRevision !== this.documentRevision(workspaceId, context, target, document)) {
+          throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
+        }
+        const updated = await edit(document, { entries: context.entries, path: target.path, location: context.location })
         await replacePluginControlDocument(document, updated, {
-          beforeCommit: () => assertCurrentConnection(context.connection),
+          beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
         }, context.fileSystem)
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally { release() }
+    })
+  }
+
+  private documentRevision(workspaceId: string, context: ReadContext, target: ResolvedTarget, document: PluginControlDocument): string {
+    let connection = this.connectionIdentities.get(context.connection.client)
+    if (!connection) { connection = randomBytes(16).toString("hex"); this.connectionIdentities.set(context.connection.client, connection) }
+    return createHmac("sha256", this.revisionKey).update(JSON.stringify([
+      workspaceId, context.location, target.scope, target.path, document.requestedPath, document.writePath,
+      this.options.workspaceManager.getServiceWslDistro(workspaceId) ?? null, connection,
+      document.exists, document.mode, document.byteOrderMark, document.text,
+    ])).digest("hex")
+  }
+
+  /** Prepare both owned files before the first rename. Callers persist the intent
+   * in beforeWrite and each receipt in afterWrite; a partial commit never rolls back. */
+  editConfigDocuments(workspaceId: string, location: PluginControlLocation,
+    edit: (view: NativeConfigDocuments) => NativeConfigEdit[],
+    hooks: { beforeWrite(edits: readonly NativeConfigEdit[]): Promise<void>; beforeCommit?(edit: NativeConfigEdit): Promise<void>;
+      afterWrite(edit: NativeConfigEdit): Promise<void> },
+  ): Promise<void> {
+    return this.serializeMutation(`${workspaceId}\nsettings-batch`, async () => {
+      const context = await this.readContext(workspaceId, location, undefined, true)
+      if (!context.fileSystem.prepare) throw new PluginControlsError("Prepared native configuration editing is unavailable", "unavailable")
+      const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
+      if (!identity) throw new PluginControlsError("Location is not owned by an active worktree", "forbidden")
+      const release = this.options.worktreeDeletionFence.enter([identity])
+      if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
+      const prepared: Array<{ edit: NativeConfigEdit; write: PluginControlDocumentPrepared }> = []
+      try {
+        const documents = await Promise.all(context.targets.map(async target => ({ scope: target.scope,
+          path: target.path, document: await readPluginControlDocument(target.ioPath, context.fileSystem) })))
+        assertCurrentConnection(context.connection)
+        const edits = edit({ location: context.location, entries: context.entries, documents })
+        if (edits.length > 2 || new Set(edits.map(item => item.scope)).size !== edits.length)
+          throw new PluginControlsError("Invalid native configuration edit set", "invalid")
+        // Physical ordering is shared by every batch to avoid lock inversion.
+        const ordered = edits.map(item => {
+          const target = documents.find(target => target.scope === item.scope && target.path === item.path)
+          if (!target || nativeSettingExpectation(target.document) !== item.expectation)
+            throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
+          return { edit: item, document: target.document }
+        }).sort((a, b) => a.document.writePath < b.document.writePath ? -1 : 1)
+        for (const item of ordered) {
+          assertCurrentConnection(context.connection)
+          prepared.push({ edit: item.edit, write: await context.fileSystem.prepare(item.document, item.edit.updated,
+            { beforeCommit: () => assertCurrentConnection(context.connection) }) })
+        }
+        for (const item of prepared) await item.write.verify()
+        assertCurrentConnection(context.connection)
+        await hooks.beforeWrite(edits)
+        // Global and project are separate durable effects, in declared order.
+        for (const item of edits) {
+          assertCurrentConnection(context.connection)
+          const write = prepared.find(target => target.edit.scope === item.scope)!.write
+          await hooks.beforeCommit?.(item)
+          assertCurrentConnection(context.connection)
+          await write.commit()
+          assertCurrentConnection(context.connection)
+          await hooks.afterWrite(item)
+        }
+      } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
+      finally {
+        await Promise.allSettled(prepared.map(item => item.write.dispose()))
+        release()
+      }
     })
   }
 
@@ -223,7 +320,7 @@ export class PluginControls {
     })
   }
 
-  private async readContext(workspaceId: string, input: PluginControlLocation): Promise<ReadContext> {
+  private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal, strictDocuments = false): Promise<ReadContext> {
     if (!this.options.workspaceManager.get(workspaceId)) {
       throw new PluginControlsError("Workspace not found", "not-found")
     }
@@ -241,7 +338,8 @@ export class PluginControls {
     }
 
     const requestLocation = { directory: location.directory }
-    const requestOptions = locationRequestOptions(location)
+    // A caller's signal (bounded reads such as extension status) also cancels the native reads.
+    const requestOptions = signal ? { ...locationRequestOptions(location), signal } : locationRequestOptions(location)
     let entries: ConfigEntry[]
     let runtime: PluginInfo[]
     try {
@@ -274,9 +372,13 @@ export class PluginControls {
     const fileSystem = distro
       ? createWslPluginControlDocumentFileSystem(distro)
       : hostPluginControlDocumentFileSystem
-    const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory, entries, fileSystem, Boolean(distro))
+    const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory, entries, fileSystem, Boolean(distro), strictDocuments)
+    const managedPlugins = await readManagedDesktopPlugins({ globalDirectory, paths,
+      hostPath: nativePath => this.options.workspaceManager.getHostPathForServicePath(workspaceId, nativePath),
+      assertCurrent: () => { assertCurrentConnection(connection); signal?.throwIfAborted() },
+    })
     assertCurrentConnection(connection)
-    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem }
+    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem, managedPlugins }
   }
 
   private async resolveTargets(
@@ -287,6 +389,7 @@ export class PluginControls {
     entries: readonly ConfigEntry[],
     fileSystem: PluginControlDocumentFileSystem,
     nativeWsl: boolean,
+    strictDocuments: boolean,
   ): Promise<ResolvedTarget[]> {
     const [globalIoRoot, projectIoRoot] = nativeWsl
       ? [globalDirectory, projectDirectory]
@@ -308,6 +411,14 @@ export class PluginControls {
       inspected = await fileSystem.inspectMany([...globalCandidates, ...projectCandidates].map((candidate) => candidate.ioPath))
     } catch (error) {
       throw mapDocumentError(error)
+    }
+    if (strictDocuments) {
+      // Native settings require one unambiguous document per layer; never pick a
+      // JSONC file while a simultaneous JSON writer owns the same native layer.
+      for (let index = 0; index < inspected.length; index += 2) {
+        if (inspected[index]?.exists && inspected[index + 1]?.exists)
+          throw new PluginControlsError("OpenCode configuration changed: JSON and JSONC coexist in one layer", "conflict")
+      }
     }
     const globalTarget = selectTarget("global", globalCandidates, inspected.slice(0, globalCandidates.length))
     // Every inherited .opencode document follows every direct document. Keep
@@ -359,7 +470,9 @@ interface SnapshotBase {
 const controlIdCollator = new Intl.Collator("en", { sensitivity: "variant" })
 
 function snapshotBase(context: ReadContext): SnapshotBase {
-  const runtime = context.runtime.map(normalizeRuntimeEntry)
+  const runtime = context.runtime.map(normalizeRuntimeEntry).map(entry => entry.source.type === "local"
+    && managedDesktopPluginForSource(context.managedPlugins, entry.source.path, context.paths)
+    ? { ...entry, managedBy: "codenomad" as const } : entry)
   const runtimeIds = new Set<string>()
   const runtimeSourceIds = new Map<string, string>()
   const runtimeById = new Map<string, PluginRuntimeInventoryEntry>()
@@ -389,15 +502,20 @@ function controlsForDocuments(
 ): PluginControlsSnapshot {
   const { runtime, runtimeIds, runtimeSourceIds, runtimeById } = base
   const documents = overlay ? applyOverlay(base, context, overlay) : base.documents
-  const knownDefinitions = new Set(runtimeIds)
+  // IDs only associate rules after an installation has passed local provenance checks.
+  // A runtime homonym from another source retains its ordinary controls.
+  const managedIds = new Set(context.managedPlugins.flatMap(entry => entry.ids)
+    .filter(id => !runtimeById.has(id) || runtimeById.get(id)?.managedBy === "codenomad"))
+  const knownDefinitions = new Set([...runtimeIds, ...managedIds])
   const declaredTargets = new Set<string>()
   const rules: PluginConfiguredRule[] = []
   const sources: PluginConfiguredSource[] = []
   for (const document of documents) {
     document.plugins.forEach((entry, entryIndex) => {
       if (typeof entry !== "string") {
-        sources.push({ target: entry.package, scope: document.scope, path: document.path, entryIndex, hasOptions: entry.options !== undefined })
         const runtimeId = runtimeIdForConfiguredTarget(context, document, entry.package, runtimeById, runtimeSourceIds)
+        sources.push({ target: entry.package, scope: document.scope, path: document.path, entryIndex, hasOptions: entry.options !== undefined,
+          ...(runtimeId ? { pluginId: runtimeId } : {}) })
         const isFirstRuntimeSourceDeclaration = Boolean(runtimeId && !declaredTargets.has(entry.package))
         const selectsPlugin = entry.package.startsWith("opencode.")
           || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(entry.package))
@@ -425,7 +543,8 @@ function controlsForDocuments(
       const selectsPlugin = selector === "*" || selector.endsWith(".*") || selector.startsWith("opencode.")
         || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(selector))
       if (!selectsPlugin) {
-        sources.push({ target: selector, scope: document.scope, path: document.path, entryIndex, hasOptions: false })
+        sources.push({ target: selector, scope: document.scope, path: document.path, entryIndex, hasOptions: false,
+          ...(runtimeSourceId ? { pluginId: runtimeSourceId } : {}) })
         declaredTargets.add(selector)
         if (runtimeSourceId) {
           if (rules.some((rule) => !rule.enabled && matchesSelector(rule.selector, runtimeSourceId))) {
@@ -439,16 +558,24 @@ function controlsForDocuments(
     })
   }
 
-  const ids = new Set<string>(runtimeIds)
+  for (const source of sources) {
+    const nativeSource = source.target.startsWith("./") || source.target.startsWith("../")
+      ? context.paths.resolve(source.path ? context.paths.dirname(source.path) : context.location.directory, source.target) : source.target
+    if (managedDesktopPluginForSource(context.managedPlugins, nativeSource, context.paths)) source.managedBy = "codenomad"
+  }
+  const ids = new Set<string>([...runtimeIds, ...managedIds])
   for (const rule of rules) {
     if (isExactSelector(rule.selector)) ids.add(rule.selector)
   }
   const controls = [...ids].filter(validPluginId).sort(controlIdCollator.compare).map((id) => {
     const matching = rules.filter((rule) => matchesSelector(rule.selector, id))
     const controllingRule = matching.at(-1)
-    const runtimeEntry = runtimeById.get(id)
+    const runtimeEntry = runtimeById.get(id) ?? runtime.find(entry => !entry.id && entry.managedBy === "codenomad"
+      && entry.source.type === "local"
+      && managedDesktopPluginForSource(context.managedPlugins, entry.source.path, context.paths)?.ids.includes(id))
     return {
       id,
+      ...(runtimeEntry?.managedBy === "codenomad" || managedIds.has(id) ? { managedBy: "codenomad" as const } : {}),
       ...(runtimeEntry ? { runtime: runtimeEntry } : {}),
       builtin: runtimeEntry?.source.type === "builtin" || id.startsWith("opencode."),
       effective: stateForRule(controllingRule),
@@ -661,6 +788,8 @@ function normalizeRuntimeEntry(plugin: PluginInfo, index: number): PluginRuntime
     ...(plugin.features.server === true ? { server: true as const } : {}),
     ...(plugin.features.tui === true ? { tui: true as const } : {}),
     ...(plugin.features.rpc === true ? { rpc: true as const } : {}),
+    // Newer services report GUI packages; the pinned client type predates the flag.
+    ...((plugin.features as Record<string, unknown>).gui === true ? { gui: true as const } : {}),
   } : {}
   const state = plugin.state.status === "active"
     ? { status: "active" as const }
@@ -720,6 +849,15 @@ function runtimeIdForConfiguredTarget(
     return undefined
   }
   if (!localTarget) return undefined
+  const installation = managedDesktopPluginForSource(context.managedPlugins, localTarget, context.paths)
+  if (installation) {
+    // The daemon may report the shim while configuration names its referenced bundle (or vice versa).
+    for (const entry of runtimeById.values()) {
+      if (entry.managedBy === "codenomad" && entry.source.type === "local"
+        && managedDesktopPluginForSource(context.managedPlugins, entry.source.path, context.paths) === installation) return entry.id
+    }
+    if (installation.ids.length === 1 && !runtimeById.has(installation.ids[0])) return installation.ids[0]
+  }
   for (const entry of runtimeById.values()) {
     if (!entry.id || entry.source.type !== "local") continue
     if (samePath(context.paths, localTarget, entry.source.path)

@@ -15,6 +15,7 @@ export interface PromptInputApi {
   setPromptText(text: string, opts?: { focus?: boolean }): void
   restoreQueuedPrompt(text: string, payload: SessionInboxUserPayload): void
   getPromptText(): string
+  getMode(): PromptMode
   focus(): void
 }
 
@@ -33,10 +34,14 @@ export interface PromptInputProps {
   onCommand?: (commandName: string, args: string) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
   disabled?: boolean
+  // Keeps typing available but refuses every send (prompt, command, shell) until cleared.
+  sendBlocked?: boolean
   escapeInDebounce?: boolean
   isSessionBusy?: boolean
   onAbortSession?: () => Promise<void>
   onBackgroundSession?: () => Promise<void>
   footerControls?: JSX.Element
+  /** Receives the cell beside the footer, under the session's timeline rail. */
+  footerCornerRef?: (element: HTMLDivElement) => void
   registerPromptInputApi?: (api: PromptInputApi) => void | (() => void)
 }

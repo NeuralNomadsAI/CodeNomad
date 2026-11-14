@@ -1,3 +1,5 @@
+export const MISSION_CREATION_REQUEST_CONFLICT = "Creation request ID was already used with a different mission"
+
 export class MissionControlError extends Error {
   constructor(message: string, readonly code: string) {
     super(message)
@@ -16,22 +18,12 @@ export function humanDecisionRequired(cause?: unknown) {
     + (detail ? ` (${detail})` : ""), "policy-unqualified")
 }
 
-/** Model-facing refusal when a Wayfinder decision cannot name the exact native call that asked the human. */
-export function decisionInvocationUnavailable() {
-  return new MissionControlError("Wayfinder decision invocation unavailable: a completed decision task cites the human's answer to a native question "
-    + "asked from the task's own conversation, which your subagent call launched with its exact assignmentPrompt. Pass artifact "
-    + '{"kind":"decision","question":"...","answer":"...","provenance":{"kind":"native-form-answer","contract":{"missionID":"...","taskKey":"...","generation":1},'
-    + '"nativeCall":{"generation":1,"parentSessionID":"<launching conversation>","parentMessageID":"<its message holding the subagent call>","toolCallID":"<that subagent call>"},'
-    + '"sessionID":"<decision conversation>","formID":"<answered Form>","messageID":"<its message holding the question call>","toolCallID":"<that question call>","fieldKey":"q0"}}. '
-    + "Record a self-contained analysis as a research task instead, or report this decision blocked.", "policy-unqualified")
-}
-
 /** Only the authoritative create preflight may certify this exact no-write denial. */
 export class MissionCreateNoEffectError extends MissionControlError {
   readonly noEffect: { requestID: string; missionID: string }
 
   constructor(requestID: string, missionID: string) {
-    super("Creation request ID was already used with a different mission", "request-conflict")
+    super(MISSION_CREATION_REQUEST_CONFLICT, "request-conflict")
     this.noEffect = { requestID, missionID }
   }
 }

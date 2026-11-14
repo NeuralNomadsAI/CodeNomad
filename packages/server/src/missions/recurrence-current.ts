@@ -2,25 +2,38 @@ import { z } from "zod"
 import { recurrenceIDSchema } from "./recurrence-contract"
 import type { MissionMap, MissionReport, MissionTask } from "./model"
 import { missionMarkdownPage } from "./markdown-pages"
+import { missionCurrentSourceSchema } from "./mission-current-source"
+import { missionPanelPageRequestSchema, MISSION_PANEL_REQUEST_BYTES } from "./mission-panel-page"
+import { missionContentRequestSchema } from "./mission-content"
 
-export const recurrenceCurrentInput = z.object({ scheduleID: recurrenceIDSchema }).strict()
+export const recurrenceCurrentInput = z.object({ scheduleID: recurrenceIDSchema, owner: z.enum(["daily", "scheduled"]).default("daily") }).strict()
+export const recurrenceCurrentPageInput = z.object({ source: missionCurrentSourceSchema, selector: missionPanelPageRequestSchema,
+  body: missionContentRequestSchema.optional() }).strict().superRefine((input, context) => {
+  const selector = input.selector
+  if (selector.source === "summaries" || selector.source === "cleanups" || selector.source === "marks" || selector.source === "task-marks"
+    || (selector.source === "tasks" ? selector.task.missionID : selector.missionID) !== input.source.missionID
+    || selector.source === "mission" && (!selector.header && !selector.field || selector.field && !selector.window)
+    || input.body && (input.body.missionID !== input.source.missionID || selector.source !== "mission" || selector.field !== "body"
+      || selector.window?.offset !== 0 || selector.text || selector.header || selector.part))
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Current passage selector differs" })
+}).refine(input => Buffer.byteLength(JSON.stringify(input)) <= MISSION_PANEL_REQUEST_BYTES, "Current passage selector capacity")
 const labels = ["summary", "objective", "notes", "evidence", "next", "brief", "artifact", "achieved", "ongoing", "obstacles"] as const
 export const recurrenceCurrentContentInput = recurrenceCurrentInput.extend({ passageID: recurrenceIDSchema,
   kind: z.enum(["overview", "task", "report", "change"]), itemId: z.string().min(1).max(240).optional(),
-  section: z.enum(labels).default("summary"), page: z.number().int().min(0).max(63).default(0),
+  section: z.enum(labels).default("summary"), page: z.number().int().min(0).safe().default(0),
   revision: z.number().int().positive().safe().optional(),
 }).strict().refine(input => input.kind === "overview" ? input.itemId === undefined : input.itemId !== undefined,
   "Reader target identity differs")
-export type RecurrenceCurrentContentInput = z.infer<typeof recurrenceCurrentContentInput>
+export type RecurrenceCurrentContentInput = Omit<z.infer<typeof recurrenceCurrentContentInput>, "owner"> & { owner?: "daily" | "scheduled" }
 export const recurrenceCurrentContentPage = z.object({ version: z.literal(1), projectID: z.string().min(1).max(240),
   scheduleID: recurrenceIDSchema, passageID: recurrenceIDSchema, missionID: z.string().min(1).max(240),
   revision: z.number().int().positive().safe(),
-  page: z.number().int().min(0).max(63), pageCount: z.number().int().min(1).max(64), sourceText: z.string().max(9_001), markdownText: z.string().max(9_116).nullable(),
+  page: z.number().int().min(0).safe(), pageCount: z.number().int().min(1).safe(), sourceText: z.string().max(3_001), markdownText: z.string().max(3_116).nullable(),
 }).strict()
 const id = { type: "string", minLength: 3, maxLength: 100 } as const
 const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
-const contentProperties = { scheduleID: id, passageID: id, section: { type: "string", enum: labels },
-  page: { ...counter, maximum: 63 }, revision: { ...counter, minimum: 1 } } as const
+const contentProperties = { scheduleID: id, passageID: id, owner: { type: "string", enum: ["daily", "scheduled"] }, section: { type: "string", enum: labels },
+  page: counter, revision: { ...counter, minimum: 1 } } as const
 export const recurrenceCurrentContentWire = {
   input: { type: "object", oneOf: [
     { type: "object", properties: { ...contentProperties, kind: { type: "string", const: "overview" } },
@@ -32,7 +45,7 @@ export const recurrenceCurrentContentWire = {
   output: { type: "object", properties: { version: { type: "integer", const: 1 }, projectID: { type: "string" },
     projectCanonical: { type: "string" }, location: { type: "object", properties: { directory: { type: "string" }, workspaceID: { type: "string" } }, required: ["directory"], additionalProperties: false },
     scheduleID: id, passageID: id, missionID: { type: "string" }, revision: { ...counter, minimum: 1 },
-    page: { ...counter, maximum: 63 }, pageCount: { ...counter, minimum: 1, maximum: 64 }, sourceText: { type: "string", maxLength: 9_001 }, markdownText: { type: ["string", "null"], maxLength: 9_116 },
+    page: counter, pageCount: { ...counter, minimum: 1 }, sourceText: { type: "string", maxLength: 3_001 }, markdownText: { type: ["string", "null"], maxLength: 3_116 },
   }, required: ["version", "projectID", "projectCanonical", "location", "scheduleID", "passageID", "missionID", "revision", "page", "pageCount", "sourceText", "markdownText"], additionalProperties: false },
 } as const
 
@@ -88,10 +101,9 @@ export function currentRecurrenceContent(mission: MissionMap, raw: unknown) {
   }
   const text = sections[input.section]
   if (text === undefined) throw new Error("Current passage section unavailable")
-  if (text.length > 576_000) throw new Error("Current passage content capacity")
-  const pageCount = Math.max(1, Math.ceil(text.length / 9_000))
+  const pageCount = Math.max(1, Math.ceil(text.length / 3_000))
   if (input.page >= pageCount) throw new Error("Current passage page unavailable")
   return recurrenceCurrentContentPage.parse({ version: 1 as const, projectID: mission.projectID, scheduleID: input.scheduleID, passageID: input.passageID,
     missionID: mission.id, revision: mission.revision, page: input.page, pageCount,
-    ...missionMarkdownPage(text, input.page) })
+    ...missionMarkdownPage(text, input.page, 3_000) })
 }

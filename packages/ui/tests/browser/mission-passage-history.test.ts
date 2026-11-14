@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { readFile } from "node:fs/promises"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionRecurrenceReadPage } from "../../../server/src/api-types"
@@ -11,7 +11,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { missionMarkdownPage } from "../../src/lib/mission-markdown-pages"
 import type {} from "./fixtures/mission-passage-history"
 import { captureMissionView } from "./mission-view-capture"
-import { missionPickerExpander, selectMission } from "./mission-actions"
+import { selectMission } from "./mission-actions"
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 
 let browser: Browser, url: string
@@ -30,7 +30,7 @@ after(async () => { await browser?.close(); })
 
 test("all ten locales define recurrence reference reader and pending status keys", async () => {
   const locales = ["en", "fr", "es", "de", "he", "ja", "zh-Hans", "ru", "tr", "ne"]
-  const required = ["reader", "section", "pending.retrying", "pending.checkNeeded"]
+  const required = ["reader", "section", "pending.retrying"]
   for (const locale of locales) {
     const source = await readFile(new URL(`../../src/lib/i18n/messages/${locale}/missions.ts`, import.meta.url), "utf8")
     for (const key of required) assert.equal(source.split(`"missions.recurrence.${key}":`).length - 1, 1, `${locale}: ${key}`)
@@ -44,23 +44,22 @@ const schedule = (id: string): MissionRecurrenceSnapshot["schedules"][number] =>
     nextDueAt: null, actions: [], controls: [], pending: { passageID: "rcp_pending", status: "uncertain" }, latestResult: history.at(-1)!, history }
 }
 
-/** A schedule's entry in the picker's persistent inline list (see `expandList`). */
+/** A schedule's row in the tree. */
 function scheduleEntry(page: Page, title: string) {
-  return page.locator(".mission-picker-inline button.mission-picker-option")
-    .filter({ has: page.locator(".mission-picker-title", { hasText: new RegExp(`^${title}$`) }) })
+  return page.locator(".mission-rows button.mission-row-select")
+    .filter({ has: page.locator(".session-item-title", { hasText: new RegExp(`^${title}$`) }) })
 }
-/** Expand the persistent inline list; once expanded, an absent entry means an absent schedule. */
+/** The tree is always shown: once rendered, an absent row means an absent schedule. */
 async function expandList(page: Page) {
-  const expander = missionPickerExpander(page)
-  await expander.waitFor()
-  if (await expander.getAttribute("aria-expanded") !== "true") await expander.click()
+  await page.locator(".mission-rows").waitFor()
 }
-const listExpanded = async (page: Page) => await missionPickerExpander(page).getAttribute("aria-expanded") === "true"
-/** The schedule's detail section (separate from the picker) and its Summary eye. */
+/** The tree stays mounted (empty, it has no height). */
+const listShown = async (page: Page) => await page.locator(".mission-rows").count() === 1
+/** The selected schedule's Summary eye, in the header's selection line while its detail is shown. */
 function overviewEye(page: Page, title: string) {
-  return page.locator(`section.mission-detail[aria-label="${title}"] .mission-overview-toggle`)
+  return page.locator(`.mission-control:has(section.mission-detail[aria-label="${title}"]) .mission-picker-selection-actions .mission-overview-toggle`)
 }
-/** The selected schedule detail's Summary eye, selecting the schedule in the picker first when needed. */
+/** The selected schedule's Summary eye, selecting the schedule in the tree first when needed. */
 async function readAll(page: Page, title: string) {
   const eye = overviewEye(page, title)
   if (!await eye.isVisible()) await selectMission(page, title)
@@ -151,7 +150,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await page.evaluate(() => { document.documentElement.dir = "rtl" })
     await captureMissionView(page, "archive-reader-390-rtl")
     const geometry = await firstEye.evaluate(node => {
-      const row = node.closest(".mission-detail")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
+      const row = node.closest(".mission-picker")!.getBoundingClientRect(), eye = node.getBoundingClientRect()
       return { rowLeft: row.left, rowRight: row.right, eyeLeft: eye.left, eyeRight: eye.right, radius: getComputedStyle(node).borderRadius }
     })
     assert.ok(geometry.eyeLeft >= geometry.rowLeft && geometry.eyeRight <= geometry.rowRight)
@@ -159,7 +158,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
     await page.evaluate(() => window.passageHistory.project("foreign"))
     await reader.getByText("This mission content is no longer available.").waitFor()
     assert.equal(await reader.getByText("rcp_rec_first_29", { exact: true }).count(), 0)
-    assert.equal(await listExpanded(page), true)
+    assert.equal(await listShown(page), true)
     assert.equal(await firstRow.count(), 0, "foreign project response cannot populate the original list")
     assert.equal(await firstEye.count(), 0)
     await page.evaluate(() => window.passageHistory.project("project"))
@@ -171,7 +170,7 @@ test("native reference history uses the shared reader, exact eyes, visible cache
       ;(serverEvents as unknown as { dispatchBatch(events: unknown[]): void }).dispatchBatch([{ type: "workspace.stopped", workspaceId: "fixture" }])
     })
     await reader.getByText("This mission content is no longer available.").waitFor()
-    assert.equal(await listExpanded(page), true)
+    assert.equal(await listShown(page), true)
     assert.equal(await firstRow.count(), 0, "workspace teardown revokes the previous cache")
     assert.equal(await firstEye.count(), 0)
     assert.equal(reads, beforeStop, "teardown does not start a read or rearm a passage")
@@ -313,7 +312,7 @@ test("late Location response never installs data into a different reader or list
     await (await readAll(page, "Daily review new")).click()
     await page.locator(".mission-reader").getByText("rcp_rec_new_29", { exact: true }).waitFor({ state: "attached" })
     assert.equal(await page.getByText("rcp_rec_old_29", { exact: true }).count(), 0)
-    assert.equal(await listExpanded(page), true)
+    assert.equal(await listShown(page), true)
     assert.equal(await scheduleEntry(page, "Daily review old").count(), 0)
     assert.equal(await page.getByText("Daily review old", { exact: true }).count(), 0, "neither the list nor the field shows the late schedule")
   } finally { release(); await page.close() }

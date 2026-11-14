@@ -1,7 +1,7 @@
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 
 /** Fixed application-authored request. Objective/notes stay native data, not interpolated instructions. */
-export function missionBriefingRequestText(mission: MissionMap, requestID: string, locale: string): string {
+export function missionBriefingRequestText(mission: MissionPanelMap, requestID: string, locale: string): string {
   return `CodeNomad project briefing request.
 Mission ID: ${mission.id}
 Request ID: ${requestID}

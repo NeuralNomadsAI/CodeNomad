@@ -1,4 +1,6 @@
 import { render } from "solid-js/web"
+import { Schema } from "effect"
+import { SessionEvent } from "@opencode/schema/session-event"
 import SessionView from "../../../src/components/session/session-view"
 import TranscriptFilters from "../../../src/components/transcript-filters"
 import { ChatSettingsSection } from "../../../src/components/settings/chat-settings-section"
@@ -15,7 +17,7 @@ import { sseManager } from "../../../src/lib/sse-manager"
 import { buildSessionSearchMatches } from "../../../src/lib/session-search"
 import "../../../src/index.css"
 
-const instanceId = "system-instance", sessionId = "system-session"
+const instanceId = "system-instance", sessionId = "ses_system_fixture"
 const model = { providerID: "fixture", id: "fixture" }
 const text = "Today's date is now: Sun Sep 20 2026\n<system-reminder>Keep this context &amp; intact.</system-reminder>"
 const quota = { type: "provider.quota", message: "Quota reached for this account", status: 429 }
@@ -108,13 +110,14 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <aside id="chat-settings"><ChatSettingsSection /></aside>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
+const liveContext = Schema.decodeUnknownSync(SessionEvent.InstructionsUpdated)({
+  id: "evt_live_context", type: "session.instructions.updated", created: 5,
+  durable: { aggregateID: sessionId, seq: 1, version: 2 }, location: { directory: "/fixture" },
+  data: { sessionID: sessionId, delta: { "context/agents.md": "a".repeat(64) }, text: "Live system context" },
+})
 ;(window as any).fixture = {
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
-  live: () => (sseManager as any).handleEvent(instanceId, {
-    id: "ev_live_context", type: "session.instructions.updated", created: 5,
-    durable: { aggregateID: sessionId, seq: 1, version: 2 }, location: { directory: "/fixture" },
-    data: { sessionID: sessionId, delta: { "AGENTS.md": "updated" }, text: "Live system context" },
-  }),
+  live: () => (sseManager as any).handleEvent(instanceId, liveContext),
   snapshot: () => ({ visibility: preferences().systemMessagesVisibility, nativeText: nativeMessages[1].text, messageReads,
     ids: messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), config }),
   matches: () => buildSessionSearchMatches({ store: messageStoreBus.getOrCreate(instanceId), sessionId, query: "Today's date",

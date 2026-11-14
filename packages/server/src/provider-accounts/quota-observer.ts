@@ -35,7 +35,8 @@ function limitName(body: unknown): { limitName?: string } {
  * and failures are dropped silently (native errors can contain credentials).
  */
 export function observeProviderQuotaFailures(bus: EventBus, accounts: Pick<ProviderAccountsService,
-  "observeSwitch" | "observeStepStart" | "markQuotaFailure" | "switchWatermark">) {
+  "observeSwitch" | "observeStepStart" | "markQuotaFailure" | "switchWatermark">,
+  observeFree?: (connection: ServiceConnection, event: unknown) => void) {
   const seen = new Set<string>()
   const recent = new Map<string, number>()
   const queues = new WeakMap<ServiceConnection, { tail: Promise<unknown>; pending: number }>()
@@ -51,6 +52,8 @@ export function observeProviderQuotaFailures(bus: EventBus, accounts: Pick<Provi
     if (event?.type !== "credential.switched" && event?.type !== "session.step.started"
       && event?.type !== "session.step.failed" && event?.type !== "session.execution.failed") return
     const connection = nativeEventConnections.get(payload.event)
+    // Free display evidence is independent of rotation policy and its dedupe/queue.
+    if (connection) observeFree?.(connection, event)
     // Every owned workspace receives the same native event object.
     if (!connection || !once(event.id)) return
     const created = typeof event.created === "number" && Number.isFinite(event.created) ? event.created : Date.now()

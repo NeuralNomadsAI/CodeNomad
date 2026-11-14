@@ -16,7 +16,7 @@ async function fixture() {
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}` }
   const workspace = { id: "w", path: "/project" }
-  const client = { session: {
+  const client = { rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }), session: {
     get: async () => ({ id: "ses_fixture", location: { directory: "/project" } }),
     environment: async () => { events.push("environment") },
   } } as unknown as OpenCodeClient

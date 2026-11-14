@@ -1,5 +1,6 @@
 import { Show, createEffect } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import { generateUUID } from "../lib/client-identity"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -11,7 +12,7 @@ import { missionBriefingRequest, setMissionBriefingRequest } from "../stores/mis
 /** The explicit "Request an update" briefing request. Its state is keyed by the
  * exact Mission identity, so the row menu and the card share one request. */
 export function createMissionBriefingRequest(props: {
-  instanceId: string; mission: MissionMap; active: boolean; disabled?: boolean; readOnly?: boolean
+  instanceId: string; mission: MissionPanelMap; active: boolean; disabled?: boolean; readOnly?: boolean
 }) {
   const { t, locale } = useI18n()
   const identity = () => JSON.stringify([props.instanceId, instances().get(props.instanceId)?.folder,
@@ -36,7 +37,7 @@ export function createMissionBriefingRequest(props: {
   const ask = async () => {
     if (!available() || waiting() || props.disabled || !props.active) return
     const key = identity(), instanceId = props.instanceId, mission = props.mission
-    const original = { requestID: crypto.randomUUID(), state: "preparing" as const }
+    const original = { requestID: generateUUID(), state: "preparing" as const }
     const owner = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId), viewCurrent = capture()
     const current = () => viewCurrent() && !props.disabled && missionAcceptsMessage(props.mission)
       && missionBriefingRequest(key)?.requestID === original.requestID
@@ -58,9 +59,9 @@ export function createMissionBriefingRequest(props: {
     <div class="mission-briefing-feedback">
       <p role={request()?.state === "error" || request()?.state === "uncertain" ? "alert" : "status"}>{t(`missions.briefing.request.${request()!.state}`)}</p>
       <Show when={["admitted", "uncertain"].includes(request()!.state)}>
-        <button type="button" class="window-text-button" disabled={props.disabled || !props.active}
+        <button type="button" class="window-action" disabled={props.disabled || !props.active}
           onClick={onOpenCoordinator}>{t("missions.control.openCoordinator")}</button>
-        <button type="button" class="window-text-button" disabled={props.disabled || !props.active || !available()}
+        <button type="button" class="window-action" disabled={props.disabled || !props.active || !available()}
           onClick={() => { if (window.confirm(t("missions.briefing.newConfirm"))) {
             setMissionBriefingRequest(identity(), { requestID: request()!.requestID, state: "error" })
             void ask()

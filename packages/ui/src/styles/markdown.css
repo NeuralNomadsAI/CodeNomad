@@ -261,6 +261,7 @@
     line-height: var(--message-part-header-title-line-height);
   }
 
+  .code-block-diagram,
   .code-block-copy,
   .code-block-wrap {
     display: inline-flex;
@@ -333,4 +334,18 @@
     word-break: break-word;
     overflow-wrap: anywhere;
   }
+}
+
+/* Markdown images of local file paths (lib/markdown-local-images.ts): the transcript's own image
+   when it holds one, otherwise the alt text. */
+.markdown-body img.markdown-local-image {
+  display: block;
+  max-height: 32rem;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.markdown-body span.markdown-local-image {
+  color: var(--text-muted);
+  font-style: italic;
 }

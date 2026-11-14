@@ -4,8 +4,9 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionActor, MissionMap } from "../../../server/src/api-types"
 import { missionSummary } from "../../../server/src/missions/mission-summary"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { inlineMissionEntry, missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { routeMissionContent, panelMissions } from "./mission-content-fixture"
 
 // A backend that lists summaries: the open mission as a full map, closed ones as
 // rows until the panel includes them, and unchanged rows skipped by version.
@@ -22,12 +23,13 @@ after(async () => { await browser?.close() })
 const actor = (sessionId: string): MissionActor =>
   ({ sessionId, title: sessionId, kind: "coordinator", managed: false, roles: ["coordinator"], location: { directory: "fixture" }, joinedAt: 1 })
 function mission(id: string, patch: Partial<MissionMap> = {}): MissionMap {
+  // The mission's own reports hold every report, as the reducer keeps them.
+  const report = { id: `rpt_${id}`, taskKey: "work", sessionId: `ses_${id}`, outcome: "completed" as const, summary: `Result of ${id}`, evidence: [], next: [], createdAt: 1 }
   return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: `Objective ${id}`, template: "custom", notes: "",
     coordinatorSessionId: `ses_${id}`, status: "active", runState: "running", actors: [actor(`ses_${id}`)], frontier: [], claims: [], revision: 1,
-    createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, reports: [],
+    createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, reports: [report],
     tasks: [{ id: `task-${id}`, key: "work", title: `Work of ${id}`, brief: "Brief", role: "research", status: "completed",
-      blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1,
-      report: { id: `rpt_${id}`, taskKey: "work", sessionId: `ses_${id}`, outcome: "completed", summary: `Result of ${id}`, evidence: [], next: [], createdAt: 1 } }], ...patch }
+      blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1, report }], ...patch }
 }
 
 async function open() {
@@ -40,16 +42,18 @@ async function open() {
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local", electronAPI: {
     claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/missions/scheduled?*", route => route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } }))
   await page.route(target => target.pathname === "/api/workspaces/fixture/missions", route => {
     const query = new URL(route.request().url()).searchParams
-    requests.push(query)
+    if (query.get("panelHeader") === "true" || query.get("panelSource") === "summaries" && requests.length === 0) requests.push(query)
     const include = (query.get("include") ?? "").split(",").filter(Boolean)
     const listed = maps.filter(value => value.status === "active" || include.includes(value.id))
     return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: Date.now(), discardedEvents: 0, cleanups: [],
-      missions: listed, ...(query.get("summaries") === "v1" ? {} : { summaries: maps.map(missionSummary) }), summariesVersion: "v1",
+      missions: panelMissions(listed), ...(query.get("summaries") === "v1" ? {} : { summaries: maps.map(missionSummary) }), summariesVersion: "v1",
       activity: { generatedAt: Date.now(), missions: listed.map(value => ({ missionId: value.id,
         actors: [{ sessionId: value.coordinatorSessionId, state: value.status === "active" ? "running" : "unknown" }] })) } } })
   })
+  await routeMissionContent(page, () => maps)
   await page.goto(url)
   return { page, errors, requests }
 }
@@ -60,21 +64,26 @@ async function panel(maps: MissionMap[], answer: (include: string[], read: numbe
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local", electronAPI: {
     claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/missions/scheduled?*", route => route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } }))
   await page.route(target => target.pathname === "/api/workspaces/fixture/missions", async route => {
     const include = (new URL(route.request().url()).searchParams.get("include") ?? "").split(",").filter(Boolean)
-    includes.push(include)
-    const status = await answer(include, includes.length)
+    const query = new URL(route.request().url()).searchParams
+    const measured = query.get("panelHeader") === "true" || query.get("panelSource") === "summaries" && includes.length === 0
+    if (measured) includes.push(include)
+    const status = measured ? await answer(include, includes.length) : undefined
     if (status) return route.fulfill({ status, json: { error: "unavailable" } })
     const listed = maps.filter(value => value.status === "active" || include.includes(value.id))
-    return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: 2, discardedEvents: 0, cleanups: [], missions: listed,
+    return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: 2, discardedEvents: 0, cleanups: [], missions: panelMissions(listed),
       summaries: maps.map(missionSummary), summariesVersion: "v1", activity: { generatedAt: 2, missions: [] } } })
   })
+  await routeMissionContent(page, () => maps)
   await page.goto(url)
   await page.waitForFunction(() => (window as any).missionFixture?.snapshot().status === "ready")
   return { page, includes }
 }
 const choose = (page: Page, id: string) => page.evaluate(async id =>
   (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { selected: id }), id)
+// Selected through the view state, a row stays folded: its loaded detail is mounted, not shown.
 const shownDetail = (page: Page, title: string) => page.locator(`section.mission-detail[aria-label="${title}"]`)
 
 test("a failed selected-map read stays parked until an explicit retry; a successful one costs one follow-up", async () => {
@@ -98,7 +107,7 @@ test("a failed selected-map read stays parked until an explicit retry; a success
   const loading = await panel(closed)
   try {
     await choose(loading.page, "closed")
-    await shownDetail(loading.page, "Objective closed").waitFor()
+    await shownDetail(loading.page, "Objective closed").waitFor({ state: "attached" })
     await loading.page.waitForTimeout(500)
     assert.deepEqual(loading.includes, [[], ["closed"]], "a loaded map needs no further read")
   } finally { await loading.page.close() }
@@ -114,7 +123,7 @@ test("an obsolete include response never unmounts the current selection's loaded
   })
   try {
     await choose(page, "A")
-    await shownDetail(page, "Objective A").waitFor()
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     race = true
     await choose(page, "B")
     while (!heldB) await page.waitForTimeout(10)
@@ -148,59 +157,65 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
   const fixtureCall = (method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
   try {
     await choose(page, "A")
-    await shownDetail(page, "Objective A").waitFor()
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     race = true
     await choose(page, "B")
     while (!heldB) await page.waitForTimeout(10)
     await choose(page, "A")
     await fixtureCall("active", false)
+    const admitted = includes.length
     assert.deepEqual(await page.evaluate(async () => (await import("/src/stores/missions.ts" as string)).missionStore.demandedInstanceIds()), [])
     releaseB()
     await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "ready")
     await page.waitForTimeout(300)
-    assert.deepEqual(includes, [[], ["A"], ["B"]], "the hidden panel reads nothing more")
+    assert.equal(includes.length, admitted, "hiding retires reads already admitted by the independent selection header")
     // Activation reads the current include.
     await fixtureCall("active", true)
-    while (includes.length < 4) await page.waitForTimeout(10)
-    assert.deepEqual(includes[3], ["A"])
-    await shownDetail(page, "Objective A").waitFor()
+    while (includes.length <= admitted) await page.waitForTimeout(10)
+    assert.deepEqual(includes[admitted], ["A"])
+    await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     // A central reader is demand of its own, with the panel hidden.
     await fixtureCall("active", false)
     race = false
+    const readerRead = page.waitForRequest(request => request.url().endsWith("/missions/panel-page") && request.postDataJSON()?.header && request.postDataJSON()?.missionID === "B")
     await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { reader: { missionId: "B", kind: "overview" } }))
+    await readerRead
     await page.locator(".mission-reader").getByText("Closed B summary").waitFor()
     assert.ok(includes.at(-1)!.includes("B"), "the reader's map was read")
   } finally { releaseB(); await page.close() }
 })
 
-const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-picker-mark").getAttribute("data-mark")
+const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-row-flag").getAttribute("data-mark")
 
 test("closed missions list as rows with their marks and open their full map only when selected", async () => {
   const { page, errors, requests } = await open()
   try {
     await (await inlineMissionEntry(page, "Objective stopped")).waitFor()
+    // Summary rows publish before their separate native activity observation.
+    await page.locator('[data-mission-key="mission:open"] .mission-row-flag[data-mark="working"]').waitFor()
     assert.deepEqual(await Promise.all(["Objective open", "Objective failed", "Objective done", "Objective stopped"].map(title => mark(page, title))),
       ["working", "interrupted", "idle", "idle"], "rows alone carry every closed mark")
-    assert.equal(requests[0]?.toString(), "", "the first read cannot know the backend lists summaries")
+    assert.equal(requests[0]?.get("panelSource"), "summaries", "discovery starts with a bounded summary window")
 
     await selectMission(page, "Objective failed")
-    assert.deepEqual([requests.at(-1)?.get("include"), requests.at(-1)?.get("summaries")], ["failed", "v1"])
+    assert.deepEqual([requests.at(-1)?.get("include"), requests.at(-1)?.get("panelHeader")], ["failed", "true"])
     await missionToolbarAction(page, "Recover interrupted mission").waitFor()
-    await missionDetail(page).locator('.mission-tree li[data-task-key="work"]').waitFor()
+    await missionDetail(page).locator('.mission-tree .mission-tree-node[data-task-key="work"]').waitFor()
     // The included closed map serves the readers: its overview, then its task.
-    await missionDetail(page).locator(".mission-overview-toggle").first().click()
+    await page.locator(".mission-picker-selection-actions .mission-overview-toggle").click()
     await page.locator(".mission-reader").getByText("Stopped short of the release").waitFor()
-    await missionDetail(page).locator('.mission-tree li[data-task-key="work"] > button.mission-tree-task').click()
+    // With the eye pressed, the reader follows the selected task.
+    await missionDetail(page).locator('.mission-tree .mission-tree-node[data-task-key="work"] .mission-tree-task').click()
     await page.locator(".mission-reader").getByText("Result of failed").waitFor()
 
     // Refreshes keep the held rows (omitted, same version) and re-read the selection.
     const reads = requests.length
-    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions"))
+    const refreshed = waitForMissionPanelRefresh(page)
     await missionRefresh(page).click()
     await refreshed
     assert.ok(requests.length > reads)
     assert.equal(requests.at(-1)?.get("include"), "failed")
-    assert.equal(await page.locator(".mission-picker-inline button.mission-picker-option").count(), 4)
+    assert.equal(await page.locator(".mission-rows button.mission-row-select").count(), 4)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

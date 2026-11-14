@@ -50,19 +50,18 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     build: {
+      // Sandboxed preloads cannot require sibling chunks or external packages.
+      isolatedEntries: true,
+      externalizeDeps: false,
       outDir: "dist/preload",
       sourcemap: true,
-      lib: {
-        entry: resolve(__dirname, "electron/preload/index.cjs"),
-        formats: ["cjs"],
-        fileName: () => "index.js",
-      },
       rollupOptions: {
+        input: { index: resolve(__dirname, "electron/preload/index.cjs"), "browser-prompt": resolve(__dirname, "electron/preload/browser-prompt.cjs") },
         external: ["electron"],
         output: {
-          entryFileNames: "index.js",
+          format: "cjs",
+          entryFileNames: "[name].js",
         },
       },
     },

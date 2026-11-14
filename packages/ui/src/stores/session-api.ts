@@ -29,6 +29,7 @@ import {
   getSessionMessagesLoadError,
   providers,
   setAgents,
+  setAgentCatalogLocations,
   setMessagesLoaded,
   advanceMessageLoadEpoch,
   finishMessageLoad,
@@ -72,6 +73,7 @@ import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
+import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import {
@@ -82,6 +84,7 @@ import {
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
+import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
 import {
   MESSAGE_WINDOW_PAGE_SIZE,
@@ -1111,15 +1114,15 @@ function trackCreation(instanceId: string, delta: 1 | -1): void {
   })
 }
 
-async function createSession(instanceId: string, agent?: string): Promise<Session> {
+async function createSession(instanceId: string, agent?: string, location?: { directory: string }): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
   const activeId = activeSessionId().get(instanceId)
-  const activeLocation = activeId && activeId !== "info"
+  const activeLocation = location ?? (activeId && activeId !== "info"
     ? sessions().get(instanceId)?.get(activeId)?.location
-    : undefined
+    : undefined)
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
@@ -1327,6 +1330,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
   cancelSessionGenerationAdmissions(instanceId, sessionId)
+  clearSessionSeenInterruption(instanceId, sessionId)
   if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)
@@ -1450,6 +1454,7 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
       next.set(instanceId, agentList)
       return next
     })
+    setAgentCatalogLocations((prev) => new Map(prev).set(instanceId, catalogLocationKey(location)))
     return true
   } catch (error) {
     log.error("Failed to fetch agents:", error)
@@ -1498,23 +1503,7 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
       rootClient.model.list(request, requestLocationOptions(location)),
       rootClient.model.default(request, requestLocationOptions(location)),
     ])
-    const providersById = new Map(response.data.map((provider) => [provider.id, provider]))
-    const modelsById = new Map(models.data.map((model) => [`${model.providerID}:${model.id}`, model]))
-    if (defaultModel.data) modelsById.set(`${defaultModel.data.providerID}:${defaultModel.data.id}`, defaultModel.data)
-    const providerIds = new Set([...providersById.keys(), ...Array.from(modelsById.values(), (model) => model.providerID)])
-    const providerList = Array.from(providerIds).sort().map((providerId) => ({
-      id: providerId,
-      name: providersById.get(providerId)?.name ?? providerId,
-      defaultModelId: defaultModel.data?.providerID === providerId ? defaultModel.data.id : undefined,
-      models: Array.from(modelsById.values()).filter((model) => model.providerID === providerId && model.status !== "deprecated").sort((a, b) => a.id.localeCompare(b.id)).map((model) => ({
-        id: model.id,
-        name: model.name,
-        providerId,
-        limit: model.limit,
-        cost: model.cost[0],
-        variantKeys: model.variants.map((variant) => variant.id),
-      })),
-    }))
+    const providerList = buildProviderCatalog(response.data, models.data, defaultModel.data)
 
     if (!generationCurrent() || providerRequestIds.get(requestKey) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setProviders((prev) => {
@@ -1773,7 +1762,10 @@ async function loadMessages(
         if (!isCurrent()) return false
       }
     }
-    const olderCursor = (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
+    // The first ascending page is the oldest: its boundary cursor promises no older page.
+    const olderCursor = intent === "oldest"
+      ? undefined
+      : (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
     const newerCursor = (responseAscending ? response.cursor?.next : response.cursor?.previous) ?? undefined
     const responseCursor = intent === "oldest" || planned.forward ? newerCursor : olderCursor
     if (planned.cursor && responseCursor === planned.cursor) {

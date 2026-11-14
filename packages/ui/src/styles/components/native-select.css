@@ -91,6 +91,12 @@ select:not([multiple]):not([size]):not(:focus-visible):hover:not(:disabled) {
     line-height: 1.2;
   }
 
+  /* Group labels read as the selectors' section titles; options keep their own text. */
+  select optgroup {
+    color: var(--text-muted);
+    font-size: 0.6875rem;
+  }
+
   select option:hover,
   select option:focus-visible {
     background-color: var(--menu-item-hover-bg);

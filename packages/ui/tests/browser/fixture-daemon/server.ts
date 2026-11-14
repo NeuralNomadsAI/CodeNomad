@@ -57,6 +57,11 @@ export async function startFixtureDaemon({ directory, cacheDir }: {
         configureServer(s) {
           s.middlewares.use(async (request, response, next) => {
             for (const control of controls) if (await control(request, response)) return
+            if (request.url === "/favicon.ico" && request.method === "GET") {
+              response.setHeader("Content-Type", "image/png")
+              response.end(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aokcAAAAASUVORK5CYII=", "base64"))
+              return
+            }
             const route = routes.get(request.url?.split("?")[0] ?? "")
             if (!route) return next()
             try {
@@ -68,7 +73,7 @@ export async function startFixtureDaemon({ directory, cacheDir }: {
       },
     ],
     resolve: { dedupe: ["solid-js"] },
-    optimizeDeps: { exclude: ["lucide-solid"] },
+    optimizeDeps: { entries: ["tests/browser/fixtures/*.tsx"], exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
   shutdown.own(server)

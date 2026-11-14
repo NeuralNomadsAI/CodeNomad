@@ -22,6 +22,7 @@
   "reportProblem": "Report a problem",
   "download": { "label": "Download", "windows": "Download for Windows", "windowsDetail": "Installer, x64", "macos": "Download for macOS", "macosDetail": "Apple Silicon", "intel": "Intel Mac? Download the Intel build", "linux": "Download for Linux", "linuxDetail": "AppImage, x64", "mobile": "Use CodeNomad from your phone", "mobileDetail": "Pair your phone with the computer running CodeNomad." },
   "tour": { "label": "Silent CodeNomad 1.0 preview: a mission with parallel subagents, a blind model comparison, a Git diff, workspace history search, project tabs and color palettes", "poster": "CodeNomad 1.0 windows: missions, a question form, a diff, Git changes and a model comparison", "caption": "Watch the full 90-second tour on YouTube" },
+  "funding": { "label": "Sponsor", "action": "Sponsor through {channel}", "recipient": "Paid to {recipient}" },
   "github": "GitHub",
   "languageLabel": "Language",
   "projectLinks": "Project links",

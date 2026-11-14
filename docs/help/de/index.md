@@ -10,7 +10,7 @@ OpenCode liefert den Motor. CodeNomad liefert das Cockpit. Es verbindet sich mit
 
 ## Lange Arbeit an Missionen übergeben {#missions}
 
-Beschreiben Sie die Arbeit einmal. Der Koordinator der Mission plant sie als Aufgabenbaum, delegiert begrenzte Aufgaben an native OpenCode-Unterhaltungen und meldet Ergebnisse mit ihren Belegen. Führen Sie eine Mission einmal oder täglich aus; eine Mission zu erstellen startet keine Arbeit, bevor Sie sich dafür entscheiden. Playbooks decken Fehlerbehebung, Produktauslieferung und den Vergleich zweier Modelle mit einem blinden Gutachter ab. Siehe [Missionen](missions.md).
+Beschreiben Sie die Arbeit einmal. Der Koordinator der Mission plant sie als Aufgabenbaum, delegiert begrenzte Aufgaben an native OpenCode-Unterhaltungen und meldet Ergebnisse mit ihren Belegen. Führen Sie Arbeit einmalig, zu gewählten Zeiten oder Intervallen oder nach einer bestätigten Projektänderung aus; Erstellen speichert eine pausierte Mission für Ihren ausdrücklichen Start. Playbooks decken Fehlerbehebung, Produktauslieferung und den Vergleich zweier Modelle mit einem blinden Gutachter ab. Siehe [Missionen](missions.md).
 
 ## Vom Smartphone aus weiterarbeiten {#phone-access}
 
@@ -46,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projekte, Unterhaltungen, Dateien und Verlauf | Ordner und native Sitzungen des Backends | Ordner und Sitzungen des verbundenen Servers | Autorisierte Arbeitsbereichsoberflächen des Hosts |
 | Native Einstellungen und Desktop-Fenster | Verfügbar | Browser-/Remote-Einstellungen bleiben im Client | Nur auf dem Host verfügbare Desktop-Steuerung nicht verfügbar |
-| Browser-Vorschau der Sitzung | Nativ in Electron und Windows-Tauri; iframe auf anderen Tauri-Plattformen | iframe, soweit verfügbar | iframe, solange der Host Web-Vorschauen erlaubt (Standard) |
+| Browser-Vorschau der Sitzung | Nativ in Electron und Tauri unter Windows, macOS und Linux | iframe, soweit verfügbar | iframe, solange der Host Web-Vorschauen erlaubt (Standard) |
 | Native Desktop-/Browser-Automatisierung | Zugeordnete lokale Fenster/Vorschauen | Kein Ersatz für native Desktop-Automatisierung | Nur auf dem Host verfügbare Automatisierungs-Endpunkte nicht verfügbar |
 | Authentifizierung | Lokale Ersteinrichtung oder Passwortsitzung | Server-Passwortsitzung | Zugangsdaten des gekoppelten Geräts |
 | PWA-Installation | Native App oder Browser verwenden | Browserabhängig; sicherer Kontext erforderlich | Browserabhängig; Kopplung weiterhin erforderlich |
@@ -77,20 +77,20 @@ Das Arbeitsbereichs-Stammverzeichnis begrenzt, welche Ordner CodeNomad öffnet; 
 | Über Checkouts und Unterhaltungen hinweg arbeiten | [Projekte](projects.md), [Unterhaltungen](conversations.md), [Dateien](files.md) |
 | Verlauf finden oder sicher bereinigen | [Verlauf](history.md) |
 | Native Fragen und Berechtigungsanfragen beantworten | [Berechtigungen](permissions.md) |
-| Begrenzte oder tägliche Arbeit koordinieren | [Missionen](missions.md) |
+| Begrenzte oder geplante Arbeit koordinieren | [Missionen](missions.md) |
 | Ausführung und Integrationen konfigurieren | [OpenCode](opencode.md), [Anbieter](providers.md), [Integrationen](integrations.md) |
 | Weiteres Gerät verbinden | [Fernsteuerung](remote-control.md), [Sicherheit](security.md), [Mobil](mobile.md) |
 | Arbeitsbereich anpassen | [Einstellungen](settings.md), [Tastenkürzel](shortcuts.md), [Sprache](voice.md), [Erweiterungen](extensions.md) |
 | Native Anwendung verwalten | [Desktop](desktop.md), [Browser-Vorschauen und SideCars](browser-sidecars.md), [Updates](updates.md) |
-| Probleme untersuchen oder beitragen | [Fehlerbehebung](troubleshooting.md), [Support und Quellcode-Builds](support.md) |
+| Probleme untersuchen oder beitragen | [Fehlerbehebung](troubleshooting.md), [Fehlerberichte und Quellcode-Builds](support.md), [CodeNomad unterstützen](sponsor.md) |
 
 ## Arbeit beobachten, ohne sie zu verändern {#monitor-work}
 
 Das Status-Panel zeigt die Anbieternutzung und nativen Hintergrund-Shells der aktiven Sitzung. Unterhaltungsstatus und Unteraktivität kennzeichnen arbeitende, komprimierende und auf Eingaben wartende Sitzungen. Eine Hintergrund-Shell zu beobachten ist etwas anderes, als im Eingabefeld eine Shell-Anfrage zu senden oder einen separat gehosteten Terminal-SideCar zu verwenden.
 
 1. Öffnen Sie **Status → Hintergrund-Shells** für die Location der ausgewählten Unterhaltung (oder den geöffneten Arbeitsbereich, wenn keine Unterhaltung ausgewählt ist).
-2. Prüfen Sie Befehl, Shell, Verzeichnis, Status, PID und Exit-Code, soweit vorhanden; wählen Sie **Ausgabe anzeigen** für die verfügbare native Ausgabe.
-3. Zum Entfernen verwenden Sie während der Ausführung **Stoppen und entfernen** oder nach dem Ende **Entfernen** und bestätigen das Ziel.
+2. Nur laufende, ausdrücklich in den Hintergrund verschobene Befehle werden angezeigt, einer pro Zeile. Beim Darüberfahren erscheinen Shell, Verzeichnis und PID; das Symbol **Ausgabe anzeigen** öffnet die native Ausgabe. Ohne OpenCodes API für Hintergrundaufgaben erscheint ein Ladefehler.
+3. Verwenden Sie das Symbol **Stoppen und entfernen** der Zeile und bestätigen Sie das Ziel.
 
 Das Entfernen einer laufenden Shell beendet diesen Prozess; das Schließen ihres Ausgabefensters nicht. Aktualisieren/Wiederverbinden liest den aktuellen nativen Zustand, statt verpasste Ausgabeereignisse zu rekonstruieren.
 

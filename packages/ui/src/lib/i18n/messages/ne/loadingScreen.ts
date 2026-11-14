@@ -3,6 +3,11 @@ export const loadingScreenMessages = {
   "loadingScreen.status.issue": "एउटा समस्या आइपऱ्यो",
   "loadingScreen.actions.showAnother": "अर्को देखाउनुहोस्",
   "loadingScreen.errors.missingRoot": "लोडिङ मूल तत्व फेला परेन",
+  "loadingScreen.remoteUnavailable.title": "यो सर्भरमा पुग्न सकिँदैन",
+  "loadingScreen.remoteUnavailable.message": "CodeNomad ले यो सर्भर लोड गर्न सकेन। यो चलिरहेको र पहुँचयोग्य छ भनी जाँच गर्नुहोस्, अनि फेरि प्रयास गर्नुहोस्।",
+  "loadingScreen.remoteUnavailable.retry": "फेरि प्रयास गर्नुहोस्",
+  "loadingScreen.remoteUnavailable.openLocal": "स्थानीय विन्डो खोल्नुहोस्",
+  "loadingScreen.remoteUnavailable.close": "विन्डो बन्द गर्नुहोस्",
 
   "loadingScreen.phrases.neurons": "एआई न्यूरोन्स तताउँदै...",
   "loadingScreen.phrases.daydreaming": "एआईलाई दिउँसो सपना देख्न छोड्न मनाउँदै...",

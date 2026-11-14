@@ -2,10 +2,12 @@ import type { MissionExecution } from "../../../server/src/missions/execution"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 import { missionProfileRoles } from "../../../server/src/missions/playbook-profiles"
+import { compareCatalogModels, type CatalogModel } from "../lib/model-catalog"
 export { missionProfileRoles }
 
 export interface ProfileAgent { id: string; mode: string; hidden?: boolean }
-export interface ProfileModel { providerID: string; id: string; variants: readonly { id: string }[] }
+/** A tool-capable catalog model, named as the conversation's model selector names it. */
+export type ProfileModel = CatalogModel
 
 export function legalProfileAgents(agents: readonly ProfileAgent[], kind: "coordinator" | "native" | "independent"): ProfileAgent[] {
   const modes = kind === "native" ? ["subagent", "all"] : ["primary", "all"]
@@ -16,10 +18,30 @@ export function modelSelectionKey(model?: MissionExecution["model"]): string {
   return model ? JSON.stringify([model.providerID, model.id]) : ""
 }
 
+export function profileModelKey(model: Pick<ProfileModel, "providerId" | "id">): string {
+  return modelSelectionKey({ providerID: model.providerId, id: model.id })
+}
+
 export function changeProfileModel(execution: MissionExecution | undefined, key: string, models: readonly ProfileModel[]): MissionExecution {
-  const model = models.find(model => modelSelectionKey(model) === key)
+  const model = models.find(model => profileModelKey(model) === key)
   // A model switch cannot carry an incompatible variant into the new model.
-  return { ...(execution?.agent ? { agent: execution.agent } : {}), ...(model ? { model: { providerID: model.providerID, id: model.id } } : {}) }
+  return { ...(execution?.agent ? { agent: execution.agent } : {}), ...(model ? { model: { providerID: model.providerId, id: model.id } } : {}) }
+}
+
+export interface ProfileModelGroup { providerId: string; providerName: string; models: ProfileModel[] }
+
+/** The Model select's provider groups: the conversation selector's list, plus a saved
+ *  catalog model it leaves out (hidden, or not a favorite) so that choice stays shown. */
+export function profileModelGroups(shown: readonly ProfileModel[], saved?: ProfileModel): ProfileModelGroup[] {
+  const models = saved && !shown.some(model => profileModelKey(model) === profileModelKey(saved))
+    ? [...shown, saved].sort(compareCatalogModels) : shown
+  const groups: ProfileModelGroup[] = []
+  for (const model of models) {
+    const last = groups.at(-1)
+    if (last?.providerId === model.providerId) last.models.push(model)
+    else groups.push({ providerId: model.providerId, providerName: model.providerName, models: [model] })
+  }
+  return groups
 }
 
 export function changeMissionProfile(profiles: MissionProfiles | undefined, role: string, execution: MissionExecution): MissionProfiles | undefined {

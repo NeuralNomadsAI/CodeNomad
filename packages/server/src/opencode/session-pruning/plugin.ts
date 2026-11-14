@@ -14,6 +14,10 @@ import { readNavigationWindow, readSessionOutline } from "./navigation-store"
 import { withHistoryDatabase } from "./history-database"
 import { assetsInputSchema, assetsResultSchema, assetReadInputSchema, assetReadResultSchema } from "./assets-contract"
 import { listSessionAssets, readSessionAsset } from "./assets-store"
+import { imageReadInputSchema, imageReadResultSchema, imageReferenceInputSchema, imageReferenceResultSchema, imagesConversationInputSchema,
+  imagesConversationResultSchema, imagesInputSchema, imagesResultSchema } from "./assets-gallery-contract"
+import { galleryImageReference, listGalleryImages, readGalleryImage } from "./assets-gallery"
+import { imagesConversationRpc } from "./assets-conversation"
 import { historyRankedInputSchema, historyRankedResultSchema } from "./history-ranked-contract"
 import { queryBoundRankedHistory, registerSessionSearch } from "./history-ranked-service"
 
@@ -29,6 +33,10 @@ export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: 
   outlinePreview: { input: outlinePreviewInputSchema, output: outlinePreviewResultSchema },
   assets: { input: assetsInputSchema, output: assetsResultSchema },
   assetRead: { input: assetReadInputSchema, output: assetReadResultSchema },
+  images: { input: imagesInputSchema, output: imagesResultSchema },
+  imageRead: { input: imageReadInputSchema, output: imageReadResultSchema },
+  imageReference: { input: imageReferenceInputSchema, output: imageReferenceResultSchema },
+  imagesConversation: { input: imagesConversationInputSchema, output: imagesConversationResultSchema },
 } })
 
 // Native local-plugin entry point. Only a user's pruning RPC changes content.
@@ -40,6 +48,13 @@ export default Plugin.define({
         (db, scope) => listSessionAssets(db, scope, input.cursor, call.signal)),
       assetRead: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readSessionAsset(db, scope, input.target, call.signal)),
+      images: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => listGalleryImages(db, scope, input.cursor, input.prompts === true, call.signal)),
+      imageRead: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => readGalleryImage(db, scope, input.target, call.signal)),
+      imageReference: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => galleryImageReference(db, scope, input.target, call.signal)),
+      imagesConversation: (input, call) => imagesConversationRpc(ctx, input, call.signal),
       window: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readNavigationWindow(db, scope, input.target, call.signal)),
       outline: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,

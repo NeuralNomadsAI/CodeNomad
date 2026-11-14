@@ -6,9 +6,9 @@ project र tool भएको ठाउँमा CodeNomad चलाएर स�
 
 ## host तयार गर्नुहोस् {#prerequisites}
 
-1. Node.js 24 LTS र npm स्थापना गर्नुहोस्; repository को pinned build runtime 24.20.0 हो। desktop package मा Node/npm हुन्छ।
+1. Node.js 24 LTS र npm स्थापना गर्नुहोस्; repository को build runtime `.node-version` मा pinned छ। desktop package ले आफ्नै runtime दिन्छ: Electron ले यसको integrated Node प्रयोग गर्छ, Tauri ले Node समावेश गर्छ र दुवैमा npm हुन्छ।
 2. Git लाई **backend प्रक्रियाको PATH** मा राख्नुहोस्। WSL भित्रको Git मात्र Windows backend का लागि पुग्दैन।
-3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.1.2**, सिफारिस qualification लक्ष्य **2.2.1**। नयाँ/custom build मा compatibility जाँच हुन्छ, tested-version allowlist होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
+3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.3.0**, सिफारिस qualification लक्ष्य **2.3.0**। नयाँ/custom build मा compatibility जाँच हुन्छ, tested-version allowlist होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
 4. server सुरु गर्ने फोल्डर रोज्नुहोस्, वा `--workspace-root` स्पष्ट दिनुहोस्।
 
 Git बिना स्पष्ट खोलिएको physical folder मा मात्र कुराकानी उपलब्ध हुन्छन्; Git र worktree कार्य असफल हुन्छन्। Git स्थापना र PATH परिवर्तनपछि backend restart गर्नुहोस्। workspace root ले opening/browsing सीमित गर्छ, agent execution होइन: [सुरक्षा](security.md) हेर्नुहोस्।
@@ -58,6 +58,8 @@ backend ले Missions जस्ता आफ्नै OpenCode plugin का �
 listener exposure, certificate, VPN/SSH र reverse proxy का लागि [प्रत्यक्ष रिमोट पहुँच](remote-access.md) हेर्नुहोस्। inbound port बिनाको पहुँचका लागि [Remote Control](remote-control.md) प्रयोग गर्नुहोस्।
 
 ## सार्वजनिक CLI सन्दर्भ {#cli-reference}
+
+Tauri वा Electron सुरु गर्न [डेस्कटप सुरुवाती आर्गुमेन्टहरू](desktop.md#desktop-cli) हेर्नुहोस्: `--connect-server`, `--folder`, `--new-window` र executable/सर्टकट उदाहरणहरू। तलको तालिका standalone सर्भर executable का लागि हो।
 
 flag ले environment counterpart override गर्छन्। value-taking flag ले देखाइएको argument लिन्छन्; switch ले लिँदैनन्। HTTPS/HTTP मानले case-insensitive `1`, `true`, `yes`, `y` र `on` लाई enabled मान्छन्; स्पष्टताका लागि `true`/`false` प्रयोग गर्नुहोस्। UI auto-update ले `1`, `true` र `yes` चिन्छ।
 
@@ -144,4 +146,4 @@ npx @neuralnomads/codenomad-dev --generate-token --launch
 
 `codenomad --upgrade` ले पत्ता लागेको npm/pnpm/bun manager (नभेटिए npm) बाट global stable CLI package update गर्छ। चलिरहेको server restart वा OpenCode update गर्दैन। project-local वा preview installation मा ठ्याक्कै त्यो npm package explicit update गर्नुहोस्। update पछि managed CodeNomad process सचेत restart गरी छापिएका address फेरि जाँच्नुहोस्।
 
-desktop maintenance का लागि [अपडेट](updates.md), source-build command का लागि [सहयोग](support.md), provider plan usage का लागि [प्रदायक](providers.md) हेर्नुहोस्।
+desktop maintenance का लागि [अपडेट](updates.md), build command का लागि [source बाट build](support.md#build-from-source), provider plan usage का लागि [प्रदायक](providers.md) हेर्नुहोस्।

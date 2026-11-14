@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -9,7 +10,8 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
-import { missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { missionDetail, missionRefresh, missionToolbarAction, selectMission, showSelection } from "./mission-actions"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, server: ViteDevServer, url: string
 before(async () => {
@@ -42,7 +44,8 @@ type InstanceModule = typeof import("../../src/stores/instances")
 type IntentModule = typeof import("../../src/stores/mission-lifecycle-intents")
 function mission(id = "one"): MissionMap {
   return { version: 1, id, projectID: "fixture", projectCanonical: "/fixture", objective: `Navigation ${id}`, template: "custom",
-    coordinatorSessionId: `ses_${id}`, status: "active", runState: "running", actors: [], tasks: [], reports: [], frontier: [], claims: [],
+    coordinatorSessionId: `ses_${id}`, status: "active", runState: "running", actors: [{ sessionId: `ses_${id}`, kind: "coordinator", managed: false,
+      title: "Coordinator", roles: ["coordinator"], location: { directory: "/fixture" }, joinedAt: 1 }], tasks: [], reports: [], frontier: [], claims: [],
     revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
@@ -69,7 +72,8 @@ async function retry(page: Page, id = "one") {
 }
 async function remount(page: Page) {
   await call(page, "mount", false); await missionDetail(page).waitFor({ state: "detached" })
-  await call(page, "mount", true); await missionDetail(page).waitFor()
+  // The restored selection's detail returns (folded until its chevron shows it).
+  await call(page, "mount", true); await showSelection(page)
   await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready"); await tick(page)
 }
 async function settle(page: Page) {
@@ -90,7 +94,7 @@ test("certified rejection while hidden releases only its owned intent; reactivat
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: [current], generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: reads, discardedEvents: 0 } }) }
       calls.push(route.request().postDataJSON() as Input)
       if (calls.length === 1) { submitted(); await held; current = { ...current, revision: 2 }; return route.fulfill({ status: 409, json: { code: "revision-conflict" } }) }
       current = { ...current, revision: 3, runState: "paused" }; return route.fulfill({ json: { mission: current } })
@@ -103,7 +107,7 @@ test("certified rejection while hidden releases only its owned intent; reactivat
     await call(page, "activate", true); await settle(page)
     assert.equal(await retryCount(page), 0); assert.equal(calls.length, 1)
     // An explicit refresh with nothing unconfirmed only reconciles read-only.
-    const reread = page.waitForResponse(value => value.url().endsWith("/missions"))
+    const reread = waitForMissionPanelRefresh(page)
     await missionRefresh(page).click(); await reread; await settle(page); assert.equal(calls.length, 1)
     assert.equal(await page.evaluate(() => (window as any).missionVisibility.state().missions[0].revision), 2)
     await pause(page).click(); await settle(page)
@@ -119,14 +123,14 @@ test("uncertain row remount and native reconnect invalidations retain exact orig
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [current, mission("two")], generatedAt: current.revision, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: current.revision, discardedEvents: 0 } })
       calls.push(route.request().postDataJSON() as Input); current = { ...current, revision: current.revision + 1 }
       return route.fulfill({ status: 409, json: {} })
     })
     await open(page); await pause(page).click(); await settle(page)
     await remount(page); await settle(page)
     assert.equal(await retryCount(page), 1); assert.equal(await pause(page).count(), 0); assert.equal(await check(page).isEnabled(), true)
-    const refreshed = page.waitForResponse(value => value.url().endsWith("/missions"))
+    const refreshed = waitForMissionPanelRefresh(page)
     await call(page, "event", "session.execution.started"); await refreshed; await settle(page)
     await call(page, "activate", false); await call(page, "activate", true); await settle(page)
     assert.equal(calls.length, 1, "navigation and reconnect reads cannot dispatch")
@@ -139,12 +143,20 @@ test("uncertain row remount and native reconnect invalidations retain exact orig
 for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as const) {
   test(`late ${outcome} after row disposal settles only exact bookkeeping, never the newly selected view`, async () => {
     const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
+    const events = await fixtureEventStream(url)
     let current = mission(), reads = 0, release!: () => void, submitted!: () => void
     const held = new Promise<void>(resolve => { release = resolve }), sent = new Promise<void>(resolve => { submitted = resolve })
     try {
       await page.route("**/api/**", route => route.fulfill({ json: {} }))
+      await events.route(page)
       await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-        if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: [current, mission("two")], generatedAt: reads, discardedEvents: 0 } }) }
+        if (route.request().method() === "GET") {
+          reads++
+          const path = new URL(route.request().url()).pathname
+          if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "fixture", schedules: [] } })
+          if (path.endsWith("/schedule")) return route.fulfill({ json: { document: null, pending: false } })
+          return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: reads, discardedEvents: 0 } })
+        }
         calls.push(route.request().postDataJSON() as Input); submitted(); await held; current = { ...current, revision: 2 }
         return outcome === "rejected" ? route.fulfill({ status: 409, json: { code: "revision-conflict" } })
           : outcome === "unknown" ? route.fulfill({ status: 409, json: {} })
@@ -153,28 +165,32 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
       // Unmounting the panel disposes the dispatching toolbar; then another Mission is selected.
       await open(page); await pause(page).click(); await sent; await remount(page)
       assert.equal(await inFlight(page), true, "the remounted toolbar observes the in-flight exact intent")
-      await select(page, "two"); await tick(page)
+      // Selection schedules its own debounced list/point read. Complete that read
+      // before measuring what the old control reply does to the selected view.
+      const selectionRead = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/two/schedule"))
+      await select(page, "two"); assert.equal(await (await selectionRead).finished(), null); await tick(page)
       const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
-      release(); await response; await tick(page)
-      assert.equal(reads, before); assert.equal(await retryCount(page, "two"), 0); assert.equal(await admissible(page, "two"), true)
+      release(); assert.equal(await (await response).finished(), null); await tick(page)
+      assert.equal(await retryCount(page, "two"), 0); assert.equal(await admissible(page, "two"), true)
+      assert.equal(reads, before, "the old response adds no Mission GET, including schedule reads")
       await select(page, "one"); await settle(page)
       const unresolved = outcome === "unknown" || outcome === "foreign-ack"
       assert.equal(await retryCount(page), unresolved ? 1 : 0)
       assert.equal(await admissible(page), !unresolved); assert.equal(await check(page).count(), unresolved ? 1 : 0)
       assert.equal(calls.length, 1)
       console.info("DISPOSED exact bookkeeping", outcome, JSON.stringify(calls))
-    } finally { release(); await page.close() }
+    } finally { release(); try { await page.close() } finally { await events.close() } }
   })
 }
 
 test("directory/project source ABA retains original uncertainty; stale completion cannot refresh the returned view", async () => {
   const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
-  let current = mission(), reads = 0, release!: () => void, submitted!: () => void
+  let current = { ...mission(), projectID: "project-a" }, reads = 0, release!: () => void, submitted!: () => void
   const held = new Promise<void>(resolve => { release = resolve }), sent = new Promise<void>(resolve => { submitted = resolve })
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: [current], generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: reads, discardedEvents: 0 } }) }
       calls.push(route.request().postDataJSON() as Input)
       if (calls.length === 1) { submitted(); await held; current = { ...current, revision: 2 } }
       return route.fulfill({ status: 409, json: {} })
@@ -188,6 +204,7 @@ test("directory/project source ABA retains original uncertainty; stale completio
     })
     await call(page, "activate", true); await select(page); await pause(page).waitFor(); await pause(page).click(); await sent
     for (const [directory, projectID] of [["/source-b", "project-b"], ["/source-a", "project-a"]]) {
+      current = { ...current, projectID }
       await page.evaluate(async ({ directory, projectID }) => {
         const { updateInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
         updateInstance("mission-visibility", { folder: directory, metadata: { project: { id: projectID } as any } })
@@ -195,6 +212,10 @@ test("directory/project source ABA retains original uncertainty; stale completio
       await tick(page)
       if (directory === "/source-b") { assert.equal(await retryCount(page), 0); assert.equal(await admissible(page), true) }
     }
+    await page.waitForFunction(() => {
+      const state = (window as any).missionVisibility.state()
+      return state.projectID === "project-a" && state.status === "ready" && state.missions.some(map => map.projectID === "project-a")
+    })
     assert.equal(await inFlight(page), true, "source A still owns its in-flight operation after ABA")
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response; await tick(page)
@@ -210,7 +231,7 @@ test("window capacity fails closed without eviction; exact release enables admis
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [mission(), mission("two")], generatedAt: 1, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([mission(), mission("two")]), generatedAt: 1, discardedEvents: 0 } })
       calls.push(route.request().postDataJSON() as Input); return route.fulfill({ status: 409, json: {} })
     })
     await open(page); await pause(page).click(); await settle(page)
@@ -244,7 +265,7 @@ test("authoritative operation replacement wins over a late rejected local intent
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: [current], generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: reads, discardedEvents: 0 } }) }
       calls.push(route.request().postDataJSON() as Input)
       if (calls.length === 1) { submitted(); await held; return route.fulfill({ status: 409, json: { code: "revision-conflict" } }) }
       return route.fulfill({ status: 503, json: { code: "control-pending" } })
@@ -253,7 +274,7 @@ test("authoritative operation replacement wins over a late rejected local intent
     current = { ...current, revision: 10, status: "stopped", runState: "stopped", control: {
       id: "evt_replacement", missionID: current.id, requestID: "durable-replacement", expectedRevision: 9, action: "stop",
       targets: [{ sessionID: "ses_one", location: { directory: "/fixture" } }], pending: ["ses_one"] } }
-    const snapshot = page.waitForResponse(value => value.url().endsWith("/missions"))
+    const snapshot = waitForMissionPanelRefresh(page)
     await call(page, "event", "session.execution.started"); await snapshot; await tick(page)
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response; await tick(page)
@@ -271,7 +292,7 @@ test("same-project metadata hydration cannot enable fresh admission or erase the
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [current, mission("two")], generatedAt: current.revision, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: current.revision, discardedEvents: 0 } })
       calls.push(route.request().postDataJSON() as Input); current = { ...current, revision: current.revision + 1 }
       return route.fulfill({ status: 409, json: {} })
     })

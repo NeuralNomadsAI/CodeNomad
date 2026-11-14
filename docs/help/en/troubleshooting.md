@@ -42,7 +42,7 @@ If an owned worktree or conversation placement cannot be verified, open its phys
 ## OpenCode runtime and WSL {#opencode-runtime}
 
 1. Open **Preferences → OpenCode** and check the **OpenCode version** card (installed version and running service status), then the selected executable under **OpenCode Binary**.
-2. Use the supported installation/update action when the required runtime is missing. Current minimum: **2.1.2**; recommended/qualified: **2.2.1**.
+2. Use the supported installation/update action when the required runtime is missing. Current minimum: **2.3.0**; recommended/qualified version: **2.3.0**.
 3. If the installed CLI differs from the running service, decide explicitly whether to restart the shared service.
 
 **Restart OpenCode service** is available under **Troubleshooting** and requires confirmation. It interrupts active work in every connected client, but retains session history. Configuration reload is a separate action: it keeps the process but rebuilds loaded Locations and cancels pending questions/permissions. Neither is a harmless refresh.
@@ -73,12 +73,15 @@ Pairing links are single-use and short-lived; the direct-access password is not 
 
 ## Provider, plugin and extension state {#providers-and-addons}
 
+If **Full timeline unavailable** accompanies a failed `codenomad-session-pruning` plugin, inspect its load error in the OpenCode log. This plugin supplies full-history navigation and pending-question/permission recovery. Retry the timeline after the plugin loads successfully; preserve your session data.
+
 | Problem | Recovery |
 | --- | --- |
 | Wrong provider account/quota | Check the selected native account and **Usage**. A quota display is not a token/cost total. Refresh after an uncertain account change; selection can affect other clients of that service. |
 | Expired externally owned OAuth | Sign in again through OpenCode, Claude Code or the relevant credential owner. CodeNomad does not exchange their refresh tokens. |
 | Automatic rotation does not switch | Check opt-in eligibility and whether the current account is actually full. It is a pre-admission policy, not in-flight failover or prompt replay. |
 | Plugin state looks stale | Use **Refresh plugin controls** and inspect the plugin tooltip's scope/target; runtime activation may await native refresh. Do not repeatedly toggle an uncertain write. |
+| Added plugin failed or shows **Not confirmed** | Check the package name, version and registry access of the OpenCode host. For a failed install, search the OpenCode log for the error reference in the plugin tooltip. **Not confirmed** also appears for a disabled plugin. Removing the plugin keeps the downloaded package in OpenCode's cache. |
 | **Mission Control is unavailable** | Follow the cause it names. If OpenCode has not loaded the Missions plugin, refresh, then use **Reload OpenCode configuration** if it persists; if the plugin failed to load, read its error in the Plugins list; if the server could not open its local Missions connection, check the server log, because reloading OpenCode will not help. Missions also run on the standalone server. |
 | Installed extension missing | Check its single activation checkbox in panel customization. Installation/replacement leaves it disabled until you explicitly activate and approve required consent. |
 | Extension assets denied | Confirm API 2 asset-read consent for the current mounted session. Installing an extension is not permission to read arbitrary files/history. |
@@ -95,8 +98,8 @@ For cancelled or partial cleanup, read its progress/receipts before starting ano
 
 ## Logs and safe diagnostics {#diagnostics}
 
-1. Open **Instance Info** to inspect its status; **Show server logs** exposes the available output.
+1. Open **Settings → OpenCode → View OpenCode logs**. This reads the selected execution host’s global `opencode.log`, located with `opencode debug paths log`. The movable, non-modal window leaves the rest of the interface usable. It shows at most the last 128 KiB; **Refresh** rereads the file. Logs stay separate from messages and model requests.
 2. In **Preferences → OpenCode**, choose the intended **Default log level** only when more detail is needed. For standalone CodeNomad logging, use the [server CLI logging options](server.md).
 3. Open **Settings → Info → Diagnostics** and use **Report a bug**, **Copy to clipboard** or **Download .txt**.
 
-Logging detail can expose paths, output and application data. Redact credentials, pairing links, network addresses, private paths and conversation content before sharing logs/captures. The full diagnostic report includes paths/addresses; the prefilled bug form deliberately excludes them. See [Support](support.md#report-a-bug).
+Logging detail can expose paths, output and application data. Redact credentials, pairing links, network addresses, private paths and conversation content before sharing logs/captures. The full diagnostic report includes paths/addresses; the prefilled bug form deliberately excludes them. See [Report a bug](support.md#report-a-bug).

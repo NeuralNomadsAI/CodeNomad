@@ -11,10 +11,10 @@ Kostenlose Open-Source-Desktop-App (MIT) für Windows, macOS und Linux. Sie verb
 | Plattform | Tauri (empfohlen) | Electron |
 | --- | --- | --- |
 | Windows 10 oder neuer | [Installationsprogramm, x64](release:tauri-windows-x64) | [ZIP, x64](release:electron-windows-x64) |
-| macOS 13.5 oder neuer | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
+| macOS – Tauri 14+; Electron 13.5+ | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (unter Ubuntu 24.04 getestet) | [AppImage, x64](release:tauri-linux-x64) | [Debian-Paket, x64](release:electron-linux-x64) |
 
-Beide Builds bieten denselben Arbeitsbereich. Tauri kann Updates direkt in der App installieren; Electron wird durch Herunterladen eines neuen Releases aktualisiert und unterstützt native Browser-Automatisierung auf allen Plattformen (Tauri nur unter Windows). [Builds vergleichen](install.md#desktop-downloads).
+Beide Builds bieten denselben Arbeitsbereich und native Browser-Automatisierung durch Agenten unter Windows, macOS und Linux. Tauri kann Updates direkt in der App installieren; Electron wird durch Herunterladen eines neuen Releases aktualisiert. Tauri verwendet unter macOS/Linux native WebKit-Mobilprofile mit enginespezifischen Grenzen bei Pixeldichte und Eingabe. [Builds vergleichen](install.md#desktop-downloads).
 
 ## Paketmanager {#package-managers}
 
@@ -39,3 +39,9 @@ Laden Sie nur von dieser Seite oder den [offiziellen Releases](https://github.co
 - **Linux**: Machen Sie das AppImage ausführbar oder installieren Sie das Debian-Paket; siehe [Unter Linux installieren](install.md#linux-install).
 - **macOS**: Blockiert macOS den ersten Start, siehe [macOS-Quarantäne](troubleshooting.md#macos-quarantine).
 - **Alle Plattformen**: Installieren Sie Git und eine kompatible OpenCode-CLI wie in den [Anforderungen](install.md#requirements) aufgeführt und [wählen Sie dann OpenCode beim ersten Start](install.md#first-launch). Andere Startprobleme behandelt die [Fehlerbehebung](troubleshooting.md#desktop-launch).
+
+## Entwicklung unterstützen {#support-development}
+
+CodeNomad ist kostenlos und wird von Freiwilligen in ihrer Freizeit gepflegt. Wenn es Ihnen oder Ihrem Team nützt, hilft Sponsoring, es zu pflegen und mit neuen OpenCode-Releases kompatibel zu halten. Die Seite [CodeNomad unterstützen](sponsor.md) erklärt, was Sponsoring finanziert.
+
+{{funding}}

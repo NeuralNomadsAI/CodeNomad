@@ -42,7 +42,7 @@ Si no puede verificarse un worktree propio o la ubicación de una conversación,
 ## Entorno de ejecución OpenCode y WSL {#opencode-runtime}
 
 1. Abre **Preferencias → OpenCode** y comprueba la tarjeta **Versión de OpenCode** (versión instalada y estado del servicio en ejecución) y después el ejecutable seleccionado en **Binario de OpenCode**.
-2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.1.2**; recomendado/verificado: **2.2.1**.
+2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.3.0**; versión recomendada/verificada: **2.3.0**.
 3. Si la CLI instalada difiere del servicio en ejecución, decide explícitamente si reiniciar el servicio compartido.
 
 **Reiniciar servicio OpenCode** está disponible en **Solución de problemas** y requiere confirmación. Interrumpe el trabajo activo de todos los clientes conectados, pero conserva el historial de sesiones. Recargar la configuración es una acción separada: mantiene el proceso, pero reconstruye las Locations cargadas y cancela preguntas/permisos pendientes. Ninguna es una actualización inofensiva.
@@ -73,12 +73,15 @@ Los enlaces de emparejamiento son de un solo uso y corta duración; la contrase�
 
 ## Estado de proveedores, plugins y extensiones {#providers-and-addons}
 
+Si **Cronología completa no disponible** aparece junto a un fallo del plugin `codenomad-session-pruning`, consulta su error de carga en el registro de OpenCode. Este plugin proporciona la navegación por todo el historial y la recuperación de preguntas y permisos pendientes. Reintenta la cronología cuando el plugin se haya cargado correctamente; conserva los datos de tus sesiones.
+
 | Problema | Recuperación |
 | --- | --- |
 | Cuenta/cuota de proveedor incorrecta | Comprueba la cuenta nativa seleccionada y **Uso**. Una cuota mostrada no es un total de tokens/coste. Actualiza tras un cambio de cuenta incierto; la selección puede afectar a otros clientes de ese servicio. |
 | OAuth externo caducado | Vuelve a iniciar sesión mediante OpenCode, Claude Code o el propietario correspondiente de la credencial. CodeNomad no intercambia sus tokens de actualización. |
 | La rotación automática no cambia de cuenta | Comprueba la elegibilidad de la opción y si la cuenta actual tiene realmente agotada su cuota. Es una política previa a la admisión, no conmutación durante la solicitud ni repetición de mensajes. |
 | El estado del plugin parece obsoleto | Usa **Actualizar controles de plugins** e inspecciona el ámbito/destino en su ayuda emergente; la activación en ejecución puede esperar una actualización nativa. No alternes repetidamente una escritura incierta. |
+| Un plugin añadido falló o muestra **Sin confirmar** | Comprueba el nombre del paquete, su versión y el acceso al registro desde el equipo de OpenCode. Si la instalación falló, busca en el registro de OpenCode la referencia de error de la información emergente del plugin. **Sin confirmar** también aparece para un plugin desactivado. Quitar el plugin deja el paquete descargado en la caché de OpenCode. |
 | **Control de misión no está disponible** | Sigue la causa que indica. Si OpenCode no ha cargado el plugin de Misiones, actualiza y, si persiste, usa **Recargar la configuración de OpenCode**; si el plugin no pudo cargarse, lee su error en la lista de plugins; si el servidor no pudo abrir su conexión local para las Misiones, revisa el registro del servidor, porque recargar OpenCode no ayudará. Las Misiones también funcionan en el servidor independiente. |
 | Falta una extensión instalada | Comprueba su única casilla de activación en personalización del panel. La instalación/reemplazo la deja desactivada hasta que la actives explícitamente y apruebes el consentimiento requerido. |
 | Recursos de extensión denegados | Confirma el consentimiento de lectura de recursos de API 2 para la sesión montada actual. Instalar una extensión no da permiso para leer archivos/historial arbitrarios. |
@@ -95,8 +98,8 @@ Para limpieza cancelada o parcial, lee su progreso/comprobantes antes de iniciar
 
 ## Registros y diagnósticos seguros {#diagnostics}
 
-1. Abre **Info de la instancia** para inspeccionar su estado; **Mostrar registros del servidor** expone la salida disponible.
+1. Abre **Configuración → OpenCode → Ver registros de OpenCode**. Se lee el archivo global `opencode.log` del host de ejecución seleccionado, localizado mediante `opencode debug paths log`. La ventana móvil y no modal permite seguir usando el resto de la interfaz. Muestra como máximo los últimos 128 KiB; **Actualizar** vuelve a leer el archivo. Los registros se mantienen separados de los mensajes y las solicitudes al modelo.
 2. En **Preferencias → OpenCode**, elige la **Verbosidad de logs** prevista solo cuando necesites más detalle. Para registros de CodeNomad independiente, usa las [opciones de registro de la CLI del servidor](server.md).
 3. Abre **Configuración → Info → Diagnósticos** y usa **Informar de un error**, **Copiar al portapapeles** o **Descargar .txt**.
 
-El detalle de los registros puede exponer rutas, salida y datos de la aplicación. Oculta credenciales, enlaces de emparejamiento, direcciones de red, rutas privadas y contenido de conversaciones antes de compartir registros/capturas. El informe diagnóstico completo incluye rutas/direcciones; el formulario de error rellenado las excluye deliberadamente. Consulta [Soporte](support.md#report-a-bug).
+El detalle de los registros puede exponer rutas, salida y datos de la aplicación. Oculta credenciales, enlaces de emparejamiento, direcciones de red, rutas privadas y contenido de conversaciones antes de compartir registros/capturas. El informe diagnóstico completo incluye rutas/direcciones; el formulario de error rellenado las excluye deliberadamente. Consulta [Informar de un error](support.md#report-a-bug).

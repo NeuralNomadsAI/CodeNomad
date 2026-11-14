@@ -4,9 +4,9 @@
 
 1. Ouvrez **Palette de commandes** avec `Ctrl+Shift+P` sous Windows/Linux ou `Cmd+Shift+P` sous macOS, ou utilisez son bouton/entrée de menu visible.
 2. Tapez un nom d’action. La palette inclut les actions de l’application et les commandes personnalisées de la Location actuelle ; leur disponibilité dépend de la vue active.
-3. Exécutez **Ouvrir l’aide** pour ouvrir ce guide dans la langue actuelle de l’interface, dans un contexte de navigateur externe. Le menu natif **Aide → Aide de CodeNomad** ouvre le même guide.
+3. Exécutez **Ouvrir l’aide** pour ouvrir ce guide dans la langue actuelle de l’interface, dans un contexte de navigateur externe. Le menu natif **Aide → Aide de CodeNomad** ouvre le même guide. **Soutenir CodeNomad** (menu natif **Aide → Soutenir CodeNomad**) ouvre de la même façon la page [Soutenir CodeNomad](sponsor.md).
 
-L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visitez directement [Aide CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 74 actions du moteur de rendu, pas toutes les actions de palette ou de menu natif. Il inclut des commandes de palette comme **Compacter la session**, **Annuler le dernier message** ou **Ouvrir l’aide**, qui commencent sans raccourci (**Aucun raccourci**) ; les actions de dossier de projet, de terminal et d’éditeur ne s’exécutent que dans les fenêtres de bureau locales.
+L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visitez directement [Aide CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 75 actions du moteur de rendu, pas toutes les actions de palette ou de menu natif. Il inclut des commandes de palette comme **Compacter la session**, **Annuler le dernier message** ou **Ouvrir l’aide**, qui commencent sans raccourci (**Aucun raccourci**) ; les actions de dossier de projet, de terminal et d’éditeur ne s’exécutent que dans les fenêtres de bureau locales.
 
 ## Enregistrer, désactiver et réinitialiser {#customize}
 
@@ -35,9 +35,9 @@ Si l’enregistrement échoue, gardez l’ancien raccourci disponible et réessa
 | Fermer la session | `Mod+Shift+W` |
 | Session précédente / suivante | `Mod+Shift+[` / `Mod+Shift+]` |
 | Onglet de session 1–9 | `Mod+Shift+1` à `Mod+Shift+9` |
-| Infos de l’instance | `Mod+Shift+L` |
+| OpenCode | `Mod+Shift+L` |
 | Rechercher dans l’historique de session | `Mod+F` |
-| Message utilisateur précédent / suivant | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) ou `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
+| **Message utilisateur précédent** / **Message utilisateur suivant**, aussi dans **Plus d'actions** du prompt | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) ou `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Résultat suivant / précédent (recherche focalisée) | `Enter` / `Shift+Enter` |
 | Focaliser / Effacer la saisie | `Mod+P` / `Mod+K` |
 | Ouvrir le sélecteur de modèle / d’agent | `Mod+Shift+M` / `Mod+Shift+A` |

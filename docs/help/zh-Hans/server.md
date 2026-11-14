@@ -6,9 +6,9 @@
 
 ## 准备主机 {#prerequisites}
 
-1. 安装 Node.js 24 LTS 和 npm；仓库固定构建运行时为 24.20.0。桌面包包含 Node/npm。
+1. 安装 Node.js 24 LTS 和 npm；仓库构建运行时固定在 `.node-version` 中。桌面包提供自己的运行时：Electron 使用内置 Node，Tauri 附带 Node，两者均包含 npm。
 2. 将 Git 加入**后端进程的 PATH**。仅 WSL 内的 Git 不满足 Windows 后端。
-3. 安装或选择 OpenCode：必需最低版本为 **2.1.2**，推荐验证目标为 **2.2.1**。更新或自定义构建会接受兼容检查，而非已测试版本白名单。参阅 [OpenCode 设置](opencode.md)。
+3. 安装或选择 OpenCode：必需最低版本为 **2.3.0**，推荐验证目标为 **2.3.0**。更新或自定义构建会接受兼容检查，而非已测试版本白名单。参阅 [OpenCode 设置](opencode.md)。
 4. 选择启动服务器的文件夹，或显式传入 `--workspace-root`。
 
 没有 Git 时，对话仅在显式打开的物理文件夹内可用；Git 和工作树操作失败。安装 Git，更改 PATH 后重启后端。工作区根目录限制打开/浏览，而非智能体执行：参阅[安全](security.md)。
@@ -58,6 +58,8 @@ HTTPS 首选端口 **9898**，HTTP 首选 **9899**。没有端口覆盖时，首
 监听器暴露、证书、VPN/SSH 和反向代理请参阅[直接远程访问](remote-access.md)。无需入站端口的访问请使用[远程控制](remote-control.md)。
 
 ## 公共 CLI 参考 {#cli-reference}
+
+启动 Tauri 或 Electron 时，请参阅[桌面应用启动参数](desktop.md#desktop-cli)，其中包括 `--connect-server`、`--folder`、`--new-window` 和命令、快捷方式示例。下表适用于独立服务器可执行文件。
 
 标志覆盖对应环境变量。带值标志使用所示参数；开关不带值。HTTPS/HTTP 值不区分大小写，将 `1`、`true`、`yes`、`y` 和 `on` 识别为启用；为清晰起见请显式使用 `true`/`false`。界面自动更新识别 `1`、`true` 和 `yes`。
 
@@ -144,4 +146,4 @@ npx @neuralnomads/codenomad-dev --generate-token --launch
 
 `codenomad --upgrade` 使用检测到的 npm/pnpm/bun 管理器更新全局稳定 CLI 包（未检测到时使用 npm）。不会重启运行中的服务器，也不会更新 OpenCode。对于项目本地或预览安装，请显式更新对应 npm 软件包。更新后有意识地重启受管理 CodeNomad 进程；重新检查打印地址。
 
-桌面维护参阅[更新](updates.md)，源码构建命令参阅[支持](support.md)，提供商计划用量参阅[提供商](providers.md)。
+桌面维护参阅[更新](updates.md)，构建命令参阅[从源码构建](support.md#build-from-source)，提供商计划用量参阅[提供商](providers.md)。

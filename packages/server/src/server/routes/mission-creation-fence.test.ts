@@ -8,7 +8,8 @@ import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { prepareMissionCreation } from "./mission-creation-pipeline"
-import { missionRecoveryError } from "../../missions/recovery-error"
+import { missionRecoveryControlError, missionRecoveryError } from "../../missions/recovery-error"
+import { MissionControlError } from "../../missions/control-error"
 
 const directory = "C:/private-fixture/worktree"
 const physical = "C:/private-fixture/physical"
@@ -30,7 +31,8 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
   const fence = new WorktreeDeletionFence(drainTimeout)
   const storage = new Map<string, any>(), sessions = new Map<string, any>(), tools = new Map<string, any>()
   let handlers: any, creates = 0, writes = 0, current = true, rpcCreates = 0
-  let lostAck = false, failedPublication = false, wrongProfile = false
+  let lostAck = false, failedPublication = false, wrongProfile = false, documentCapabilities = true, failedIntentCleanup = false
+  let preferences: unknown, preferenceReads = 0
   let rejectionTransform: ((error: any) => any) | undefined
   let creationGate: ReturnType<typeof deferred> | undefined, publicationGate: ReturnType<typeof deferred> | undefined
   let settlementGate: ReturnType<typeof deferred> | undefined, foreignRoot = false, nativeDirectory = directory
@@ -55,6 +57,10 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
     session, location: { get: async () => ({ directory: nativeDirectory, project: { id: projectID } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
     rpc: () => new Proxy({}, { get: (_, method) => async (input: any) => {
+      if (method === "documentCapabilities") {
+        if (!documentCapabilities) throw new Error("Document capabilities unavailable")
+        return { version: 1 }
+      }
       if (method === "snapshot" && creates && settlementGate) { settlementStarted.resolve(); await settlementGate.promise }
       if (method === "create") rpcCreates++
       try {
@@ -79,6 +85,7 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
   const context: any = {
     location: { directory, project: { id: projectID, canonical: directory } }, session,
     storage: { get: async (key: string) => structuredClone(storage.get(key)), set: async (key: string, value: any) => {
+      if (failedIntentCleanup && key.includes("/creation-intents/") && value === null) throw new Error("Intention cleanup unavailable")
       publicationStarted.resolve(); await publicationGate?.promise
       if (failedPublication) throw new Error("Publication unavailable")
       writes++; storage.set(key, structuredClone(value))
@@ -91,11 +98,16 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
   const bridge = async (sessionID: string, kind: string, input: unknown) => {
     const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH, headers: { "x-codenomad-automation-token": "private-token" },
       payload: { mode: "mission-input", sessionID, command: { kind, input } } })
-    if (response.statusCode !== 200) throw new Error(missionRecoveryError(response.json().code)?.message ?? response.json().error)
+    if (response.statusCode !== 200) {
+      const error = missionRecoveryError(response.json().code, response.json().error)
+      if (error && error.status === response.statusCode) throw missionRecoveryControlError(error.code, response.json().error)
+      throw new Error(response.json().error)
+    }
     return response.json().result
   }
   const transport = {
     prompt: async () => ({}), synthetic: async () => ({}),
+    resolveCreationDefaults: (sessionID: string, input: unknown) => bridge(sessionID, "profile-defaults", input),
     prepare: (sessionID: string, input: unknown) => bridge(sessionID, "prepare", input),
   }
   const creationLifetime = new AbortController()
@@ -110,10 +122,15 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
     })
   registerMissionRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence })
   registerAutomationPluginRoute(app, { workspaceManager: manager, worktreeDeletionFence: fence, bridgeToken: "private-token",
+    settings: { getRawConfigOwner: (owner: string) => { assert.equal(owner, "ui"); preferenceReads++; return { settings: { missionProfileDefaults: preferences } } } },
     authManager: { isLoopbackRequest: () => true }, nativeParent: {}, developerCdp: {} } as any)
   return {
     app, fence, sessions, storage, tools, handlers, manager, context, creationStarted, publicationStarted, settlementStarted, track,
     get creates() { return creates }, get writes() { return writes }, get rpcCreates() { return rpcCreates },
+    get preferenceReads() { return preferenceReads },
+    setPreferences: (value: unknown) => { preferences = value },
+    setDocumentCapabilities: (value: boolean) => { documentCapabilities = value },
+    failIntentCleanup: () => { failedIntentCleanup = true },
     loseAck: () => { lostAck = true }, failPublication: () => { failedPublication = true },
     mismatchProfile: () => { wrongProfile = true },
     transformRejection: (transform: (error: any) => any) => { rejectionTransform = transform },
@@ -239,7 +256,7 @@ async function specialist(f: Awaited<ReturnType<typeof fixture>>) {
   const result = await f.tools.get("inspect").execute({ start: { objective: "Test", template: "custom" } }, {
     sessionID: coordinator.id, id: "inspect", progress: async () => {},
   })
-  return { coordinator, mission: JSON.parse(result.content).mission }
+  return { coordinator, ...JSON.parse(result.content) }
 }
 function delegate(f: Awaited<ReturnType<typeof fixture>>) {
   return f.track(f.tools.get("delegate").execute({ taskKey: "work", title: "Work", brief: "Test", role: "worker",
@@ -258,6 +275,8 @@ test("a coordinator prepares a paused hand-off through the bridge's fenced creat
     const prepare = (objective = "Pilot the chosen seam") => tool("prepare", { requestID: "pilot", objective, template: "custom" })
     const prepared = JSON.parse((await prepare()).content)
     assert.deepEqual([prepared.disposition, prepared.status, prepared.runState], ["prepared", "active", "prepared"])
+    assert.deepEqual(prepared.selection, { profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native",
+      origins: { coordinator: "opencode-default", roles: { specialist: "opencode-default" }, taskMode: "opencode-default" } })
     const handoff = (await f.handlers.snapshot()).missions.find((mission: any) => mission.id === prepared.missionID)
     assert.deepEqual(handoff.preparedBy, { missionId: source.id, coordinatorSessionId: coordinator.id })
     assert.notEqual(handoff.coordinatorSessionId, coordinator.id)
@@ -285,8 +304,80 @@ test("a lost prepare acknowledgement is reported uncertain, never as nothing cre
     f.loseAck()
     await assert.rejects(prepare(), /outcome is uncertain; retry with the same requestID/)
     const saved = (await f.handlers.snapshot()).missions.find((mission: any) => mission.preparedBy?.coordinatorSessionId === coordinator.id)
-    assert.equal(JSON.parse((await prepare()).content).missionID, saved.id)
+    const reads = f.preferenceReads
+    f.setPreferences({ invalid: true })
+    const replay = JSON.parse((await prepare()).content)
+    assert.equal(replay.missionID, saved.id)
+    assert.deepEqual(replay.selection, { profiles: saved.profiles, taskMode: saved.taskMode, origins: saved.creationDefaults.origins })
+    assert.equal(f.preferenceReads, reads, "invalid current preferences cannot invalidate a saved creation")
     assert.equal(f.rpcCreates, 1, "the retry never asks for a second creation")
+  } finally { await f.close() }
+})
+
+test("an intention cleanup failure preserves creation success and releases the native admission hold", async () => {
+  const f = await fixture()
+  try {
+    const { coordinator } = await specialist(f)
+    f.failIntentCleanup()
+    const prepare = () => f.tools.get("prepare").execute({ requestID: "cleanup", objective: "Pilot", template: "custom" },
+      { sessionID: coordinator.id, id: "cleanup-prepare", progress: async () => {} })
+    const first = JSON.parse((await prepare()).content)
+    assert.equal(first.disposition, "prepared")
+    assert.deepEqual(JSON.parse((await prepare()).content), first)
+    assert.equal(f.rpcCreates, 1)
+    assert.equal(await f.fence.run(physical, [physical], async () => "released"), "released")
+  } finally { await assert.rejects(f.close(), /Intention cleanup unavailable/) }
+})
+
+test("an uncertain prepare before any creation document retains its original selection across preference changes", async () => {
+  const f = await fixture()
+  try {
+    const { coordinator } = await specialist(f)
+    f.setPreferences([{ template: "all", profiles: { coordinator: { agent: "fixture" } }, taskMode: "independent" }])
+    const request = { requestID: "uncertain-profile", objective: "Uncertain pilot", template: "custom" }
+    const prepare = (input = request) => f.tools.get("prepare").execute(input, {
+      sessionID: coordinator.id, id: "prepare-uncertain-profile", progress: async () => {},
+    })
+    f.returnChild()
+    await assert.rejects(prepare(), /outcome is uncertain/)
+    assert.equal((await f.handlers.snapshot()).missions.some((mission: any) => mission.preparedBy), false)
+    const reads = f.preferenceReads, bytes = structuredClone([...f.storage])
+    f.setDocumentCapabilities(false)
+    await assert.rejects(prepare(), (error: any) => error.code === "prepare-uncertain")
+    assert.equal(f.preferenceReads, reads)
+    assert.deepEqual([...f.storage], bytes, "a later prevalidation refusal cannot erase the original uncertain intention")
+    f.setDocumentCapabilities(true)
+    for (const preferences of [[], { invalid: true }]) {
+      f.setPreferences(preferences)
+      await assert.rejects(prepare(), /outcome is uncertain/)
+      assert.equal(f.preferenceReads, reads)
+      assert.equal(f.rpcCreates, 1, "the original uncertain hold never permits a replay")
+      assert.deepEqual([...f.storage], bytes)
+    }
+    await assert.rejects(prepare({ ...request, objective: "Another pilot" }), /different mission/)
+    assert.equal(f.creates, 1)
+  } finally { await f.close() }
+})
+
+test("the bridge resolves owner preferences once and returns the frozen tool selection on replay", async () => {
+  const f = await fixture()
+  try {
+    const { coordinator, selection } = await specialist(f)
+    assert.deepEqual(selection, { profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native",
+      origins: { coordinator: "opencode-default", roles: { specialist: "opencode-default" }, taskMode: "opencode-default" } })
+    f.setPreferences([{ template: "all", profiles: { coordinator: { agent: "fixture" }, roles: { specialist: {} } }, taskMode: "independent" }])
+    const request = { requestID: "preferred", objective: "Owner choices", template: "custom" }
+    const prepare = (input = request) => f.tools.get("prepare").execute(input, { sessionID: coordinator.id, id: "prepare-preferred", progress: async () => {} })
+    const first = JSON.parse((await prepare()).content)
+    assert.deepEqual(first.selection, { profiles: { coordinator: { agent: "fixture" }, roles: { specialist: {} } }, taskMode: "independent",
+      origins: { coordinator: "preference", roles: { specialist: "preference" }, taskMode: "preference" } })
+    const reads = f.preferenceReads, bytes = structuredClone([...f.storage])
+    f.setPreferences([{ template: "all", profiles: {}, taskMode: "native" }])
+    assert.deepEqual(JSON.parse((await prepare()).content), first)
+    await assert.rejects(prepare({ ...request, objective: "Conflict" }), /already prepared a different mission/)
+    assert.equal(f.preferenceReads, reads)
+    assert.equal(f.rpcCreates, 1)
+    assert.deepEqual([...f.storage], bytes)
   } finally { await f.close() }
 })
 

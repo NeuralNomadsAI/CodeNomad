@@ -113,6 +113,8 @@ export interface UiSettings {
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
+  /** First/latest controls in the corner under a shown timeline instead of floating over the transcript. */
+  scrollControlsInTimelineCorner: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
   hotkeyOverrides: HotkeyOverrides
@@ -132,6 +134,10 @@ export interface UiSettings {
   showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  autoExpandActiveSubsessions: boolean
+  keepComputerAwake: boolean
+  /** Deleting a Mission also deletes the task conversations created for it. */
+  missionDeleteSessions: boolean
   focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
   missionProfileDefaults: MissionProfileDefault[]
@@ -191,6 +197,8 @@ interface UiStateBucket {
   colorSchemePresets?: unknown
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
+  /** The folder the last clone was created in, where the next clone is suggested. */
+  lastCloneParent?: string
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
   models?: {
@@ -203,6 +211,7 @@ interface UiStateBucket {
 
 interface NormalizedUiState {
   recentFolders: RecentFolder[]
+  lastCloneParent?: string
   opencodeBinaries: OpenCodeBinary[]
   remoteServers: RemoteServerProfile[]
   models: {
@@ -227,6 +236,7 @@ const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
+  scrollControlsInTimelineCorner: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},
@@ -244,6 +254,9 @@ const defaultUiSettings: UiSettings = {
   showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: true,
+  autoExpandActiveSubsessions: true,
+  keepComputerAwake: false,
+  missionDeleteSessions: false,
   focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
   missionProfileDefaults: [],
@@ -338,6 +351,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
+    scrollControlsInTimelineCorner: sanitized.scrollControlsInTimelineCorner ?? defaultUiSettings.scrollControlsInTimelineCorner,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
     hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),
@@ -370,7 +384,11 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    autoExpandActiveSubsessions: typeof sanitized.autoExpandActiveSubsessions === "boolean"
+      ? sanitized.autoExpandActiveSubsessions : defaultUiSettings.autoExpandActiveSubsessions,
     focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
+    keepComputerAwake: sanitized.keepComputerAwake === true,
+    missionDeleteSessions: sanitized.missionDeleteSessions === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     missionProfileDefaults: normalizeMissionDefaults(sanitized.missionProfileDefaults),
     missionModels: normalizeMissionModels(sanitized.missionModels),
@@ -469,6 +487,8 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
         ...(typeof projectName === "string" && projectName.trim() ? { projectName: projectName.trim() } : {}),
       }
     }),
+    ...(typeof source.lastCloneParent === "string" && source.lastCloneParent.trim()
+      ? { lastCloneParent: source.lastCloneParent.trim() } : {}),
     opencodeBinaries: cloneArray<OpenCodeBinary>(source.opencodeBinaries, (b) => {
       if (!b || typeof b !== "object") return null
       const p = (b as any).path
@@ -1096,6 +1116,25 @@ function addRecentFolder(folderPath: string): void {
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to add recent folder", error))
 }
 
+// This window's latest clone parent wins over the saved one, whatever the
+// outcome of saves; the saved one carries it to other windows and restarts.
+// Every clone saves its parent, one save after another, so the last clone's is kept.
+const [latestCloneParent, setLatestCloneParent] = createSignal<string>()
+let cloneParentSaves = Promise.resolve()
+
+function lastCloneParent(): string | undefined {
+  return latestCloneParent() ?? uiState().lastCloneParent
+}
+
+function rememberCloneParent(folderPath: string): void {
+  if (!folderPath) return
+  setLatestCloneParent(folderPath)
+  // Tracked from the start, so native shutdown also waits for saves still queued.
+  cloneParentSaves = storage.trackWrite(cloneParentSaves
+    .then(() => patchStateOwner("ui", { lastCloneParent: folderPath }))
+    .catch((error) => log.error("Failed to remember clone folder", error)))
+}
+
 function removeRecentFolder(folderPath: string): void {
   const next = recentFolders().filter((f) => f.path !== folderPath)
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to remove recent folder", error))
@@ -1330,6 +1369,7 @@ void ensureLoaded().catch((error: unknown) => {
 
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
+  ensureLoaded: typeof ensureLoaded
   isUiConfigLoaded: typeof isUiConfigLoaded
   uiConfigLoadFailed: typeof uiConfigLoadFailed
   missionDefaultsValid: typeof missionDefaultsValid
@@ -1416,6 +1456,7 @@ const ConfigContext = createContext<ConfigContextValue>()
 
 const configContextValue: ConfigContextValue = {
   isLoaded,
+  ensureLoaded,
   isUiConfigLoaded,
   uiConfigLoadFailed,
   missionDefaultsValid,
@@ -1529,6 +1570,8 @@ export function useConfig(): ConfigContextValue {
 export {
   preferences,
   uiState,
+  lastCloneParent,
+  rememberCloneParent,
   serverSettings,
   recentFolders,
   opencodeBinaries,

@@ -83,7 +83,8 @@ export const recurrenceControlRecordSchema = z.object({ requestID: recurrenceIDS
   action: z.enum(["play", "pause", "stop", "resume", "run-now", "check"]), expectedRevision: counter,
   revision: counter, state: z.enum(["paused", "running", "stopped"]), controlsComplete: z.boolean(),
   schedulerCancellation: z.enum(["acknowledged", "unknown"]).optional(),
-  targets: z.array(z.object({ sessionID: id, outcome: z.enum(["acknowledged", "unknown"]) }).strict()).max(32),
+  // The passage's actors; a completed record keeps none (`recordControl`).
+  targets: z.array(z.object({ sessionID: id, outcome: z.enum(["acknowledged", "unknown"]) }).strict()),
   targetsKnown: z.boolean(),
 }).strict()
 export type RecurrenceControlRecord = z.infer<typeof recurrenceControlRecordSchema>

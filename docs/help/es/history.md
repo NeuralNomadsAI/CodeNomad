@@ -1,5 +1,7 @@
 # Historial, búsqueda y limpieza
 
+La búsqueda, la cronología, la galería de imágenes y la limpieza técnica admiten también el almacenamiento experimental `part_rows` de OpenCode y los mensajes con partes separadas e integradas. Las partes ya separadas siguen siendo compatibles tras desactivar la opción.
+
 El historial almacenado, lo que muestra actualmente la transcripción y el contexto compactado del modelo son cosas distintas. Elige navegar o filtrar antes de eliminar nada.
 
 ## Buscar en todo el historial {#full-history-search}
@@ -23,7 +25,7 @@ Si una ventana de búsqueda caduca o su historial cambia, **Iniciar búsqueda nu
 
 1. Elige un resultado de búsqueda de la sesión actual para saltar al pasaje que lo rodea.
 2. Elige un resultado de otra sesión para abrir una vista previa independiente de ese mensaje; usa **Abrir en la sesión** para ir a esa conversación en el resultado.
-3. En **Línea de tiempo de mensajes**, pasa el puntero o enfoca un marcador para ver un fragmento y selecciónalo para navegar: su bloque pasa arriba y el marcador sigue resaltado hasta que te desplaces; después, el resaltado sigue al bloque de la parte superior de la conversación. Usa los controles de primer/último mensaje para volver a los extremos del historial almacenado.
+3. En **Línea de tiempo de mensajes**, pasa el puntero o enfoca un marcador para ver un fragmento y selecciónalo para navegar: su bloque pasa arriba y el marcador sigue resaltado hasta que te desplaces; después, el resaltado sigue al bloque de la parte superior de la conversación. Usa las flechas de primer/último mensaje para volver a los extremos del historial almacenado. Flotan sobre la conversación; si activas **Colocar las flechas de primer/último mensaje bajo la cronología** en **General**, pasan a la esquina bajo la cronología, a la derecha de **Enviar mensaje**, y la flecha del extremo en el que estás aparece atenuada.
 
 La línea de tiempo representa la estructura completa de la sesión aunque la transcripción solo contenga un pasaje acotado. Los saltos cargan el destino en lugar de obtener todos los mensajes intermedios. Las vistas previas de resultados de otras sesiones no cargan toda su transcripción ni las seleccionan; solo **Abrir en la sesión** cambia de conversación.
 
@@ -44,7 +46,7 @@ La línea de tiempo se oculta cuando la conversación es demasiado estrecha (men
 | Eliminar sesión | **Eliminar sesión** en la fila de la sesión, o eliminación de sesiones seleccionadas | Elimina recursivamente la conversación nativa y sus subsesiones/historial descendientes tras confirmar; no se puede deshacer |
 | Depurar sesiones | Paleta de comandos | Eliminación más amplia de sesiones, no un ajuste de visualización ni de tamaño del contexto |
 
-**Contenido de los mensajes** se aplica a todas las conversaciones. Elige un preajuste (**Nada**, **Mínimo**, **Equilibrado** o **Todo**) en su parte superior o en **Configuración → Chat** y después ajusta filas individuales; el menú de preajustes de **Contenido de los mensajes** muestra entonces **Personalizado**. Ocultar herramientas no las desactiva, no cambia permisos ni elimina la salida almacenada. Para mantener la fluidez de representación, los mensajes muy grandes muestran **Mostrar … más** en un hueco omitido, y los textos o salidas de herramientas muy largos se detienen en una línea **… caracteres más ocultos** con **Mostrar todo**, o **Mostrar … más** cuando queda mucho, lo que puede requerir varios pasos. Revelar cualquiera de ellos solo afecta a la visualización y no recupera contenido eliminado.
+**Contenido de los mensajes** se aplica a todas las conversaciones. Elige un preajuste (**Nada**, **Mínimo**, **Equilibrado** o **Todo**) en su parte superior o en **Configuración → Chat** y después ajusta filas individuales; el menú de preajustes de **Contenido de los mensajes** muestra entonces **Personalizado**. Ocultar herramientas no las desactiva, no cambia permisos ni elimina la salida almacenada. Para mantener la fluidez de representación, los mensajes muy grandes muestran **Mostrar … más** en un hueco omitido, y los textos o salidas de herramientas muy largos se detienen en una línea **… caracteres más ocultos** con **Mostrar todo**, o **Mostrar … más** cuando queda mucho, lo que puede requerir varios pasos. Revelar cualquiera de ellos solo afecta a la visualización y no recupera contenido eliminado. Arrastra sobre sus botones de ojo o de flecha para ajustar varias filas a la vez: el primer botón del que sales cambia, y cada botón que cruzas en la misma columna toma su nuevo estado. La conversación se actualiza al soltar el botón.
 
 ## Compactar una sesión {#compact-session}
 

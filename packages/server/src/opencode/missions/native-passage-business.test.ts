@@ -5,7 +5,7 @@ import { desktopPlugin } from "./desktop-plugin"
 import { retireNativePassageBusiness, prepareNativePassageSession } from "./native-passage-business"
 import { observeNativePassageSettlement } from "./native-recurrence-settlement"
 import { AUTOMATIC_BRIEFINGS, USER_FACING_TEXT } from "../../missions/recipes"
-import { MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "../../missions/journal"
+import { MISSION_JOURNAL_STORAGE_PREFIX, missionFinishCounterKey, stableToken, type MissionStorage } from "../../missions/journal"
 import { missionJournalWrites } from "../../missions/journal-index"
 
 test("desktop registers passage mission tools independently of backend presence; descendants read the isolated map", async () => {
@@ -65,7 +65,7 @@ test("explicit independent task uses frozen native ENV/IDs and remains part of p
 test("recurring passages never write the ordinary journal, so its activation index never misses their writes", async () => {
   const f = await passageFixture()
   const token = stableToken(`project\0${f.root}`, 24)
-  const ordinary = [`${MISSION_JOURNAL_STORAGE_PREFIX}/${token}`, `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${token}/`]
+  const ordinary = [`${MISSION_JOURNAL_STORAGE_PREFIX}/${token}`, `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${token}/`, missionFinishCounterKey(token)]
   const trapped: string[] = []
   // The Job admission writes through the fixture storage; restored business through the context's copy.
   for (const storage of [f.storage, f.context.storage] as Array<{ set: MissionStorage["set"]; remove?: (key: string) => Promise<void> }>) {
@@ -85,7 +85,7 @@ test("recurring passages never write the ordinary journal, so its activation ind
     await f.finish()
     const events = (await f.passage.journal.events()).events
     assert.ok(events.some(event => event.type === "task.reported") && events.some(event => event.type === "mission.finished"), "the passage journal was written")
-    assert.deepEqual(trapped, [], "no ordinary journal or deletion-record write")
+    assert.deepEqual(trapped, [], "no ordinary journal, deletion-record or finish-counter write")
     assert.equal(missionJournalWrites(token), writes, "no write any ordinary index would have to see")
     await assert.rejects(f.passage.journal.readHints(hints => hints.openIDs()), /not indexed/)
   } finally { await f.dispose() }

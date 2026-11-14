@@ -6,6 +6,8 @@ import { stableToken } from "../../missions/journal"
 import { currentRecurrenceContent } from "../../missions/recurrence-current"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerMissionRoutes } from "./missions"
+import { projectMissionPanel } from "../../missions/mission-panel-projection"
+import type { MissionPanelPageRequest } from "../../missions/mission-panel-wire"
 
 async function fixture() {
   const fence = new WorktreeDeletionFence(), location = { directory: "/repo" }
@@ -18,11 +20,12 @@ async function fixture() {
   const root = { id: coordinatorID, projectID, location }, child = { ...root, id: "ses_child", parentID: coordinatorID }
   const state = { workspace: { id: "workspace" }, owned: true, connected: true, available: true, plugin: true,
     unknown: false, foreignChild: false, invalidate: false, advance: false, nullPassage: false,
-    foreignProject: false, foreignSchedule: false, contentOverflow: false, contentChanged: false }
+    foreignProject: false, foreignSchedule: false, contentOverflow: false, contentChanged: false, ownerRevision: 1,
+    afterPage: undefined as (() => void) | undefined }
   const calls: Array<{ method: string; input: unknown }> = []
-  const envelope = () => ({ version: 1, projectID: state.foreignProject ? "foreign" : projectID, projectCanonical: location.directory,
+  const envelope = () => ({ version: 1, ownerRevision: state.ownerRevision, projectID: state.foreignProject ? "foreign" : projectID, projectCanonical: location.directory,
     location, scheduleID: state.foreignSchedule ? "foreign" : scheduleID, passageID: state.nullPassage ? null : passageID,
-    ...(state.nullPassage ? {} : { mission }) })
+    ...(state.nullPassage ? {} : { source: { owner: "daily" as const, projectID, scheduleID, passageID, missionID, digest: "a".repeat(43) } }) })
   const client = {
     location: { get: async () => ({ project: { id: projectID, canonical: location.directory } }) },
     plugin: { list: async () => ({ data: state.plugin ? [{ id: "codenomad.missions", state: { status: "active" } }] : [] }) },
@@ -30,6 +33,12 @@ async function fixture() {
       calls.push({ method: "current", input })
       if (state.invalidate) await fence.run(location.directory, [location.directory], async () => {})
       return envelope()
+    }, recurrenceCurrentPage: async (input: { source: unknown; selector: MissionPanelPageRequest }) => {
+      calls.push({ method: "page", input })
+      if (input.selector.source === "summaries" || input.selector.source === "cleanups" || input.selector.source === "marks" || input.selector.source === "task-marks") throw Error("Not a passage range")
+      const result = projectMissionPanel(mission, input.selector, { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }, { passage: envelope().source })
+      state.afterPage?.()
+      return result
     }, recurrenceCurrentContent: async (input: Parameters<typeof currentRecurrenceContent>[1]) => {
       calls.push({ method: "content", input })
       const page = currentRecurrenceContent(mission, input)
@@ -55,7 +64,9 @@ async function fixture() {
     getSharedServiceConnection: async () => state.available ? { client, assertCurrent() { if (!state.connected) throw new Error("Connection replaced") } } : undefined,
   } as never, worktreeDeletionFence: fence })
   const url = `/api/workspaces/workspace/missions/recurrence/${scheduleID}/current`
-  return { app, state, calls, url, passageID, coordinatorID, missionID, mission }
+  const page = async (selector: unknown) => app.inject({ method: "POST", url: `${url}/${passageID}/page`, payload: { source: envelope().source, selector } })
+  const row = (response: { json(): any }) => JSON.parse(response.json().page.pieces.map((piece: { text: string }) => piece.text).join(""))
+  return { app, state, calls, url, passageID, coordinatorID, missionID, mission, page, row }
 }
 
 test("current recurrence route exposes real bounded native ancestry and exact-reader pages without mutations", async () => {
@@ -64,12 +75,15 @@ test("current recurrence route exposes real bounded native ancestry and exact-re
     const response = await f.app.inject({ method: "GET", url: f.url })
     assert.equal(response.statusCode, 200)
     const result = response.json()
-    assert.equal(result.mission.id, f.missionID)
-    assert.deepEqual(result.activity.missions[0].family, { state: "observed", members: [
+    assert.equal(result.source.missionID, f.missionID)
+    assert.equal(result.mission, undefined)
+    assert.deepEqual(f.calls, [{ method: "current", input: { scheduleID: "schedule", owner: "daily" } }, { method: "current", input: { scheduleID: "schedule", owner: "daily" } }])
+    const observed = await f.page({ source: "activity", missionID: f.missionID })
+    assert.equal(observed.statusCode, 200, observed.body)
+    assert.deepEqual(f.row(observed).activity.family, { state: "observed", members: [
       { sessionId: f.coordinatorID, actorSessionId: f.coordinatorID, kind: "declared" },
       { sessionId: "ses_child", parentSessionId: f.coordinatorID, actorSessionId: f.coordinatorID, kind: "ordinary" },
     ] })
-    assert.deepEqual(f.calls, [{ method: "current", input: { scheduleID: "schedule" } }, { method: "current", input: { scheduleID: "schedule" } }])
     assert.equal(result.projectCanonical, undefined)
     assert.equal(result.location, undefined)
     const page = await f.app.inject({ method: "GET", url: `${f.url}/${f.passageID}/content?kind=overview&section=objective&page=0&revision=1` })
@@ -85,12 +99,25 @@ test("current recurrence route exposes real bounded native ancestry and exact-re
       assert.equal(f.calls.length, count)
     }
     f.state.unknown = true
-    const unknown = await f.app.inject({ method: "GET", url: f.url })
+    const unknown = await f.page({ source: "activity", missionID: f.missionID })
     assert.equal(unknown.statusCode, 200)
-    assert.deepEqual(unknown.json().activity.missions[0].family, { state: "unknown", members: [] })
-    assert.equal(unknown.json().activity.missions[0].actors[0].state, "unknown")
+    assert.deepEqual(f.row(unknown).activity.family, { state: "unknown", members: [] })
+    assert.equal(f.row(unknown).activity.actors[0].state, "unknown")
     f.state.nullPassage = true
-    assert.deepEqual((await f.app.inject({ method: "GET", url: f.url })).json(), { version: 1, projectID: "project", scheduleID: "schedule", passageID: null })
+    assert.deepEqual((await f.app.inject({ method: "GET", url: f.url })).json(), { version: 1, ownerRevision: 1, projectID: "project", scheduleID: "schedule", passageID: null })
+  } finally { await f.app.close() }
+})
+
+test("current recurrence route serves a passage of many actors and tasks", async () => {
+  const f = await fixture()
+  try {
+    const coordinator = f.mission.actors[0]
+    f.mission.actors.push(...Array.from({ length: 11 }, (_, index) => ({ ...coordinator, sessionId: `ses_actor_${index}`, kind: "specialist" as const, roles: ["worker"] })))
+    f.mission.tasks.push(...Array.from({ length: 100 }, (_, index) => ({ id: `tsk_${index}`, key: `task-${index}`, title: "Task", brief: "Brief",
+      role: "worker", blockedBy: [], status: "ready" as const, createdAt: 1, updatedAt: 1, outstandingExecution: false })))
+    const response = await f.page({ source: "mission", missionID: f.missionID, header: true })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual([f.row(response).collections.actors.total, f.row(response).tasks.page.total], [12, 100])
   } finally { await f.app.close() }
 })
 
@@ -99,7 +126,7 @@ for (const kind of ["available", "connected", "plugin", "owned", "foreignProject
     const f = await fixture()
     try {
       f.state[kind] = !["available", "connected", "plugin", "owned"].includes(kind)
-      const result = await f.app.inject({ method: "GET", url: f.url })
+      const result = kind === "advance" ? await f.page({ source: "activity", missionID: f.missionID }) : await f.app.inject({ method: "GET", url: f.url })
       assert.equal(result.statusCode, kind === "owned" ? 403 : 503)
       assert.equal(result.json().mission, undefined)
     } finally { await f.app.close() }
@@ -115,6 +142,22 @@ for (const kind of ["contentOverflow", "contentChanged"] as const) {
     } finally { await f.app.close() }
   })
 }
+
+for (const kind of ["revision", "ownership", "connection", "workspace"] as const) test(`current page publication rereads ${kind} after the native range`, async () => {
+  const f = await fixture()
+  try {
+    f.state.afterPage = () => {
+      if (kind === "revision") f.state.ownerRevision++
+      if (kind === "ownership") f.state.owned = false
+      if (kind === "connection") f.state.connected = false
+      if (kind === "workspace") f.state.workspace = { id: "replacement" }
+    }
+    const result = await f.page({ source: "mission", missionID: f.missionID, header: true })
+    assert.equal(result.statusCode, kind === "ownership" ? 403 : 503)
+    assert.equal(result.json().page, undefined)
+    assert.equal(f.calls.filter(call => call.method === "page").length, 1)
+  } finally { await f.app.close() }
+})
 
 test("semantic content targets keep exact reports/history separate from current task results", async () => {
   const f = await fixture()
@@ -144,7 +187,7 @@ test("semantic content targets keep exact reports/history separate from current 
     assert.equal((await f.app.inject({ method: "GET", url: `${f.url}/${f.passageID}/content?kind=task&section=brief` })).statusCode, 400)
     assert.equal(f.calls.length, count)
     f.mission.objective = "x".repeat(8_999) + "😀" + "tail"
-    const pages = [0, 1].map(page => currentRecurrenceContent(f.mission, { scheduleID: "schedule", passageID: f.passageID,
+    const pages = Array.from({ length: Math.ceil(f.mission.objective.length / 3000) }, (_, page) => currentRecurrenceContent(f.mission, { scheduleID: "schedule", passageID: f.passageID,
       kind: "overview", section: "objective", page }).sourceText)
     assert.equal(pages.join(""), f.mission.objective, "paging preserves a boundary surrogate pair without overlap")
   } finally { await f.app.close() }
@@ -155,20 +198,20 @@ test("current passage content keeps Markdown context across bounded pages", asyn
   try {
     f.mission.summary = "# Result\n\n[Evidence](https://example.invalid)\n\n```ts\n" + "const result = true;\n".repeat(600) + "```\n\n## Next\nDone."
     const pages = []
-    for (const page of [0, 1]) {
+    for (let page = 0; page < Math.ceil(f.mission.summary.length / 3000); page++) {
       const response = await f.app.inject({ method: "GET", url: `${f.url}/${f.passageID}/content?kind=overview&section=summary&page=${page}` })
       assert.equal(response.statusCode, 200)
       const result = response.json()
-      assert.equal(result.pageCount, 2)
+      assert.equal(result.pageCount, Math.ceil(f.mission.summary.length / 3000))
       assert.equal(typeof result.markdownText, "string")
-      assert(result.sourceText.length <= 9_001)
-      assert(result.markdownText.length <= 9_116)
+      assert(result.sourceText.length <= 3_001)
+      assert(result.markdownText.length <= 3_116)
       pages.push(result)
     }
     assert.equal(pages.map(page => page.sourceText).join(""), f.mission.summary, "copy pages remain exact native source")
     assert.match(pages[0].markdownText, /^# Result\n/)
     assert.match(pages[0].markdownText, /\n```\n$/)
     assert.match(pages[1].markdownText, /^```ts\n/)
-    assert.match(pages[1].markdownText, /## Next\nDone\.$/)
+    assert.match(pages.at(-1).markdownText, /## Next\nDone\.$/)
   } finally { await f.app.close() }
 })

@@ -11,10 +11,10 @@
 | Платформа | Tauri (рекомендуется) | Electron |
 | --- | --- | --- |
 | Windows 10 или новее | [Установщик, x64](release:tauri-windows-x64) | [ZIP, x64](release:electron-windows-x64) |
-| macOS 13.5 или новее | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
+| macOS — Tauri 14+; Electron 13.5+ | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (проверено на Ubuntu 24.04) | [AppImage, x64](release:tauri-linux-x64) | [Пакет Debian, x64](release:electron-linux-x64) |
 
-Обе сборки предоставляют одинаковое рабочее пространство. Tauri может устанавливать обновления внутри приложения; Electron обновляется загрузкой нового релиза и поддерживает нативную автоматизацию браузера на всех платформах (Tauri — только в Windows). [Сравните сборки](install.md#desktop-downloads).
+Обе сборки предоставляют одинаковое рабочее пространство и нативную автоматизацию браузера агентами в Windows, macOS и Linux. Tauri может устанавливать обновления внутри приложения; Electron обновляется загрузкой нового релиза. Tauri в macOS/Linux использует нативные мобильные профили WebKit с ограничениями плотности пикселей и ввода, зависящими от движка. [Сравните сборки](install.md#desktop-downloads).
 
 ## Менеджеры пакетов {#package-managers}
 
@@ -39,3 +39,9 @@ npx @neuralnomads/codenomad --generate-token --launch
 - **Linux**: сделайте AppImage исполняемым или установите пакет Debian; см. [Установка в Linux](install.md#linux-install).
 - **macOS**: если macOS блокирует первый запуск, см. [Карантин macOS](troubleshooting.md#macos-quarantine).
 - **Все платформы**: установите Git и совместимый OpenCode CLI, как указано в [требованиях](install.md#requirements), затем [выберите OpenCode при первом запуске](install.md#first-launch). Другие проблемы запуска описаны в разделе [устранения неполадок](troubleshooting.md#desktop-launch).
+
+## Поддержать разработку {#support-development}
+
+CodeNomad бесплатен, его сопровождают добровольцы в своё свободное время. Если он полезен вам или вашей команде, спонсорство помогает сопровождать его и сохранять совместимость с новыми релизами OpenCode. На странице [Поддержать CodeNomad](sponsor.md) объясняется, на что идёт спонсорство.
+
+{{funding}}

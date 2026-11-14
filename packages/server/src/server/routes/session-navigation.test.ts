@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import Fastify from "fastify"
 import { registerSessionNavigationRoutes } from "./session-navigation"
+import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { brokerIdentities, brokerConnection } from "./rpc-broker-test-fixture"
 
 function fixture(pluginsReady: () => Promise<void> = async () => {}) {
   const app = Fastify()
@@ -14,15 +16,16 @@ function fixture(pluginsReady: () => Promise<void> = async () => {}) {
     outline: () => outline(), outlineLayout: () => outline({ layout: "TX" }), outlinePreview: () => ({ status: "previews", entries: [] }),
     window: () => ({ status: "window", messages: [], older: null, newer: null, resume: { kind: "latest" }, latest: true }),
   }
-  registerSessionNavigationRoutes(app, { workspaceManager: {
+  registerSessionNavigationRoutes(app, { worktreeDeletionFence: new WorktreeDeletionFence(), workspaceManager: {
+    ...brokerIdentities(),
     ownsLocation: async () => owned,
     desktopPluginsReady: pluginsReady,
-    getSharedServiceClient: async () => ({ session: { get: async () => structuredClone(session) }, rpc: {
+    ...brokerConnection({ session: { get: async () => structuredClone(session) }, rpc: {
       call: async (input: any) => {
         calls.push(input); afterRead()
         return { output: methods[input.method]() }
       },
-    } }) as any,
+    } } as any),
   } as any })
   return { app, calls, ownership: (value: boolean) => { owned = value }, race: (callback: () => void) => { afterRead = callback },
     change: (value: object) => { session = { ...session, ...value } },

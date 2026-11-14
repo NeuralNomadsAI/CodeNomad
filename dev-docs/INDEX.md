@@ -10,9 +10,10 @@ Start with [README](../README.md) for installation and usage, then
 - [Runtime setup and recovery](OPENCODE_RUNTIME_SETUP.md): admission, installation/upgrade and service maintenance.
 - [Worktree/session placement](WORKTREE_SESSION_PLACEMENT.md): native location identity and authorized conversation movement.
 - [Session environment](SESSION_ENVIRONMENT.md): server-only execution-host snapshots, fresh profile reads at admission and fail-closed per-send synchronization.
+- [Agent memory](AGENT_MEMORY.md): entry format, project identity, local Git transactions and recovery, authorized API/tool contracts, safe session instructions, Preferences review and cleanup sessions.
 - [Session recovery](SESSION_RECOVERY.md): reconciling saved session activity with native state.
 - [Cache refresh conventions](CACHE_REFRESH_CONVENTIONS.md): display snapshots, invalidation and authoritative mutation reads.
-- [Bundled runtime maintenance](RUNTIME_MAINTENANCE.md): Node/npm pinning, LTS proposals and the dependency audit.
+- [Bundled runtime maintenance](RUNTIME_MAINTENANCE.md): Node/npm pinning, update proposals, the npm audit and CI download caches.
 
 ## History and pruning
 
@@ -35,7 +36,8 @@ Start with [README](../README.md) for installation and usage, then
 - [Questions and permissions](NATIVE_INTERRUPTION_UX.md): permissions/Forms dock, drafts and pending-request recovery.
 - [Keyboard shortcuts](HOTKEYS.md): the shortcut catalog, recording and dispatch.
 - [Provider accounts](PROVIDER_ACCOUNTS.md): native account selection, usage credentials and bounded quota/rotation policy.
-- [Plugin controls](PLUGIN_CONTROLS.md): explicit Global/Project activation and native package check/update.
+- [Plugin controls](PLUGIN_CONTROLS.md): adding and removing plugin sources, explicit Global/Project activation, versions and native package check/update.
+- [OpenCode integrations](OPENCODE_INTEGRATIONS.md): the integration marker, catalog and RPC contract, its parity with the vendored specification, and the fake registry and integration fixtures.
 - [Panel extensions](PANEL_EXTENSIONS.md): distribution, trust, consent and sandbox/API boundaries.
 - [Palette sources](PALETTE_SOURCES.md): color provenance and validation.
 
@@ -43,16 +45,19 @@ Start with [README](../README.md) for installation and usage, then
 
 - [Missions](MISSIONS.md): one-time Mission maps, native admission, Wayfinder/Debugging/Product delivery playbooks and validation.
 - [Recurring Missions](MISSIONS_RECURRING.md): daily native schedule contract; the [qualification fixture](MISSIONS_RECURRING_QUALIFICATION.md) runs its journeys against an isolated runtime.
+- [Missions native contracts](MISSIONS_NATIVE_CONTRACTS.md): public/private boundaries, per-invocation lifetimes, bounded capabilities and experimental document authors.
+- [Native schedule transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md): exact read-only discovery, incarnation-fenced RPC and local carrier primitives.
 - [Autonomy requirement](MISSIONS_AUTONOMY.md): Missions run in the OpenCode service with the CodeNomad UI and backend closed.
 
 ## Desktop automation and validation
 
 - [Desktop instrumentation and browser automation](BROWSER_AUTOMATION.md): always-available automation tools, authenticated transport, owned native previews and targeting.
-- [Browser test suite](BROWSER_TESTING.md): the runner-owned fixture daemon, tiered local runner, CI shards, logs and cleanup, and exemption map.
+- [Browser test suite](BROWSER_TESTING.md): the runner-owned fixture daemon, tiered local runner, CI shards, logs and cleanup, exemption map, and the native fixtures' fake registry and integration.
 - [Device emulation](BROWSER_DEVICE_EMULATION.md): touch profiles and sizing contracts.
 - [Desktop data profiles](DESKTOP_DATA_PROFILES.md): profile resolution, isolation and cleanup.
 - [Tauri updates](TAURI_UPDATER.md): signed updates, the update feed and Linux AppImage distribution.
 - [Remote Control](REMOTE_CONTROL.md): OpenTunnel transport, pairing and device admission.
-- [Tauri backports](../packages/tauri-app/vendor/README.md): upstream provenance, validation commands and override removal criteria.
+- [Vendored Tauri crates](../packages/tauri-app/vendor/README.md): vendored crate provenance, local patches, re-qualification, validation commands and override removal criteria.
 - [Build guide](../BUILD.md): packaging and platform build commands.
+- [Code signing policy](../CODE_SIGNING.md): Windows SignPath signing in the release workflows, its configuration and approvals.
 - [Contributing](../CONTRIBUTING.md): development and test workflows.

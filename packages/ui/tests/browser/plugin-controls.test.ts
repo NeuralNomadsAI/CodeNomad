@@ -32,6 +32,7 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   page.on("pageerror", (error) => errors.push(error.message))
   await page.goto(url)
 
+  await page.waitForFunction(() => Boolean((window as any).fixture))
   await page.waitForTimeout(100)
   assert.equal(await page.evaluate(() => (window as any).fixture.reads()), 0, "a hidden plugin section must not load")
   await page.evaluate(() => (window as any).fixture.show())
@@ -44,9 +45,10 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').count(), 6)
   assert.deepEqual(await page.locator(".plugin-control-scope-label").allTextContents(), ["Global", "Project"])
   assert.equal(await page.locator(".plugin-controls-description, .plugin-controls-footer, .plugin-control-sub, .plugin-controls-notice").count(), 0)
-  assert.equal(await page.locator(".plugin-controls-header button").count(), 1, "only the compact refresh button appears in the header")
+  assert.deepEqual(await page.locator(".plugin-controls-header button").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label"))),
+    ["Refresh plugin controls", "Add"], "only the compact Refresh and Add icons appear in the header")
   assert.ok(await page.locator(".plugin-control-identity button").count() > 0, "package rows expose a compact native update/check action")
-  const refresh = page.locator(".plugin-controls-header button")
+  const refresh = page.getByRole("button", { name: "Refresh plugin controls", exact: true })
   assert.equal(await refresh.isEnabled(), true)
   assert.equal(await refresh.locator(".animate-spin").count(), 0)
   const readsBeforeRefresh = await page.evaluate(() => (window as any).fixture.reads())
@@ -145,6 +147,7 @@ test("failed packages without IDs remain actionable and reconcile into loaded pl
   page.on("pageerror", error => errors.push(error.message))
   try {
     await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => { (window as any).fixture.failedPackagesOnly(); (window as any).fixture.setNarrow(); (window as any).fixture.show() })
     const target = "opencode-gemini-auth@latest"
     const row = page.locator(`[data-package-target="${target}"]`)
@@ -154,9 +157,9 @@ test("failed packages without IDs remain actionable and reconcile into loaded pl
     await row.locator(".plugin-control-name").focus()
     await page.locator(".plugin-control-tooltip").waitFor()
     assert.match(await page.locator(".plugin-control-tooltip").innerText(), /Failed — Package failed before exporting a plugin ID/)
-    await row.getByRole("button", { name: `Check updates for ${target}`, exact: true }).click()
+    await row.getByRole("button", { name: `Actions for ${target}`, exact: true }).click()
     await page.getByRole("menuitem", { name: `Check updates for ${target}`, exact: true }).click()
-    const update = row.getByRole("button", { name: `Update ${target}`, exact: true })
+    const update = row.getByRole("button", { name: `Actions for ${target}`, exact: true })
     await update.waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     if (process.env.CODENOMAD_PLUGIN_SCREENSHOTS) {
@@ -182,6 +185,7 @@ test("V2 plugin controls disable Project when it resolves to the Global document
   page.on("pageerror", (error) => errors.push(error.message))
   await page.goto(url)
 
+  await page.waitForFunction(() => Boolean((window as any).fixture))
   await page.evaluate(() => (window as any).fixture.setTargets(["global"]))
   await page.evaluate(() => (window as any).fixture.show())
   await page.getByText("acme.reviewer", { exact: true }).waitFor()
@@ -226,6 +230,7 @@ test("V2 plugin controls disable Project when it resolves to the Global document
 test("plugin rows retain focus through passive refresh and guarded pending mutations", async () => {
   const page = await browser.newPage({ viewport: { width: 520, height: 900 } })
   await page.goto(url)
+  await page.waitForFunction(() => Boolean((window as any).fixture))
   await page.evaluate(() => (window as any).fixture.show())
   const input = page.locator('[data-plugin-id="acme.reviewer"] [data-scope="global"] input')
   await input.waitFor()
@@ -264,6 +269,7 @@ test("plugin rows retain focus through passive refresh and guarded pending mutat
 test("narrow layouts keep rows compact and reveal complete details on name focus", async () => {
   const page = await browser.newPage({ viewport: { width: 320, height: 1200 }, hasTouch: true })
   await page.goto(url)
+  await page.waitForFunction(() => Boolean((window as any).fixture))
   const details = await page.evaluate(() => {
     const fixture = (window as any).fixture
     fixture.setNarrow()
@@ -302,6 +308,7 @@ for (const fail of [false, true]) {
   test(`disposed plugin surfaces suppress late mutation feedback, failure=${fail}`, async () => {
     const page = await browser.newPage({ viewport: { width: 520, height: 900 } })
     await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate((fail) => {
       const fixture = (window as any).fixture
       fixture.show()
@@ -325,6 +332,7 @@ for (const dispose of [false, true]) {
   test(`queued plugin reads wait for visible demand after hiding, disposed=${dispose}`, async () => {
     const page = await browser.newPage({ viewport: { width: 520, height: 900 } })
     await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => (window as any).fixture.show())
     await page.locator('[data-plugin-id="acme.reviewer"]').waitFor()
     await page.evaluate(() => { (window as any).fixture.holdRead(); (window as any).fixture.invalidate() })
@@ -346,5 +354,303 @@ for (const dispose of [false, true]) {
     await page.waitForFunction(() => (window as any).fixture.reads() === 3)
     await page.locator('[data-plugin-id="acme.reviewer"]').waitFor()
     await page.close()
+  })
+}
+
+test("healthy managed plugins stay out of all ordinary row routes while homonyms remain controllable", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => { (window as any).fixture.systemPlugins("active"); (window as any).fixture.show() })
+    await page.locator('[data-plugin-id="codenomad.third-party"]').waitFor()
+    assert.equal(await page.locator(".plugin-system-attention").count(), 0)
+    assert.equal(await page.locator('[data-plugin-id="codenomad.design"], [data-package-target], [data-source-target]').count(), 0)
+    assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').count(), 4)
+    await page.locator('[data-plugin-id="codenomad.third-party"] [data-scope="project"] input').click()
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.type === "mutation" && call.pluginId === "codenomad.third-party"))
+  } finally { await page.close() }
+})
+
+test("unproven and third-party no-ID local failures retain ordinary native-path rows", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => { (window as any).fixture.ordinaryLocalFailure(); (window as any).fixture.show() })
+    await page.locator('[data-local-path="/thirdparty/plugin.ts"]').waitFor()
+    assert.equal(await page.locator(".plugin-control-row").count(), 2)
+    assert.equal(await page.locator(".plugin-system-attention").count(), 0)
+    assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').count(), 0)
+    for (const path of ["/thirdparty/plugin.ts", "/daemon/plugins/codenomad-design.js"]) {
+      const row = page.locator(`[data-local-path="${path}"]`)
+      assert.equal(await row.locator(".plugin-control-name").innerText(), path)
+      await row.locator(".plugin-control-name").focus()
+      await page.locator(".plugin-control-tooltip").waitFor()
+      assert.match(await page.locator(".plugin-control-tooltip").innerText(), /Unproven local plugin load failed/)
+      assert.match(await page.locator(".plugin-control-tooltip").innerText(), /err_local_native/)
+      await page.locator("[data-plugin-refresh]").focus()
+      await page.locator(".plugin-control-tooltip").waitFor({ state: "hidden" })
+    }
+  } finally { await page.close() }
+})
+
+for (const [ruleScope, expectedScope, writable] of [
+  ["global", "global", ["global", "project"]],
+  ["project", "project", ["global", "project"]],
+  ["other", "project", ["global", "project"]],
+  ["virtual", "project", ["global", "project"]],
+  ["global", "project", ["project"]],
+] as const) {
+  test(`managed re-enable uses one exact positive rule: ${ruleScope} -> ${expectedScope}, targets=${writable}`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await page.evaluate(({ ruleScope, writable }) => {
+        const fixture = (window as any).fixture
+        fixture.systemPlugins("disabled", ruleScope, false)
+        fixture.setTargets(writable)
+        fixture.holdMutation()
+        fixture.show()
+      }, { ruleScope, writable })
+      const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+      await notice.waitFor()
+      assert.equal(await notice.getAttribute("aria-live"), "polite")
+      const heading = await notice.getAttribute("aria-labelledby")
+      assert.ok(heading)
+      assert.equal(await page.locator(`[id="${heading}"]`).count(), 1)
+      assert.equal(await notice.evaluate(node => Boolean(node.nextElementSibling?.classList.contains("plugin-controls-header"))), true)
+      assert.equal(await page.locator(".plugin-control-row").count(), 0)
+      assert.equal(await notice.locator(".plugin-system-attention-label bdi").innerText(), "codenomad.design")
+      const origin = ruleScope === "other" ? "Inherited / external" : ruleScope === "virtual" ? "Virtual configuration" : ruleScope === "global" ? "Global" : "Project"
+      assert.equal(await notice.locator(".plugin-system-attention-label").innerText(), `codenomad.design — Disabled in ${origin}`)
+      if (expectedScope !== ruleScope) {
+        assert.equal(await notice.locator(".plugin-system-attention-scope").innerText(), "Project", "the override scope is visible when it differs from the disabling rule")
+      } else {
+        assert.equal(await notice.locator(".plugin-system-attention-scope").count(), 0, "matching action and rule scopes stay terse")
+      }
+      const info = notice.getByRole("button", { name: "Details for codenomad.design", exact: true })
+      await info.click()
+      await page.locator(".plugin-system-attention-details").waitFor()
+      const configPath = ruleScope === "virtual" ? undefined : ruleScope === "global" ? "/daemon/opencode.jsonc" : ruleScope === "project" ? "/repo/.opencode/opencode.jsonc" : "/ancestor/opencode.jsonc"
+      if (configPath) {
+        assert.ok((await page.locator(".plugin-system-attention-details bdi").allTextContents()).includes(configPath))
+        assert.ok((await page.locator(".plugin-system-attention-details").innerText()).includes(`${origin} — ${configPath}`))
+      } else {
+        assert.equal(await page.locator(".plugin-system-attention-details").getByText(origin, { exact: true }).count(), 1, "a virtual rule retains its origin without inventing a configuration file")
+      }
+      await page.keyboard.press("Escape")
+      await page.locator(".plugin-system-attention-details").waitFor({ state: "hidden" })
+      const button = notice.getByRole("button", { name: `Re-enable codenomad.design in ${expectedScope === "global" ? "Global" : "Project"}`, exact: true })
+      await button.focus()
+      const original = await button.elementHandle()
+      await button.press("Enter")
+      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-busy") === "true")
+      assert.equal(await button.getAttribute("aria-disabled"), "true")
+      assert.equal(await button.evaluate(node => (node as HTMLButtonElement).disabled), false, "the busy button keeps keyboard focus")
+      await button.press("Enter")
+      await button.click({ force: true })
+      assert.equal(await original!.evaluate(node => node.isConnected && node === document.activeElement), true)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.type === "mutation")), [
+        { type: "mutation", location: { directory: "/repo" }, pluginId: "codenomad.design", scope: expectedScope, enabled: true },
+      ])
+      await page.evaluate(() => (window as any).fixture.releaseMutation())
+      await notice.getByText("codenomad.design — Loading not confirmed", { exact: true }).waitFor()
+      assert.equal(await notice.getByRole("button", { name: /^Re-enable / }).count(), 0)
+      await page.waitForFunction(() => document.activeElement?.hasAttribute("data-plugin-refresh"))
+      // Focus inside the warning when runtime confirmation removes the whole block.
+      await notice.locator(".plugin-system-attention-entry").evaluate(node => { node.setAttribute("tabindex", "-1"); (node as HTMLElement).focus() })
+      await page.evaluate(() => (window as any).fixture.activateSystemPlugin())
+      await notice.waitFor({ state: "detached" })
+      await page.waitForFunction(() => document.activeElement?.hasAttribute("data-plugin-refresh"))
+      assert.equal(await page.locator('[data-plugin-id="codenomad.design"]').count(), 0)
+    } finally { await page.close() }
+  })
+}
+
+for (const mode of ["failed", "failed-no-id"] as const) {
+  test(`managed native failures expose details without activation or ordinary actions: ${mode}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 320, height: 600 } })
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await page.evaluate(mode => { (window as any).fixture.systemPlugins(mode, "project", false); (window as any).fixture.setNarrow(); (window as any).fixture.show() }, mode)
+      const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+      await notice.waitFor()
+      const name = mode === "failed" ? "codenomad.design" : "@codenomad/design@1.0.0"
+      assert.equal(await notice.getByRole("button", { name: /^Re-enable / }).count(), 0)
+      assert.equal(await page.locator(".plugin-control-row").count(), 0)
+      assert.equal(await notice.locator(".plugin-system-attention-label").innerText(), `${name} — Failed to load`)
+      assert.equal(await notice.locator(".plugin-system-attention-label bdi").innerText(), name)
+      assert.equal(await notice.locator(".plugin-system-attention-scope").innerText(), "Global")
+      const details = notice.getByRole("button", { name: `Details for ${name}`, exact: true })
+      await details.focus()
+      await details.press("Enter")
+      await page.getByText("Native system plugin failed safely", { exact: false }).waitFor()
+      assert.match(await page.locator(".info-popover-text").innerText(), /err_system_native/)
+      assert.match(await page.locator(".info-popover-text").innerText(), /Error reference in the OpenCode log: err_system_native/)
+      const isolated = await page.locator(".plugin-system-attention-details bdi").allTextContents()
+      for (const value of [name, "@codenomad/design@1.0.0", "/daemon/opencode.jsonc", "err_system_native"]) assert.ok(isolated.includes(value))
+      await page.keyboard.press("Escape")
+      await page.waitForFunction(label => document.activeElement?.getAttribute("aria-label") === label, `Details for ${name}`)
+      assert.equal(await details.evaluate(node => node === document.activeElement), true)
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      await page.evaluate(() => (window as any).fixture.activateSystemPlugin())
+      await notice.waitFor({ state: "detached" })
+      await page.waitForFunction(() => document.activeElement?.hasAttribute("data-plugin-refresh"))
+    } finally { await page.close() }
+  })
+}
+
+test("managed mutation failures retain the warning and announce a new error across passive refresh", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.systemPlugins("disabled", "global", false)
+      fixture.failMutation()
+      fixture.show()
+    })
+    const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+    const button = notice.getByRole("button", { name: "Re-enable codenomad.design in Global", exact: true })
+    await button.click()
+    await notice.getByRole("alert").waitFor()
+    assert.match(await notice.getByRole("alert").innerText(), /codenomad.design/)
+    assert.equal(await button.getAttribute("aria-busy"), "false")
+    await page.evaluate(() => (window as any).fixture.invalidate())
+    await page.waitForFunction(() => (window as any).fixture.reads() === 2)
+    assert.equal(await notice.getByRole("alert").count(), 1)
+    assert.match(await notice.innerText(), /Disabled in Global/)
+    await button.click()
+    await notice.getByText("codenomad.design — Loading not confirmed", { exact: true }).waitFor()
+    assert.equal(await notice.getByRole("alert").count(), 0)
+  } finally { await page.close() }
+})
+
+test("managed pre-write active inventory stays unconfirmed after re-enable until a native-event read", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => { (window as any).fixture.systemPlugins("disabled-active", "project", false); (window as any).fixture.show() })
+    const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+    await notice.getByRole("button", { name: "Re-enable codenomad.design in Project", exact: true }).click()
+    await notice.getByText("codenomad.design — Loading not confirmed", { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.reads()), 1, "a write response does not confirm runtime loading")
+    await page.evaluate(() => (window as any).fixture.invalidate())
+    await notice.waitFor({ state: "detached" })
+    assert.equal(await page.evaluate(() => (window as any).fixture.reads()), 2)
+  } finally { await page.close() }
+})
+
+test("managed pre-write failure stays unconfirmed until a fresh native failure is observed", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => { (window as any).fixture.systemPlugins("disabled-failed", "project", false); (window as any).fixture.show() })
+    const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+    await notice.getByRole("button", { name: "Re-enable codenomad.design in Project", exact: true }).click()
+    await notice.getByText("codenomad.design — Loading not confirmed", { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.reads()), 1)
+    await page.evaluate(() => (window as any).fixture.invalidate())
+    await notice.getByText("codenomad.design — Failed to load", { exact: true }).waitFor()
+    assert.equal(await notice.getByRole("button", { name: /^Re-enable / }).count(), 0)
+    await notice.getByRole("button", { name: "Details for codenomad.design", exact: true }).click()
+    await page.getByText("Native system plugin failed safely", { exact: false }).waitFor()
+    assert.match(await page.locator(".info-popover-text").innerText(), /err_system_native/)
+  } finally { await page.close() }
+})
+
+test("managed runtime confirmation restores Refresh focus from an open details portal", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => { (window as any).fixture.systemLocalFailure(true); (window as any).fixture.show() })
+    const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+    await notice.getByRole("button", { name: "Details for codenomad.design", exact: true }).click()
+    await page.waitForFunction(() => Boolean(document.activeElement?.closest(".info-popover-content")))
+    await page.evaluate(() => (window as any).fixture.activateSystemPlugin())
+    await notice.waitFor({ state: "detached" })
+    await page.locator(".plugin-system-attention-details").waitFor({ state: "detached" })
+    await page.waitForFunction(() => document.activeElement?.hasAttribute("data-plugin-refresh"))
+  } finally { await page.close() }
+})
+
+for (const attached of [true, false]) {
+  test(`managed no-ID local failures use proven identity or exact path without duplicate warnings, attached=${attached}`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await page.evaluate(attached => { (window as any).fixture.systemLocalFailure(attached); (window as any).fixture.show() }, attached)
+      const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+      await notice.waitFor()
+      assert.equal(await notice.locator(".plugin-system-attention-entry").count(), 1)
+      const name = attached ? "codenomad.design" : "/daemon/plugins/codenomad-design.js"
+      assert.equal(await notice.locator(".plugin-system-attention-label").innerText(), `${name} — Failed to load`)
+      assert.equal(await notice.locator(".plugin-system-attention-label bdi").innerText(), name)
+      assert.equal(await notice.locator(".plugin-system-attention-scope").innerText(), "Global")
+      assert.equal(await notice.getByRole("button", { name: /^Re-enable / }).count(), 0)
+      await notice.getByRole("button", { name: `Details for ${name}`, exact: true }).click()
+      await page.getByText("Native system plugin failed safely", { exact: false }).waitFor()
+      assert.match(await page.locator(".info-popover-text").innerText(), /err_system_native/)
+      assert.ok((await page.locator(".plugin-system-attention-details bdi").allTextContents()).includes("/daemon/plugins/codenomad-design.js"))
+    } finally { await page.close() }
+  })
+}
+
+for (const mode of ["unconfirmed", "source-only"] as const) {
+  test(`managed loading stays unconfirmed outside ordinary lists: ${mode}`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await page.evaluate(mode => { (window as any).fixture.systemPlugins(mode, "project", false); (window as any).fixture.show() }, mode)
+      const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+      await notice.waitFor()
+      assert.match(await notice.innerText(), /Loading not confirmed/)
+      assert.equal(await page.locator(".plugin-control-row").count(), 0)
+      assert.equal(await notice.getByRole("button", { name: /^Re-enable / }).count(), 0)
+      assert.equal(await notice.getByRole("button").count(), 1, "every affected plugin has one information button")
+      assert.equal(await notice.locator(".plugin-system-attention-scope").innerText(), "Global")
+      const name = mode === "unconfirmed" ? "codenomad.design" : "@codenomad/design@1.0.0"
+      assert.equal(await notice.locator(".plugin-system-attention-label bdi").innerText(), name)
+      await notice.getByRole("button", { name: `Details for ${name}`, exact: true }).click()
+      await page.locator(".plugin-system-attention-details").waitFor()
+      assert.ok((await page.locator(".plugin-system-attention-details bdi").allTextContents()).includes("/daemon/opencode.jsonc"))
+      await page.keyboard.press("Escape")
+      await page.evaluate(() => { document.documentElement.dir = "rtl"; return (window as any).fixture.setLocale("he") })
+      assert.equal(await page.locator(".plugin-system-attention-label bdi").innerText(), name)
+      assert.equal(await page.locator(".plugin-system-attention-label bdi").getAttribute("dir"), null, "bdi retains native automatic isolation")
+    } finally { await page.close() }
+  })
+}
+
+for (const mode of ["failed", "unconfirmed"] as const) {
+  test(`managed installation without configured scope prefers the Global installation target: ${mode}`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await page.evaluate(mode => {
+        const fixture = (window as any).fixture
+        fixture.systemPlugins(mode, "project", false)
+        fixture.clearSystemConfiguration()
+        fixture.show()
+      }, mode)
+      const notice = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+      await notice.waitFor()
+      assert.equal(await notice.locator(".plugin-system-attention-scope").innerText(), "Global")
+      await notice.getByRole("button", { name: "Details for codenomad.design", exact: true }).click()
+      await page.locator(".plugin-system-attention-details").waitFor()
+      const paths = await page.locator(".plugin-system-attention-details bdi").allTextContents()
+      assert.ok(paths.includes("/daemon/opencode.jsonc"))
+      assert.ok(!paths.includes("/repo/.opencode/opencode.jsonc"), "available Project writes do not imply Project installation provenance")
+    } finally { await page.close() }
   })
 }

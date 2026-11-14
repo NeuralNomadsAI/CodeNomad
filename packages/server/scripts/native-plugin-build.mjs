@@ -6,4 +6,6 @@ export const nativePluginBuild = {
   format: "esm",
   target: "node22",
   external: ["effect", "@opencode/plugin"],
+  // Native agent/skill files are embedded as text (esbuild already loads `.txt` as text).
+  loader: { ".md": "text" },
 }

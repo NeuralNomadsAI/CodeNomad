@@ -8,13 +8,39 @@
 
 Project tabs, selected conversations and layout belong to a window. OpenCode sessions/messages belong to the shared native OpenCode service: another window can see the same conversation. Closing a project tab closes that project in CodeNomad, not its OpenCode sessions; reopen it to find them again. Another window displaying the same project connection also closes its tab and shows a notification; separately opened tabs of the same folder are unaffected. Closing a whole window, quitting or reloading preserves project connections for restoration; see [Projects](projects.md). Do not use closing windows as proof that an agent or scheduled Mission has stopped.
 
-Native application menus use CodeNomad's interface language once a window has loaded; they show English until then. **Help → About CodeNomad** (also in the macOS application menu) opens **Settings → Info** with the version, updates and diagnostics.
+Native application menus use CodeNomad's interface language once a window has loaded; they show English until then. **Help → About CodeNomad** (also in the macOS application menu) opens **Settings → Info** with the version, updates and diagnostics. **Help → Support CodeNomad** opens the [Support CodeNomad](sponsor.md) page in your browser.
+
+## Desktop launch arguments {#desktop-cli}
+
+Pass these arguments after the **desktop executable** (Tauri or Electron), in a terminal or the **Target** field of a Windows shortcut. Replace the example executable paths with yours.
+
+| Argument | Effect |
+| --- | --- |
+| `--connect-server <server>` | Open a remote CodeNomad server using its HTTP(S) URL, saved name or saved ID. See [connection and sign-in behavior](remote-access.md#saved-servers). |
+| `--folder <path>` | Open an existing project directory. Repeat the argument to open several directories; relative paths use the launch working directory. |
+| `<path> ...` | Open project directories without spelling out `--folder`. **Windows Tauri, when already running:** use `--folder` for every directory. Mixing positional paths with `--folder` also drops the entire folder request. |
+| `--new-window` | Request a new application window, including when another launch would normally focus the existing window. |
+
+`--connect-server=<server>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`; local window restoration is then deferred unless connecting fails. The desktop keeps its local helper backend for coordination.
+
+In **PowerShell**:
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+In a Windows shortcut’s **Target**, put `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (the `&` belongs to PowerShell). On Linux, use the AppImage executable, for example `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+For desktop profiles and configuration, set `CODENOMAD_PROFILE` and `CLI_CONFIG` before launch; see [Data profiles](#data-profiles). Backend listening, TLS and authentication options are in the [server CLI reference](server.md#cli-reference). On Windows Tauri, launch arguments containing `|` are rejected; use a URL or rename the saved server.
 
 ## Preferences and startup restore {#preferences-startup}
 
 1. Open Settings from the window you want to configure. Local desktop entry points focus the single native Preferences window with that opener's project/Location.
 2. In **General**, turn **Restore previous state** on or off.
 3. To forget that window's saved layout, use **Clear saved startup state**. It applies immediately, without a confirmation.
+
+After a crash, restored cost/token counters can show the last saved checkpoint until OpenCode refreshes them. During generation or compaction, counter-only changes wait for the next checkpoint; normal close flushes current counters.
 
 Restore can reopen workspace/SideCar tabs and active sessions, unsent text, scroll positions, panels, window placement and zoom. It is per-window client state, not a copy of the native conversation database. Clearing it removes saved tabs, drafts and layout; it does not delete CodeNomad configuration or OpenCode conversations. Save any important unsent draft elsewhere first.
 

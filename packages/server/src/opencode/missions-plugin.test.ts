@@ -3,14 +3,19 @@ import test from "node:test"
 
 import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin } from "./missions-plugin"
 import { buildAssignmentPrompt } from "../missions/recipes"
-import type { MissionMap } from "../missions/model"
+import type { MissionJsonValue, MissionMap } from "../missions/model"
+import type { MissionsPluginContext } from "./missions-plugin"
+import type { MissionInputTransport, NativeMissionSession } from "../missions/control-types"
+import { resolveMissionCreationDefaults } from "../missions/profile-defaults"
+import { NativeMissionDocumentStore, type MissionDocumentStorage } from "../missions/mission-document-store"
+import { canonicalAuthority } from "../missions/authority-protocol"
 
 test("validates the compact mission tool contracts", () => {
   for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
     assert.equal(parseInspectInput({ start: { objective: "Bounded comparison", template } }).start!.template, template)
   }
   assert.deepEqual(parseInspectInput({ start: { objective: "Fix it", template: "debug" } }), {
-    start: { objective: "Fix it", template: "debug", notes: undefined, taskMode: "native" },
+    start: { objective: "Fix it", template: "debug", notes: undefined },
     missionID: undefined,
   })
   assert.deepEqual(parseDelegateInput({ taskKey: "review-spec", title: "Review", brief: "Check spec", role: "review-spec" }), {
@@ -106,9 +111,10 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   const inspect = tools.find((tool) => tool.name === "inspect")!
   assert.deepEqual((inspect as any).input.properties.start.properties.template.enum, ["custom", "debug", "wayfinder", "delivery", "compare"])
   assert.match((tools.find(tool => tool.name === "report") as any).input.properties.artifact.description, /Compare comparator.*version 1 comparison/)
-  await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
+  const started = JSON.parse((await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
     sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {},
-  })
+  })).content)
+  assert.equal("selection" in started, false, "historical creation without a resolver invents no origins")
   const snapshot = await snapshotHandler!() as { missions: Array<Record<string, unknown>> }
   assert.equal(snapshot.missions.length, 1)
   assert.equal("notes" in snapshot.missions[0], false)
@@ -166,9 +172,10 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   assert.deepEqual(nativeMutations, { create: 0, prompt: 0, synthetic: 0 })
   const replay = JSON.parse((await delegate.execute(declaration, call("replay"))).content)
   assert.deepEqual(replay, { ...declared, disposition: "existing" }, "context response does not mutate the canonical generation or execution")
-  // The exact prompt is rereadable without the declaration's response or the full map.
+  // The exact prompt is rereadable without the declaration's response or the full map,
+  // with the task's reports (none yet).
   const { disposition: _disposition, ...declaredView } = declared
-  assert.deepEqual(JSON.parse((await inspect.execute({ taskKey: "native-work" }, call("reread"))).content), declaredView)
+  assert.deepEqual(JSON.parse((await inspect.execute({ taskKey: "native-work" }, call("reread"))).content), { ...declaredView, reports: [] })
   await assert.rejects(inspect.execute({ taskKey: "missing-work" }, call("missing")), /task not found: missing-work/)
   await assert.rejects(delegate.execute({ ...declaration, brief: "Replace the saved scope" }, call("conflict")), /different contract/)
   const blocked = JSON.parse((await delegate.execute({ taskKey: "blocked-work", title: "Blocked", brief: "Wait for actual evidence", role: "specialist", blockedBy: [declaration.taskKey] }, call("blocked"))).content)
@@ -237,6 +244,142 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   }), /no longer available/)
 })
 
+test("inspect start and prepare return frozen profiles, task mode and origins without rereading defaults", async () => {
+  const values = new Map<string, unknown>(), sessions = new Map<string, NativeMissionSession>([["ses_coordinator", {
+    id: "ses_coordinator", projectID: "project-1", location: { directory: "/repo" },
+  }]])
+  const tools = new Map<string, { execute(input: unknown, context: any): Promise<{ content: string }> }>()
+  let handlers: any, reads = 0, preparations = 0
+  let preferences: unknown = [{ template: "all", profiles: { coordinator: { agent: "lead" }, roles: { specialist: { agent: "worker" } } }, taskMode: "independent" }]
+  const transport: MissionInputTransport = {
+    prompt: async () => assert.fail("Creation never prompts"), synthetic: async () => assert.fail("Creation never resumes"),
+    resolveCreationDefaults: async (_sessionID, input) => { reads++; return resolveMissionCreationDefaults({ ...input, preferences }) },
+    prepare: async (sessionID, input) => {
+      preparations++
+      return handlers.create({ ...input, prepared: true, preparedBy: { missionID: input.missionID, coordinatorSessionID: sessionID } })
+    },
+  }
+  const cleanup = await setupMissionsPlugin({
+    location: { directory: "/repo", project: { id: "project-1", canonical: "/repo" } },
+    storage: {
+      get: async (key: string) => values.get(key),
+      set: async (key: string, value: unknown) => { values.set(key, structuredClone(value)) },
+      scan: async ({ prefix }: { prefix: string }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })) }),
+    },
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => { const session = sessions.get(sessionID); if (!session) throw new Error("Absent"); return session },
+      create: async (input: any) => { const session = { ...input, projectID: "project-1" }; sessions.set(session.id, session); return session },
+      prompt: async () => assert.fail("Creation never prompts"), synthetic: async () => assert.fail("Creation never resumes"),
+      hook: async () => ({ dispose: async () => {} }),
+    },
+    agent: { list: async () => ({ data: ["lead", "worker"].map(id => ({ id, mode: "all" })) }) },
+    model: { list: async () => ({ data: [] }) },
+    tool: { transform: async (callback: any) => { callback({ namespace() {}, add(tool: any) { tools.set(tool.name, tool) } }); return { dispose: async () => {} } } },
+    rpc: { register: async (_definition: unknown, value: unknown) => { handlers = value; return { dispose: async () => {}, events: { emit: async () => {} } } } },
+  } as never, transport)
+  const call = async (name: string, input: unknown, id = name) => JSON.parse((await tools.get(name)!.execute(input, {
+    sessionID: "ses_coordinator", messageID: `msg_${id}`, id: `call_${id}`, progress: async () => {},
+  })).content)
+  try {
+    const start = { objective: "Coordinate", template: "custom" as const, profiles: { coordinator: {} } }
+    const started = await call("inspect", { start }, "start")
+    assert.deepEqual(started.selection, resolveMissionCreationDefaults({ ...start, preferences }))
+    assert.equal("creationDefaults" in started.mission, false, "tool replies expose the selection without its private replay request")
+    assert.deepEqual(started.selection.origins, { coordinator: "explicit", roles: { specialist: "preference" }, taskMode: "preference" })
+    const request = { requestID: "pilot", objective: "Pilot", template: "custom" as const }
+    const prepared = await call("prepare", request)
+    assert.deepEqual(prepared.selection, resolveMissionCreationDefaults({ ...request, preferences }))
+    assert.deepEqual(Object.keys(prepared).sort(), ["disposition", "missionID", "status", "runState", "revision", "selection"].sort())
+    assert.deepEqual([prepared.disposition, prepared.runState, prepared.selection.profiles.coordinator], ["prepared", "prepared", { agent: "lead" }])
+    const bytes = structuredClone([...values])
+    preferences = { invalid: true }
+    assert.deepEqual(await call("inspect", { start }, "start"), started)
+    assert.deepEqual(await call("prepare", request), prepared)
+    assert.equal(reads, 2)
+    assert.equal(preparations, 1)
+    assert.deepEqual([...values], bytes)
+    assert.deepEqual((await call("inspect", { missionID: prepared.missionID })).selection, prepared.selection)
+    assert.equal(reads, 2, "ordinary reads retain stored provenance")
+  } finally { await cleanup() }
+})
+
+for (const workspaceID of [undefined, "workspace-1"]) {
+  test(`RPC create persists the fallback location with workspaceID ${workspaceID ?? "absent"}`, async () => {
+    const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, NativeMissionSession>()
+    const nativeMutations = { create: 0, prompt: 0, synthetic: 0 }
+    const location = { directory: "/repo", ...(workspaceID === undefined ? {} : { workspaceID }) }
+    const storage: MissionsPluginContext["storage"] & MissionDocumentStorage = {
+      get: async key => structuredClone(values.get(key)),
+      set: async (key, value) => { values.set(key, structuredClone(value)) },
+      remove: async key => { values.delete(key) },
+      scan: async ({ prefix }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })) }),
+      compareAndSet: async (key, value, expected, current) => {
+        current()
+        assert.equal((values.get(key) as { revision: number } | undefined)?.revision ?? null, expected)
+        values.set(key, structuredClone(value))
+      },
+    }
+    const documents = new NativeMissionDocumentStore(storage, "project-1", "/repo")
+    let create: Parameters<MissionsPluginContext["rpc"]["register"]>[1]["create"] | undefined
+    const cleanup = await setupMissionsPlugin({
+      location: { ...location, project: { id: "project-1", canonical: "/repo" } }, storage,
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => {
+          const session = sessions.get(sessionID)
+          if (!session) throw new Error("Session not found")
+          return session
+        },
+        create: async (input: Parameters<MissionsPluginContext["session"]["create"]>[0]) => {
+          nativeMutations.create++
+          const session = { ...input, projectID: "project-1" }
+          sessions.set(session.id, session)
+          return session
+        },
+        prompt: async () => { nativeMutations.prompt++; assert.fail("Creation must never prompt") },
+        synthetic: async () => { nativeMutations.synthetic++; assert.fail("Creation must never resume") },
+      },
+      rpc: { register: async (_definition: unknown, handlers: { create: NonNullable<typeof create> }) => {
+        create = handlers.create
+        return { dispose: async () => {}, events: { emit: async () => {} } }
+      } },
+    } as never, undefined, undefined, undefined, undefined, false, undefined, use => use(documents))
+    try {
+      const context = { error: () => assert.fail("Valid creation must succeed") }
+      const input = { requestID: "fallback-create", objective: "Keep this conversation", template: "custom" }
+      for (const invalid of [{ directory: "" }, { directory: "/repo", workspaceID: "" }]) {
+        await assert.rejects(create!({ ...input, expectedCoordinatorLocation: invalid }, context), /Invalid location/)
+      }
+      assert.equal(values.size, 0)
+      assert.deepEqual(nativeMutations, { create: 0, prompt: 0, synthetic: 0 })
+      const first = await create!(input, context) as { mission: MissionMap }
+      assert.equal(first.mission.runState, "prepared")
+      assert.equal(first.mission.document?.state, "paused")
+      assert.deepEqual(first.mission.actors.map(actor => actor.location), [location])
+      const stored = await documents.read(first.mission.id)
+      assert.ok(stored && !("deletedAt" in stored))
+      assert.deepEqual(stored.oneTime?.location, location)
+      assert.equal(stored.state, "paused")
+      assert.equal(stored.firstPlayedAt, null)
+      assert.equal(stored.oneTime?.firstPlay, null)
+      assert.deepEqual(JSON.parse(canonicalAuthority(stored)).oneTime.location, location)
+      const beforeReplay = structuredClone([...values])
+      assert.deepEqual(await create!(input, context), first)
+      assert.deepEqual([...values], beforeReplay)
+      assert.equal(sessions.size, 1)
+      assert.deepEqual(nativeMutations, { create: 1, prompt: 0, synthetic: 0 })
+    } finally { await cleanup() }
+  })
+}
+
+test("invalid plugin locations are refused before registration", async () => {
+  for (const location of [{ directory: "" }, { directory: "/repo", workspaceID: "" }]) {
+    await assert.rejects(setupMissionsPlugin({
+      location: { ...location, project: { id: "project-1", canonical: "/repo" } }, storage: {},
+      rpc: { register: async () => assert.fail("Invalid location must never register") },
+    } as never), /Invalid location/)
+  }
+})
+
 test("failed presence activation disposes partial registrations and fences captured tools", async () => {
   const disposed: string[] = []
   const captured: Array<{ execute(input: unknown, context: unknown): Promise<unknown> }> = []
@@ -252,4 +395,76 @@ test("failed presence activation disposes partial registrations and fences captu
   } as never), /hook failed/)
   assert.deepEqual(disposed.sort(), ["rpc", "tools"])
   await assert.rejects(captured[0].execute({}, {}), /no longer available/)
+})
+
+test("a graceful Pause reaches the coordinator and every ordinary native descendant at each model request", async () => {
+  const values = new Map<string, unknown>()
+  const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
+  let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
+  let lifecycle: ((input: unknown, context: any) => Promise<unknown>) | undefined
+  // Ordinary native sub-agents are never Mission actors: only their ancestry links them.
+  const parents: Record<string, string> = { ses_child: "ses_coordinator", ses_grandchild: "ses_child", ses_great: "ses_grandchild", ses_stranger_child: "ses_stranger" }
+  const reads: string[] = []
+  // Native moves keep the parent edge and change project or Location.
+  const moved: Record<string, { projectID?: string; directory?: string }> = {}
+  const registration = () => ({ dispose: async () => {} })
+  const cleanup = await setupMissionsPlugin({
+    location: { directory: "/repo", project: { id: "project-1", canonical: "/repo" } },
+    storage: {
+      get: async (key: string) => values.get(key),
+      set: async (key: string, value: unknown) => { values.set(key, structuredClone(value)) },
+      remove: async (key: string) => { values.delete(key) },
+      scan: async ({ prefix }: { prefix: string }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })) }),
+    },
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => {
+        reads.push(sessionID)
+        return { id: sessionID, projectID: moved[sessionID]?.projectID ?? "project-1", title: sessionID, location: { directory: moved[sessionID]?.directory ?? "/repo" }, ...(parents[sessionID] ? { parentID: parents[sessionID] } : {}) }
+      },
+      create: async () => { throw new Error("not used") }, prompt: async () => {}, synthetic: async () => {},
+      hook: async (_name: "context", callback: typeof contextHook) => { contextHook = callback; return registration() },
+    },
+    tool: { transform: async (callback: (draft: any) => void) => { callback({ namespace: () => {}, add: (tool: any) => tools.push(tool) }); return registration() } },
+    rpc: { register: async (_definition: unknown, handlers: { lifecycle(input: unknown, context: any): Promise<unknown> }) => {
+      lifecycle = handlers.lifecycle
+      return { ...registration(), events: { emit: async () => {} } }
+    } },
+  } as never)
+  try {
+    await tools.find(tool => tool.name === "inspect")!.execute({ start: { objective: "Coordinate", template: "custom" } },
+      { sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {} })
+    const context = async (sessionID: string) => {
+      const event = { sessionID, system: [] as Array<{ type: "text"; text: string }>, tools: {} as Record<string, unknown> }
+      await contextHook!(event)
+      return event.system.map(part => part.text).join("\n")
+    }
+    for (const id of ["ses_child", "ses_great"]) assert.doesNotMatch(await context(id), /paused/, "a running mission adds nothing to ordinary sub-agents")
+    // Once warm, a running Mission's sub-agents and unrelated families need no native read.
+    const warm = reads.length
+    for (const id of ["ses_great", "ses_stranger_child"]) await context(id)
+    await context("ses_stranger_child")
+    assert.deepEqual(reads.slice(warm).filter(id => id !== "ses_stranger_child" && id !== "ses_stranger"), [], "cached parents serve later requests")
+
+    const mission = JSON.parse((await tools.find(tool => tool.name === "inspect")!.execute({}, {
+      sessionID: "ses_coordinator", messageID: "msg_2", id: "call_2", progress: async () => {} })).content).mission as MissionMap
+    const result = await lifecycle!({ missionID: mission.id, requestID: "pause-gracefully", expectedRevision: mission.revision, action: "pause", graceful: true },
+      { error: (type: string, message: string, data: unknown) => ({ type, message, data }) }) as { mission: MissionMap }
+    assert.equal(result.mission.control?.graceful, true)
+
+    assert.match(await context("ses_coordinator"), /paused by the user[\s\S]*end your turn\. Wait for the user's Play action/)
+    for (const id of ["ses_child", "ses_grandchild", "ses_great"]) {
+      assert.match(await context(id), new RegExp(`Mission ${mission.id} is paused by the user[\\s\\S]*return what you have to your parent`), id)
+    }
+    assert.doesNotMatch(await context("ses_stranger_child"), /paused/, "another conversation's sub-agent is untouched")
+    // A wake-up or the next step of the same sub-agent still receives it.
+    assert.match(await context("ses_great"), /paused by the user/)
+    // A moved family member no longer belongs to the admitted family, even with warm parents.
+    moved.ses_child = { directory: "/other-worktree" }
+    for (const id of ["ses_child", "ses_grandchild", "ses_great"]) assert.doesNotMatch(await context(id), /paused/, `${id} below a moved child`)
+    delete moved.ses_child
+    moved.ses_grandchild = { projectID: "foreign-project" }
+    assert.doesNotMatch(await context("ses_great"), /paused/, "an ancestor moved to another project breaks the family")
+    delete moved.ses_grandchild
+    assert.match(await context("ses_great"), /paused by the user/)
+  } finally { await cleanup() }
 })

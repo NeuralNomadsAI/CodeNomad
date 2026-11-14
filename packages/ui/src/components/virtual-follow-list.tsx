@@ -1,10 +1,11 @@
 import { Show, batch, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup, untrack } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { trackHeightDelta } from "../lib/height-delta"
+import { flushFrameBatchedMounts } from "../lib/frame-batch-schedule"
 import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
-import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollObservationGate, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -169,6 +170,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
 
   const scrollController = new VirtualScrollController(initialAutoScroll())
+  // Scroll events observe the DOM at most once per animation frame: a
+  // settling list emits one per rendering update (every programmatic write,
+  // each of Virtua's measurement compensations, the follow pin), and each
+  // observation reads layout and can write again. Direct entries (a gesture
+  // at a clamped edge, content-rendered flushes, viewport resizes) keep their
+  // synchronous observation and consume the frame slot.
+  const scrollObservation = new ScrollObservationGate(() => updateScrollStateFromDom(), {
+    schedule: (callback) => requestAnimationFrame(callback),
+    cancel: (handle) => cancelAnimationFrame(handle),
+  })
   // Virtua measures and compensates the header like any row. It is created
   // once: a Virtua remount moves it into its new first row instead of
   // recreating it (focus and its components' state survive).
@@ -243,6 +254,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     readerSettlement.cancel()
     invalidateScrollRestore()
     endBottomPin("interrupted")
+    scrollObservation.cancelPending()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     pendingContentRenderedFrame = null
   }
@@ -320,7 +332,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // No list positioning outlives this: see `writeScroll`.
     // At a clamped edge a wheel/key produces no scroll event. The gesture
     // itself must be able to request the next historical window.
-    if (direction) updateScrollStateFromDom()
+    if (direction) scrollObservation.observeNow()
   }
 
   function hasProgrammaticScrollIntent() {
@@ -533,14 +545,30 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     runBottomPinFrame()
   }
 
+  /** The anchor an immediate jump to the top holds, told apart from in-place reveals. */
+  let topHold: { key: string; offset: number } | undefined
+
   function performScrollToTop(immediate: boolean, source: ScrollReason) {
     writeScroll(source, immediate ? { type: "dom", top: 0, record: true } : { type: "native", top: 0, behavior: "smooth", record: false })
+    if (!immediate) return
+    // Like a key jump, the landing is held while rows are measured: right after a
+    // window replacement Virtua can still apply a size compensation computed
+    // against its previous offset, which would carry the reader back down.
+    const handle = virtuaHandle(), first = retiredCount()
+    const item = virtualItems()[first]
+    if (handle && item !== undefined) {
+      topHold = { key: props.getKey(item, first), offset: handle.getItemOffset(first + HEADER_ROWS) }
+      readerSettlement.hold(topHold)
+    }
   }
 
   function performScrollToKey(key: string, source: ScrollReason) {
     const select = keyJumpSelect
     const index = findLiveIndex(key)
     if (index === -1) return
+    // The jump lands on final layout: deferred mounts still queued around the
+    // target would drift it while the settlement holds it.
+    flushFrameBatchedMounts()
     // The jump lands at once on Virtua's estimate; the reader settlement then
     // holds the row (or its selected block) at the top once it is measured, for
     // the alignment window only, like an in-place reveal.
@@ -610,7 +638,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function handleScroll() {
     followRollAnchor()
-    updateScrollStateFromDom()
+    scrollObservation.request()
     props.onScroll?.()
 
     const handle = virtuaHandle()
@@ -748,7 +776,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     else if (!bottomPin?.settle && !maybeEscapeForHoldTrigger()) {
       dispatchFollowEvent({ type: "content-grew", canPinToBottom: autoScroll() && !externalSuspendAutoPinToBottom() })
     }
-    updateScrollStateFromDom()
+    scrollObservation.observeNow()
   }
 
   function captureScrollSnapshot(): VirtualFollowScrollSnapshot | undefined {
@@ -1003,7 +1031,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       lastPrimaryPointerY = null
       if (wasDragging) {
         programmaticScrollUntil = 0
-        updateScrollStateFromDom()
+        scrollObservation.observeNow()
       }
     }
     let lastTouchY: number | null = null
@@ -1052,10 +1080,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
       markUserScrollIntent(intent.direction, intent.distance)
     }
-    // Moving focus elsewhere (Tab, assistive technology) ends an in-place reveal's hold.
+    // Moving focus elsewhere (Tab, assistive technology) ends an in-place reveal's
+    // hold; the top landing reveals nothing, so any focus move ends it.
     const handleFocusIn = (event: FocusEvent) => {
       const held = readerSettlement.held()
-      if (held && !itemElements.get(held.key)?.contains(event.target as Node)) readerSettlement.cancel()
+      if (held && (held === topHold || !itemElements.get(held.key)?.contains(event.target as Node))) readerSettlement.cancel()
     }
     const detachGestureRouting = attachScrollGestureRouting(element, handleWheelIntent)
     element.addEventListener("focusin", handleFocusIn)
@@ -1122,6 +1151,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const key = target.closest<HTMLElement>("[data-virtual-follow-key]")?.dataset.virtualFollowKey
     if (!element || !element.contains(target) || key === undefined) return
     supersedePositioning()
+    // The alignment targets final layout: deferred mounts still queued in the
+    // target's row would move the held element over the following frames.
+    flushFrameBatchedMounts()
     dispatchFollowEvent({ type: "set-follow", enabled: false }, "align-element")
     // The virtualizer's resize compensation and late layout (fonts, lazy cards) can move
     // the target after this correction: the reader settlement re-measures it on every
@@ -1327,13 +1359,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (!isActive() || scrollController.snapshot().restoring) return
       if (canPinFollowBottom()) {
         pinFollowBottom("viewport-resize")
-      } else if (!readerSettlement.held()) {
+      } else if (!readerSettlement.held() && element.scrollTop > TOP_SCROLL_EPSILON_PX) {
+        // A reader at the start stays there; others keep the content above the composer.
         const before = element.scrollTop
         writeScroll("viewport-resize", { type: "dom", top: getBottomAnchoredViewportOffset(before, heightDelta), record: true })
         // The rolled reader's place follows the bottom-anchored (and clamped) content.
         if (rollReader) rollReader.offset -= element.scrollTop - before
       }
-      updateScrollStateFromDom()
+      scrollObservation.observeNow()
     })
     // An inactive or restoring list only rebases. A held element re-aligns itself on its next frame.
     const observer = new ResizeObserver(() => { viewportHeight.update(isActive() && !scrollController.snapshot().restoring) })

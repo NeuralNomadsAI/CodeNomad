@@ -40,6 +40,10 @@ async function bootstrap() {
     ])
     await initializeClientState()
     await installNativeStartupStateCommandHandler(runStartupStateCommand).catch(() => undefined)
+    const [{ installMemoryCleanupHandler }, { runMemoryCleanup }] = await Promise.all([
+      import("./lib/native/memory-cleanup"), import("./stores/agent-memory-cleanup"),
+    ])
+    await installMemoryCleanupHandler(runMemoryCleanup)
     RootComponent = appModule.default
   }
 

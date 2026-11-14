@@ -32,6 +32,7 @@ async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDir
     result: { data: [complete(root)] } as unknown, onFetch: () => {}, onOwnership: () => {},
   }
   const workspace = { path: root } as NonNullable<ReturnType<PendingRequestsRouteDeps["workspaceManager"]["get"]>>
+  let bootstrap = { directory: root }
   const connection = {
     endpoint: { url: "http://isolated-native.invalid" },
     client: new Proxy({}, { get() { throw new Error("No native location/permission/form/session list warming permitted") } }),
@@ -56,7 +57,7 @@ async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDir
   const manager: PendingRequestsRouteDeps["workspaceManager"] = {
     get: (id) => id === "fixture" && state.present ? workspace : undefined,
     getSharedServiceConnection: async () => connection,
-    getServiceLocation: () => ({ directory: state.bootstrap }),
+    getServiceLocation: () => { if (bootstrap.directory !== state.bootstrap) bootstrap = { directory: state.bootstrap }; return bootstrap },
     getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
     getServiceDirectoryForPath: async (_id, candidate) => state.allowed.has(candidate) ? candidate : undefined,
     getWorktreeIdentityForPath: async (_id, candidate) => state.allowed.has(candidate) ? root : undefined,
@@ -69,7 +70,7 @@ async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDir
     },
   }
   const app = Fastify(logs ? { logger: { stream: { write: (line: string) => { logs.push(line) } } } } : {})
-  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) }, ...deps })
+  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { captureDisplay: directories => () => !directories.some(identity => state.blocked || state.blockedIdentities.has(identity)), isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) }, ...deps })
   const url = (directories = [root], optional: string[] = []) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams([
     ...directories.map((directory) => ["directories", directory]), ...optional.map((directory) => ["optionalDirectories", directory]),
   ])}`
@@ -80,7 +81,7 @@ test("raw pending adapter retains the bound service authentication and fails clo
   const h = await harness()
   try {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "isolated-fixture" } }
-    rememberRuntime(endpoint, { version: "2.1.2", pid: 123, discovery: "info" })
+    rememberRuntime(endpoint, { version: "2.3.0", pid: 123, discovery: "info" })
     h.connection.endpoint = endpoint
     h.connection.fetch = createRuntimeFetch(endpoint, async (input, init) => {
       h.state.calls.push(new URL(String(input)))
@@ -139,7 +140,7 @@ test("cold coverage and idle/global pending recover through only the fixed loade
   } finally { await h.cleanup() }
 })
 
-test("root recovery resolves its Git identity once before native read and once before publication", async () => {
+test("root recovery resolves its Git identity at admission, after preparation and before publication", async () => {
   const h = await harness()
   try {
     const phases: string[] = []
@@ -151,7 +152,24 @@ test("root recovery resolves its Git identity once before native read and once b
     h.state.result = { data: [complete(h.root, [emptyLocation(h.root)])] }
     const response = await h.app.inject({ url: h.url() })
     assert.equal(response.statusCode, 200, response.body)
-    assert.deepEqual(phases, ["before", "after"], "Do not repeat serial Git authority reads within either phase")
+    assert.deepEqual(phases, ["before", "before", "after"], "One root identity check per authority phase")
+  } finally { await h.cleanup() }
+})
+
+test("candidate authority withdrawn during preparation admits no snapshot dispatch", async () => {
+  const h = await harness()
+  try {
+    h.manager.desktopPluginsReady = async target => {
+      assert(target)
+      assert.equal(target?.connection, h.connection)
+      assert.deepEqual(target?.location, { directory: h.root })
+      target.assertCurrent()
+      h.state.allowed.delete(h.subdirectory)
+    }
+    const response = await h.app.inject({ url: h.url([h.subdirectory]) })
+    assert.equal(response.statusCode, 403)
+    assert.deepEqual(response.json().directories, [{ directory: h.subdirectory, status: "error", reason: "changed" }])
+    assert.equal(h.state.calls.length, 0)
   } finally { await h.cleanup() }
 })
 
@@ -799,10 +817,10 @@ test("fresh pre-RPC classification preserves mixed coverage and never fences or 
   } finally { await h.cleanup() }
 })
 
-// One admission pass precedes the native read (no repeated pre-RPC Git reads);
-// a later withdrawal withholds only that candidate's coverage and capability.
-test("candidate alias, identity and host withdrawal after admission withhold only that candidate", async () => {
-  for (const fault of ["alias", "identity", "host"] as const) {
+// Authority is revalidated after preparation and after native IO. A withdrawal
+// withholds only that candidate's coverage and capability.
+test("candidate alias, identity and host withdrawal fence its dispatch and publication", async () => {
+  for (const phase of ["preparation", "native IO"] as const) for (const fault of ["alias", "identity", "host"] as const) {
     const h = await harness()
     try {
       const alias = process.platform === "win32" ? h.subdirectory.toUpperCase().replaceAll("\\", "/") : `${h.subdirectory}/.`
@@ -810,18 +828,20 @@ test("candidate alias, identity and host withdrawal after admission withhold onl
       const identity = h.manager.getWorktreeIdentityForPath
       const host = h.manager.getHostPathForServicePath
       let mappings = 0, identities = 0, hosts = 0
+      const failAt = phase === "preparation" ? 2 : 3
       h.manager.getServiceDirectoryForPath = async (id, directory) => directory === alias
-        ? ++mappings === 2 && fault === "alias" ? undefined : h.subdirectory : translate(id, directory)
-      h.manager.getWorktreeIdentityForPath = async (id, directory) => directory === h.subdirectory && ++identities === 2 && fault === "identity"
+        ? ++mappings === failAt && fault === "alias" ? undefined : h.subdirectory : translate(id, directory)
+      h.manager.getWorktreeIdentityForPath = async (id, directory) => directory === h.subdirectory && ++identities === failAt && fault === "identity"
         ? undefined : identity(id, directory)
-      h.manager.getHostPathForServicePath = async (id, directory) => directory === h.subdirectory && ++hosts === 2 && fault === "host"
+      h.manager.getHostPathForServicePath = async (id, directory) => directory === h.subdirectory && ++hosts === failAt && fault === "host"
         ? undefined : host(id, directory)
-      h.state.result = { data: [complete(h.root), complete(h.subdirectory, [{ location: { directory: h.subdirectory }, permissions: [permission], forms: [form] }])] }
+      h.state.result = { data: [complete(h.root), ...(phase === "preparation" ? [] : [complete(h.subdirectory, [{ location: { directory: h.subdirectory }, permissions: [permission], forms: [form] }])])] }
       const response = await h.app.inject({ url: h.url([h.root, alias]) })
       assert.equal(response.statusCode, 200, response.body)
       assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === alias), { directory: alias, status: "error", reason: "changed" }, fault)
       assert.equal(response.body.includes('"action"'), false, "a withdrawn candidate never publishes its requests")
       assert.equal(h.state.calls.length, 1)
+      assert.deepEqual(h.state.batches, [phase === "preparation" ? [h.root] : [h.root, h.subdirectory]])
       observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
       assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "a withdrawn candidate cannot verify capability")
     } finally { await h.cleanup() }
@@ -853,7 +873,7 @@ test("root mapping and identity withdrawal after asynchronous candidate preparat
       const response = await h.app.inject({ url: h.url([h.subdirectory]) })
       assert.equal(response.statusCode, 503, response.body)
       assert.equal(response.body.includes('"locations"'), false)
-      assert.equal(h.state.calls.length, 1)
+      assert.equal(h.state.calls.length, 0, "the pre-dispatch root revalidation observes withdrawal")
       observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
       assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "a withdrawn root cannot verify capability")
     } finally { await h.cleanup() }
@@ -901,7 +921,7 @@ for (const phase of ["admission", "supported post-RPC", "unsupported post-RPC"] 
     let request: Promise<{ statusCode: number; body: string; json(): any }> | undefined
     let hostRead: Promise<string | undefined> | undefined
     let settled = false, held = false, hostReads = 0, identityReads = 0, nextBatchReads = 0
-    const failRead = phase === "admission" ? 1 : 2
+    const failRead = phase === "admission" ? 1 : 3
     try {
       const bad = join(h.root, "withdrawn-custody-peer")
       await mkdir(bad)
@@ -946,7 +966,7 @@ for (const phase of ["admission", "supported post-RPC", "unsupported post-RPC"] 
       await new Promise<void>(resolve => setTimeout(resolve, 100))
       assert.equal(held, true)
       assert.equal(settled, false, "The failed request must retain custody until the admitted host read settles")
-      assert.equal(h.state.calls.length, failRead === 2 ? 1 : 0)
+      assert.equal(h.state.calls.length, phase === "admission" ? 0 : 1)
       assert.equal(nextBatchReads, failRead - 1, "A failing candidate's batch must settle before a later ownership batch")
       release.resolve()
       const response = await request
@@ -959,7 +979,7 @@ for (const phase of ["admission", "supported post-RPC", "unsupported post-RPC"] 
         for (const directory of aliases) assert.equal(entries.find((entry: any) => entry.directory === directory)?.status, "ok")
       }
       assert.equal(h.state.calls.length, 1)
-      assert.equal(nextBatchReads, 2, "admission and final revalidation each read the later batch once")
+      assert.equal(nextBatchReads, 3, "admission, post-preparation and final revalidation each read the later batch once")
       observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
       assert.equal(deferPendingDiscovery(h.connection, { loadedOnly: true }), phase !== "admission", "only post-admission failures withhold capability")
     } finally {

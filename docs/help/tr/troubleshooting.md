@@ -42,7 +42,7 @@ Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa,
 ## OpenCode çalışma zamanı ve WSL {#opencode-runtime}
 
 1. **Preferences → OpenCode** öğesini açın ve **OpenCode sürümü** kartını (kurulu sürüm ve çalışan hizmet durumu), ardından **OpenCode Binary** altındaki seçili yürütülebilir dosyayı kontrol edin.
-2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.1.2**; önerilen/doğrulanan: **2.2.1**.
+2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.3.0**; önerilen/doğrulanan sürüm: **2.3.0**.
 3. Kurulu CLI, çalışan hizmetten farklıysa, paylaşılan hizmetin yeniden başlatılıp başlatılmayacağına açıkça karar verin.
 
 **OpenCode hizmetini yeniden başlat**, **Sorun giderme** altında mevcuttur ve onay gerektirir. Bağlı her istemcideki aktif çalışmayı kesintiye uğratır ancak oturum geçmişini korur. Yapılandırmanın yeniden yüklenmesi ayrı bir eylemdir: süreci korur ancak yüklenen Konumları yeniden oluşturur ve bekleyen soruları/izinleri iptal eder. Zararsız bir yenileme de değildir.
@@ -73,12 +73,15 @@ Eşleştirme bağlantıları tek kullanımlıktır ve kısa ömürlüdür; doğr
 
 ## Sağlayıcı, eklenti ve uzantı durumu {#providers-and-addons}
 
+**Tam zaman çizelgesi kullanılamıyor** ile birlikte `codenomad-session-pruning` eklentisi başarısız görünüyorsa OpenCode günlüğündeki yükleme hatasını inceleyin. Bu eklenti, tam geçmişte gezinmeyi ve bekleyen soru/izin kurtarmayı sağlar. Eklenti başarıyla yüklendikten sonra zaman çizelgesini yeniden deneyin; oturum verilerinizi koruyun.
+
 | Sorun | Kurtarma |
 | --- | --- |
 | Yanlış sağlayıcı hesabı/kota | Seçilen yerel hesabı ve **Kullanım** öğesini kontrol edin. Kota ekranı bir belirteç/maliyet toplamı değildir. Belirsiz bir hesap değişikliğinden sonra yenileyin; seçim o hizmetin diğer istemcilerini etkileyebilir. |
 | Süresi dolmuş harici mülkiyetli OAuth | OpenCode, Claude Code veya ilgili kimlik bilgisi sahibi aracılığıyla tekrar oturum açın. CodeNomad yenileme jetonlarını değiştirmez. |
 | Otomatik hesap seçimi geçiş yapmıyor | Özelliğin açık ve hesabın uygun olduğunu, mevcut kotanın tamamen dolduğunu kontrol edin. Bu, devam eden isteğe müdahale veya hemen yeniden yürütme değil, kabul öncesi ilkedir. |
 | Eklenti durumu eski görünüyor | **Plugin denetimlerini yenile** öğesini kullanın ve eklenti ipucunun kapsamını/hedefini inceleyin; çalışma zamanı aktivasyonu yerel yenilemeyi bekleyebilir. Belirsiz bir yazmayı tekrar tekrar değiştirmeyin. |
+| Eklenen eklenti başarısız oldu veya **Onaylanmadı** gösteriyor | OpenCode ana makinesinden paket adını, sürümü ve kayıt defteri erişimini denetleyin. Başarısız bir kurulumda, eklenti araç ipucundaki hata referansını OpenCode günlüğünde arayın. **Onaylanmadı** devre dışı bir eklenti için de görünür. Eklentiyi kaldırmak, indirilen paketi OpenCode önbelleğinde bırakır. |
 | **Görev Kontrolü kullanılamıyor** | Belirtilen nedeni izleyin. OpenCode Görevler eklentisini yüklemediyse yenileyin, sorun sürerse **OpenCode yapılandırmasını yeniden yükle** eylemini kullanın; eklenti yüklenemediyse hatasını Eklentiler listesinde okuyun; sunucu yerel Görevler bağlantısını açamadıysa sunucu günlüğünü kontrol edin, çünkü OpenCode'u yeniden yüklemek işe yaramaz. Görevler bağımsız sunucuda da çalışır. |
 | Yüklü uzantı eksik | Panel özelleştirmesinde tek etkinleştirme onay kutusunu işaretleyin. Kurulum/değiştirme işlemi, siz açıkça etkinleştirip gerekli onayı onaylayana kadar onu devre dışı bırakır. |
 | Uzantı öğeleri reddedildi | Geçerli bağlı oturum için API 2 varlık okuma iznini onaylayın. Bir uzantı yüklemek, rastgele dosyaları/geçmişi okuma izni değildir. |
@@ -95,8 +98,8 @@ Bekleyen istek kurtarma işlemi tamamlanmadıysa CodeNomad, eksik kapsamı boş 
 
 ## Günlükler ve güvenli tanılama {#diagnostics}
 
-1. Durumunu incelemek için **Instance Bilgisi** öğesini açın; **Sunucu log'larını göster** mevcut çıktıyı ortaya çıkarır.
+1. **Ayarlar → OpenCode → OpenCode loglarını görüntüle** yolunu açın. Seçilen yürütme sunucusunun genel `opencode.log` dosyası `opencode debug paths log` ile bulunur. Taşınabilir, modal olmayan pencere, arayüzün geri kalanını kullanmanıza izin verir. En fazla son 128 KiB gösterilir; **Yenile** dosyayı tekrar okur. Loglar mesajlardan ve model isteklerinden ayrı kalır.
 2. **Preferences → OpenCode** bölümünde amaçlanan **Varsayılan log seviyesi** öğesini yalnızca daha fazla ayrıntıya ihtiyaç duyulduğunda seçin. Bağımsız CodeNomad günlük kaydı için [sunucu CLI günlük kaydı seçenekleri](server.md)'yi kullanın.
 3. **Ayarlar → Bilgi → Tanılama** öğesini açın ve **Hata bildir**, **Panoya kopyala** veya **.txt indir** öğesini kullanın.
 
-Günlüğe kaydetme ayrıntıları yolları, çıktıları ve uygulama verilerini ortaya çıkarabilir. Günlükleri/yakalamaları paylaşmadan önce kimlik bilgilerini, eşleştirme bağlantılarını, ağ adreslerini, özel yolları ve konuşma içeriğini çıkarın. Tam teşhis raporu yolları/adresleri içerir; önceden doldurulmuş hata formu bunları kasıtlı olarak hariç tutar. Bkz. [Destek](support.md#report-a-bug).
+Günlüğe kaydetme ayrıntıları yolları, çıktıları ve uygulama verilerini ortaya çıkarabilir. Günlükleri/yakalamaları paylaşmadan önce kimlik bilgilerini, eşleştirme bağlantılarını, ağ adreslerini, özel yolları ve konuşma içeriğini çıkarın. Tam teşhis raporu yolları/adresleri içerir; önceden doldurulmuş hata formu bunları kasıtlı olarak hariç tutar. Bkz. [Hata bildirin](support.md#report-a-bug).

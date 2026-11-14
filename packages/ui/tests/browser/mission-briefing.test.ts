@@ -3,13 +3,14 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap, MissionReport } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-navigation"
-import { inlineMissionEntry, missionEntryStatus } from "./mission-actions"
+import { expandRow, inlineMissionEntry, missionEntryStatus, missionMenuItem, missionMenuItemState, missionToolbar } from "./mission-actions"
 import { missionReadFixture } from "./mission-read-fixture"
+import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -59,11 +60,11 @@ async function setup(locale = "fr-FR") {
     if (request.method() !== "GET") writes.push({ path: pathname, body: request.postData() ? request.postDataJSON() : undefined })
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     if (pathname.includes("/instructions/") && request.method() !== "GET") return route.fulfill({ status: 204, body: "" })
-    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: values,
+    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(values),
       generatedAt: NOW + 10000, discardedEvents: 0, activity: { generatedAt: NOW + 10000, missions: values.map(value => ({ missionId: value.id,
         actors: [{ sessionId: value.coordinatorSessionId, state: "idle-without-report" }] })) } } })
-    // The coordinator message's fresh read of its one mission.
-    const read = missionReadFixture(pathname, request.method(), values as never)
+    // The coordinator message's fresh read of its one mission, and the readers' bodies.
+    const read = missionReadFixture(pathname, request.method(), values as never) ?? missionContentFixture(request.url(), request.method(), values as never)
     if (read) return route.fulfill({ json: read })
     if (/\/session\/ses_[AB]$/.test(pathname)) return route.fulfill({ json: { data: { id: pathname.split("/").pop(), projectID: "project",
       title: "Coordinateur mobile", slug: "coordinator", version: "1", agent: "build", model: { id: "native", providerID: "native" },
@@ -76,7 +77,7 @@ async function setup(locale = "fr-FR") {
   await page.goto(url, { timeout: 60000 })
   await choose(page, TITLE)
   const refresh = async () => {
-    const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+    const response = waitForMissionPanelRefresh(page)
     await page.getByRole("button", { name: /^(Actualiser la carte de mission|Refresh mission map)$/ }).click()
     await response
   }
@@ -84,23 +85,27 @@ async function setup(locale = "fr-FR") {
 }
 /** Select through the persistent inline list (locale-independent; the picker field's name is localized). */
 async function choose(page: Page, title: string) {
-  await (await inlineMissionEntry(page, title)).click()
+  const entry = await inlineMissionEntry(page, title)
+  await entry.click()
+  // A click only selects the row; its chevron shows the detail, as in the session list.
+  await expandRow(entry)
   await card(page).waitFor()
 }
 // The selected Mission's detail is a separate section below the picker; request
-// feedback stays under its row and all prose opens in the central reader.
+// feedback stays in the persistent header and all prose opens in the central reader.
 const card = (page: Page) => page.locator("section.mission-detail")
-const feedback = (page: Page) => card(page).locator(".mission-briefing-feedback")
-const readAll = (page: Page) => card(page).locator(".mission-overview-toggle")
+const feedback = (page: Page) => page.locator(".mission-picker-selection-actions .mission-briefing-feedback")
+const readAll = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const reader = (page: Page) => page.locator(".mission-reader")
 const prompts = (writes: Array<{ path: string; body: any }>) => writes.filter(write => write.path.endsWith("/prompt"))
-/** The briefing request is a text button below the toolbar; waiting requests relabel and disable it. */
-const requestButton = (page: Page) => card(page).locator(".mission-action-request")
+/** The briefing request is an overflow-menu item; waiting requests relabel and disable it. */
 async function requestUpdate(page: Page) {
-  await card(page).getByRole("button", { name: REQUEST, exact: true }).click()
+  const item = await missionMenuItem(page, "request")
+  assert.equal((await item.innerText()).trim(), REQUEST)
+  await item.click()
 }
 async function canRequest(page: Page): Promise<boolean> {
-  return await requestButton(page).count() > 0 && await requestButton(page).isEnabled()
+  return (await missionMenuItemState(page, "request")).enabled
 }
 function publish(value: MissionMap, requestID: string) {
   value.briefing = { id: `briefing-${value.id}-${requestID}`, requestID, basedOnRevision: value.revision, basedOnUpdatedAt: value.updatedAt,
@@ -118,14 +123,13 @@ test("existing mobile project keeps a prose-free detail and exact current result
     assert.equal(await card(page).locator("p, .mission-result-text, .mission-more").count(), 0)
     assert.equal(await card(page).getByText(/%|Point du coordinateur|tâches terminées/).count(), 0)
     const tree = card(page).locator(".mission-tree")
-    assert.equal(await tree.locator(".mission-disclosure-trigger > span").textContent(), "Tâches")
-    assert.deepEqual(await tree.locator("li[data-task-key]").evaluateAll(rows => rows.map(row => [(row as HTMLElement).dataset.taskKey, (row as HTMLElement).dataset.state])),
+    assert.equal(await tree.getAttribute("aria-label"), "Tâches (4)")
+    assert.deepEqual(await tree.locator(".mission-tree-node[data-task-key]").evaluateAll(rows => rows.map(row => [(row as HTMLElement).dataset.taskKey, (row as HTMLElement).dataset.state])),
       [["xcode", "done"], ["android-boot", "blocked"], ["old-xcode", "retired"], ["compile-ios", "waiting"]])
     assert.equal(await tree.locator('[data-task-key="compile-ios"] .sr-only').textContent(), "En attente")
     assert.equal(await tree.locator('[data-task-key="android-boot"] .sr-only').textContent(), "Bloquée")
     for (const text of ["Le démarrage Android attend la quantité de mémoire requise.", "Ancien obstacle : Xcode absent."])
       assert.equal(await page.locator(".mission-control").getByText(text, { exact: true }).filter({ visible: true }).count(), 0)
-    assert.equal(await page.locator(".mission-needs").count(), 0)
     // Its coordinator is observed idle without its report while nothing else runs.
     assert.match(await missionEntryStatus(page, TITLE), /^Interrompue · /)
     assert.equal(await page.locator(".mission-picker").getByText("Active", { exact: true }).count(), 0)
@@ -200,8 +204,7 @@ test("a freshly paused mission fences the request without resuming or sending it
   const { page, values, writes } = await setup()
   try {
     // Pause lands after the toolbar offered the request: admission's fresh read must fence it.
-    const item = requestButton(page)
-    await item.waitFor()
+    const item = await missionMenuItem(page, "request")
     values[0].runState = "paused"
     await item.click()
     await feedback(page).getByRole("alert").waitFor()
@@ -219,7 +222,7 @@ test("the panel has no coordinator field; the toolbar's Open conversation reache
     assert.equal(await feedback(page).count(), 0)
     assert.equal(await canRequest(page), true)
     assert.equal((await page.evaluate(() => window.missionNavigation.snapshot())).selectedSession, "ses_B")
-    await card(page).getByRole("button", { name: "Ouvrir la conversation", exact: true }).click()
+    await missionToolbar(page).getByRole("button", { name: "Ouvrir la conversation", exact: true }).click()
     await page.waitForFunction(() => window.missionNavigation.snapshot().selectedSession === "ses_A")
     assert.ok(!writes.some(write => write.path.includes("/missions/")))
     assert.deepEqual(errors, [])
@@ -289,8 +292,8 @@ test("seen exact response remains acknowledged when a later briefing supersedes 
     await page.locator(".mission-reader").getByText(values[0].summary, { exact: true }).waitFor()
     assert.equal(await reader(page).getByText(values[0].briefing!.summary, { exact: true }).count(), 0, "a terminal summary takes precedence")
     // A terminal Mission offers no lifecycle control: the toolbar keeps them in place, disabled.
-    assert.equal(await card(page).locator(".mission-action-bar button").first().isDisabled(), true)
-    assert.equal(await card(page).locator(".mission-action-bar button").nth(1).isDisabled(), true)
+    assert.equal(await missionToolbar(page).locator("button").first().isDisabled(), true)
+    assert.equal(await missionToolbar(page).locator("button").nth(1).isDisabled(), true)
     assert.equal(await canRequest(page), false)
     assert.equal(prompts(writes).length, 1)
   } finally { await page.close() }

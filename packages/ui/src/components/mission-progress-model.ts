@@ -1,15 +1,15 @@
-import type { MissionActorActivity, MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
+import type { MissionActorActivity, MissionPanelMap, MissionPanelReport, MissionPanelTask } from "../../../server/src/api-types"
 
 /** Recorded results, not guesses from titles, prose, ancestry or admission. */
-export function missionReports(mission: MissionMap): MissionReport[] {
-  const reports = new Map<string, MissionReport>()
+export function missionReports(mission: MissionPanelMap): MissionPanelReport[] {
+  const reports = new Map<string, MissionPanelReport>()
   // History copies must not overwrite the reducer's authoritative current copy.
   for (const report of [...mission.reports, ...mission.tasks.flatMap(task => task.lateReports ?? []),
     ...mission.tasks.flatMap(task => task.report ? [task.report] : [])]) reports.set(report.id, report)
   return [...reports.values()].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id))
 }
 
-export function missionTaskReport(_mission: MissionMap, task: MissionTask): MissionReport | undefined {
+export function missionTaskReport(_mission: MissionPanelMap, task: MissionPanelTask): MissionPanelReport | undefined {
   // Absence is authoritative too: the historical report list cannot settle new work.
   const report = task.report
   if (!report || report.late || report.taskKey !== task.key || task.replacedByTaskKey) return undefined
@@ -21,20 +21,20 @@ export function missionTaskReport(_mission: MissionMap, task: MissionTask): Miss
 }
 
 /** Retained source records stay readable without becoming the current result. */
-export function missionTaskHistory(mission: MissionMap, task: MissionTask): MissionReport[] {
+export function missionTaskHistory(mission: MissionPanelMap, task: MissionPanelTask): MissionPanelReport[] {
   const current = missionTaskReport(mission, task)
   return missionReports(mission).filter(report => report.taskKey === task.key && report.id !== current?.id)
 }
 
 /** Outcome prose is history unless this is the task's authoritative result. */
-export function missionReportIsPrevious(mission: MissionMap, report: MissionReport): boolean {
+export function missionReportIsPrevious(mission: MissionPanelMap, report: MissionPanelReport): boolean {
   if (report.late) return true
   if (!report.taskKey) return false // Explicit mission-wide readout, not a task attempt.
   const task = mission.tasks.find(task => task.key === report.taskKey)
   return !task || missionTaskReport(mission, task)?.id !== report.id
 }
 
-export function missionProgress(mission: MissionMap, activity: readonly MissionActorActivity[] = []) {
+export function missionProgress(mission: MissionPanelMap, activity: readonly MissionActorActivity[] = []) {
   const tasks = mission.tasks.filter(task => task.status !== "withdrawn" && !task.replacedByTaskKey)
   const open = tasks.filter(task => task.status !== "completed")
   // Activity observes an owned conversation/family, not consumption of any of

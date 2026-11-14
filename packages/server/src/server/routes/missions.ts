@@ -2,14 +2,18 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
 import type { OpenCodeClient } from "@opencode/client"
-import type { MissionActivityProjection, MissionList, MissionListResponse, MissionListUnavailableResponse, MissionMap, MissionRead,
-  MissionReadResponse, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
+import type { MissionActivityProjection, MissionList, MissionListResponse, MissionListUnavailableResponse, MissionMap, MissionPanelMap,
+  MissionRead, MissionReadResponse, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
+import { compactMissionMap, compactMissionReads, missionTaskPage, missionTaskRequestSchema } from "../../missions/mission-compact-map"
+import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskPageResult } from "../../missions/mission-panel-map"
+import { projectMissionActivity, type MissionActivityInput, type MissionObservedRequests } from "../../missions/activity"
+import { MissionPanelObservationError, readMissionPanelObservation } from "../../missions/mission-panel-observation"
 import { MISSION_LIST_MAX_INCLUDE } from "../../missions/mission-summary"
+import { missionContentRequestSchema, type MissionContentResponse, type MissionContentResult } from "../../missions/mission-content"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { readMissionMutationError } from "../../missions/rpc-errors"
-import { projectMissionActivity } from "../../missions/activity"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { prepareMissionCreation, MissionCreationPreparationError } from "./mission-creation-pipeline"
@@ -19,14 +23,25 @@ import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot
 import { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { SettingsService } from "../../settings/service"
 import { registerMissionRecurrenceCurrent } from "./mission-recurrence-current"
+import { registerMissionPlaybookRoutes } from "./mission-playbooks"
 import { MissionMapMutationError, prepareMissionMapMutation } from "./mission-map-mutation"
 import type { AuthManager } from "../../auth/manager"
 import type { RemoteControlManager } from "../../remote-control/manager"
+import { MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_REQUEST_BYTES, isMissionPanelPageResult, missionPanelBytes,
+  missionPanelPageRequestSchema } from "../../missions/mission-panel-page"
+import { registerMissionScheduleActivation } from "./mission-schedule-activation"
+import { registerMissionScheduled } from "./mission-scheduled"
+import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
+import { registerMissionScheduleList } from "./mission-schedule-list"
+import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
 
 interface MissionRouteDeps {
+  scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
+  scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply" | "verify">
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
     | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
     | "getHostPathForServicePath" | "getServiceWslDistro">
+    & Partial<Pick<WorkspaceManager, "getServicePathStyle">>
   worktreeDeletionFence?: WorktreeDeletionFence
   settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "configYamlPathForAuthority">>
   auth?: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">
@@ -45,6 +60,18 @@ const ListQuerySchema = z.object({
     .pipe(z.array(z.string().min(1).max(100)).max(MISSION_LIST_MAX_INCLUDE)).optional(),
   summaries: z.string().min(1).max(64).optional(),
 })
+// A content request's selector, digest and offset (`missionContentRequestSchema` checks the rest).
+const IntegerQuery = z.string().regex(/^\d{1,15}$/).transform(Number)
+const ContentQuerySchema = z.object({
+  kind: z.string().max(16), field: z.string().max(64), taskKey: z.string().max(64).optional(), reportId: z.string().max(240).optional(),
+  change: IntegerQuery.optional(), digest: z.string().max(43).optional(), offset: IntegerQuery,
+}).strict()
+// A task request's window, attention window or names, comma-separated (`missionTaskRequestSchema` checks the rest).
+const NameList = z.string().max(MISSION_TASK_PAGE * 241).transform(value => value.split(",").filter(Boolean))
+const TaskQuerySchema = z.object({
+  order: z.string().max(64).optional(), offset: IntegerQuery.optional(), attention: IntegerQuery.optional(),
+  keys: NameList.optional(), ids: NameList.optional(), reports: NameList.optional(),
+}).strict().transform(({ reports, ...value }) => ({ ...value, ...(reports ? { reportIds: reports } : {}) }))
 const RequestID = z.string().trim().min(1).max(128)
 const UpdateSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
@@ -53,44 +80,112 @@ const UpdateSchema = z.object({
 const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), requestId: RequestID, deleteManagedSessions: z.boolean().optional() }).strict()
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
+  registerMissionScheduleList(app, deps)
+  registerMissionScheduleActivation(app, deps)
+  registerMissionScheduled(app, deps)
   registerMissionRecurrenceSnapshot(app, deps)
   registerMissionRecurrenceCreate(app, deps)
   registerMissionRecurrenceCurrent(app, deps)
-  // Open and included missions as full maps plus one summary row per mission,
-  // with activity for those maps only. A plugin without `list` (a reload can
-  // briefly pair builds) answers with its full snapshot and no summaries.
+  registerMissionPlaybookRoutes(app)
+  // Opt-in bounded transport. A plugin without it stays unavailable: never fall back to
+  // a project snapshot or legacy list that would transfer every open mission's map.
+  app.post<{ Params: { id: string } }>("/api/workspaces/:id/missions/panel-page", { bodyLimit: MISSION_PANEL_REQUEST_BYTES }, async (request, reply) => {
+    const input = missionPanelPageRequestSchema.safeParse(request.body)
+    if (!input.success) return reply.code(400).send({ available: false, reason: "invalid-request" })
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign, observe, observationCurrent }) => {
+      if (input.data.source === "activity" || input.data.source === "marks") {
+        try { return await readMissionPanelObservation(input.data, {
+          projectID, read: value => rpc.panelPage(value, call), observe: (value, requests) => observe(value, requests), current: observationCurrent,
+        }) } catch (error) { if (error instanceof MissionPanelObservationError) return foreign(); throw error }
+      }
+      const result: unknown = await rpc.panelPage(input.data, call)
+      if (!isMissionPanelPageResult(result) || missionPanelBytes(result) > MISSION_PANEL_PAGE_BYTES) return foreign()
+      const missionID = input.data.source === "tasks" ? input.data.task.missionID : input.data.source === "mission" || input.data.source === "task-marks" ? input.data.missionID : undefined
+      const field = input.data.source === "mission" ? input.data.field : undefined
+      if (result.available && (result.projectID !== projectID || result.source !== input.data.source
+        || result.missionID !== missionID || result.field !== field || result.part !== (input.data.source === "mission" ? input.data.part : undefined) || result.text !== (input.data.source === "mission" ? input.data.text : undefined)
+         || result.header !== (input.data.source === "mission" ? input.data.header : undefined)
+         || (input.data.source === "task-marks" ? result.taskMarksThrough === undefined : result.taskMarksThrough !== undefined)
+        || Boolean(result.window) !== Boolean("window" in input.data && input.data.window)
+        || result.window && "window" in input.data && input.data.window && (result.window.offset !== Math.min(input.data.window.offset, result.window.total)
+          || result.window.end !== Math.min(result.window.offset + (input.data.source === "mission" && input.data.text ? 1 : 50), result.window.total) || result.page.total !== result.window.end - result.window.offset
+          || input.data.window.order !== undefined && input.data.window.order !== result.window.order))) return foreign()
+      return result
+    })
+  })
+  // Open and included missions as compact maps plus one summary row per mission,
+  // with activity for those maps only. Maps are compacted here too: a reload can
+  // briefly pair this backend with a plugin that lists full maps. A plugin without
+  // `list` is unavailable: its only other read, the snapshot, carries every full map.
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>("/api/workspaces/:id/missions", async (request, reply) => {
     const query = ListQuerySchema.safeParse(request.query ?? {})
     if (!query.success) return reply.code(400).send({ error: "Invalid mission list request" })
     const input = { ...(query.data.include ? { include: query.data.include } : {}),
       ...(query.data.summaries ? { summariesVersion: query.data.summaries } : {}) }
     return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign, observe }): Promise<MissionListResponse> => {
-      // The registered RPC validates this JSON-Schema output before the generated client returns it.
-      let listed: MissionSnapshot & Partial<Pick<MissionList, "summaries" | "summariesVersion">>
-      try { listed = await rpc.list(input, call) as MissionList }
-      catch (error) {
-        if (!isMissingMethod(error)) throw error
-        listed = await rpc.snapshot({}, call) as MissionSnapshot
-      }
+      // The registered RPC validates this JSON-Schema output against the plugin's own schema.
+      const listed = compactMissionReads(await rpc.list(input, call) as MissionList)
       if (listed.projectID !== projectID) return foreign()
       return { available: true, ...listed, activity: await observe(listed) }
     })
   })
 
-  // One mission's range for display reconciliation (lost acknowledgements,
-  // cleanup retries). Hints-based project flags: never admission authority.
+  // One mission's range, its map compact, for display reconciliation (lost
+  // acknowledgements, cleanup retries). Hints-based project flags: never admission
+  // authority. A plugin without `mission` answers from its snapshot, one map compacted.
   app.get<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
     const params = MissionReadParamsSchema.safeParse(request.params)
     if (!params.success) return reply.code(400).send({ error: "Invalid mission read request" })
     return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionReadResponse> => {
-      let read: MissionRead
+      let read: MissionRead<MissionMap | MissionPanelMap>
       try { read = await rpc.mission({ missionID: params.data.missionID }, call) as MissionRead }
       catch (error) {
         if (!isMissingMethod(error)) throw error
         read = missionReadFromSnapshot(await rpc.snapshot({}, call) as MissionSnapshot, params.data.missionID)
       }
       if (read.projectID !== projectID) return foreign()
-      return { available: true, ...read }
+      return { available: true, ...read, ...(read.mission ? { mission: compactMissionMap(read.mission) } : {}) }
+    })
+  })
+
+  // One mission body for display, in digest-pinned slices of one range read
+  // (`MissionControl.content`); never authority. A plugin without `content` is unavailable.
+  app.get<{ Params: { id: string; missionID: string }; Querystring: Record<string, unknown> }>("/api/workspaces/:id/missions/:missionID/content", async (request, reply) => {
+    const params = MissionReadParamsSchema.safeParse(request.params)
+    const query = ContentQuerySchema.safeParse(request.query ?? {})
+    const input = params.success && query.success ? missionContentRequestSchema.safeParse({ missionID: params.data.missionID, ...query.data }) : undefined
+    if (!input?.success) return reply.code(400).send({ error: "Invalid mission content request" })
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionContentResponse> => {
+      const result = await rpc.content(input.data, call) as MissionContentResult
+      if (result.projectID !== projectID || result.missionID !== input.data.missionID) return foreign()
+      return { available: true, ...result }
+    })
+  })
+
+  // More of one map's tasks for display, a page at a time (`MissionControl.tasks`); never
+  // authority. A plugin without `tasks` answers from its single-mission read, paged here.
+  app.get<{ Params: { id: string; missionID: string }; Querystring: Record<string, unknown> }>("/api/workspaces/:id/missions/:missionID/tasks", async (request, reply) => {
+    const params = MissionReadParamsSchema.safeParse(request.params)
+    const query = TaskQuerySchema.safeParse(request.query ?? {})
+    const input = params.success && query.success ? missionTaskRequestSchema.safeParse({ missionID: params.data.missionID, ...query.data }) : undefined
+    if (!input?.success) return reply.code(400).send({ error: "Invalid mission task request" })
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionTaskPageResponse> => {
+      let result: MissionTaskPageResult
+      try { result = await rpc.tasks(input.data, call) as MissionTaskPageResult }
+      catch (error) {
+        if (!isMissingMethod(error)) throw error
+        const read = await rpc.mission({ missionID: input.data.missionID }, call) as MissionRead
+        if (read.projectID !== projectID) return foreign()
+        const base = { version: read.version, projectID: read.projectID, missionID: input.data.missionID }
+        if (!read.mission) result = { ...base, refused: "mission-not-found" }
+        else {
+          const page = missionTaskPage(read.mission, input.data)
+          result = input.data.order !== undefined && input.data.order !== page.taskPage.order
+            ? { ...base, revision: read.mission.revision, refused: "order-changed" } : { ...base, revision: read.mission.revision, ...page }
+        }
+      }
+      if (result.projectID !== projectID || result.missionID !== input.data.missionID) return foreign()
+      return { available: true, ...result }
     })
   })
 
@@ -100,7 +195,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   app.get<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID/admission", async (request, reply) => {
     const params = MissionReadParamsSchema.safeParse(request.params)
     if (!params.success) return reply.code(400).send({ error: "Invalid mission read request" })
-    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionReadResponse> => {
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionReadResponse<MissionMap>> => {
       const read = missionReadFromSnapshot(await rpc.snapshot({}, call) as MissionSnapshot, params.data.missionID)
       if (read.projectID !== projectID) return foreign()
       return { available: true, ...read }
@@ -151,11 +246,13 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   })
 
   app.post<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID/control", async (request, reply) => {
-    const parsed = z.object({ action: z.enum(["start", "pause", "stop"]), expectedRevision: z.number().int().positive(), requestId: RequestID }).strict().safeParse(request.body)
+    const parsed = z.object({ action: z.enum(["start", "pause", "stop"]), expectedRevision: z.number().int().positive(), requestId: RequestID,
+      graceful: z.literal(true).optional() }).strict().refine(value => !value.graceful || value.action === "pause").safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
     if (!parsed.success || !params.success) return reply.code(400).send({ error: "Invalid mission control request" })
     return mutate(request, reply, deps, params.data.id, async (rpc, options) => await rpc.lifecycle({
       missionID: params.data.missionID, requestID: parsed.data.requestId, action: parsed.data.action, expectedRevision: parsed.data.expectedRevision,
+      ...(parsed.data.graceful ? { graceful: true } : {}),
     }, options) as { mission: MissionMap })
   })
 
@@ -187,7 +284,8 @@ interface MissionPluginRead {
   /** A response naming another project: logged, answered 502 plugin-unavailable. */
   foreign(): MissionListUnavailableResponse
   /** Display activity of these maps' actors, fenced by this read's view and connection. */
-  observe(snapshot: MissionSnapshot): Promise<MissionActivityProjection>
+  observe(read: MissionActivityInput, requests?: (value: MissionObservedRequests) => void): Promise<MissionActivityProjection>
+  observationCurrent(): boolean
 }
 
 /** The read routes' shared path to the owned Location's active plugin. */
@@ -223,27 +321,29 @@ async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: stri
     // after registration. The reviewed typed call is the RPC capability check.
     if (plugin?.state.status === "failed") return unavailable("plugin-failed")
     if (!plugin || plugin.state.status !== "active") return unavailable("plugin-unavailable")
+    let observationCurrent = () => false
     return await read({
       rpc: missionRpc(client), call: { location, ...options }, projectID: resolved.project.id,
+      observationCurrent: () => observationCurrent(),
       foreign: () => {
         request.log.error({ workspaceId: workspaceID }, "Mission RPC returned a foreign project snapshot")
         reply.code(502)
         return unavailable("plugin-unavailable")
       },
-      observe: async snapshot => {
+      observe: async (snapshot, requests) => {
         const displayCurrent = await lifetime.wait(displayCapture)
         const deletionCurrent = await lifetime.wait(captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, workspaceID, [
           ownedLocation.directory, ...snapshot.missions.flatMap(mission => mission.actors.map(actor => actor.location.directory)),
         ]))
-        return projectMissionActivity({
-          client, snapshot, workspaceID,
-          ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager),
-          isCurrent: () => {
+        observationCurrent = () => {
             if (!displayCurrent?.() || !deletionCurrent?.() || lifetime.signal.aborted
               || deps.workspaceManager.get(workspaceID) !== workspace
               || !sameLocation(deps.workspaceManager.getServiceLocation(workspaceID) ?? { directory: "" }, ownedLocation)) return false
             try { connection.assertCurrent(); return true } catch { return false }
-          },
+          }
+        return projectMissionActivity({
+          client, snapshot, workspaceID, onRequests: requests,
+          ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager), isCurrent: observationCurrent,
         })
       },
     })
@@ -278,7 +378,7 @@ function unavailable(reason: MissionUnavailableReason): MissionListUnavailableRe
 
 /** One mission's read projected from a full snapshot: its map (stamped with the
  * project flags), its cleanups and the project flags. */
-function missionReadFromSnapshot(snapshot: MissionSnapshot, missionID: string): MissionRead {
+function missionReadFromSnapshot(snapshot: MissionSnapshot, missionID: string): MissionRead<MissionMap> {
   const mission = snapshot.missions.find(value => value.id === missionID)
   return { version: snapshot.version, projectID: snapshot.projectID, generatedAt: snapshot.generatedAt, ...(mission ? { mission } : {}),
     cleanups: (snapshot.cleanups ?? []).filter(cleanup => cleanup.missionID === missionID),

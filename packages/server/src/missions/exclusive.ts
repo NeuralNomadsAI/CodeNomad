@@ -14,3 +14,9 @@ export function runMissionExclusive<T>(key: string, operation: () => Promise<T>)
     if (queues.get(key) === settled) queues.delete(key)
   })
 }
+
+/** Refuse contention before effects when the caller already holds another lock. */
+export function runAvailableMissionExclusive<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  if (queues.has(key)) return Promise.reject(new Error("Mission mutation is busy"))
+  return runMissionExclusive(key, operation)
+}

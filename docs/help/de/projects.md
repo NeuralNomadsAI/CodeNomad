@@ -6,7 +6,7 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 1. Klicken Sie auf **Neue Instanz** (`+`), um die Startseite zu öffnen.
 2. Wählen Sie **Ordner durchsuchen**, wählen und öffnen Sie den Backend-Ordner; oder wählen Sie einen Eintrag unter **Letzte Ordner**.
-3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**.
+3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
 
@@ -58,7 +58,7 @@ Verwerfen wird verweigert, während eine Unterhaltung läuft oder der Ordner in 
 2. Wählen Sie einen vorhandenen gefundenen Worktree oder **+ Worktree erstellen**.
 3. Geben Sie zum Erstellen **Name** ein und wählen Sie **Worktree erstellen und verwenden**.
 
-CodeNomad findet Worktrees über OpenCode und prüft ihre Zugehörigkeit zum geöffneten Repository. Ein neuer Branch-Name beginnt am HEAD des ausgewählten Checkouts. Ein vorhandener Branch-Name verwendet dessen aktuelle Revision; Git kann einen bereits anderswo ausgecheckten Branch verweigern. Worktrees verwenden standardmäßig `.codenomad/worktrees`. Nicht committete Änderungen bleiben im ursprünglichen Checkout; die Erstellung kopiert sie nicht in den neuen Worktree.
+CodeNomad findet Worktrees über OpenCode und prüft ihre Zugehörigkeit zum geöffneten Repository. Ist das Projekt ein Ordner innerhalb eines Repositorys, werden nur Worktrees aufgeführt, die diesen Ordner enthalten. Um aus einem solchen Ordner einen Worktree zu erstellen, muss Git ihn verfolgen. Ein neuer Branch-Name beginnt am HEAD des ausgewählten Checkouts. Ein vorhandener Branch-Name verwendet dessen aktuelle Revision; Git kann einen bereits anderswo ausgecheckten Branch verweigern. Worktrees verwenden standardmäßig `.codenomad/worktrees`. Nicht committete Änderungen bleiben im ursprünglichen Checkout; die Erstellung kopiert sie nicht in den neuen Worktree.
 
 Die Auswahl im Eingabefeld verschiebt die übergeordnete Unterhaltung und ihre rekursiven Nachfahren als überprüfte Familie. Eine Untersitzung kann diese Auswahl nicht unabhängig ändern. Aktive Sitzungen blockieren den Vorgang: Lassen Sie die Familie zuerst fertig werden oder stoppen Sie deren Ausführung. Warten Sie den Abschluss einer Verschiebung ab, bevor Sie die nächste anfordern; prüfen Sie bei Fehlern vor dem Wiederholen den aktualisierten Unterhaltungs-/Worktree-Zustand.
 

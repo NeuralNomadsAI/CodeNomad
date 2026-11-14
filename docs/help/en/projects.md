@@ -6,7 +6,7 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 
 1. Click **New instance** (`+`) to open the home page.
 2. Choose **Browse Folders**, select the backend folder and open it; or choose an entry under **Recent Folders**.
-3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**.
+3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
 
@@ -58,7 +58,7 @@ Discard refuses while a conversation is running or the folder is open in another
 2. Select an existing discovered worktree, or choose **+ Create worktree**.
 3. For creation, enter **Name** and choose **Create and use worktree**.
 
-CodeNomad discovers worktrees through OpenCode and verifies that they belong to the opened repository. A new branch name starts at the selected checkout's HEAD. An existing branch name uses that branch's current revision; Git can refuse a branch already checked out elsewhere. Worktrees use the default `.codenomad/worktrees` location. Uncommitted changes remain in the original checkout; creation does not copy them into the new worktree.
+CodeNomad discovers worktrees through OpenCode and verifies that they belong to the opened repository. When the project is a folder inside a repository, only worktrees that contain that folder are listed. Creating a worktree from such a folder requires Git to track it. A new branch name starts at the selected checkout's HEAD. An existing branch name uses that branch's current revision; Git can refuse a branch already checked out elsewhere. Worktrees use the default `.codenomad/worktrees` location. Uncommitted changes remain in the original checkout; creation does not copy them into the new worktree.
 
 The composer selector moves the parent conversation and its recursive descendants as a verified family. A subsession cannot independently change this selector. Active sessions block the operation: let the family finish or stop its execution first. Wait for a move to settle before requesting another; on error, inspect the refreshed conversation/worktree state before retrying.
 

@@ -1,7 +1,5 @@
 import { createSignal, onCleanup, type Accessor, type Setter } from "solid-js"
 
-import { useGlobalPointerDrag } from "./useGlobalPointerDrag"
-
 type DrawerResizeSide = "left" | "right"
 
 type DrawerResizeOptions = {
@@ -15,14 +13,18 @@ type DrawerResizeOptions = {
 }
 
 type DrawerResizeApi = {
-  handleDrawerResizeMouseDown: (side: DrawerResizeSide) => (event: MouseEvent) => void
-  handleDrawerResizeTouchStart: (side: DrawerResizeSide) => (event: TouchEvent) => void
+  activeResizeSide: Accessor<DrawerResizeSide | null>
+  handleDrawerResizePointerDown: (side: DrawerResizeSide) => (event: PointerEvent) => void
+  handleDrawerResizePointerMove: (event: PointerEvent) => void
+  handleDrawerResizePointerEnd: (event: PointerEvent) => void
+  stopDrawerResize: () => void
 }
 
 export function useDrawerResize(options: DrawerResizeOptions): DrawerResizeApi {
   const [activeResizeSide, setActiveResizeSide] = createSignal<DrawerResizeSide | null>(null)
   const [resizeStartX, setResizeStartX] = createSignal(0)
   const [resizeStartWidth, setResizeStartWidth] = createSignal(0)
+  let resizePointerId: number | undefined
 
   const scheduleDrawerMeasure = () => {
     if (typeof window === "undefined") {
@@ -53,55 +55,36 @@ export function useDrawerResize(options: DrawerResizeOptions): DrawerResizeApi {
     applyDrawerWidth(side, nextWidth)
   }
 
-  function drawerMouseMove(event: MouseEvent) {
+  function stopDrawerResize() {
+    resizePointerId = undefined
+    setActiveResizeSide(null)
+  }
+
+  function handleDrawerResizePointerMove(event: PointerEvent) {
+    if (event.pointerId !== resizePointerId) return
     event.preventDefault()
     handleDrawerPointerMove(event.clientX)
   }
 
-  function drawerMouseUp() {
+  function handleDrawerResizePointerEnd(event: PointerEvent) {
+    if (event.pointerId !== resizePointerId) return
     stopDrawerResize()
+    const target = event.currentTarget as HTMLElement
+    if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId)
   }
 
-  function drawerTouchMove(event: TouchEvent) {
-    const touch = event.touches[0]
-    if (!touch) return
+  const handleDrawerResizePointerDown = (side: DrawerResizeSide) => (event: PointerEvent) => {
+    if (!event.isPrimary || event.button !== 0 || resizePointerId !== undefined) return
     event.preventDefault()
-    handleDrawerPointerMove(touch.clientX)
-  }
-
-  function drawerTouchEnd() {
-    stopDrawerResize()
-  }
-
-  const drawerPointerDrag = useGlobalPointerDrag({
-    onMouseMove: drawerMouseMove,
-    onMouseUp: drawerMouseUp,
-    onTouchMove: drawerTouchMove,
-    onTouchEnd: drawerTouchEnd,
-  })
-
-  function stopDrawerResize() {
-    setActiveResizeSide(null)
-    drawerPointerDrag.stop()
-  }
-
-  const startDrawerResize = (side: DrawerResizeSide, clientX: number) => {
+    resizePointerId = event.pointerId
     setActiveResizeSide(side)
-    setResizeStartX(clientX)
+    setResizeStartX(event.clientX)
     setResizeStartWidth(side === "left" ? options.sessionSidebarWidth() : options.rightDrawerWidth())
-    drawerPointerDrag.start()
-  }
-
-  const handleDrawerResizeMouseDown = (side: DrawerResizeSide) => (event: MouseEvent) => {
-    event.preventDefault()
-    startDrawerResize(side, event.clientX)
-  }
-
-  const handleDrawerResizeTouchStart = (side: DrawerResizeSide) => (event: TouchEvent) => {
-    const touch = event.touches[0]
-    if (!touch) return
-    event.preventDefault()
-    startDrawerResize(side, touch.clientX)
+    try {
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+    } catch {
+      stopDrawerResize()
+    }
   }
 
   onCleanup(() => {
@@ -109,7 +92,10 @@ export function useDrawerResize(options: DrawerResizeOptions): DrawerResizeApi {
   })
 
   return {
-    handleDrawerResizeMouseDown,
-    handleDrawerResizeTouchStart,
+    activeResizeSide,
+    handleDrawerResizePointerDown,
+    handleDrawerResizePointerMove,
+    handleDrawerResizePointerEnd,
+    stopDrawerResize,
   }
 }

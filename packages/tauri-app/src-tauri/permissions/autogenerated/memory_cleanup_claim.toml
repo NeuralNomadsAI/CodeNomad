@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-memory-cleanup-claim"
+description = "Enables the memory_cleanup_claim command without any pre-configured scope."
+commands.allow = ["memory_cleanup_claim"]
+
+[[permission]]
+identifier = "deny-memory-cleanup-claim"
+description = "Denies the memory_cleanup_claim command without any pre-configured scope."
+commands.deny = ["memory_cleanup_claim"]

@@ -6,6 +6,8 @@ import { pathToFileURL } from "node:url"
 import { afterEach, describe, it } from "node:test"
 import { parse } from "jsonc-parser"
 import { PluginControls, PluginControlsError } from "./plugin-controls"
+import { installDesktopPluginPresence, type DesktopPluginFeature } from "./desktop-plugin-installation"
+import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
 
 const temporaryDirectories = new Set<string>()
 
@@ -150,7 +152,7 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.equal(linter.snapshot.controls.find((entry) => entry.id === "acme.linter")?.project, "disabled")
   })
 
-  it("serializes same-target mutations while letting other scopes proceed", async () => {
+  it("serializes same-target mutations while letting other scopes proceed", { timeout: 5_000 }, async () => {
     const fixture = createFixture({
       globalPlugins: [{ package: "@acme/reviewer", options: { strict: true } }],
       projectPlugins: [],
@@ -159,30 +161,40 @@ describe("OpenCode V2 plugin activation controls", () => {
     const manager = (fixture.controls as any).options.workspaceManager
     const innerIdentity = manager.getWorktreeIdentityForPath.bind(manager)
     const gate = deferred<void>()
+    const globalEntered = deferred<void>()
     let identityCalls = 0
-    let projectSettled = false
     manager.getWorktreeIdentityForPath = async (...args: [string, string]) => {
       identityCalls += 1
-      // The first mutation (global scope) is held here; a per-target queue
-      // lets the project-scope mutation overtake it instead of blocking.
-      if (identityCalls === 1) await gate.promise
+      if (identityCalls === 1) {
+        globalEntered.resolve()
+        await gate.promise
+      }
       return innerIdentity(...args)
     }
 
     const global = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: false })
+    // Discovery includes filesystem IO: invocation order cannot identify which
+    // scope reaches the fence first. Admit Global before launching its siblings.
+    await globalEntered.promise
+    const nextGlobal = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true })
     const project = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "project", enabled: false })
-    void project.then(() => { projectSettled = true })
-    const deadline = Date.now() + 5_000
-    while (!projectSettled && Date.now() < deadline) await tick()
-    assert.equal(projectSettled, true)
-    gate.resolve()
-    const [globalResponse, projectResponse] = await Promise.all([global, project])
+    let projectResponse: Awaited<typeof project>
+    try {
+      projectResponse = await project
+      assert.equal(identityCalls, 2, "the second Global mutation stays queued while Project completes")
+    } finally {
+      gate.resolve()
+      await Promise.allSettled([global, nextGlobal, project])
+    }
+    const [globalResponse, nextGlobalResponse] = await Promise.all([global, nextGlobal])
 
     assert.equal(globalResponse.changed, true)
+    assert.equal(nextGlobalResponse.changed, true)
     assert.equal(projectResponse.changed, true)
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [
       { package: "@acme/reviewer", options: { strict: true } },
       "-acme.reviewer",
+      "acme.reviewer",
     ])
     assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["-acme.reviewer"])
   })
@@ -625,7 +637,7 @@ describe("OpenCode V2 plugin activation controls", () => {
   it("fences a mutation again immediately before the atomic rename", async () => {
     const fixture = createFixture({
       runtime: [activePlugin("known", "known-package")],
-      assertCurrent: (count) => { if (count === 4) throw new Error("stale connection") },
+      assertCurrent: (count) => { if (count === 5) throw new Error("stale connection") },
     })
     const before = fs.readFileSync(fixture.globalFile, "utf8")
 
@@ -639,7 +651,7 @@ describe("OpenCode V2 plugin activation controls", () => {
       (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
     )
 
-    assert.equal(fixture.calls.assertCurrent, 4)
+    assert.equal(fixture.calls.assertCurrent, 5)
     assert.equal(fs.readFileSync(fixture.globalFile, "utf8"), before)
   })
 
@@ -647,7 +659,7 @@ describe("OpenCode V2 plugin activation controls", () => {
     const fixture = createFixture({
       globalPlugins: ["-known"],
       runtime: [],
-      assertCurrent: (count) => { if (count === 3) throw new Error("stale connection") },
+      assertCurrent: (count) => { if (count === 4) throw new Error("stale connection") },
     })
 
     await assert.rejects(
@@ -659,9 +671,154 @@ describe("OpenCode V2 plugin activation controls", () => {
       }),
       (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
     )
-    assert.equal(fixture.calls.assertCurrent, 3)
+    assert.equal(fixture.calls.assertCurrent, 4)
   })
 })
+
+describe("CodeNomad-managed plugin provenance and recovery", () => {
+  it("marks only verified local shim and bundle runtime paths and exact configured locations", async () => {
+    for (const sourceKind of ["entry", "plugin"] as const) {
+      const fixture = createFixture()
+      const installed = await installManaged(fixture, "automation", "codenomad.automation")
+      const source = installed[sourceKind]
+      fixture.runtime.push({ id: "codenomad.automation", source: { type: "local", path: source }, features: {}, state: { status: "active" } })
+      fixture.setGlobalPlugins([installed.entry, pathToFileURL(installed.plugin).href, "./plugins/codenomad-automation.ts", "@third-party/codenomad"])
+
+      const snapshot = await fixture.controls.read("workspace", fixture.location)
+      assert.equal(snapshot.runtime[0].managedBy, "codenomad")
+      assert.equal(snapshot.controls.find(entry => entry.id === "codenomad.automation")?.managedBy, "codenomad")
+      assert.deepEqual(snapshot.configured.sources.map(entry => entry.managedBy), ["codenomad", "codenomad", "codenomad", undefined])
+      assert.deepEqual(snapshot.configured.sources.map(entry => entry.pluginId), ["codenomad.automation", "codenomad.automation", "codenomad.automation", undefined])
+    }
+  })
+
+  it("keeps installed-descriptor homonyms from unrelated package and local sources ordinary", async () => {
+    for (const type of ["package", "local"] as const) {
+      const fixture = createFixture()
+      const id = "codenomad.automation"
+      await installManaged(fixture, "automation", id)
+      const target = type === "package" ? "@third-party/codenomad" : path.join(fixture.projectDirectory, "codenomad-automation.ts")
+      fixture.runtime.push({ id, source: type === "package" ? { type, target } : { type, path: target }, features: {}, state: { status: "active" } })
+      fixture.setGlobalPlugins([target, `-${id}`])
+
+      const snapshot = await fixture.controls.read("workspace", fixture.location)
+      assert.equal(snapshot.runtime[0].managedBy, undefined)
+      assert.equal(snapshot.controls.find(entry => entry.id === id)?.managedBy, undefined)
+      assert.equal(snapshot.controls.find(entry => entry.id === id)?.effective, "disabled")
+      assert.equal(snapshot.configured.sources[0].managedBy, undefined)
+    }
+  })
+
+  it("synthesizes verified descriptor IDs for exact, prefix and all-plugin disabling rules without runtime", async () => {
+    for (const rule of ["-codenomad.automation", "-codenomad.*", "-*", "-codenomad-session-pruning"]) {
+      const fixture = createFixture({ globalPlugins: [rule] })
+      await installManaged(fixture, "automation", "codenomad.automation")
+      await installManaged(fixture, "session-pruning", "codenomad-session-pruning")
+      const snapshot = await fixture.controls.read("workspace", fixture.location)
+      assert.deepEqual(snapshot.runtime, [])
+      const automation = snapshot.controls.find(entry => entry.id === "codenomad.automation")!
+      const pruning = snapshot.controls.find(entry => entry.id === "codenomad-session-pruning")!
+      for (const control of [automation, pruning]) {
+        assert.equal(control.managedBy, "codenomad")
+        assert.equal(control.runtime, undefined)
+      }
+      assert.equal(automation.effective, rule === "-codenomad-session-pruning" ? "default" : "disabled")
+      assert.equal(pruning.effective, rule === "-*" || rule === "-codenomad-session-pruning" ? "disabled" : "default")
+      assert.equal(snapshot.controls.some(entry => entry.id.includes("*")), false)
+    }
+  })
+
+  it("discovers new descriptor IDs without a hardcoded ID catalogue", async () => {
+    const fixture = createFixture({ globalPlugins: ["-future.*"] })
+    await installManaged(fixture, "automation", "future.new-plugin")
+    const control = (await fixture.controls.read("workspace", fixture.location)).controls.find(entry => entry.id === "future.new-plugin")!
+    assert.equal(control.managedBy, "codenomad")
+    assert.equal(control.effective, "disabled")
+    assert.equal(control.controllingRule?.selector, "future.*")
+  })
+
+  it("correlates a proven managed source with its absent runtime ID and replays its ordered add", async () => {
+    const fixture = createFixture()
+    const installed = await installManaged(fixture, "automation", "codenomad.automation")
+    fixture.setGlobalPlugins(["-codenomad.*", installed.plugin])
+    const snapshot = await fixture.controls.read("workspace", fixture.location)
+    assert.equal(snapshot.configured.sources[0].pluginId, "codenomad.automation")
+    assert.equal(snapshot.configured.sources[0].managedBy, "codenomad")
+    assert.equal(snapshot.controls[0].effective, "enabled")
+    assert.equal(snapshot.controls[0].runtime, undefined)
+  })
+
+  it("leaves exact CodeNomad-named rules ordinary without an installation", async () => {
+    const fixture = createFixture({ globalPlugins: ["-codenomad.automation", "-codenomad-session-pruning", "-codenomad.*"] })
+    const snapshot = await fixture.controls.read("workspace", fixture.location)
+    assert.deepEqual(snapshot.controls.map(entry => [entry.id, entry.managedBy, entry.effective]), [
+      ["codenomad-session-pruning", undefined, "disabled"],
+      ["codenomad.automation", undefined, "disabled"],
+    ])
+  })
+
+  it("marks a verified local loading failure even before the runtime exports an ID", async () => {
+    const fixture = createFixture()
+    const installed = await installManaged(fixture, "automation", "codenomad.automation")
+    fixture.runtime.push({ source: { type: "local", path: installed.entry }, features: {}, state: { status: "failed", error: "import failed", ref: "err_managed" } })
+    const snapshot = await fixture.controls.read("workspace", fixture.location)
+    assert.equal(snapshot.runtime[0].id, undefined)
+    assert.equal(snapshot.runtime[0].managedBy, "codenomad")
+    assert.deepEqual(snapshot.runtime[0].state, { status: "failed", error: "import failed", ref: "err_managed" })
+    const control = snapshot.controls.find(entry => entry.id === "codenomad.automation")!
+    assert.equal(control.managedBy, "codenomad")
+    assert.equal(control.runtime, snapshot.runtime[0])
+    assert.equal(control.runtime?.id, undefined)
+  })
+
+  it("does not mark runtime, configured source or disabled control after payload tampering", async () => {
+    const fixture = createFixture({ globalPlugins: ["-codenomad.automation"] })
+    const installed = await installManaged(fixture, "automation", "codenomad.automation")
+    fs.appendFileSync(installed.plugin, "tampered")
+    fixture.runtime.push({ id: "codenomad.automation", source: { type: "local", path: installed.entry }, features: {}, state: { status: "active" } })
+    fixture.setGlobalPlugins([installed.entry, "-codenomad.automation"])
+    const snapshot = await fixture.controls.read("workspace", fixture.location)
+    assert.equal(snapshot.runtime[0].managedBy, undefined)
+    assert.equal(snapshot.configured.sources[0].managedBy, undefined)
+    assert.equal(snapshot.controls[0].managedBy, undefined)
+  })
+
+  it("re-enables in the disabling Global or Project scope, retaining rules without claiming active runtime", async () => {
+    for (const scope of ["global", "project"] as const) {
+      const rule = scope === "global" ? "-*" : "-codenomad.*"
+      const fixture = createFixture({ globalPlugins: scope === "global" ? [rule] : [], projectPlugins: scope === "project" ? [rule] : [] })
+      const installed = await installManaged(fixture, "automation", "codenomad.automation")
+      const before = await fixture.controls.read("workspace", fixture.location)
+      assert.equal(before.controls[0].controllingRule?.scope, scope)
+      const untouchedFile = scope === "global" ? fixture.projectFile : fixture.globalFile
+      const untouched = fs.readFileSync(untouchedFile, "utf8")
+      const response = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "codenomad.automation", scope, enabled: true })
+      const control = response.snapshot.controls.find(entry => entry.id === "codenomad.automation")!
+      assert.equal(response.changed, true)
+      assert.equal(response.reloadPending, true)
+      assert.equal(response.target.scope, scope)
+      assert.equal(control.effective, "enabled")
+      assert.equal(control.managedBy, "codenomad")
+      assert.equal(control.runtime, undefined)
+      assert.deepEqual(response.snapshot.runtime, [])
+      assert.deepEqual((parse(fs.readFileSync(scope === "global" ? fixture.globalFile : fixture.projectFile, "utf8")) as any).plugins, [rule, "codenomad.automation"])
+      assert.equal(fs.readFileSync(untouchedFile, "utf8"), untouched)
+      if (scope === "global") fixture.setGlobalPlugins([rule, "codenomad.automation"])
+      else fixture.setProjectPlugins([rule, "codenomad.automation"])
+      fixture.runtime.push({ id: "codenomad.automation", source: { type: "local", path: installed.plugin }, features: {}, state: { status: "active" } })
+      assert.equal((await fixture.controls.read("workspace", fixture.location)).controls[0].runtime?.state.status, "active")
+    }
+  })
+})
+
+async function installManaged(fixture: ReturnType<typeof createFixture>, feature: DesktopPluginFeature, id: string) {
+  const stop = await installDesktopPluginPresence(feature, Buffer.from(`// CodeNomad plugin IDs: ${JSON.stringify([id])}\nexport const desktopPlugin = () => {}\n`), {
+    config: fixture.globalDirectory, data: path.join(path.dirname(fixture.globalDirectory), "managed-data"),
+  })
+  await stop()
+  const entry = path.join(fixture.globalDirectory, "plugins", `codenomad-${feature}.ts`)
+  return { entry, plugin: parseManagedDesktopPluginEntry(feature, fs.readFileSync(entry, "utf8"), process.platform === "win32" ? path.win32 : path.posix)!.plugin }
+}
 
 function createFixture(options: {
   globalPlugins?: unknown[]
@@ -713,6 +870,10 @@ function createFixture(options: {
     globalFile,
     projectFile,
     runtime,
+    setGlobalPlugins: (plugins: unknown[]) => {
+      entries[0].info.plugins = plugins
+      fs.writeFileSync(globalFile, `${JSON.stringify({ plugins }, null, 2)}\n`)
+    },
     setProjectPlugins: (plugins: unknown[]) => {
       if (!projectEntry) throw new Error("Project document is omitted")
       projectEntry.info.plugins = plugins
@@ -777,8 +938,4 @@ function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T | Promi
   let resolve!: (value: T | PromiseLike<T>) => void
   const promise = new Promise<T>((accept) => { resolve = accept })
   return { promise, resolve }
-}
-
-function tick(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve))
 }

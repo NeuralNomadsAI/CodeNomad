@@ -31,7 +31,11 @@ L’initialisation n’est acceptée que depuis l’écoute de boucle locale de 
 
 La connexion directe crée une session opaque en mémoire du backend et un cookie `codenomad_session` (ou le nom configuré). Les cookies sont `HttpOnly`, `SameSite=Lax`, limités à `/` et marqués `Secure` s’ils sont émis en HTTPS. Ce sont des cookies de session navigateur ; le redémarrage du backend invalide les sessions en mémoire. Réauthentifiez-vous sur place si demandé plutôt que de renvoyer les modifications échouées.
 
-Changer un mot de passe change les vérifications futures ; cela n’invalide **pas** les sessions directes déjà émises ni les appareils de Contrôle à distance. En cas de compromission suspectée :
+La déconnexion révoque la session directe courante. Un changement de mot de passe réussi sur l’hôte révoque toutes les sessions directes de cet utilisateur, y compris celle de l’appelant ; reconnectez-vous. Les sessions expirent après 24 heures sans requête authentifiée ou sept jours depuis leur création. Pour ajuster ces limites, définissez `CODENOMAD_SESSION_IDLE_SECONDS` et `CODENOMAD_SESSION_ABSOLUTE_SECONDS` en secondes entières positives avant de démarrer le backend. Les appareils de Contrôle à distance se révoquent séparément.
+
+Les clients LAN peuvent se connecter, se déconnecter et utiliser les projets. Le mot de passe, le Contrôle à distance, les outils de serveurs distants/proxy et les SideCars se gèrent sur l’hôte en loopback. Les modifications du navigateur exigent une Origin autorisée, ou le Referer en son absence. Les origines annoncées du serveur sont autorisées ; pour les alias DNS, proxys inverses ou interfaces hébergées séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` avec des origines HTTP(S) exactes séparées par des virgules, par exemple `https://code.example.test,https://ui.example.test:8443`, puis redémarrez. N’ajoutez ni chemin ni joker. Cela autorise le navigateur, sans donner les privilèges de l’hôte. Les clients natifs effectuant des modifications LAN doivent aussi fournir une Origin autorisée. Un proxy de confiance connecté en loopback dispose des privilèges de l’hôte et doit appliquer ses propres contrôles d’accès. Quand le serveur écoute en loopback ou sur toutes les interfaces, l’interface ouverte sur l’hôte en `localhost`, avec le même schéma et le même port, fonctionne aussi.
+
+En cas de compromission suspectée :
 
 1. Restreignez l’exposition réseau et définissez un nouveau mot de passe sur l’hôte, ou changez votre secret d’exécution et redémarrez.
 2. Redémarrez le backend pour invalider ses sessions directes existantes.
@@ -70,4 +74,4 @@ OpenCode possède les connexions fournisseurs et son stockage global de conversa
 | Clés fournisseurs et identifiants vocaux | Saisir uniquement dans les paramètres/le propriétaire prévus ; vérifier quel fournisseur reçoit les données. Voir [Voix](voice.md). |
 | Journaux debug/trace et captures réseau | Collecter seulement le nécessaire, inspecter localement et masquer avant signalement. Ne pas supposer que toute sortie d’outil en aval est exempte de secrets. |
 
-**Paramètres → Info → Signaler un bug** prépare des diagnostics bornés sans préremplir les écoutes, adresses, chemins, identifiants ou contenu des conversations. Relisez ce que vous ajoutez avant soumission. Voir [Assistance](support.md).
+**Paramètres → Info → Signaler un bug** prépare des diagnostics bornés sans préremplir les écoutes, adresses, chemins, identifiants ou contenu des conversations. Relisez ce que vous ajoutez avant soumission. Voir [Signalement de bugs et compilation depuis les sources](support.md#report-a-bug).

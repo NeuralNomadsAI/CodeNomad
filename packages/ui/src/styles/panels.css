@@ -12,9 +12,12 @@
 @import "./components/transcript-filters.css";
 @import "./components/new-instance-launcher.css";
 @import "./panels/right-panel.css";
+@import "./panels/right-panel-customization.css";
 @import "./panels/status-tokens.css";
+@import "./panels/status-goal.css";
 @import "./panels/mission-control.css";
 @import "./panels/mission-recurrence.css";
+@import "./panels/mission-source-select.css";
 @import "./panels/mission-create.css";
 @import "./panels/mission-schedule.css";
 @import "./panels/mission-list-item.css";
@@ -26,11 +29,11 @@
 @import "./panels/mission-graph.css";
 @import "./panels/mission-task-tree.css";
 @import "./panels/mission-disclosure.css";
-@import "./panels/mission-attention.css";
 @import "./panels/mission-progress.css";
 @import "./panels/mission-briefing.css";
 @import "./panels/mission-execution.css";
 @import "./panels/mission-reader.css";
+@import "./panels/mission-playbook.css";
 @import "./panels/mission-preferences.css";
 @import "./panels/mission-cleanup.css";
 @import "./panels/panel-extensions.css";
@@ -38,3 +41,6 @@
 @import "./panels/git-history.css";
 @import "./panels/workspace-tree.css";
 @import "./panels/file-row-actions.css";
+@import "./panels/mission-scheduling.css";
+@import "./panels/mission-unified-schedule.css";
+@import "./panels/status-shells.css";

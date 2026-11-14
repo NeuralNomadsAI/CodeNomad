@@ -6,30 +6,18 @@ import { parseNativeBinding, sameNativeCall } from "./native-report-provenance"
 import { missionProfileRoles, sameCompareModel, type MissionProfiles } from "./playbook-profiles"
 import type { MissionExecution } from "./execution"
 import { validateCompareArtifact } from "./compare-artifact"
+import { humanDecisionArtifact, type NativeDecisionProvenance } from "./decision-artifact"
 
-const nativeID = z.string().min(1).max(240).regex(/^[^\s\x00-\x1f\x7f]+$/)
-const decisionAnswer = z.union([z.string().min(1).max(20_000), z.array(z.string().min(1).max(20_000)).min(1).max(32)])
-export const nativeDecisionProvenance = z.object({
-  kind: z.literal("native-form-answer"),
-  contract: taskContractReferenceSchema,
-  nativeCall: z.object({ generation: z.number().int().positive().safe(), parentSessionID: nativeID,
-    parentMessageID: nativeID, toolCallID: nativeID }).strict(),
-  sessionID: nativeID,
-  formID: nativeID,
-  messageID: nativeID,
-  toolCallID: nativeID,
-  fieldKey: z.string().regex(/^q(?:0|[1-9]\d?)$/),
-}).strict()
-export type NativeDecisionProvenance = z.infer<typeof nativeDecisionProvenance>
+export { nativeDecisionProvenance, type NativeDecisionProvenance } from "./decision-artifact"
 export type NativeDecisionArtifactBinding = { contract: TaskContractReference; call: MissionNativeBinding; sessionID: string }
 
 /** Syntax and exact task/invocation correlation ONLY. Neither model JSON nor
  * this validator authenticates a human producer or qualifies native evidence. */
 export function validateNativeDecisionArtifact(input: NativeDecisionArtifactBinding & { artifact?: MissionJsonValue }):
   NativeDecisionProvenance & { question: string; answer: string | string[] } {
-  const artifact = z.object({ kind: z.literal("decision"), question: z.string().min(1).max(20_000),
-    answer: decisionAnswer, provenance: nativeDecisionProvenance }).strict().parse(input.artifact)
+  const artifact = humanDecisionArtifact.parse(input.artifact)
   const provenance = artifact.provenance
+  if (provenance.kind !== "native-form-answer") throw new Error("A decision conversation's answer cites its own native question")
   const contract = taskContractReferenceSchema.parse(input.contract)
   if (!parseNativeBinding(input.call) || !sameNativeCall(provenance.nativeCall, input.call)
     || provenance.contract.missionID !== contract.missionID || provenance.contract.taskKey !== contract.taskKey

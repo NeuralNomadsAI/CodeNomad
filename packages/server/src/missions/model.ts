@@ -4,7 +4,10 @@ export type { MissionBriefing, MissionBriefingItem, MissionBriefingResponse } fr
 import type { MissionTaskExecutionMode } from "./task-execution-mode"
 export type { MissionTaskExecutionMode } from "./task-execution-mode"
 import type { MissionSummary } from "./mission-summary"
+import type { MissionBodyDescriptors } from "./mission-content-wire"
+import type { MissionPanelMap } from "./mission-panel-map"
 export type { MissionSummary } from "./mission-summary"
+export type { MissionPanelBriefing, MissionPanelExecutionMode, MissionPanelMap, MissionPanelPlanChange, MissionPanelReport, MissionPanelTask } from "./mission-panel-map"
 import { hasInvalidControlHistory, isReportReceipt } from "./receipt-identity"
 import { hasInvalidReportNotificationHistory, isCoordinatorNotificationReport, sameNativeCall } from "./native-report-provenance"
 import { hasUnsettledNativeExecution, parseNativeCallObservation, projectNativeCallObservation, type MissionNativeExecution, type NativeCallObservation } from "./native-call-observation"
@@ -12,15 +15,19 @@ import { nativeCallObservationID } from "./native-call-reconciliation"
 import { projectLifecycle, type MissionControlRequestedEvent, type MissionControlAppliedEvent, type MissionRunState, type MissionLifecycleOperation } from "./lifecycle-model"
 
 export const MISSION_SCHEMA_VERSION = 1 as const
-export const MISSION_MAX_ACTORS = 8
-/** Ordinary entries of one mission's journal range; a project holds any number of missions. */
+/** Stored entries of one mission's journal range, receipts and tombstone included,
+ * and the read bound of that range; a project holds any number of missions. */
 export const MISSION_MAX_EVENTS = 2_000
-/** Room above a mission's ordinary limit for its deletion tombstone and reserved
- * receipts, so a full mission can still be deleted. */
-export const MISSION_DELETION_RESERVE = 4 * (1 + MISSION_MAX_ACTORS)
-/** Physical read bound of one mission's journal range. */
-export const MISSION_MAX_STORED_EVENTS = MISSION_MAX_EVENTS + MISSION_DELETION_RESERVE
-export const MISSION_MAX_TASKS = 96
+/** Deletion capacity: tombstone, one receipt per actor and, for unified documents,
+ * one document-cleanup receipt. */
+export function missionTerminalShare(actors: number, documentCleanup = false): number {
+  return 1 + actors + Number(documentCleanup)
+}
+/** Room ordinary writes leave in a mission's range so that one Stop and then
+ * its deletion always fit, however many actors it has. */
+export function missionLifecycleReserve(actors: number, documentCleanup = false): number {
+  return 1 + actors + missionTerminalShare(actors, documentCleanup)
+}
 export const MISSION_MAX_HISTORY = 50
 
 export type MissionJsonValue = null | boolean | number | string | readonly MissionJsonValue[] | {
@@ -60,9 +67,10 @@ export interface MissionActivityProjection {
   missions: Array<{
     missionId: string
     actors: MissionActorActivity[]
-    /** Observed native membership for display only, never task/actor authority. */
+    /** Observed native membership for display only, never task/actor authority.
+     * `partial`: the members of the actors this refresh read; the others read as unknown. */
     family?: {
-      state: "observed" | "unknown"
+      state: "observed" | "partial" | "unknown"
       members: Array<{
         sessionId: string
         parentSessionId?: string
@@ -104,6 +112,8 @@ export interface MissionReport {
   delivery?: "coordinator-notification" | "native-return" | "coordinator-readout"
   notificationStatus?: "pending" | "admitted"
   createdAt: number
+  /** Body descriptors, in the mission's own `reports` of list and mission reads only. */
+  bodies?: MissionBodyDescriptors
 }
 
 export interface MissionTask {
@@ -130,6 +140,8 @@ export interface MissionTask {
   report?: MissionReport
   lateReports?: MissionReport[]
   outstandingExecution: boolean
+  /** Body descriptors, in list and mission reads only. */
+  bodies?: MissionBodyDescriptors
 }
 
 export interface MissionDependencyUpdate {
@@ -149,6 +161,8 @@ export interface MissionRetiredTask {
 }
 
 export interface MissionPlanChange {
+  /** Exact accepted human edit identity, retained with its bounded history. */
+  requestID?: string
   revision: number
   source?: "user" | "coordinator"
   actorSessionId?: string
@@ -159,9 +173,13 @@ export interface MissionPlanChange {
   retiredTasks: MissionRetiredTask[]
   dependencyUpdates: MissionDependencyChange[]
   createdAt: number
+  /** Body descriptors, in list and mission reads only. */
+  bodies?: MissionBodyDescriptors
 }
 
 export interface MissionMap {
+  creationDefaults?: import("./creation-defaults").MissionCreationMetadata
+  document?: import("./mission-document-one-time").MissionDocumentSummary
   version: typeof MISSION_SCHEMA_VERSION
   id: string
   projectID: string
@@ -181,6 +199,9 @@ export interface MissionMap {
   controlUnavailable?: boolean
   notificationUnavailable?: boolean
   summary?: string
+  /** Project-wide order of the finish in effect (`MissionJournal.appendFinish`): later
+   * finishes have larger numbers, whatever deletions, reloads and clocks did. */
+  finishSequence?: number
   briefing?: MissionBriefing
   /** Exact request identities of the most recent accepted briefings, oldest
    * first, so a superseded requested response is still recognizable. */
@@ -196,6 +217,9 @@ export interface MissionMap {
   revision: number
   history: MissionPlanChange[]
   historyTruncated: boolean
+  /** Body descriptors (`missions/mission-body-descriptors.ts`), in list and mission reads only:
+   * the reducer never writes them, so content values never include them. */
+  bodies?: MissionBodyDescriptors
 }
 
 export type MissionCleanupReason = "children" | "shared" | "moved" | "identity" | "guarded"
@@ -209,6 +233,7 @@ export interface MissionCleanup {
   removed: number
   retained: number
   pending: number
+  documentPending?: boolean
   reasons: MissionCleanupReason[]
   createdAt: number
 }
@@ -225,36 +250,39 @@ export interface MissionSnapshot {
   cleanupUnavailable?: boolean
 }
 
-/** The plugin's `list` read: full maps of the open missions and the included
- * ones, plus a row for every live map. `summaries` is omitted, with the same
- * `summariesVersion`, when the caller already holds that version. */
-export interface MissionList extends MissionSnapshot {
+/** The plugin's `list` read: compact maps (`compactMissionMap`) of the open missions
+ * and the included ones, plus a row for every live map. `summaries` is omitted, with
+ * the same `summariesVersion`, when the caller already holds that version. */
+export interface MissionList extends Omit<MissionSnapshot, "missions"> {
+  missions: MissionPanelMap[]
   summaries?: MissionSummary[]
   summariesVersion: string
 }
 
-/** The plugin's `mission` read: one mission's range, `mission` absent when it
- * holds no live map, with that range's cleanups and the project damage flags. */
-export interface MissionRead {
+/** The plugin's `mission` read: one mission's range, its map compact and absent when it
+ * holds no live map, with that range's cleanups and the project damage flags. The
+ * admission read answers the same shape with the full map (`MissionRead<MissionMap>`). */
+export interface MissionRead<Map extends MissionPanelMap = MissionPanelMap> {
   version: typeof MISSION_SCHEMA_VERSION
   projectID: string
   generatedAt: number
-  mission?: MissionMap
+  mission?: Map
   cleanups: MissionCleanup[]
   cleanupUnavailable?: boolean
   controlUnavailable?: boolean
   notificationUnavailable?: boolean
 }
 
-/** Without `summariesVersion` (a plugin without `list`) every live map is in `missions`. */
-export interface MissionListAvailableResponse extends MissionSnapshot {
+/** Without `summariesVersion` every live map is in `missions`. */
+export interface MissionListAvailableResponse extends Omit<MissionSnapshot, "missions"> {
   available: true
+  missions: MissionPanelMap[]
   activity: MissionActivityProjection
   summaries?: MissionSummary[]
   summariesVersion?: string
 }
 
-export type MissionReadResponse = (MissionRead & { available: true }) | MissionListUnavailableResponse
+export type MissionReadResponse<Map extends MissionPanelMap = MissionPanelMap> = (MissionRead<Map> & { available: true }) | MissionListUnavailableResponse
 
 /** Why Missions cannot be read: this backend has no local bridge to run them
  * (`host-unavailable`), OpenCode has not loaded the plugin or it does not answer
@@ -279,6 +307,7 @@ interface MissionEventBase {
 }
 
 export interface MissionCreatedEvent extends MissionEventBase {
+  creationDefaults?: import("./creation-defaults").MissionCreationMetadata
   type: "mission.created"
   projectCanonical: string
   title?: string
@@ -307,12 +336,25 @@ export interface MissionUpdatedEvent extends MissionEventBase {
   notes?: string
 }
 
+export interface MissionPreparedEvent extends Omit<MissionCreatedEvent, "type" | "prepared" | "preparedBy" | "requestID"> {
+  type: "mission.prepared"
+  requestID: string
+  expectedRevision: number
+  fingerprint: string
+}
+
 export interface MissionDeletedEvent extends MissionEventBase {
   type: "mission.deleted"
   requestID: string
   expectedRevision: number
   deleteManagedSessions?: boolean
   cleanupTargets?: Array<{ sessionID: string; location: MissionLocation }>
+  documentCleanup?: true
+}
+
+export interface MissionDocumentCleanedEvent extends MissionEventBase {
+  type: "mission.document-cleaned"
+  deletionID: string
 }
 
 export interface MissionSessionCleanedEvent extends MissionEventBase {
@@ -439,6 +481,8 @@ export interface MissionFinishedEvent extends MissionEventBase {
   type: "mission.finished"
   outcome: "completed" | "failed"
   summary: string
+  /** The project's finish number, absent from isolated recurrence passages. */
+  sequence?: number
   /** Exact original control/message and durable native failure, not a task report. */
   nativeFailure?: { operationID: string; sessionID: string; messageID: string; evidenceID: string; inputDigest: string }
 }
@@ -460,8 +504,10 @@ export type MissionEvent =
   | MissionControlAppliedEvent
   | MissionCreatedEvent
   | MissionUpdatedEvent
+  | MissionPreparedEvent
   | MissionDeletedEvent
   | MissionSessionCleanedEvent
+  | MissionDocumentCleanedEvent
   | MissionRevisedEvent
   | MissionTaskCreatedEvent
   | MissionTaskDispatchingEvent
@@ -503,8 +549,18 @@ export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.
   }
 }
 
-function reduceMission(events: readonly MissionEvent[], discarded: { count: number }): MissionMap | undefined {
-  const created = events.find((event): event is MissionCreatedEvent => event.type === "mission.created")
+/** Every plan change one mission's events record (its `missionView` events), exactly as
+ * the reducer derives them: the map's `history` is the last `MISSION_MAX_HISTORY` of
+ * these. Empty when the events hold no live map. */
+export function missionPlanChanges(events: readonly MissionEvent[], missionID: string): MissionPlanChange[] {
+  const changes: MissionPlanChange[] = []
+  const live = reduceMission(events.filter(event => event.missionID === missionID).sort(compareEvents), { count: 0 }, changes)
+  return live ? changes : []
+}
+
+/** `changes`, when given, receives every plan change, before the map keeps its last ones. */
+function reduceMission(events: readonly MissionEvent[], discarded: { count: number }, changes?: MissionPlanChange[]): MissionMap | undefined {
+  let created = events.find((event): event is MissionCreatedEvent => event.type === "mission.created")
   if (!created) {
     discarded.count += events.length
     return undefined
@@ -538,7 +594,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
 
   let stoppedForReports = false
   // Index of the finish in effect: a resumed failure no longer finishes the mission.
-  let finishedAt = -1
+  let finishIndex = -1
   for (const event of events) {
     updatedAt = Math.max(updatedAt, event.createdAt)
     if (event.projectID !== created.projectID || event.missionID !== created.missionID) {
@@ -546,7 +602,17 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       continue
     }
     if (event.type === "mission.control-requested" && event.action === "stop") stoppedForReports = true
-    if (event.type === "mission.updated") {
+    if (event.type === "mission.prepared") {
+      const prefix = events.slice(0, events.indexOf(event))
+      if (event.expectedRevision !== prefix.length || tasks.size || status !== "active"
+        || projectLifecycle(prefix).runState !== "prepared") { discarded.count++; continue }
+      created = { ...created, title: event.title, template: event.template, profiles: event.profiles,
+        taskMode: event.taskMode, coordinator: event.coordinator }
+      actors.clear()
+      actors.set(event.coordinator.sessionID, { sessionId: event.coordinator.sessionID, kind: "coordinator", managed: false,
+        title: event.coordinator.title, roles: ["coordinator"], location: event.coordinator.location, joinedAt: event.createdAt })
+    }
+    if (event.type === "mission.updated" || event.type === "mission.prepared") {
       const previousObjective = objective
       const previousNotes = notes
       objective = event.objective
@@ -554,8 +620,9 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       history.push({
         revision: event.expectedRevision + 1,
         source: "user",
+        requestID: event.requestID,
         objective: { before: previousObjective, after: objective },
-        ...(event.notesSpecified ? { notes: { before: previousNotes, after: notes } } : {}),
+        ...(event.type === "mission.prepared" || event.notesSpecified ? { notes: { before: previousNotes, after: notes } } : {}),
         addedTaskKeys: [],
         retiredTasks: [],
         dependencyUpdates: [],
@@ -609,7 +676,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         task.updatedAt = event.createdAt
       }
       for (const added of event.addedTasks) {
-        if (tasks.has(added.key) || tasks.size >= MISSION_MAX_TASKS) { discarded.count += 1; continue }
+        if (tasks.has(added.key)) { discarded.count += 1; continue }
         tasks.set(added.key, {
           ...added,
           contractGeneration: 1,
@@ -635,7 +702,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       continue
     }
     if (event.type === "task.created") {
-      if (tasks.has(event.task.key) || tasks.size >= MISSION_MAX_TASKS) {
+      if (tasks.has(event.task.key)) {
         discarded.count += 1
         continue
       }
@@ -660,8 +727,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         || !actors.has(event.binding.parentSessionID) || event.binding.parentSessionID === event.actor.sessionID
         || (existing && (existing.kind !== "specialist" || existing.managed !== event.actor.managed
           || existing.title !== event.actor.title || existing.location.directory !== event.actor.location.directory
-          || existing.location.workspaceID !== event.actor.location.workspaceID))
-        || (!existing && actors.size >= MISSION_MAX_ACTORS)) {
+          || existing.location.workspaceID !== event.actor.location.workspaceID))) {
         discarded.count += 1
         continue
       }
@@ -750,7 +816,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       const existing = actors.get(event.actor.sessionID)
       if (existing) {
         if (!existing.roles.includes(task.role)) existing.roles.push(task.role)
-      } else if (actors.size < MISSION_MAX_ACTORS) {
+      } else {
         actors.set(event.actor.sessionID, {
           sessionId: event.actor.sessionID,
           kind: "specialist",
@@ -760,8 +826,6 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
           location: event.actor.location,
           joinedAt: event.createdAt,
         })
-      } else {
-        discarded.count += 1
       }
       continue
     }
@@ -822,14 +886,14 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     }
     if (event.type === "mission.finished") {
       status = event.outcome
-      finishedAt = events.indexOf(event)
+      finishIndex = events.indexOf(event)
       continue
     }
     if (event.type === "mission.reopened") {
       // Only a failure can be resumed, at the exact revision the user saw.
       if (status !== "failed" || event.expectedRevision !== events.indexOf(event)) { discarded.count += 1; continue }
       status = "active"
-      finishedAt = -1
+      finishIndex = -1
     }
   }
 
@@ -848,7 +912,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   const firstStop = events.findIndex(event => event.type === "mission.control-requested" && event.action === "stop")
   // Denial receipts in the normal final-report/native-settlement interval do
   // not rewrite the already recorded terminal result. A prior Stop remains terminal.
-  const finishedBeforeStop = finishedAt >= 0 && finishedAt < firstStop
+  const finishedBeforeStop = finishIndex >= 0 && finishIndex < firstStop
   if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
     status = "stopped"
     for (const task of tasks.values()) {
@@ -871,6 +935,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     if (task.report) task.report = notificationStatus(task.report)
     if (task.lateReports) task.lateReports = task.lateReports.map(notificationStatus)
   }
+  changes?.push(...history)
   return {
     version: MISSION_SCHEMA_VERSION,
     id: created.missionID,
@@ -886,10 +951,13 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     template: created.template,
     taskMode: created.taskMode ?? "native",
     ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
+    ...(created.creationDefaults === undefined ? {} : { creationDefaults: structuredClone(created.creationDefaults) }),
     status,
     ...lifecycle,
     ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
-    summary: finishedAt >= 0 ? (events[finishedAt] as MissionFinishedEvent).summary : undefined,
+    summary: finishIndex >= 0 ? (events[finishIndex] as MissionFinishedEvent).summary : undefined,
+    ...(finishIndex >= 0 && (events[finishIndex] as MissionFinishedEvent).sequence !== undefined
+      ? { finishSequence: (events[finishIndex] as MissionFinishedEvent).sequence } : {}),
     coordinatorSessionId: created.coordinator.sessionID,
     actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
     tasks: taskList,

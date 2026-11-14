@@ -8,6 +8,8 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
+import { parseAllowedOrigins } from "./server/direct-origin"
+import { sessionTimeoutMs } from "./auth/session-manager"
 import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
 import { resolveConfigLocation } from "./config/location"
@@ -36,7 +38,7 @@ import { SideCarManager } from "./sidecars/manager"
 import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { runCliUpgrade } from "./cli-upgrade"
-import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownTrigger } from "./shutdown"
+import { createServerShutdownHandler, installShutdownSignalHandlers, installShutdownStdinHandler, orchestrateServerShutdown } from "./shutdown"
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { PermissionReceipts } from "./permissions/receipts"
@@ -45,6 +47,8 @@ import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metad
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
+import { designRequestRefresher } from "./opencode/design/demand"
+import { followMemoryPreference } from "./opencode/memory/preference"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
 import { provisionDesktopPlugins } from "./opencode/desktop-plugin-provisioning"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
@@ -52,6 +56,8 @@ import { RemoteDeviceRegistry } from "./remote-control/devices"
 import { RemoteControlManager } from "./remote-control/manager"
 import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
 import { WorktreeDeletionFence } from "./workspaces/worktree-session-evacuation"
+import { IntegrationCatalogSource } from "./opencode/integrations/catalog"
+import { MemoryStore } from "./memory/store"
 
 const require = createRequire(import.meta.url)
 
@@ -93,53 +99,6 @@ const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 const DEFAULT_HTTPS_PORT = 9898
 const DEFAULT_HTTP_PORT = 9899
-export const STDIN_SHUTDOWN_COMMAND = "codenomad:shutdown"
-
-interface ShutdownSignalSource {
-  on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown
-}
-
-export function installShutdownSignalHandlers(
-  source: ShutdownSignalSource,
-  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
-): void {
-  source.on("SIGINT", () => void shutdown("SIGINT"))
-  source.on("SIGTERM", () => void shutdown("SIGTERM"))
-}
-
-interface ShutdownStdinSource {
-  on(event: "data", listener: (chunk: Buffer | string) => void): unknown
-  off?(event: "data", listener: (chunk: Buffer | string) => void): unknown
-  destroy?(): unknown
-}
-
-export function installShutdownStdinHandler(
-  source: ShutdownStdinSource,
-  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
-  handleLine?: (line: string) => boolean,
-): void {
-  let buffer = ""
-  let requested = false
-  const onData = (chunk: Buffer | string) => {
-    if (requested) return
-    buffer += chunk.toString()
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ""
-    let shutdownRequested = false
-    for (const line of lines) {
-      if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
-      else handleLine?.(line)
-    }
-    if (!shutdownRequested) return
-
-    requested = true
-    source.off?.("data", onData)
-    source.destroy?.()
-    void shutdown("stdin")
-  }
-  source.on("data", onData)
-}
-
 export function parseBooleanSwitchEnv(name: string, value: string | undefined = process.env[name]): boolean {
   const normalized = (value ?? "").trim().toLowerCase()
   if (["1", "true", "yes", "on"].includes(normalized)) return true
@@ -341,6 +300,7 @@ async function main() {
 
   const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
+  const memoryStore = new MemoryStore(configLocation.baseDir)
 
   if ((options.tlsKeyPath && !options.tlsCertPath) || (!options.tlsKeyPath && options.tlsCertPath)) {
     throw new InvalidArgumentError("--tls-key and --tls-cert must be provided together")
@@ -365,6 +325,8 @@ async function main() {
       username: options.authUsername,
       password: options.authPassword,
       cookieName: options.authCookieName,
+      sessionIdleMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_IDLE_SECONDS, "CODENOMAD_SESSION_IDLE_SECONDS"),
+      sessionAbsoluteMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_ABSOLUTE_SECONDS, "CODENOMAD_SESSION_ABSOLUTE_SECONDS"),
       generateToken: options.generateToken,
       dangerouslySkipAuth: options.dangerouslySkipAuth,
     },
@@ -398,16 +360,22 @@ async function main() {
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")
   const missionsLifecycle = new DesktopPluginLifecycle("missions")
+  const memoryLifecycle = new DesktopPluginLifecycle("memory")
+  // Before any lease is created: the native memory tool follows the preference.
+  followMemoryPreference(settings, eventBus, memoryLifecycle,
+    error => logger.warn({ err: error }, "Failed to publish the memory preference to native plugins"))
   // Missions dispatch through the loopback bridge of the owning backend, desktop or
   // standalone; window/browser automation needs a desktop host. Settles once
   // publication has been attempted, so early connections never skip Missions.
   let missionBridge: "pending" | "published" | "failed" = "pending"
   let settleMissionBridge!: (published: boolean) => void
   const missionBridgeSettled = new Promise<boolean>(resolve => { settleMissionBridge = resolve })
+  const reportedProvisioningFailures = new Set<string>()
   const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = (launch, connection, deadlineAt) =>
     provisionDesktopPlugins({
       connection,
       logger,
+      reported: reportedProvisioningFailures,
       resolvePaths: () => resolveDesktopPluginPaths(connection, launch, deadlineAt),
       install: async paths => {
         const missions = await missionBridgeSettled
@@ -415,7 +383,8 @@ async function main() {
           pruning: pruningLifecycle,
           automation: nativeParent.available ? automationLifecycle : undefined,
           missions: missions ? missionsLifecycle : undefined,
-        })
+          memory: missions ? memoryLifecycle : undefined,
+        }, connection)
       },
     })
   const temporaryFolders = await TemporaryFolderRegistry.open(
@@ -433,7 +402,7 @@ async function main() {
     eventBus,
     logger: workspaceLogger,
     prepareDesktopPlugins,
-    desktopPluginsReady: () => pruningLifecycle.ready(),
+    desktopPluginsReady: target => pruningLifecycle.ready(target),
     startServiceCommand: nativeServiceStarter(nativeParent),
   })
   const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
@@ -554,7 +523,11 @@ async function main() {
   const servers: Array<ReturnType<typeof createHttpServer>> = []
   const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
     eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
+    void refreshDesignRequest()
   })
+  // This backend's Design request, carried by each of its session-pruning leases.
+  const refreshDesignRequest = designRequestRefresher(panelExtensions, pruningLifecycle)
+  void refreshDesignRequest()
   // Every listener admits the same worktrees: one fence (and its mission holds),
   // so a deletion through HTTPS drains a mission admitted through the bridge.
   const worktreeDeletionFence = new WorktreeDeletionFence()
@@ -562,6 +535,8 @@ async function main() {
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
+    allowedOrigins: parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS),
+    memoryStore,
     workspaceManager,
     settings,
     fileSystemBrowser,
@@ -584,6 +559,7 @@ async function main() {
     automationBridgeToken: automationBridge.token,
     worktreeDeletionFence,
     missionsHost,
+    integrationCatalog: new IntegrationCatalogSource({ stateFile: path.join(configDir, "integrations-catalog.json"), logger }),
   }
 
   // HTTP always starts: besides an explicit --http it carries the loopback bridge
@@ -737,25 +713,27 @@ async function main() {
     shutdown: () =>
       orchestrateServerShutdown(
         {
-          stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
+          stopInstanceEventBridge: async () => {
+            instanceEventBridge.shutdown()
+            await Promise.all([yoloManager.stop(), permissionReceipts.stop()])
+          },
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
-            instanceEventBridge.shutdown()
-            yoloManager.stop()
+            // Accepted HTTP mutations can confirm receipts after observers stop.
+            await yoloManager.stop()
             await permissionReceipts.stop()
-            await workspaceManager.shutdown()
+            const results = await Promise.allSettled([
+              workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(), memoryLifecycle.stop(),
+              removeAutomationBridge?.(),
+            ])
+            nativeParent.close()
+            const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
+            if (failures.length) throw new AggregateError(failures, "Workspace and plugin cleanup failed")
           },
           stopHttpServers: async () => {
-            await pruningLifecycle.stop()
-            await automationLifecycle.stop()
-            await missionsLifecycle.stop()
-            nativeParent.close()
-            await removeAutomationBridge?.()
-            yoloManager.stop()
-            await permissionReceipts.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
             if (failures.length > 0) {

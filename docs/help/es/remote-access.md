@@ -52,6 +52,14 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 No supongas que el puerto es 9898 o 9899: los puertos omitidos pueden cambiar si están ocupados. Un `--https-port` explícito distinto de cero, o un `--http-port` con HTTP activado, fija el puerto y falla si no puede escuchar; `0` pide al sistema operativo que asigne uno. Las **Local Connection URL** y **Remote Connection URL** indicadas, y las **Direcciones accesibles** actualizadas, son autoritativas para esa ejecución. Consulta la [referencia completa de la CLI del servidor](server.md).
 
+## Actualizar {#upgrading}
+
+Vuelve a iniciar sesión después de actualizar. Para un alias de nombre de host, un proxy inverso o una interfaz alojada por separado, configura `CODENOMAD_ALLOWED_ORIGINS` en el backend con los orígenes de confianza de la interfaz (esquema, nombre de host y puerto). Los clientes nativos de la LAN deben enviar una cabecera `Origin` permitida en las solicitudes de modificación.
+
+Usa una conexión loopback para las operaciones reservadas al anfitrión: contenido de SideCar (`/sidecars/`) y WebSockets, gestión de Control remoto (`/api/remote-control/`), puente de plugins (`/api/opencode-plugin/`), proxies remotos (`/api/remote-proxy/`), gestión de servidores guardados (`/api/remote-servers/`), cambios de contraseña e inicialización por token. Estas operaciones requieren loopback incluso con una sesión autenticada mediante acceso directo por LAN. El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido.
+
+Las API de registro `/api/sidecars` siguen disponibles para los clientes directos de LAN autenticados y los dispositivos emparejados. Las vistas previas web de Control remoto siguen disponibles con su token de capacidad mientras estén activadas en el anfitrión.
+
 ## Configurar TLS de confianza {#tls}
 
 ### Proporcionar tu propio certificado {#custom-certificates}
@@ -88,5 +96,9 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 3. Elige **Guardar** para crear un marcador o **Conectar** para guardarlo y abrirlo. Inicia sesión en ese servidor.
 
 Selecciona un servidor guardado en la pestaña **Servidores** de la página de inicio para volver a abrirlo. Los marcadores pertenecen a esta configuración de CodeNomad, no a los proyectos del servidor remoto. Guardar una URL no inicia el servidor ni concede acceso. **Eliminar servidor guardado** elimina el marcador, no las conversaciones remotas, el backend ni sus credenciales.
+
+Para abrir un servidor guardado directamente desde la línea de comandos, inicia la aplicación de escritorio con `--connect-server <nombre>` (o `--connect-server=<nombre>`), usando el nombre guardado del servidor o su URL `https://`. CodeNomad abre solo la ventana remota, con las mismas comprobaciones e inicio de sesión que **Conectar**; si CodeNomad ya se está ejecutando, su ventana actual lo abre en lugar de una nueva. Una URL que no coincide con ningún servidor guardado se guarda con su nombre de host. Los valores de inicio nunca llevan credenciales: se rechaza una URL con nombre de usuario, contraseña o código de emparejamiento. Si el nombre es desconocido, la URL no es válida o la conexión falla, CodeNomad se inicia con normalidad y muestra el error. Cuando la conexión necesita una confirmación, como instalar el certificado local para un servidor autofirmado, CodeNomad también se inicia con normalidad y la pide allí. En Windows, la compilación Tauri no se inicia si un argumento de inicio contiene `|`; usa en su lugar la URL del servidor o cambia el nombre del servidor.
+
+Una ventana remota siempre deja una forma de volver a este equipo. Cerrar la última ventana local mientras siguen abiertas ventanas remotas conserva sus pestañas: **Ventana → Nueva ventana** en una ventana remota, o iniciar CodeNomad de nuevo, la vuelve a abrir. Si un servidor no se puede cargar, su ventana lo indica y ofrece **Reintentar**, **Abrir una ventana local** y **Cerrar ventana**; en la versión Tauri, usa el botón de recarga de la página y **Ventana → Nueva ventana**.
 
 Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL del servidor**. El marcador conserva solo el origen del túnel, nunca el código de un solo uso; consulta [Control remoto](remote-control.md) para volver a emparejar tras perder la cookie del dispositivo.

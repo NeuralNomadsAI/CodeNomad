@@ -2,7 +2,8 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { authenticatedFetch } from "./auth-recovery"
 import { HttpResponseError } from "./retryable-file-search"
 
-export type MissionLifecycleInput = { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string }
+/** `graceful` (Pause only) lets running steps finish instead of interrupting them. */
+export type MissionLifecycleInput = { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string; graceful?: true }
 const codes = ["revision-conflict", "request-conflict", "control-conflict", "control-pending"] as const
 type LifecycleCode = typeof codes[number]
 

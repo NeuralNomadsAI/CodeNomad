@@ -19,9 +19,11 @@ const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const RESERVED_IDS = new Set(["content", "help-query", "help-results"])
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i
 // Generated blocks, each written as a top-level paragraph of its own: `{{release}}`.
-export const DIRECTIVES = new Set(["release", "download-button", "tour-video"])
-// Directives restricted to one page; download-button also makes its page load help-download.js.
-const DIRECTIVE_PAGES = new Map([["download-button", "download"], ["tour-video", "index"]])
+export const DIRECTIVES = new Set(["release", "download-button", "tour-video", "funding"])
+// Directives restricted to some pages; download-button also makes its page load help-download.js.
+const DIRECTIVE_PAGES = new Map([["download-button", ["download"]], ["tour-video", ["index"]], ["funding", ["sponsor", "download"]]])
+// Funding channels accepted in docs/help/funding.json: exact canonical URLs, no credentials, port, query or fragment.
+const FUNDING_URLS = [/^https:\/\/github\.com\/sponsors\/(?=[A-Za-z0-9-]{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*$/]
 // The home tour: a silent loop that plays only on wide screens without reduced motion; elsewhere
 // the poster image replaces it (help.css) and no video is downloaded.
 const TOUR_VIDEO = resolve(root, "docs/screenshots/codenomad-tour.mp4")
@@ -90,7 +92,7 @@ const DOWNLOAD_KEYS = ["label", "windows", "windowsDetail", "macos", "macosDetai
 export async function readChromeStrings(locales, directory = chrome) {
   const strings = {}
   for (const locale of locales) strings[locale] = await readJson(resolve(directory, `i18n/${locale}.json`))
-  const expected = ["language", "siteTitle", "brand", "tagline", "onThisPage", "skipToContent", "editPage", "translatePage", "reportProblem", "github", ...DOWNLOAD_KEYS.map((key) => `download.${key}`), "languageLabel", "projectLinks", "helpTopics", "scope", "findHint", "untranslated", ...SECTION_IDS.map((id) => `sections.${id}`), ...["label", "clear", "empty", "noResults", "failure", "loading", "count"].map((key) => `search.${key}`), ...["published", "unavailable"].map((key) => `release.${key}`), ...["label", "poster", "caption"].map((key) => `tour.${key}`)].sort().join()
+  const expected = ["language", "siteTitle", "brand", "tagline", "onThisPage", "skipToContent", "editPage", "translatePage", "reportProblem", "github", ...DOWNLOAD_KEYS.map((key) => `download.${key}`), "languageLabel", "projectLinks", "helpTopics", "scope", "findHint", "untranslated", ...SECTION_IDS.map((id) => `sections.${id}`), ...["label", "clear", "empty", "noResults", "failure", "loading", "count"].map((key) => `search.${key}`), ...["published", "unavailable"].map((key) => `release.${key}`), ...["label", "poster", "caption"].map((key) => `tour.${key}`), ...["label", "action", "recipient"].map((key) => `funding.${key}`)].sort().join()
   for (const locale of locales) {
     if (flatKeys(strings[locale]).join() !== expected) throw new Error(`docs/help/i18n/${locale}.json: keys differ from en.json`)
     if (Object.keys(strings[locale].sections).join() !== SECTION_IDS.join()) throw new Error(`docs/help/i18n/${locale}.json: section labels must follow site.json order`)
@@ -113,6 +115,24 @@ export async function readDownloads(directory = chrome) {
     templates.add(entry.template)
   }
   return downloads
+}
+
+/** Validates funding channels in display order: each { id, name, url, recipient } with an allowlisted URL. */
+export function validateFunding(funding) {
+  if (!Array.isArray(funding)) throw new Error("funding.json: expected a list")
+  const ids = new Set()
+  for (const entry of funding) {
+    if (!exactKeys(entry, "id,name,recipient,url")) throw new Error("funding.json: each entry needs exactly id, name, url and recipient")
+    if (typeof entry.id !== "string" || !ID_PATTERN.test(entry.id) || ids.has(entry.id)) throw new Error(`funding.json: invalid or duplicate id ${entry.id}`)
+    for (const key of ["name", "recipient"]) if (typeof entry[key] !== "string" || !entry[key].trim()) throw new Error(`funding.json: ${entry.id} needs a non-empty ${key}`)
+    if (typeof entry.url !== "string" || !FUNDING_URLS.some((pattern) => pattern.test(entry.url))) throw new Error(`funding.json: ${entry.id} url is not an accepted funding page`)
+    ids.add(entry.id)
+  }
+  return funding
+}
+
+export async function readFunding(directory = chrome) {
+  return validateFunding(await readJson(resolve(directory, "funding.json")))
 }
 
 /**
@@ -139,7 +159,7 @@ export function validateRelease(release, downloads) {
   return { version, published, assets }
 }
 
-function renderMarkdown(markdown, file, media, report, { locale, page, strings, release, downloads }) {
+function renderMarkdown(markdown, file, media, report, { locale, page, strings, release, downloads, funding }) {
   const downloadIds = new Set(downloads.map((entry) => entry.id))
   const headings = []
   const links = []
@@ -248,12 +268,23 @@ function renderMarkdown(markdown, file, media, report, { locale, page, strings, 
     const t = strings.tour
     return `<figure class="tour"><video autoplay muted loop playsinline controls preload="metadata" width="1280" height="720" poster="${poster}" aria-label="${escape(t.label)}"><source src="${video}" type="video/mp4" media="${TOUR_MEDIA}"></video><img src="${poster}" alt="${escape(t.poster)}" width="1280" height="720"><figcaption><a href="${TOUR_URL}">${escape(t.caption)}</a></figcaption></figure>\n`
   }
+  // One outlined button per funding.json channel, naming who receives the money.
+  const fundingList = () => {
+    if (!funding.length) {
+      report("missing-funding", "{{funding}} needs at least one channel in docs/help/funding.json")
+      return ""
+    }
+    const t = strings.funding
+    const items = funding.map((entry) => `<li><a href="${escape(entry.url)}">${format(t.action, { channel: `<bdi>${escape(entry.name)}</bdi>` })}</a><span>${format(t.recipient, { recipient: `<bdi>${escape(entry.recipient)}</bdi>` })}</span></li>`)
+    return `<ul class="funding">${items.join("")}</ul>\n`
+  }
   const generate = {
     release: () => release
       ? `<p class="release-line">${format(strings.release.published, { version: escape(release.version), date: escape(formatDate(locale, release.published)) })}</p>\n`
       : `<p class="release-line"><a href="${LATEST_RELEASE}">${escape(strings.release.unavailable)}</a></p>\n`,
     "download-button": downloadButton,
     "tour-video": tourVideo,
+    funding: fundingList,
   }
   // Directives are replaced at token level so list items, cells and quotes never qualify and the
   // generated block never becomes the meta description; any remaining {{ in rendered text is a problem.
@@ -262,7 +293,7 @@ function renderMarkdown(markdown, file, media, report, { locale, page, strings, 
     const name = token.type === "paragraph" ? DIRECTIVE.exec(token.text.trim())?.[1] : undefined
     if (!DIRECTIVES.has(name)) continue
     if (directives.includes(name)) report("duplicate-directive", `{{${name}}} appears more than once`)
-    if (DIRECTIVE_PAGES.has(name) && DIRECTIVE_PAGES.get(name) !== page) report("misplaced-directive", `{{${name}}} belongs only on ${DIRECTIVE_PAGES.get(name)}.md`)
+    if (DIRECTIVE_PAGES.has(name) && !DIRECTIVE_PAGES.get(name).includes(page)) report("misplaced-directive", `{{${name}}} belongs only on ${DIRECTIVE_PAGES.get(name).map((other) => `${other}.md`).join(" or ")}`)
     directives.push(name)
     tokens[index] = { type: "html", block: true, pre: false, raw: token.raw, text: generate[name]() }
   }
@@ -291,7 +322,7 @@ function languageMenu(site, strings, locale, href) {
   return `<details class="language-menu"><summary><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path fill="none" stroke="currentColor" d="M8 .5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15ZM.5 8h15M8 .5c-2 2-3 4.5-3 7.5s1 5.5 3 7.5c2-2 3-4.5 3-7.5S10 2.5 8 .5Z"/></svg><span class="visually-hidden">${escape(strings[locale].languageLabel)}: </span>${escape(strings[locale].language)}</summary><ul>${items}</ul></details>`
 }
 
-function pageDocument({ site, strings, locale, page, rendered, fallback, available }) {
+function pageDocument({ site, strings, locale, page, rendered, fallback, available, sponsor }) {
   const t = strings[locale]
   const rtl = RTL_LOCALES.has(locale)
    const pageTitle = rendered.title === t.siteTitle ? escape(t.siteTitle) : `${escape(rendered.title)} - ${escape(t.siteTitle)}`
@@ -332,7 +363,7 @@ function pageDocument({ site, strings, locale, page, rendered, fallback, availab
       <div class="search-controls"><input id="help-query" type="search" autocomplete="off" aria-controls="help-results"><button type="button">${escape(t.search.clear)}</button></div>
       <div class="search-results" hidden><p class="search-status" role="status" aria-live="polite"></p><ul id="help-results"></ul></div>
     </div>
-    <nav class="site-links" aria-label="${escape(t.projectLinks)}"><a href="download.html">${escape(t.download.label)}</a><a href="${repo}">${escape(t.github)}</a>${languageMenu(site, strings, locale, (other) => `../${other}/${page}.html`)}</nav>
+    <nav class="site-links" aria-label="${escape(t.projectLinks)}"><a href="download.html">${escape(t.download.label)}</a>${sponsor ? `<a href="sponsor.html">${escape(t.funding.label)}</a>` : ""}<a href="${repo}">${escape(t.github)}</a>${languageMenu(site, strings, locale, (other) => `../${other}/${page}.html`)}</nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
@@ -394,10 +425,11 @@ function chooserDocument(site, strings) {
  * Builds every locale listed in site.json. Pages missing from a locale fall back to English.
  * Returns problems instead of throwing so callers decide which kinds are fatal.
  */
-export async function buildHelp({ content = chrome, output = resolve(root, "dist/help"), release } = {}) {
+export async function buildHelp({ content = chrome, output = resolve(root, "dist/help"), release, funding } = {}) {
   const site = await readSite(content)
   const strings = await readChromeStrings(site.locales)
   const downloads = await readDownloads()
+  const channels = funding === undefined ? await readFunding() : validateFunding(funding)
   const releaseData = release == null ? null : validateRelease(release, downloads)
   const problems = []
   const media = new Map()
@@ -407,7 +439,7 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
     const file = resolve(content, locale, `${page}.md`)
     if (!isFile(file)) return null
     const report = (kind, message) => problems.push({ kind, locale, page, message })
-    return renderMarkdown(await readFile(file, "utf8"), file, media, report, { locale, page, strings: strings[locale], release: releaseData, downloads })
+    return renderMarkdown(await readFile(file, "utf8"), file, media, report, { locale, page, strings: strings[locale], release: releaseData, downloads, funding: channels })
   }
 
   for (const page of pages) {
@@ -437,6 +469,8 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
   }
 
   const available = new Map(pages.filter((page) => rendered.has(`en/${page}`)).map((page) => [page, rendered.get(`en/${page}`).title]))
+  // The header Sponsor link needs both a channel and the page that explains it.
+  const sponsor = channels.length > 0 && available.has("sponsor")
   for (const locale of site.locales) {
     for (const page of available.keys()) {
       const result = rendered.get(`${locale}/${page}`)
@@ -486,7 +520,7 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
     const labels = new Map([...available.keys()].map((page) => [page, rendered.get(`${locale}/${page}`).title]))
     for (const page of available.keys()) {
       const result = rendered.get(`${locale}/${page}`)
-      const html = pageDocument({ site, strings, locale, page, rendered: result, fallback: result.fallback, available: labels })
+      const html = pageDocument({ site, strings, locale, page, rendered: result, fallback: result.fallback, available: labels, sponsor })
       await writeFile(resolve(output, locale, `${page}.html`), html)
     }
   }

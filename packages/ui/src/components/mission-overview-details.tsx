@@ -1,24 +1,31 @@
 import { For, Show, createMemo } from "solid-js"
-import type { MissionMap, MissionReport } from "../../../server/src/api-types"
+import type { MissionPanelMap, MissionPanelReport } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
-import { missionStore } from "../stores/missions"
+import { useMissionPanelStore } from "./mission-panel-scope"
 import { updateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
 import { MissionCleanupPanel } from "./mission-cleanup"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { missionReportIsPrevious, missionReports } from "./mission-progress-model"
+import { missionReportDecisionMaker } from "./mission-decision-report"
+import { missionChangeExcerpt } from "../../../server/src/missions/mission-panel-map"
+import { MissionPanelFields } from "./mission-panel-fields"
+import { MissionPanelPaging } from "./mission-panel-paging"
 
 /** Secondary overview material, folded at the bottom of the central overview
  * reader: plan changes, reports, conversation cleanup history and identifiers.
  * The panel keeps none of it. */
 export function MissionOverviewDetails(props: {
-  instanceId: string; scope: string; mission: MissionMap; recurrence?: MissionReaderTarget["recurrence"]
+  instanceId: string; scope: string; mission: MissionPanelMap; recurrence?: MissionReaderTarget["recurrence"]
 }) {
+  const missionStore = useMissionPanelStore()
   const { t, locale } = useI18n()
   const open = (kind: MissionReaderTarget["kind"], itemId: string) =>
     updateMissionProjectView(props.scope, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
   const history = () => [...(props.mission.history ?? [])].reverse()
   const reports = createMemo(() => missionReports(props.mission))
-  const reportTarget = (report: MissionReport) => {
+  // A compact map holds its rows' reports: the rest belong to tasks it does not hold.
+  const omittedReports = () => Math.max(0, (props.mission.taskPage?.reports ?? 0) - reports().length)
+  const reportTarget = (report: MissionPanelReport) => {
     const task = props.mission.tasks.find(task => task.report?.id === report.id)
     return !props.mission.reports.some(item => item.id === report.id) && task ? { kind: "task" as const, id: task.id } : { kind: "report" as const, id: report.id }
   }
@@ -31,31 +38,42 @@ export function MissionOverviewDetails(props: {
     <Show when={props.mission.status === "active" && props.mission.reports.some(report => report.notificationStatus === "pending" && report.delivery !== "native-return")}>
       <p role="status">{t("missions.control.report.notificationPending")}</p>
     </Show>
-    <Show when={history().length}>
-      <details class="mission-report-technical"><summary>{t("missions.control.history.title")}</summary>
+    <Show when={history().length || props.mission.panelCollections?.history?.total}>
+      <details class="mission-report-technical" onToggle={event => {
+        if (event.currentTarget.open && props.mission.panelCollections && missionStore.progress(props.instanceId, `field:${props.mission.id}:history`).total === undefined)
+          void missionStore.more(props.instanceId, `field:${props.mission.id}:history`)
+      }}><summary>{t("missions.control.history.title")}</summary>
+        <Show when={props.mission.panelCollections}><MissionPanelPaging instanceId={props.instanceId} lane={`field:${props.mission.id}:history`} /></Show>
         <Show when={props.mission.historyTruncated}><p>{t("missions.control.history.truncated", { count: history().length })}</p></Show>
         <ol class="mission-reader-links"><For each={history()}>{change => <li>
-          <button type="button" class="window-text-button" onClick={() => open("change", String(change.revision))}>
-            {change.reason ?? t("missions.control.edit")}</button>
+          <button type="button" class="window-action mission-reader-link" onClick={() => open("change", String(change.revision))}>
+            {missionChangeExcerpt(change) ?? t("missions.control.edit")}</button>
           <small>{when(change.createdAt)} · {author(change.actorSessionId, change.source)}</small>
         </li>}</For></ol>
       </details>
     </Show>
-    <Show when={reports().length}>
-      <details class="mission-report-technical"><summary>{t("missions.control.reports.title")}</summary>
+    <Show when={reports().length || omittedReports()}>
+      <details class="mission-report-technical" onToggle={event => {
+        if (event.currentTarget.open && props.mission.panelCollections && missionStore.progress(props.instanceId, `field:${props.mission.id}:reports`).total === undefined)
+          void missionStore.more(props.instanceId, `field:${props.mission.id}:reports`)
+      }}><summary>{t("missions.control.reports.title")}</summary>
+        <Show when={props.mission.panelCollections}><MissionPanelPaging instanceId={props.instanceId} lane={`field:${props.mission.id}:reports`} /></Show>
+        <Show when={omittedReports()}>{count => <p>{t(`missionsPanel.reports.omitted.${count() === 1 ? "one" : "other"}`, { count: count() })}</p>}</Show>
         <ol class="mission-reader-links"><For each={reports()}>{report => <li>
-          <button type="button" class="window-text-button" onClick={() => { const target = reportTarget(report); open(target.kind, target.id) }}>
+          <button type="button" class="window-action mission-reader-link" onClick={() => { const target = reportTarget(report); open(target.kind, target.id) }}>
             {props.mission.tasks.find(task => task.key === report.taskKey)?.title ?? (report.taskKey || t("missions.control.overview"))}</button>
-          <small>{when(report.createdAt)} · {t(missionReportIsPrevious(props.mission, report) ? "missions.progress.previousAttempt" : `missions.control.report.outcome.${report.outcome}`)}</small>
+          <small>{when(report.createdAt)} · {t(missionReportIsPrevious(props.mission, report) ? "missions.progress.previousAttempt" : `missions.control.report.outcome.${report.outcome}`)}
+            <Show when={missionReportDecisionMaker(props.mission, report)}>{by => <> · <span data-decided-by={by()}>{t(`missions.decision.${by()}`)}</span></>}</Show></small>
         </li>}</For></ol>
       </details>
     </Show>
     <Show when={cleanups().length}>
       <MissionCleanupPanel instanceId={props.instanceId} cleanups={cleanups()} active
-        disabled={missionStore.state(props.instanceId).status !== "ready" || Boolean(missionStore.state(props.instanceId).cleanupUnavailable)}
+        disabled={!["ready", "loading"].includes(missionStore.state(props.instanceId).status) || Boolean(missionStore.state(props.instanceId).cleanupUnavailable)}
         refresh={() => missionStore.refresh(props.instanceId)} />
     </Show>
     <details class="mission-report-technical"><summary>{t("missionsPanel.technical")}</summary>
+      <Show when={!props.recurrence || props.mission.panelPassage}><MissionPanelFields instanceId={props.instanceId} mission={props.mission} /></Show>
       <dl class="mission-technical">
         <dt>{t("missionsPanel.technical.mission")}</dt><dd><bdi>{props.mission.id}</bdi></dd>
         <dt>{t("missionsPanel.technical.coordinator")}</dt><dd><bdi>{props.mission.coordinatorSessionId}</bdi></dd>

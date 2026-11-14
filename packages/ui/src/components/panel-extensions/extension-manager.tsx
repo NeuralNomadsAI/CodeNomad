@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { Download, FileArchive, RefreshCw, Trash2 } from "lucide-solid"
 import type { PanelExtensionManifest, PanelExtensionCatalogEntry } from "../../../../server/src/api-types"
-import { PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
+import { PANEL_EXTENSION_API4_PERMISSIONS, PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
 import { useI18n } from "../../lib/i18n"
 import type { PanelExtensionsController } from "./use-panel-extensions"
@@ -135,7 +135,16 @@ export function ExtensionManager(props: { controller: PanelExtensionsController 
         <p>{pkg().manifest.repository}</p>
         <code>{pkg().digest}</code>
       </details>
-      <p>{t(({ 2: "panelExtensions.assetsConsent", 3: "panelExtensions.workItemsConsent" } as Record<number, string>)[pkg().manifest.apiVersion] ?? "panelExtensions.permission")}</p>
+      <Show when={pkg().manifest.apiVersion === 4} fallback={
+        <p>{t(({ 2: "panelExtensions.assetsConsent", 3: "panelExtensions.workItemsConsent" } as Record<number, string>)[pkg().manifest.apiVersion] ?? "panelExtensions.permission")}</p>}>
+        {/* API 4: one sentence per declared permission, in the host's order. */}
+        <p>{t("panelExtensions.api4.permissions")}</p>
+        <ul class="panel-extension-permissions">
+          <For each={PANEL_EXTENSION_API4_PERMISSIONS.filter(permission => (pkg().manifest.permissions as readonly string[]).includes(permission))}>
+            {permission => <li>{t(`panelExtensions.api4.${permission}`)}</li>}
+          </For>
+        </ul>
+      </Show>
       <p>{t("panelExtensions.warning")}</p>
       <label><input type="checkbox" checked={acknowledged()} onChange={event => setAcknowledged(event.currentTarget.checked)} />{t("panelExtensions.trust")}</label>
       <div class="panel-extension-actions">

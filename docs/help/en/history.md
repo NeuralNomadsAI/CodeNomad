@@ -1,5 +1,7 @@
 # History, search and cleanup
 
+Search, timeline navigation, the image gallery and technical cleanup also support OpenCode's experimental `part_rows` storage, including messages containing both split and inline parts. Existing split parts remain supported after the option is disabled.
+
 Stored history, what the transcript currently displays and the model's compacted context are separate. Choose navigation or filtering before deleting anything.
 
 ## Search full history {#full-history-search}
@@ -23,7 +25,7 @@ If a search window expires or its history changes, **Start fresh search** restar
 
 1. Choose a current-session search result to jump to its surrounding passage.
 2. Choose a result from another session to open a separate preview of that message; use **Open in session** to go to that conversation at the hit.
-3. In **Message timeline**, hover or focus a marker for an excerpt, then select it to navigate: its block moves to the top and the marker stays highlighted until you scroll, after which the highlight follows the block at the top of the conversation. Use the first/latest message controls to return to the ends of stored history.
+3. In **Message timeline**, hover or focus a marker for an excerpt, then select it to navigate: its block moves to the top and the marker stays highlighted until you scroll, after which the highlight follows the block at the top of the conversation. Use the first/latest message arrows to return to the ends of stored history. They float over the conversation; with **Put the first/latest message arrows under the timeline** enabled in **General**, they sit instead in the corner under the timeline, to the right of **Send message**, with the arrow for the end you are at dimmed.
 
 The timeline represents full session structure even when the transcript holds only a bounded passage. Jumps load the destination rather than fetching every intervening message. Other-session search previews do not load that session's entire transcript or select it; only **Open in session** switches conversations.
 
@@ -44,7 +46,7 @@ The timeline is hidden when the conversation is too narrow (below 420 CSS pixels
 | Delete session | Session row **Delete session**, or selected-session delete | Recursively deletes the native conversation and its descendant subsessions/history after confirmation; no undo |
 | Scrub Sessions | Command palette | Broader session deletion, not a display or context-size setting |
 
-**Message content** applies across conversations. Choose a preset (**Nothing**, **Minimal**, **Balanced** or **Everything**) at its top or in **Settings → Chat**, then adjust individual rows; the **Message content** preset menu then shows **Custom**. Hiding tools does not disable tools, change permissions or remove stored output. To keep rendering responsive, very large messages show **Show … more** at an omitted gap, and very long text or tool output stops at a **… more characters hidden** line with **Show all**, or **Show … more** when much remains, which may take several steps. Revealing either is display-only and does not recover deleted content.
+**Message content** applies across conversations. Choose a preset (**Nothing**, **Minimal**, **Balanced** or **Everything**) at its top or in **Settings → Chat**, then adjust individual rows; the **Message content** preset menu then shows **Custom**. Hiding tools does not disable tools, change permissions or remove stored output. To keep rendering responsive, very large messages show **Show … more** at an omitted gap, and very long text or tool output stops at a **… more characters hidden** line with **Show all**, or **Show … more** when much remains, which may take several steps. Revealing either is display-only and does not recover deleted content. Drag across its eye or chevron buttons to set several rows at once: the first button you drag out of toggles, and every button you cross in the same column takes its new state. The conversation updates when you release the button.
 
 ## Compact a session {#compact-session}
 

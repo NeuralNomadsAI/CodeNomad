@@ -141,7 +141,10 @@ try {
 }
 
 export const windowsPrivateStorage: StoragePolicy = {
-  async verify(file, directory) {
+  verify: (file, directory) => verifyWindowsPrivateStorage(file, directory),
+}
+
+export async function verifyWindowsPrivateStorage(file: string, directory: boolean): Promise<void> {
     if (process.platform !== "win32") throw new HostError("windows-storage-evidence-unknown")
     const { script, ancestorCount } = windowsStorageScript(file)
     const executable = path.join(process.env.SystemRoot || "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe")
@@ -155,5 +158,4 @@ export const windowsPrivateStorage: StoragePolicy = {
         })
     }).catch(() => unknown())
     verifyWindowsStorageEvidence(raw, directory, ancestorCount)
-  },
 }

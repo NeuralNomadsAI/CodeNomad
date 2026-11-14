@@ -1,4 +1,4 @@
-# 支持与源码构建
+# 错误报告与源码构建
 
 通过仓库报告错误、查看当前版本和贡献。[故障排查指南](troubleshooting.md)介绍报告问题前的安全恢复。
 
@@ -31,7 +31,7 @@ GitHub 表单字段不兼容时，CodeNomad 会打开包含相同报告信息的
 
 ## 从源码构建 {#build-from-source}
 
-使用 `.node-version` 固定的 Node.js **24.20.0**、npm、Git 和兼容 OpenCode CLI。在开发检出目录运行：
+使用 `.node-version` 固定的 Node.js 版本、npm、Git 和兼容 OpenCode CLI。在开发检出目录运行：
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git

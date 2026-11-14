@@ -1,11 +1,44 @@
-# Recurring Missions — native qualification fixture
+# Daily Mission documents — native qualification fixture
 
-`scripts/test-recurring-simple-native.mjs` qualifies the acceptance journeys of
+`scripts/test-recurring-simple-native.mjs` qualifies the daily-document acceptance journeys of
 [`MISSIONS_RECURRING.md`](MISSIONS_RECURRING.md) against a real
 isolated OpenCode service and the shipped Missions bundle. That document defines
 the journeys; this one maps them to fixture letters and describes the fixture.
 
-## Run
+## Unified native schedules
+
+Unified documents use the separate protocols in
+[schedule transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#native-document-composition-and-packaging), with
+their [consumed native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification).
+Run only against owned isolated runtimes and fresh scratch directories:
+
+```sh
+node scripts/test-native-schedule-foundation.mjs <absolute-cli> <fresh-scratch>
+node --import tsx scripts/test-native-mission-schedule-product.mjs <absolute-cli> <fresh-scratch> --parent-ready --kinds=at,in
+node scripts/test-missions-terminal-native.mjs <absolute-isolated-cli>
+```
+
+The product fixture's `--parent-ready` requires the coordinator's explicit final-ready
+handoff. Its `--kinds=every --natural-every` exercises the real minimum 15-minute
+interval. Foundation cold-missing runtime/provider modes verify automatic no-client
+Location wake and original calendar identity after restart; controlled-maintenance
+checks automatic local compaction, retained phase/end and zero provider HTTP calls.
+Product checks cover authenticated paused creation, activation/control receipts,
+backend closure and managed-service restart. Terminal checks require original-input
+correlation and whole-family/background-delivery quiescence before settlement.
+Desktop packaging and host-login gates require their own evidence.
+After a cold-first-admission failure, a disposable ten-second worker records timestamped HTTP status/PID and the expected version only after exact PID/version correlation, shared-incarnation log sizes/truncation within a 256 KiB read budget and targeted read-only SQL within 512 KiB. Both cold and authenticated current-incarnation SQL exports use an explicit metadata projection: numeric counters/timestamps, booleans, finite schema states, SHA-256 opaque identifiers and text digests, schedule-proof identity correlation and overflow/omission markers. Hashes cover complete bounded values before any truncation; oversized SQL values are omitted with retained size evidence where collected. Configuration, objectives, message bodies, nested metadata, database keys, maintenance event text, logs and errors are omitted; maintenance retains its count. Diagnostic, receipt and cleanup failures preserve the original qualification error and failed verdict; a receipt write failure also fails an otherwise successful qualification. The entrypoint emits a fixed safe failure category.
+
+UI qualification uses the real Solid/HTTP fixtures under
+`packages/ui/tests/browser/` with `npm run test:browser --workspace @codenomad/ui`:
+verify Create/Edit H9 locks, explicit activation, uncertain original receipts,
+pagination, diagnostics and carrier links across locales.
+Read-only native capture replay uses
+`npm run qualify:browser:native-mission-replay --workspace @codenomad/ui` with the
+captured run's `NATIVE_MISSION_CAPTURE` and its own `NATIVE_MISSION_OUTPUT`.
+Keep observed results and unexecuted platform gates in delivery evidence.
+
+## Daily fixture run
 
 ```powershell
 npm run build:missions --workspace packages/server
@@ -24,11 +57,11 @@ code 1 on any failure.
 | Letter | Acceptance journey | Asserts |
 | --- | --- | --- |
 | A | 1, daily useful work | With backend, bridge and presence closed, the due passage runs read → shell → `mission_inspect` → final `mission_report`; completed archive, one start, schedule still running with nextDueAt = due + 24 h |
-| B | 2, restart with pending | The owned service is killed mid-turn and relaunched: Interrupted (`service-restart`) with the same pending passage; Resume archives `ended-without-report`/`interrupted` with the original single start and no further provider turn |
+| B | 2, restart with pending | The owned standalone service is killed mid-turn and relaunched: Interrupted (`service-restart`) with the same pending passage; Resume observes the old claim as uncertain, without archive, cursor advance or a second original start |
 | C | 3, Run now | Two Run now passages on one schedule, each completed with one start and its own session; the evidence records the response to an exact duplicate of the first request |
 | G | 3, Run now | Run now on a paused schedule completes through the settlement-only observer; the schedule stays paused with nextDueAt null |
 | D | 4, Pause/Stop | Pause before due leaves no root session through due + 30 s; Stop is terminal and a later Resume is refused |
-| Q | 5, human gate | A Wayfinder decision child asks a native Form, which keeps the passage pending. The dock answer with `x-codenomad-human-answer` writes a confirmed `ui` mark and the passage completes; the same answer without the header leaves no mark, the gate returns "Human decision required…" and the passage ends without report |
+| Q | 5, human gate | A Wayfinder decision child returns a brief and the passage coordinator asks a native Form naming the task's `questionTag` from its own conversation, which keeps the passage pending. The dock answer with `x-codenomad-human-answer` writes a confirmed `ui` mark, the coordinator cites the answer that `inspect({ taskKey })` lists and the passage completes; the same answer without the header leaves no mark, the gate returns "Human decision required…" and the passage ends without report |
 | E | 1, family settlement | A background `subagent` and a background `shell` keep the passage pending; child end → shell end → final report → archive, with one Mission start beside the native completion notices |
 | L | 1, family settlement | 34 background subagents launched six per turn form a 35-session family; one held child keeps it pending until it ends |
 | F | 1, provider failure | Provider HTTP 400 archives `failed` from the native idle outcome, with one start and no further provider call |
@@ -45,6 +78,9 @@ HOME/XDG/config/database/bridge roots and a loopback deterministic provider. Eve
 fixture stops it. Never point the fixture at the shared daemon, its registration,
 configuration or database, or at a user's Missions, and never add installers,
 pattern kills or pushes.
+
+Initial provisioning and owned-service restarts await the retained Missions
+plugin's active state for the project before observing its recurrence RPCs.
 
 The fixture drives the production recurrence create, control and Run now routes,
 WorkspaceManager ownership and deletion fences, the automation bridge with HMAC
@@ -88,5 +124,9 @@ Paths below are under `packages/server/src/` unless stated.
   (`MISSIONS.md` §Validation).
 - Open: the managed service's restart, including its boot-time sweep of orphaned
   claims (B restarts an owned `serve` process with a hard kill).
+- `scripts/test-missions-terminal-native.mjs` qualifies the production terminal
+  reader on an isolated runtime: old inactive claim through repeated observations,
+  native resume under the original input, seq-correlated idle, unrelated old
+  failures and an outstanding native background-child delivery.
 - Open: a native admission whose `recordAdmission` write is lost reads as never
   admitted once its start message is pruned.

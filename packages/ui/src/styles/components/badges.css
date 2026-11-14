@@ -10,8 +10,43 @@
     .settings-scope-badge,
     .tool-call-todo-status,
     .tool-call-todo-tag,
-    .git-change-section-count) {
+    .git-change-section-count,
+    .session-goal-badge,
+    .integration-state-badge) {
   border-radius: var(--chip-radius);
+}
+
+/* A session goal's status (components/session/session-goal-line.tsx). */
+.session-goal-badge {
+  @apply inline-flex shrink-0 items-center px-1.5 py-0.5 text-xs font-medium;
+  background-color: var(--badge-neutral-bg);
+  color: var(--badge-neutral-text);
+}
+
+.session-goal-badge[data-status="paused"] {
+  background-color: var(--status-starting-bg);
+  color: var(--status-starting-fg);
+}
+
+.session-goal-badge[data-status="complete"] {
+  background-color: var(--status-ready-bg);
+  color: var(--status-ready-fg);
+}
+
+/* An integration's state label: text carries the state; colour only tints it (AA contrast in every palette). */
+.integration-state-badge {
+  @apply inline-flex min-w-0 shrink items-center px-1.5 py-0.5 text-xs font-medium;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--status-stopped-fg);
+  background-color: var(--status-stopped-bg);
+  color: var(--text-primary);
+}
+
+.integration-state-badge[data-integration-state="nonConforming"] {
+  border-color: var(--status-error-fg);
+  background-color: var(--status-error-bg);
 }
 
 .neutral-badge {
@@ -58,4 +93,10 @@
 
 .status-dot.stopped {
   background-color: var(--status-stopped-fg);
+}
+.agent-memory-badge {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.7rem;
+  color: var(--text-primary);
+  background: var(--surface-inset);
 }

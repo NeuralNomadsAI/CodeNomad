@@ -9,6 +9,7 @@ import {
   activeSettingsSection,
   closeSettings,
   settingsOpen,
+  settingsRowPending,
   setActiveSettingsSection,
   type SettingsSectionId,
 } from "../stores/settings-screen"
@@ -33,6 +34,9 @@ import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
 import { createSettingsScrollRestoration } from "./settings/settings-scroll-restoration"
+import { createPreferencesProjectContext } from "./settings/preferences-project-context"
+import { activeInstanceId, instances } from "../stores/instances"
+import { getActiveCatalogLocation } from "../stores/sessions"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -52,6 +56,12 @@ interface SettingsScreenProps {
 export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const { t } = useI18n()
   const phoneQuery = useMediaQuery("(max-width: 640px)")
+  const embeddedProject = createPreferencesProjectContext(() => {
+    const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
+    return { section: "general", instanceId, workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
+      location: instanceId ? getActiveCatalogLocation(instanceId) : undefined }
+  }, () => !props.standalone && !props.providerContext && settingsOpen() && activeSettingsSection() === "general", () => {})
+  const memoryContext = () => props.providerContext ?? embeddedProject()
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -113,7 +123,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return <InfoSettingsSection />
       case "general":
       default:
-        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} />
+        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} />
     }
   }
 
@@ -328,6 +338,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
             class="modal-surface window-shell settings-screen-shell"
             style={{ transform: `translate(${windowPosition().x}px, ${windowPosition().y}px)` }}
             onInteractOutside={(event) => event.preventDefault()}
+            // A linked setting row takes focus itself instead of the first control.
+            onOpenAutoFocus={(event) => { if (settingsRowPending()) event.preventDefault() }}
           >
             <Dialog.Title class="sr-only">{t("settings.title")}</Dialog.Title>
             {content()}

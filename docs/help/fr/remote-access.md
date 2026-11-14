@@ -52,6 +52,14 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils sont occupés. Un `--https-port` explicite non nul, ou un `--http-port` avec HTTP activé, fixe le port et échoue si l’écoute est impossible ; `0` demande au système d’en attribuer un. Les **Local Connection URL** et **Remote Connection URL** affichées, et les **Adresses accessibles** actualisées, font autorité pour cette exécution. Voir la [référence CLI serveur](server.md) complète.
 
+## Mise à niveau {#upgrading}
+
+Reconnectez-vous après la mise à niveau. Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification.
+
+Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), gestion des serveurs enregistrés (`/api/remote-servers/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
+
+Les API d’enregistrement `/api/sidecars` restent accessibles aux clients LAN directs authentifiés et aux appareils appairés. Les aperçus web du Contrôle à distance restent accessibles avec leur jeton de capacité lorsqu’ils sont activés sur l’hôte.
+
 ## Configurer un TLS de confiance {#tls}
 
 ### Fournir son propre certificat {#custom-certificates}
@@ -88,5 +96,9 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.
 
 Sélectionnez un serveur enregistré dans l’onglet **Serveurs** de l’accueil pour l’ouvrir de nouveau. Les favoris appartiennent à cette configuration CodeNomad, pas aux projets du serveur distant. Enregistrer une URL ne démarre pas le serveur et n’accorde pas l’accès. **Supprimer le serveur enregistré** retire le favori, pas les conversations distantes, le backend ou ses identifiants.
+
+Pour ouvrir un serveur enregistré directement depuis la ligne de commande, lancez l’application de bureau avec `--connect-server <nom>` (ou `--connect-server=<nom>`), en indiquant le nom enregistré du serveur ou son URL `https://`. CodeNomad n’ouvre que la fenêtre distante, avec les mêmes vérifications et la même connexion que **Se connecter** ; si CodeNomad est déjà lancé, sa fenêtre actuelle l’ouvre au lieu d’une nouvelle fenêtre. Une URL qui ne correspond à aucun serveur enregistré est enregistrée sous son nom d’hôte. Les valeurs de lancement ne portent jamais d’identifiants : une URL avec un nom d’utilisateur, un mot de passe ou un code d’appairage est refusée. Si le nom est inconnu, l’URL invalide ou la connexion échoue, CodeNomad démarre normalement et affiche l’erreur. Quand la connexion demande une confirmation, comme l’installation du certificat local pour un serveur auto-signé, CodeNomad démarre aussi normalement et la demande là. Sous Windows, la version Tauri refuse de démarrer quand un argument de lancement contient `|` ; utilisez plutôt l’URL du serveur, ou renommez le serveur.
+
+Une fenêtre distante laisse toujours un moyen de revenir sur cet ordinateur. Fermer la dernière fenêtre locale alors que des fenêtres distantes restent ouvertes conserve ses onglets : **Fenêtre → Nouvelle fenêtre** dans une fenêtre distante, ou un nouveau lancement de CodeNomad, la rouvre. Si un serveur ne peut pas être chargé, sa fenêtre l’indique et propose **Réessayer**, **Ouvrir une fenêtre locale** et **Fermer la fenêtre** ; dans la version Tauri, utilisez le bouton d’actualisation de la page et **Fenêtre → Nouvelle fenêtre**.
 
 Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans **URL du serveur**. Le favori ne conserve que l’origine du tunnel, jamais le code d’appairage à usage unique ; voir [Contrôle à distance](remote-control.md) pour le réappairage après perte du cookie de l’appareil.

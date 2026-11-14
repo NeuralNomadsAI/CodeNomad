@@ -3,9 +3,15 @@ import test from "node:test"
 import Fastify from "fastify"
 
 import { registerMissionRoutes } from "./missions"
+import { ROUTER_OPTIONS } from "../routed-path"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { stableToken } from "../../missions/journal"
+import { MissionJournal, stableToken } from "../../missions/journal"
 import { fixture } from "../../missions/journal-history-fixture"
+import { describeMissionBodies } from "../../missions/mission-body-descriptors"
+import { compactMissionMap } from "../../missions/mission-compact-map"
+import { FIXTURE_PROJECT, missionPluginFixture } from "../../missions/mission-plugin-fixture"
+import { missionTaskOrder } from "../../missions/mission-task-order"
+import { MISSION_PANEL_PAGE_BYTES, missionPanelPage } from "../../missions/mission-panel-page"
 
 const snapshot = {
   version: 1 as const,
@@ -25,6 +31,10 @@ function manager(options: {
   rpcError?: unknown
   /** A plugin build registered before `list` and `mission`. */
   legacy?: boolean
+  /** What the `mission` RPC answers. */
+  missionRead?: object
+  panelRead?: object
+  panelHandler?: (input: unknown) => Promise<unknown>
 } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const plugin = options.plugin ?? "active"
@@ -62,6 +72,12 @@ function manager(options: {
           calls.push({ method: "rpc-definition", value: definition.id })
           const missing = { type: "rpc.method_not_found", message: "Unknown RPC method" }
           return {
+            panelPage: async (input: unknown, callOptions: unknown) => {
+              calls.push({ method: "panel-page", value: { input, callOptions } })
+              if (options.legacy) throw missing
+              if (options.rpcError) throw options.rpcError
+              return options.panelHandler ? options.panelHandler(input) : options.panelRead
+            },
             snapshot: async (input: unknown, callOptions: unknown) => {
               calls.push({ method: "snapshot", value: { input, callOptions } })
               if (options.rpcError) throw options.rpcError
@@ -77,7 +93,7 @@ function manager(options: {
               calls.push({ method: "mission-rpc", value: { input, callOptions } })
               if (options.legacy) throw missing
               if (options.rpcError) throw options.rpcError
-              return { version: 1, projectID: "project-1", generatedAt: 2, cleanups: [] }
+              return options.missionRead ?? { version: 1, projectID: "project-1", generatedAt: 2, cleanups: [] }
             },
           }
         },
@@ -86,8 +102,98 @@ function manager(options: {
   return { calls, value: value as never }
 }
 
+test("opt-in panel pages fit the actual HTTP wire and fail bounded without legacy snapshot/list fallback", async () => {
+  const panel = missionPanelPage({ source: "summaries", projectID: "project-1" }, [{ actors: Array(3_000).fill("\u0000😀€\\\"") }])
+  for (const options of [{ panelRead: panel }, { legacy: true }, { panelRead: { ...panel, projectID: "foreign" } },
+    { panelRead: { ...panel, unexpected: "x".repeat(MISSION_PANEL_PAGE_BYTES) } },
+    // Structurally valid, but the Unicode text exceeds the serialized byte budget.
+    { panelRead: { available: true, version: 1, projectID: "project-1", source: "summaries", page: {
+      digest: "x".repeat(43), total: 1, pieces: [{ index: 0, offset: 0, characters: 30_000, text: "€".repeat(30_000) }],
+    } } }, { rpcError: new Error("bad".repeat(100_000)) }]) {
+    const f = manager(options), app = Fastify({ logger: false })
+    registerMissionRoutes(app, { workspaceManager: f.value })
+    try {
+      const reply = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries" } })
+      assert.ok(reply.rawPayload.length <= MISSION_PANEL_PAGE_BYTES, `${reply.rawPayload.length} bytes`)
+      assert.deepEqual(reply.json(), options.panelRead === panel ? panel : { available: false, reason: options.rpcError ? "workspace-unavailable" : "plugin-unavailable", missions: [] })
+      assert.equal(f.calls.filter(call => ["snapshot", "list-rpc", "mission-rpc", "active"].includes(call.method)).length, 0)
+      const before = f.calls.length
+      const bad = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries", field: "actors" } })
+      assert.deepEqual([bad.statusCode, bad.json()], [400, { available: false, reason: "invalid-request" }])
+      const oversized = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries", junk: "x".repeat(20_000) } })
+      assert.equal(oversized.statusCode, 413)
+      assert.ok(oversized.rawPayload.length < 1_024)
+      assert.equal(f.calls.length, before, "invalid selectors never reach the plugin")
+    } finally { await app.close() }
+  }
+})
+
+test("HTTP rejects incomplete or mixed panel successes and refusals, with a fixed bounded unavailable body", async () => {
+  const complete = missionPanelPage({ source: "summaries", projectID: "project-1" }, [])
+  for (const panelRead of [{ available: true, projectID: "project-1", source: "summaries" }, { available: false },
+    { ...complete, page: {} }, { ...complete, reason: "changed" }, { available: false, reason: "changed", page: {} }]) {
+    const f = manager({ panelRead }), app = Fastify({ logger: false })
+    registerMissionRoutes(app, { workspaceManager: f.value })
+    try {
+      const reply = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries" } })
+      assert.equal(reply.statusCode, 502)
+      assert.deepEqual(reply.json(), { available: false, reason: "plugin-unavailable", missions: [] })
+      assert.ok(reply.rawPayload.length < 100)
+      assert.equal(f.calls.some(call => ["snapshot", "list-rpc", "mission-rpc", "active"].includes(call.method)), false)
+    } finally { await app.close() }
+  }
+})
+
+test("range damage survives whole-map, field and task reads through real control, RPC and HTTP; damaged absence stays distinct", async () => {
+  const f = missionPluginFixture(), plugin = await f.plugin(), control = f.control()
+  const app = Fastify({ logger: false })
+  const m = manager({ panelHandler: input => plugin.rpc("panelPage", input) })
+  registerMissionRoutes(app, { workspaceManager: m.value })
+  try {
+    const mission = (await control.create({ requestID: "range-damage", objective: "Damage", template: "custom" })).mission
+    const clean = (await control.create({ requestID: "range-clean", objective: "Clean", template: "custom" })).mission
+    await control.panelPage({ source: "summaries" })
+    const key = [...f.values].find(([, event]) => (event as { type?: string; missionID?: string })?.type === "mission.created"
+      && (event as { missionID?: string }).missionID === mission.id)![0]
+    const prefix = key.slice(0, key.lastIndexOf("/") + 1)
+    f.values.set(`${prefix}evt_bad`, {})
+    const observed = await new MissionJournal(f.storage, FIXTURE_PROJECT.id, FIXTURE_PROJECT.canonical).missionView(mission.id)
+    const damage = { discardedEvents: observed.discardedEvents, controlUnavailable: observed.controlUnavailable,
+      notificationUnavailable: observed.notificationUnavailable, cleanupUnavailable: observed.cleanupUnavailable }
+    assert.deepEqual(damage, { discardedEvents: 1, controlUnavailable: true, notificationUnavailable: true, cleanupUnavailable: true })
+    const scans: string[] = [], scan = f.storage.scan.bind(f.storage)
+    f.storage.scan = async input => { scans.push(input.prefix); return scan(input) }
+    const requests = [{ source: "mission" as const, missionID: mission.id }, { source: "mission" as const, missionID: mission.id, field: "actors" },
+      { source: "tasks" as const, task: { missionID: mission.id, offset: 0 } }]
+    for (const input of requests) {
+      const direct = await control.panelPage(input)
+      const rpc = await plugin.rpc("panelPage", input)
+      const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: input })
+      assert.equal(response.statusCode, 200)
+      assert.deepEqual([rpc, response.json()], [direct, direct])
+      assert.ok(direct.available)
+      for (const [field, value] of Object.entries(damage)) assert.equal((direct as unknown as Record<string, unknown>)[field], value, `${input.source} ${field}`)
+      assert.ok(response.rawPayload.length <= MISSION_PANEL_PAGE_BYTES)
+    }
+    assert.ok(scans.length > 0 && scans.every(value => value === prefix), "only the named range, never fresh project hints or snapshot")
+    // Another range's damage never becomes this range's flags.
+    const sibling = await control.panelPage({ source: "mission", missionID: clean.id, field: "actors" })
+    assert.ok(sibling.available)
+    assert.deepEqual([sibling.discardedEvents, sibling.controlUnavailable, sibling.notificationUnavailable, sibling.cleanupUnavailable], [0, false, false, false])
+    f.values.set(key, {})
+    for (const input of requests) {
+      assert.deepEqual(await control.panelPage(input), { available: false, reason: "damaged" })
+      assert.deepEqual(await plugin.rpc("panelPage", input), { available: false, reason: "damaged" })
+      const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: input })
+      assert.deepEqual(response.json(), { available: false, reason: "damaged" })
+      assert.ok(response.rawPayload.length < 100)
+    }
+    assert.deepEqual(await plugin.rpc("panelPage", { source: "mission", missionID: "msn_absent" }), { available: false, reason: "mission-not-found" })
+  } finally { await app.close(); await plugin.dispose() }
+})
+
 function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean
-  pluginInactive?: boolean; noConnection?: boolean; locationError?: unknown; createError?: unknown } = {}) {
+  pluginInactive?: boolean; noConnection?: boolean; locationError?: unknown; createError?: unknown; unsupportedDocuments?: boolean } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const workspace = { id: "workspace-1" }
   const value = {
@@ -113,6 +219,7 @@ function mutationManager(options: { owns?: boolean; error?: unknown; dropProfile
       rpc: (definition: { id: string }) => {
         calls.push({ method: "rpc", value: definition.id })
         return {
+          documentCapabilities: async () => { if (options.unsupportedDocuments) throw new Error("rpc.method_not_found"); return { version: 1 } },
           create: async (input: any, rpcOptions: unknown) => {
             calls.push({ method: "create", value: { input, rpcOptions } })
             if (options.createError) throw options.createError
@@ -151,6 +258,18 @@ function mutationManager(options: { owns?: boolean; error?: unknown; dropProfile
   return { calls, value: value as never }
 }
 
+test("creation refuses a plugin without unified-document capability before create RPC or any native effect", async () => {
+  const fake = mutationManager({ unsupportedDocuments: true }), app = Fastify({ logger: false })
+  registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
+      payload: { requestId: "original", objective: "Work", template: "custom" } })
+    assert.equal(response.statusCode, 503)
+    assert.equal(response.json().code, "creation-unavailable")
+    assert.equal(fake.calls.filter(call => call.method === "create").length, 0)
+  } finally { await app.close() }
+})
+
 test("brokers only the reviewed mission list RPC at the owned workspace location", async () => {
   const fake = manager()
   const app = Fastify({ logger: false })
@@ -188,15 +307,13 @@ test("passes the panel's includes and summary version through, bounded and dedup
   await app.close()
 })
 
-test("a plugin without the list RPC answers with its full snapshot, as before", async () => {
+test("a plugin without the list RPC is unavailable: its snapshot, every full map, is never read in its place", async () => {
   const fake = manager({ legacy: true })
   const app = Fastify({ logger: false })
   registerMissionRoutes(app, { workspaceManager: fake.value })
   const response = await app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions?include=msn_a&summaries=version-0" })
-  assert.equal(response.statusCode, 200)
-  const body = response.json()
-  assert.deepEqual({ ...body, activity: undefined }, { available: true, ...snapshot, activity: undefined }, "no summaries: every map is full")
-  assert.deepEqual(fake.calls.filter(call => call.method.endsWith("-rpc") || call.method === "snapshot").map(call => call.method), ["list-rpc", "snapshot"])
+  assert.deepEqual(response.json(), { available: false, reason: "plugin-unavailable", missions: [] })
+  assert.deepEqual(fake.calls.filter(call => call.method.endsWith("-rpc") || call.method === "snapshot").map(call => call.method), ["list-rpc"])
   // Any other RPC failure stays a failure: no fallback read hides it.
   const failing = manager({ rpcError: { type: "rpc.internal", message: "boom" } })
   const other = Fastify({ logger: false })
@@ -243,12 +360,14 @@ test("damage written outside the index generation refuses admission while the di
     const admission = (await app.inject({ method: "GET", url: `/api/workspaces/workspace-1/missions/${mission.id}/admission` })).json()
     assert.deepEqual([display.controlUnavailable, display.mission.controlUnavailable], [undefined, undefined], "a hint, never proof")
     assert.deepEqual([admission.controlUnavailable, admission.mission.controlUnavailable], [true, true])
+    // The display map is compact; the admission map is the snapshot's, whole.
+    assert.deepEqual([display.mission.objective, display.mission.excerpt, admission.mission.objective], [undefined, "Admission gate", "Admission gate"])
   } finally { await app.close() }
 })
 
 test("the single-mission read brokers the mission RPC, falling back to the snapshot of an older plugin", async () => {
   const fake = manager()
-  const app = Fastify({ logger: false })
+  const app = Fastify({ logger: false, routerOptions: ROUTER_OPTIONS })
   registerMissionRoutes(app, { workspaceManager: fake.value })
   const response = await app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions/msn_a" })
   assert.deepEqual(response.json(), { available: true, version: 1, projectID: "project-1", generatedAt: 2, cleanups: [] })
@@ -275,6 +394,83 @@ test("the single-mission read brokers the mission RPC, falling back to the snaps
   const refused = await other.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions/msn_a" })
   assert.equal(refused.statusCode, 502)
   await app.close(); await old.close(); await other.close()
+})
+
+test("an older plugin's full maps reach the panel compact, described when they carry no descriptors; admission stays full", async () => {
+  const f = fixture(9), control = f.control()
+  const created = (await control.create({ requestID: "older", objective: "Older objective", notes: "Older notes", template: "custom" })).mission
+  await control.update({ missionID: created.id, requestID: "edit", expectedRevision: created.revision, objective: "Edited objective", notes: "Edited notes" })
+  // Without actors, the list projects no activity.
+  const full = { ...(await control.snapshot()).missions[0], actors: [] }
+  const compact = JSON.parse(JSON.stringify(compactMissionMap(full)))
+  assert.deepEqual([compact.objective, compact.notes, compact.excerpt, Object.keys(compact.bodies).sort()], [undefined, undefined, "Edited objective", ["notes", "objective"]])
+  const paths = { list: "/api/workspaces/workspace-1/missions", read: `/api/workspaces/workspace-1/missions/${full.id}`,
+    admission: `/api/workspaces/workspace-1/missions/${full.id}/admission` }
+  // A plugin from before body descriptors, and one that sends them on full maps.
+  for (const sent of [full, describeMissionBodies(full)]) {
+    const fake = manager({ missionRead: { version: 1, projectID: "project-1", generatedAt: 2, mission: sent, cleanups: [] } })
+    const app = Fastify({ logger: false })
+    registerMissionRoutes(app, { workspaceManager: fake.value })
+    Object.assign(listed, { missions: [sent] }); Object.assign(snapshot, { missions: [sent] })
+    try {
+      assert.deepEqual((await app.inject({ method: "GET", url: paths.list })).json().missions, [compact])
+      assert.deepEqual((await app.inject({ method: "GET", url: paths.read })).json().mission, compact)
+      assert.deepEqual((await app.inject({ method: "GET", url: paths.admission })).json().mission, JSON.parse(JSON.stringify(sent)), "the snapshot's map, as sent")
+    } finally { Object.assign(listed, { missions: [] }); Object.assign(snapshot, { missions: [] }); await app.close() }
+  }
+  // A plugin without `mission` answers from its snapshot: that one map, compact.
+  const legacy = manager({ legacy: true })
+  const old = Fastify({ logger: false })
+  registerMissionRoutes(old, { workspaceManager: legacy.value })
+  Object.assign(snapshot, { missions: [full] })
+  try { assert.deepEqual((await old.inject({ method: "GET", url: paths.read })).json().mission, compact) }
+  finally { Object.assign(snapshot, { missions: [] }); await old.close() }
+})
+
+test("the task route brokers the tasks RPC, and pages an older plugin's single-mission read itself", async () => {
+  const f = missionPluginFixture(), control = () => f.control()
+  let mission = (await control().create({ requestID: "pages", objective: "Pages", template: "custom" })).mission
+  for (let round = 0; round < 3; round++) mission = (await control().revise(mission.coordinatorSessionId, { missionID: mission.id, expectedRevision: mission.revision,
+    requestID: `round-${round}`, reason: "More", retireTasks: [], dependencyUpdates: [], addTasks: Array.from({ length: 24 }, (_, index) => ({ taskKey: `task-${round}-${index}`,
+      title: `Task ${round}.${index}`, brief: "Brief", role: "specialist", blockedBy: round ? [`task-${round - 1}-${index}`] : [] })) })).mission
+  const full = (await control().snapshot()).missions[0], order = (await control().mission(mission.id)).mission!.taskPage!.order
+  const keys = missionTaskOrder(full.tasks).map(task => task.key)
+  const missing = { type: "rpc.method_not_found", message: "Unknown RPC method" }
+  const route = async (legacy: boolean) => {
+    const client = {
+      location: { get: async () => ({ directory: "/repo", project: { id: FIXTURE_PROJECT.id } }) },
+      plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
+      rpc: () => ({
+        tasks: async (input: never) => { if (legacy) throw missing; return control().tasks(input) },
+        // An older plugin's single read: its full map with descriptors.
+        mission: async (input: { missionID: string }) => legacy ? { ...(await control().mission(input.missionID)), mission: describeMissionBodies(full) }
+          : control().mission(input.missionID),
+      }),
+    }
+    const app = Fastify({ logger: false })
+    registerMissionRoutes(app, { workspaceManager: { get: () => ({ id: "workspace-1" }), getServiceLocation: () => ({ directory: "/repo" }),
+      getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) } as never })
+    return app
+  }
+  const url = (query: string) => `/api/workspaces/workspace-1/missions/${mission.id}/tasks?${query}`
+  for (const legacy of [false, true]) {
+    const app = await route(legacy)
+    try {
+      const page = (await app.inject({ method: "GET", url: url(`order=${order}&offset=50`) })).json()
+      assert.deepEqual([page.available, page.taskPage.offset, page.taskPage.end, page.tasks.map((task: { key: string }) => task.key)],
+        [true, 50, 72, keys.slice(50)], `legacy ${legacy}`)
+      const named = (await app.inject({ method: "GET", url: url(`order=${order}&keys=task-0-0,task-2-23`) })).json()
+      assert.deepEqual(named.tasks.map((task: { key: string }) => task.key), ["task-0-0", "task-2-23"])
+      assert.equal((await app.inject({ method: "GET", url: url("order=other&offset=0") })).json().refused, "order-changed")
+      const attention = (await app.inject({ method: "GET", url: url(`order=${order}&attention=0`) })).json()
+      assert.deepEqual([attention.tasks, attention.taskPage.attention], [[], { counts: { notifications: 0, blocked: 0, failed: 0, recovery: 0 }, omitted: 0,
+        sequence: page.taskPage.attention.sequence, offset: 0, end: 0 }])
+      const names = (prefix: string, count: number) => Array.from({ length: count }, (_, index) => `${prefix}${index}`).join(",")
+      for (const query of ["offset=0&keys=task-0-0", "offset=0&attention=0", "order=x", `keys=${names("k", 51)}`, `keys=${names("k", 30)}&ids=${names("i", 21)}`, "offset=-1"]) {
+        assert.equal((await app.inject({ method: "GET", url: url(query) })).statusCode, 400, query)
+      }
+    } finally { await app.close() }
+  }
 })
 
 test("does not accept a client-controlled directory or expose generic RPC", async () => {

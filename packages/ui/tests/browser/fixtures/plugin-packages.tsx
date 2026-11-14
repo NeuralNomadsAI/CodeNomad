@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import { Toaster } from "solid-toast"
 import { render } from "solid-js/web"
-import { PluginPackageAction } from "../../../src/components/plugin-package-action"
+import { PluginRowActions } from "../../../src/components/plugin-row-actions"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -11,9 +11,10 @@ import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 const [source, setSource] = createSignal<any>({ type: "package", target: "fixture-plugin@latest", version: "1.0.0" })
 const [active, setActive] = createSignal(true)
+const [epoch, setEpoch] = createSignal(0)
 const requests: any[] = []
 let resolve: () => void, reject: () => void, invalidations = 0
-pluginControlsCache.invalidateInstance = () => { invalidations++ }
+pluginControlsCache.invalidateInstance = () => { invalidations++; setEpoch(value => value + 1) }
 const client: any = { plugin: {
   check: async (input: any) => { requests.push({ action: "check", ...input }); setSource({ ...source(), outdated: true }); return { data: [] } },
   update: async (input: any) => { requests.push({ action: "update", ...input }); await new Promise<void>((yes, no) => { resolve = yes; reject = () => no(new Error("synthetic failure")) }) },
@@ -22,8 +23,8 @@ const client: any = { plugin: {
 await applyUiSettings({})
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><main>
   <Toaster />
-  <PluginPackageAction instanceId="plugins" location={{ directory: "/a" }} source={source()} active={active()} />
-  <PluginPackageAction instanceId="plugins" location={{ directory: "/b" }} source={source()} active={active()} />
-  <PluginPackageAction instanceId="plugins" location={{ directory: "/a" }} source={{ type: "local", path: "/plugin" }} />
+  <PluginRowActions instanceId="plugins" name="fixture.package" removable={[]} location={{ directory: "/a" }} source={source()} active={active()} consentEpoch={epoch()} />
+  <PluginRowActions instanceId="plugins" name="fixture.package" removable={[]} location={{ directory: "/b" }} source={source()} active={active()} consentEpoch={epoch()} />
+  <PluginRowActions instanceId="plugins" name="fixture.package" removable={[]} location={{ directory: "/a" }} source={{ type: "local", path: "/plugin" }} />
 </main></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = { requests, setActive, refreshSource: () => setSource({ ...source() }), resolve: () => resolve(), reject: () => reject(), invalidations: () => invalidations }

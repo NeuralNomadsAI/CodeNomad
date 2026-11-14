@@ -68,16 +68,22 @@
   padding: 0 var(--space-md);
 }
 
-/* One action row centred on the shared header action line. */
+/* One action row centred on the shared header action line: history
+ * navigation at the start, the centred title, session actions at the end. */
 .session-sidebar-header-row {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
+  align-items: center;
+  gap: var(--space-sm);
   height: calc(2 * var(--panel-header-action-center));
 }
 
-.session-sidebar-header-actions {
-  flex-shrink: 0;
+.session-sidebar-header-end {
+  justify-content: flex-end;
 }
 
 .session-sidebar-title {
+  text-align: center;
   /* Narrow sidebars keep every header action; only the label truncates. */
   min-width: 0;
   overflow: hidden;
@@ -284,6 +290,7 @@
 .session-resize-handle {
   @apply absolute top-0 w-1 h-full cursor-col-resize bg-transparent transition-colors;
   z-index: 10;
+  touch-action: none;
 }
 
 .session-resize-handle--left {
@@ -294,7 +301,8 @@
   inset-inline-start: 0;
 }
 
-.session-resize-handle:hover {
+.session-resize-handle:hover,
+.session-resize-handle.is-resizing {
   background-color: var(--accent-primary);
 }
 

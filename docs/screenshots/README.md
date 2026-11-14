@@ -35,6 +35,13 @@ and session/project names in the adjacent `readme-workspace-data.ts`. Update thi
 data when refreshing documentation; keep product layout and styling in the real
 components.
 
+# Integration Plugins captures
+
+`integration-plugins-{light,dark}.png` show the real Plugins rows of two integrations and a plain plugin with
+synthetic data, the first integration attached to the displayed conversation.
+`packages/ui/tests/browser/integration-plugin-row.test.ts` generates them when `CODENOMAD_INTEGRATION_SCREENSHOTS`
+names an output directory.
+
 # Help home tour
 
 The help home page's `{{tour-video}}` block uses two files from the CodeNomad 1.0

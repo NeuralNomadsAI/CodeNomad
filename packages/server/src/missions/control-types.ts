@@ -5,6 +5,8 @@ import type { MissionActor, MissionJsonValue, MissionMap, MissionReportOutcome, 
 import type { TaskContractReference } from "./task-declaration"
 import type { MissionRecipe, missionRecipeCatalog } from "./recipes"
 import type { MissionProfiles } from "./playbook-profiles"
+import type { MissionCreationChoices, MissionCreationMetadata } from "./creation-defaults"
+import type { MissionCreationSelection } from "./profile-defaults"
 
 export interface NativeMissionSession extends MissionExecution {
   id: string
@@ -124,7 +126,8 @@ export type MissionNativeReportAuthorization = (request: MissionNativeReportRequ
 }>
 
 export interface MissionInspection {
-  mission: MissionMap | null
+  selection?: MissionCreationSelection
+  mission: Omit<MissionMap, "creationDefaults"> | null
   actor: MissionActor | null
   templates: ReturnType<typeof missionRecipeCatalog>
   playbook?: MissionRecipe
@@ -135,6 +138,8 @@ export interface MissionInspection {
 }
 
 export interface MissionCreateInput extends MissionStartInput {
+  /** Original agent request and frozen preference provenance, supplied by the owning backend. */
+  creationDefaults?: MissionCreationMetadata
   /** Optional short label (1–60 characters, trimmed). */
   title?: string
   prepared?: boolean
@@ -182,7 +187,9 @@ export interface MissionReviseInput {
 }
 
 export interface MissionInputTransport {
+  resolveCreationDefaults?(sessionID: string, input: MissionCreationChoices & { template: MissionTemplateId; coordinatorModel?: MissionExecution["model"] }): Promise<unknown>
   lifecycle?(coordinatorID: string, input: { missionID: string; operationID: string; sessionID: string;
+    startText?: string;
     recurrence?: import("./lifecycle-model").MissionLifecycleInput["recurrence"] }): Promise<unknown>
   cleanup?(coordinatorID: string, input: { missionID: string; deletionID: string; sessionID: string }): Promise<{ outcome: "removed" | "retained"; reason?: import("./model").MissionCleanupReason }>
   prompt(coordinatorID: string, input: Parameters<MissionSessionAdapter["prompt"]>[0]): Promise<unknown>
@@ -195,6 +202,8 @@ export interface MissionInputTransport {
 
 /** A coordinator's paused hand-off mission: what the Mission editor submits, never Play. */
 export interface MissionPrepareRequest {
+  /** Trusted resolved creation metadata, carried only through the backend transport. */
+  creationDefaults?: MissionCreationMetadata
   requestID: string
   objective: string
   title?: string

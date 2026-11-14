@@ -8,16 +8,20 @@ mod browser_controller;
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
+mod clipboard_attachments;
 mod client_state;
 mod data_profile;
 mod data_profile_cleanup;
 mod developer_mode;
+mod embedded_view;
 mod external_open;
 mod identity;
 mod launch;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 mod local_windows;
+#[cfg(target_os = "macos")]
+mod macos_relaunch;
 mod managed_node;
 mod menu_bar;
 mod menu_labels;
@@ -42,6 +46,8 @@ mod window_zoom;
 mod windows_browser_accelerators;
 #[cfg(windows)]
 mod windows_notification_identity;
+#[cfg(windows)]
+mod windows_session_end;
 mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
@@ -82,6 +88,8 @@ const REMOTE_PROXY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
 const RELEASES_LIST_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases";
 const HELP_URL: &str = "https://neuralnomadsai.github.io/CodeNomad/";
+/// English page opened when no renderer can choose the UI locale (`helpUrl("en", "sponsor")`).
+const SPONSOR_URL: &str = "https://neuralnomadsai.github.io/CodeNomad/en/sponsor.html";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
     "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
@@ -246,6 +254,13 @@ fn is_allowed_local_origin(url: &Url, managed_backend: Option<&str>) -> bool {
         || same_origin(url, managed_backend)
 }
 
+/// Navigation policy for local and Preferences windows. `about:blank` is the
+/// initial document carrying the boot splash: it holds no origin and grants no
+/// IPC authority, so admitting it says nothing about trusted renderer origins.
+fn is_navigable_local_origin(url: &Url, managed_backend: Option<&str>) -> bool {
+    url.as_str() == "about:blank" || is_allowed_local_origin(url, managed_backend)
+}
+
 pub(crate) fn require_preferences_or_local_app_webview(
     webview: &tauri::Webview,
     state: &AppState,
@@ -283,13 +298,14 @@ pub(crate) fn handle_native_request(
     method: &str,
     params: Option<serde_json::Value>,
     deadline: u64,
+    fence: native_request::RequestFence,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     match method {
         "browser.probe" | "browser.execute" | "browser.page.begin" | "browser.page.send"
         | "browser.page.check" | "browser.page.end" => state
             .browser_controller
-            .handle_native(app, method, params, deadline),
+            .handle_native(app, method, params, deadline, fence),
         "opencode.service.start" => native_service_start::start(params, deadline),
         "developer.status" => state.developer_mode.native_snapshot(app),
         "developer.restart" => state.developer_mode.request_restart(app),
@@ -507,20 +523,25 @@ async fn browser_target_register(
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
     let window = webview.window();
-    state.browser_controller.register(&window, payload)
+    let controller = state.browser_controller.clone();
+    tauri::async_runtime::spawn_blocking(move || controller.register(&window, payload))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn browser_target_update(
+async fn browser_target_update(
     webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetUpdate,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    state
-        .browser_controller
-        .update(&app, webview.label(), payload)
+    let controller = state.browser_controller.clone();
+    let owner = webview.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || controller.update(&app, &owner, payload))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -732,7 +753,7 @@ fn wake_lock_start(
         .display(config.display)
         .idle(config.idle)
         .sleep(config.sleep)
-        .reason("CodeNomad active session")
+        .reason("CodeNomad keeps the computer awake")
         .app_name("CodeNomad")
         .app_reverse_domain("ai.neuralnomads.codenomad.client");
 
@@ -772,7 +793,7 @@ fn should_allow_window_origin<R: Runtime>(
     if identity::local_window_id(window_label).is_ok() || window_label == preferences_window::LABEL
     {
         let status = state.manager.status();
-        return is_allowed_local_origin(url, status.url.as_deref());
+        return is_navigable_local_origin(url, status.url.as_deref());
     }
     let Ok(allowed) = state.remote_navigation.lock() else {
         return false;
@@ -827,9 +848,8 @@ fn open_remote_external_url(url: &Url, open: impl FnOnce(&Url)) -> bool {
 
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let window_label = webview.label().to_string();
-    let state = webview.app_handle().state::<AppState>();
-    if let Some(allowed) = state
-        .browser_controller
+    if let Some(allowed) = webview.app_handle()
+        .state::<embedded_view::EmbeddedViews>()
         .navigation_allowed(&window_label, url)
     {
         return allowed;
@@ -1637,11 +1657,18 @@ fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
     });
 }
 
+/// `launch_windows` are the hidden windows a `--connect-server` launch runs in: like Preferences, they never keep CodeNomad alive.
 fn is_final_application_window<'a>(
     closing_label: &str,
     mut labels: impl Iterator<Item = &'a str>,
+    launch_windows: &[String],
 ) -> bool {
-    !labels.any(|label| label != closing_label && label != preferences_window::LABEL)
+    !labels.any(|label| {
+        label != closing_label
+            && label != preferences_window::LABEL
+            && !label.starts_with("browser-popup-")
+            && !launch_windows.iter().any(|launch| launch == label)
+    })
 }
 
 fn consume_approved_auxiliary_close(app: &AppHandle, label: &str) -> bool {
@@ -1679,6 +1706,8 @@ fn request_final_application_window_close(app: AppHandle, label: String, local_w
                 .keys()
                 .filter(|candidate| !shutdown::local_window_close_in_flight(&app, candidate))
                 .map(String::as_str),
+            &app.state::<local_windows::LocalWindows>()
+                .connect_only_labels(),
         );
         // Closing the last window quits CodeNomad, Remote Control included; it
         // resumes at the next launch.
@@ -1699,7 +1728,16 @@ enum LocalCloseEventAction {
     Continue,
 }
 
-fn local_close_event_action(consumed: Option<bool>, in_flight: bool) -> LocalCloseEventAction {
+/// A hidden `--connect-server` launch window holds no user state: it closes at once, without the
+/// renderer flush whose acknowledgement a renderer that never started cannot send.
+fn local_close_event_action(
+    consumed: Option<bool>,
+    in_flight: bool,
+    launch_window: bool,
+) -> LocalCloseEventAction {
+    if launch_window {
+        return LocalCloseEventAction::Allow;
+    }
     match consumed {
         Some(true) => LocalCloseEventAction::Allow,
         Some(false) => LocalCloseEventAction::Prevent,
@@ -1775,11 +1813,19 @@ fn main() {
         devtools_active_port,
     );
 
+    let launch_arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    // Before the single-instance plugin can forward a `|` that would split into other arguments.
+    #[cfg(windows)]
+    if let Some(message) = launch::pipe_argument_error(&launch_arguments) {
+        eprintln!("[startup] {message}");
+        profile_selection_dialog::show_startup_error(&message);
+        std::process::exit(2);
+    }
     let launch_queue = Arc::new(launch::LaunchQueue::default());
-    launch_queue.enqueue(launch::parse_launch_intent(
-        &std::env::args().skip(1).collect::<Vec<_>>(),
-        &cwd,
-    ));
+    let first_intent = launch::parse_launch_intent(&launch_arguments, &cwd);
+    // A launch that only connects to a server restores the local windows only if the connection fails.
+    let restore_on_start = !first_intent.is_connect_only();
+    launch_queue.enqueue(first_intent);
     let singleton_queue = Arc::clone(&launch_queue);
     let second_launch_config = std::path::PathBuf::from(&scope.config_identity);
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
@@ -1808,6 +1854,9 @@ fn main() {
     let notification_badge_host = Arc::new(Mutex::new(None::<Arc<AppHandle>>));
     let setup_notification_badge_host = Arc::clone(&notification_badge_host);
 
+    let browser_controller = browser_controller::BrowserController::new(
+        setup_scope.webview_data_directory.join("browser"),
+    );
     desktop_updater::register(tauri::Builder::default(), context.config())
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
@@ -1838,6 +1887,11 @@ fn main() {
         )
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
+        .manage(browser_controller.embedded_views.clone())
+        .manage(embedded_view::StorageIdentity::new(
+            scope.profile.clone(),
+            scope.config_identity.clone(),
+        ))
         .manage(local_windows::LocalWindows::default())
         .manage(notification_badge::NotificationBadge::default())
         .manage(window_constraints::WindowConstraints::default())
@@ -1867,9 +1921,7 @@ fn main() {
                 backend_config.clone(),
             ),
             developer_mode,
-            browser_controller: browser_controller::BrowserController::new(
-                setup_scope.webview_data_directory.join("browser"),
-            ),
+            browser_controller,
             wake_lock: Mutex::new(WakeLockState::default()),
             remote_navigation: Mutex::new(HashMap::new()),
             remote_navigation_generation: AtomicU64::new(0),
@@ -1951,8 +2003,13 @@ fn main() {
             app.manage(shutdown::ShutdownCoordinator::default());
             app.manage(desktop_updater::UpdateState::default());
             build_menu(&app.handle())?;
-            local_windows::restore_windows(&app.handle())
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            if restore_on_start {
+                local_windows::restore_windows(&app.handle())
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            } else {
+                app.state::<local_windows::LocalWindows>()
+                    .defer_startup_restore();
+            }
             schedule_launch_drain(app.handle().clone(), Arc::clone(&setup_queue));
             update_fullscreen_shortcut(&app.handle());
 
@@ -1971,6 +2028,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
             cli_restart,
             wake_lock_start,
@@ -1983,6 +2041,9 @@ fn main() {
             preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
             preferences_window::preferences_opener_startup_state,
+            preferences_window::memory_cleanup::preferences_memory_cleanup,
+            preferences_window::memory_cleanup::memory_cleanup_result,
+            preferences_window::memory_cleanup::memory_cleanup_claim,
             window_control,
             window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
@@ -2005,6 +2066,8 @@ fn main() {
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,
+            local_windows::desktop_launch_next_connection,
+            local_windows::desktop_launch_acknowledge_connection,
             desktop_updater::check_desktop_update,
             desktop_updater::install_desktop_update,
             desktop_updater::take_desktop_update_failure,
@@ -2018,6 +2081,9 @@ fn main() {
             browser_target_release_open
         ])
         .on_menu_event(|app_handle, event| {
+            if embedded_view::zoom::focused(app_handle, event.id().0.as_str()) {
+                return;
+            }
             match event.id().0.as_str() {
                 // File menu
                 action @ ("new-instance"
@@ -2109,6 +2175,18 @@ fn main() {
                         }
                     }
                 }
+                "open-sponsor" => {
+                    if !emit_menu_action(app_handle, "open-sponsor") {
+                        if let Err(err) = external_open::open_url(app_handle, SPONSOR_URL) {
+                            eprintln!("[tauri] failed to open the Support CodeNomad page: {err}");
+                            rfd::MessageDialog::new()
+                                .set_title("Support CodeNomad")
+                                .set_description(format!("Could not open the Support CodeNomad page in your browser. Visit {SPONSOR_URL} manually."))
+                                .set_level(rfd::MessageLevel::Error)
+                                .show();
+                        }
+                    }
+                }
                 "open-about" | "help_open_about" => {
                     // About opens Settings → Info → About from the most recently used
                     // application window, which brings the Preferences window forward.
@@ -2168,6 +2246,10 @@ fn main() {
             }
             #[cfg(target_os = "linux")]
             tauri::RunEvent::Exit => appimage_exit::stop_mounted_children(),
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Exit if shutdown::restart_on_exit() => {
+                macos_relaunch::relaunch_and_exit(&app_handle)
+            }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),
@@ -2232,7 +2314,10 @@ fn main() {
                 if local_window {
                     let consumed = shutdown::consume_local_window_close(&app_handle, &label);
                     let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
-                    match local_close_event_action(consumed, in_flight) {
+                    let launch_window = app_handle
+                        .state::<local_windows::LocalWindows>()
+                        .is_connect_only(&label);
+                    match local_close_event_action(consumed, in_flight, launch_window) {
                         LocalCloseEventAction::Allow => return,
                         LocalCloseEventAction::Prevent => {
                             api.prevent_close();
@@ -2245,7 +2330,13 @@ fn main() {
                 }
                 let windows = app_handle.windows();
                 let final_window =
-                    is_final_application_window(&label, windows.keys().map(String::as_str));
+                    is_final_application_window(
+                        &label,
+                        windows.keys().map(String::as_str),
+                        &app_handle
+                            .state::<local_windows::LocalWindows>()
+                            .connect_only_labels(),
+                    );
                 if final_window {
                     api.prevent_close();
                     request_final_application_window_close(app_handle.clone(), label, local_window);
@@ -2488,11 +2579,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     };
 
     let help_item = item("open-help", "codenomadHelp", None)?;
+    let sponsor_item = item("open-sponsor", "sponsor", None)?;
     let help_menu = if is_mac {
         let help_updates_item = item("help_get_updates", "getUpdates", None)?;
         let help_about_item = item("help_open_about", "about", None)?;
         let menu = SubmenuBuilder::with_id(app, "menu-help", label("help"))
             .item(&help_item)
+            .item(&sponsor_item)
             .item(&help_updates_item)
             .separator()
             .item(&help_about_item)
@@ -2503,6 +2596,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     } else {
         SubmenuBuilder::with_id(app, "menu-help", label("help"))
             .item(&help_item)
+            .item(&sponsor_item)
             .item(&get_updates_item)
             .separator()
             .item(&about_item)
@@ -2525,6 +2619,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         ("fullScreen", toggle_fullscreen_item),
         ("commandPalette", command_palette_item),
         ("codenomadHelp", help_item),
+        ("sponsor", sponsor_item),
     ] {
         labelled.push((key, MenuItemKind::MenuItem(entry)));
     }
@@ -2598,12 +2693,12 @@ fn about_fallback_text(version: &str) -> String {
 mod menu_tests {
     use super::{
         about_fallback_text, claim_unowned_remote_proxy_session, releases_page, clear_remote_tls_handler,
-        is_allowed_local_origin, is_final_application_window, local_close_event_action,
+        is_allowed_local_origin, is_final_application_window, is_navigable_local_origin, local_close_event_action,
         require_http_url, rollback_remote_window_metadata, open_remote_external_url,
         should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
         titlebar_menu_id, LocalCloseEventAction,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
-        HELP_URL, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        HELP_URL, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT, SPONSOR_URL,
     };
     use serde_json::json;
     use url::Url;
@@ -2611,11 +2706,11 @@ mod menu_tests {
     #[test]
     fn remote_help_policy_opens_only_allowlisted_https_in_system_browser() {
         let mut opened = Vec::new();
-        for value in [HELP_URL, "https://neuralnomadsai.github.io/CodeNomad/fr/history.html#delete"] {
+        for value in [HELP_URL, SPONSOR_URL, "https://neuralnomadsai.github.io/CodeNomad/fr/history.html#delete"] {
             let url = Url::parse(value).unwrap();
             assert!(open_remote_external_url(&url, |url| opened.push(url.to_string())));
         }
-        assert_eq!(opened.len(), 2);
+        assert_eq!(opened.len(), 3);
         for value in [
             "http://neuralnomadsai.github.io/CodeNomad/en/",
             "https://example.com/CodeNomad/",
@@ -2632,35 +2727,115 @@ mod menu_tests {
     }
 
     #[test]
+    fn about_blank_boot_document_navigates_but_never_becomes_a_trusted_origin() {
+        let backend = "http://127.0.0.1:43123/";
+        let blank = Url::parse("about:blank").unwrap();
+        assert!(
+            is_navigable_local_origin(&blank, Some(backend)),
+            "the initial boot splash document must be navigable in local windows"
+        );
+        assert!(
+            !is_allowed_local_origin(&blank, Some(backend)),
+            "about:blank never gains IPC or renderer authority"
+        );
+        assert!(is_navigable_local_origin(
+            &Url::parse(backend).unwrap(),
+            Some(backend)
+        ));
+        assert!(!is_navigable_local_origin(
+            &Url::parse("https://example.com/").unwrap(),
+            Some(backend)
+        ));
+    }
+
+    #[test]
     fn preferences_does_not_keep_the_last_application_window_alive() {
         assert!(is_final_application_window(
             "local-a",
             ["local-a", "preferences"].into_iter(),
+            &[],
         ));
         assert!(!is_final_application_window(
             "local-a",
             ["local-a", "preferences", "local-b"].into_iter(),
+            &[],
         ));
         assert!(!is_final_application_window(
             "local-a",
             ["local-a", "preferences", "remote-a"].into_iter(),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn webkit_popups_follow_the_last_application_window_lifetime() {
+        assert_eq!(
+            is_final_application_window(
+                "local-a",
+                ["local-a", "browser-popup-a"].into_iter(),
+                &[],
+            ),
+            true,
+        );
+        assert!(!is_final_application_window(
+            "local-a",
+            ["local-a", "browser-popup-a", "local-b"].into_iter(),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn hidden_launch_windows_do_not_keep_the_last_application_window_alive() {
+        let launch = vec!["local-launch".to_string()];
+        // Closing the last visible window quits even while a launch connection is pending.
+        assert!(is_final_application_window(
+            "local-a",
+            ["local-a", "local-launch"].into_iter(),
+            &launch,
+        ));
+        assert!(is_final_application_window(
+            "remote-a",
+            ["remote-a", "local-launch", "preferences"].into_iter(),
+            &launch,
+        ));
+        // The launch window closing beside its remote window is an ordinary close.
+        assert!(!is_final_application_window(
+            "local-launch",
+            ["local-launch", "remote-a"].into_iter(),
+            &launch,
+        ));
+        assert!(!is_final_application_window(
+            "local-a",
+            ["local-a", "local-launch"].into_iter(),
+            &[],
         ));
     }
 
     #[test]
     fn approved_local_close_wins_over_its_in_flight_marker() {
         assert_eq!(
-            local_close_event_action(Some(true), true),
+            local_close_event_action(Some(true), true, false),
             LocalCloseEventAction::Allow
         );
         assert_eq!(
-            local_close_event_action(None, true),
+            local_close_event_action(None, true, false),
             LocalCloseEventAction::Prevent
         );
         assert_eq!(
-            local_close_event_action(None, false),
+            local_close_event_action(None, false, false),
             LocalCloseEventAction::Continue
         );
+    }
+
+    #[test]
+    fn hidden_launch_windows_close_without_a_renderer_flush() {
+        // Continue would request the flush that a launch window still on loading.html never acknowledges.
+        for (consumed, in_flight) in [(None, false), (None, true), (Some(false), false)] {
+            assert_eq!(
+                local_close_event_action(consumed, in_flight, true),
+                LocalCloseEventAction::Allow
+            );
+        }
     }
 
     #[test]
@@ -2675,6 +2850,13 @@ mod menu_tests {
         let shared = include_str!("../../../ui/src/lib/help-url.ts");
         assert!(shared.contains(&format!("export const HELP_BASE_URL = \"{HELP_URL}\"")));
         assert_eq!(titlebar_menu_id("help"), Some("menu-help"));
+    }
+
+    #[test]
+    fn sponsor_fallback_is_the_english_help_page() {
+        // The renderer's helpUrl("en", "sponsor") builds `${HELP_BASE_URL}en/sponsor.html`.
+        assert_eq!(SPONSOR_URL, format!("{HELP_URL}en/sponsor.html"));
+        assert_eq!(super::menu_labels::label("sponsor"), "Support CodeNomad");
     }
 
     #[test]

@@ -13,12 +13,13 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
+import type { MissionCreationMetadata } from "../../missions/creation-defaults"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: z.string().trim().min(1).max(128),
-  profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.default("native"),
+  profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
 }).strict()
 
 export type MissionCreationPipelineManager = Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection"
@@ -39,6 +40,7 @@ export async function prepareMissionCreation(input: {
   expectedProjectID?: string
   /** Trusted coordinator hand-off from the authenticated plugin bridge, never HTTP input. */
   preparedBy?: { missionID: string; coordinatorSessionID: string }
+  creationDefaults?: MissionCreationMetadata
 }) {
   const { manager, workspaceID, signal } = input
   const wait = input.wait ?? (<T>(operation: Promise<T>) => operation)
@@ -48,7 +50,7 @@ export async function prepareMissionCreation(input: {
   const request = parsed.data
   const compareError = request.template === "compare" && compareModelError(request.profiles)
   if (compareError) throw new MissionCreationPreparationError(400, compareError)
-  request.profiles = freezeCompareProfiles(request.template, request.profiles)
+  if (!input.creationDefaults) request.profiles = freezeCompareProfiles(request.template, request.profiles)
   try { validateMissionProfiles(request.template, request.profiles) }
   catch { throw new MissionCreationPreparationError(400, "Invalid mission creation request") }
   if (!input.fence) throw new MissionCreationPreparationError(503, "Mission creation unavailable")
@@ -59,14 +61,14 @@ export async function prepareMissionCreation(input: {
   if (!connection) throw new MissionCreationPreparationError(503, "Mission plugin unavailable")
   const client = connection.client
   let location = request.directory ? { directory: request.directory } : base
-  if (!await wait(manager.ownsLocation(workspaceID, location, client, signal))) {
+  if (!await wait(manager.ownsLocation(workspaceID, location, client, { signal }))) {
     throw new MissionCreationPreparationError(403, "Mission directory does not belong to workspace")
   }
   const directory = await wait(manager.getServiceDirectoryForPath(workspaceID, location.directory))
   if (!directory) throw new MissionCreationPreparationError(503, "Mission plugin unavailable")
   location = { directory }
   const resolved = await wait(client.location.get({ location }, { ...locationRequestOptions(location), signal }))
-  if (!sameLocation(location, resolved) || !await wait(manager.ownsLocation(workspaceID, resolved, client, signal))) {
+  if (!sameLocation(location, resolved) || !await wait(manager.ownsLocation(workspaceID, resolved, client, { signal }))) {
     throw new MissionCreationPreparationError(403, "Native mission location differs from owned directory")
   }
   const baseResolved = await wait(client.location.get({ location: { directory: base.directory } }, { ...locationRequestOptions(base), signal }))
@@ -78,12 +80,16 @@ export async function prepareMissionCreation(input: {
   if (!inventory.data.some(entry => entry.id === CODENOMAD_MISSIONS_RPC_ID && entry.state.status === "active")) {
     throw new MissionCreationPreparationError(503, "Mission plugin unavailable")
   }
+  try {
+    const capability = await wait(client.rpc(CODENOMAD_MISSIONS_RPC).documentCapabilities({}, { location, ...locationRequestOptions(location), signal }))
+    z.object({ version: z.literal(1) }).strict().parse(capability)
+  } catch { throw new MissionCreationPreparationError(503, "Unified Mission documents unavailable") }
   signal.throwIfAborted(); connection.assertCurrent()
   const locations = [location]
   if (request.coordinatorSessionId) {
     const coordinator = await wait(client.session.get({ sessionID: request.coordinatorSessionId }, { signal }))
     if (coordinator.id !== request.coordinatorSessionId || coordinator.parentID || coordinator.projectID !== projectID
-      || !await wait(manager.ownsLocation(workspaceID, coordinator.location, client, signal))) {
+      || !await wait(manager.ownsLocation(workspaceID, coordinator.location, client, { signal }))) {
       throw new MissionCreationPreparationError(403, "Coordinator session does not belong to workspace project")
     }
     locations.push(coordinator.location)
@@ -98,8 +104,9 @@ export async function prepareMissionCreation(input: {
   const nativeInput = {
     prepared: true, requestID: request.requestId, objective: request.objective,
     ...(request.title === undefined ? {} : { title: request.title }),
-    ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode,
+    ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode ?? "native",
     ...(request.profiles === undefined ? {} : { profiles: request.profiles }),
+    ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),
     ...(request.coordinatorSessionId ? { coordinatorSessionID: request.coordinatorSessionId } : {}),
     expectedCoordinatorLocation: locations.at(-1)!,
     ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),

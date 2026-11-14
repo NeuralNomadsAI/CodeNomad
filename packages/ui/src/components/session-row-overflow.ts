@@ -35,15 +35,16 @@ export function useSessionRowOverflow(row: Accessor<HTMLElement | undefined>) {
       if (!select || !inline || !actions || !element.getBoundingClientRect().width) return
       const title = select.querySelector(".session-item-title")!
       const icon = select.querySelector(".session-item-kind-icon")!
-      const badges = select.querySelector(".session-item-badges")!
+      // Badges follow the select button; the row gap before them counts on both sides.
+      const badges = element.querySelector(".session-item-badges")!
       const badgeWidths = [...badges.children].map((badge) => flexWidth(badge,
         [...badge.children].map((child) => child.matches(".session-item-status-label, .worktree-indicator-label")
           ? textWidth(child) : child.getBoundingClientRect().width),
       ))
-      const widths = [icon.getBoundingClientRect().width, textWidth(title)]
-      if (badgeWidths.length) widths.push(flexWidth(badges, badgeWidths))
-      const required = flexWidth(select, widths) + inline.getBoundingClientRect().width
-      const available = select.getBoundingClientRect().width + actions.getBoundingClientRect().width
+      const required = flexWidth(select, [icon.getBoundingClientRect().width, textWidth(title)])
+        + (badgeWidths.length ? flexWidth(badges, badgeWidths) : 0) + inline.getBoundingClientRect().width
+      const available = select.getBoundingClientRect().width + badges.getBoundingClientRect().width
+        + actions.getBoundingClientRect().width
       const next = required > available + 0.5
       if (next === compact()) return
       const hadActionFocus = actions.contains(document.activeElement)
@@ -59,7 +60,7 @@ export function useSessionRowOverflow(row: Accessor<HTMLElement | undefined>) {
     }
     const resize = new ResizeObserver(schedule)
     resize.observe(element)
-    for (const target of element.querySelectorAll(".session-item-select, .session-item-inline-actions")) resize.observe(target)
+    for (const target of element.querySelectorAll(".session-item-select, .session-item-badges, .session-item-inline-actions")) resize.observe(target)
     const mutation = new MutationObserver(schedule)
     mutation.observe(element, { childList: true, characterData: true, subtree: true })
     document.fonts?.addEventListener("loadingdone", schedule)

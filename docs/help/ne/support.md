@@ -1,4 +1,4 @@
-# सहयोग र source build
+# bug report र source build
 
 bug report, current release र contribution का लागि repository प्रयोग गर्नुहोस्। issue report अघिको सुरक्षित recovery [समस्या समाधान गाइड](troubleshooting.md) मा छ।
 
@@ -31,7 +31,7 @@ CodeNomad नियन्त्रणभन्दा native OpenCode configurati
 
 ## source बाट build {#build-from-source}
 
-`.node-version` मा pinned Node.js **24.20.0**, npm, Git र compatible OpenCode CLI प्रयोग गर्नुहोस्। development checkout बाट आदेश चलाउनुहोस्:
+`.node-version` मा pinned Node.js संस्करण, npm, Git र compatible OpenCode CLI प्रयोग गर्नुहोस्। development checkout बाट आदेश चलाउनुहोस्:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git

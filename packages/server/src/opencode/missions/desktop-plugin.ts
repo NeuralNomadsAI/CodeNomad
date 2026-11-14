@@ -3,16 +3,23 @@ import type { NativeMissionSession } from "../../missions/control-types"
 import { followPresence } from "../desktop-plugin-presence"
 import { setupMissionsBusiness, setupMissionsPlugin, type MissionBusinessRoute } from "../missions-plugin"
 import { selectNativePassageBusiness, prepareNativePassageSession, retireNativePassageBusiness } from "./native-passage-business"
-import { sendMissionInput } from "../automation-plugin"
+import { resolveMissionProfileDefaults, sendMissionInput } from "../automation-plugin"
 import { isCleanupReason } from "../../missions/cleanup-projection"
 import { MissionJournal } from "../../missions/journal"
 import { MissionJournalIndex } from "../../missions/journal-index"
 import { hintsShowWork, retainMissionWork } from "./lifetime"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
+import type { MissionDocumentAccess } from "../../missions/mission-document-one-time"
+
+export interface NativeDocumentBusiness {
+  select(sessionID: string): Promise<MissionBusinessRoute | undefined>
+  prepare(sessionID: string): Promise<boolean>
+}
 
 /** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
  * reads, creates or repairs the retired `authority-v2` namespace. */
-export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate): Plugin.Plugin {
+export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate, documents?: MissionDocumentAccess,
+  documentBusiness?: NativeDocumentBusiness): Plugin.Plugin {
   return {
     id: "codenomad.missions",
     setup: async ctx => {
@@ -21,8 +28,11 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
       const journal = new MissionJournal(ctx.storage, ctx.location.project.id, ctx.location.project.canonical, undefined, index)
       let ordinary: MissionBusinessRoute | undefined
       const disposeBusiness = await setupMissionsBusiness(ctx, async sessionID =>
-        await selectNativePassageBusiness(ctx, sessionID, humanGate) ?? (ordinary && { ...ordinary, readSessionID: sessionID }))
-      const promptHook = await ctx.session.hook("prompt", event => prepareNativePassageSession(ctx, event.sessionID, humanGate))
+        await documentBusiness?.select(sessionID) ?? await selectNativePassageBusiness(ctx, sessionID, humanGate)
+          ?? (ordinary && { ...ordinary, readSessionID: sessionID }))
+      const promptHook = await ctx.session.hook("prompt", async event => {
+        if (!await documentBusiness?.prepare(event.sessionID)) await prepareNativePassageSession(ctx, event.sessionID, humanGate)
+      })
         .catch(async error => { await disposeBusiness(); throw error })
       let disposePresence: (() => Promise<void>) | undefined
       try { disposePresence = await followPresence(presenceDirectory, async () => {
@@ -32,6 +42,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           synthetic: (coordinatorID, input) => sendMissionInput(coordinatorID, "synthetic", input),
           lifecycle: (coordinatorID, input) => sendMissionInput(coordinatorID, "lifecycle", input),
           prepare: (coordinatorID, input) => sendMissionInput(coordinatorID, "prepare", input),
+          resolveCreationDefaults: resolveMissionProfileDefaults,
           observeTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "task-sessions", input),
           interruptTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "interrupt", input),
           cleanup: async (coordinatorID, input) => {
@@ -45,7 +56,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
             }, beforeTool: async () => {} }
             ordinary = selected
           }, beforeTool: async () => {}, beforeJournalWrite: async () => {} },
-          (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false, index)
+          (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false, index, documents)
           return async () => { ordinary = undefined; await dispose() }
         } catch (error) { ordinary = undefined; throw error }
       }, console.error, () => retainMissionWork(() => journal.snapshot(), () => journal.readHints(hintsShowWork))) }

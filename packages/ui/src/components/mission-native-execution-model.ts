@@ -1,7 +1,7 @@
-import type { MissionActorActivity, MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
+import type { MissionActorActivity, MissionPanelMap, MissionPanelReport, MissionPanelTask } from "../../../server/src/api-types"
 import { missionTaskExecutionEvidence } from "../../../server/src/missions/execution-evidence"
 
-export type MissionNativeTask = Pick<MissionTask, "status" | "executionMode" | "contractGeneration" | "nativeBinding" | "nativeExecution" | "actorSessionId" | "admissionId" | "report" | "lateReports" | "outstandingExecution">
+export type MissionNativeTask = Pick<MissionPanelTask, "status" | "executionMode" | "contractGeneration" | "nativeBinding" | "nativeExecution" | "actorSessionId" | "admissionId" | "report" | "lateReports" | "outstandingExecution">
 
 /** Display only: a native return is neither a terminal session nor a business report. */
 export function missionTaskStatusKey(task: MissionNativeTask): string {
@@ -39,7 +39,7 @@ export function canRecoverMissionReport(task: MissionNativeTask | undefined, act
     && (!activity || activity === "unknown" || activity === "idle-without-report")
 }
 
-export type MissionReportDelivery = Pick<MissionReport, "notificationStatus" | "delivery">
+export type MissionReportDelivery = Pick<MissionPanelReport, "notificationStatus" | "delivery">
 
 export function missionReportNotificationKey(report: MissionReportDelivery): string | undefined {
   if (report.delivery === "coordinator-readout") return undefined
@@ -50,7 +50,15 @@ export function missionReportNotificationKey(report: MissionReportDelivery): str
 /** The latest Pause/Stop could not confirm that every native sub-agent stopped
  * (incomplete inventory or a session still observed active). Older receipts
  * without a family summary claim nothing either way. */
-export function partialInterrupt(mission: Pick<MissionMap, "control">): boolean {
+/** Whether observed activity shows work an immediate interrupt could still stop.
+ * A Form or permission anywhere in a family outranks its running members in the
+ * projection, so a waiting actor counts as working too. */
+export function missionActivityWorking(actors: readonly Pick<MissionActorActivity, "state">[] | undefined): boolean {
+  return Boolean(actors?.some(actor => ["running", "queued", "background", "permission", "form"].includes(actor.state)))
+}
+
+export function partialInterrupt(mission: Pick<MissionPanelMap, "control" | "panelControl">): boolean {
+  if (mission.panelControl) return mission.panelControl.action !== "start" && mission.panelControl.partialDescendants > 0
   const control = mission.control
   if (!control || control.action === "start") return false
   return Boolean(control.receipts?.some(receipt => receipt.nativeAcknowledgement?.disposition === "interrupt-observed"

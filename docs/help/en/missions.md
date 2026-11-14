@@ -1,161 +1,160 @@
 # Missions
 
-Missions pair a durable project plan with native OpenCode conversations. The coordinator plans and delegates; the task tree records dependencies and results. A saved plan, an admitted input and observed execution are different facts.
+A Mission keeps an objective, a coordinator conversation, tasks and their results together. Open **Missions** in the right panel.
 
-## Create, then explicitly start {#create}
+## Create a Mission {#create}
 
-1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission list and the selected mission's tasks until you create or cancel.
-2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
-3. Under **When**, select **Once** or **Every day at**. For daily work, verify the displayed time zone; **Change** allows an IANA zone.
-4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subsession nesting depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
-5. Choose **Create**. Select the new entry, then use its separate ▶ action when ready: **Start mission** for one-time work, or **Play schedule {id}** for a daily schedule.
+Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.
 
-**Create never starts work.** A one-time mission is prepared; a daily schedule is paused. Neither creation nor saving a brief arms a timer. Creation is scoped to the selected project/Location and freezes the requested profiles and task-session policy. Validation is beside the affected field; a refusal that says nothing was sent leaves the draft available for correction. The coordinator of a one-time mission can also prepare a separate mission for you, such as a follow-up: it appears in the list as **Prepared** and, like any mission, starts only from its ▶ action.
+Choose **Create mission**. The form replaces the tree until you create or cancel. Its groups follow the order below.
 
-### Playbooks {#playbooks}
+### Configuration {#saved-briefs}
 
-| Playbook | Intended work |
-| --- | --- |
-| Flexible mission | Coordinator chooses a dependency-aware plan for the objective. |
-| Debugging | Diagnosis, implementation, separate standards/specification review and fresh validation; resolution continues the implementer. |
-| Exploration | Maps uncertainties and works through bounded decisions with human questions. |
-| Product delivery | Coordinates product analysis, architecture, implementation and quality roles. |
-| Compare two models | Runs the same task with identical briefs on **Model A** and **Model B**, then a **Blind judge** scores both under neutral labels and gives a verdict: **Model A wins**, **Model B wins**, **Equivalent** or **Inconclusive**. |
+**Configuration** optionally loads a saved objective, notes, playbook, agents/models and task-session choices. Its name supplies the editable title. Check the filled fields before creating.
 
-For **Compare two models**, both models are required and must differ; a different **Thinking** level alone is not a different model. Unless you choose one, the judge uses the coordinator's model; the form warns when it matches A or B, which may bias the comparison. The overview shows the verdict, both model names and the scores by criterion.
+**Save configuration**, in the footer beside Cancel and Create, names and saves a reusable configuration. It does not create or start a Mission. Scheduling and **Start automatically** are separate choices. The Missions gear opens Preferences, including the saved-configuration library; removing a configuration keeps existing missions and conversations.
 
-The playbook guides coordination; it does not bypass native permissions or guarantee success. Answer Exploration's decision questions through CodeNomad's interruption dock so an explicit UI answer is recorded, rather than asking an agent to impersonate approval.
+### Objective, Title and Notes {#mission-instructions}
+
+- **Objective**: the result you want and how to check it.
+- **Title**: the name in the tree. For a blank Mission it follows the objective's first sentence, up to 60 characters; you can edit it.
+- **Notes**: optional context, constraints or additional instructions for the agents. Keep information needed to do the work here, rather than UI settings.
+
+### Options and playbook {#playbooks}
+
+**Playbook** selects the coordinator's working method: Flexible mission, Debugging, Exploration, Product delivery or Compare two models. [Playbooks](playbooks.md) describes their roles and steps.
+
+The playbook guides the agents within their native permissions. Commits, pushes, pull requests and issue-tracker changes require an explicit request for that action in the objective or Notes.
+
+### Delegation and depth {#profiles}
+
+**Task sessions** selects **Native subagents** under the coordinator, or **Independent sessions**. Both remain subject to OpenCode permissions and nesting limits.
+
+**Subagent depth** is a project setting for all its OpenCode conversations. Choose **Inherit** or a depth from 1 to 10; this choice is saved immediately. Its **ⓘ** shows the observed effective depth, nesting permissions and configuration paths. A failed or unconfirmed save keeps its warning and offers an explicit refresh.
+
+Saving a project depth also enables subagents to delegate within that depth, overriding General restrictions from other configuration files where supported. An incompatible project rule keeps its warning. **Inherit** removes the added rule. Saving does not reload OpenCode or change running conversations.
+
+### Agents and models {#agents-models}
+
+Expand **Agents and models** to edit one Agent / Model / Thinking row per role. The summary keeps the requested choices visible when folded. Creation starts from the defaults in Preferences; changes here apply to this Mission.
+
+The Missions gear opens the defaults for **All missions** or a particular playbook. Preferences save each change immediately. Model lists follow the conversation selector's visibility and favorites settings; a saved model outside the list stays selected.
+
+**Compare two models** requires different models for A and B; changing Thinking alone does not make a different model. The blind judge uses the coordinator's model unless you choose another one. Using A or B as judge can bias the comparison.
+
+Calendar-backed scheduling requires an explicit agent and model for the coordinator and every playbook role.
+
+### Start automatically {#automatic-start}
+
+**Start automatically** is outside Scheduling and off by default. Leave it off to create a paused Mission, then use ▶ **Start** in the header. Turn it on to request Start after creation is confirmed, with the ordinary checks and automatic scheduling preparation.
+
+If creation's acknowledgement is lost, reading its receipt leaves Start manual. An unconfirmed creation keeps its original request; inspect the list and conversation before creating anything again.
+
+## Scheduling {#daily-schedules}
+
+### Criteria {#native-scheduling}
+
+The subagent-depth information identifies its effective source under **OpenCode configuration file:**.
+
+The first criterion is **Once, now**. **Add a criterion** adds another; choose its type, remove it with ×, or reorder cards by their grip. Alt+Up/Down moves a focused grip.
+
+Schedules include Once, now, Every N hours, Every day, Selected weekdays, Day of each month and Advanced (cron). Civil schedules use the saved time zone. **Saved time zone (IANA)** appears when it differs from the system zone. Months without the chosen day are skipped.
+
+**Once, now** takes its instant at Start, rather than when the form opens. It offers one opportunity, which a condition can consume without launching. Choose a repeating schedule for later opportunities. Scheduling runs while its OpenCode service and execution host are available.
+
+Starting or resuming prepares scheduling in the project's OpenCode configuration automatically. An explicit OFF is preserved: use **Open scheduling settings** when offered to open the responsible file, and the **i** tip for its source or environment details. The clicked button shows loading only during the request. An unconfirmed result offers verification; recovered activation leaves Start explicit.
+
+### Events and combinations {#scheduling-conditions}
+
+Choose **Repository activity → Event**, then any optional filters in the same card. Git branch commits share this menu with events from the automatically detected GitHub, GitLab or Gitea repository, using the same detection as Contribute (`upstream`, then `origin`). All three support new PRs/MRs, merged PRs/MRs and new issues, with optional **Author**, including `dependabot[bot]`. Choosing an event fixes its repository; saved criteria retain their targets.
+
+Forge checks use `gh`, `glab` or `tea` on the OpenCode execution host, including with CodeNomad closed; public repositories can use anonymous access. Self-hosted forges require a CLI signed in to that host. **github.com** also offers account notifications and Dependabot alerts through signed-in `gh`, with [notification access](https://docs.github.com/en/rest/activity/notifications) or [alert read access](https://docs.github.com/en/rest/dependabot/alerts). Notifications preserve read status; alerts include fixed or dismissed items. Stored notifications with an empty **GitHub repository** cover the account. First Start sets the reference. Checks read at most four pages of 50 items within ten seconds; missing access, rate limits or incomplete windows leave the source unavailable. Observed summaries enter the passage input and are consumed after success.
+
+An event can follow another schedule's success, a completed one-time Mission, commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Browsing without a search loads more as you scroll; a failed read offers **Try again** there. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
+
+- **or** combines adjacent schedules, or adjacent events.
+- **if**: events after schedules are their conditions. At each scheduled time, one of those events must have changed since the last successful passage.
+- **else**: schedules after events are a fallback. At their time, they run only if the criteria above launched no passage since that schedule's previous slot, or since it was armed. Events after the fallback condition that fallback.
+
+Events at the beginning can launch a passage on each new occurrence; trigger events are checked every 15 minutes. First Start establishes the source reference. A successful passage advances it; failed work keeps it. Missing or unreadable sources block with an explanation. Passages do not overlap.
+
+### Counts and history {#scheduling-limits}
+
+**Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**; a missing selected conversation requires your intervention.
+
+Select a schedule to read its state, next wake or check, launched and successful passage counts, and **Past runs**. The history retains 30 results; lifetime counts remain. **Run now** counts as a launched passage once admitted.
+
+A saved policy that the editor cannot represent stays under **Stored scheduling policy** until you explicitly replace it. Review any retained end or launch limit before editing.
+
+### Existing daily schedules {#existing-daily-schedules}
+
+Existing daily entries keep their own controls and saved time zone. After a service restart they show **Interrupted** and require **Resume**. They catch up the latest eligible day rather than running every missed day. Read their retained results through the selected entry.
 
 ## Follow the tree and read results {#tracking}
 
-1. Select the mission title. The leading chevron keeps its list open; the title field opens a temporary picker.
-2. Choose **Summary** (eye) for the central overview, or select a task node for its exact result, brief and evidence.
-3. Follow dependency links and **Reports**; use **Open conversation** for the coordinator when you need its transcript.
-4. Under **Needs you**, choose **Answer** to open the requesting actor's conversation and interruption dock.
+The chevron expands or collapses a Mission's tasks. Clicking a row selects the Mission or task; actions for that selection stay in the header. A Mission without tasks has no chevron. **Filter missions** filters the loaded directory.
 
-| Indicator | What it establishes |
+The eye toggles **Summary** in the central reader and follows your selection while pressed. Use **Open conversation** to go to the coordinator or selected task. **More actions** (⋯) contains the applicable update, interruption, save-configuration and edit commands.
+
+More directory entries and tasks load as you approach the end. Loaded task pages stay cached independently of the rendered rows. A failed read keeps its last display and offers **Try again**. Background reading uses the header's refresh indicator. Reading or retrying a read never starts work.
+
+### Colours and states {#status-colours}
+
+The flag shows the Mission's state; its chevron carries its tasks' attention state. A recurring entry uses a repeat icon.
+
+| Colour and shape | Meaning |
 | --- | --- |
-| Assigned | Input was admitted; model consumption/work/completion is not proven. |
-| Active | Native activity was observed. |
-| Waiting | Declared dependencies are not yet met. |
-| Blocked | A blockage was reported, not necessarily a question for you. |
-| Awaiting your input | An open native Form/question or permission needs an answer; it is listed under **Needs you**. |
-| Done | A task result was recorded; inspect its evidence and any remaining native work. |
-| Failed / Retired | The task failed, or the coordinator replaced or abandoned it. |
+| Red | An open question or permission needs your answer. Select the asking Mission or task to open the interruption dock. |
+| Yellow, pulsing | Native work was observed running. |
+| Orange pause symbol | Paused. |
+| Orange warning triangle | Interrupted, with an action to continue. |
+| Green | A Mission, task or successful scheduled run awaits review in this window. |
+| Accent icon with a small static neutral line below | **Waiting for scheduled run**: the next wake is confirmed. The accent follows your palette. |
+| Accent icon alone | Prepared Mission or a task that has not started. |
+| Neutral | Reviewed completion, stopped schedule or **State unconfirmed**; read the status text. |
 
-The graph includes completed and retired work. Retiring a task does not itself stop its conversation. In a one-time mission, the coordinator can separately stop the conversations of a retired task it launched as a native subagent, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
+Select a green Mission or task, click or sweep green task icons, or use **Mark as read** on the chevron's context menu. For **Successful run to review**, explicitly select the recurring row in the active window or use **Mark as read** to acknowledge that run. Its icon returns to waiting while scheduling remains active, otherwise neutral. Restored selection and results arriving on an already selected row keep the new result unread. Historical successes present on first loading start as read.
 
-### Colours and interrupted missions {#status-colours}
+Status text distinguishes Assigned, Active, Waiting, Blocked, Done, Failed and Retired. A reported blockage is not necessarily a question for you. A recorded result is not proof that every native operation has stopped. Retiring a task keeps its history.
 
-Mission marks, task icons and the list's chevron use the session list's colours: colour shows only what needs you now.
+### Questions and decisions {#questions}
 
-| Colour | Meaning |
-| --- | --- |
-| Red | An answer is expected from you; it is listed under **Needs you**. |
-| Yellow, pulsing | Work is running. |
-| Orange | The mission is paused, or interrupted, with an action to continue it. |
-| Green | A completed mission you have not opened yet in this window; it turns neutral once you select it. |
-| Blue | A prepared mission, ready to start like a composed prompt. |
-
-Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons. While the list is collapsed, its chevron takes the most urgent of red, yellow and green among the other missions; like collapsed sessions, orange and blue show only on their own rows.
-
-A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when it cannot continue on its own, it asks you a question under **Needs you**. Only you stop a mission.
+The coordinator is instructed to resolve what it can and ask you only for remaining decisions, consent or credentials. Answer through the interruption dock. Exploration results distinguish **Coordinator decision** from **Your answer**; with Independent sessions, decisions are recorded in Notes. [Playbooks](playbooks.md) explains those workflows.
 
 ### Briefings and update requests {#briefings}
 
-The coordinator is instructed to publish a project briefing after its initial plan, after task settlements, when waiting for a human and before the final report. This is an authored assessment, not a live activity counter or guaranteed periodic heartbeat. A notice identifies when the map has changed since the briefing.
+The coordinator is instructed to publish briefings at key milestones. They are its assessment, not a live activity counter. **Request an update** under More actions asks for another; read it through Summary. If delivery is unconfirmed, inspect the coordinator conversation before making a separate request.
 
-Use **Request an update** below the toolbar for a fresh coordinator assessment, then read **Summary**. **Update requested…** means the request is pending, not answered. **Delivery unconfirmed** does not authorize automatic resending: open the coordinator conversation before making a separate new request. This is an ordinary native input, not a read-only sandbox; the coordinator retains its normal permissions.
+## Context and results {#context-flow}
 
-## Profiles, delegation and depth {#profiles}
+The durable plan holds the objective, Notes, task briefs, dependencies, results and plan changes. The coordinator receives the objective, Notes and playbook instructions. Native tasks receive their assignment from their parent; independent tasks also receive their open assignments. Helpers receive the context their parent passes. The blind judge receives anonymized comparison material rather than the objective and Notes.
 
-1. Use the Missions gear or **Settings → Missions** to edit **New mission defaults**.
-2. Under **Apply to**, choose **All missions** or one playbook, then set **Task sessions** and, under **Agents and models**, one row per role (coordinator, then the playbook's roles). Each choice is saved immediately; there is no Save button.
-3. In a playbook scope, rows show the global values marked **Global**. Changing a field customizes that role starting from them; its revert icon uses the global values again. **Reset** (after confirmation) clears only the agents and models of the shown scope.
-4. In creation, use **Options → Agents and models** for specific requested profiles; **Use saved defaults** restores the saved ones.
-5. For native recursion limits, edit **Subsession nesting depth → Depth override for the project**, here or under creation **Options**. Pressing Enter or leaving the field saves a changed valid value; **Inherit** saves at once; Escape discards an unsaved value.
+A new Mission or scheduled passage has its own plan. Put useful previous results into its Objective or Notes, or ask the coordinator to find them. OpenCode may compact a conversation's model context while preserving its stored history.
 
-| Setting | Scope and effect |
-| --- | --- |
-| New mission defaults | Configuration-wide defaults for **new** missions only; a playbook exception overrides the general default. |
-| Agent / Model / Thinking | Requested coordinator/role selections recorded with creation; a busy actor is not silently switched to satisfy later work. Daily runs reuse their frozen requested profiles. |
-| Native subagents | Task sessions use native subagent/all agents under the coordinator. |
-| Independent sessions | Declared task sessions use primary/all agents and independent conversations; this does not disable internal native helpers. |
-| Subsession nesting depth | Project configuration for **all** OpenCode conversations there, not just Missions. Empty inherits: **Inherit** removes the project override and an `experimental` block it leaves empty. OpenCode reads the project's `experimental` block as a whole, so other experimental settings kept there still hide the global depth. Saving does not reload OpenCode or change running conversations. |
+### Search earlier conversations {#context-search}
 
-**Native default** and **Global** are different: the former requests OpenCode's own defaults, the latter inherits the global choice; choosing native defaults in a playbook scope remains an explicit exception. Catalog availability is checked; a requested profile is not proof of the profile a conversation currently uses. Native permissions and configured depth still govern internal helper calls in either task mode.
+While CodeNomad is running, agents can search saved conversations in this project. Ask explicitly when earlier conclusions matter; a separate Mission does not automatically inherit another conversation's full context.
 
-A refused or unconfirmed choice is never resent: the stored values are shown again, and **Reload** appears only when they cannot be read. If a depth change is unconfirmed, your value is kept; use **Refresh project depth** before another change. Do not interpret **OpenCode effective depth unknown** as zero or disabled.
+## Closing CodeNomad and restarting services {#lifetime}
 
-## Reuse a saved brief {#saved-briefs}
+Closing a project or CodeNomad does not stop native OpenCode work. Armed native schedules can run with CodeNomad closed while the service and execution host are available. A healthy native schedule resumes its calendar after a service restart; explicit pauses, stops and unresolved outcomes keep their barriers. Existing daily schedules require Resume after a restart.
 
-1. In creation, expand **Options → Start from a brief** and select the saved brief.
-2. Review the copied objective, notes, playbook, profiles and delegation before **Create**.
-3. Use **Save as brief** to name a reusable draft. A selected one-time mission, including a finished one, also offers **Save as brief**.
+Some coordination and recovery actions need the CodeNomad backend. If Missions is unavailable, follow the panel's connection or plugin error rather than assuming saved work has disappeared.
 
-Briefs store instructions and requested choices, not task plans, results, conversations, schedule clocks or execution authority. Loading one fills an ordinary creation draft; it does not start or schedule anything. Removing a brief keeps existing missions/conversations. **Settings → Missions → Saved briefs** manages the library; if the library becomes unreadable, **Reset the saved library** (after confirmation) removes saved briefs, not executions. Schedules themselves have no save-as-brief action.
+## Pause, Stop and unconfirmed actions {#controls-recovery}
 
-## Daily time, catch-up and followed conversations {#daily-schedules}
+One-time **Pause** lets current steps finish without starting new work. **Interrupt now** requests immediate interruption. **Stop** is terminal and asks for confirmation. Native schedule Pause closes future admission and requests interruption of its current passage. Tool effects may continue after an interruption; inspect partial results.
 
-Daily schedules use the saved IANA time zone and civil time, not an elapsed 24-hour interval. Times are shown in the schedule's zone, labelled when different from the viewer's. Each run gets its own coordinator and isolated mission map; the selected schedule shows the current task tree and date/outcome history. Select a past run to read it centrally. History is bounded to 30 results.
+Keep an unconfirmed action's original request. Use the offered **Check status**, **Refresh saved request** or retry control; do not create a replacement to bypass uncertainty. Passive refresh and reconnect do not replay it. After confirmation, new actions can remain disabled until an updated view arrives.
 
-| Situation | Scheduling behavior |
-| --- | --- |
-| Several missed due days | Runs only the latest due day newer than the settled daily marker, not a backlog for every missed day. |
-| Spring-forward gap | Advances to the first later valid minute; a gap at day end advances across the boundary. |
-| Repeated clock hour | Uses the first occurrence; does not create a second daily run. |
-| Wholly skipped civil day | No run exists for that day. |
-| Clock moves backward | Does not make an already processed day due again. |
-| Existing run still pending | Does not overlap it with a new daily run. |
+An interrupted or failed one-time Mission can offer **Recover interrupted mission**. Eligible tasks offer missing-report recovery. These actions check native activity and outstanding requests before admitting work.
 
-Creation time also bounds eligible daily work; starting a new schedule is not permission to process dates before it existed. **Run now** starts a separate manual run when offered; it does not replace the daily clock or bypass a pending run. A displayed next time is a projection, not a guarantee of exact-time execution.
+## Edit, delete and conversation cleanup {#cleanup}
 
-**Followed conversations (optional)** adds bounded context from chosen conversations. Only a completed run advances their processed-message cursors; a failed/interrupted run does not silently consume that context. If instructions plus context exceed capacity, shorten instructions or remove followed conversations rather than assuming unlimited history is read.
+Task-conversation cleanup is a one-time Mission option. Native schedule deletion retains conversations.
 
-## Lifetime and service restarts {#lifetime}
+**Edit selected mission**, under More actions, opens the shared form. Before first launch, preparation fields can be edited when unlocked. After launch, instructions and Notes remain editable where allowed; explanations beside locked fields name the restriction. On conflict, reload the current configuration and inspect **Previous draft for comparison**.
 
-| Component | What closing it means |
-| --- | --- |
-| CodeNomad project tab | Closes the project in CodeNomad; native sessions continue in OpenCode. Reopen the project to find them again. |
-| Whole window, app quit or renderer reload | Preserves project connections for restoration; does not stop native work or the OpenCode service. |
-| CodeNomad backend | Does not stop OpenCode. A running one-time mission continues: its coordinator, native subagent tasks and mission tools run in OpenCode. Assigning tasks to independent sessions and delivering their reports to the coordinator, missions the coordinator prepares, stopping a retired task's conversations, recovery and Mission Control wait for the backend, as does continuing a one-time mission after an OpenCode service restart. |
-| Running daily schedule | Its clock and passage execution run in the OpenCode plugin/service, including with CodeNomad UI and backend closed. The execution host and OpenCode service must stay running. |
-| OpenCode service restart | Loses process-local schedule jobs. A desired-running schedule becomes **Interrupted** until an explicit **Resume**; reopening CodeNomad does not rearm it. |
+Stop work before deleting it. **Delete selected mission…** removes a one-time Mission at once; a failed or unconfirmed deletion keeps its original **Try again**. Schedule deletion closes future launches first.
 
-After a restart, inspect the pending run and choose **Resume** when ready. Resume reconciles the existing run without sending its coordinator input twice; it does not promise continuation of an interrupted native turn. A turn cut off by restart can settle as ended without a report, with **Interrupted by a restart**. Do not use restarting as a way to retry tool side effects.
-
-Missions work with the desktop apps and with a standalone CodeNomad [server](server.md). When the panel shows **Mission Control is unavailable**, its message names the cause:
-
-| Cause | What to do |
-| --- | --- |
-| The OpenCode workspace is not ready | Reconnect the project, then refresh. |
-| OpenCode has not loaded the Missions plugin | Refresh in a moment; if it persists, use **Reload OpenCode configuration** in **Settings → OpenCode**. |
-| OpenCode could not load the Missions plugin | Read its error in the Plugins list, then refresh once it is fixed. |
-| The CodeNomad server could not open its local Missions connection (127.0.0.1) | Check the server log; reloading OpenCode does not help. |
-
-## Pause, Stop and uncertain outcomes {#controls-recovery}
-
-1. Select the entry and inspect its current state and conversation before acting.
-2. Use the pause icon for a resumable hold, or the stop icon and confirmation for a terminal stop. One-time tooltips are **Pause mission** and **Stop mission permanently**; schedule tooltips name the schedule.
-3. If the result is unconfirmed, use **Check status** / **Check control status** to read the existing outcome. Do not issue a replacement action to bypass uncertainty.
-4. For one-time actions, the header's **Refresh and resend the unconfirmed action** first checks state and resends only that still-unconfirmed exact action from your explicit click.
-
-One-time Pause interrupts the mission's native family and parks coordination; Stop also cancels queued family inputs/deliveries and is terminal. These are bounded operations: **Some sub-agents may still be running.** means the stop is incomplete. Inspect the retained result and use its explicit retry rather than assuming all shell/tool effects were cancelled. Resume tells the coordinator about interrupted descendants; it must decide how to continue the work.
-
-Daily Pause/Stop cancel scheduling and request interruption of registered root actors, including the coordinator and independent specialists, but **do not prove that those conversations or their descendants have stopped**. Inspect the native families. Stop is terminal: a stopped schedule cannot Play, Resume or Run now. **Check passage** reconciles a pending run without sending it again. Transient scheduled-check failures display their last failure and retry automatically; a lost user-control reply does not cause automatic control resending.
-
-For a one-time coordinator that is idle without its report, the primary ▶ action can verify and recover it; tasks have targeted missing-report recovery when eligible. Recovery checks native activity, descendants and waits first; unknown activity refuses admission. It does not replay assignments or replace the plan. Open conversations to resolve outstanding questions, permissions, shells or background work.
-
-If **Create** is unconfirmed, the window retains the submitted request and disables further creation for that project; worktree deletion can remain held. Refresh only reads state. Closing/reopening the editor does not repair it. Before reloading the window, inspect the mission list: reload clears the local lock, **not proof that creation failed**. Do not blindly create a duplicate after a reload or restart.
-
-## Edit, delete and clean up conversations {#cleanup}
-
-Use **Edit selected mission** on an editable one-time mission; on a conflict, close/reopen the editor to load the current revision rather than overwrite it. Daily schedules do not offer edit/delete controls.
-
-1. For a one-time mission you no longer need, choose **Delete selected mission…** and review the confirmation.
-2. Optionally select **Also delete specialist conversations created for this mission** before confirming.
-3. Check **Conversation cleanup** for removed/kept/pending counts. Retry only the remaining recorded cleanup if offered.
-
-Deleting a mission is not the same as stopping it; use Stop and inspect remaining work first. Coordinators and reused conversations are kept. Shared, moved, child-bearing or unverifiably owned specialists may also be retained. Partial cleanup is not rolled back and is not silently completed in the background. The overview reader keeps the 20 most recent completed cleanups. Deleting missions frees their project storage: older deleted missions are cleared automatically.
-
-See [Permissions](permissions.md), [Conversations](conversations.md) and [OpenCode setup](opencode.md) for native work and service controls.
+To also remove eligible task conversations, enable **Deleting a mission also deletes its task conversations** in Missions Preferences. Coordinators, reused or shared conversations and conversations whose ownership cannot be established are kept. **Conversation cleanup** shows remaining cleanup and explicit retries. Removing a saved configuration does not delete a Mission.

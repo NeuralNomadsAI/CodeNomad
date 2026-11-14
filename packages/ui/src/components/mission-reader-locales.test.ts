@@ -7,7 +7,9 @@ test("reader and shared truncation dependencies exist in every dictionary with m
     "missions.control.history.title", "missions.control.history.before", "missions.control.history.after", "missions.control.objective", "missions.control.notes", "missions.control.brief", "missions.control.summary", "missions.control.report.evidence", "missions.control.report.next", "missions.control.artifact", "missions.control.reader.close",
     "missions.control.template.compare", ...["model-a", "model-b", "comparator"].map(role => `missions.control.profiles.role.${role}`),
     "missions.compare.verdict", "missions.compare.criteria", "missions.compare.compare-models-required", "missions.compare.compare-models-identical", "missions.compare.judgeWarning",
-    ...["a", "b", "equivalent", "inconclusive"].map(outcome => `missions.compare.verdict.${outcome}`)]
+    ...["a", "b", "equivalent", "inconclusive"].map(outcome => `missions.compare.verdict.${outcome}`),
+    ...["coordinator", "coordinator.detail", "human", "human.detail", "question", "decision", "answer", "rationale", "alternatives", "reversal"]
+      .map(key => `missions.decision.${key}`)]
   let english: Record<string, string> = {}
   const placeholders = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort()
   for (const locale of locales) {

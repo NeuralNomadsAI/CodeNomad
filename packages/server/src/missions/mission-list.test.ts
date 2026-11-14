@@ -4,22 +4,24 @@ import test from "node:test"
 import type { MissionDeleteInput } from "./control-types"
 import { fixture, seedCrossMission, step, type HistoryFixture } from "./journal-history-fixture"
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
+import { compactMissionMap } from "./mission-compact-map"
 import type { MissionSnapshot } from "./model"
 
 /** The panel's reads equal what the full snapshot shows: every row, the open and
- * included maps, the cleanup history and the project flags. */
+ * included maps (compact: body descriptors in place of bodies), the cleanup history and the project flags. */
 async function assertListed(f: HistoryFixture, label: string, include: string[]) {
   const snapshot = await f.journal.snapshot()
   const open = new Set(await f.journal.readHints(hints => hints.openIDs()))
   const listed = await f.control().list({ include })
   assert.deepEqual(listed.summaries, snapshot.missions.map(missionSummary), `${label}: rows`)
-  assert.deepEqual(listed.missions, snapshot.missions.filter(mission => open.has(mission.id) || include.includes(mission.id)), `${label}: full maps`)
+  assert.deepEqual(listed.missions, snapshot.missions.filter(mission => open.has(mission.id) || include.includes(mission.id)).map(compactMissionMap), `${label}: compact maps`)
   const flags = (value: Pick<MissionSnapshot, "controlUnavailable" | "notificationUnavailable" | "cleanupUnavailable" | "discardedEvents" | "cleanups">) =>
     [value.discardedEvents, value.controlUnavailable, value.notificationUnavailable, value.cleanupUnavailable, value.cleanups]
   assert.deepEqual(flags(listed), flags(snapshot), `${label}: history and flags`)
   for (const missionID of include) {
     const read = await f.control().mission(missionID)
-    assert.deepEqual(read.mission, snapshot.missions.find(mission => mission.id === missionID), `${label}: read ${missionID}`)
+    const shown = snapshot.missions.find(mission => mission.id === missionID)
+    assert.deepEqual(read.mission, shown && compactMissionMap(shown), `${label}: read ${missionID}`)
     for (const cleanup of snapshot.cleanups ?? []) if (cleanup.missionID === missionID) assert.ok(read.cleanups.some(item => item.deletionID === cleanup.deletionID), `${label}: ${missionID} cleanup`)
     assert.deepEqual([read.controlUnavailable, read.notificationUnavailable], [snapshot.controlUnavailable, snapshot.notificationUnavailable], `${label}: read flags`)
     if (snapshot.cleanupUnavailable) assert.equal(read.cleanupUnavailable, true, `${label}: read cleanup flag`)
@@ -80,7 +82,7 @@ test("rows miss a foreign write until the rebuild, while an included mission's r
   assert.equal((await f.control().list()).summaries?.some(row => row.id === "msn_elsewhere"), false, "a hint, never proof")
   const selected = await f.control().list({ include: ["msn_elsewhere"] })
   assert.deepEqual([selected.missions.some(value => value.id === "msn_elsewhere"), selected.summaries?.[0]?.id], [true, "msn_elsewhere"])
-  assert.equal((await f.control().mission("msn_elsewhere")).mission?.objective, "Elsewhere")
+  assert.equal((await f.control().mission("msn_elsewhere")).mission?.excerpt, "Elsewhere")
   f.advanceIndexClock(60_000)
   assert.equal((await f.control().list()).summaries?.[0]?.id, "msn_elsewhere")
 })
@@ -91,6 +93,15 @@ test("a row's objective label keeps what its title reads and nothing beyond", ()
       location: { directory: "/repo" }, joinedAt: 1 }], tasks: [], reports: [], frontier: [], claims: [], createdAt: 1, updatedAt: 2, revision: 3,
     history: [], historyTruncated: false })
   assert.deepEqual(base("  Fix   the\tbuild.\n\n  Then   ship  "), { id: "msn_a", objective: "Fix the build.\nThen ship", status: "completed",
-    coordinatorSessionId: "ses_c", actorSessionIds: ["ses_c"], updatedAt: 2, revision: 3 })
+    coordinatorSessionId: "ses_c", actorSessionIds: ["ses_c"], updatedAt: 2, revision: 3, taskCount: 0 })
   assert.equal(Array.from(base("é".repeat(20_000)).objective).length, 502)
+})
+
+test("a row counts its plan's tasks: a compact map's page names the whole plan", () => {
+  const task = (id: string) => ({ id, key: id, title: id, status: "completed", blockedBy: [], createdAt: 1, updatedAt: 1 })
+  const map = { version: 1, id: "msn_t", projectID: "p", projectCanonical: "/repo", objective: "Plan", template: "custom", status: "active",
+    coordinatorSessionId: "ses_c", actors: [], tasks: [task("a"), task("b")], reports: [], frontier: [], claims: [], createdAt: 1, updatedAt: 2,
+    revision: 3, history: [], historyTruncated: false }
+  assert.equal(missionSummary(map as never).taskCount, 2)
+  assert.equal(missionSummary({ ...map, tasks: [task("a")], taskPage: { offset: 0, total: 40 } } as never).taskCount, 40)
 })

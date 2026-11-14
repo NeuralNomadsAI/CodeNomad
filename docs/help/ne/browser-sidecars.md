@@ -18,18 +18,27 @@
 
 | क्लाइन्ट | पूर्वावलोकन कार्यान्वयन | Agent browser automation | Mobile template |
 | --- | --- | --- | --- |
-| समर्थित desktop प्लेटफर्ममा Electron | नेटिभ Chromium guest | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
-| Windows Tauri | नेटिभ WebView2 child | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
-| macOS/Linux Tauri | sandbox भएको iframe | नेटिभ browser automation छैन | आयाम मात्र |
+| समर्थित desktop प्लेटफर्ममा Electron | नेटिभ Chromium guest; OAuth पप-अप, डाउनलोड र संवाद | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
+| Windows Tauri | नेटिभ WebView2 child; OAuth पप-अप, डाउनलोड र संवाद | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
+| macOS Tauri (14+) | नेटिभ WKWebView child; OAuth पप-अप, डाउनलोड र संवाद | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | WebKit मोबाइल पहिचान र CSS भ्युपोर्ट; नेटिभ इनपुट सीमा |
+| Linux Tauri | नेटिभ WebKitGTK child; OAuth पप-अप, डाउनलोड र संवाद | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | WebKit मोबाइल पहिचान र CSS भ्युपोर्ट; नेटिभ घनत्व/इनपुट सीमा |
 | सामान्य browser/remote दृश्य | iframe fallback | स्थानीय native preview target छैन | आयाम मात्र |
 
-नेटिभ automation desktop startup मै तयार हुन्छ र open, navigate, snapshot, screenshot र page action (click, type, select, hover, drag, scroll, key press र text पर्खने) का लागि session-bound `codenomad.browser` tool प्रयोग गर्छ। tool उपलब्धता हरेक विन्डोको अनुमति होइन: execution ले स्वामी backend, native capability, session र visible target जाँच्छ। बीचमै पृष्ठ लुकेको, बदलिएको वा अर्कै ठाउँ नेभिगेट भएको action अर्को पृष्ठमा पठाइँदैन, अस्वीकार गरिन्छ; कुनै action स्वतः दोहोर्‍याइँदैन। पृष्ठ सामग्री अविश्वसनीय नै हुन्छ। target ले embedding निषेध गर्दा iframe असफल हुन सक्छ; सुरक्षा कमजोर पार्नुको सट्टा बाह्य browser प्रयोग गर्नुहोस्।
+सबै नेटिभ desktop host मा session-bound `codenomad.browser` ले पूर्वावलोकन खोल्ने, नेभिगेट गर्ने, snapshot/screenshot लिने र click, type, select, hover, drag, scroll, key तथा text-wait action चलाउँछ। execution ले स्वामी backend, native capability, session र देखिने target जाँच्छ। लुकेको, बदलिएको वा नेभिगेट भएको target अस्वीकार हुन्छ; action स्वतः दोहोरिँदैन। पृष्ठ सामग्री अविश्वसनीय रहन्छ। iframe रोक्ने साइटका लागि बाह्य browser प्रयोग गर्नुहोस्।
+
+नेटिभ पूर्वावलोकन म्यानुअल वा agent बाट खुल्छन्, पुनःसुरुवातपछि sign-in राख्छन् र नेटिभ Back/Forward इतिहास प्रयोग गर्छन्। स्थानीय menu/dialog ले पूर्वावलोकन लुकाउँछन्। नेटिभ मोडमा element comment उपलब्ध छैन। WebKit ले script-created closed shadow root पढ्छ; declarative closed root अपारदर्शी रहन्छ। macOS को पहिलो hover ले pointerenter छुटाउन सक्छ र ⌘A ले A keydown बिना नेटिभ चयन गर्छ। GTK clipboard read का लागि स्पष्ट Ctrl+V प्रयोग हुन्छ; write र नेटिभ copy/paste चल्छन्।
+
+नेटिभ पप-अपले पूर्वावलोकनका साइन-इन साझा गर्छन्, `opener`/`postMessage` कायम राख्छन् र मूल पृष्ठसँगै बन्द हुन्छन्। लेखिएका वा पुनर्स्थापित ठेगानामा परिचयपत्ररहित HTTP(S) मात्र अनुमति छ; साइटले खाली र उही मूलका blob कागजात पनि खोल्न सक्छन्। फाइल र एप स्किम रोकिएका छन्। डाउनलोडहरू सुरक्षित अद्वितीय नाममा Downloads मा राखिन्छन्, फाइल मेटिँदैन र स्वतः खोलिँदैन। क्यामेरा, माइक्रोफोन, स्थान र सूचना अस्वीकार गरिन्छन्; वर्गीकृत अनुमतिमा सहमति मागिन्छ र अज्ञात अनुरोधमा त्रुटि देखाइन्छ। Tauri र Electron मा `alert`/`confirm`/`prompt` उपलब्ध छन्; Electron को prompt संवाद पूर्वावलोकनका मुख्य पृष्ठ, पप-अप र उप-फ्रेममा उपलब्ध छ। उपकरण र स्क्रिन छनोट सूचीका उपलब्ध प्रविष्टिहरू स्क्रोल गर्न सकिन्छ। अन्य API इन्जिन र हार्डवेयरमा निर्भर छन्।
+
+साइटले नेटिभ पप-अप बन्द गर्दा पुष्टि माग्न सक्छ। Linux मा पोइन्टर लकको सहमति सम्बन्धित विन्डोको माथि देखिन्छ। [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277) बाट प्रभावित WebKitGTK संस्करणहरू, 2.52.6 सहित, मा सुरक्षाका कारण ड्रप गरिएका फाइलको पहुँच रोकिएको हुन्छ; अपलोड गर्न पृष्ठको फाइल छनोट प्रयोग गर्नुहोस्। सम्बन्धित CodeNomad विन्डो बन्द वा पुनः लोड गर्नुअघि पृष्ठको काम सुरक्षित गर्नुहोस्।
+
+Tauri macOS/Linux मा पूर्वावलोकनलाई फोकस गरेर ⌘/Ctrl सँग +, − वा 0 वा एपको जुम मेनु प्रयोग गरी जुम बदल्नुहोस्। फोकस अन्यत्र हुँदा यी मेनु कार्यहरूले एपको जुम बदल्छन्।
 
 ## छ viewport template मध्ये एक रोज्नुहोस् {#templates}
 
 1. पूर्वावलोकनको viewport menu खोल्नुहोस्।
 2. तलको template चयन गर्नुहोस्। portrait/landscape प्रविष्टि सोझै प्रयोग गर्नुहोस्; छुट्टै rotate नियन्त्रण छैन।
-3. mobile emulation प्रवेश/परिवर्तन वा dimensions-only template मा फर्कँदा native reload हुन्छ भन्ने बुझ्नुहोस्।
+3. Electron र Windows Tauri मा mobile emulation प्रवेश/परिवर्तन वा dimensions-only template मा फर्कँदा native reload हुन्छ भन्ने बुझ्नुहोस्।
 
 | Template | CSS viewport |
 | --- | --- |
@@ -40,7 +49,7 @@
 | Mobile viewport | 390 × 844 |
 | Mobile landscape | 844 × 390 |
 
-नेटिभ mobile template ले स्वामित्वको guest मा मात्र Android/Chromium पहिचान, orientation, touch र DPR 2.75 सेट गर्छन्। responsive/desktop/tablet मा फर्कँदा override हटेर reload हुन्छ। iframe fallback ले आकार मात्र बदल्छ। यी पुनरुत्पादनयोग्य layout सन्दर्भ हुन्, Safari/Firefox emulation वा phone keyboard, browser/system bar वा mobile OS text setting को simulation होइनन्। reload ले नपठाइएको page state हटाउन सक्ने भएकाले template बदल्नुअघि पृष्ठ काम बचत गर्नुहोस्।
+Electron र Windows Tauri मा mobile template ले स्वामित्वको guest मा मात्र Android/Chromium पहिचान, orientation, touch र DPR 2.75 सेट गर्छन्। responsive/desktop/tablet मा फर्कँदा override हटेर reload हुन्छ। macOS/Linux Tauri ले HTTP र JavaScript मा सामान्य WebKit मोबाइल पहिचान लागू गर्छन् र एपको zoom/DPI बाट स्वतन्त्र CSS भ्युपोर्ट मिलाउँछन्; template परिवर्तन वा reset गर्दा reload हुन्छ। उपलब्ध हुँदा macOS ले नेटिभ DPR 2.75 प्रयोग गर्छ; GTK घनत्व फिट गर्ने zoom र मनिटरअनुसार हुन्छ। screen, platform, pointer/hover media र अधिकतम touch point मा नेटिभ desktop मान रहन्छन्। GTK मोबाइल click ले नेटिभ touch र mouse compatibility event दिन्छ; macOS मा mouse input रहन्छ। iframe fallback ले आकार मात्र बदल्छ। यी layout सन्दर्भ हुन्; फोन keyboard, system bar र मोबाइल text setting दायराबाहिर छन्। reload ले नपठाइएको page state हटाउन सक्ने भएकाले template बदल्नुअघि पृष्ठ काम बचत गर्नुहोस्।
 
 ## SideCar दर्ता गर्नुहोस् {#register-sidecar}
 
@@ -60,7 +69,9 @@
 
 पहुँच नभए backend मा process र port जाँच्नुहोस्। HTML खुले पनि asset/WebSocket असफल भए tool को base path र prefix mode जाँच्नुहोस्। गलत दर्ता चाहेको सेटिङमा फेरि बनाउनुहोस्; proxy त्रुटि छल्न upstream सार्वजनिक नगर्नुहोस्। SideCar अनुप्रयोगले server खाताको अधिकारमा terminal वा फाइल देखाउन सक्छन्; प्रयोगकर्ता र कन्फिगरेसनलाई विश्वास गर्नुपर्छ।
 
-SideCar sandbox गरिएको पूर्वावलोकन होइन, CodeNomad को विश्वसनीय विस्तार हो: यसको पृष्ठ CodeNomad कै origin मा चल्छ, त्यसैले यसका script ले तपाईंको sign-in भएको पहुँचसहित CodeNomad प्रयोग गर्न सक्छन्। जसको code मा विश्वास छ ती सेवा मात्र दर्ता गर्नुहोस्। CodeNomad ले आफ्नै sign-in cookie सेवामा पठाउँदैन, तर सेवाका आफ्नै cookie राखिन्छन्। Remote Control ले SideCar application proxy traffic दिँदैन; [रिमोट पहुँच](remote-access.md) र [Remote Control](remote-control.md) मा भएको उपयुक्त direct-access मार्ग प्रयोग गर्नुहोस्।
+SideCar sandbox गरिएको पूर्वावलोकन होइन, CodeNomad को विश्वसनीय विस्तार हो: यसको पृष्ठ CodeNomad कै origin मा चल्छ, त्यसैले यसका script ले तपाईंको sign-in भएको पहुँचसहित CodeNomad प्रयोग गर्न सक्छन्। जसको code मा विश्वास छ ती सेवा मात्र दर्ता गर्नुहोस्। CodeNomad ले आफ्नै sign-in cookie सेवामा पठाउँदैन, तर सेवाका आफ्नै cookie राखिन्छन्।
+
+SideCar सामग्री (`/sidecars/`) र SideCar WebSocket लाई होस्टमा loopback जडान चाहिन्छ। `/api/sidecars` मार्फत दर्ता जोडी बनाइएका उपकरण र प्रमाणीकृत प्रत्यक्ष LAN क्लाइन्टलाई उपलब्ध छ। सक्रिय पूर्वावलोकन सामग्री (`/previews/`) वैध क्षमता टोकनसहित प्रत्यक्ष LAN पहुँचमा उपलब्ध छ; [Remote Control](remote-control.md#remote-surface) का वेब पूर्वावलोकन सक्षम रहँदा आफ्नो क्षमता टोकनसहित उपलब्ध रहन्छन्। प्रत्यक्ष पहुँचका आवश्यकताका लागि [स्तरोन्नति](remote-access.md#upgrading) हेर्नुहोस्।
 
 ## OpenVSCode Server विधि {#openvscode}
 

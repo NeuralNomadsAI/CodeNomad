@@ -1,0 +1,258 @@
+import assert from "node:assert/strict"
+import { openMissionProfiles } from "./mission-actions"
+import { after, before, test } from "node:test"
+import { createServer, type Server } from "node:http"
+import { chromium, type Browser, type Page, type Request } from "playwright"
+import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
+import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
+import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
+import { missionDocumentSummary } from "../../../server/src/missions/mission-document-one-time"
+import type { MissionDocument } from "../../../server/src/missions/mission-document"
+import type { MissionJsonValue } from "../../../server/src/missions/model"
+
+let browser: Browser, url: string, events: Server, eventsURL: string
+before(async () => {
+  const fixture = await borrowFixture({ name: "mission-creation-start", routes: [{ path: "/start", html:
+    '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-creation-start.tsx"></script></body></html>' }] })
+  url = fixture.url
+  events = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache",
+      "Access-Control-Allow-Origin": new URL(url).origin, "Access-Control-Allow-Credentials": "true" })
+    response.write(": fixture\n\n")
+  })
+  await new Promise<void>(resolve => events.listen(0, "127.0.0.1", resolve))
+  eventsURL = `http://127.0.0.1:${(events.address() as { port: number }).port}/api/events`
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => {
+  try { await browser?.close() }
+  finally { if (events) { events.closeAllConnections(); await new Promise<void>(resolve => events.close(() => resolve())) } }
+})
+const configuration = { title: "Inspect changes", objective: "Inspect changes", notes: "", template: "custom", taskMode: "native",
+  profiles: { coordinator: { agent: "build", model: { providerID: "p", id: "m" } },
+    roles: { specialist: { agent: "build", model: { providerID: "p", id: "m" } } } }, watchedConversationIDs: [],
+  launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } }
+async function setup(page: Page, options: { enabled?: boolean; lose?: "create" | "activation" | "play"; realEditor?: boolean } = {}) {
+  page.setDefaultTimeout(10_000)
+  const values = new Map<string, MissionJsonValue>(), posts: any[] = [], errors: string[] = [], reads: URL[] = []
+  const failedRequests: Array<{ method: string; path: string }> = []
+  const store = new NativeMissionDocumentStore({ get: async key => values.get(key),
+    compareAndSet: async (key, value) => { values.set(key, structuredClone(value)) } }, "project", "/fixture")
+  let doc: MissionDocument, enabled = options.enabled ?? true, receipt: any
+  let activationGate: Promise<void> | undefined
+  const result = () => ({ ...missionScheduleView(doc), pending: false,
+    document: { ...missionScheduleView(doc).document, control: receipt } })
+  page.on("pageerror", error => errors.push(error.message))
+  page.on("requestfailed", request => failedRequests.push({ method: request.method(), path: new URL(request.url()).pathname }))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/events?*", route => route.continue({ url: eventsURL }))
+  await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { locale: "en",
+    missionProfileDefaults: [{ template: "custom", profiles: configuration.profiles }] } } }))
+  if (options.realEditor) {
+    await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
+      location: { directory: "/fixture" }, capability: null, effectiveDepth: null, project: null } }))
+    await page.route("**/workspaces/fixture/instance/api/{agent,model,provider}**", route => {
+      const target = new URL(route.request().url()).pathname
+      return route.fulfill({ json: { data: target.endsWith("/agent") ? [{ id: "build", mode: "all" }]
+        : target.endsWith("/provider") ? [{ id: "p", name: "Fixture provider" }]
+          : [{ providerID: "p", id: "m", name: "Fixture model", status: "active", enabled: true,
+            capabilities: { tools: true }, cost: [], limit: { context: 1000, output: 100 }, variants: [] }] } })
+    })
+  }
+  await page.route("**/api/workspaces/fixture/missions/**", async route => {
+    const request = route.request(), target = new URL(request.url()).pathname
+    if (request.method() === "GET") {
+      reads.push(new URL(request.url()))
+      if (target.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" },
+        api: { available: true }, enabled, origin: null, activation: { available: true,
+          targets: [{ scope: "global", path: "/private/config/opencode.jsonc" }] } } })
+      if (target.endsWith("/schedule-settings")) return route.fulfill({ json: { document: missionDocumentSummary(doc) } })
+      return route.fulfill({ json: result() })
+    }
+    assert.equal(request.method(), "POST")
+    const body = request.postDataJSON(); posts.push({ ...body, target })
+    if (target.endsWith("/schedule-settings")) {
+      doc = await store.change(doc.id, body.expectedDocumentRevision, () => true, value => {
+        value.scheduleActivation = { requestID: body.requestID, expectedRevision: body.expectedDocumentRevision,
+          authority: "a".repeat(64), state: "ready", targets: [], effectiveOrigin: "/private/config/opencode.jsonc" }
+      })
+      enabled = true
+      await activationGate
+      if (options.lose === "activation") return route.abort("connectionreset")
+      return route.fulfill({ json: { document: missionDocumentSummary(doc) } })
+    }
+    assert.ok(body.action === "create" || body.action === "play", "unexpected schedule mutation")
+    assert.equal(target, body.action === "create" ? "/api/workspaces/fixture/missions/scheduled"
+      : "/api/workspaces/fixture/missions/msn_created/schedule")
+    if (body.action === "create") doc = await store.create("msn_created", { ...body.configuration, profileID: "profile", executionHost: "local",
+      roots: [{ mode: "directory-only", directory: "/fixture" }] }, Date.now(), () => true)
+    else {
+      assert.equal(body.expectedRevision, doc.revision)
+      doc = await store.change(doc.id, doc.revision, () => true, value => { value.state = "running"; value.firstPlayedAt = Date.now() })
+    }
+    receipt = { action: body.action, requestID: body.requestID, expectedRevision: body.expectedRevision, pending: false }
+    if (options.lose === body.action) return route.abort("connectionreset")
+    return route.fulfill({ json: result() })
+  })
+  if (options.realEditor) {
+    // MissionEditor refreshes the project after creation. The panel adapter owns
+    // that read-only POST protocol independently of the schedule mutation collector.
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: {
+      available: true, version: 1, projectID: "project", missions: [], cleanups: [], generatedAt: 1, discardedEvents: 0 } }))
+  }
+  const kinds = ["agent", "model", "provider"], completed: Request[] = []
+  const matches = (request: Request, kind: string) => request.method() === "GET"
+    && new URL(request.url()).pathname === `/workspaces/fixture/instance/api/${kind}`
+  // Capture body-completion receipts without starting action deadlines during navigation.
+  const remember = (request: Request) => { if (kinds.some(kind => matches(request, kind))) completed.push(request) }
+  page.on("requestfinished", remember)
+  const waitForCatalog = () => {
+    page.off("requestfinished", remember)
+    const early = completed.splice(0) // Initial receipts are consumed once; later waves require new events.
+    return Promise.all(kinds.map(async kind => {
+      if (!early.some(request => matches(request, kind))) await page.waitForEvent("requestfinished", { predicate: request => matches(request, kind) })
+    }))
+  }
+  await page.goto(options.realEditor ? `${url}?realEditor=1` : url)
+  await page.waitForFunction(realEditor => realEditor ? (window as any).realCreationStartFixture : (window as any).creationStartFixture, !!options.realEditor)
+  if (options.realEditor) { await openMissionProfiles(page); await waitForCatalog() }
+  else page.off("requestfinished", remember)
+  return { posts, reads, failedRequests, errors, waitForCatalog, get revision() { return doc.revision }, set activationGate(value: Promise<void>) { activationGate = value } }
+}
+const save = (page: Page, requested = true) => page.evaluate(({ configuration, requested }) =>
+  (window as any).creationStartFixture.save(configuration, requested), { configuration, requested })
+const saved = (page: Page) => page.waitForFunction(() => document.querySelector("[data-saved]")?.textContent === "1")
+
+test("direct scheduled creation arms once through exact activation and Play revisions", async () => {
+  const page = await browser.newPage(), f = await setup(page, { enabled: false })
+  try {
+    const saving = save(page)
+    await saving; await saved(page)
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.deepEqual(f.posts.map(post => post.action ?? "activation"), ["create", "activation", "play"])
+    assert.equal(f.posts[2].expectedRevision, f.posts[1].expectedDocumentRevision + 1)
+    await page.evaluate(() => (window as any).creationStartFixture.repeat())
+    assert.equal(f.posts.length, 3)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("unchecked creation stays paused and recovered creation never autostarts", async () => {
+  for (const lose of [undefined, "create"] as const) {
+    const page = await browser.newPage(), f = await setup(page, { lose })
+    try {
+      await save(page, !!lose)
+      if (lose) {
+        await page.evaluate(() => (window as any).creationStartFixture.reconcile())
+      }
+      await saved(page)
+      assert.deepEqual(f.posts.map(post => post.action), ["create"])
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  }
+})
+
+test("lost activation remains retained on remount; receipt recovery leaves Play explicit", async () => {
+  const page = await browser.newPage(), f = await setup(page, { enabled: false, lose: "activation" })
+  try {
+    const saving = save(page)
+    await saving; await saved(page)
+    assert.equal(await page.evaluate(() => (window as any).creationStartFixture.held()?.phase), "activation")
+    await page.evaluate(() => (window as any).creationStartFixture.mount(false))
+    await page.evaluate(() => (window as any).creationStartFixture.mount(true))
+    await page.getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    await page.waitForFunction(() => (window as any).creationStartFixture.held()?.phase === "publication")
+    assert.deepEqual(f.posts.map(post => post.action ?? "activation"), ["create", "activation"])
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("view departure after activation dispatch fences its direct Play continuation", async () => {
+  const page = await browser.newPage(), f = await setup(page, { enabled: false })
+  let release!: () => void
+  f.activationGate = new Promise<void>(resolve => { release = resolve })
+  try {
+    const saving = save(page)
+    await page.waitForFunction(() => (window as any).creationStartFixture.held()?.phase === "activation")
+    await page.evaluate(() => (window as any).creationStartFixture.activate(false))
+    release(); await saving
+    assert.deepEqual(f.posts.map(post => post.action ?? "activation"), ["create", "activation"])
+    assert.equal(await page.locator("[data-saved]").textContent(), "0")
+    assert.deepEqual(f.errors, [])
+  } finally { release(); await page.close() }
+})
+
+test("lost scheduled Play keeps its exact original control across helper disposal and remount", async () => {
+  const page = await browser.newPage(), f = await setup(page, { lose: "play" })
+  try {
+    await save(page); await saved(page)
+    const held = await page.evaluate(() => (window as any).creationStartFixture.held())
+    assert.equal(held.action, "play"); assert.equal(held.requestID, f.posts[2].requestID)
+    await page.evaluate(() => (window as any).creationStartFixture.mount(false))
+    await page.evaluate(() => (window as any).creationStartFixture.mount(true))
+    assert.equal(await page.evaluate(() => (window as any).creationStartFixture.held()?.requestID), held.requestID)
+    assert.deepEqual(f.posts.map(post => post.action ?? "activation"), ["create", "activation", "play"])
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("real editor adopts discovered project before creation; lost Play remains recoverable by current-project controls after remount", async () => {
+  const page = await browser.newPage({ viewport: { width: 800, height: 1200 } })
+  const f = await setup(page, { realEditor: true, lose: "play" })
+  try {
+    const form = page.locator("form.mission-editor"), originalForm = await form.elementHandle()
+    assert.ok(originalForm)
+    assert.equal(await page.locator("[data-project]").textContent(), "undiscovered")
+    await form.getByLabel("Objective", { exact: true }).fill("Inspect changes after project discovery")
+    await openMissionProfiles(page)
+    await Promise.all([
+      f.waitForCatalog(),
+      page.evaluate(() => (window as any).realCreationStartFixture.discoverProject()),
+    ])
+    await page.getByText("project", { exact: true }).waitFor()
+    assert.equal(await originalForm.evaluate(element => element.isConnected && element === document.querySelector("form.mission-editor")), true,
+      "project discovery must update the already-mounted MissionEditor")
+    assert.equal(await form.getByLabel("Objective", { exact: true }).inputValue(), "Inspect changes after project discovery")
+    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
+    await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
+    await form.getByLabel("Coordinator · Model", { exact: true }).locator("option:checked").filter({ hasText: "Fixture model" }).waitFor({ state: "attached" })
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await form.waitFor({ state: "detached" }); await saved(page)
+
+    assert.deepEqual(f.posts.map(post => [post.action, post.target]), [
+      ["create", "/api/workspaces/fixture/missions/scheduled"],
+      [undefined, "/api/workspaces/fixture/missions/msn_created/schedule-settings"],
+      ["play", "/api/workspaces/fixture/missions/msn_created/schedule"],
+    ])
+    const play = f.posts[2]
+    const retained = await page.evaluate(() => (window as any).realCreationStartFixture.held())
+    assert.ok(retained, "the Play holder must use the discovered project, matching normal schedule controls")
+    assert.equal(retained.phase, "control"); assert.equal(retained.action, "play")
+    assert.equal(retained.requestID, play.requestID); assert.equal(retained.expectedRevision, play.expectedRevision)
+    assert.equal(await page.evaluate(() => (window as any).realCreationStartFixture.orphaned()), undefined)
+    assert.equal(f.reads.filter(url => url.searchParams.has("requestID")).length, 0, "lost Play must wait for explicit receipt recovery")
+
+    await page.evaluate(() => (window as any).realCreationStartFixture.mountControls(false))
+    await page.getByRole("region", { name: "Created mission controls", exact: true }).waitFor({ state: "detached" })
+    await page.evaluate(() => (window as any).realCreationStartFixture.mountControls(true))
+    const controls = page.getByRole("region", { name: "Created mission controls", exact: true })
+    await controls.waitFor()
+    const remounted = JSON.parse(await controls.locator("[data-held-control]").innerText())
+    assert.equal(remounted.requestID, play.requestID); assert.equal(remounted.expectedRevision, play.expectedRevision)
+    await controls.getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    await page.waitForFunction(() => (window as any).realCreationStartFixture.held()?.phase === "publication")
+
+    const receiptReads = f.reads.filter(url => url.searchParams.has("requestID"))
+    assert.equal(receiptReads.length, 1)
+    assert.equal(receiptReads[0].pathname, "/api/workspaces/fixture/missions/msn_created/schedule")
+    assert.equal(receiptReads[0].searchParams.get("requestID"), play.requestID)
+    assert.equal(receiptReads[0].searchParams.get("directory"), "/fixture")
+    const recovered = await page.evaluate(() => (window as any).realCreationStartFixture.held())
+    assert.equal(recovered.requestID, play.requestID); assert.equal(recovered.minimumRevision, f.revision)
+    assert.deepEqual(f.posts.map(post => post.action ?? "activation"), ["create", "activation", "play"], "receipt recovery must never send another Play")
+    assert.deepEqual(f.failedRequests, [{ method: "POST", path: "/api/workspaces/fixture/missions/msn_created/schedule" }])
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})

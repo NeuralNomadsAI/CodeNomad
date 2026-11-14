@@ -33,7 +33,7 @@ export class CanonicalMissionRoots {
   private async resolveConnection(location: MissionLocation, connection: ServiceConnection | undefined,
     purpose: "request" | "event" = "request", signal?: AbortSignal): Promise<AuthorityRoot> {
     if ("workspaceID" in location || !connection
-      || !await this.manager.ownsLocation(this.workspaceID, location, connection.client, signal, purpose)) rejectAuthority("binding-mismatch")
+      || !await this.manager.ownsLocation(this.workspaceID, location, connection.client, { signal, purpose })) rejectAuthority("binding-mismatch")
     const hostPath = await this.manager.getHostPathForServicePath(this.workspaceID, location.directory)
     // No guessed WSL translation or independent Windows claim for Linux roots.
     if (!hostPath || identity(hostPath) !== identity(location.directory)) rejectAuthority("observation-unavailable")

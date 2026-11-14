@@ -42,7 +42,7 @@ owned worktree वा conversation placement verify गर्न नसके �
 ## OpenCode runtime र WSL {#opencode-runtime}
 
 1. **प्राथमिकताहरू → OpenCode** खोली **OpenCode संस्करण** card (installed version र running service status), त्यसपछि **OpenCode बाइनरी** अन्तर्गतको selected executable जाँच्नुहोस्।
-2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.1.2**; recommended/qualified: **2.2.1**।
+2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.3.0**; recommended/qualified संस्करण: **2.3.0**।
 3. installed CLI running service भन्दा फरक भए shared service restart गर्ने कि स्पष्ट निर्णय गर्नुहोस्।
 
 **OpenCode सेवा पुनः सुरु गर्नुहोस्** **समस्या समाधान** अन्तर्गत उपलब्ध छ र पुष्टि चाहिन्छ। हरेक connected client को सक्रिय काम interrupt गर्छ, तर session history राख्छ। configuration reload छुट्टै हो: process राख्छ तर loaded Location पुनर्निर्माण र pending question/permission रद्द गर्छ। कुनै हानिरहित refresh होइन।
@@ -73,12 +73,15 @@ pairing link single-use र छोटो आयुका हुन्; direct-ac
 
 ## provider, plugin र extension अवस्था {#providers-and-addons}
 
+**पूरा टाइमलाइन उपलब्ध छैन** सँगै `codenomad-session-pruning` plugin असफल भएको देखिए OpenCode लगमा यसको लोड त्रुटि हेर्नुहोस्। यस plugin ले पूरा इतिहास नेभिगेसन र बाँकी प्रश्न तथा अनुमति पुनर्स्थापना दिन्छ। plugin सफलतापूर्वक लोड भएपछि टाइमलाइन फेरि प्रयास गर्नुहोस्; आफ्नो सत्र डेटा सुरक्षित राख्नुहोस्।
+
 | समस्या | पुनःप्राप्ति |
 | --- | --- |
 | गलत provider account/quota | selected native account र **प्रयोग** जाँच्नुहोस्। quota display token/cost total होइन। अनिश्चित account परिवर्तनपछि refresh; चयनले उही सेवाका अरू client असर गर्न सक्छ। |
 | बाह्य स्वामित्वको OAuth expired | OpenCode, Claude Code वा credential owner बाट फेरि sign in गर्नुहोस्। CodeNomad ले refresh token साट्दैन। |
 | automatic rotation switch हुँदैन | opt-in eligibility र current account साँच्चै full छ कि जाँच्नुहोस्। pre-admission नीति हो, in-flight failover वा prompt replay होइन। |
 | plugin अवस्था पुरानो | **प्लगइन नियन्त्रण ताजा गर्नुहोस्** र tooltip scope/target जाँच्नुहोस्; runtime activation लाई native refresh पर्खनुपर्न सक्छ। अनिश्चित write बारम्बार toggle नगर्नुहोस्। |
+| थपेको plugin असफल भयो वा **पुष्टि भएको छैन** देखाउँछ | OpenCode host बाट package नाम, संस्करण र रजिस्ट्री पहुँच जाँच्नुहोस्। असफल स्थापनामा, plugin tooltip को त्रुटि सन्दर्भ OpenCode लगमा खोज्नुहोस्। निष्क्रिय plugin का लागि पनि **पुष्टि भएको छैन** देखिन्छ। plugin हटाउँदा डाउनलोड गरिएको package OpenCode cache मा रहन्छ। |
 | **मिसन नियन्त्रण उपलब्ध छैन** | यसले बताएको कारण पछ्याउनुहोस्। OpenCode ले Missions plugin लोड गरेको छैन भने refresh गर्नुहोस्, रहिरहे **OpenCode कन्फिगरेसन पुनः लोड गर्नुहोस्** प्रयोग गर्नुहोस्; plugin लोड हुन असफल भए Plugins सूचीमा यसको त्रुटि पढ्नुहोस्; server ले आफ्नो स्थानीय Missions जडान खोल्न सकेन भने server log जाँच्नुहोस्, किनकि OpenCode reload गर्दा मद्दत हुँदैन। Missions standalone server मा पनि चल्छन्। |
 | स्थापित extension हराएको | panel customization मा एउटै activation checkbox जाँच्नुहोस्। installation/replacement पछि explicit activation र required consent नदिँदासम्म disabled हुन्छ। |
 | extension asset denied | current mounted session को API 2 asset-read consent जाँच्नुहोस्। extension स्थापना मनपरी file/history पढ्ने अनुमति होइन। |
@@ -95,8 +98,8 @@ cancelled वा partial cleanup मा अर्को deletion अघि progr
 
 ## log र सुरक्षित निदान {#diagnostics}
 
-1. स्थिति हेर्न **उदाहरण जानकारी (Instance Info)** खोल्नुहोस्; **सर्भर लगहरू देखाउनुहोस्** ले उपलब्ध output देखाउँछ।
+1. **सेटिङहरू → OpenCode → OpenCode लगहरू हेर्नुहोस्** खोल्नुहोस्। छानिएको कार्यान्वयन होस्टको विश्वव्यापी `opencode.log` फाइल `opencode debug paths log` बाट पत्ता लगाइन्छ। सार्न मिल्ने गैर-मोडल विन्डोले बाँकी इन्टरफेस प्रयोग गर्न दिन्छ। अन्तिम बढीमा 128 KiB देखाइन्छ; **रिफ्रेस** ले फेरि पढ्छ। लगहरू सन्देश र मोडेल अनुरोधबाट अलग रहन्छन्।
 2. **प्राथमिकताहरू → OpenCode** मा थप विवरण चाहिँदा मात्र अभिप्रेत **पूर्वनिर्धारित लग स्तर** रोज्नुहोस्। standalone logging मा [server CLI logging विकल्प](server.md) प्रयोग गर्नुहोस्।
 3. **सेटिङहरू → जानकारी → निदान (Diagnostics)** खोली **बग रिपोर्ट गर्नुहोस्**, **क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्** वा **.txt डाउनलोड गर्नुहोस्** प्रयोग गर्नुहोस्।
 
-logging विवरणले path, output र application data देखाउन सक्छ। log/capture साझा अघि credential, pairing link, network address, private path र conversation content redact गर्नुहोस्। पूर्ण diagnostic report मा path/address हुन्छन्; prefilled bug form ले जानाजानी समावेश गर्दैन। [सहयोग](support.md#report-a-bug) हेर्नुहोस्।
+logging विवरणले path, output र application data देखाउन सक्छ। log/capture साझा अघि credential, pairing link, network address, private path र conversation content redact गर्नुहोस्। पूर्ण diagnostic report मा path/address हुन्छन्; prefilled bug form ले जानाजानी समावेश गर्दैन। [bug report गर्नुहोस्](support.md#report-a-bug) हेर्नुहोस्।

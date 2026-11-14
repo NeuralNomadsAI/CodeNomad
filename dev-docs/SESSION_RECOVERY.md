@@ -46,6 +46,38 @@ when newer SSE/local authority supersedes the captured baseline. Deletion,
 instance/client-generation and abort fences apply. Recovery never prompts,
 interrupts, updates a session or replays anything automatically.
 
+## Display acknowledgement
+
+`session-interruption-seen.ts` owns per-window, per-project-tab acknowledgement
+watermarks keyed by session ID and the native `time.idle` boundary. The session
+list's explicit badge click and sweep acknowledge
+Interrupted through `markSessionInterruptionSeen`. Viewing a visible, focused
+conversation clears only Idle through `markSessionIdleSeen`. Native outcome,
+recovery, admission and pending-request facts keep their existing authority.
+
+The native interruption event claims acknowledgement authority before its activity
+read. It invalidates the prior acknowledgement and uses the event timestamp while
+SessionInfo catches up. The accepted runtime merge retires that association once
+the native idle boundary reaches the event timestamp. It extends a gap-time clear
+only when native `time.busy` identifies a run started at or before the acknowledged
+event; a later or unknown run start leaves the watermark unchanged.
+An observed `session.execution.started` retires the pending association while
+preserving the clear, including when successive native events share a timestamp.
+Acknowledgements stay monotonic through older metadata, and later event
+continuations preserve intervening clears. A newer native idle boundary shows
+interrupted attention again; the same or an older boundary preserves acknowledgement
+across refresh/reconnect.
+Work and pending input/permission always retain priority.
+
+`seenInterruptions` persists beside idle and recovery markers in window client
+state, including each session's content-addressed leaf. Capture and hydration use
+native graph byte/partition budgets and unavailable-session preservation; live
+event tombstones fence late snapshot hydration. Native settlement past an
+acknowledged boundary drops its marker. Authoritative deletion and inventory
+pruning release both per-session maps; instance removal releases the whole scope.
+Restoration revalidates recovery separately against native
+activity/outcome while preserving the acknowledged boundary.
+
 ## Validation
 
 Store regressions use isolated in-memory clients and the real stores; mutation stubs

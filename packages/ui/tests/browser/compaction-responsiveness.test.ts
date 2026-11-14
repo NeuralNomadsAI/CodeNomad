@@ -73,7 +73,10 @@ const snapshot = (page: Page) => page.evaluate(() => (window as any).compactionF
 const joined = (count: number) => Array.from({ length: count }, (_, index) => `[${index}]`).join("")
 
 test("128 active deltas reduce and project once, preserve immediate revision, and end authoritatively", () => fixture(async page => {
-  await page.evaluate(() => { const f = (window as any).compactionFixture; f.start(); f.resetCounts() })
+  await page.evaluate(() => { const f = (window as any).compactionFixture; f.start() })
+  // The compaction row's own creation projection lands on its frame first.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await page.evaluate(() => { const f = (window as any).compactionFixture; f.resetCounts() })
   const before = await snapshot(page)
   const dispatchMs = await page.evaluate(() => (window as any).compactionFixture.burst("active"))
   const pending = await snapshot(page)
@@ -96,7 +99,10 @@ test("128 active deltas reduce and project once, preserve immediate revision, an
 }))
 
 test("spaced native events coalesce per interval without losing chunks or affecting the other session", () => fixture(async page => {
-  await page.evaluate(() => { const f = (window as any).compactionFixture; f.start(); f.resetCounts() })
+  await page.evaluate(() => { const f = (window as any).compactionFixture; f.start() })
+  // The compaction row's own creation projection lands on its frame first.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await page.evaluate(() => { const f = (window as any).compactionFixture; f.resetCounts() })
   for (let phase = 1; phase <= 2; phase++) {
     await page.evaluate(() => (window as any).compactionFixture.phase("active"))
     await page.waitForFunction(phase => (window as any).compactionFixture.snapshot().active ===

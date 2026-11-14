@@ -1,5 +1,6 @@
 export const commandMessages = {
   "commands.openHelp.failed": "Die Hilfe konnte nicht im Browser geöffnet werden. Öffnen Sie https://neuralnomadsai.github.io/CodeNomad/ manuell.",
+  "commands.openSponsor.failed": "Die Seite „CodeNomad unterstützen“ konnte nicht im Browser geöffnet werden. Öffnen Sie {url} manuell.",
   "commandPalette.title": "Befehlspalette",
   "commandPalette.description": "Befehle suchen und ausführen",
   "commandPalette.searchPlaceholder": "Befehl eingeben oder suchen...",
@@ -174,6 +175,9 @@ export const commandMessages = {
   "commands.openHelp.label": "Hilfe öffnen",
   "commands.openHelp.description": "Das CodeNomad-Benutzerhandbuch im Browser öffnen",
   "commands.openHelp.keywords": "hilfe, handbuch, dokumentation",
+  "commands.openSponsor.label": "CodeNomad unterstützen",
+  "commands.openSponsor.description": "Die Seite über das Sponsern von CodeNomad und weitere Möglichkeiten zu helfen öffnen",
+  "commands.openSponsor.keywords": "unterstützen, sponsern, sponsoring, spenden, spende, finanzieren, mitwirken",
   "commands.openAbout.label": "Über CodeNomad",
   "commands.openAbout.description": "Version, Updates und Diagnose in den Einstellungen anzeigen",
   "commands.openAbout.keywords": "über, version, updates, diagnose",

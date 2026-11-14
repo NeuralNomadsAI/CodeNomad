@@ -31,7 +31,11 @@ bootstrap host कै loopback listener बाट मात्र स्वी�
 
 direct sign-in ले opaque in-memory backend session र `codenomad_session` cookie (वा configured नाम) बनाउँछ। cookie `HttpOnly`, `SameSite=Lax`, `/` दायराका र HTTPS बाट जारी हुँदा `Secure` हुन्छन्। browser-session cookie हुन्; backend restart ले in-memory session अमान्य गर्छ। माग्दा असफल परिवर्तन फेरि पठाउनुको सट्टा त्यहीं reauthenticate गर्नुहोस्।
 
-password बदल्दा पछिका credential जाँच बदलिन्छन्; जारी भइसकेका direct session वा Remote Control device अमान्य **हुँदैनन्**। compromise शङ्का भए:
+logout ले हालको direct session रद्द गर्छ। host मा password सफलतापूर्वक बदल्दा त्यस प्रयोगकर्ताका सबै direct session, हालको समेत, रद्द हुन्छन्; फेरि sign-in गर्नुहोस्। authenticated request नभएको 24 घण्टा वा सिर्जनादेखि सात दिनमा session म्याद सकिन्छ। सीमा बदल्न backend सुरु गर्नुअघि `CODENOMAD_SESSION_IDLE_SECONDS` र `CODENOMAD_SESSION_ABSOLUTE_SECONDS` धनात्मक पूर्णाङ्क सेकेन्डमा सेट गर्नुहोस्। Remote Control device छुट्टै रद्द गरिन्छन्।
+
+LAN client ले sign-in, logout र project प्रयोग गर्न सक्छन्। password परिवर्तन, Remote Control व्यवस्थापन, remote-server/proxy tool र SideCars host को loopback बाट व्यवस्थापन गरिन्छन्। browser परिवर्तनमा अनुमति भएको Origin, वा त्यो नभए Referer चाहिन्छ। server का प्रकाशित origin अनुमति हुन्छन्; DNS alias, reverse proxy वा अलग होस्ट गरिएको UI का लागि `CODENOMAD_ALLOWED_ORIGINS` मा ठ्याक्कै HTTP(S) origin अल्पविरामले छुट्याएर, जस्तै `https://code.example.test,https://ui.example.test:8443`, सेट गरी restart गर्नुहोस्। path वा wildcard नराख्नुहोस्। यसले browser पहुँच दिन्छ, host अधिकार होइन। native LAN client ले पनि परिवर्तन गर्दा अनुमति भएको Origin पठाउनुपर्छ। loopback बाट जोडिएको विश्वसनीय proxy सँग host अधिकार हुन्छ र आफ्नै पहुँच नियन्त्रण चाहिन्छ। server loopback वा सबै interface मा listen गर्दा, host मा उही scheme र port सहित `localhost` बाट खोलिएको UI पनि चल्छ।
+
+compromise शङ्का भए:
 
 1. network exposure सीमित गरी host मा नयाँ password सेट, वा runtime secret बदलेर restart गर्नुहोस्।
 2. विद्यमान direct session अमान्य गर्न backend restart गर्नुहोस्।
@@ -70,4 +74,4 @@ provider connection र global conversation storage OpenCode का हुन्
 | provider key र speech credential | अभिप्रेत settings/credential owner मा मात्र भर्नुहोस्; कुन provider ले data पाउँछ जाँच्नुहोस्। [आवाज](voice.md) हेर्नुहोस्। |
 | debug/trace log र network capture | आवश्यक मात्र सङ्कलन, स्थानीय निरीक्षण र report अघि redact गर्नुहोस्। downstream tool output secret-free छ नमान्नुहोस्। |
 
-**सेटिङहरू → जानकारी → बग रिपोर्ट गर्नुहोस्** ले listener, address, path, credential वा conversation content पूर्वभरण नगरी सीमित निदान तयार गर्छ। आफूले थपेको सामग्री बुझाउनुअघि समीक्षा गर्नुहोस्। [सहयोग](support.md) हेर्नुहोस्।
+**सेटिङहरू → जानकारी → बग रिपोर्ट गर्नुहोस्** ले listener, address, path, credential वा conversation content पूर्वभरण नगरी सीमित निदान तयार गर्छ। आफूले थपेको सामग्री बुझाउनुअघि समीक्षा गर्नुहोस्। [bug report र source build](support.md#report-a-bug) हेर्नुहोस्।

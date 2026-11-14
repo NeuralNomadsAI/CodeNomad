@@ -10,19 +10,34 @@ This guide explains how to build distributable binaries for CodeNomad.
 
 ### Bundled server runtime
 
-Both Tauri and Electron ship a separate Node.js executable for the CodeNomad
-server. `scripts/prepare-node-runtime.cjs` reads the same `.node-version` pin as
-CI, downloads the official target archive, and verifies its SHA-256 before
-packaging. Only the executable is bundled, not npm or Corepack. Updating this
-pin does not update Electron's internal Node/Chromium, WebView2, the system Node
-installation, or the independently managed OpenCode daemon.
+Tauri ships a separate Node.js executable with its npm for the CodeNomad
+server. Electron runs the server with its integrated Node (`ELECTRON_RUN_AS_NODE=1`,
+plus `ELECTRON_NO_ASAR=1` so project `.asar` files stay ordinary files) and ships
+npm only. `scripts/prepare-node-runtime.cjs` reads the same
+`.node-version` pin as CI, downloads the official target archive, and verifies
+its SHA-256 before packaging Tauri's Node executable and license. Both hosts'
+npm is the release pinned in `.npm-version`: the script downloads that package
+from the npm registry, verifies its sha512 registry integrity and places it
+where the Node archive keeps npm (Tauri) or in Electron's npm-only resources.
+Preparation fails when that npm's `engines.node` rejects the Node it will run
+under: `.node-version` for Tauri, the installed Electron's integrated Node for
+Electron. Corepack is never bundled. Electron's Node and Chromium follow the
+Electron version. WebView2, the system Node installation and the independently
+managed OpenCode daemon stay independent of these pins.
 
 For a runtime update, run the server and desktop tests with the pinned Node,
 then rebuild and smoke-test the packaged applications on Windows, macOS, and
-Linux. Check the upstream Node platform requirements before changing the pin;
-Node 24 requires macOS 13.5 or later. Keep both desktop bundle minimum versions
-aligned. Keep the version exact rather than resolving `latest` or `lts/*` at
-build time so release inputs remain reproducible.
+Linux. Check the upstream platform requirements before changing a pin or the
+Electron version: Tauri's bundled Node 24 requires macOS 13.5 or later, and
+the pinned Electron (`packages/electron-app/package.json`) requires macOS 13
+or later and Windows 10 or later. Electron declares macOS 13.5; Tauri declares macOS 14 for identified
+WKWebView preview stores. Keep the versions exact
+rather than resolving `latest` or `lts/*` at build time so release inputs remain
+reproducible.
+
+The `electron` package downloads its binary on first use. The Electron app's
+`dev` and `preview` scripts fetch it first; `npx --no install-electron` fetches
+it ahead of parallel tests or scripts that read its path.
 
 ## Quick Start
 
@@ -127,15 +142,16 @@ Electron names deb architectures the Debian way (`amd64`) and Tauri keeps its na
 
 ### macOS
 
-- **Build on:** macOS 13.5+ with the required Xcode tools (CI uses macOS 15)
-- **Run on:** macOS 13.5+ (Intel and Apple Silicon; required by bundled Node 24)
+- **Build on:** macOS 13.5+ for Electron, macOS 14+ for Tauri, with the required Xcode tools (CI uses macOS 15)
+- **Run on:** Electron macOS 13.5+; Tauri macOS 14+ (Intel and Apple Silicon)
+- **Tauri bundles:** keep `minimumSystemVersion` and `LSMinimumSystemVersion` at 14.0 for both architectures; scope any `MACOSX_DEPLOYMENT_TARGET=14.0` override to Tauri build steps.
 - **Code signing:** Optional (recommended for distribution)
 
 ### Windows
 
 - **Build on:** Windows 10+, macOS, or Linux
 - **Run on:** Windows 10+
-- **Code signing:** Optional (recommended for distribution)
+- **Code signing:** Optional for local builds; release builds sign through SignPath when signing is enabled (see [Code signing policy](CODE_SIGNING.md))
 
 ### Linux
 
@@ -258,7 +274,7 @@ bun run build:binaries
 A: Yes, but native binaries (e.g., DMG) require the target OS.
 
 **Q: How large are the binaries?**  
-A: Approximately 100-150 MB (includes Electron runtime).
+A: About 200 MB for the Electron Windows ZIP (includes the Electron runtime).
 
 **Q: Do I need code signing?**  
 A: Not required, but recommended for public distribution to avoid security warnings.

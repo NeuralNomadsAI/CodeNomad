@@ -5,6 +5,8 @@ import { useConfig, type ServerLogLevel } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { OpenCodeUpdateCard } from "./opencode-update-card"
 import { OpenCodeExecutableCard } from "./opencode-executable-card"
+import { OpenCodeLoginStartCard } from "./opencode-login-start-card"
+import { OpenCodeLogsAction } from "./opencode-logs-action"
 
 type LogLevelOption = { value: ServerLogLevel; label: string }
 
@@ -25,6 +27,7 @@ export const OpenCodeSettingsSection: Component = () => {
     <div class="settings-section-stack">
       <OpenCodeUpdateCard />
       <OpenCodeExecutableCard />
+      <OpenCodeLoginStartCard />
 
       <div class="settings-card">
         <div class="settings-card-header">
@@ -34,6 +37,7 @@ export const OpenCodeSettingsSection: Component = () => {
           </div>
         </div>
         <div class="settings-card-body">
+          <OpenCodeLogsAction />
           <div class="settings-toggle-row settings-toggle-row-compact">
             <div>
               <div class="settings-toggle-title">{t("settings.opencode.logLevel.selector.title")}</div>

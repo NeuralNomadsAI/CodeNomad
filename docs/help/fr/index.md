@@ -10,7 +10,7 @@ OpenCode vous donne le moteur. CodeNomad vous donne le cockpit. Il se connecte a
 
 ## Confier le travail de longue haleine aux Missions {#missions}
 
-Décrivez le travail une seule fois. Le coordinateur de la mission le planifie sous forme d’arbre de tâches, délègue des tâches délimitées à des conversations natives OpenCode et rend compte des résultats avec leurs preuves. Exécutez une mission une fois ou chaque jour ; en créer une ne démarre jamais le travail tant que vous ne l’avez pas décidé. Des scénarios couvrent le débogage, la livraison de produit et la comparaison de deux modèles avec un juge à l’aveugle. Voir [Missions](missions.md).
+Décrivez le travail une seule fois. Le coordinateur de la mission le planifie sous forme d’arbre de tâches, délègue des tâches délimitées à des conversations natives OpenCode et rend compte des résultats avec leurs preuves. Exécutez une fois, aux horaires ou intervalles choisis, ou après un changement vérifié du projet ; la création enregistre une Mission en pause que vous démarrez explicitement. Des scénarios couvrent le débogage, la livraison de produit et la comparaison de deux modèles avec un juge à l’aveugle. Voir [Missions](missions.md).
 
 ## Continuer à travailler depuis votre téléphone {#phone-access}
 
@@ -46,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projets, conversations, fichiers et historique | Dossiers du backend et sessions natives | Dossiers et sessions du serveur connecté | Surfaces autorisées de l’espace de travail de l’hôte |
 | Préférences natives et fenêtres de bureau | Disponibles | Les paramètres navigateur/distants restent dans le client | Commandes réservées au bureau hôte indisponibles |
-| Aperçu navigateur de session | Natif dans Electron et Tauri Windows ; iframe sur les autres plateformes Tauri | Iframe si disponible | Iframe tant que l’hôte autorise les aperçus web (par défaut) |
+| Aperçu navigateur de session | Natif dans Electron et Tauri sous Windows, macOS et Linux | Iframe si disponible | Iframe tant que l’hôte autorise les aperçus web (par défaut) |
 | Automatisation native du bureau/navigateur | Fenêtres/aperçus locaux détenus | Ne remplace pas l’automatisation native du bureau | Points d’accès d’automatisation réservés à l’hôte indisponibles |
 | Authentification | Initialisation locale ou session par mot de passe | Session par mot de passe du serveur | Identifiant d’appareil appairé |
 | Installation PWA | Utiliser l’application native ou un navigateur | Selon le navigateur ; contexte sécurisé requis | Selon le navigateur ; appairage toujours requis |
@@ -77,20 +77,20 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 | Travailler avec plusieurs copies de travail et conversations | [Projets](projects.md), [Conversations](conversations.md), [Fichiers](files.md) |
 | Rechercher dans l’historique ou le nettoyer sans risque | [Historique](history.md) |
 | Répondre aux questions et autorisations natives | [Autorisations](permissions.md) |
-| Coordonner un travail délimité ou quotidien | [Missions](missions.md) |
+| Coordonner un travail délimité ou programmé | [Missions](missions.md) |
 | Configurer l’exécution et les intégrations | [OpenCode](opencode.md), [Fournisseurs](providers.md), [Intégrations](integrations.md) |
 | Connecter un autre appareil | [Contrôle à distance](remote-control.md), [Sécurité](security.md), [Mobile](mobile.md) |
 | Adapter l’espace de travail | [Paramètres](settings.md), [Raccourcis](shortcuts.md), [Voix](voice.md), [Extensions](extensions.md) |
 | Gérer l’application native | [Bureau](desktop.md), [Aperçus navigateur et SideCars](browser-sidecars.md), [Mises à jour](updates.md) |
-| Diagnostiquer ou contribuer | [Dépannage](troubleshooting.md), [Assistance et compilation depuis les sources](support.md) |
+| Diagnostiquer ou contribuer | [Dépannage](troubleshooting.md), [Signalement de bugs et compilation depuis les sources](support.md), [Soutenir CodeNomad](sponsor.md) |
 
 ## Surveiller le travail sans le modifier {#monitor-work}
 
 Le panneau Statut expose l’utilisation du fournisseur de la session active et les Shells natifs en arrière-plan. Le statut des conversations et l’activité des enfants indiquent les sessions actives, en compactage ou en attente de saisie. Surveiller un Shell en arrière-plan est distinct de l’envoi d’une demande Shell depuis la zone de saisie ou de l’utilisation d’un SideCar terminal hébergé séparément.
 
 1. Ouvrez **Statut → Shells en arrière-plan** pour la Location de la conversation sélectionnée (ou l’espace de travail ouvert si aucune conversation n’est sélectionnée).
-2. Consultez la commande, le shell, le répertoire, le statut, le PID et le code de sortie lorsqu’ils sont fournis ; choisissez **Afficher la sortie** pour voir la sortie native disponible.
-3. Pour en retirer un, utilisez **Arrêter et supprimer** pendant son exécution, ou **Supprimer** après sa sortie, et confirmez la cible.
+2. Seules les commandes en cours explicitement passées en arrière-plan sont listées, une par ligne. Survolez une ligne pour voir le shell, le dossier et le PID ; son icône **Afficher la sortie** ouvre la sortie native. Si OpenCode ne fournit pas l’API des tâches en arrière-plan, une erreur de chargement s’affiche.
+3. Utilisez l’icône **Arrêter et supprimer** de la ligne et confirmez la cible.
 
 Supprimer un Shell en cours arrête ce processus ; fermer sa fenêtre de sortie ne l’arrête pas. L’actualisation ou la reconnexion lit l’état natif actuel au lieu de reconstruire les événements de sortie manqués.
 

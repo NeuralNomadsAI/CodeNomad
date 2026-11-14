@@ -7,7 +7,7 @@ import { isCoordinatorNotificationReport } from "../../missions/native-report-pr
 export function missionWorkRemains(snapshot: MissionSnapshot): boolean {
   if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
     || snapshot.cleanupUnavailable) return true
-  if (snapshot.cleanups?.some(cleanup => cleanup.pending > 0)) return true
+  if (snapshot.cleanups?.some(cleanup => cleanup.pending > 0 || cleanup.documentPending === true)) return true
   return snapshot.missions.some(mission => mission.status === "active"
     || mission.controlUnavailable || mission.notificationUnavailable
     || Boolean(mission.control?.pending.length)

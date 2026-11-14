@@ -22,6 +22,7 @@
   "reportProblem": "Ein Problem melden",
   "download": { "label": "Herunterladen", "windows": "Für Windows herunterladen", "windowsDetail": "Installationsprogramm, x64", "macos": "Für macOS herunterladen", "macosDetail": "Apple Silicon", "intel": "Intel-Mac? Intel-Version herunterladen", "linux": "Für Linux herunterladen", "linuxDetail": "AppImage, x64", "mobile": "CodeNomad vom Smartphone aus nutzen", "mobileDetail": "Koppeln Sie Ihr Smartphone mit dem Computer, auf dem CodeNomad läuft." },
   "tour": { "label": "Stumme Vorschau von CodeNomad 1.0: eine Mission mit parallelen Subagenten, ein blinder Modellvergleich, ein Git-Diff, die Verlaufssuche im Arbeitsbereich, Projekt-Tabs und Farbpaletten", "poster": "Fenster von CodeNomad 1.0: Missionen, ein Fragenformular, ein Diff, Git-Änderungen und ein Modellvergleich", "caption": "Die vollständige 90-Sekunden-Tour auf YouTube ansehen" },
+  "funding": { "label": "Sponsern", "action": "Über {channel} sponsern", "recipient": "Zahlung an {recipient}" },
   "github": "GitHub",
   "languageLabel": "Sprache",
   "projectLinks": "Projektlinks",

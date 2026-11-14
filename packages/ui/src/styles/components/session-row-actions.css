@@ -80,6 +80,20 @@
   flex-shrink: 0;
 }
 
+.session-item-badges .session-status-clearable {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.session-item-badges .session-status-clearable:hover {
+  border-color: currentColor;
+}
+
+.session-item-badges .session-status-clearable:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
 @media (pointer: coarse) {
   .session-item-inline-actions .session-item-close,
   .session-item-overflow-actions .action-overflow-trigger {

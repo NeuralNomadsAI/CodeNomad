@@ -8,13 +8,39 @@
 
 Les onglets de projet, conversations sélectionnées et dispositions appartiennent à une fenêtre. Les sessions/messages OpenCode appartiennent au service natif OpenCode partagé : une autre fenêtre peut voir la même conversation. Fermer un onglet de projet ferme ce projet dans CodeNomad, pas ses sessions OpenCode ; rouvrez-le pour les retrouver. Une autre fenêtre qui affiche la même connexion de projet ferme aussi son onglet et affiche une notification ; les onglets ouverts séparément sur le même dossier ne sont pas concernés. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; voir [Projets](projects.md). Ne considérez pas la fermeture des fenêtres comme une preuve qu’un agent ou une Mission planifiée s’est arrêté.
 
-Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics.
+Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics. **Aide → Soutenir CodeNomad** ouvre la page [Soutenir CodeNomad](sponsor.md) dans votre navigateur.
+
+## Arguments de lancement de l’application {#desktop-cli}
+
+Placez ces arguments après **l’exécutable desktop** (Tauri ou Electron), dans un terminal ou dans le champ **Cible** d’un raccourci Windows. Remplacez les chemins d’exemple par celui de votre exécutable.
+
+| Argument | Effet |
+| --- | --- |
+| `--connect-server <server>` | Ouvre un serveur CodeNomad distant à partir de son URL HTTP(S), de son nom enregistré ou de son identifiant enregistré. Voir [la connexion et l’authentification](remote-access.md#saved-servers). |
+| `--folder <path>` | Ouvre un dossier de projet existant. Répétez l’argument pour plusieurs dossiers ; les chemins relatifs partent du répertoire de lancement. |
+| `<path> ...` | Ouvre des dossiers de projet sans écrire `--folder`. **Tauri Windows, si l’application est déjà ouverte :** utilisez `--folder` devant chaque dossier. Mélanger des chemins seuls avec `--folder` annule aussi toute la demande d’ouverture de dossiers. |
+| `--new-window` | Demande une nouvelle fenêtre, même lorsqu’un second lancement devrait normalement sélectionner la fenêtre existante. |
+
+Les formes `--connect-server=<server>` et `--folder=<path>` fonctionnent aussi. Entourez de guillemets les chemins ou noms contenant des espaces. Pour ouvrir uniquement la fenêtre distante, utilisez `--connect-server` seul, sans dossier ni `--new-window` ; la restauration des fenêtres locales est différée sauf si la connexion échoue. L’application conserve son backend auxiliaire local pour la coordination.
+
+Dans **PowerShell** :
+
+```powershell
+& "C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"
+& "C:\path\to\CodeNomad.exe" --new-window --folder "D:\Projects\demo"
+```
+
+Dans la **Cible** du raccourci Windows, placez `"C:\path\to\CodeNomad.exe" --connect-server "https://server.example:9898"` (le `&` appartient à PowerShell). Sous Linux, utilisez l’AppImage, par exemple `./CodeNomad.AppImage --connect-server "https://server.example:9898"`.
+
+Pour les profils desktop et la configuration, définissez `CODENOMAD_PROFILE` et `CLI_CONFIG` avant le lancement ; voir [Profils de données](#data-profiles). Les options d’écoute, TLS et d’authentification du backend sont dans la [référence CLI du serveur](server.md#cli-reference). Sous Tauri Windows, les arguments contenant `|` sont refusés ; utilisez une URL ou renommez le serveur enregistré.
 
 ## Préférences et restauration au démarrage {#preferences-startup}
 
 1. Ouvrez les paramètres depuis la fenêtre à configurer. Les points d’entrée du bureau local focalisent l’unique fenêtre native Preferences avec le projet/la Location de cette fenêtre d’origine.
 2. Dans **Général**, activez ou désactivez **Restaurer l’état précédent**.
 3. Pour oublier la disposition enregistrée de cette fenêtre, utilisez **Effacer l’état de démarrage enregistré**. L’action s’applique immédiatement, sans confirmation.
+
+Après un plantage, les compteurs coût/tokens restaurés peuvent afficher le dernier point enregistré jusqu’à leur actualisation par OpenCode. Pendant la génération ou la compaction, les changements de compteurs seuls attendent le prochain point de sauvegarde ; une fermeture normale enregistre les compteurs actuels.
 
 La restauration peut rouvrir onglets d’espace de travail/SideCar et sessions actives, texte non envoyé, positions de défilement, panneaux, placement et zoom de fenêtre. C’est un état client par fenêtre, pas une copie de la base de conversations natives. L’effacer retire onglets, brouillons et disposition enregistrés ; cela ne supprime ni configuration CodeNomad ni conversations OpenCode. Enregistrez d’abord ailleurs tout brouillon non envoyé important.
 

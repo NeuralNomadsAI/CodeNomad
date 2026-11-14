@@ -8,6 +8,7 @@ import solid from "vite-plugin-solid"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
+import { fixtureGesturePoint, withFixtureMiddleDrag } from "./fixture-native-gesture"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -141,12 +142,9 @@ test("unrelated child text keeps mounted task steps, disclosure, scroller and co
   await page.evaluate(() => (window as any).fixture.reproject())
   assert.equal(await tool.evaluate(element => element === (window as any).originalStep), true, "authoritative reprojection must not recreate the tool shell")
   const output = tool.locator(".tool-call-markdown")
-  const box = (await output.boundingBox())!
-  await page.mouse.move(box.x + 30, box.y + 60)
-  await page.mouse.down({ button: "middle" })
-  try {
+  await withFixtureMiddleDrag(page, output, await fixtureGesturePoint(output, { x: 30, y: 60 }), async () => {
     await output.evaluate(element => { (window as any).originalScroller = element; element.scrollTop = 240 })
-    await page.evaluate(() => { (window as any).fixture.hold(); (window as any).fixture.reset(); (window as any).fixture.delta() })
+    await page.evaluate(() => { (window as any).fixture.hold(); (window as any).fixture.reset(); (window as any).fixture.delta(); (window as any).fixture.invalidate() })
     await page.waitForFunction(() => (window as any).fixture.snapshot().held > 0)
     assert.equal(await tool.evaluate(element => element === (window as any).originalStep), true, "pending display refresh must retain mounted steps")
     await page.evaluate(() => (window as any).fixture.release())
@@ -158,13 +156,15 @@ test("unrelated child text keeps mounted task steps, disclosure, scroller and co
     assert.equal(await output.evaluate(element => element === (window as any).originalScroller), true)
     assert.equal(await output.evaluate(element => element.scrollTop), 240)
     assert.equal(state.added + state.removed, 0)
-  } finally { await page.mouse.up({ button: "middle" }) }
+  })
+  await tool.locator(":scope > .tool-call-header").hover()
   await tool.locator(":scope > .tool-call-header > .tool-call-header-copy").first().click()
   const state = await page.evaluate(() => (window as any).fixture.snapshot())
   assert.equal(state.clipboard[0], state.output)
   await page.evaluate(() => (window as any).fixture.toolUpdate(0, "Changed native output"))
   await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="step-0"]')?.textContent?.includes("Changed native output"))
   assert.equal(await tool.evaluate(element => element === (window as any).originalStep), true)
+  await tool.locator(":scope > .tool-call-header").hover()
   await tool.locator(":scope > .tool-call-header > .tool-call-header-copy").first().click()
   assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).clipboard.at(-1), "Changed native output")
   await page.evaluate(() => (window as any).fixture.mutateTool())
@@ -211,6 +211,7 @@ test("native page output must not reuse zero-revision Markdown when a tool is re
   await frames(page)
   assert.equal((await tool.locator("pre code").textContent())?.trim() === "Replacement native page output", true,
     "the native record changed but the displayed Markdown is stale")
+  await tool.locator(":scope > .tool-call-header").hover()
   await tool.locator(":scope > .tool-call-header > .tool-call-header-copy").first().click()
   assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).clipboard.at(-1), "Replacement native page output")
 }))
@@ -365,6 +366,7 @@ test("large tool output bounds rendered text but preserves full clipboard source
   assert.ok(content && content.length <= 10_000)
   assert.ok(!(await tool.textContent())!.includes("Output truncated"), "no copy-only suffix remains")
   console.log("large-output", { renderedCharacters: content!.length, ...await page.evaluate(start => ({ msToObservedRender: performance.now() - start, nodes: document.querySelectorAll("*").length }), start) })
+  await tool.locator(":scope > .tool-call-header").hover()
   await tool.locator(":scope > .tool-call-header > .tool-call-header-copy").first().click()
   const state = await page.evaluate(() => (window as any).fixture.snapshot())
   assert.equal(state.clipboard[0], state.output)

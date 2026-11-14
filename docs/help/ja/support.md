@@ -1,4 +1,4 @@
-# サポートとソースビルド
+# 不具合報告とソースビルド
 
 不具合報告、最新リリース、貢献にはリポジトリを使用します。問題を報告する前の安全な復旧方法は、[トラブルシューティングガイド](troubleshooting.md)を参照してください。
 
@@ -31,7 +31,7 @@ CodeNomad の操作ではなく、OpenCode ネイティブ設定の問題は、[
 
 ## ソースからビルドする {#build-from-source}
 
-`.node-version` に固定された Node.js **24.20.0**、npm、Git、互換性のある OpenCode CLI を使用します。開発用チェックアウトから実行します。
+`.node-version` に固定されたバージョンの Node.js、npm、Git、互換性のある OpenCode CLI を使用します。開発用チェックアウトから実行します。
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git

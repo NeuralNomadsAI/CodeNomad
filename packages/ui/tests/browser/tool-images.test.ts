@@ -36,8 +36,11 @@ async function withPage(run: (page: Page) => Promise<void>) {
   } finally { await page.close() }
 }
 
-async function decodedImages(page: Page, count: number) {
-  await page.waitForFunction(count => {
+/** Event-driven projections coalesce onto the next animation frame. */
+const frames = (page: Page) => page.evaluate(() =>
+  new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+
+async function decodedImages(page: Page, count: number) {  await page.waitForFunction(count => {
     const images = Array.from(document.querySelectorAll<HTMLImageElement>(".tool-call-output-images img"))
     return images.length === count && images.every(img => img.complete && img.naturalWidth === 800)
   }, count)
@@ -57,6 +60,40 @@ test("MCP images render with text on native live completion and historical reloa
   await page.setViewportSize({ width: 380, height: 1000 })
   assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
   if (process.env.CODENOMAD_IMAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_IMAGE_CAPTURE, fullPage: true })
+}))
+
+test("a Markdown image of a local file shows the transcript's image of that path, never a broken image", async () => withPage(async page => {
+  const answer = page.locator(".fixture-answer")
+  const label = answer.locator('span.markdown-local-image[title="C:/Users/me/Temp/images/sheep.png"]')
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("none"))
+  await answer.getByText("Un petit mouton", { exact: true }).waitFor()
+  assert.equal(await answer.locator("img").count(), 0, "without a transcript image the alt text stays")
+  assert.equal(await answer.locator('span.markdown-local-image[title="C:/Users/me/missing.png"]').innerText(), "Absent")
+
+  // A matching image that fails to load returns to the alt text, never a broken icon.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("broken"))
+  await answer.locator('span.markdown-local-image[data-failed-source="data:image/png;base64,broken"]').waitFor()
+  assert.equal(await answer.locator("img").count(), 0)
+  assert.equal(await label.innerText(), "Un petit mouton")
+
+  // The read tool's image of that path arrives: the same rendered answer resolves it.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("valid"))
+  await page.waitForFunction(() => {
+    const image = document.querySelector<HTMLImageElement>(".fixture-answer img.markdown-local-image")
+    return Boolean(image?.complete && image.naturalWidth === 800 && image.alt === "Un petit mouton")
+  })
+  assert.match(await answer.locator("img.markdown-local-image").getAttribute("src") ?? "", /^data:image\/png;base64,/)
+  assert.equal(await answer.locator("span.markdown-local-image").innerText(), "Absent", "an unmatched path keeps its alt text")
+  // Removing the read result removes its image from the answer too.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("none"))
+  await label.waitFor()
+  assert.equal(await answer.locator("img").count(), 0)
+  assert.equal(await label.innerText(), "Un petit mouton")
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("valid"))
+  await answer.locator("img.markdown-local-image").waitFor()
+  await page.setViewportSize({ width: 380, height: 1000 })
+  assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  if (process.env.CODENOMAD_LOCAL_IMAGE_CAPTURE) await answer.screenshot({ path: process.env.CODENOMAD_LOCAL_IMAGE_CAPTURE })
 }))
 
 test("image-only output works for generic and specialized tools and obeys collapse", async () => withPage(async page => {
@@ -105,6 +142,27 @@ test("a tool image deferred by its transcript page loads from CodeNomad's sessio
   assert.equal(requested.length, 2)
 }))
 
+test("an interrupted shell call shows its output so far as output and only the notice as error", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.interruptedShell())
+  const error = page.locator(".tool-call-error-content")
+  await error.waitFor()
+  assert.match(await error.textContent() ?? "", /Command interrupted by the user \(shell ID: sh_1\)/)
+  assert.doesNotMatch(await error.textContent() ?? "", /PARTIAL_LINE/)
+  const output = page.locator(".tool-call pre", { hasText: "PARTIAL_LINE_1" }).first()
+  await output.waitFor()
+  assert.match(await output.textContent() ?? "", /npm test\s+PARTIAL_LINE_1\nPARTIAL_LINE_2/)
+}))
+
+test("Code Mode indents a compact JSON result and keeps its logs", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.execute("json"))
+  const block = page.locator(".tool-call-execute pre", { hasText: '"answer"' }).first()
+  await block.waitFor()
+  const text = await block.textContent() ?? ""
+  assert.match(text, /\{\n\s+"answer": 42,\n\s+"items": \[\n\s+"a",/)
+  assert.match(text, /Logs:\nhello/)
+  assert.doesNotMatch(text, /\{"answer":42/)
+}))
+
 test("Code Mode renders native progress, nested errors, script, images and historical output", async () => withPage(async page => {
   await page.evaluate(() => (window as any).fixture.execute("running"))
   await page.locator(".execute-calls").waitFor()
@@ -113,6 +171,7 @@ test("Code Mode renders native progress, nested errors, script, images and histo
   await firstCall.click()
   await firstCall.focus()
   await page.evaluate(() => (window as any).fixture.execute("progress"))
+  await frames(page)
   assert.equal(await page.locator(".execute-calls li").count(), 3)
   assert.equal(await page.locator(".execute-calls details").first().getAttribute("open"), "")
   assert.equal(await firstCall.evaluate(el => el === document.activeElement), true)

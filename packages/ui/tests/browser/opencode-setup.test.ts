@@ -132,8 +132,8 @@ test("missing installation and incompatible daemon expose different actions; res
 
 test("closing required-update screen leaves recovery clickable above a pending folder overlay", async () => {
   const page = await browser.newPage()
-  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.32",
-    latestVersion: "2.1.2", minimumVersion: "2.1.2", recommendedVersion: "2.1.2", incompatibilityReason: "native_contract", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.2.2",
+    latestVersion: "2.2.3", minimumVersion: "2.2.3", recommendedVersion: "2.2.3", incompatibilityReason: "native_contract", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.getByRole("dialog").waitFor()
@@ -146,10 +146,10 @@ test("closing required-update screen leaves recovery clickable above a pending f
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "OpenCode setup required" }).click()
     await page.getByRole("dialog").waitFor()
-    assert.equal(await page.getByText("2.0.32", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("2.2.2", { exact: true }).count(), 1)
     assert.equal(await page.locator("details[open]").count(), 0)
     await page.getByText("Version details", { exact: true }).click()
-    await page.getByText(/requires OpenCode 2\.1\.2 or later for correct JavaScript job ordering in Code Mode/).waitFor()
+    await page.getByText(/requires OpenCode 2\.2\.3 or later for the image generation tool used by the Images settings/).waitFor()
     assert.equal(await page.getByText("settings.opencode.setup.native_contract", { exact: true }).count(), 0)
   } catch (error) { console.error(await page.locator("body").innerText()); throw error }
   finally { await page.close() }
@@ -606,94 +606,6 @@ test("settings troubleshooting restart retains a dismissed recovery continuation
   } finally { await page.close() }
 })
 
-test("instance info explicitly confirms a global V2 reload and never calls the retired dispose endpoint", async () => {
-  const page = await browser.newPage()
-  const mutations: Array<{ url: string; body: unknown }> = []
-  let release!: () => void
-  await page.route("**/*", async route => {
-    const request = route.request()
-    if (!request.url().includes("/api/") && !request.url().includes("instance/dispose")) return route.continue()
-    if (request.method() === "POST" && (request.url().endsWith("/api/opencode/service") || request.url().includes("instance/dispose"))) {
-      mutations.push({ url: new URL(request.url()).pathname, body: request.postDataJSON() })
-      await new Promise<void>(resolve => { release = resolve })
-    }
-    return route.fulfill({ json: { ...healthyStatus, canReload: true } })
-  })
-  try {
-    await page.goto(`${url}?info=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    const reload = page.getByRole("button", { name: "Reload OpenCode configuration", exact: true })
-    await reload.click()
-    const dialog = page.getByRole("dialog")
-    await dialog.getByText(/every loaded location for all connected clients/).waitFor()
-    await dialog.getByText(/cancels pending permissions and forms/).waitFor()
-    assert.equal(mutations.length, 0)
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
-    assert.equal(mutations.length, 0)
-    await reload.click()
-    await dialog.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
-    await page.getByRole("button", { name: "Reloading OpenCode configuration…", exact: true }).waitFor()
-    assert.equal(await page.getByRole("button", { name: "Reloading OpenCode configuration…", exact: true }).isDisabled(), true)
-    for (let count = 0; count < 100 && !release; count++) await page.waitForTimeout(10)
-    assert.ok(release)
-    release()
-    await page.waitForFunction(() => (window as any).fixture.notifications().some((item: any) => item.variant === "success"))
-    assert.deepEqual(mutations, [{ url: "/api/opencode/service", body: { reload: true } }])
-    assert.equal(await page.getByRole("button", { name: "Dispose instance", exact: true }).count(), 0)
-    assert.equal(await reload.isEnabled(), true)
-  } finally { release?.(); await page.close() }
-})
-
-test("instance reload failure reports an error without replaying the mutation and permits explicit retry", async () => {
-  const page = await browser.newPage()
-  let attempts = 0
-  await page.route("**/api/**", route => {
-    if (route.request().method() === "POST" && route.request().url().endsWith("/api/opencode/service")) {
-      assert.deepEqual(route.request().postDataJSON(), { reload: true })
-      if (++attempts === 1) return route.fulfill({ status: 502, json: { error: "service_activation_failed" } })
-    }
-    return route.fulfill({ json: { ...healthyStatus, canReload: true } })
-  })
-  try {
-    await page.goto(`${url}?info=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    for (const outcome of ["error", "success"]) {
-      await page.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
-      await page.getByRole("dialog").getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
-      await page.waitForFunction(outcome => (window as any).fixture.notifications()[0]?.variant === outcome, outcome)
-      assert.equal(attempts, outcome === "error" ? 1 : 2)
-    }
-  } finally { await page.close() }
-})
-
-test("Info reload preserves a dismissed recovery continuation without opening its pending workspace", async () => {
-  const page = await browser.newPage()
-  let reloads = 0
-  await page.route("**/api/**", route => {
-    if (route.request().method() === "POST" && route.request().url().endsWith("/api/opencode/service")) {
-      assert.deepEqual(route.request().postDataJSON(), { reload: true })
-      reloads++
-    }
-    return route.fulfill({ json: { ...healthyStatus, canReload: true } })
-  })
-  try {
-    await page.goto(`${url}?info=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.evaluate(() => (window as any).fixture.open())
-    await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click()
-    await page.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
-    await page.getByRole("dialog").getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
-    await page.waitForFunction(() => (window as any).fixture.notifications()[0]?.variant === "success")
-    assert.equal(reloads, 1)
-    assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0)
-    assert.equal(await page.getByRole("dialog").count(), 0)
-    await page.evaluate(() => (window as any).fixture.reopen())
-    await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click()
-    await page.waitForFunction(() => (window as any).fixture.resumed() === 1)
-    assert.equal(reloads, 1, "explicit recovery retains the callback without another reload")
-  } finally { await page.close() }
-})
-
 test("Continue rechecks a service stopped after the recovery screen opened and preserves the workspace retry", async () => {
   const page = await browser.newPage()
   let stopped = false, mutations = 0
@@ -724,6 +636,7 @@ test("refresh events during a read coalesce into a trailing check before reporti
   const page = await browser.newPage()
   let held = false, reads = 0, release!: () => void
   await page.route("**/api/**", async route => {
+    if (new URL(route.request().url()).pathname !== "/api/opencode/update") return route.fulfill({ json: healthyStatus })
     const stale = held
     if (held) {
       reads++
@@ -741,6 +654,8 @@ test("refresh events during a read coalesce into a trailing check before reporti
     assert.ok(release)
     await page.evaluate(() => { for (let i = 0; i < 10; i++) void (window as any).fixture.refresh() })
     held = false; release()
+    // Auth/SSE and Settings reads are independent of the status lane under test.
+    await page.evaluate(() => fetch("/api/auth/status"))
     await page.getByText("Status and update check complete.", { exact: true }).waitFor()
     await page.getByText("OpenCode is not connected.", { exact: true }).waitFor()
     assert.equal(reads, 2, "a burst queues one follow-up rather than losing the event or issuing ten checks")
@@ -788,6 +703,9 @@ test("changing executable fences an old read and its queued follow-up", async ()
   const page = await browser.newPage()
   let hold = false, changed = false, release!: () => void, reads = 0
   await page.route("**/api/**", async route => {
+    if (route.request().method() !== "GET" || new URL(route.request().url()).pathname !== "/api/opencode/update") {
+      return route.fulfill({ json: healthyStatus })
+    }
     const status = { ...healthyStatus, binaryPath: changed ? "new-opencode" : "old-opencode", serviceState: changed ? "stopped" : "ready" }
     if (hold) { reads++; await new Promise<void>(resolve => { release = resolve }) }
     else if (reads) reads++
@@ -808,6 +726,8 @@ test("changing executable fences an old read and its queued follow-up", async ()
     release()
     await oldRead
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 30)))
+    // Authentication reads must not count as status checks or overwrite the held read.
+    await page.evaluate(() => fetch("/api/auth/status"))
     assert.equal(await page.getByText("old-opencode", { exact: true }).count(), 0)
     assert.equal(await page.getByText("OpenCode is connected.", { exact: true }).count(), 0)
     assert.equal(reads, 2)
@@ -1042,8 +962,8 @@ test("an outdated foreign OpenCode 2 is described by the minimum version, not as
 test("an older OpenCode occupying the user npm folder explains why OpenCode 2 cannot be installed beside it", async () => {
   const page = await browser.newPage()
   const occupying = "/home/fixture/.local/bin/opencode"
-  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "1.17.18", latestVersion: "2.1.2",
-    updateAvailable: true, canUpgrade: false, minimumVersion: "2.1.2", recommendedVersion: "2.1.2", binaryPath: occupying, installationSource: "path",
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "1.17.18", latestVersion: "2.2.3",
+    updateAvailable: true, canUpgrade: false, minimumVersion: "2.2.3", recommendedVersion: "2.2.3", binaryPath: occupying, installationSource: "path",
     foreignInstallation: { path: occupying, version: "1.17.18", source: "other", blocked: { reason: "occupied", path: occupying } },
     versionAssessment: "incompatible", target: "host", canRestart: false } }))
   try {

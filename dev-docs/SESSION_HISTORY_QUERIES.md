@@ -28,6 +28,16 @@ Agents use the same bundle's `codenomad.session_search` Code Mode tool to find
 past discussions. Native tool permissions govern execution. Backend presence
 owns both the tool and RPC registrations.
 
+## Stored-part coverage
+
+With `experimental.part_rows`, native assistant parts can reside in `session_part`
+beside an inline tail. CodeNomad's SQL history, search, outline/navigation, gallery
+and pruning readers use the shared `session-pruning/message-storage.ts` relation:
+ordinal split rows precede the inline tail, and all resulting part indexes use that
+combined order. Stored-byte bounds cover both forms before reconstruction. Existing
+split rows retain this read behavior after `part_rows` is disabled. Missions uses
+the same ordered-content SQL expression with its own read budgets and source fences.
+
 ## Scope and resource limits
 
 Session queries validate the session's current full native location and project.
@@ -318,12 +328,20 @@ workspace matches and ranked search with three diverse hits and exact two-sessio
 provenance. Pure ranking tests cover Unicode terms, frequency weights, phrase
 bonuses, diversity, dates and cap formatting. Synthetic SQLite/filesystem tests cover
 physical clone/worktree ownership, unknown identities and adversarial large-row
-first-yield responsiveness, tool-heavy rarity ranking, exact control/Unicode
+yield progress, tool-heavy rarity ranking, exact control/Unicode
 escape decoding and IDF isolation from unknown projections. The native fixture also checks dotted-capital-I and
 mixed-accent/Kelvin/long-s scalar matching, plus large-row bypass reporting.
 Synthetic SQLite tests cover scope,
 prefilter supersets and selectivity, multiline rarity ranking, bounded materialization, cancellation, yielding and time/candidate
 caps; registration tests exercise the tool, RPC, storage challenge and caller fences.
+
+The ignored-tool-metadata regression uses real SQLite rows and event-loop turns,
+advancing a controlled slice clock after each classification and body read. It
+asserts a turn before the next row when the 40 ms slice expires, streaming within
+a chunk, and prose-only JavaScript decode sizes below 64 KiB on 12.7 MB stored
+rows. Single-row SQLite projection and technical JSON decoding finish before a
+yield; their elapsed cost is machine/load-dependent and is measured separately.
+
 The parent fixture also checks active-generation refusal and
 pre-compaction discovery. Never point it at a user's DB or shared daemon; report
 native Windows, browser rendering and other platforms as separate validation claims.

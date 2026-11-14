@@ -1,4 +1,6 @@
+mod build_webkit;
 fn main() {
+    build_webkit::build(std::path::Path::new("src/embedded_view"));
     let manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");
@@ -50,6 +52,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "cli_get_status",
             "cli_restart",
+            "read_clipboard_attachments",
             "wake_lock_start",
             "wake_lock_stop",
             "notification_badge_set",
@@ -60,6 +63,9 @@ fn main() {
             "preferences_accept_request",
             "preferences_resolve_transition",
             "preferences_opener_startup_state",
+            "preferences_memory_cleanup",
+            "memory_cleanup_result",
+            "memory_cleanup_claim",
             "window_control",
             "owned_webview_zoom",
             "popup_titlebar_menu",
@@ -82,6 +88,8 @@ fn main() {
             "desktop_launch_ready",
             "desktop_launch_next_folder",
             "desktop_launch_acknowledge_folder",
+            "desktop_launch_next_connection",
+            "desktop_launch_acknowledge_connection",
             "install_desktop_update",
             "check_desktop_update",
             "take_desktop_update_failure",

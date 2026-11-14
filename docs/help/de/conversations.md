@@ -6,16 +6,28 @@ Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeuge
 
 Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt gedauert hat, und zählen live mit, solange er läuft; Dauern unter einer Sekunde werden nicht angezeigt. Wenn **Tokens** in **Nachrichteninhalt** angezeigt wird (die Voreinstellung **Alles** zeigt sie), endet jede Agentennachricht nach ihrem letzten Text mit einer Token- und Kostenzeile. Diese Zeile summiert die Nachricht und die Nachrichten mit den Werkzeugen und Denkprozessen, die ihre Aktion **Tools und Denkprozesse aus dieser Antwort entfernen** abdeckt, innerhalb des geladenen Verlaufs; klappen Sie sie für Denk- und Cache-Zähler auf. Schritte, die nur Werkzeuge ausgeführt haben, haben keine eigene Zeile.
 
+## Mermaid-Diagramme {#mermaid}
+
+Codeblöcke mit `mermaid` oder `mmd` werden nach Ende der Übertragung mit Mermaid Tiny dargestellt. **Quelltext anzeigen** / **Diagramm anzeigen** im Codekopf wechselt die Ansicht; Kopieren übernimmt den Quelltext. Tiny enthält keine Mindmaps, Architekturdiagramme oder KaTeX. Ungültige, nicht unterstützte oder zu große Diagramme behalten den Quelltext mit einer Fehlermeldung. Die lokale Darstellung ohne Netzwerk ist auf 50.000 Zeichen und 500 Kanten begrenzt.
+
 ## Unterhaltungen finden und navigieren {#navigate-conversations}
 
 1. Wählen Sie eine Zeile unter **Sitzungen** oder verwenden Sie **Neue Sitzung**, um eine übergeordnete Unterhaltung zu beginnen.
-2. Klappen Sie den Pfeil einer übergeordneten Sitzung auf, um deren Untersitzungen zu sehen. Ein eingeklappter Pfeil zeigt den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet oder kürzlich beendet (untätig); sein Tooltip zählt sie.
-3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein.
+2. Klicken Sie auf den Pfeil einer übergeordneten Sitzung, um deren Untersitzungen auf- oder einzuklappen und ihre Abzeichen beizubehalten. Ob auf- oder eingeklappt, zeigt der Pfeil den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet, wird komprimiert oder ist inaktiv; seine zugängliche Beschriftung zählt sie. Klicken Sie ihn mit der rechten Maustaste an und wählen Sie **Als gelesen markieren**, um die Abzeichen **Bereit** und **Unterbrochen** der Unterhaltung und aller Untersitzungen auf einmal zu entfernen.
+3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein. Ziehen Sie in Suchergebnissen über die Kontrollkästchen der Zeilen, um mehrere Unterhaltungen auf einmal aus- oder abzuwählen.
 4. Verwenden Sie **Zurück** und **Vorwärts** in der Seitenleiste, um zuvor angezeigte Unterhaltungen erneut aufzurufen.
 
-Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Einträge mit eigener Identität und eigenem Worktree jeder Unterhaltung. Eine neu arbeitende Untersitzung wird nur unter der Familie der aktiven Unterhaltung automatisch eingeblendet. Das Einklappen dieses Zweigs beendet diese automatische Einblendung für die derzeit laufenden Nachfahren.
+Klicken Sie auf **Bereit** oder **Unterbrochen** (**Ausblenden**), um das Abzeichen zu bestätigen, ohne die Unterhaltung zu öffnen; mit Tastaturfokus genügt Eingabe/Leertaste. Halten Sie mit Maus oder Stift ein Abzeichen gedrückt und ziehen Sie über weitere, um mehrere auszublenden; Touch-Ziehen scrollt weiterhin. Arbeit und ausstehende Eingabe-/Berechtigungsanfragen bleiben sichtbar. Beim Anzeigen wird **Bereit** ausgeblendet; **Unterbrochen** erfordert eine ausdrückliche Ausblendgeste. Bestätigungen werden mit dem Sitzungszustand dieses Fensters gespeichert; eine neue Unterbrechung zeigt das Abzeichen erneut. Ausblenden ändert nur die Anzeige; der Neuladepfeil lädt weiterhin Nachrichten neu.
+
+Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Einträge mit eigener Identität und eigenem Worktree jeder Unterhaltung. Unter **Einstellungen → Allgemein** ist **Untersitzungen automatisch aufklappen** standardmäßig aktiviert. Eine sichtbare eingeklappte Zeile öffnet die Pfade zu ihren aktiven Untersitzungen, wenn ihr Pfeil zu Arbeit, Komprimierung oder Eingabe erforderlich wechselt und sie ausgewählt ist oder zur Nachkommenschaft der ausgewählten Unterhaltung gehört. Diese Regel gilt auf jeder Ebene. Eine bereits aktive Zeile bleibt beim Hereinscrollen bis zu einem neuen Zustandswechsel geschlossen. Deaktivieren Sie die Option, damit Aktivität keine Zweige öffnet; manuelles Aufklappen und ausdrückliche Navigation bleiben verfügbar. Geöffnete Zweige, auch automatisch geöffnete, werden zur Wiederherstellung gespeichert.
 
 Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die Reihenfolge der Liste. Er bleibt im Arbeitsspeicher, überspringt nicht verfügbare/gelöschte Unterhaltungen und wird nach einem Neustart nicht wiederhergestellt. Die Auswahl einer neuen Unterhaltung nach dem Zurückgehen ersetzt den Vorwärtspfad. **Vorherige Sitzung** / **Nächste Sitzung** in der Palette durchlaufen stattdessen die sichtbare Liste.
+
+## Archivieren und wiederherstellen {#archive}
+
+Wählen Sie **Sitzung archivieren** in den Zeilenaktionen, um den Verlauf zu behalten und den inaktiven Zweig aus der normalen Ansicht auszublenden. Die ausgewählte Unterhaltung sowie laufende Arbeit und offene Fragen bleiben erreichbar. Archivieren beendet keine Arbeit, löscht keine Nachrichten und ändert nicht die eigenen Archivkennzeichen der Untersitzungen.
+
+Öffnen Sie die Sitzungssuche und wählen Sie **Archivierte Sitzungen** oder **Alle Sitzungen**. Die Zeilen zeigen **Archiviert** und bieten **Sitzung wiederherstellen**. Aktivieren Sie Untersitzungen, um Kinder auch unter archivierten Eltern unabhängig zu finden. **Nicht archivierte Sitzungen** filtert nach dem eigenen Kennzeichen jeder Unterhaltung. Stellen Sie einen archivierten Vorfahren wieder her, um seinen inaktiven Zweig wieder normal anzuzeigen. Aktualisieren Sie bei unbestätigter Aktion die Liste vor einem erneuten Versuch.
 
 ## Agent, Modell und Denkaufwand wählen {#agent-model-thinking}
 
@@ -47,6 +59,12 @@ Die Auswahl eines Skills entfernt das `@query`-Token und fügt einen Chip hinzu.
 Auf dem Desktop verschiebt Senden den Tastaturfokus in die Unterhaltung, sodass Pfeiltasten, Bildlauftasten und Leertaste sie scrollen; das Tippen eines Zeichens kehrt mit diesem Zeichen zum Eingabefeld zurück. **Prompt-Text löschen** in **Weitere Aktionen** (Standard **Ctrl/Cmd+K**) leert den Entwurf des Eingabefelds.
 
 Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrichten. Die Startwiederherstellung kann unterstützten Eingabezustand behalten; behandeln Sie einen ungesendeten Entwurf oder Anhang aber nicht als Sicherung und nehmen Sie nicht an, dass er auf einem anderen Gerät erscheint. Sichern Sie wichtigen Text vor dem Löschen von Startdaten oder dem Schließen eines Clients mit deaktivierter Wiederherstellung; siehe [Desktop](desktop.md).
+
+## Dateien aus Antworten öffnen {#open-files-from-replies}
+
+1. Agent-Antworten verlinken Projektdateien mit relativen und absoluten Pfaden.
+2. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
+3. Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees behalten das normale Linkverhalten.
 
 ## Befehle und Shell-Modus {#commands-shell}
 
@@ -82,6 +100,14 @@ Schlägt eine Warteschlangenänderung fehl, prüfen Sie vor dem Wiederholen die 
 Dies ist eine separate Modellanfrage mit dem Sitzungskontext. Sie führt keine Werkzeugschleife und keine Aktionen aus und hängt Frage/Antwort nicht an die Unterhaltung an. Datei-/Bildanhänge bleiben im Eingabefeld; eingefügter Text in der Frage wird als Text einbezogen. Dies ist weder eine neue dauerhafte Unterhaltung noch ein alternativer Weg zur Arbeitsvergabe.
 
 Schließen bricht die wartende Nebenanfrage ab, ohne die Hauptsitzung zu unterbrechen. Das Verlassen der aktiven Unterhaltung leert dieses flüchtige Fenster; kopieren Sie benötigte Inhalte vorher. Leere Antworten/Fehler erscheinen hier, nicht als Verlaufsnachrichten.
+
+## Mit /goal auf ein Ziel hinarbeiten {#goal}
+
+1. Senden Sie `/goal` gefolgt von einem Ziel, zum Beispiel `/goal Make every test pass`. Die Sitzung arbeitet Runde um Runde weiter, bis der Zielprüfer von OpenCode das Ziel als erreicht beurteilt.
+2. Solange die Unterhaltung ein Ziel hat, zeigt **Status** es in einer Zeile über **Tokens**: seinen Zustand (**Aktiv**, **Pausiert** oder **Erreicht**), das Ziel und die verbrauchten Runden vom erlaubten Maximum. Zeigen Sie auf das Ziel oder fokussieren Sie es, um es vollständig zu lesen, mit dem Grund der letzten Änderung, etwa warum das Ziel pausiert oder erreicht wurde.
+3. Verwenden Sie **Ziel pausieren** oder **Ziel fortsetzen** in dieser Zeile oder senden Sie `/goal pause` oder `/goal resume`. Mit **Ziel entfernen** oder `/goal clear` entfernen Sie das Ziel.
+
+Ein Ziel gehört zu seiner Unterhaltung: Untersitzungen und Abzweigungen beginnen ohne Ziel. OpenCode pausiert ein Ziel auch selbst, wenn Sie die Sitzung stoppen, ein Lauf fehlschlägt, kein Fortschritt mehr entsteht, das Rundenlimit erreicht ist oder der Dienst neu startet; setzen Sie es fort, um weiterzumachen. Pausieren oder Entfernen macht bereits erledigte Arbeit nicht rückgängig. Ein Befehl, der nicht passt, etwa Pausieren ohne aktives Ziel, zeigt die Meldung von OpenCode. Ohne Ziel oder mit einem OpenCode-Dienst ohne Zielunterstützung erscheint die Zeile nicht.
 
 ## Abzweigen, rückgängig machen und Fehler beheben {#fork-errors}
 

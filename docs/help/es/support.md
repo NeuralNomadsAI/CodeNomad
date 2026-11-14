@@ -1,4 +1,4 @@
-# Soporte y compilaciones desde el código fuente
+# Informes de errores y compilaciones desde el código fuente
 
 Usa el repositorio para informes de errores, versiones actuales y contribuciones. La [guía de solución de problemas](troubleshooting.md) cubre la recuperación segura antes de informar de una incidencia.
 
@@ -31,7 +31,7 @@ Para problemas de configuración nativa de OpenCode en lugar de controles de Cod
 
 ## Compilar desde el código fuente {#build-from-source}
 
-Usa Node.js **24.20.0**, fijado en `.node-version`, npm, Git y una CLI OpenCode compatible. Ejecuta los comandos desde una copia de desarrollo:
+Usa la versión de Node.js fijada en `.node-version`, npm, Git y una CLI OpenCode compatible. Ejecuta los comandos desde una copia de desarrollo:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git

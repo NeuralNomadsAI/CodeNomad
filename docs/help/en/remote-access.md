@@ -52,6 +52,14 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 Do not assume port 9898 or 9899: omitted ports can fall back when busy. An explicit nonzero `--https-port`, or `--http-port` with HTTP enabled, pins the port and fails if it cannot bind; `0` asks the OS to assign one. The printed **Local Connection URL** and **Remote Connection URL**, and refreshed **Reachable addresses**, are authoritative for that run. See the complete [server CLI reference](server.md).
 
+## Upgrading {#upgrading}
+
+Sign in again after upgrading. For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations.
+
+Use a loopback connection for host-only operations: SideCar content (`/sidecars/`) and WebSockets, Remote Control management (`/api/remote-control/`), the plugin bridge (`/api/opencode-plugin/`), remote proxies (`/api/remote-proxy/`), saved-server management (`/api/remote-servers/`), password changes and token bootstrap. These require loopback even when signed in through direct LAN access. Live preview content (`/previews/`) is available over direct LAN access with a valid capability token.
+
+The `/api/sidecars` registration APIs remain available to authenticated direct LAN clients and paired devices. Remote Control web previews remain available with their capability token while enabled on the host.
+
 ## Configure trusted TLS {#tls}
 
 ### Supply your own certificate {#custom-certificates}
@@ -88,5 +96,9 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 3. Choose **Save** to bookmark, or **Connect** to save and open it. Sign in on that server.
 
 Select a saved server on the home page's **Servers** tab to open it again. Bookmarks belong to this CodeNomad configuration, not the remote server's projects. Saving a URL does not start the server or grant access. **Remove saved server** removes the bookmark, not remote conversations, the backend or its credentials.
+
+To open a saved server straight from the command line, start the desktop app with `--connect-server <name>` (or `--connect-server=<name>`), using the server's saved name, or with its `https://` URL. CodeNomad opens only the remote window, with the same checks and sign-in as **Connect**; when CodeNomad is already running, its current window opens it instead of a new one. A URL that matches no saved server is saved under its host name. Launch values never carry credentials: a URL with a user name, password or pairing code is refused. If the name is unknown, the URL is invalid or the connection fails, CodeNomad starts normally and shows the error. When the connection needs a confirmation, such as installing the local certificate for a self-signed server, CodeNomad also starts normally and asks there. On Windows, the Tauri build refuses to start when a launch argument contains `|`; use the server's URL instead, or rename the server.
+
+A remote window always leaves a way back to this computer. Closing the last local window while remote windows stay open keeps its tabs: **Window → New Window** in a remote window, or starting CodeNomad again, reopens it. If a server cannot be loaded, its window says so and offers **Try again**, **Open a local window** and **Close window**; in the Tauri build, use the page's reload button and **Window → New Window**.
 
 For Remote Control, paste a fresh pairing link into **Server URL** instead. The bookmark retains only the tunnel origin, never the one-use pairing code; see [Remote Control](remote-control.md) for re-pairing after device-cookie loss.

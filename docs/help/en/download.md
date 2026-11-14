@@ -11,10 +11,10 @@ Free and open-source (MIT) desktop app for Windows, macOS and Linux. It connects
 | Platform | Tauri (recommended) | Electron |
 | --- | --- | --- |
 | Windows 10 or later | [Installer, x64](release:tauri-windows-x64) | [ZIP, x64](release:electron-windows-x64) |
-| macOS 13.5 or later | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
+| macOS — Tauri 14+; Electron 13.5+ | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (tested on Ubuntu 24.04) | [AppImage, x64](release:tauri-linux-x64) | [Debian package, x64](release:electron-linux-x64) |
 
-Both builds provide the same workspace. Tauri can install updates from within the app; Electron is updated by downloading a new release and supports native browser automation on every platform (Tauri on Windows only). [Compare the builds](install.md#desktop-downloads).
+Both builds provide the same workspace and native agent browser automation on Windows, macOS and Linux. Tauri can install updates from within the app; Electron is updated by downloading a new release. Tauri macOS/Linux use native WebKit mobile profiles with engine-specific density and input limits. [Compare the builds](install.md#desktop-downloads).
 
 ## Package managers {#package-managers}
 
@@ -39,3 +39,9 @@ Download only from this page or the [official releases](https://github.com/Neura
 - **Linux**: make the AppImage executable or install the Debian package; see [Install on Linux](install.md#linux-install).
 - **macOS**: if macOS blocks the first launch, see [macOS quarantine](troubleshooting.md#macos-quarantine).
 - **Every platform**: install Git and a compatible OpenCode CLI as listed in the [requirements](install.md#requirements), then [select OpenCode on first launch](install.md#first-launch). Other launch problems are covered in [troubleshooting](troubleshooting.md#desktop-launch).
+
+## Support development {#support-development}
+
+CodeNomad is free and maintained by volunteers in their own time. If it is useful to you or your team, sponsoring helps keep it maintained and compatible with new OpenCode releases. The [Support CodeNomad](sponsor.md) page explains what sponsorship pays for.
+
+{{funding}}

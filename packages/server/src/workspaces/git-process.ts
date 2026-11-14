@@ -1,6 +1,6 @@
 import { Worker } from "node:worker_threads"
 
-interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background"; encoding?: "utf8" | "base64" }
+interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background"; encoding?: "utf8" | "base64"; env?: NodeJS.ProcessEnv }
 interface GitRequest extends GitProcessOptions { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv }
 interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null } }
 
@@ -68,9 +68,9 @@ function getWorker(): Worker {
   return created
 }
 
-export function runWorktreeGit(directory: string, args: string[], timeout?: number): Promise<string> {
+export function runWorktreeGit(directory: string, args: string[], timeout?: number, env?: NodeJS.ProcessEnv): Promise<string> {
   // Ownership and inventory reads must not wait behind an entire display batch.
-  return runGitProcess(directory, args, { timeout, priority: "foreground" }).then(stdout => stdout.replace(/\r?\n$/, ""))
+  return runGitProcess(directory, args, { timeout, priority: "foreground", env }).then(stdout => stdout.replace(/\r?\n$/, ""))
 }
 
 // Content/diff readers need exact bytes decoded as UTF-8, including the final newline.
@@ -81,7 +81,7 @@ export function runGitProcess(directory: string, args: string[], options: GitPro
     pending.set(id, { resolve, reject })
     current.ref()
     try {
-      current.postMessage({ id, directory, args, env: { ...process.env }, ...options } satisfies GitRequest)
+      current.postMessage({ id, directory, args, ...options, env: { ...process.env, ...options.env } } satisfies GitRequest)
     } catch (error) {
       pending.delete(id)
       if (pending.size === 0) current.unref()

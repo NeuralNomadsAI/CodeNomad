@@ -8,6 +8,9 @@ import { messageStoreBus } from "./message-v2/bus.ts"
 import {
   clearInstanceDraftPrompts,
   clearInstanceSessionSelection,
+  activeParentSessionId,
+  activeSessionId,
+  hasAuthoritativeSessionSelection,
   getSessionDraftPrompt,
   setSessions,
 } from "./session-state.ts"
@@ -68,6 +71,39 @@ it("restores the selected draft before inactive session hydration settles", asyn
     clearInstanceDraftPrompts(instanceId)
     clearInstanceSessionSelection(instanceId)
     setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+    removeInstance(instanceId, { authoritative: false })
+    sdkManager.destroyClientsForInstance(instanceId)
+  }
+})
+
+it("waits for a saved Info selection's parent without claiming user-selection authority", async () => {
+  const instanceId = "saved-info-parent"
+  const parent = deferred<any>()
+  const client = { session: { get: ({ sessionID }: { sessionID: string }) => {
+    assert.equal(sessionID, "parent")
+    return parent.promise
+  } } } as any
+  ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+  addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  try {
+    const hydration = hydrateRestoredWorkspaceState(instanceId, {
+      kind: "workspace", folder: "/work", activeParentSessionId: "parent", activeSessionId: "info",
+      drafts: { parent: "saved draft" }, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+    }, new AbortController().signal, () => true)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(activeParentSessionId().get(instanceId), "parent")
+    assert.equal(activeSessionId().get(instanceId), "info")
+    assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
+    parent.resolve(apiSession("parent"))
+    await hydration
+    assert.equal(activeSessionId().get(instanceId), "parent")
+    assert.equal(getSessionDraftPrompt(instanceId, "parent"), "saved draft")
+    assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
+  } finally {
+    if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    clearInstanceDraftPrompts(instanceId)
+    clearInstanceSessionSelection(instanceId)
+    setSessions(previous => { const next = new Map(previous); next.delete(instanceId); return next })
     removeInstance(instanceId, { authoritative: false })
     sdkManager.destroyClientsForInstance(instanceId)
   }

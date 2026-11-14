@@ -1,6 +1,8 @@
 import { createMemo, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import SessionList from "../../../src/components/session-list"
+import { MissionSourceSelect } from "../../../src/components/mission-source-select"
+import { createMissionEditorSources } from "../../../src/components/mission-editor-sources"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
@@ -22,6 +24,7 @@ const items = [
   make("child", "Child needle", "/repo", 4, "parent"),
   make("grandchild", "Deep needle", "/feature", 3, "child"),
   make("local", "Local conversation", "/repo", 2),
+  make("ses_cn_schedule_fixture", "Carrier needle", "/repo", 6),
 ]
 const orphan = make("orphan", "Remote content match", "/feature", 5, "unloaded-parent")
 const searches: unknown[] = [], selected: string[] = []
@@ -45,17 +48,22 @@ serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
 ] })
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
 setSessions(previous => new Map(previous).set(id, new Map(items.map(item => [item.id, item]))))
-setSessionPage(id, ["parent", "local"], false, true)
+setSessionPage(id, ["parent", "local", "ses_cn_schedule_fixture"], false, true)
 await ensureWorktreesLoaded(id)
 const [searchMode, setSearchMode] = createSignal(true)
 const [active, setActive] = createSignal<string | null>(null)
+const [source, setSource] = createSignal("")
 function Fixture() {
-  const threads = createMemo(() => buildSessionThreadsFromMap(sessions().get(id)!, ["parent", "local"]))
+  const threads = createMemo(() => buildSessionThreadsFromMap(sessions().get(id)!, ["parent", "local", "ses_cn_schedule_fixture"]))
+  const sources = createMissionEditorSources({ instanceId: id, projectID: "fixture", directory: () => "/repo",
+    kinds: () => ["conversation-message"], selected: () => source() ? [{ kind: "conversation-message", id: source() }] : [],
+    active: () => true, captureView: () => () => true })
   return <ConfigProvider><I18nProvider><div style={{ width: "440px", height: "650px", display: "flex" }}>
     <SessionList instanceId={id} threads={threads()} activeSessionId={active()} onSelect={value => { selected.push(value); setActive(value) }}
       onNew={() => {}} enableFilterBar={searchMode()} showHeader={false} showFooter={false} />
-  </div></I18nProvider></ConfigProvider>
+  </div><MissionSourceSelect label="Criterion 1 source" value={source()} choices={sources.sources()["conversation-message"]}
+    paging={sources.reader("conversation-message", source())} onChange={setSource} /></I18nProvider></ConfigProvider>
 }
 render(() => <Fixture />, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).fixture = { searches, selected, parentReads: () => parentReads, setSearchMode }
+;(window as any).fixture = { searches, selected, parentReads: () => parentReads, setSearchMode, source }

@@ -31,7 +31,11 @@ Ersteinrichtung wird nur vom eigenen Loopback-Listener des Hosts angenommen, nic
 
 Direkte Anmeldung erzeugt eine undurchsichtige Backend-Sitzung im Arbeitsspeicher und ein `codenomad_session`-Cookie (oder den konfigurierten Cookie-Namen). Cookies sind `HttpOnly`, `SameSite=Lax`, auf `/` begrenzt und bei Ausgabe über HTTPS als `Secure` markiert. Es sind Browsersitzungs-Cookies; ein Backend-Neustart macht die Sitzungen im Speicher ungültig. Authentifizieren Sie sich bei Aufforderung an Ort und Stelle neu, statt fehlgeschlagene Änderungen erneut zu senden.
 
-Ein Passwortwechsel ändert spätere Zugangsdatenprüfungen; er macht bereits ausgegebene Direkt-Sitzungen oder Fernsteuerungsgeräte **nicht** ungültig. Bei Kompromittierungsverdacht:
+Abmelden widerruft die aktuelle direkte Sitzung. Ein erfolgreicher Passwortwechsel auf dem Host widerruft alle direkten Sitzungen dieses Benutzers einschließlich der aufrufenden Sitzung; melden Sie sich erneut an. Sitzungen laufen nach 24 Stunden ohne authentifizierte Anfrage oder sieben Tagen seit Erstellung ab. Passen Sie diese Grenzen vor dem Backend-Start mit `CODENOMAD_SESSION_IDLE_SECONDS` und `CODENOMAD_SESSION_ABSOLUTE_SECONDS` als positive ganze Sekunden an. Fernsteuerungsgeräte werden separat widerrufen.
+
+LAN-Clients können sich an- und abmelden und Projekte nutzen. Passwortänderungen, Fernsteuerungsverwaltung, Remote-Server-/Proxy-Werkzeuge und SideCars werden auf dem Loopback-Host verwaltet. Browseränderungen benötigen einen erlaubten Origin oder ersatzweise Referer. Die veröffentlichten Server-Ursprünge sind erlaubt; für DNS-Aliasse, Reverse-Proxys oder eine separat gehostete Oberfläche setzen Sie `CODENOMAD_ALLOWED_ORIGINS` auf kommagetrennte exakte HTTP(S)-Ursprünge, etwa `https://code.example.test,https://ui.example.test:8443`, und starten neu. Verwenden Sie keine Pfade oder Platzhalter. Dies gewährt Browserzugriff, keine Host-Rechte. Native LAN-Clients müssen bei Änderungen ebenfalls einen erlaubten Origin senden. Ein vertrauenswürdiger Proxy über Loopback hat Host-Rechte und benötigt eigene Zugriffskontrollen. Lauscht der Server auf Loopback oder auf allen Schnittstellen, funktioniert die Oberfläche auf dem Host auch unter `localhost` mit demselben Schema und Port.
+
+Bei Kompromittierungsverdacht:
 
 1. Begrenzen Sie die Netzwerkfreigabe und setzen Sie auf dem Host ein neues Passwort oder ändern Sie Ihr Laufzeitgeheimnis und starten neu.
 2. Starten Sie das Backend neu, um vorhandene Direkt-Sitzungen ungültig zu machen.
@@ -70,4 +74,4 @@ OpenCode verwaltet Anbieterverbindungen und seinen globalen Unterhaltungsspeiche
 | Anbieterschlüssel und Sprachzugangsdaten | Nur in den vorgesehenen Einstellungen/beim Zugangsdatenverwalter eingeben; prüfen, welcher Anbieter Daten erhält. Siehe [Sprache](voice.md). |
 | Debug-/Trace-Logs und Netzwerkmitschnitte | Nur Nötiges sammeln, lokal prüfen und vor Meldung schwärzen. Nicht voraussetzen, dass jede nachgelagerte Werkzeugausgabe frei von Geheimnissen ist. |
 
-**Einstellungen → Info → Fehler melden** bereitet begrenzte Diagnosen vor, ohne Listener, Adressen, Pfade, Zugangsdaten oder Unterhaltungsinhalte vorauszufüllen. Prüfen Sie vor dem Absenden alles selbst Ergänzte. Siehe [Support](support.md).
+**Einstellungen → Info → Fehler melden** bereitet begrenzte Diagnosen vor, ohne Listener, Adressen, Pfade, Zugangsdaten oder Unterhaltungsinhalte vorauszufüllen. Prüfen Sie vor dem Absenden alles selbst Ergänzte. Siehe [Fehlerberichte und Quellcode-Builds](support.md#report-a-bug).

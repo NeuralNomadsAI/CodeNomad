@@ -1,6 +1,7 @@
 import Switch from "@suid/material/Switch"
 import { Show, type Component } from "solid-js"
 import { SettingsInfoTip } from "./settings-info-tip"
+import type { HelpDestination } from "../../lib/help-url"
 
 interface SettingsSwitchProps {
   checked: boolean
@@ -11,6 +12,12 @@ interface SettingsSwitchProps {
   onChange: (checked: boolean) => void
 }
 
+/** The checked colour of an accent switch: the theme accent, as CSS, so palettes apply. */
+export const ACCENT_SWITCH_SX = {
+  "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--accent-primary)" },
+  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--accent-primary)" },
+}
+
 /** On/off control for a lone setting: the Yolo switch, in the plain accent color. */
 export const SettingsSwitch: Component<SettingsSwitchProps> = (props) => (
   <Switch
@@ -18,10 +25,7 @@ export const SettingsSwitch: Component<SettingsSwitchProps> = (props) => (
     checked={props.checked}
     disabled={props.disabled}
     size="small"
-    sx={{
-      "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--accent-primary)" },
-      "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--accent-primary)" },
-    }}
+    sx={ACCENT_SWITCH_SX}
     inputProps={{ role: "switch", "aria-label": props.label, "aria-describedby": props.describedBy }}
     onChange={(_event, checked) => props.onChange(Boolean(checked))}
   />
@@ -33,6 +37,7 @@ interface SettingsChoiceRowProps {
   caption?: string
   /** Secondary explanation behind an "i" beside the title instead of a caption. */
   info?: string
+  help?: HelpDestination
   disabled?: boolean
   onChange: (checked: boolean) => void
 }
@@ -41,7 +46,7 @@ interface SettingsChoiceRowProps {
 export const SettingsChoiceRow: Component<SettingsChoiceRowProps> = (props) => (
   <label class="settings-toggle-row settings-choice-row" classList={{ "opacity-60": Boolean(props.disabled) }}>
     <span>
-      <span class="settings-toggle-title">{props.title}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} />}</Show></span>
+      <span class="settings-toggle-title">{props.title}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} help={props.help} />}</Show></span>
       <Show when={props.caption}><span class="settings-toggle-caption">{props.caption}</span></Show>
     </span>
     <input

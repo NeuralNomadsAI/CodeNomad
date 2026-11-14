@@ -22,6 +22,7 @@
   "reportProblem": "דיווח על בעיה",
   "download": { "label": "הורדה", "windows": "הורדה ל־Windows", "windowsDetail": "מתקין, x64", "macos": "הורדה ל־macOS", "macosDetail": "Apple Silicon", "intel": "Mac עם Intel? הורידו את גרסת Intel", "linux": "הורדה ל־Linux", "linuxDetail": "AppImage, x64", "mobile": "השתמשו ב־CodeNomad מהטלפון", "mobileDetail": "צמדו את הטלפון למחשב שמריץ את CodeNomad." },
   "tour": { "label": "תצוגה מקדימה שקטה של CodeNomad 1.0: משימה עם תת־סוכנים במקביל, השוואה עיוורת בין מודלים, השוואת שינויים ב־Git, חיפוש בהיסטוריה של סביבת העבודה, לשוניות פרויקטים וערכות צבעים", "poster": "חלונות CodeNomad 1.0: משימות, טופס שאלות, השוואת שינויים, שינויי Git והשוואת מודלים", "caption": "צפו בסיור המלא בן 90 השניות ב־YouTube" },
+  "funding": { "label": "חסות", "action": "מתן חסות דרך {channel}", "recipient": "התשלום מועבר אל {recipient}" },
   "github": "GitHub",
   "languageLabel": "שפה",
   "projectLinks": "קישורי הפרויקט",

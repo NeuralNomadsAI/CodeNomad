@@ -295,6 +295,7 @@ pub fn setup_local_window(
     window: &tauri::WebviewWindow,
     window_id: &str,
     persisted: bool,
+    show: bool,
 ) -> Result<(), String> {
     #[cfg(windows)]
     crate::windows_browser_accelerators::bind(window.as_ref());
@@ -313,7 +314,9 @@ pub fn setup_local_window(
     register_native_zoom_handler(window, app, window_id.to_string(), persisted);
     if !client_state.is_primary() || !persisted {
         crate::window_constraints::register(&window.as_ref().window(), initial_zoom);
-        let _ = window.show();
+        if show {
+            let _ = window.show();
+        }
         return Ok(());
     }
 
@@ -416,7 +419,7 @@ pub fn setup_local_window(
     }
     let app_handle = app.clone();
     let window_label = window.label().to_string();
-    let show = window_id != crate::preferences_window::LABEL;
+    let show = show && window_id != crate::preferences_window::LABEL;
     let window_id = window_id.to_string();
     window.on_window_event(move |event| match event {
         WindowEvent::Resized(_)

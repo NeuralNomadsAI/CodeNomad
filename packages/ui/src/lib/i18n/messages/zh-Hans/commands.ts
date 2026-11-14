@@ -1,5 +1,6 @@
 export const commandMessages = {
   "commands.openHelp.failed": "无法在浏览器中打开帮助。请手动访问 https://neuralnomadsai.github.io/CodeNomad/。",
+  "commands.openSponsor.failed": "无法在浏览器中打开“赞助 CodeNomad”页面。请手动访问 {url}。",
   "commandPalette.title": "命令面板",
   "commandPalette.description": "搜索并执行命令",
   "commandPalette.searchPlaceholder": "输入命令或搜索...",
@@ -174,6 +175,9 @@ export const commandMessages = {
   "commands.openHelp.label": "打开帮助",
   "commands.openHelp.description": "在浏览器中打开 CodeNomad 用户指南",
   "commands.openHelp.keywords": "帮助, 指南, 文档",
+  "commands.openSponsor.label": "赞助 CodeNomad",
+  "commands.openSponsor.description": "打开关于赞助 CodeNomad 及其他帮助方式的页面",
+  "commands.openSponsor.keywords": "支持, 赞助, 捐赠, 捐款, 资助, 贡献",
   "commands.openAbout.label": "关于 CodeNomad",
   "commands.openAbout.description": "在设置中显示版本、更新和诊断信息",
   "commands.openAbout.keywords": "关于, 版本, 更新, 诊断",

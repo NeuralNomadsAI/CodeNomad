@@ -7,7 +7,7 @@ CodeNomad expose les connexions MCP natives, l’activation des plugins, les com
 | Intégration | Où agir | Ce que la commande change |
 | --- | --- | --- |
 | Serveur MCP | **Statut → Serveurs MCP** | Connexion native à la Location affichée ; n’installe pas de serveur. |
-| Plugin natif | **Statut → Plugins** | Règle d’activation persistante **Global** ou **Projet** ; pour un plugin issu d’un paquet, vérification ou mise à jour explicite de ce paquet. N’installe ni ne retire de paquets. |
+| Plugin natif | **Statut → Plugins** | Ajoute ou retire la déclaration d’un paquet, et fixe une règle d’activation persistante **Global** ou **Projet** ; pour un plugin issu d’un paquet, vérification ou mise à jour explicite de ce paquet. |
 | Compétence | Menu `@` de saisie | Pièce jointe explicite au prochain prompt dans la Location de la conversation. |
 | Commande personnalisée | Menu `/` de saisie | Exécute une commande exposée par OpenCode pour cette Location. |
 
@@ -25,7 +25,13 @@ Si aucun serveur n’apparaît, vérifiez la Location active et sa configuration
 
 ## Activer les plugins à la portée Global ou Projet {#plugins}
 
-1. Installez/déclarez le plugin natif avec OpenCode ; puis ouvrez **Statut → Plugins**.
+Les plugins gérés par CodeNomad restent hors de la liste ordinaire et de ses contrôles d’activation, de mise à jour et de retrait. CodeNomad les reconnaît à leur entrée d’installation validée et à l’emplacement de leur code identifié par son empreinte de contenu ; un plugin tiers de même nom ou ID conserve ses contrôles ordinaires.
+
+Si un plugin géré est désactivé, échoue au chargement ou reste sans confirmation de chargement, **Les plugins CodeNomad nécessitent votre attention** apparaît au-dessus de la liste Plugins. Ouvrez son bouton **i** (**Détails de** ce plugin) pour consulter l’erreur disponible et sa référence dans le journal OpenCode. Seul un plugin désactivé propose **Réactiver** : cette action ajoute une règle d’activation positive pour son ID exact, en conservant la règle de désactivation. Elle écrit dans la portée **Global** ou **Projet** de la règle de désactivation si elle est modifiable, sinon dans **Projet**. OpenCode continue de fonctionner ; l’avertissement reste jusqu’à ce que les événements natifs ou **Actualiser les contrôles des plugins** confirment que le plugin est actif.
+
+L’avertissement et ses détails indiquent l’origine de configuration **Héritée / externe** ou **Configuration virtuelle** selon le cas. Un libellé **Projet** distinct indique la destination de réactivation lorsqu’elle diffère de l’origine de la règle de désactivation.
+
+1. [Ajoutez le plugin](#plugin-sources) ou déclarez-le dans la configuration d’OpenCode ; puis ouvrez **Statut → Plugins**.
 2. Survolez ou focalisez son nom pour inspecter source, échec d’exécution et détails de cible de configuration.
 3. Basculez délibérément **Global** ou **Projet**. Attendez l’écriture et utilisez **Actualiser les contrôles des plugins** si l’état est incertain.
 4. Pour un plugin installé depuis un paquet, utilisez l’icône à côté de son nom. Son menu nomme l’opération exacte : **Vérifier les mises à jour de** ce paquet, ou le **Mettre à jour** une fois une version plus récente trouvée.
@@ -37,6 +43,21 @@ Ces commutateurs ajoutent des règles d’activation exactes en préservant les 
 Une mise à jour de paquet modifie ce paquet dans le cache partagé d’OpenCode pour toutes les Locations qui l’utilisent, comme l’indique son infobulle ; elle ne change pas les règles d’activation, ne redémarre pas OpenCode et ne recharge pas la configuration. Les plugins locaux, intégrés et fournis par le SDK n’ont pas d’action de paquet. Un paquet qui échoue avant de communiquer l’ID de son plugin est listé sous son nom de paquet, avec l’échec dans son infobulle et les actions de vérification/mise à jour, mais sans commutateurs d’activation. Une vérification ou mise à jour échouée est signalée et jamais réessayée automatiquement.
 
 La surface conserve son dernier instantané quand elle est masquée et le revalide à l’affichage, aux changements natifs/reconnexions et à l’actualisation explicite. Une règle enregistrée et la disponibilité réelle peuvent brièvement différer. Si un plugin reste indisponible, inspectez son infobulle et sa configuration native avant **Recharger la configuration OpenCode** ; cette action affecte toutes les Locations chargées, pas seulement ce plugin. Une configuration mal formée ou une modification concurrente n’est pas écrasée silencieusement : résolvez-la, actualisez et réessayez explicitement.
+
+## Ajouter ou retirer un plugin {#plugin-sources}
+
+1. Dans **Statut → Plugins**, ouvrez **+** et choisissez **Ajouter un plugin…**.
+2. Saisissez un paquet du registre npm (`nom`, `nom@1.2.3`, `@scope/nom@^1`) ou un dépôt Git (`github:propriétaire/dépôt`, `git+https://…`).
+3. Gardez **Global**, sauf si le plugin ne doit s’exécuter que pour ce projet, puis choisissez **Ajouter**.
+4. La nouvelle ligne affiche **Installation** jusqu’à ce qu’OpenCode la signale. Elle devient alors une ligne de plugin ordinaire avec ses commutateurs, ou une ligne en échec.
+
+Pour retirer un plugin, ouvrez le menu à côté de son nom et choisissez **Retirer de Global** ou **Retirer de Projet**. Seule la déclaration du fichier de configuration de cette portée est supprimée ; ses règles d’activation **Global**/**Projet** restent des règles, et le cache de paquets d’OpenCode reste en place.
+
+Le code du plugin s’exécute avec vos droits dans OpenCode. Une entrée **Projet** s’exécute chaque fois que ce dossier est ouvert dans OpenCode, et les paquets qui ont des parties pour l’application de bureau d’OpenCode ne les chargent que depuis **Global** ; l’infobulle le signale quand un tel paquet est déclaré ailleurs. Les chemins locaux, les variables de configuration et les ID de plugin sont refusés ici : déclarez les plugins locaux dans le fichier de configuration. Un paquet déjà déclaré dans une configuration qui s’applique à cette Location est refusé, quelle que soit sa version, sa plage ou sa forme.
+
+Une intégration OpenCode du catalogue revu (par exemple l’intégration Blender) est reconnue avant son installation. Celle qui a une partie dans une application s’ajoute en **Global** seulement : **Projet** est refusé pour elle. Son paquet du registre et ses builds Git comptent comme un seul paquet : ajouter une seconde forme d’une intégration déjà déclarée ou chargée est refusé.
+
+Survolez ou ciblez le nom d’un plugin pour voir sa version, **Mise à jour disponible** et, pour une installation en échec, l’erreur avec sa référence dans le journal d’OpenCode. Une ligne qu’OpenCode n’a pas signalée au bout de deux minutes affiche **Non confirmé** avec l’action **Actualiser les contrôles des plugins** : le plugin est peut-être désactivé, ou son installation n’a jamais abouti (voir [Dépannage](troubleshooting.md#providers-and-addons)).
 
 ## Joindre des compétences {#skills}
 
@@ -57,3 +78,30 @@ Les compétences disponibles viennent de la Location de la conversation, pas d�
 Les commandes sont découvertes depuis OpenCode pour la Location active. Leur définition native peut choisir le comportement d’exécution ; le menu n’est ni un installateur de paquets ni un éditeur de configuration sans restriction. CodeNomad applique l’environnement de session du profil avant la soumission native ; un échec de mise à jour d’environnement bloque l’envoi. `/btw` est le parcours distinct de question éphémère de CodeNomad, pas une commande personnalisée ordinaire.
 
 Pour les définitions de commandes et l’héritage de configuration natif, utilisez la [documentation des commandes OpenCode](https://opencode.ai/v2/docs/commands/). Après des changements de configuration, actualisez/rouvrez d’abord la surface concernée ; ne rechargez explicitement la configuration que si l’environnement d’exécution en a encore besoin. Ne rejouez jamais une commande peut-être admise uniquement pour rafraîchir son affichage.
+## Intégrations dans Plugins {#integration-rows}
+
+Dans **Statut → Plugins**, **+** propose **Ajouter une intégration…** ou **Ajouter un plugin…**. Le sélecteur d’intégrations liste les entrées non installées du catalogue revu. Choisissez la portée puis **Installer** : CodeNomad installe l’ID du catalogue choisi. Les intégrations natives sont **Global uniquement**. **Catalogue indisponible** propose **Actualiser** ; **Catalogue du {date}** indique le dernier catalogue valide s’il est périmé.
+
+Une intégration reconnue a une seule ligne dans **Statut → Plugins**, avec son nom (par exemple **OpenCode for Blender**) et sa version. Ses interrupteurs **Global** et **Projet** prennent la couleur d’accent comme les autres interrupteurs, ceux d’un plugin simple sont verts ; une intégration qui a une partie dans une application est **Global uniquement**. Survolez ou focalisez son nom : les détails commencent par **Intégration** au lieu de **Plugin**. Une source ambiguë affiche **Non conforme**.
+
+Pour une intégration qui a une partie dans une application, un bouton chaînon indique la conversation affichée : enfoncé et chaînon fermé avec **Rattachée à :** et le document, chaînon rompu avec **Aucune conversation rattachée**, estompé avec **Rattachement inconnu** quand l’intégration ne sait pas le dire. Activez-le pour rattacher la conversation : avec un seul document ouvert, elle est rattachée aussitôt ; avec plusieurs, un menu demande **Rattacher à quel document ?**. Activez-le de nouveau pour la détacher. Sans conversation affichée ni document ouvert, il est indisponible et son infobulle en donne la raison. Une conversation se rattache aussi d’elle-même la première fois que son agent utilise l’intégration. Une icône d’alerte n’apparaît que si la partie installée dans l’application est absente, à mettre à jour ou incompatible. Les changements signalés par l’intégration et les reconnexions actualisent la ligne.
+
+Le menu **…** de la ligne commence par l’état de la connexion, par exemple **Blender : 1 document ouvert** ou **Blender fermé**. Il propose ensuite **Installer dans l'application…** ou **Mettre à jour l'application…** quand c’est possible ([voir plus bas](#application-installation)), **Détacher la conversation** quand la conversation affichée est rattachée, la vérification des mises à jour du package, **Retirer de Global** ou **Retirer de Projet**, et **Actualiser les contrôles des plugins**. Détacher se fait en un clic, sans confirmation, et ne concerne que cette conversation : l’application reste ouverte, sa partie reste installée et les autres conversations gardent leur rattachement. Si la réponse est perdue, la ligne relit l’état ; la requête n’est jamais répétée.
+
+L’installation depuis le catalogue, l’installation ou la mise à jour de la partie dans l’application et le retrait demandent une confirmation. **Annuler** reçoit d’abord le focus ; l’action de confirmation devient disponible après 600 ms. L’activation, les mises à jour de plugins, le rattachement et le détachement s’exécutent directement.
+
+Le retrait se fait sans recensement des conversations ni détachement automatique.
+
+Retirer un plugin ouvre un avertissement nommant le plugin et sa portée exacte. **Annuler** reçoit le focus ; **Retirer de Global/Projet** devient disponible après 600 ms et exige une action explicite. Le retrait peut interrompre la disponibilité et les connexions des conversations utilisant le plugin ; Global peut aussi affecter d’autres projets. Annuler, laisser expirer ou naviguer avant l’envoi conserve tout inchangé. Seule la déclaration confirmée est retirée : règles d’activation, cache, fichiers d’application et indications d’attachement sont conservés. Une configuration modifiée exige une nouvelle sélection et confirmation. Le succès confirme le retrait de la déclaration ; l’état effectif suit le rechargement d’OpenCode. Si la réponse est perdue, actualisez Plugins pour vérifier la configuration avant une nouvelle tentative. Réinstaller peut rétablir la disponibilité ; un rechargement ou rattachement peut être nécessaire, sans reprise garantie des opérations interrompues.
+
+## Installer ou mettre à jour l’intégration de l’application {#application-installation}
+
+Dans **Statut → Plugins**, ouvrez le menu **…** de l’intégration et choisissez **Installer dans l'application…** ou **Mettre à jour l'application…** quand son état à jour propose l’action ; l’icône d’alerte de la ligne en donne la raison. L’action est disponible sans conversation ni document ouvert. Si l’application est fermée, ouvrez-la pour vérifier sa partie installée.
+
+La confirmation indique l’application et la **version du paquet d’intégration** qui fournit l’installateur. Vérifiez ces informations et l’avertissement sur la machine : l’installation a lieu sur la machine où tourne OpenCode, qui peut être distante. **Annuler** reçoit le focus initial. Confirmez explicitement pour continuer. Changer de projet, de Location ou de conversation, se reconnecter ou recevoir un changement natif pertinent avant la confirmation annule l’accord en attente ; rouvrez l’action pour examiner les informations à jour.
+
+WSL refuse toujours l’installation dans l’application, même si une application ouverte semble compatible. Ouvrez l’application sur une machine compatible.
+
+Le résultat indique que la partie dans l’application a été installée, mise à jour, était déjà à jour, a été refusée ou a échoué. Après une installation ou une mise à jour, ouvrez l’application et vérifiez son intégration. Le succès de l’installation décrit la requête de l’installateur ; la disponibilité réelle de l’application vient de son état.
+
+Les requêtes ne sont jamais relancées automatiquement. Après un refus ou un échec, vérifiez l’application avant de choisir une nouvelle action. Si une erreur rend le résultat incertain, ne répétez jamais cette requête : examinez d’abord l’application, puis lancez une nouvelle action avec confirmation si nécessaire.

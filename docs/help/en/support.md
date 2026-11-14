@@ -1,4 +1,4 @@
-# Support and source builds
+# Bug reports and source builds
 
 Use the repository for bug reports, current releases and contributions. The [troubleshooting guide](troubleshooting.md) covers safe recovery before you report an issue.
 
@@ -31,7 +31,7 @@ For issues with native OpenCode configuration rather than CodeNomad controls, co
 
 ## Build from source {#build-from-source}
 
-Use Node.js **24.20.0**, as pinned in `.node-version`, npm, Git and a compatible OpenCode CLI. Run the commands from a development checkout:
+Use the Node.js version pinned in `.node-version`, npm, Git and a compatible OpenCode CLI. Run the commands from a development checkout:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git

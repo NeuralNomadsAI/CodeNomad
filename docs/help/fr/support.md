@@ -1,4 +1,4 @@
-# Assistance et compilation depuis les sources
+# Signalement de bugs et compilation depuis les sources
 
 Utilisez le dépôt pour les signalements de bugs, versions actuelles et contributions. Le [guide de dépannage](troubleshooting.md) couvre la récupération sûre avant de signaler un problème.
 
@@ -31,7 +31,7 @@ Pour les problèmes de configuration native OpenCode plutôt que de commandes Co
 
 ## Compiler depuis les sources {#build-from-source}
 
-Utilisez Node.js **24.20.0**, épinglé dans `.node-version`, npm, Git et une CLI OpenCode compatible. Exécutez les commandes depuis une copie de développement :
+Utilisez la version de Node.js épinglée dans `.node-version`, npm, Git et une CLI OpenCode compatible. Exécutez les commandes depuis une copie de développement :
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git

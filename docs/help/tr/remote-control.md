@@ -56,12 +56,12 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Parolayla giriş/çıkış, parola değişiklikleri, yerel belirteç önyüklemesi | Mevcut değil; doğrudan kimlik doğrulama devre dışı bırakılsa bile cihaz kimlik bilgileri gereklidir. |
 | Uzaktan Kontrol durumu | Eşleştirilmiş bir cihaz tarafından okunabilir; yönetim mevcut değildir. Başlat/Durdur, eşleştirme oluşturma, cihaz listesi ve iptal etme, ana bilgisayar erişim yolunda kalır. |
 | Masaüstü uzak pencere/sunucu yönetimi ve proxy rotaları | Kullanılamıyor (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| SideCar **içerik proxy'si** | Kullanılamaz (`/sidecars/`). Bu, tüm SideCar API'lerinin engellendiği anlamına **gelmez**: eşleştirilmiş istemciler yine de `/api/sidecars` kayıt API'lerine erişebilir. |
+| SideCar **içerik proxy'si** | SideCar WebSocket'leri gibi loopback gerektirir (`/sidecars/`). `/api/sidecars` kayıt API'leri, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. |
 | Web önizleme içeriği | Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında **Web önizlemeleri** açık olduğu sürece (varsayılan) kullanılabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun. Anahtarı kapatmak sunulan önizlemeleri ve WebSocket bağlantılarını durdurur; eşleştirilmiş cihazlar yeniden yüklendiğinde **Web önizlemesini aç** seçeneğini gizler. |
 | Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |
 | WebSocket yükseltmeleri | Yalnızca web önizlemeleri için kullanılabilir. |
 
-Bir iş akışı engellenmiş bir proxy/WebSocket yüzeyi gerektirdiğinde uygun şekilde korunan bir [doğrudan bağlantı](remote-access.md) kullanın. Uzaktan Kontrol otomatik olarak bu yola geçmez.
+Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [Yükseltme](remote-access.md#upgrading). Uzaktan Kontrol web önizlemeleri, adreslerindeki yetenek belirtecini kullanır ve ana bilgisayarda etkin oldukları sürece kullanılabilir kalır; bu adresi gizli tutun.
 
 ## Aktarma ve gizlilik {#relay-privacy}
 

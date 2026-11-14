@@ -33,6 +33,10 @@ import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
 import { sessionMessagesNeedLoad, sessions } from "../../stores/session-state"
 import { stageSessionRevert } from "../../stores/session-actions"
+import { DESIGN_AGENT_ID, isDesignAgentMissing, isImagesConversation, locationAgents } from "../../stores/images-conversation"
+import { clearComposerFocusRequest, composerFocusRequested } from "../../stores/composer-focus"
+import { isSelectablePrimaryAgent } from "../../types/session"
+import DesignAgentNotice from "../prompt-input/DesignAgentNotice"
 
 const log = getLogger("session")
 
@@ -84,6 +88,18 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return Boolean(currentSession.pendingPermission || currentSession.pendingForm)
   })
 
+  // Only an Images conversation whose selected agent is an absent `design` blocks
+  // sending, judged on its own Location's loaded catalog.
+  const designAgentBlocked = createMemo(() => {
+    const currentSession = session()
+    return props.isActive !== false && isImagesConversation(currentSession)
+      && currentSession!.agent === DESIGN_AGENT_ID && isDesignAgentMissing(props.instanceId, currentSession!.location)
+  })
+  const defaultAgentId = () => {
+    const currentSession = session()
+    return currentSession ? locationAgents(props.instanceId, currentSession.location)?.find(isSelectablePrimaryAgent)?.id : undefined
+  }
+
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
@@ -95,7 +111,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   // contains has nothing to show: release the central surface to the transcript.
   createEffect(() => {
     const target = missionReader()
-    if (!target || target.kind === "recurrence" || target.recurrence) return
+    if (!target || target.kind === "recurrence" || target.kind === "playbook" || target.recurrence) return
     const state = missionStore.state(props.instanceId)
     if ((state.status === "ready" || state.status === "unavailable") && !state.summaries.some(row => row.id === target.missionId))
       updateMissionProjectView(props.instanceFolder, { reader: undefined })
@@ -129,6 +145,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   let rootRef: HTMLDivElement | undefined
   const [timelineMount, setTimelineMount] = createSignal<HTMLDivElement>()
+  const [scrollCornerMount, setScrollCornerMount] = createSignal<HTMLDivElement>()
   createEffect(() => {
     const rail = timelineMount()
     if (rail) onCleanup(observeTimelineRailBoundary(rail))
@@ -322,6 +339,21 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       },
     ),
   )
+
+  // A host action asked for this composer (stores/composer-focus.ts): focus it
+  // once the pane is shown and its textarea mounted, then consume the request.
+  createEffect(() => {
+    if (!props.isActive || !composerFocusRequested(props.instanceId, props.sessionId)) return
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        if (!props.isActive || !rootRef?.isConnected) return
+        clearComposerFocusRequest(props.instanceId, props.sessionId)
+        if (promptInputApi) promptInputApi.focus()
+        else rootRef.querySelector<HTMLTextAreaElement>(".prompt-input")?.focus()
+      })
+    })
+    onCleanup(() => cancelAnimationFrame(frame))
+  })
 
   // Drive the active session's initial message load from a value-diffed id so
   // the effect runs once per real session change instead of on every mutation
@@ -605,6 +637,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         >
             <MessageSection
               timelineMount={timelineMount()}
+              scrollCornerMount={scrollCornerMount()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               loading={messagesLoading()}
@@ -659,6 +692,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         </Show>
 
         {props.interruptionPanel}
+        <Show when={designAgentBlocked()}>
+          <DesignAgentNotice onUseDefaultAgent={defaultAgentId() ? () => props.onAgentChange(defaultAgentId()!) : undefined} />
+        </Show>
         <PromptInput
           interruptionExpanded={props.interruptionExpanded}
           instanceId={props.instanceId}
@@ -670,6 +706,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           escapeInDebounce={props.escapeInDebounce}
           isSessionBusy={sessionBusy()}
           disabled={sessionNeedsInput()}
+          sendBlocked={designAgentBlocked()}
           onAbortSession={handleAbortSession}
           onBackgroundSession={handleBackgroundSession}
           footerControls={
@@ -684,6 +721,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             />
           }
           registerPromptInputApi={registerPromptInputApi}
+          footerCornerRef={setScrollCornerMount}
         />
         <div class="session-timeline-slot" inert={readingMission()} ref={setTimelineMount} />
         </Show>

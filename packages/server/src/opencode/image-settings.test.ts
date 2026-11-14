@@ -21,8 +21,8 @@ test("image capabilities follow the configuration contract, never a version", ()
 })
 
 test("image generation values read as OpenCode reads them", () => {
-  for (const value of [undefined, false, null, "x", [], 1]) assert.equal(imageGenerationSelection(value), false)
-  assert.equal(imageGenerationSelection(true), true)
+  assert.equal(imageGenerationSelection(false), false, "only an explicit false turns the tool off")
+  for (const value of [undefined, true, null, "x", [], 1]) assert.equal(imageGenerationSelection(value), true, "unset means on")
   assert.equal(imageGenerationSelection({}), true)
   assert.equal(imageGenerationSelection({ model: "openai/gpt-image-2" }), "openai/gpt-image-2")
   assert.equal(imageGenerationSelection({ model: { providerID: "google", model: "imagen", variant: "hd" } }), "google/imagen#hd")
@@ -77,7 +77,7 @@ test("global image settings edit JSONC in place and report project overrides", a
     registerImageSettingsRoutes(app, settings)
 
     let snapshot = await settings.read("w", location)
-    assert.deepEqual(snapshot.generation, { global: false, effective: false,
+    assert.deepEqual(snapshot.generation, { global: true, effective: true,
       models: [{ ref: "openai/gpt-image-2", name: "GPT Image 2" }, { ref: "google/imagen", name: "imagen" }] })
     assert.deepEqual(snapshot.mediaStorage, { global: false, effective: false })
 
@@ -91,16 +91,37 @@ test("global image settings edit JSONC in place and report project overrides", a
     assert.equal(snapshot.mediaStorage?.effective, true)
 
     // A higher `experimental` object hides the global storage choice, but not the per-field generation choice.
-    await writeFile(projectFile, '{ "experimental": { "subagent_depth": 1 } }')
+    await writeFile(projectFile, '{\n  // project comment\n  "experimental": { "subagent_depth": 1 }\n}\n')
     snapshot = await settings.read("w", location)
     assert.equal(snapshot.generation?.effective, "openai/gpt-image-2")
     assert.equal(snapshot.generation?.override, undefined)
-    assert.deepEqual(snapshot.mediaStorage, { global: true, effective: false, override: { path: projectFile } })
+    assert.deepEqual(snapshot.mediaStorage, { global: true, effective: false, project: { path: projectFile } })
+    // The selected Location's own project block decides storage, so saving writes it there too.
+    await settings.update("w", location, { mediaStorage: true })
+    const projectSaved = await readFile(projectFile, "utf8")
+    assert.match(projectSaved, /\/\/ project comment/)
+    assert.deepEqual(parse(projectSaved).experimental, { subagent_depth: 1, media_blob: true })
+    assert.equal(parse(await readFile(globalFile, "utf8")).experimental.media_blob, true)
+    assert.deepEqual((await settings.read("w", location)).mediaStorage, { global: true, effective: true, project: { path: projectFile } })
+    // Generation is read per field, so its choice stays Global only.
+    await settings.update("w", location, { generation: "openai/gpt-image-2" })
+    assert.equal(await readFile(projectFile, "utf8"), projectSaved, "generation never writes the project")
+    // A project block removed after acquisition is never recreated: that would hide inherited settings.
+    const removing = new ImageSettings({
+      readConfigDocuments: (...args: Parameters<PluginControls["readConfigDocuments"]>) => controls.readConfigDocuments(...args),
+      editConfigDocument: async (...args: Parameters<PluginControls["editConfigDocument"]>) => {
+        if (args[2] === "project") await writeFile(projectFile, "{}")
+        return controls.editConfigDocument(...args)
+      },
+    }, manager)
+    await assert.rejects(removing.update("w", location, { mediaStorage: false }), /configuration changed/)
+    assert.equal(await readFile(projectFile, "utf8"), "{}")
+    await settings.update("w", location, { mediaStorage: true })
     await writeFile(projectFile, '{ "experimental": { "image_generate": false } }')
     snapshot = await settings.read("w", location)
     assert.equal(snapshot.generation?.effective, false)
     assert.deepEqual(snapshot.generation?.override, { path: projectFile })
-    assert.equal(await readFile(projectFile, "utf8"), '{ "experimental": { "image_generate": false } }', "the project is never written")
+    assert.equal(await readFile(projectFile, "utf8"), '{ "experimental": { "image_generate": false } }', "reads never write the project")
     // The deciding document is reported wherever it lives, not only in the selected project's own file.
     await writeFile(projectFile, "{}")
     ancestor = { experimental: { image_generate: false } }
@@ -146,6 +167,7 @@ test("global image settings edit JSONC in place and report project overrides", a
     await writeFile(projectFile, '{ "experimental": { "subagent_depth": 1 } }')
     assert.deepEqual((await settings.read("w", location)).blockedBy, { path: lowerFile })
     await assert.rejects(settings.update("w", location, { mediaStorage: true }), /hide inherited experimental/)
+    assert.equal(await readFile(projectFile, "utf8"), '{ "experimental": { "subagent_depth": 1 } }', "a refused Global write leaves the project")
     await writeFile(projectFile, "{}")
     // A stale native entry for the target cannot authorize a write the fresh document would turn into a mask.
     staleGlobal = { experimental: { subagent_depth: 3 } }
@@ -202,4 +224,36 @@ test("global image settings edit JSONC in place and report project overrides", a
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().mediaStorage.global, true)
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test("a caller's signal cancels the native configuration reads behind image settings", { timeout: 10_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "image-settings-signal-"))
+  try {
+    const project = path.join(root, "project")
+    await mkdir(project)
+    const seen: Array<AbortSignal | undefined> = []
+    const held = (options?: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {
+      seen.push(options?.signal)
+      options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
+    })
+    const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
+      assertCurrent: () => {}, fetch: async () => Response.json(contract(both)),
+      client: { config: { get: (_input: unknown, options?: { signal?: AbortSignal }) => held(options) },
+        plugin: { list: (_input: unknown, options?: { signal?: AbortSignal }) => held(options) } } }
+    const manager: any = {
+      get: () => ({}), getSharedServiceConnection: async () => connection,
+      getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
+      ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
+      getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
+      getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id: string, value: string) => value,
+    }
+    const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger: {} as any })
+    const settings = new ImageSettings(controls, manager)
+    const caller = new AbortController()
+    const pending = settings.read("w", { directory: project }, caller.signal)
+    setTimeout(() => caller.abort(new Error("caller left")), 20)
+    await assert.rejects(pending)
+    assert.equal(seen.length, 2, "configuration and plugin reads both started")
+    assert.ok(seen.every(signal => signal?.aborted), "both native reads received the caller's signal and were cancelled")
+  } finally { await rm(root, { recursive: true, force: true }) }
 })

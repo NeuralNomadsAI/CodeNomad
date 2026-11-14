@@ -42,7 +42,7 @@ Si un worktree détenu ou l’emplacement d’une conversation ne peut être vé
 ## Environnement OpenCode et WSL {#opencode-runtime}
 
 1. Ouvrez **Préférences → OpenCode** et vérifiez la carte **Version d’OpenCode** (version installée et état du service actif), puis l’exécutable sélectionné sous **Binaire OpenCode**.
-2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.1.2** ; recommandé/qualifié : **2.2.1**.
+2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.3.0** ; version recommandée/qualifiée : **2.3.0**.
 3. Si la CLI installée diffère du service actif, décidez explicitement s’il faut redémarrer le service partagé.
 
 **Redémarrer le service OpenCode** est disponible sous **Dépannage** et exige confirmation. Cela interrompt le travail actif de tous les clients connectés mais conserve l’historique. Le rechargement de configuration est distinct : il garde le processus mais reconstruit les Locations chargées et annule les questions/autorisations en attente. Aucun n’est une actualisation anodine.
@@ -73,12 +73,15 @@ Les liens d’appairage sont à usage unique et de courte durée ; le mot de pas
 
 ## État des fournisseurs, plugins et extensions {#providers-and-addons}
 
+Si **Timeline complète indisponible** accompagne un échec du plugin `codenomad-session-pruning`, consultez son erreur de chargement dans le journal OpenCode. Ce plugin assure la navigation dans l’historique complet et la récupération des questions et permissions en attente. Réessayez la timeline après son chargement réussi ; conservez vos données de session.
+
 | Problème | Récupération |
 | --- | --- |
 | Mauvais compte/quota fournisseur | Vérifiez le compte natif sélectionné et **Utilisation**. Un quota affiché n’est pas un total de tokens/coût. Actualisez après un changement de compte incertain ; la sélection peut affecter d’autres clients du service. |
 | OAuth externe expiré | Reconnectez-vous via OpenCode, Claude Code ou le propriétaire d’identifiants concerné. CodeNomad n’échange pas leurs jetons de rafraîchissement. |
 | La rotation automatique ne bascule pas | Vérifiez l’activation volontaire, l’admissibilité et si le compte actuel est réellement saturé. C’est une politique avant admission, pas un basculement en cours de requête ni un rejeu de prompt. |
 | État de plugin apparemment périmé | Utilisez **Actualiser les contrôles des plugins** et inspectez la portée/cible dans l’infobulle ; l’activation réelle peut attendre une actualisation native. Ne basculez pas à répétition une écriture incertaine. |
+| Un plugin ajouté a échoué ou affiche **Non confirmé** | Vérifiez le nom du paquet, sa version et l’accès au registre depuis l’hôte OpenCode. Pour une installation en échec, cherchez dans le journal d’OpenCode la référence d’erreur de l’infobulle du plugin. **Non confirmé** apparaît aussi pour un plugin désactivé. Retirer le plugin laisse le paquet téléchargé dans le cache d’OpenCode. |
 | **Le centre de mission est indisponible** | Suivez la cause indiquée. Si OpenCode n’a pas chargé le plugin Missions, actualisez, puis utilisez **Recharger la configuration OpenCode** si cela persiste ; si le plugin n’a pas pu se charger, lisez son erreur dans la liste des plugins ; si le serveur n’a pas pu ouvrir sa connexion locale pour les Missions, consultez le journal du serveur, car recharger OpenCode n’y changera rien. Les Missions fonctionnent aussi sur le serveur autonome. |
 | Extension installée manquante | Vérifiez sa case d’activation unique dans la personnalisation. Installation/remplacement la laisse désactivée jusqu’à votre activation explicite et approbation du consentement requis. |
 | Ressources d’extension refusées | Confirmez le consentement API 2 de lecture des ressources pour la session montée actuelle. Installer une extension n’autorise pas la lecture arbitraire de fichiers/historique. |
@@ -95,8 +98,8 @@ Pour un nettoyage annulé ou partiel, lisez sa progression/ses reçus avant une 
 
 ## Journaux et diagnostics sûrs {#diagnostics}
 
-1. Ouvrez **Infos de l'instance** pour inspecter son état ; **Afficher les journaux du serveur** expose la sortie disponible.
+1. Ouvrez **Paramètres → OpenCode → Afficher les journaux OpenCode**. Le fichier global `opencode.log` de l’hôte d’exécution sélectionné est localisé par `opencode debug paths log`. La fenêtre déplaçable et non modale laisse le reste de l’interface utilisable. Elle affiche au maximum les derniers 128 Kio ; **Actualiser** relit le fichier. Les journaux restent séparés des messages et des requêtes au modèle.
 2. Dans **Préférences → OpenCode**, choisissez la **Verbosite des logs** voulue seulement si davantage de détail est nécessaire. Pour les journaux CodeNomad autonome, utilisez les [options CLI serveur de journalisation](server.md).
 3. Ouvrez **Paramètres → Info → Diagnostics** et utilisez **Signaler un bug**, **Copier dans le presse-papiers** ou **Télécharger .txt**.
 
-Les détails de journalisation peuvent exposer chemins, sorties et données applicatives. Masquez identifiants, liens d’appairage, adresses réseau, chemins privés et contenu des conversations avant de partager journaux/captures. Le rapport complet inclut chemins/adresses ; le formulaire de bug prérempli les exclut volontairement. Voir [Assistance](support.md#report-a-bug).
+Les détails de journalisation peuvent exposer chemins, sorties et données applicatives. Masquez identifiants, liens d’appairage, adresses réseau, chemins privés et contenu des conversations avant de partager journaux/captures. Le rapport complet inclut chemins/adresses ; le formulaire de bug prérempli les exclut volontairement. Voir [Signaler un bug](support.md#report-a-bug).

@@ -4,6 +4,7 @@ export const MISSION_RPC_REJECTION = "mission.rejected"
 
 const statuses = {
   "control-pending": 503,
+  "document-unavailable": 409,
   "control-conflict": 409,
   "recovery-conflict": 409,
   "recovery-busy": 409,

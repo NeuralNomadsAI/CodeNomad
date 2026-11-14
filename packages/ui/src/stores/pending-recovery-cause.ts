@@ -119,6 +119,10 @@ export function describePendingRecovery(
   sessionTitlesIn: (directories: readonly string[]) => string[],
   t: Translate,
 ): { title: string; message: string } {
+  // The plugin belongs to the OpenCode connection, so its single notice names no project.
+  if (cause.kind === "unsupported") {
+    return { title: t("interruption.recoveryUnsupported.title"), message: t("interruption.recoveryCause.unsupported") }
+  }
   const title = t("interruption.recoveryIncomplete.title", { workspace })
   if (cause.kind !== "directories") {
     const detail = "detail" in cause ? cause.detail : ""

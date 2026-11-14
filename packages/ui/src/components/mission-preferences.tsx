@@ -122,7 +122,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     {/* Every agent/model choice in one fold; its summary keeps the current choice visible. */}
     <details ref={profilesFold} class="settings-disclosure mission-profiles-disclosure" open={profilesOpen()} onToggle={event => setProfilesOpen(event.currentTarget.open)}>
       <summary>{t("missions.create.agents")}
-        <MissionProfileSummary inline template={exception() ?? "custom"} profiles={exception() ? missionDefaultsFor(shown(), exception()!) : entry()?.profiles} /></summary>
+        <MissionProfileSummary inline instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"} profiles={exception() ? missionDefaultsFor(shown(), exception()!) : entry()?.profiles} /></summary>
       {/* A mission type shows the global choices its roles inherit until one is customized. */}
       <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"}
         inherited={exception() ? missionDefaultsFor(shown(), exception()!, false) ?? {} : undefined}
@@ -135,7 +135,10 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
       </div>
     </details>
     <Show when={failed()}><p role="alert">{t("missions.defaults.error")}</p></Show>
-    {/* Location depth writes OpenCode configuration; it is a separate group, not part of these defaults. */}
+    <label class="mission-preferences-check"><input type="checkbox" checked={config.preferences().missionDeleteSessions}
+      disabled={!config.isUiConfigLoaded()} onChange={event => void config.updatePreferences({ missionDeleteSessions: event.currentTarget.checked })} />
+      {t("missions.preferences.deleteSessions")}</label>
+    {/* Location depth writes OpenCode configuration; it is a separate row, not part of these defaults. */}
     <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory} active={props.active} />
     <MissionModelLibrary active={props.active} />
   </div>

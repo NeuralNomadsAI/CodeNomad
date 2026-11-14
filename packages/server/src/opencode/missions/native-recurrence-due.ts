@@ -26,7 +26,7 @@ export type NativePassagePlacement = Readonly<{ projectID: string; projectCanoni
   settleOnly?: boolean }>
 /** `admission-unknown`: this wake reserved a passage whose first admission threw;
  * it stays pending under its original identities for a later retry. */
-export type NativePassageWake = "idle" | "started" | "pending" | "settled" | "admission-unknown"
+export type NativePassageWake = "idle" | "started" | "pending" | "settled" | "admission-unknown" | "settlement-unknown"
 type WakeEffect = Effect.Effect<NativePassageWake, Error | Schema.SchemaError, import("effect").Scope.Scope>
 export interface NativePassageDue {
   (scheduleID: string, graphCurrent: () => true, signal: AbortSignal): WakeEffect
@@ -127,9 +127,10 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
         if (!pending.pending.admission) await source.recordAdmission(scheduleID, ack, now(), current)
         const fresh = await source.read(scheduleID)
         if (!fresh?.pending) return "settled"
+        let uncertain = false
         const result = await observeNativePassageSettlement({ document: fresh, storage, native: observation,
-          directory: placement.directory, workspaceID: placement.workspaceID, current, signal })
-        if (!result) return "pending"
+          directory: placement.directory, workspaceID: placement.workspaceID, current, signal, uncertain: () => { uncertain = true } })
+        if (!result) return uncertain ? "settlement-unknown" : "pending"
         await source.finish(scheduleID, result.result, now(), current, result.expectedRevision)
         settleNativePassageBusiness(result.result.conversationID)
         return "settled"

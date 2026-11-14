@@ -28,7 +28,7 @@ before(async () => {
 after(async () => { await browser?.close() })
 
 async function fixture(mixed = false, pausePreviews = false, holdMessages = false, deep = false, hiddenTimeline = false,
-  options: { missionPicker?: boolean; mac?: boolean } = {}) {
+  options: { mac?: boolean } = {}) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   // Default shortcuts follow `navigator.platform`. A string, like `waitFrames`: the
   // test transpiler's helpers do not exist in the page.
@@ -101,7 +101,7 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
   })
-  await page.goto(url + `?${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${hiddenTimeline ? "hiddenTimeline&" : ""}${options.missionPicker ? "missionPicker&" : ""}${holdMessages ? "holdMessages" : ""}`)
+  await page.goto(url + `?${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${hiddenTimeline ? "hiddenTimeline&" : ""}${holdMessages ? "holdMessages" : ""}`)
   await page.waitForFunction(() => Boolean((window as any).fixture))
   // The deep fixture's tool rows contribute extra segments.
   if (deep) await page.waitForFunction(() => Number(document.querySelector(".message-timeline")?.getAttribute("data-segment-count")) >= 1500)
@@ -977,12 +977,20 @@ test("resident streaming keeps a distant timeline marker mounted", async () => {
     await f.page.locator(".message-timeline").evaluate(element => { element.scrollTop = element.scrollHeight * 250 / 1500 })
     const marker = f.page.locator('.message-timeline-segment[data-message-id="msg_00250"]')
     await marker.waitFor()
-    const retained = await marker.evaluate(element => {
+    // A Locator re-resolves on every evaluate; an ElementHandle pins the
+    // original node so the identity check catches a clone replacing it.
+    const markerNode = await marker.elementHandle()
+    const retained = await markerNode!.evaluate(element => {
       ;(window as any).fixture.stream("A new resident response while browsing old timeline markers")
       return element.isConnected
     })
     assert(retained, "a resident content update must not remount an unchanged distant click target")
-    assert((await snapshot(f.page)).ids.includes("msg_streaming"), "the resident transcript did receive the streamed message")
+    // The streamed row publishes on its coalesced frame; wait for it before
+    // rechecking the marker, so the identity assertion protects the DOM
+    // invariant instead of racing the publication.
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.includes("msg_streaming"), undefined, { timeout: 15_000 })
+    assert.equal(await markerNode!.evaluate(element => element.isConnected), true,
+      "the original distant marker node stays mounted after the streamed row publishes")
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
@@ -1255,6 +1263,38 @@ test("keyboard scrolling owns the timeline without paging the transcript", async
   } finally { await f.close() }
 })
 
+for (const mac of [false, true]) test(`the prompt menu jumps between user messages without changing the draft (${mac ? "macOS" : "Windows/Linux"})`, async () => {
+  const f = await fixture(true, false, false, false, false, { mac })
+  try {
+    await clickTimeline(f.page, 1300); await assertPassageAtTop(f.page, 1300)
+    const composer = f.page.locator("textarea.prompt-input").first(), draft = "Keep this unsent draft"
+    await composer.fill(draft)
+    const open = () => f.page.locator(".prompt-actions-menu").getByRole("button", { name: "More actions", exact: true }).click()
+    await open()
+    const previous = f.page.getByRole("menuitem", { name: "Previous User Message", exact: true })
+    const next = f.page.getByRole("menuitem", { name: "Next User Message", exact: true })
+    assert.equal(await previous.getAttribute("title"), mac ? "⌘+⌥+↑" : "Alt+↑")
+    assert.equal(await next.getAttribute("title"), mac ? "⌘+⌥+↓" : "Alt+↓")
+    const captures = process.env.CODENOMAD_PROMPT_MENU_CAPTURE_DIR
+    if (captures) { await mkdir(captures, { recursive: true }); await f.page.screenshot({ path: path.join(captures, `prompt-navigation-${mac ? "mac" : "desktop"}.png`) }) }
+    await previous.click(); await assertPassageAtTop(f.page, 1295)
+    assert.ok(f.windows.some(target => target.messageID === navigationMessageId(1295)), "the menu loads the bounded historical destination")
+    await open(); await next.click(); await assertPassageAtTop(f.page, 1300)
+    await f.page.evaluate(async () => {
+      const { updatePreferences } = await import("/src/stores/preferences.tsx" as string)
+      await updatePreferences({ hotkeyOverrides: { "user-message-prev": [{ key: "F8" }], "user-message-next": [] } })
+    })
+    await open()
+    assert.equal(await previous.getAttribute("title"), "F8", "the menu follows configured bindings")
+    assert.equal(await next.getAttribute("title"), null, "an unbound command has no fabricated shortcut hint")
+    assert.equal(await next.isDisabled(), false, "disabling a shortcut leaves the menu command available")
+    await previous.focus(); await f.page.keyboard.press("Enter"); await assertPassageAtTop(f.page, 1295)
+    assert.equal(await composer.inputValue(), draft)
+    assert.deepEqual(await f.page.evaluate(() => (window as any).fixture.prompts()), [], "navigation sends nothing")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 test("Alt+Up/Down jump between user messages across history windows, from the conversation and the composer", async () => {
   const f = await fixture(true)
   try {
@@ -1292,28 +1332,6 @@ test("Alt+Up/Down jump between user messages across history windows, from the co
     await composer.press("Alt+ArrowUp")
     await waitFrames(f.page, 10)
     await assertPassageAtTop(f.page, 1300)
-    assert.deepEqual(f.errors, [])
-  } finally { await f.close() }
-})
-
-for (const mac of [false, true]) test(`${mac ? "Cmd+Option" : "Alt"}+Up/Down move the mission picker search's option, not the conversation`, async () => {
-  const f = await fixture(true, false, false, false, false, { missionPicker: true, mac })
-  const jump = (key: "ArrowUp" | "ArrowDown") => `${mac ? "Meta+Alt" : "Alt"}+${key}`
-  try {
-    await clickTimeline(f.page, 1300)
-    await assertPassageAtTop(f.page, 1300)
-    await f.page.locator(".message-stream").focus()
-    await f.page.keyboard.press(jump("ArrowDown"))
-    await assertPassageAtTop(f.page, 1305)
-    await f.page.locator(".mission-picker-field").click()
-    const search = f.page.locator(".mission-picker-search")
-    await search.focus()
-    await f.page.keyboard.press("ArrowDown")
-    const before = await search.getAttribute("aria-activedescendant")
-    await f.page.keyboard.press(jump("ArrowDown"))
-    assert.notEqual(await search.getAttribute("aria-activedescendant"), before, "the picker moves its active option")
-    await waitFrames(f.page, 10)
-    await assertPassageAtTop(f.page, 1305)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

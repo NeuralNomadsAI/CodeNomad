@@ -6,7 +6,7 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 
 1. Haz clic en **Nueva instancia** (`+`) para abrir la página de inicio.
 2. Elige **Buscar carpetas**, selecciona la carpeta del backend y ábrela; o elige una entrada de **Carpetas recientes**.
-3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**.
+3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
 
 Explorar un servidor remoto significa explorar el sistema de archivos de ese servidor, no el de tu teléfono o portátil. Abrir un proyecto no crea un daemon de OpenCode distinto para cada pestaña. Las conversaciones son sesiones nativas de OpenCode; su duración no es la de la pestaña.
 
@@ -58,7 +58,7 @@ Descartar se rechaza mientras haya una conversación en ejecución o la carpeta 
 2. Selecciona un worktree descubierto existente o elige **+ Crear worktree**.
 3. Para crearlo, introduce el **Nombre** y elige **Crear y usar worktree**.
 
-CodeNomad descubre worktrees a través de OpenCode y verifica que pertenecen al repositorio abierto. Un nombre de rama nuevo parte del HEAD de la copia de trabajo seleccionada. Un nombre de rama existente usa la revisión actual de esa rama; Git puede rechazar una rama que ya esté abierta en otro lugar. Los worktrees usan la ubicación predeterminada `.codenomad/worktrees`. Los cambios sin confirmar permanecen en la copia de trabajo original; la creación no los copia al worktree nuevo.
+CodeNomad descubre worktrees a través de OpenCode y verifica que pertenecen al repositorio abierto. Si el proyecto es una carpeta dentro de un repositorio, solo se muestran los worktrees que contienen esa carpeta. Para crear un worktree desde una carpeta así, Git debe seguirla. Un nombre de rama nuevo parte del HEAD de la copia de trabajo seleccionada. Un nombre de rama existente usa la revisión actual de esa rama; Git puede rechazar una rama que ya esté abierta en otro lugar. Los worktrees usan la ubicación predeterminada `.codenomad/worktrees`. Los cambios sin confirmar permanecen en la copia de trabajo original; la creación no los copia al worktree nuevo.
 
 El selector del editor de mensajes mueve la conversación padre y sus descendientes recursivos como una familia verificada. Una subsesión no puede cambiar este selector de forma independiente. Las sesiones activas bloquean la operación: deja que la familia termine o detén primero su ejecución. Espera a que un movimiento se resuelva antes de solicitar otro; si hay un error, inspecciona el estado actualizado de conversación/worktree antes de reintentar.
 

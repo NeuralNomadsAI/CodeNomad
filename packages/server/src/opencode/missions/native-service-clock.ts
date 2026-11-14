@@ -229,6 +229,9 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
         if (wake === "admission-unknown" && document.pending && !document.pending.admission) {
           phase = "admission-failed"; throw new Error("Recurrence passage admission unknown")
         }
+        if (wake === "settlement-unknown" && document.pending?.admission) {
+          phase = "settlement-failed"; throw new Error("Recurrence passage terminal correlation unknown")
+        }
         const after = clock.now()
         pendingWakes = document.pending ? pendingWakes + 1 : 0
         // The settle observer shares the event wake and pending backoff, never a daily due.

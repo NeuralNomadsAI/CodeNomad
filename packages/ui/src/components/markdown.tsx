@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
-import type { TextPart, RenderCache } from "../types/message"
+import type { TextPart, RenderCache, MermaidCodeBlock } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
@@ -12,18 +12,14 @@ import {
   type TextSource,
 } from "../lib/render-text-window"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
+import { scheduleDeferredHighlight } from "../lib/markdown-highlight-schedule"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
-import { isLoopbackHttpUrl } from "./browser-frame-security"
-import { openSessionPreview } from "../stores/session-previews"
-import { instances } from "../stores/instances"
-import { showAlertDialog } from "../stores/alerts"
-import { previewsUnavailable, previewsAvailabilityResolved, getServerMeta } from "../lib/server-meta"
+import { decorateSessionLinks, routeSessionLink, sessionLinkBase, sessionLinkTitles, warmLoopbackPreviewMeta } from "./markdown-session-links"
+import { messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
+import { messageStoreBus } from "../stores/message-v2/bus"
+import { useMarkdownMermaid } from "./markdown-mermaid"
 
 const log = getLogger("session")
-
-// One session-bound Markdown instance asks for the server meta; the answer
-// decides whether loopback links may open the web preview on this client.
-let loopbackPreviewMetaRequested = false
 
 type MarkdownModule = typeof import("../lib/markdown")
 
@@ -41,6 +37,7 @@ interface ResolvedMarkdownSnapshot {
   revealSteps: number
   /** A long window of a streaming reply: rendered at most every interval, unhighlighted. */
   deferred: boolean
+  truncated: boolean
 }
 
 let markdownModulePromise: Promise<MarkdownModule> | null = null
@@ -137,36 +134,14 @@ interface MarkdownProps {
 export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
 
-  // A loopback link click opens the session preview on the instance owning
-  // the session; failures surface through the shared alert dialog.
-  const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
-    const folder = instances().get(instanceId)?.folder ?? ""
-    void openSessionPreview(sessionId, url, folder).catch((error) => {
-      showAlertDialog(t("sessionPreview.open.title"), {
-        title: t("sessionPreview.open.title"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    })
-  }
-
-  // Whether clicking a loopback link opens the web preview on this client.
-  // Availability must be known first: through Remote Control with previews
-  // off the default false would otherwise open a dead preview before the
-  // server meta answers. Other callers (update checks, settings) usually
-  // resolve the meta earlier.
-  const loopbackLinksOpenPreview = () => previewsAvailabilityResolved() && !previewsUnavailable()
-  if (props.instanceId && props.sessionId && !previewsAvailabilityResolved() && !loopbackPreviewMetaRequested) {
-    loopbackPreviewMetaRequested = true
-    void getServerMeta().catch(() => {
-      loopbackPreviewMetaRequested = false
-    })
-  }
+  // Loopback-link availability resolves without waiting for a click.
+  warmLoopbackPreviewMeta(props.instanceId, props.sessionId)
 
   const [html, setHtml] = createSignal("")
   // Whether `html` is the Markdown render rather than its plain-text fallback. The
   // reveal line waits for it, so a reveal's anchor never sits on a prefix that re-lays out.
   const [rendered, setRendered] = createSignal(false)
+  const [mermaidBlocks, setMermaidBlocks] = createSignal<MermaidCodeBlock[]>([])
   const bounded = createTextWindow({
     source: () => props.source ?? (typeof props.part.text === "string" ? props.part.text : ""),
     limit: () => props.renderLimit ?? MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
@@ -263,6 +238,7 @@ export function Markdown(props: MarkdownProps) {
       : resolvePartVersion(part, text)
     return {
       revealSteps: bounded.steps(),
+      truncated: window.hidden > 0,
       deferred,
       part,
       text,
@@ -287,11 +263,13 @@ export function Markdown(props: MarkdownProps) {
     },
     version: () => resolved().version,
   })
+  useMarkdownMermaid({ root: () => containerRef, html, identity: () => resolved().cacheId,
+    blocks: mermaidBlocks, dark: () => Boolean(props.isDark), streaming: () => Boolean(props.streaming), onRendered: notifyRendered })
 
   const commitCacheEntry = (
     snapshot: ResolvedMarkdownSnapshot,
     renderedHtml: string,
-    options?: { cache?: boolean },
+    options?: { cache?: boolean; mermaid?: MermaidCodeBlock[] },
   ) => {
     // No `text`: a window is a slice that would retain the whole part beyond its
     // eviction while the cache accounts only for the slice.
@@ -299,7 +277,9 @@ export function Markdown(props: MarkdownProps) {
       html: renderedHtml,
       theme: snapshot.themeKey,
       mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
+      mermaid: options?.mermaid,
     }
+    setMermaidBlocks(options?.mermaid ?? [])
     setHtml(renderedHtml)
     setRendered(true)
     if (options?.cache ?? true) {
@@ -308,34 +288,51 @@ export function Markdown(props: MarkdownProps) {
     notifyRendered()
   }
 
-  const renderSnapshot = async (snapshot: ResolvedMarkdownSnapshot, request: number): Promise<void> => {
+  const renderSnapshot = async (snapshot: ResolvedMarkdownSnapshot, request: number, highlight = snapshot.highlightEnabled): Promise<void> => {
     const markdown = await loadMarkdownModule()
     // Awaiting even a warm module suspends this invocation. Skip stale work before
     // entering the synchronous parser, including retries with the same key.
     if (!isCurrentRender(request)) return
     markdown.setMarkdownTheme(snapshot.themeKey === "dark")
+    const diagrams: MermaidCodeBlock[] = []
     const rendered = await markdown.renderMarkdown(snapshot.text, {
-      suppressHighlight: !snapshot.highlightEnabled,
+      suppressHighlight: !highlight,
       escapeRawHtml: snapshot.escapeRawHtml,
       literalRawHtml: snapshot.literalRawHtml,
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
+      onMermaid: block => diagrams.push(block),
+      truncated: snapshot.truncated,
     })
     if (!isCurrentRender(request)) return
-    const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
+    // A deferred plain pass never publishes under a cache key that promises
+    // highlighting; a highlight-disabled snapshot still caches its plain render.
+    const shouldCache = highlight
+      ? !markdown.hasPendingCodeHighlight(snapshot.text)
+      : !snapshot.highlightEnabled
 
     if (isCurrentRender(request)) {
-      commitCacheEntry(snapshot, rendered, { cache: shouldCache })
+      commitCacheEntry(snapshot, rendered, { cache: shouldCache, mermaid: diagrams })
     }
   }
 
-  const startRender = (snapshot: ResolvedMarkdownSnapshot, request: number) => {
+  const startRender = (snapshot: ResolvedMarkdownSnapshot, request: number, highlight = snapshot.highlightEnabled) => {
     lastRenderStartedAt = performance.now()
-    void renderSnapshot(snapshot, request).catch((error) => {
-      log.error("Failed to render markdown:", error)
-      if (isCurrentRender(request)) {
-        commitCacheEntry(snapshot, renderFallbackHtml(snapshot.text))
-      }
-    })
+    void renderSnapshot(snapshot, request, highlight)
+      .catch((error) => {
+        log.error("Failed to render markdown:", error)
+        if (isCurrentRender(request)) {
+          commitCacheEntry(snapshot, renderFallbackHtml(snapshot.text))
+        }
+      })
+      .then(() => {
+        // A first render that held highlighting back schedules its highlighted
+        // pass for idle time: a mounting burst of blocks must not run every
+        // Shiki highlight inside the mounting task.
+        if (highlight || !snapshot.highlightEnabled || !isCurrentRender(request)) return
+        scheduleDeferredHighlight(() => {
+          if (isCurrentRender(request)) startRender(snapshot, request, true)
+        })
+      })
   }
 
   // At most one render per interval, always of the latest snapshot.
@@ -363,6 +360,7 @@ export function Markdown(props: MarkdownProps) {
     const localCache = snapshot.part.renderCache
     if (localCache && cacheMatches(localCache)) {
       cancelDeferredRender()
+      setMermaidBlocks(localCache.mermaid ?? [])
       setHtml(localCache.html)
       setRendered(true)
       notifyRendered()
@@ -372,6 +370,7 @@ export function Markdown(props: MarkdownProps) {
     const globalCache = cacheHandle.get<RenderCache>()
     if (globalCache && cacheMatches(globalCache)) {
       cancelDeferredRender()
+      setMermaidBlocks(globalCache.mermaid ?? [])
       setHtml(globalCache.html)
       setRendered(true)
       notifyRendered()
@@ -389,11 +388,14 @@ export function Markdown(props: MarkdownProps) {
     }
     cancelDeferredRender()
     if (!(samePart && (revealing || previous.deferred))) {
+      setMermaidBlocks([])
       setHtml(renderFallbackHtml(snapshot.text))
       setRendered(false)
       notifyRendered()
     }
-    startRender(snapshot, request)
+    // A block's first render commits plain Markdown and takes up highlighting
+    // in idle time; every later render of the component renders immediately.
+    startRender(snapshot, request, previous === undefined && snapshot.highlightEnabled ? false : snapshot.highlightEnabled)
   })
 
   createEffect(() => {
@@ -403,49 +405,50 @@ export function Markdown(props: MarkdownProps) {
 
   createEffect(() => {
     html()
-    // Decorate exactly the links that intercept: only session-bound loopback
-    // links while previews are known available, and never over an author's
-    // own title attribute.
-    const decorate = Boolean(props.instanceId && props.sessionId) && loopbackLinksOpenPreview()
-    const title = decorate ? t("markdown.link.previewOpens") : ""
+    // Decorate exactly the links that intercept (see markdown-session-links):
+    // loopback links while previews are known available, and project-file
+    // links; never over an author's own title attribute. The titles and the
+    // resolution base are read synchronously so availability, locale and
+    // worktree-inventory changes re-run this pass.
+    const sessionBound = Boolean(props.instanceId && props.sessionId)
+    const titles = sessionLinkTitles(props.instanceId, props.sessionId)
+    const base = sessionBound ? sessionLinkBase(props.instanceId!, props.sessionId!) : undefined
     Promise.resolve().then(() => {
       if (disposed || !containerRef) {
         return
       }
-      for (const anchor of containerRef.querySelectorAll<HTMLAnchorElement>("a[href]")) {
-        if (!isLoopbackHttpUrl(anchor.getAttribute("href") ?? "")) {
-          continue
-        }
-        if (title) {
-          if (!anchor.hasAttribute("title")) {
-            anchor.setAttribute("title", title)
-            anchor.setAttribute("data-preview-link-title", "true")
-          }
-        } else if (anchor.getAttribute("data-preview-link-title") === "true") {
-          anchor.removeAttribute("title")
-          anchor.removeAttribute("data-preview-link-title")
-        }
-      }
+      decorateSessionLinks(containerRef, titles, base)
+    })
+  })
+
+  createEffect(() => {
+    // Only a block that rendered a local-image label reads the session's tool images; it tracks
+    // message revisions, and each message is scanned once per revision for every block.
+    const instanceId = props.instanceId, sessionId = props.sessionId
+    if (!instanceId || !sessionId || !html().includes("data-local-image")) return
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const candidates = [...store.getSessionMessageIds(sessionId)].reverse()
+      .flatMap(id => { const message = store.getMessage(id); return message ? messageImageCandidates(message) : [] })
+    Promise.resolve().then(() => {
+      if (!disposed && containerRef) resolveLocalImages(containerRef, candidates)
     })
   })
 
   onMount(() => {
     const handleClick = async (event: Event) => {
       const target = event.target as HTMLElement
-      // A plain click on a loopback URL opens the session preview instead of
-      // a dead browser tab: browser-accessed frontends cannot reach the
-      // backend host's localhost. Modified clicks keep browser defaults, and
-      // clients without a working preview surface keep the link behavior.
       const anchor = target.closest("a[href]") as HTMLAnchorElement | null
       if (anchor && props.instanceId && props.sessionId) {
         const href = anchor.getAttribute("href") ?? ""
         const mouseEvent = event as MouseEvent
         // Firefox fires `click` for the middle button too; only a primary
-        // left click without modifiers opens the preview.
+        // left click without modifiers routes to an app surface.
         const plainClick = mouseEvent.button === 0 && !mouseEvent.ctrlKey && !mouseEvent.metaKey && !mouseEvent.shiftKey && !mouseEvent.altKey
-        if (plainClick && loopbackLinksOpenPreview() && isLoopbackHttpUrl(href)) {
+        // A plain click on a loopback URL opens the session preview, and one
+        // on a path inside the session's worktree opens the file reader;
+        // modified clicks keep browser defaults (see markdown-session-links).
+        if (plainClick && routeSessionLink(props.instanceId, props.sessionId, href)) {
           event.preventDefault()
-          openLoopbackPreview(props.instanceId, props.sessionId, href)
           return
         }
       }

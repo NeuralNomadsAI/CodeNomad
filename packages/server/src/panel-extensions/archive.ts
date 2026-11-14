@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto"
 import yauzl from "yauzl"
 import { z } from "zod"
-import { PANEL_EXTENSION_LIMITS, type PanelExtensionManifest } from "./contract"
+import { PANEL_EXTENSION_API4_PERMISSIONS, PANEL_EXTENSION_LIMITS, type PanelExtensionManifest } from "./contract"
+
+// `session.context` plus a non-empty subset of the finite API 4 set, each once;
+// prompts only with the gallery they annotate. Order is free.
+const Api4Permissions = z.array(z.enum(["session.context", ...PANEL_EXTENSION_API4_PERMISSIONS]))
+  .min(2).max(PANEL_EXTENSION_API4_PERMISSIONS.length + 1)
+  .refine(permissions => new Set(permissions).size === permissions.length && permissions.includes("session.context")
+    && (!permissions.includes("session.images.prompts") || permissions.includes("session.images.read")))
 
 export const ManifestFields = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{1,39}\.[a-z][a-z0-9-]{1,39}$/),
@@ -19,6 +26,7 @@ export const ManifestSchema = z.discriminatedUnion("apiVersion", [
   ManifestFields.extend({ apiVersion: z.literal(1), permissions: z.tuple([z.literal("session.context")]) }).strict(),
   ManifestFields.extend({ apiVersion: z.literal(2), permissions: z.tuple([z.literal("session.context"), z.literal("session.assets.read")]) }).strict(),
   ManifestFields.extend({ apiVersion: z.literal(3), permissions: z.tuple([z.literal("session.context"), z.literal("repository.workItems.read")]) }).strict(),
+  ManifestFields.extend({ apiVersion: z.literal(4), permissions: Api4Permissions }).strict(),
 ])
 
 export interface PanelExtensionPackage { manifest: PanelExtensionManifest; html: string; digest: string }

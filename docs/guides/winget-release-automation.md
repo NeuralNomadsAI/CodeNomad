@@ -40,4 +40,5 @@ CodeNomad publishes Winget updates from the stable GitHub release pipeline. `.gi
 
 - The workflow does not depend on a persistent local `winget-pkgs` clone.
 - Releases publish the Tauri NSIS installer directly as `CodeNomad-Tauri-windows-x64-{version}.exe` (it is also the signed in-app updater payload); the former ZIP wrapper is no longer published. The `winget-pkgs` manifest must declare that installer as `nsis` rather than a ZIP with a nested NSIS installer.
+- When Windows release signing is enabled (`CODE_SIGNING.md`), the release asset is already the Authenticode-signed installer when this workflow runs, so the hash submitted to Winget is that of the signed file.
 - If a maintainer publishes a release outside the standard release workflow, they should manually run `Update Winget` for that stable tag.

@@ -6,7 +6,7 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 
 1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir l’accueil.
 2. Choisissez **Parcourir les dossiers**, sélectionnez le dossier du backend et ouvrez-le ; ou choisissez une entrée sous **Dossiers récents**.
-3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**.
+3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
 Parcourir un serveur distant signifie parcourir son système de fichiers, pas votre téléphone ou ordinateur portable. Ouvrir un projet ne crée pas un démon OpenCode distinct par onglet. Les conversations sont des sessions natives OpenCode ; leur durée de vie n’est pas celle de l’onglet.
 
@@ -58,7 +58,7 @@ La suppression est refusée si une conversation est active ou si le dossier est 
 2. Sélectionnez un worktree découvert existant ou choisissez **+ Créer un worktree**.
 3. Pour une création, saisissez **Nom** et choisissez **Créer et utiliser le worktree**.
 
-CodeNomad découvre les worktrees via OpenCode et vérifie qu’ils appartiennent au dépôt ouvert. Un nouveau nom de branche part du HEAD de la copie sélectionnée. Un nom de branche existant utilise sa révision actuelle ; Git peut refuser une branche déjà extraite ailleurs. Les worktrees utilisent l’emplacement par défaut `.codenomad/worktrees`. Les modifications non validées restent dans la copie d’origine ; la création ne les copie pas dans le nouveau worktree.
+CodeNomad découvre les worktrees via OpenCode et vérifie qu’ils appartiennent au dépôt ouvert. Quand le projet est un dossier situé dans un dépôt, seuls les worktrees qui contiennent ce dossier sont proposés. Pour créer un worktree depuis un tel dossier, Git doit le suivre. Un nouveau nom de branche part du HEAD de la copie sélectionnée. Un nom de branche existant utilise sa révision actuelle ; Git peut refuser une branche déjà extraite ailleurs. Les worktrees utilisent l’emplacement par défaut `.codenomad/worktrees`. Les modifications non validées restent dans la copie d’origine ; la création ne les copie pas dans le nouveau worktree.
 
 Le sélecteur de la zone de saisie déplace la conversation parente et ses descendants récursifs en tant que famille vérifiée. Une sous-session ne peut pas modifier ce sélecteur indépendamment. Les sessions actives bloquent l’opération : laissez la famille terminer ou arrêtez d’abord son exécution. Attendez qu’un déplacement soit réglé avant d’en demander un autre ; en cas d’erreur, vérifiez l’état actualisé de la conversation/du worktree avant de réessayer.
 

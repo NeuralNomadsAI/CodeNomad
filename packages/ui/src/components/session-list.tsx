@@ -1,17 +1,22 @@
-import { Component, For, Show, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
+import { Component, For, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { focusInterruption } from "../stores/interruption-navigation"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
+import { observeListEnd } from "../lib/list-end-observer"
+import { preserveListFocus } from "../lib/preserve-list-focus"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
-import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
+import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
+import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import SessionExpander from "./session-expander"
 import { useSessionRowOverflow } from "./session-row-overflow"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
+import { toggleSweepClear, toggleSweepGroup } from "../lib/toggle-sweep"
+import { isSessionInterruptionUnseen, markSessionInterruptionSeen } from "../stores/session-interruption-seen"
 import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
@@ -20,6 +25,7 @@ import {
   isSessionExpanded,
   loadMessages,
   loading,
+  markSessionIdleSeen,
   renameSession,
   sessions as sessionStateSessions,
   setActiveSessionFromList,
@@ -36,12 +42,14 @@ import {
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
-import { collectDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, projectSessionSearchResults, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
+import { collectDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, isSessionArchived, projectSessionFamilies, projectSessionSearchResults, projectUnarchivedSessionThreads, sortSessionIdsDeepestFirst, type SessionFamilySort, type SessionArchiveFilter } from "../stores/session-tree"
+import { setSessionArchived } from "../stores/session-archive"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
+import { getDescendantSessions, getSessionAncestorIds, revealSubsession } from "../stores/session-state"
 const log = getLogger("session")
 
 
@@ -74,6 +82,8 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [worktreeDirectory, setWorktreeDirectory] = createSignal("")
   const [includeMainSessions, setIncludeMainSessions] = createSignal(true)
   const [includeSubsessions, setIncludeSubsessions] = createSignal(false)
+  const [archiveFilter, setArchiveFilter] = createSignal<SessionArchiveFilter>("active")
+  const [archivingSessionIds, setArchivingSessionIds] = createSignal<Set<string>>(new Set())
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
   let failedSortExhaustion: string | undefined
 
@@ -90,10 +100,12 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
   const [now, setNow] = createSignal(Date.now())
   const [listEl, setListEl] = createSignal<HTMLDivElement>()
+  preserveListFocus(listEl)
   const [listViewportAttached, setListViewportAttached] = createSignal(false)
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
   const [menuSessionId, setMenuSessionId] = createSignal<string>()
+  const [expanderMenuSessionId, setExpanderMenuSessionId] = createSignal<string>()
   let attachmentFrame: number | undefined
 
   const setListElement = (element: HTMLDivElement) => {
@@ -163,21 +175,14 @@ const SessionList: Component<SessionListProps> = (props) => {
     const el = sentinelEl()
     if (!el || !hasMore() || isFetchingSessions()) return
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0]
-        if (entry?.isIntersecting && hasMore() && !isFetchingSessions()) {
+    onCleanup(observeListEnd(el, listEl() ?? null, () => {
+        if (hasMore() && !isFetchingSessions()) {
           failedSortExhaustion = undefined
           void loadMoreSessions(props.instanceId).catch((error) => {
             log.error("Failed to load more sessions:", error)
           })
         }
-      },
-      { root: listEl() ?? null, rootMargin: "0px 0px 200px 0px" }
-    )
-
-    observer.observe(el)
-    onCleanup(() => observer.disconnect())
+    }, 200))
   })
 
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -236,7 +241,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory) === normalized)
       return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.label ?? worktree?.slug ?? directory
     }
-    if (!props.enableFilterBar) return projectSessionFamilies(props.threads, { sort: sortBy(), getWorktreeLabel })
+    if (!props.enableFilterBar) return projectSessionFamilies(projectUnarchivedSessionThreads(props.threads, props.activeSessionId), { sort: sortBy(), getWorktreeLabel })
     const instanceSessions = sessionStateSessions().get(props.instanceId)
     const candidates = hasSearchResults ? getSessionSearchSessions(props.instanceId)
       : collectSessionThreadIds(props.threads).flatMap(id => {
@@ -248,6 +253,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       worktreeDirectory: worktreeDirectory(),
       includeSubsessions: includeSubsessions(),
       includeMainSessions: includeMainSessions(),
+      archive: archiveFilter(),
       getWorktreeLabel,
       ...(query && !hasSearchResults
         ? { matchesSession: (session) => sessionMatchesQuery(session.id, query) }
@@ -273,7 +279,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
-    for (const sessionId of [focusedSessionId(), menuSessionId()]) {
+    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId()]) {
       const index = sessionId ? visibleProjection().indexById.get(sessionId) : undefined
       if (index !== undefined) indexes.add(index)
     }
@@ -412,6 +418,23 @@ const SessionList: Component<SessionListProps> = (props) => {
     setRenameTarget({ id: sessionId, title: session.title ?? "", label })
   }
 
+  const handleArchiveSession = async (sessionId: string) => {
+    const instanceId = props.instanceId
+    const session = sessionStateSessions().get(instanceId)?.get(sessionId)
+    if (!session || archivingSessionIds().has(sessionId)) return
+    const archived = !isSessionArchived(session)
+    setArchivingSessionIds(previous => new Set(previous).add(sessionId))
+    try {
+      await setSessionArchived(instanceId, sessionId, archived)
+    } catch (error) {
+      log.error("Failed to change native session archive", { instanceId, sessionId, error })
+      if (props.instanceId === instanceId) showToastNotification({ category: "sessions", variant: "error",
+        message: t(archived ? "sessionList.archive.error" : "sessionList.restore.error") })
+    } finally {
+      setArchivingSessionIds(previous => { const next = new Set(previous); next.delete(sessionId); return next })
+    }
+  }
+
   const isSessionReloading = (sessionId: string) => reloadingSessionIds().has(sessionId)
 
   const handleReloadSession = async (sessionId: string) => {
@@ -435,6 +458,17 @@ const SessionList: Component<SessionListProps> = (props) => {
         return next
       })
     }
+  }
+
+  // Acknowledges a finished row: its Interrupted and Idle badges hide until a new boundary.
+  const clearSessionStatus = (sessionId: string) => {
+    const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
+    if (!session) return
+    batch(() => {
+      markSessionInterruptionSeen(props.instanceId, session)
+      markSessionIdleSeen(props.instanceId, sessionId)
+      clearSessionIdleFade(props.instanceId, sessionId)
+    })
   }
 
   const closeRenameDialog = () => {
@@ -586,8 +620,37 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     const isActive = () => props.activeSessionId === sessionId()
-    // A collapsed parent's chevron carries its subsessions' visible status.
-    const childActivity = () => rowProps.hasChildren && !rowProps.expanded ? descendantActivity().get(sessionId()) : undefined
+    // A parent's chevron carries its subsessions' visible status, expanded or not.
+    const childActivity = () => rowProps.hasChildren ? descendantActivity().get(sessionId()) : undefined
+    // The row and descendants whose Idle or Interrupted badge "Mark as read" clears.
+    const readableHierarchy = () => [rowProps.session, ...getDescendantSessions(props.instanceId, sessionId())]
+      .filter(session => session.status === "idle" && !session.pendingPermission && !session.pendingForm
+        && (isSessionInterruptionUnseen(props.instanceId, session)
+          || shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus)))
+      .map(session => session.id)
+    // Observe activity independently of expansion: folding a busy branch is not
+    // a new activity transition. Visible descendants follow the same rule.
+    const activityKind = createMemo(() => {
+      const activity = descendantActivity().get(sessionId())
+      return activity ? childActivityKind(activity) : undefined
+    })
+    createEffect(on(activityKind, (kind, previous) => {
+      if (kind === previous || !kind || kind === "idle" || rowProps.expanded
+        || props.enableFilterBar || !preferences().autoExpandActiveSubsessions) return
+      const active = props.activeSessionId
+      if (!active || (!isActive() && !getSessionAncestorIds(props.instanceId, sessionId()).includes(active))) return
+      const row = rowElement()?.getBoundingClientRect(), viewport = listEl()?.getBoundingClientRect()
+      // Virtua also mounts buffered rows beyond the viewport; only visible rows reveal.
+      if (!row || !viewport || row.width <= 0 || row.height <= 0
+        || row.bottom <= Math.max(0, viewport.top) || row.top >= Math.min(window.innerHeight, viewport.bottom)
+        || row.right <= Math.max(0, viewport.left) || row.left >= Math.min(window.innerWidth, viewport.right)) return
+      for (const descendant of getDescendantSessions(props.instanceId, sessionId())) {
+        if (descendant.pendingPermission || descendant.pendingForm
+          || descendant.status === "working" || descendant.status === "compacting") {
+          revealSubsession(props.instanceId, descendant.id)
+        }
+      }
+    }, { defer: true }))
     const expanderLabel = (key: string) => {
       const label = t(`sessionList.expand.${key}`)
       const activity = childActivity()
@@ -595,7 +658,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
     const title = () => rowProps.session.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, sessionId())
-    const interrupted = () => rowProps.session.generationRecovery === "interrupted"
+    const interrupted = () => isSessionInterruptionUnseen(props.instanceId, rowProps.session)
     const retry = () => getSessionRetry(props.instanceId, sessionId())
     const statusLabel = () => {
       if (interrupted()) return t("sessionList.status.interrupted")
@@ -645,6 +708,18 @@ const SessionList: Component<SessionListProps> = (props) => {
         message: retryState.message,
         attempt: String(retryState.attempt),
       })
+    }
+    // Only finished states are acknowledged; work and input requests always stay visible.
+    const statusClearable = () => !needsInput() && !retry() && status() === "idle"
+    const statusContent = () => (
+      <>
+        {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
+        <span class="session-item-status-label">{statusText()}</span>
+      </>
+    )
+    const selectRow = () => {
+      selectSession(sessionId())
+      if (needsInput()) focusInterruption(props.instanceId, sessionId())
     }
  
     const isSelected = () => selectedSessionIds().has(sessionId())
@@ -703,6 +778,13 @@ const SessionList: Component<SessionListProps> = (props) => {
         get disabled() { return isSessionDeleting(sessionId()) },
         onSelect: () => handleDeleteSession(sessionId()),
       },
+      {
+        key: "archive",
+        get label() { return t(isSessionArchived(rowProps.session) ? "sessionList.actions.restore.title" : "sessionList.actions.archive.title") },
+        get icon() { return isSessionArchived(rowProps.session) ? <ArchiveRestore class="w-3.5 h-3.5" /> : <Archive class="w-3.5 h-3.5" /> },
+        get disabled() { return archivingSessionIds().has(sessionId()) || isSessionDeleting(sessionId()) },
+        onSelect: () => handleArchiveSession(sessionId()),
+      },
     ]
 
     return (
@@ -721,6 +803,7 @@ const SessionList: Component<SessionListProps> = (props) => {
               }}
               type="checkbox"
               checked={parentGroupState().checked}
+              data-toggle-sweep={toggleSweepGroup("session-selection")}
               onChange={(event) => setSelectedMany(parentGroupState().ids, event.currentTarget.checked)}
               aria-label={t("sessionList.selection.checkboxAriaLabel")}
             />
@@ -729,22 +812,23 @@ const SessionList: Component<SessionListProps> = (props) => {
             when={rowProps.hasChildren}
             fallback={<span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
           >
-            <button
-              type="button"
+            <SessionExpander
               class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-              onClick={() => rowProps.onToggleExpand?.()}
-              aria-expanded={Boolean(rowProps.expanded)}
-              aria-label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
+              expanded={Boolean(rowProps.expanded)}
+              activity={childActivity() ? childActivityKind(childActivity()!) : undefined}
+              label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
               title={expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
-              data-child-activity={childActivity() ? childActivityKind(childActivity()!) : undefined}
-            >
-              <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
-            </button>
+              markReadLabel={t("sessionList.expand.markRead")}
+              markReadDisabled={readableHierarchy().length === 0}
+              onToggle={() => rowProps.onToggleExpand?.()}
+              onMarkRead={() => batch(() => readableHierarchy().forEach(clearSessionStatus))}
+              onOpenChange={(open) => setExpanderMenuSessionId(open ? sessionId() : undefined)}
+            />
           </Show>
           <button
             type="button"
             class="session-item-select"
-            onClick={() => { selectSession(sessionId()); if (needsInput()) focusInterruption(props.instanceId, sessionId()) }}
+            onClick={selectRow}
             title={title()}
             aria-current={isActive() ? "true" : undefined}
           >
@@ -752,25 +836,53 @@ const SessionList: Component<SessionListProps> = (props) => {
               <Bot class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />
             </Show>
             <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
-            <span class="session-item-badges">
-              <Show when={showStatus()}>
-                <span
-                  class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
-                  title={statusTooltip()}
-                  translate="no"
-                >
-                  {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
-                  <span class="session-item-status-label">{statusText()}</span>
-                </span>
-              </Show>
-              <Show when={showWorktreeBadge()}>
-                <span class="status-indicator session-status-list worktree-indicator" title={t("sessionList.worktree.tooltip", { worktree: worktreeSlug() })}>
-                  <Split class="w-3.5 h-3.5" aria-hidden="true" />
-                  <span class="worktree-indicator-label">{worktreeSlug()}</span>
-                </span>
-              </Show>
-            </span>
           </button>
+          {/* Badges sit beside the select button so a clearable one can be its own button;
+              the rest of the badge area still selects the row. */}
+          <span
+            class="session-item-badges"
+            onClick={(event) => { if (!(event.target as Element).closest("button")) selectRow() }}
+          >
+            <Show when={isSessionArchived(rowProps.session)}>
+              <span class="status-indicator session-status-list" title={t("sessionList.status.archived")}>
+                <Archive class="w-3.5 h-3.5" aria-hidden="true" />
+                <span>{t("sessionList.status.archived")}</span>
+              </span>
+            </Show>
+            <Show when={showStatus()}>
+              <Show
+                when={statusClearable()}
+                fallback={
+                  <span
+                    class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
+                    title={statusTooltip()}
+                    translate="no"
+                  >
+                    {statusContent()}
+                  </span>
+                }
+              >
+                <button
+                  type="button"
+                  class={`status-indicator session-status session-status-list session-status-clearable ${statusClassName()} notranslate`}
+                  title={t("sessionList.status.clear")}
+                  aria-label={t("sessionList.status.clearAriaLabel", { status: statusText() })}
+                  translate="no"
+                  data-toggle-sweep={toggleSweepGroup("session-status-clear")}
+                  ref={(element) => toggleSweepClear(element)}
+                  onClick={() => clearSessionStatus(sessionId())}
+                >
+                  {statusContent()}
+                </button>
+              </Show>
+            </Show>
+            <Show when={showWorktreeBadge()}>
+              <span class="status-indicator session-status-list worktree-indicator" title={t("sessionList.worktree.tooltip", { worktree: worktreeSlug() })}>
+                <Split class="w-3.5 h-3.5" aria-hidden="true" />
+                <span class="worktree-indicator-label">{worktreeSlug()}</span>
+              </span>
+            </Show>
+          </span>
           <div class="session-item-actions">
             <div class="session-item-inline-actions" inert={compactActions()}>
               <For each={actionItems}>{(item) => (
@@ -889,6 +1001,14 @@ const SessionList: Component<SessionListProps> = (props) => {
               ))}
             </select>
           </div>
+
+          <select class="selector-input mt-2 w-full min-w-0" value={archiveFilter()}
+            onChange={event => setArchiveFilter(event.currentTarget.value as SessionArchiveFilter)}
+            aria-label={t("sessionList.archiveFilter.ariaLabel")}>
+            <option value="active">{t("sessionList.archiveFilter.active")}</option>
+            <option value="archived">{t("sessionList.archiveFilter.archived")}</option>
+            <option value="all">{t("sessionList.archiveFilter.all")}</option>
+          </select>
 
           <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-secondary">
             <label class="flex items-center gap-2">

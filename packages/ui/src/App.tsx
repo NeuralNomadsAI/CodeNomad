@@ -8,6 +8,7 @@ import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
+import { useDesktopConnectionLaunch } from "./lib/hooks/use-desktop-connection-launch"
 import { installKeyboardOffset } from "./lib/keyboard-offset"
 import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
@@ -81,6 +82,7 @@ import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
 import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
+import { shouldAppHoldWakeLock } from "./stores/wake-lock-eligibility"
 import { openSettings } from "./stores/settings-screen"
 import { showCommandPalette } from "./stores/command-palette"
 import {
@@ -224,15 +226,11 @@ const App: Component = () => {
     initReleaseNotifications()
   })
 
-  const shouldHoldWakeLock = createMemo(() => {
-    const map = instances()
-    for (const id of map.keys()) {
-      if (hasWakeLockEligibleWork(id)) {
-        return true
-      }
-    }
-    return false
-  })
+  const shouldHoldWakeLock = createMemo(() => shouldAppHoldWakeLock(
+    preferences().keepComputerAwake,
+    [...instances().keys()].some(hasWakeLockEligibleWork),
+    runtimeEnv.windowContext,
+  ))
 
   createEffect(() => {
     const hold = shouldHoldWakeLock()
@@ -285,7 +283,7 @@ const App: Component = () => {
       if (!await claimNativeBrowserOpen(requestID)) return
       try {
         const instance = owner
-        await openSessionPreview(sessionID, url, instance.folder)
+        await openSessionPreview(sessionID, url, instance.folder, async () => !disposed && await claimNativeBrowserOpen(requestID))
         if (disposed) {
           await releaseNativeBrowserOpen(requestID)
           return
@@ -507,6 +505,7 @@ const App: Component = () => {
   }
 
   useDesktopFolderLaunch(handleSelectFolder)
+  useDesktopConnectionLaunch()
 
   async function handleNewTemporaryInstance(): Promise<void> {
     clearLaunchError()

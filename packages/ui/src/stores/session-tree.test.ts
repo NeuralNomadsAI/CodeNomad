@@ -13,6 +13,7 @@ import {
   getSessionRootFromMap,
   projectSessionFamilies,
   projectSessionSearchResults,
+  projectUnarchivedSessionThreads,
   sortSessionIdsDeepestFirst,
 } from "./session-tree"
 import { normalizeSessionDirectory } from "./session-list-options"
@@ -26,6 +27,37 @@ function sessionMap(definitions: Array<[string, string | null, number]>): Map<st
 }
 
 describe("session tree", () => {
+  it("projects native archives without altering flags, selected paths or live work", () => {
+    const sessions = sessionMap([["root", null, 1], ["child", "root", 2], ["nested", "child", 3], ["other", null, 4]])
+    for (const value of sessions.values()) value.status = "idle"
+    sessions.get("root")!.time.archived = 10
+    const threads = buildSessionThreadsFromMap(sessions, ["root", "other"])
+    const ids = (selected?: string) => collectSessionThreadIds(projectUnarchivedSessionThreads(threads, selected))
+    assert.deepEqual(ids(), ["other"])
+    assert.deepEqual(ids("nested"), ["other", "root", "child", "nested"])
+    sessions.get("nested")!.pendingForm = true
+    assert.deepEqual(ids(), ["other", "root", "child", "nested"])
+    sessions.get("nested")!.pendingForm = false
+    sessions.get("child")!.status = "working"
+    assert.deepEqual(ids(), ["other", "root", "child"])
+    sessions.get("child")!.status = "idle"
+    assert.equal(sessions.get("child")!.time.archived, undefined)
+    const options = { sort: "activity" as const, getWorktreeLabel: () => "", includeMainSessions: true, includeSubsessions: true }
+    const filtered = (archive: "active" | "archived" | "all") => projectSessionSearchResults(sessions.values(), { ...options, archive }).map(row => row.session.id)
+    assert.deepEqual(filtered("archived"), ["root"])
+    assert.deepEqual(filtered("active"), ["other", "nested", "child"])
+    assert.equal(filtered("all").length, 4)
+    assert.equal(collectSessionThreadIds(threads).length, 4, "authoritative family remains intact")
+  })
+  it("hides reserved schedule carriers in browsing and search without removing native observations", () => {
+    const carrier = "ses_cn_schedule_fixture", sessions = sessionMap([["ordinary", null, 1], [carrier, null, 2]])
+    const threads = buildSessionThreadsFromMap(sessions, ["ordinary", carrier])
+    assert.deepEqual(threads.map(item => item.session.id), ["ordinary"])
+    const options = { sort: "activity" as const, getWorktreeLabel: () => "", includeMainSessions: true, includeSubsessions: true }
+    assert.deepEqual(projectSessionSearchResults(sessions.values(), options).map(item => item.session.id), ["ordinary"])
+    assert.deepEqual(projectSessionFamilies([{ session: sessions.get(carrier)!, children: [], depth: 0, hasChildren: false, latestUpdated: 2 }], options), [])
+    assert.equal(sessions.has(carrier), true, "display filtering preserves authoritative native data")
+  })
   it("preserves case in the Linux portion of WSL UNC paths", () => {
     assert.equal(
       normalizeSessionDirectory("\\\\WSL.localhost\\Ubuntu\\Repo\\Feature"),

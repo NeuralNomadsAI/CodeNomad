@@ -75,6 +75,32 @@ function locationlessManager(
 }
 
 describe("InstanceEventBridge", () => {
+  it("projects payload-free integration events before the ownership relay and drops unknown notifications", async () => {
+    const secret = "HOST_TOKEN_SCRIPT_BINDING_SENTINEL"
+    const location = { directory: "/repo-a" }
+    const events = [
+      { type: "rpc.neuralnomads.fixture.status_changed", location, data: { token: secret }, secret },
+      { type: "rpc.neuralnomads.fixture.hosts_changed", location, data: { script_handle: secret }, id: secret },
+      { type: "rpc.neuralnomads.fixture.binding_changed", location, data: { binding_key: secret } },
+      { type: "rpc.neuralnomads.fixture.status_changed", data: { token: secret } },
+      { type: "config.updated", data: {} },
+    ] as unknown as OpenCodeEvent[]
+    const { manager } = locationlessManager(events, {})
+    const bus = new EventBus()
+    const received: OpenCodeEvent[] = []
+    bus.on("instance.event", event => { if (event.event.type !== "server.connected") received.push(event.event) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] })
+      await waitFor(() => received.length === 3)
+      assert.deepEqual(received.filter(event => event.type.startsWith("rpc.")), [
+        { type: "rpc.neuralnomads.fixture.status_changed", location, data: {} },
+        { type: "rpc.neuralnomads.fixture.hosts_changed", location, data: {} },
+      ])
+      assert.equal(JSON.stringify(received).includes(secret), false)
+    } finally { bridge.shutdown() }
+  })
+
   it("keeps same-directory legacy identities separate for scoped and cached locationless events", async () => {
     const one = { directory: "/repo", workspaceID: "one" }
     const two = { directory: "/repo", workspaceID: "two" }
@@ -823,7 +849,7 @@ describe("InstanceEventBridge", () => {
     const connectionFor = (pid: number) => ({
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4010", auth: { username: "u", password: "p" } },
-        { [runtimeKey]: Object.freeze({ version: "2.1.2", pid, contract: {} }) },
+        { [runtimeKey]: Object.freeze({ version: "2.3.0", pid, contract: {} }) },
       ),
     })
     const first = serverConnected()
@@ -862,7 +888,7 @@ describe("InstanceEventBridge", () => {
       // The relayed identity must not be a digest a subscriber can recompute
       // from known fields: that would be an offline verifier for the password.
       const verifiable = createHash("sha256").update(JSON.stringify([
-        "http://127.0.0.1:4010", "2.1.2", 4242, "u", "p",
+        "http://127.0.0.1:4010", "2.3.0", 4242, "u", "p",
       ])).digest("hex")
       assert.notEqual(received[0].data.daemon, verifiable, "the token is server-held, not a recomputable digest")
       for (const digest of [received[0].data.daemon, received[2].data.daemon]) {
@@ -878,7 +904,7 @@ describe("InstanceEventBridge", () => {
     const connection = {
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4011" },
-        { [runtimeKey]: Object.freeze({ version: "2.1.2", pid: 4242, contract: {} }) },
+        { [runtimeKey]: Object.freeze({ version: "2.3.0", pid: 4242, contract: {} }) },
       ),
     }
     const firstSubscription = serverConnected()
@@ -918,7 +944,7 @@ describe("InstanceEventBridge", () => {
     const connectionFor = (pid: number) => ({
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4012" },
-        { [runtimeKey]: Object.freeze({ version: "2.1.2", pid, contract: {} }) },
+        { [runtimeKey]: Object.freeze({ version: "2.3.0", pid, contract: {} }) },
       ),
     })
     const before = serverConnected()
@@ -956,7 +982,7 @@ describe("InstanceEventBridge", () => {
     const connection = {
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4013" },
-        { [runtimeKey]: Object.freeze({ version: "2.1.2", pid: 3333, contract: {} }) },
+        { [runtimeKey]: Object.freeze({ version: "2.3.0", pid: 3333, contract: {} }) },
       ),
     }
     const attributedStream = () => {

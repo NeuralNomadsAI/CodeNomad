@@ -4,16 +4,9 @@ import { MissionControlError } from "./control-error"
 import { parseExecution } from "./execution"
 import type { MissionMap, MissionTask } from "./model"
 import { parseExecutionMode } from "./task-execution-mode"
+import { missionTaskKeySchema as taskKey, taskContractReferenceSchema } from "./task-contract"
 
-const taskKey = z.string().regex(/^[a-z0-9][a-z0-9._-]{1,63}$/)
-
-/** This reference is a task generation, never a journal/document revision. */
-export const taskContractReferenceSchema = z.object({
-  missionID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
-  taskKey,
-  generation: z.number().int().positive().safe(),
-}).strict()
-export type TaskContractReference = z.infer<typeof taskContractReferenceSchema>
+export { taskContractReferenceSchema, type TaskContractReference } from "./task-contract"
 
 const declarationSchema = z.object({
   missionID: taskContractReferenceSchema.shape.missionID.optional(),

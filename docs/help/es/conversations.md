@@ -6,16 +6,28 @@ Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de 
 
 Los encabezados de razonamiento y de herramientas muestran cuánto duró cada paso, con un contador en vivo mientras se ejecuta; no se muestran duraciones inferiores a un segundo. Cuando **Tokens** se muestra en **Contenido de los mensajes** (el preajuste **Todo** lo muestra), cada mensaje del agente termina con una línea de tokens y coste después de su texto final. Esa línea suma el mensaje y los mensajes que contienen las herramientas y el razonamiento que cubre su acción **Eliminar herramientas y razonamientos de esta respuesta**, dentro de la transcripción cargada; despliégala para ver los recuentos de razonamiento y de caché. Los pasos que solo ejecutaron herramientas no tienen línea propia.
 
+## Diagramas Mermaid {#mermaid}
+
+Los bloques `mermaid` y `mmd` se representan con Mermaid Tiny al terminar la transmisión. Usa **Mostrar código fuente** / **Mostrar diagrama** en la cabecera del código; Copiar conserva el texto fuente. Tiny excluye mapas mentales, diagramas de arquitectura y KaTeX. Los diagramas inválidos, no compatibles o demasiado grandes conservan su código con un error. El renderizado es local, sin red, con un límite de 50.000 caracteres y 500 aristas.
+
 ## Buscar y recorrer conversaciones {#navigate-conversations}
 
 1. Selecciona una fila en **Sesiones** o usa **Nueva sesión** para iniciar una conversación padre.
-2. Expande el chevrón de una conversación padre para ver sus subsesiones. Un chevrón contraído muestra el estado más urgente de sus descendientes: necesitan entrada, están trabajando o terminaron hace poco (inactivos); su información emergente los cuenta.
-3. Usa **Buscar sesiones…**, **Sesiones principales** / **Subsesiones**, el filtro de worktree y la ordenación por **Actividad**, **Nombre** o **Worktree** para acotar la lista.
+2. Haz clic en el chevrón de una conversación padre para expandir o contraer sus subsesiones conservando sus insignias. Expandido o contraído, el chevrón muestra el estado más urgente de sus descendientes: necesitan entrada, están trabajando, compactando o inactivos; su etiqueta accesible los cuenta. Haz clic derecho en él y elige **Marcar como leído** para borrar de una vez las insignias **Inactiva** e **Interrumpido** de la conversación y de todas sus subsesiones.
+3. Usa **Buscar sesiones…**, **Sesiones principales** / **Subsesiones**, el filtro de worktree y la ordenación por **Actividad**, **Nombre** o **Worktree** para acotar la lista. En los resultados de búsqueda, arrastra sobre las casillas de las filas para seleccionar o deseleccionar varias conversaciones a la vez.
 4. Usa **Atrás** y **Adelante** en la barra lateral para volver a conversaciones que hayas mostrado.
 
-La exploración normal es jerárquica; los resultados de búsqueda/filtro son entradas planas con la identidad y el worktree propios de cada conversación. Una subsesión que empiece a trabajar solo se revela automáticamente dentro de la familia de la conversación activa. Contraer esa rama descarta esa apertura automática para los descendientes actualmente en ejecución.
+Haz clic en una insignia **Inactiva** o **Interrumpido** (**Descartar**) para reconocerla sin abrir la conversación, o pulsa Intro/Espacio cuando tenga el foco. Con ratón o lápiz, mantén pulsada una insignia y arrastra sobre otras para descartar varias; el gesto táctil sigue desplazando la lista. Los indicadores de trabajo y de entrada/permisos pendientes permanecen visibles. Ver la sesión descarta **Inactiva**; **Interrumpido** requiere un gesto explícito de descarte. Los reconocimientos se guardan con el estado de sesiones de esta ventana; una nueva interrupción vuelve a mostrar la insignia. Descartar solo cambia el indicador; la flecha de recarga sigue recargando mensajes.
+
+La exploración normal es jerárquica; los resultados de búsqueda/filtro son entradas planas con la identidad y el worktree propios de cada conversación. En **Ajustes → General**, **Expandir subsesiones automáticamente** está activado por defecto. Una fila visible y contraída abre las rutas a sus subsesiones activas cuando su flecha pasa a trabajar, compactar o esperar una respuesta, si está seleccionada o desciende de la conversación seleccionada. La regla se aplica a cualquier profundidad. Desplazarse hasta una fila ya activa la deja cerrada hasta una nueva transición. Desactiva la opción para que la actividad no abra ramas; la expansión manual y la navegación explícita siguen disponibles. Las ramas abiertas, incluidas las abiertas automáticamente, se guardan para restaurarlas.
 
 Atrás/Adelante es un historial de visitas por pestaña de proyecto y ventana, no el orden de la lista. Se conserva en memoria, omite conversaciones no disponibles/eliminadas y no se restaura tras reiniciar. Seleccionar una conversación nueva después de retroceder reemplaza la ruta hacia delante. En cambio, **Sesión anterior** / **Siguiente sesión** en la paleta recorren cíclicamente la lista visible.
+
+## Archivar y restaurar {#archive}
+
+Elige **Archivar sesión** en las acciones de una fila para conservar su historial y ocultar su rama inactiva de la navegación normal. La conversación seleccionada y las que tienen trabajo en curso o preguntas pendientes siguen accesibles. Archivar no detiene el trabajo, no elimina mensajes ni cambia el estado de archivo propio de las subsesiones.
+
+Abre la búsqueda de sesiones y elige **Sesiones archivadas** o **Todas las sesiones**. Las filas muestran **Archivada** y ofrecen **Restaurar sesión**. Activa las subsesiones para encontrar hijos de forma independiente, incluso bajo un padre archivado. **Sesiones sin archivar** filtra por el estado propio de cada conversación. Restaura un antecesor archivado para volver a mostrar su rama inactiva en la navegación normal. Si una acción no se confirma, actualiza la lista antes de reintentar.
 
 ## Elegir Agente, Modelo y Razonamiento {#agent-model-thinking}
 
@@ -47,6 +59,12 @@ Elegir una habilidad retira el token `@query` y añade una etiqueta. Enviar borr
 En el escritorio, enviar mueve el foco del teclado a la conversación, de modo que las flechas, las teclas de página y Espacio la desplazan; escribir un carácter vuelve al editor con ese carácter. **Borrar el texto del prompt** en **Más acciones** (por defecto **Ctrl/Cmd+K**) borra el borrador del editor.
 
 Los borradores son estado de trabajo del cliente, no mensajes nativos compartidos. La restauración al iniciar puede conservar el estado compatible del editor, pero no trates un borrador o adjunto sin enviar como una copia de seguridad ni supongas que aparece en otro dispositivo. Guarda el texto importante antes de borrar los datos de inicio o cerrar un cliente cuya política de restauración esté desactivada; consulta [Escritorio](desktop.md).
+
+## Abrir archivos desde las respuestas {#open-files-from-replies}
+
+1. Las respuestas del agente enlazan archivos del proyecto con rutas relativas y absolutas.
+2. Un clic normal abre el archivo enlazado en la vista previa del archivo, leído del worktree de la conversación.
+3. Los clics con modificadores (Ctrl/⌘-clic, Mayús-clic, clic central) y los enlaces fuera del worktree de la sesión mantienen el comportamiento normal de los enlaces.
 
 ## Comandos y modo shell {#commands-shell}
 
@@ -82,6 +100,14 @@ Si falla una actualización de la cola, inspecciona la cola actual antes de rein
 Es una solicitud de modelo independiente que usa el contexto de la sesión. No ejecuta un bucle de herramientas, no realiza acciones ni añade su pregunta/respuesta a la conversación. Los adjuntos de archivo/imagen permanecen en el editor; el texto pegado usado en la pregunta se incluye como texto. No es una conversación duradera nueva ni una forma alternativa de asignar trabajo.
 
 Cerrar cancela la solicitud aparte pendiente sin interrumpir la sesión principal. Salir de la conversación activa borra esta ventana efímera; copia primero lo que necesites. Las respuestas vacías/con error aparecen aquí en lugar de convertirse en mensajes de la transcripción.
+
+## Seguir trabajando hacia un objetivo con /goal {#goal}
+
+1. Envía `/goal` seguido de un objetivo, por ejemplo `/goal Make every test pass`. La sesión sigue trabajando, turno tras turno, hasta que el revisor de objetivos de OpenCode decide que el objetivo se ha cumplido.
+2. Mientras la conversación tiene un objetivo, **Estado** lo muestra en una línea encima de **Tokens**: su estado (**Activo**, **En pausa** o **Cumplido**), el objetivo y las rondas usadas sobre el máximo permitido. Pasa el puntero por el objetivo o dale el foco para leerlo completo, con el motivo del último cambio, como por qué el objetivo se pausó o se cumplió.
+3. Usa **Pausar objetivo** o **Reanudar objetivo** en esa línea, o envía `/goal pause` o `/goal resume`. Usa **Borrar objetivo** o `/goal clear` para quitar el objetivo.
+
+Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones empiezan sin ninguno. OpenCode también pausa un objetivo por sí mismo cuando detienes la sesión, cuando una ejecución falla, cuando deja de avanzar, al llegar a su límite de rondas o cuando el servicio se reinicia; reanúdalo para continuar. Pausar o borrar no deshace el trabajo ya hecho. Un comando que no aplica, como pausar sin un objetivo activo, muestra el mensaje de OpenCode. Sin objetivo, o con un servicio de OpenCode sin soporte de objetivos, la línea no aparece.
 
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
 

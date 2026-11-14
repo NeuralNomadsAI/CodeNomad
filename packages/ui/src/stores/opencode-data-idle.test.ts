@@ -26,7 +26,7 @@ function fixture(instanceId: string) {
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>) => projectOpenCodeMessages(instanceId, sessionId, data)
   const emit = (type: string, data: Record<string, unknown> = {}) => {
     const created = ++sequence
-    const event = { id: `event-${created}`, type, created, data: { sessionID: sessionId, ...data } } as OpenCodeEvent
+    const event = { id: `evt_${created}`, type, created, data: { sessionID: sessionId, ...data } } as OpenCodeEvent
     const result = applyOpenCodeDataEvent(instanceId, "/work", event, next => {
       project(next)
       if (type === SETTLED) idleApplied = true

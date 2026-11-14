@@ -2,7 +2,7 @@ import { Show, type Accessor, type Component } from "solid-js"
 import type { SessionThread } from "../../../stores/session-state"
 import type { DrawerViewState } from "./types"
 
-import { ArrowLeft, ArrowRight, Info, Loader2, PlusSquare, Search } from "lucide-solid"
+import { ArrowLeft, ArrowRight, Loader2, PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 
 import SessionList from "../../session-list"
@@ -44,11 +44,35 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
   return (
     <div id={props.panelId} class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
       <div class="panel-header session-sidebar-header border-b border-base">
-        <div class="session-sidebar-header-row flex items-center justify-between gap-2">
+        <div class="session-sidebar-header-row">
+          <div class="panel-header-actions session-sidebar-header-actions session-sidebar-header-nav">
+            <IconButton
+              class="session-history-button"
+              size="small"
+              color="inherit"
+              aria-label={props.t("sessionList.history.back")}
+              title={props.t("sessionList.history.backTitle")}
+              disabled={!props.history.canGoBack()}
+              onClick={props.history.goBack}
+            >
+              <ArrowLeft size={20} aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              class="session-history-button"
+              size="small"
+              color="inherit"
+              aria-label={props.t("sessionList.history.forward")}
+              title={props.t("sessionList.history.forwardTitle")}
+              disabled={!props.history.canGoForward()}
+              onClick={props.history.goForward}
+            >
+              <ArrowRight size={20} aria-hidden="true" />
+            </IconButton>
+          </div>
           <span class="session-sidebar-title">
             {props.t("instanceShell.leftPanel.sessionsTitle")}
           </span>
-          <div class="panel-header-actions session-sidebar-header-actions">
+          <div class="panel-header-actions session-sidebar-header-actions session-sidebar-header-end">
             <IconButton
               size="small"
               color="inherit"
@@ -76,39 +100,6 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
               onClick={props.onToggleSearch}
             >
               <Search class="w-4 h-4" />
-            </IconButton>
-            <IconButton
-              class="icon-toggle"
-              size="small"
-              color="inherit"
-              aria-label={props.t("instanceShell.leftPanel.instanceInfo")}
-              title={withHotkey(props.t("instanceShell.leftPanel.instanceInfo"), "switch-to-info")}
-              aria-pressed={props.activeSessionId() === "info"}
-              onClick={() => props.onSelectSession("info")}
-            >
-              <Info size={20} aria-hidden="true" />
-            </IconButton>
-            <IconButton
-              class="session-history-button"
-              size="small"
-              color="inherit"
-              aria-label={props.t("sessionList.history.back")}
-              title={props.t("sessionList.history.backTitle")}
-              disabled={!props.history.canGoBack()}
-              onClick={props.history.goBack}
-            >
-              <ArrowLeft size={20} aria-hidden="true" />
-            </IconButton>
-            <IconButton
-              class="session-history-button"
-              size="small"
-              color="inherit"
-              aria-label={props.t("sessionList.history.forward")}
-              title={props.t("sessionList.history.forwardTitle")}
-              disabled={!props.history.canGoForward()}
-              onClick={props.history.goForward}
-            >
-              <ArrowRight size={20} aria-hidden="true" />
             </IconButton>
           </div>
         </div>

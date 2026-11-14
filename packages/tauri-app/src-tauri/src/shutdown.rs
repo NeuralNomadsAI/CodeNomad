@@ -16,7 +16,8 @@ const WINDOWS_SESSION_END_TIMEOUT: Duration = Duration::from_secs(5);
 struct PendingClose {
     window_id: String,
     generation: u64,
-    persisted: bool,
+    /// False for an unpersisted window and for the last user window, whose saved state stays.
+    removes_state: bool,
 }
 
 #[cfg(windows)]
@@ -63,7 +64,12 @@ pub(crate) struct ShutdownCoordinator {
 }
 
 impl ShutdownCoordinator {
-    fn begin_local_close(&self, label: String, window_id: String, persisted: bool) -> Option<u64> {
+    fn begin_local_close(
+        &self,
+        label: String,
+        window_id: String,
+        removes_state: bool,
+    ) -> Option<u64> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.shutdown_started
             || state.local_closes.contains_key(&label)
@@ -79,7 +85,7 @@ impl ShutdownCoordinator {
             PendingClose {
                 window_id,
                 generation,
-                persisted,
+                removes_state,
             },
         );
         Some(generation)
@@ -454,14 +460,22 @@ impl ShutdownCoordinator {
     }
 }
 
+/// The loading page and the server's sign-in and pairing pages never run the application, so
+/// nothing there would answer a flush: waiting for one would keep the window from closing and
+/// CodeNomad from quitting. An unreadable address still asks.
+fn awaits_renderer_flush(url: Option<&tauri::Url>) -> bool {
+    url.map_or(true, |url| !crate::is_listenerless_document(url))
+}
+
 fn emit_flush(app: &AppHandle, label: &str, generation: u64) -> bool {
     app.get_webview(label).is_some_and(|webview| {
-        webview
-            .emit(
-                "client-state:flush-requested",
-                client_state::RendererFlushRequest { generation },
-            )
-            .is_ok()
+        awaits_renderer_flush(webview.url().ok().as_ref())
+            && webview
+                .emit(
+                    "client-state:flush-requested",
+                    client_state::RendererFlushRequest { generation },
+                )
+                .is_ok()
     })
 }
 
@@ -484,10 +498,13 @@ pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
     let Some(record) = app.state::<LocalWindows>().record(&label) else {
         return;
     };
+    let removes_state = app
+        .state::<LocalWindows>()
+        .has_other_user_window(&label, |other| local_window_close_in_flight(&app, other));
     let Some(generation) = app.state::<ShutdownCoordinator>().begin_local_close(
         label.clone(),
         record.id.clone(),
-        record.persisted,
+        record.persisted && removes_state,
     ) else {
         return;
     };
@@ -545,12 +562,7 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
 }
 
 fn renderer_labels(app: &AppHandle) -> Vec<String> {
-    let mut labels = app
-        .state::<LocalWindows>()
-        .records()
-        .into_iter()
-        .map(|record| record.label)
-        .collect::<Vec<_>>();
+    let mut labels = app.state::<LocalWindows>().user_window_labels();
     if app.get_webview_window(crate::preferences_window::LABEL).is_some()
         && app.state::<crate::preferences_window::PreferencesWindow>().renderer_ready()
     {
@@ -676,6 +688,8 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         client_state::release(&app);
         let restart = app.state::<ShutdownCoordinator>().complete_cleanup();
         if restart {
+            #[cfg(target_os = "macos")]
+            RESTART_ON_EXIT.store(true, std::sync::atomic::Ordering::Release);
             app.request_restart();
         } else {
             app.exit(0);
@@ -686,6 +700,16 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
 pub(crate) fn request_restart(app: AppHandle) {
     app.state::<ShutdownCoordinator>().request_restart();
     request(app);
+}
+
+/// Set once cleanup has requested Tauri's restart; `RunEvent::Exit` then relaunches
+/// with this process's environment (`macos_relaunch.rs`).
+#[cfg(target_os = "macos")]
+static RESTART_ON_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+pub(crate) fn restart_on_exit() -> bool {
+    RESTART_ON_EXIT.load(std::sync::atomic::Ordering::Acquire)
 }
 
 fn retry_bounded<E>(
@@ -724,7 +748,7 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
     let pending = app
         .state::<ShutdownCoordinator>()
         .take_committed_local_close(label)?;
-    if !pending.persisted {
+    if !pending.removes_state {
         app.state::<ShutdownCoordinator>()
             .approve_local_close(label.to_string());
         return Some(true);
@@ -885,70 +909,45 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
 }
 
 #[cfg(windows)]
-struct WindowsSessionEndContext {
-    app: AppHandle,
-}
-
-#[cfg(windows)]
-unsafe extern "system" fn windows_session_end_proc(
-    hwnd: windows_sys::Win32::Foundation::HWND,
-    message: u32,
-    wparam: windows_sys::Win32::Foundation::WPARAM,
-    lparam: windows_sys::Win32::Foundation::LPARAM,
-    subclass_id: usize,
-    reference_data: usize,
-) -> windows_sys::Win32::Foundation::LRESULT {
-    use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        WM_ENDSESSION, WM_NCDESTROY, WM_QUERYENDSESSION,
-    };
-    if message == WM_NCDESTROY {
-        RemoveWindowSubclass(hwnd, Some(windows_session_end_proc), subclass_id);
-        let result = DefSubclassProc(hwnd, message, wparam, lparam);
-        drop(Box::from_raw(
-            reference_data as *mut WindowsSessionEndContext,
-        ));
-        return result;
-    }
-    if message == WM_QUERYENDSESSION {
+fn windows_session_end_handler(app: AppHandle, forward_end: bool) -> crate::windows_session_end::SessionEndHandler {
+    let query_app = app.clone();
+    crate::windows_session_end::SessionEndHandler {
         // Windows requires this message to return promptly. Start the bounded state-flush
         // worker now, but leave CLI cleanup and lock release for WM_ENDSESSION.
-        let context = &*(reference_data as *const WindowsSessionEndContext);
-        prepare_windows_session_end(&context.app);
-        return 1;
+        query: Box::new(move || {
+            prepare_windows_session_end(&query_app);
+        }),
+        end: Box::new(move |ending| {
+            if ending {
+                request_windows_session_end(app.clone());
+            } else {
+                cancel_windows_session_end(&app);
+            }
+        }),
+        forward_end,
     }
-    if message == WM_ENDSESSION {
-        let context = &*(reference_data as *const WindowsSessionEndContext);
-        if wparam != 0 {
-            request_windows_session_end(context.app.clone());
-        } else {
-            cancel_windows_session_end(&context.app);
-        }
-        return 0;
-    }
-    DefSubclassProc(hwnd, message, wparam, lparam)
 }
 
 #[cfg(windows)]
 pub(crate) fn install_windows_session_end_handler(window: &WebviewWindow) -> Result<(), String> {
-    use windows_sys::Win32::UI::Shell::SetWindowSubclass;
-    const SUBCLASS_ID: usize = 0x434E_5345;
     let hwnd = window.hwnd().map_err(|error| error.to_string())?;
-    let context = Box::into_raw(Box::new(WindowsSessionEndContext {
-        app: window.app_handle().clone(),
-    }));
-    let installed = unsafe {
-        SetWindowSubclass(
-            hwnd.0,
-            Some(windows_session_end_proc),
-            SUBCLASS_ID,
-            context as usize,
-        )
-    };
-    if installed == 0 {
-        unsafe { drop(Box::from_raw(context)) };
-        return Err("failed to install Windows session-end handler".to_string());
+    crate::windows_session_end::install(hwnd.0, windows_session_end_handler(window.app_handle().clone(), false))
+}
+
+/// Tao's hidden event target exits the process on WM_ENDSESSION; it may receive the
+/// message before any application window, so it runs the same flush first.
+#[cfg(windows)]
+fn install_tao_event_target_session_end_handler(app: &AppHandle) -> Result<(), String> {
+    use crate::windows_session_end::{current_thread_window_of_class, install, TAO_EVENT_TARGET_CLASS};
+    // Main thread only; a failed attempt is retried with the next window.
+    static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if INSTALLED.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
     }
+    let target = current_thread_window_of_class(TAO_EVENT_TARGET_CLASS)
+        .ok_or_else(|| format!("{TAO_EVENT_TARGET_CLASS} window not found"))?;
+    install(target, windows_session_end_handler(app.clone(), true))?;
+    INSTALLED.store(true, std::sync::atomic::Ordering::Release);
     Ok(())
 }
 
@@ -959,6 +958,9 @@ pub(crate) fn schedule_windows_session_end_handler(window: &WebviewWindow) -> Re
     app.run_on_main_thread(move || {
         if let Err(error) = install_windows_session_end_handler(&window) {
             eprintln!("[client-state] failed to install Windows session-end handler: {error}");
+        }
+        if let Err(error) = install_tao_event_target_session_end_handler(window.app_handle()) {
+            eprintln!("[client-state] failed to install the Tao event target's Windows session-end handler: {error}");
         }
     })
     .map_err(|error| error.to_string())

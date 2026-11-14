@@ -6,12 +6,13 @@ import { registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from 
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { sessionEnvironment } from "../../workspaces/session-environment"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../api-types"
+import type { MemoryService } from "../../memory/service"
 
 const apps: FastifyInstance[] = []
 afterEach(async () => { await Promise.all(apps.splice(0).map(app => app.close())) })
 const prefix = "/workspaces/w/instance/api/session/"
 
-async function harness() {
+async function harness(memory?: Pick<MemoryService, "sessionTitles"> & Partial<Pick<MemoryService, "getSettings">>, supported = true) {
   const calls: string[] = []
   const snapshots = new Map<string, Record<string, string>>()
   const sends: Array<{ sessionID: string; variables?: Record<string, string>; body: unknown }> = []
@@ -21,10 +22,23 @@ async function harness() {
     beforeEnvironment: async () => {},
     afterEnvironment: () => {},
     beforeInstructions: async () => {},
+    beforeMemory: async (_method: string) => {},
     current: true,
+    openapiStatus: 200,
+    memoryStatus: 204,
+    openapiReads: 0,
   }
   const upstream = Fastify({ forceCloseConnections: true })
   apps.push(upstream)
+  const entries = "/api/experimental/session/{sessionID}/instructions/entries"
+  upstream.get("/openapi.json", async (_request, reply) => {
+    control.openapiReads++
+    return control.openapiStatus === 200 ? { openapi: "3.1.0", paths: supported
+      ? { [entries]: { get: {} }, [`${entries}/{key}`]: { put: {}, delete: {} } } : {} }
+      : reply.code(control.openapiStatus).send({ error: "PRIVATE MEMORY" })
+  })
+  upstream.post("/api/rpc/codenomad.missions/scheduleCarrierRead", async (_request, reply) =>
+    reply.code(400).send({ _tag: "RpcError", type: "rpc.method_not_found", message: "Unknown RPC method" }))
   upstream.get("/api/session/:id", async request => {
     const { id } = request.params as { id: string }
     return { data: { id, location: { directory: id === "foreign" ? "/other" : "/repo" } } }
@@ -45,7 +59,14 @@ async function harness() {
     return { data: [] }
   })
   upstream.route({ method: ["PUT", "DELETE"], url: "/api/experimental/session/:id/instructions/entries/:key",
-    handler: async (_request, reply) => { await control.beforeInstructions(); return reply.code(204).send() },
+    handler: async (request, reply) => {
+      if ((request.params as { key: string }).key === "codenomad.memory") {
+        calls.push(`memory:${request.method}`)
+        await control.beforeMemory(request.method)
+        if (control.memoryStatus !== 204) return reply.code(control.memoryStatus).send({ error: "PRIVATE MEMORY" })
+      }
+      await control.beforeInstructions(); return reply.code(204).send()
+    },
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}` }
@@ -72,11 +93,70 @@ async function harness() {
   const logs: unknown[] = []
   registerInstanceProxyRoutes(app, {
     workspaceManager: manager, worktreeDeletionFence: fence,
+    memory: memory ? { getSettings: () => ({ enabled: true }), ...memory } as MemoryService : undefined,
     logger: { debug() {}, error: (...args: unknown[]) => logs.push(args), isLevelEnabled: () => false } as never,
   })
   await app.ready()
   return { app, calls, sends, control, manager, fence, logs }
 }
+
+test("proxy prompt and command await memory replacement/removal; shell bypasses it and missing capability stays silent", async () => {
+  let titles: any = { global: [], project: [] }
+  const memory = { sessionTitles: async (sessionID: string) => { assert.equal(sessionID, "one"); return titles } }
+  const f = await harness(memory)
+  const send = (action: string) => f.app.inject({ method: "POST", url: `${prefix}one/${action}`, payload: {} })
+  assert.equal((await send("prompt")).statusCode, 200)
+  titles = null
+  assert.equal((await send("command")).statusCode, 200)
+  assert.equal((await send("shell")).statusCode, 200)
+  assert.deepEqual(f.calls, ["environment:one", "memory:PUT", "POST:prompt:one", "environment:one", "memory:DELETE", "POST:command:one", "environment:one", "POST:shell:one"])
+  const absent = await harness({ sessionTitles: async () => { throw new Error("must not read") } }, false)
+  assert.equal((await absent.app.inject({ method: "POST", url: `${prefix}one/prompt`, payload: {} })).statusCode, 200)
+  assert.deepEqual(absent.calls, ["environment:one", "POST:prompt:one"])
+})
+
+test("proxy memory failure clears its stale key and admits input while releasing its mutation fence", async () => {
+  const f = await harness({ sessionTitles: async () => { throw new Error("PRIVATE MEMORY") } })
+  const response = await f.app.inject({ method: "POST", url: `${prefix}one/prompt`, payload: {} })
+  assert.equal(response.statusCode, 200)
+  assert(!response.body.includes("PRIVATE"))
+  assert.equal(f.sends.length, 1)
+  assert(f.calls.includes("memory:DELETE"))
+  await f.fence.run("delete", ["root"], async () => {})
+})
+
+test("QA regression: disabled/discovery/cleanup outages never block proxy prompts or commands", async () => {
+  for (const enabled of [false, true]) for (const mode of ["discovery", "remove", "put"]) {
+    let storageReads = 0
+    const f = await harness({ getSettings: () => ({ enabled }), sessionTitles: async () => { storageReads++; return {} } })
+    if (mode === "discovery") f.control.openapiStatus = 503
+    else f.control.memoryStatus = 503
+    for (const action of ["prompt", "command"]) {
+      const response = await f.app.inject({ method: "POST", url: `${prefix}one/${action}`, payload: {} })
+      assert.equal(response.statusCode, 200, `${enabled}/${mode}/${action}: ${response.body}`)
+    }
+    assert.equal(f.sends.length, 2)
+    assert.equal(f.control.openapiReads, enabled ? 2 : 0)
+    assert.equal(storageReads, enabled && mode !== "discovery" ? 2 : 0)
+    assert.equal(f.calls.filter(call => call === "memory:DELETE").length, 2)
+    await f.fence.run("delete", ["root"], async () => {})
+  }
+})
+
+for (const mode of ["put", "remove", "cleanup"] as const) test(`proxy admits input after a hanging memory ${mode} exhausts its own budget`, { timeout: 10_000 }, async () => {
+  const f = await harness({ getSettings: () => ({ enabled: mode !== "remove" }), sessionTitles: async () => ({}) })
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.control.beforeMemory = async method => { if (mode !== "cleanup" || method === "DELETE") await gate }
+  if (mode === "cleanup") f.control.memoryStatus = 503
+  try {
+    const response = await f.app.inject({ method: "POST", url: `${prefix}one/prompt`, payload: {} })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(f.sends.length, 1)
+    assert.deepEqual(f.calls.filter(call => call.startsWith("memory:")), mode === "cleanup" ? ["memory:PUT", "memory:DELETE"] : [`memory:${mode === "put" ? "PUT" : "DELETE"}`])
+    await f.fence.run("delete", ["root"], async () => {})
+  } finally { release() }
+})
 
 test("every prompt applies current profile values before forwarding, including removal and other sessions", async () => {
   const { app, calls, sends, control } = await harness()

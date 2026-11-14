@@ -12,6 +12,9 @@ import { SettingsReadError } from "../../settings/yaml-doc-store"
 interface RouteDeps {
   settings: SettingsService
   logger: Logger
+  /** An installed login start follows an explicit executable change; its failure never refuses the save. */
+  refreshLoginStart?: () => Promise<void>
+  withConfigLock?: <T>(action: () => T) => Promise<T>
 }
 
 const ValidateBinarySchema = z.object({
@@ -52,22 +55,32 @@ export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: un
   return patch
 }
 
+async function refreshLoginStart(deps: RouteDeps) {
+  await deps.refreshLoginStart?.().catch(error => deps.logger.warn?.({ err: error }, "Failed to update the OpenCode login start"))
+}
+
 export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
+  const withConfigLock = deps.withConfigLock ?? (async <T>(action: () => T): Promise<T> => action())
   // Full-document access
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
   app.patch("/api/storage/config", async (request, reply) => {
     try {
       let body = request.body ?? {}
-      if (body && typeof body === "object" && "server" in body) {
-        const bodyObj = { ...(body as Record<string, unknown>) }
-        const serverPatch = bodyObj.server
-        if (serverPatch && typeof serverPatch === "object") {
-          const currentServer = deps.settings.getOwner("config", "server")
-          bodyObj.server = enforceSpeechCredentialPairing(serverPatch, currentServer)
+      const saved = await withConfigLock(() => {
+        if (body && typeof body === "object" && "server" in body) {
+          const bodyObj = { ...(body as Record<string, unknown>) }
+          const serverPatch = bodyObj.server
+          if (serverPatch && typeof serverPatch === "object") {
+            const currentServer = deps.settings.getRawConfigOwner("server")
+            bodyObj.server = enforceSpeechCredentialPairing(serverPatch, currentServer)
+          }
+          body = bodyObj
         }
-        body = bodyObj
-      }
-      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", body))
+        return deps.settings.mergePatchDoc("config", body)
+      })
+      if (body && typeof body === "object" && "server" in body && body.server && typeof body.server === "object"
+        && "opencodeBinary" in body.server) await refreshLoginStart(deps)
+      return sanitizeConfigDoc(saved)
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
@@ -93,19 +106,21 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         if (request.query.conditional !== "missions-v1") throw new Error("Unknown conditional patch mode")
         return sanitizeConfigOwner(
           request.params.owner,
-          applyConditionalMissionPreferences(deps.settings, request.params.owner, request.body),
+          await withConfigLock(() => applyConditionalMissionPreferences(deps.settings, request.params.owner, request.body)),
         )
       }
-      const currentOwner = request.params.owner === "server"
-        ? deps.settings.getOwner("config", "server")
-        : undefined
-      const processed = request.params.owner === "server"
-        ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
-        : request.body ?? {}
-      return sanitizeConfigOwner(
-        request.params.owner,
-        deps.settings.mergePatchOwner("config", request.params.owner, processed),
-      )
+      const saved = await withConfigLock(() => {
+        const currentOwner = request.params.owner === "server"
+          ? deps.settings.getRawConfigOwner("server")
+          : undefined
+        const processed = request.params.owner === "server"
+          ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
+          : request.body ?? {}
+        return deps.settings.mergePatchOwner("config", request.params.owner, processed)
+      })
+      if (request.params.owner === "server" && request.body && typeof request.body === "object" && "opencodeBinary" in request.body)
+        await refreshLoginStart(deps)
+      return sanitizeConfigOwner(request.params.owner, saved)
     } catch (error) {
       reply.code(error instanceof MissionPreferenceConflictError ? 409 : error instanceof SettingsReadError ? 503 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }

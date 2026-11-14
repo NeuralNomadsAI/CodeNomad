@@ -10,6 +10,7 @@ export interface RestorableWorkspaceTabState {
   drafts: Record<string, string>; attachments: Record<string, RestorableAttachment[]>
   scrollSnapshots: Record<string, ScrollSnapshot>; unseenIdleSince: Record<string, number>
   generationRecovery: Record<string, PersistedGenerationRecovery>
+  seenInterruptions?: Record<string, number>
   expandedSessionIds?: string[]
   outlineIndexes?: Record<string, PersistedOutline>
   sessionCatalog?: PersistedSessionCatalogEntry[]
@@ -137,6 +138,15 @@ function normalizeExpandedSessionIds(value: unknown, budget: StringBudget): stri
   return result
 }
 
+// Acknowledgements are irrecoverable user state. Native graph byte/partition
+// budgets bound their persistence independently of recoverable runtime markers.
+function normalizeSeenInterruptions(value: unknown): Record<string, number> | null {
+  if (!isRecord(value)) return null
+  return Object.fromEntries(Object.entries(value).filter(([id, boundary]) =>
+    safeKey(id) && id.trim().length > 0 && id.length <= MAX_ID
+    && takeNumber(boundary, 0, Number.MAX_SAFE_INTEGER) !== undefined)) as Record<string, number>
+}
+
 function normalizeWorkspaceTab(
   value: Record<string, unknown>,
   identity: WorkspaceIdentity,
@@ -163,6 +173,7 @@ function normalizeWorkspaceTab(
     value.generationRecovery ?? {}, MAX_RECOVERY, budget,
     (entry) => entry as PersistedGenerationRecovery,
     (entry) => entry === "working" || entry === "interrupted")
+  const seenInterruptions = normalizeSeenInterruptions(value.seenInterruptions)
   const expandedSessionIds = value.expandedSessionIds === undefined
     ? undefined
     : normalizeExpandedSessionIds(value.expandedSessionIds, budget)
@@ -180,6 +191,7 @@ function normalizeWorkspaceTab(
     attachments: { ...identity.priorityAttachments, ...attachmentResult.attachments },
     scrollSnapshots, unseenIdleSince, generationRecovery,
   }
+  if (seenInterruptions && Object.keys(seenInterruptions).length) result.seenInterruptions = seenInterruptions
   if (expandedSessionIds !== undefined) result.expandedSessionIds = expandedSessionIds
   const outlineIndexes = normalizeOutlineIndexes(value.outlineIndexes, budget.outlines, identity.activeSessionId)
   if (outlineIndexes) result.outlineIndexes = outlineIndexes

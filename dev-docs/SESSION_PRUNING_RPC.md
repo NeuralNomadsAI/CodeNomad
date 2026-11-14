@@ -24,25 +24,67 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `media-blob.ts`: the native read form of rows stored with OpenCode's optional media storage (`experimental.media_blob`: `media:<sha256>` refs into `blob`, owned through `blob_ref`). Preview, pruning, prune candidates, navigation windows and assets inline refs, or give the native unavailable placeholder, exactly as native reads do, within the same byte budgets measured on that form. Rows naming no ref pass through untouched; ref-backed rows whose blob tables are missing or unrecognized fail closed as `unsupported_storage`.
 - `database-path.ts`: daemon-side OpenCode data-directory/environment conventions, with an optional path override.
 - `transaction.ts`: synchronous content-only CAS and atomic idempotency receipt.
+- `message-storage.ts`: bounded native message relation for inline content and ordinal `session_part` rows followed by any inline tail; schema inspection selects the stored representation. Headers account for both stores before JSON materialization. Invalid part ownership, type or call identity is refused. Metadata-only rowid/sequence seeks retain their native tables.
 - `claim-fence.ts`: native execution-claim and database-identity checks.
 - `service.ts`: database connection and a fresh `ctx.storage` challenge.
 - `isolated-store.ts`: in-memory-only test adapter; never a live write bypass.
 - `plugin.ts`: native RPC registration and post-commit notifications.
+- `assets-store.ts`, `assets-gallery*.ts`, `assets-conversation.ts`: tool-file assets, the [image gallery](#image-gallery) and the [Images conversation](#images-conversation).
 - `history-ranked-service.ts`: the presence-owned Code Mode `codenomad.session_search` tool and versioned ranked-history RPC; ranking, scope and bounds are specified in [full-history queries](SESSION_HISTORY_QUERIES.md).
-- `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry.
-- `tui.ts` / `tui-reload.ts`: companion cache invalidation via the public TUI API.
+- `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry. At load, before following presence, the entry also registers the Design agent and skills that backend leases request (`../design/register.ts`, contract in [OpenCode compatibility](OPENCODE_COMPATIBILITY.md#agent-conventions)).
+  The initial effect awaits registration reconciliation before native activation completes. Each successful presence registration acquires a fresh scope incarnation for the Location's `ctx.location.directory`. Targeted preparation observes that incarnation through a nonce-correlated ACK, a live owned backend lease and the scope's presence record. The wire format, quantitative bounds and cleanup ownership are specified in the compatibility contract above; `desktop-plugin-readiness.test.ts` exercises that protocol and the lifecycle seam.
+  Closing the native plugin scope stops its follower and joins that follower's admitted readiness writes before releasing its observations. Other live followers retain their registrations and writes; backend shutdown removes its own lease while OpenCode continues independently.
+  Readiness files retain their exclusive creator's handle for identity-checked cleanup: backends own requests, followers own ACKs, scope records and reservations. Reconciliation validates its complete bounded snapshot before publishing new ACKs. Scope admission reserves a file under `presence/readiness/<SHA-256 of the exact native directory>/`, counting all entries in that Location's namespace, including crash residues, against a 256-entry scan/refusal bound. Presence leases and other Locations have independent capacity. Root scope proofs retain their nonce-correlated wire paths; cleanup preserves foreign replacements. Targeted cancellation aborts and joins its owned catalogue transport before returning; shared installation claims retain their own lifetimes.
 
 `pruning-lifecycle.ts` and `pruning-installation.ts` beside that directory own
 automatic provisioning and backend leases. The server build bundles the payload
 and its dependencies under `dist/plugins/session-pruning/`, copied by both desktop hosts.
 Provisioning and lease placement follow the `OPENCODE_COMPATIBILITY.md` Agent conventions.
 
+`WorkspaceManager.desktopPluginsReady(target)` exposes Location-local preparation
+for fixed pruning consumers. The caller authorizes the exact native directory
+before invoking it and supplies its captured connection, cancellation/budget and
+monotone authority/placement assertion. The five-second preparation budget covers
+catalogue activation and fresh presence proof. A result attests observed registration
+for this wait; callers retain adjacent authorization, cancellation, connection and
+deletion-fence checks and issue one useful RPC. The no-argument overload retains
+its startup-marker semantics for existing callers.
+
+The fixed brokers capture the published workspace record, native root Location,
+connection object and monotone deletion/display fences before preparation. Session
+descriptors supply session-scoped directories; history pages authorize their selected
+inventory directory, and ranked history prepares each queried directory on every
+continuation. Session and directory ownership are revalidated after preparation and
+after native IO. The navigation outline retains its `outlineLayout` to `outline`
+adaptation exclusively for `rpc.method_not_found`.
+
+Pruning, history, navigation and extension assets use a 15-second request budget;
+batch pruning uses 30 seconds. Preparation consumes the remaining budget, with its
+own five-second admission bound. API 4 retains its 19-second route budget and
+eight-second reads. Cancellation and connection assertions sit immediately beside
+the fixed dispatch. Native carrier guards share the pruning request's signal and
+current-placement assertion. Responses retain their connection/ownership fences.
+
+Extension assets and API 4 reauthorize the exact enabled package and permission
+after preparation and before publication. Images conversation resolution retains
+its entered deletion fence through the settlement of admitted IO and uses one
+connection throughout Location resolution, preparation, dispatch and Git exclusion.
+API 4 passes its captured outer connection and current grant into that resolver.
+
+Pending recovery prepares only its established, authorized execution-host bootstrap.
+Candidate ownership is admitted before preparation and revalidated afterward; the
+fixed snapshot keeps its loaded-only candidate semantics. Root identity, compaction
+admission, cancellation and connection are checked beside its single HTTP dispatch.
+The route preserves per-directory non-authoritative errors and retained queues.
+
 The UI offers individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
 content/time match, then sends indexes plus a canonical SHA-256 content revision.
 Ambiguous reasoning or stale content fails closed. It never submits replacement text.
-The plugin compares that revision with the native read form (`media-blob.ts`), writes
-surviving parts in their stored form, and in the same transaction releases the
+The plugin compares that revision with the reconstructed native read form (`message-storage.ts`, `media-blob.ts`),
+deletes selected split rows and removes selected entries from the inline tail under the same write lock.
+Retained split rows keep their original ordinals and JSON bytes; native readers order ordinals without requiring contiguous values.
+The envelope's exact-data CAS, part deletion and receipt commit together. In the same transaction it releases the
 `blob_ref` rows of refs the removed parts alone named, deleting blobs no ref keeps,
 as native content updates do.
 Selections allow up to 100,001 unique indices (0-100,000), within a 1 MiB broker
@@ -55,19 +97,134 @@ fence. It pins `codenomad.session-pruning`, the method and runtime location; the
 instance proxy blocks arbitrary RPC. Server authentication middleware protects
 these routes.
 
+Ordinary single-message and batch pruning apply the shared Mission schedule input
+guard before native content writes. Technical carrier sessions stay read-only
+through these brokers; their preview and history reads remain available.
+
 After commit the caller re-reads native history, never a synthesized remainder.
 `rpc.codenomad.session-pruning.pruned` contains session/message IDs and the content
 revision. The UI invalidates both message-load authority and its native SDK transcript,
 including pending rotations, then coalesces active-session reloads. Late reads cannot
 overwrite a newer pruning invalidation. Reconnect uses authoritative reconciliation.
-The optional TUI companion invalidates/synchronizes its public message cache and
-reconciles loaded sessions on reconnect. Third-party clients may display cached
-history until they reload.
+Other clients may display cached history until they reload.
 
 The receipt and content change commit together; an identical retry returns the same
 receipt and re-emits the event. Receipts contain no deleted content. Event delivery
 is best-effort: failure cannot roll back a committed prune. A timed-out caller must
 re-read or retry the **same** request, never assume no mutation occurred.
+
+## Image gallery
+
+Fixed methods recompute every answer from one session's transcript inside a
+`BEGIN … ROLLBACK` read, through `withHistoryDatabase` and `ownedSession`: no cache,
+index, copy, file access or `kv` lookup beyond the storage challenge. Every query
+stops before the revert boundary (`id < revert.messageID`).
+
+- `images({ sessionID, cursor?, prompts? })` lists, newest first, one `image` entry
+  per image file (`image/png|jpeg|gif|webp|avif`) of a `read` tool part and one
+  `generation` entry per `experimental_image_generate` part, in part and file order. A page holds
+  at most 32 assistant messages, 32 MiB of stored JSON (each row size-checked
+  before it loads; a row over 16 MiB gives `blocked: limit`), 64 entries and 1 MiB
+  serialized. Every admitted row is emitted before the cursor advances: a row the
+  byte budget refuses becomes the cursor at offset 0; a full page points at the next
+  entry. Cursors bind the scope and boundary (`blocked: conflict` otherwise) and
+  carry `through`, the highest assistant or synthetic `seq` of the first page.
+  Media refs list from blob sizes only, as `assets` does.
+- `imageRead({ sessionID, target })` is `assetRead`'s byte read behind a membership
+  check in the same bounded read: anything but an image file of a `read` part gives
+  `blocked: not-gallery`; a row over 16 MiB gives `blocked: limit`. Decode bounds
+  belong to the caller's channel.
+- `imageReference({ sessionID, target })` takes an image target or a generation
+  target `{ messageID, part, digest: SHA-256(part id, NUL, jobID) }` and returns
+  `{ path }` relative to the location, or `refused` with `unverifiable`, `outside`,
+  `changed`, `not-gallery` or `missing`. A target is never substituted.
+
+Generation annotations (`generationKey`, `parentKeys`, `otherRefs`) appear only on
+proven images; other images are `origin: "unverifiable"` and keep their pixels.
+The proof covers the window rows, up to 32 older assistant rows within 32 MiB, and
+one scan of at most 4,096 synthetic rows from the lowest covered `seq` to `through`,
+decoded by SQLite only for rows of at most 64 KiB. A read of file `F` over
+`[time.ran, time.completed]` is proven when the notice scan is complete, no
+undecoded row is dated at or before the read's end, the scan covers the item's whole
+range (its message and the 31 before it, within 32 MiB, unless the session starts
+sooner; a range an oversized row or the scan budget cuts proves nothing), exactly one
+`experimental_image_generate` call that may write `F` in that range started before that end
+(a call whose single decoded notice reports `error` before that call's start does not count:
+OpenCode delivers a failed job's notice once its run has settled, and the run's last step is the
+write, so a failed attempt followed by a retry under the same name stays provable; a cancelled
+call still counts, since its notice can precede the end of an interrupted write), it
+completed with a `jobID` before the read began, its single
+decoded notice names `F` between the call's start and the read's start, and no
+other completed notice names `F` from then until the read's end. Parents of a proven
+call follow the same rule over the generation's own interval. Only a `completed`
+`experimental_image_generate` part with `metadata.path` names the file it writes (that stem);
+every other `experimental_image_generate` part (streaming, running, errored or completed without
+`metadata.path`) may write any file, so it leaves every proof and reference it could
+affect unverifiable. Relative read names and parent references resolve lexically against the session directory in the daemon's
+path style (Windows without case); one outside the location has no label and no
+reference. Generation states are the native part status and, when established, the
+outcome of its unique decoded notice (`completed`, `error`, `cancelled`), else
+`unknown`. `prompts: true` adds `prompt` (8 KiB of UTF-8, then `promptTruncated`)
+and `model` to generations and proven images only in a root session marked
+`codenomad.companion: images`; the host grants it. Entries never carry paths,
+directories, job, notification or call IDs, or notice and error text.
+
+References also require no later write: the newest 32 assistant rows within 32 MiB
+must reach the item, with a complete notice scan, no undecoded row dated from the
+read's start (a generation's notice time), no call that may write any file started
+from then (`unverifiable`), and no call to the same stem started from then or other
+notice naming the file after it (`changed`). A generation target is also refused as
+`unverifiable` when the scan cuts its range, or while another call that may write
+its file, started before its notice (or at an unknown time) in the item's range or
+later, lacks a completion time or a decoded notice of its own.
+
+Consumed contracts: `read` tool `state.content` files, `experimental_image_generate` parts
+(`state.status`, `state.input.prompt|images`, `state.metadata.path` as the stem, `jobID`, `model`,
+`time.ran|completed`) and its synthetic notices (`metadata.source|jobID|state|path`,
+text `Saved image: <file> (`). A change leaves generations `unknown` and images
+unverifiable.
+
+## Images conversation
+
+`imagesConversation({ mode, title?, agent?, model? })` runs for the calling location.
+The lookup reads `session_v2` with `ownedSession`'s location predicate, root and
+unarchived sessions whose `metadata."codenomad.companion"` is `images`, newest by
+`time_created DESC, id DESC`, over at most 20,000 roots: `found`, `absent` only after
+a complete scan, else `unknown`. Every mode also answers `unknown` when the database
+or its storage challenge cannot be read or fails, and creates nothing; cancellation
+still rejects. `open` repeats the lookup under a process-wide lock
+(global symbol, keyed by database file, project, storage directory and workspace)
+and creates through `ctx.session.create` only when `absent`; `new` always creates.
+The lock serializes the callers of one OpenCode process; two processes sharing a
+database can each create one, and the lookup then picks the newest.
+
+`POST /api/workspaces/:id/images-conversation` (`server/routes/images-conversation.ts`)
+brokers it for `{ directory, mode, title?, agent?, model? }`: the workspace manager
+authorizes the directory and the worktree deletion fence is entered before any OpenCode
+request (reading a Location boots its services); only then is the Location read and
+checked again. RPC ID and method are pinned, and
+a missing method, malformed answer or timeout is `blocked: unavailable`, never a
+fallback. In the UI (`ui/src/stores/images-conversation.ts`), `resolveImagesConversation`
+refreshes the current location's agent catalog and sends the localized title,
+`agent: "design"` only when the catalog lists it, and the model `getDefaultModel`
+resolves for that agent; the plugin applies them only when it creates. The agent list
+counts only when it was read for that Location (`agentCatalogLocations`); otherwise the
+answer is `unknown` and nothing is created.
+`showImagesConversation` then hydrates and selects a found conversation and requests
+composer focus, so a caller can answer before navigating; nothing is ever sent. After a successful `open`
+or `new` the route excludes the Location's `.codenomad/design/` (`workspaces/design-git-exclude.ts`)
+and answers `gitExclusion`: the execution host's Git (`wsl.exe --distribution <owned>
+--exec git` for WSL, in the C locale) resolves `rev-parse --show-prefix --git-path info/exclude`,
+the path is translated for host access, and `appendCodenomadGitExclude` appends the
+rule under `# codenomad` without rewriting existing bytes, never `.gitignore`. At a
+worktree top the rule is `.codenomad/design/`; a nested Location gets
+`/<prefix>.codenomad/design/` with glob characters escaped, since slash-containing
+patterns anchor at the worktree top (the shared `info/exclude` applies at each
+worktree's top). Existing lines compare as Git reads them: a final `\r` and unescaped
+trailing spaces are ignored, leading whitespace is part of the pattern. Only
+Git's explicit "not a git repository (or any …)" answer is `not-repository`; Git
+missing, an unfollowable `.git` pointer, a failed translation or a location removed
+meanwhile write nothing and give `unavailable`.
 
 ## Version and loading notes
 
@@ -78,7 +235,7 @@ re-read or retry the **same** request, never assume no mutation occurred.
 - The plugin contract lacks `ctx.session.message` and `ctx.db`; the plugin opens its own SQLite connection.
 - SQLite unit tests use Node's `node:sqlite`; the native test also exercises that
   driver **inside the official compiled runtime**.
-- The module has a packable manifest with `index.ts` and `./tui` entrypoints.
+- The module has a packable manifest with `index.ts` and `./rpc` entrypoints.
   Local configuration must target the **directory**, never `plugin.ts`.
 - An automatically provisioned entry in the global OpenCode `plugins` directory is
   discovered for all projects. Its small lifecycle module stays loaded; pruning
@@ -94,10 +251,22 @@ prompt/transaction orderings, retry receipts, two event subscribers, next primar
 request payload, fork isolation, pre-compaction deletion without summary changes,
 server restart, and a tool file result read through navigation, assets and pruning
 in whichever form the runtime stores it (with `experimental.media_blob`, a blob ref
-whose ref and blob the prune releases). Unit tests cover rollback and client projection/read races.
+whose ref and blob the prune releases), the Images conversation (one creation for
+concurrent opens from two clients, a newer marked child, deletion, another location,
+restart) and gallery membership on that stored tool file. Unit tests cover rollback
+and client projection/read races; the gallery tests replay their proof mutations on
+copies of two Images transcripts in the OpenCode 2.2.3 format, with and without media blobs
+(`assets-gallery-fixture.json`).
+`scripts/test-design-companion-native.mjs` drives an Images conversation end to end with a
+scripted chat model and a fake image model on the shipped bundle: two series of read images
+under `.codenomad/design/`, proven with prompt, lineage and pixels, then a completed
+generation without read-back whose reference is sent and read more than 32 assistant
+messages later (pixels, unverifiable origin). With `--ui <Design ZIP>` the same request is
+prefilled from the installed Design extension through the real right panel, API 4 routes
+and composer, sent, and its relative Markdown image is checked in the real transcript.
 The mock's usage numbers are synthetic; never cite them as provider token savings.
 
-Unvalidated: native WSL runs, interactive TUI, two desktop windows/scroll,
+Unvalidated: native WSL runs, two desktop windows/scroll,
 provider-specific continuation state and budgets, and interactive bulk
 progress/cancel. Never describe these as passed on the strength of HTTP or
 mocked cache tests.
@@ -106,8 +275,13 @@ mocked cache tests.
 
 ```powershell
 node --import tsx --test packages/server/src/opencode/session-pruning/*.test.ts packages/server/src/server/routes/session-pruning.test.ts packages/server/src/server/__tests__/instance-proxy.test.ts
+node --import tsx --test packages/server/src/server/routes/images-conversation.test.ts packages/server/src/workspaces/design-git-exclude.test.ts  # CODENOMAD_TEST_WSL_DISTRO=<distro> adds the real WSL case
+node --import tsx --test tests/browser/images-conversation.test.ts  # from packages/ui
 node --import tsx --conditions=browser --test --test-force-exit packages/ui/src/stores/session-actions.test.ts packages/ui/src/stores/session-pruning-events.test.ts packages/ui/src/stores/session-pruning-projection.test.ts packages/ui/src/stores/opencode-data.test.ts
 node scripts/test-session-pruning-native.mjs C:/isolated-install/opencode2.exe
+node --import tsx scripts/test-pruning-location-ready-native.mjs C:/isolated-install/opencode2.exe
+node scripts/test-design-companion-native.mjs C:/isolated-install/opencode2.exe  # gallery end to end, scripted chat and image models
+node scripts/test-design-companion-native.mjs C:/isolated-install/opencode2.exe --ui C:/abs/neuralnomads.design-1.0.0.zip  # plus the Design panel, composer and transcript
 npm run typecheck --workspace @neuralnomads/codenomad
 npm run typecheck --workspace @codenomad/ui
 npm run build --workspace @codenomad/ui
@@ -118,6 +292,12 @@ the assertions finish. The separate native test creates its own DB/config/home,
 starts `serve --port 0` directly (never service discovery), supplies a local provider,
 and terminates only its own child. It retains its synthetic fixture/logs for inspection.
 An optional third argument tests an independently installed plugin package directory.
+The pruning driver awaits the exact `codenomad-session-pruning` active catalogue
+entry in each captured Location, with that client's location options and a 60-second
+abort deadline, before its first useful RPC and after daemon restart. The shared
+`scripts/native-pruning-ready.mjs` keeps missing/failed activation diagnostics and
+the driver's bounded polling checks. Presence withdrawal/reopening has its own
+explicit lifecycle assertions in the bundled run.
 
 ## Agent conventions
 

@@ -7,10 +7,25 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+export type { MemoryScope, MemoryEntryType, MemoryContent, MemoryEntryHeader, MemoryEntry, MemoryErrorCode, MemoryOperation, MemoryContext, MemorySettings, MemoryVersionedEntry, MemoryUIEntry, MemoryListEntry, MemoryUIListResult, MemoryResult, MemoryApiError } from "./memory/contract"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
+export type { OpenCodeLogsResponse } from "./opencode/logs"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"
+export type { MissionScheduleList } from "./missions/mission-schedule-list"
+export type { MissionScheduleRead } from "./missions/mission-schedule-view"
+export interface MissionScheduleCapability {
+  location: PluginControlLocation
+  api: { available: true } | { available: false; reason: "missing-api" | "incompatible-contract" }
+  enabled: boolean
+  origin: string | null
+  provenance?: "environment" | "experimental-block" | "all-flags" | "channel-default"
+  activation: { available: true; targets: Array<{ path: string; scope: "global" | "project" }> }
+    | { available: false; reason: string; targets: []; code?: "schedule-activation-refused";
+      refusal?: { reason: "explicit-off" | "masked"; provenance: "environment" | "experimental-block" | "all-flags" | "channel-default";
+        layer: "environment" | "global" | "project" | "inherited" | "imposed"; path?: string; openable: boolean; configFileID?: string } }
+}
 
 export type {
   MissionActor,
@@ -22,6 +37,10 @@ export type {
   MissionListResponse,
   MissionListUnavailableResponse,
   MissionMap,
+  MissionPanelMap,
+  MissionPanelPlanChange,
+  MissionPanelReport,
+  MissionPanelTask,
   MissionBriefing,
   MissionBriefingItem,
   MissionReadResponse,
@@ -61,10 +80,12 @@ export interface MissionRecurrenceSnapshot {
 
 export interface MissionRecurrenceCurrent {
   version: 1
+  ownerRevision?: number
   projectID: string
   scheduleID: string
   passageID: string | null
-  mission?: import("./missions/model").MissionMap
+  source?: import("./missions/mission-current-source").MissionCurrentSource
+  mission?: import("./missions/mission-panel-map").MissionPanelMap
   activity?: import("./missions/model").MissionActivityProjection
 }
 export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missions/recurrence-current").currentRecurrenceContent>
@@ -190,19 +211,37 @@ export interface ProviderUsageWindow {
   windowSeconds: number | null
   resetAt: number | null
   valueLabel?: string
+  balanceUSD?: { remaining: number; total?: number }
+  limitUSD?: number
+  consumption?: { used: number; limit?: number } | { creditsUsed: number } | { unlimited: true }
 }
+
+export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared" | "invalid-base-url"
+  | "cursor-token-expired" | "cursor-team-unavailable" | "cursor-access-denied" | "cursor-usage-unavailable"
+  | "opencode-go-key-expired"
+  | import("./api-types-provider-usage").ProviderUsageUnavailableReason
+export type ProviderUsageUnavailableAction = "chatgpt-usage" | "opencode-go-new-key"
 
 export interface ProviderUsageResponse {
   requestedProviderId: string
   providerId: string | null
   providerName: string
+  copilotPlan?: "free" | "pro" | "proPlus" | "business" | "enterprise" | "student" | "max"
   modelId?: string
   supported: boolean
   configured: boolean
   ok: boolean
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
-  unavailableReason?: "openai-token-sharing-unsupported"
+  unavailableReason?: ProviderUsageUnavailableReason
+  /** Public numeric business code, at most eight digits; never an upstream message. */
+  providerErrorCode?: string
+  /** UI-owned fixed destination, admitted only for its associated reason. */
+  unavailableAction?: ProviderUsageUnavailableAction
+  console?: import("./api-types-provider-usage").OpenCodeConsoleUsage
+  freeEstimate?: import("./api-types-provider-usage").OpenCodeFreeEstimate
+  /** The allowance or reset is a local reference; request counts can come from Console. */
+  estimated?: true
 }
 
 export type WorktreeKind = "root" | "worktree"
@@ -222,6 +261,9 @@ export interface WorktreeDescriptor {
   registeredDirectory?: string
   /** Degraded mode: only this exact physical directory authorizes sessions. */
   directoryOnly?: boolean
+  /** The opened nested folder is absent from this checkout: it still owns the
+   * sessions placed there, but is neither offered for selection nor recovered. */
+  nestedFolderMissing?: boolean
   kind: WorktreeKind
   /** False for the opened folder and Git's main checkout. */
   removable?: boolean
@@ -455,6 +497,8 @@ export interface ImageSettingsSnapshot {
     global: boolean
     effective: boolean
     override?: ImageSettingOverride
+    /** The selected Location's own project document decides the value; saving writes it there too. */
+    project?: { path: string }
   } | null
   /** The lower-priority document whose whole `experimental` object a new Global one would hide; writes are refused. */
   blockedBy?: ImageSettingOverride
@@ -466,13 +510,20 @@ export interface ImageSettingsMutation {
 }
 
 export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
+export type SubagentNestingEffect = "allow" | "ask" | "deny"
 export interface SubagentDepthSnapshot {
   location: PluginControlLocation
   capability: SubagentDepthCapability | null
   effectiveDepth: number | null
+  /** OpenCode's General subagent per its resolved rules: `effect` of launching another General subagent,
+   * and `hidden` when OpenCode removes the subagent tool from General (a blanket denial last); `null` when unknown. */
+  nesting: { effect: SubagentNestingEffect; hidden?: true } | null
+  /** Document selecting the whole effective `experimental` block, including when depth uses its native default. */
+  origin: string | null
   /** `emptyExperimental`: the project holds an `experimental` object without properties, which
-   * hides every inherited experimental setting; Inherit removes it. */
-  project: { path: string; depth: number | null; expectation: string; emptyExperimental?: boolean } | null
+   * hides every inherited experimental setting; Inherit removes it. `nestingSkipped`: the override saved only
+   * the depth, because the project's General block cannot take the nesting rule without rewriting its value. */
+  project: { path: string; depth: number | null; expectation: string; emptyExperimental?: boolean; nestingSkipped?: boolean } | null
 }
 
 export type PluginRuntimeSource =
@@ -483,9 +534,12 @@ export type PluginRuntimeSource =
 
 export interface PluginRuntimeInventoryEntry {
   key: string
+  /** Proven local installation published by CodeNomad. */
+  managedBy?: "codenomad"
   id?: string
   source: PluginRuntimeSource
-  features: { server?: true; tui?: true; rpc?: true }
+  /** `gui`: the package ships parts the OpenCode desktop app loads only from Global configuration. */
+  features: { server?: true; tui?: true; rpc?: true; gui?: true }
   state: { status: "active" } | { status: "failed"; error: string; ref?: string }
 }
 
@@ -500,16 +554,22 @@ export interface PluginConfiguredRule {
 
 export interface PluginConfiguredSource {
   target: string
+  managedBy?: "codenomad"
   scope: PluginConfigScope
   path?: string
   entryIndex: number
   hasOptions: boolean
+  /** Plugin associated by runtime inventory or a verified managed installation. */
+  pluginId?: string
+  /** Opaque confirmed-document identity, present on writable removal descriptors. */
+  expectedRevision?: string
 }
 
 export type PluginScopeRuleState = "default" | "enabled" | "disabled"
 
 export interface PluginActivationControl {
   id: string
+  managedBy?: "codenomad"
   runtime?: PluginRuntimeInventoryEntry
   /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
   builtin: boolean
@@ -523,6 +583,8 @@ export interface PluginControlTarget {
   scope: PluginControlScope
   path: string
   exists: boolean
+  /** Opaque identity of the current raw document and authenticated connection. */
+  expectedRevision?: string
 }
 
 export interface PluginControlsSnapshot {
@@ -806,6 +868,7 @@ export type WorkspaceEventType =
   | "yolo.stateChanged"
   | "yolo.autoAccepted"
   | "permission.receiptsChanged"
+  | "memory.changed"
 
 export interface PermissionReceipt {
   requestId: string
@@ -829,6 +892,7 @@ export interface PermissionReceiptPage {
 export interface WorkspaceDirectoryChange { directory: string; path: string }
 
 export type WorkspaceEventPayload =
+  | { type: "memory.changed" }
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
@@ -883,6 +947,8 @@ export interface SupportMeta {
 }
 
 export interface ServerMeta {
+  /** Whether this request has host-local privileges (loopback, outside Remote Control). */
+  localRequest?: boolean
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
   /** URL direct remote clients should use (prefers HTTPS when enabled). */
@@ -932,3 +998,7 @@ export interface ServiceUsageSnapshot {
   connection?: string
   stats: import("@opencode/client").SessionStatsInfo
 }
+/** Settings → OpenCode "Start OpenCode at startup": the presence of the OS login artifact. */
+export type LoginStartState = "on" | "off" | "unavailable"
+export interface LoginStartResponse { state: LoginStartState }
+export interface LoginStartControl { enabled: boolean }

@@ -6,9 +6,9 @@ Dieselbe Oberfläche unterstützt [mehrere Projekt-Tabs und Worktrees](projects.
 
 ## Host vorbereiten {#prerequisites}
 
-1. Installieren Sie Node.js 24 LTS und npm; die festgelegte Build-Laufzeit des Repositorys ist 24.20.0. Desktop-Pakete enthalten Node/npm.
+1. Installieren Sie Node.js 24 LTS und npm; die Build-Laufzeit des Repositorys ist in `.node-version` festgelegt. Desktop-Pakete liefern ihre eigene Laufzeit: Electron nutzt sein integriertes Node, Tauri bündelt Node, und beide enthalten npm.
 2. Stellen Sie Git im **PATH des Backend-Prozesses** bereit. Git allein in WSL genügt für ein Windows-Backend nicht.
-3. Installieren oder wählen Sie OpenCode: Erforderliches Minimum ist **2.1.2**, empfohlenes Qualifizierungsziel **2.2.1**. Neuere/angepasste Builds durchlaufen Kompatibilitätsprüfungen, keine Positivliste getesteter Versionen. Siehe [OpenCode-Einrichtung](opencode.md).
+3. Installieren oder wählen Sie OpenCode: **2.3.0** ist das erforderliche Minimum, **2.3.0** das empfohlene Qualifizierungsziel. Neuere/angepasste Builds durchlaufen Kompatibilitätsprüfungen, keine Positivliste getesteter Versionen. Siehe [OpenCode-Einrichtung](opencode.md).
 4. Wählen Sie den Startordner des Servers oder übergeben Sie `--workspace-root` ausdrücklich.
 
 Ohne Git bleiben Unterhaltungen nur im ausdrücklich geöffneten physischen Ordner verfügbar; Git- und Worktree-Vorgänge schlagen fehl. Installieren Sie Git und starten Sie das Backend nach einer PATH-Änderung neu. Das Arbeitsbereichs-Stammverzeichnis begrenzt Öffnen/Durchsuchen, nicht Agentenausführung: siehe [Sicherheit](security.md).
@@ -58,6 +58,8 @@ Das Backend kann außerdem einen nicht angekündigten, authentifizierten HTTP-Li
 Listenerfreigabe, Zertifikate, VPN/SSH und Reverse-Proxys erläutert [Direkter Fernzugriff](remote-access.md). Für Zugriff ohne eingehenden Port verwenden Sie [Fernsteuerung](remote-control.md).
 
 ## Öffentliche CLI-Referenz {#cli-reference}
+
+Für Tauri oder Electron siehe [Desktop-Startargumente](desktop.md#desktop-cli): `--connect-server`, `--folder`, `--new-window` und Beispiele für Programmaufrufe und Verknüpfungen. Die folgende Tabelle beschreibt die Programmdatei des eigenständigen Servers.
 
 Flags übersteuern ihre Umgebungsentsprechungen. Flags mit Wert verwenden das gezeigte Argument; Schalter nicht. HTTPS-/HTTP-Werte erkennen `1`, `true`, `yes`, `y` und `on` unabhängig von Groß-/Kleinschreibung als aktiviert; verwenden Sie zur Klarheit explizites `true`/`false`. Automatische UI-Updates erkennen `1`, `true` und `yes`.
 
@@ -144,4 +146,4 @@ Verwenden Sie für isolierte CodeNomad-Einstellungen bewusst eine separate Konfi
 
 `codenomad --upgrade` aktualisiert das globale stabile CLI-Paket mit dem erkannten npm-/pnpm-/bun-Manager (npm, falls keiner erkannt wird). Es startet weder einen laufenden Server neu noch aktualisiert es OpenCode. Aktualisieren Sie bei projektlokaler oder Vorschauinstallation ausdrücklich genau dieses npm-Paket. Starten Sie den verwalteten CodeNomad-Prozess nach dem Update bewusst neu und prüfen Sie seine ausgegebenen Adressen erneut.
 
-Desktop-Wartung siehe [Updates](updates.md), Quellcode-Build-Befehle [Support](support.md) und Anbieterplannutzung [Anbieter](providers.md).
+Desktop-Wartung siehe [Updates](updates.md), Build-Befehle [Aus Quellcode bauen](support.md#build-from-source) und Anbieterplannutzung [Anbieter](providers.md).

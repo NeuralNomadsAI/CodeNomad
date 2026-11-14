@@ -67,7 +67,7 @@ export function useAssetsChannel(props: {
   }
 }
 
-async function thumbnail(asset: { mime: string; uri: string }) {
+export async function thumbnail(asset: { mime: string; uri: string }) {
   if (!/^image\/(png|jpeg|gif|webp|avif)$/i.test(asset.mime)) throw new Error("Unsupported preview")
   const bytes = Uint8Array.from(atob(asset.uri.slice(asset.uri.indexOf(",") + 1)), char => char.charCodeAt(0))
   assertThumbnailBounds(bytes, asset.mime)

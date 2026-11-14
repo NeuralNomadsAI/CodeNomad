@@ -10,7 +10,7 @@ OpenCode size motoru verir. CodeNomad size kokpiti verir. OpenCode'un paylaşıl
 
 ## Uzun işleri Görevlere devredin {#missions}
 
-İşi bir kez tanımlayın. Görevin koordinatörü onu bir görev ağacı olarak planlar, sınırlı işleri yerel OpenCode konuşmalarına devreder ve sonuçları kanıtlarıyla birlikte raporlar. Bir görevi bir kez veya her gün çalıştırın; bir görev oluşturmak, siz seçene kadar hiçbir işi başlatmaz. İş akışı rehberleri hata ayıklamayı, ürün teslimini ve iki modelin kör bir hakemle karşılaştırılmasını kapsar. Bkz. [Görevler](missions.md).
+İşi bir kez tanımlayın. Görevin koordinatörü onu bir görev ağacı olarak planlar, sınırlı işleri yerel OpenCode konuşmalarına devreder ve sonuçları kanıtlarıyla birlikte raporlar. Bir kez, seçilen saatlerde veya aralıklarla ya da doğrulanmış bir proje değişikliğinden sonra çalıştırın; oluşturma, açıkça başlatmanız için duraklatılmış bir Görev kaydeder. İş akışı rehberleri hata ayıklamayı, ürün teslimini ve iki modelin kör bir hakemle karşılaştırılmasını kapsar. Bkz. [Görevler](missions.md).
 
 ## Telefonunuzdan çalışmaya devam edin {#phone-access}
 
@@ -46,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projeler, konuşmalar, dosyalar ve geçmiş | Arka ucun klasörleri ve OpenCode oturumları | Bağlı sunucunun klasörleri ve oturumları | Ana bilgisayarın yetkili çalışma alanı yüzeyleri |
 | Yerel Tercihler ve masaüstü pencereleri | Mevcut | Tarayıcı/uzaktan ayarlar istemcide kalır | Yalnızca ana bilgisayar masaüstü denetimleri kullanılamıyor |
-| Oturum tarayıcı önizlemesi | Electron ve Windows Tauri'de yerel; diğer Tauri platformlarında iframe | Mevcut olduğunda Iframe | Ana makine web önizlemelerine izin verdiği sürece iframe (varsayılan) |
+| Oturum tarayıcı önizlemesi | Windows, macOS ve Linux'ta Electron ve Tauri'de yerel | Mevcut olduğunda Iframe | Ana makine web önizlemelerine izin verdiği sürece iframe (varsayılan) |
 | Yerel masaüstü/tarayıcı otomasyonu | Sahip olunan yerel pencereler/önizlemeler | Yerel masaüstü otomasyonunun yerini almaz | Yalnızca ana makine otomasyon uç noktaları kullanılamıyor |
 | Kimlik doğrulama | Yerel önyükleme veya parola oturumu | Sunucu şifre oturumu | Eşleştirilmiş cihaz kimlik bilgisi |
 | PWA kurulumu | Yerel uygulamayı veya tarayıcıyı kullanın | Tarayıcıya bağımlı; güvenli bağlam gerekli | Tarayıcıya bağımlı; eşleştirme hala gerekli |
@@ -77,20 +77,20 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | Çalışma kopyaları ve konuşmalar arasında çalışın | [Projeler](projects.md), [Konuşmalar](conversations.md), [Dosyalar](files.md) |
 | Geçmişi bulun veya güvenle temizleyin | [Geçmiş](history.md) |
 | Yerel soruları ve izinleri yanıtlayın | [İzinler](permissions.md) |
-| Sınırlı veya günlük işleri koordine edin | [Görevler](missions.md) |
+| Sınırlı veya zamanlanmış işleri koordine edin | [Görevler](missions.md) |
 | Yürütme ve entegrasyonları yapılandırma | [OpenCode](opencode.md), [Sağlayıcılar](providers.md), [Entegrasyonlar](integrations.md) |
 | Başka bir cihaz bağlayın | [Uzaktan Kontrol](remote-control.md), [Güvenlik](security.md), [Mobil](mobile.md) |
 | Çalışma alanını uyarlayın | [Ayarlar](settings.md), [Kısayollar](shortcuts.md), [Ses](voice.md), [Uzantılar](extensions.md) |
 | Yerel uygulamayı yönetin | [Masaüstü](desktop.md), [Tarayıcı önizlemeleri ve SideCars](browser-sidecars.md), [Güncellemeler](updates.md) |
-| Teşhis edin veya katkıda bulunun | [Sorun giderme](troubleshooting.md), [Destek ve kaynak derlemeleri](support.md) |
+| Teşhis edin veya katkıda bulunun | [Sorun giderme](troubleshooting.md), [Hata raporları ve kaynaktan derleme](support.md), [CodeNomad'i destekleyin](sponsor.md) |
 
 ## Çalışmayı değiştirmeden izleyin {#monitor-work}
 
 Durum paneli etkin oturumun sağlayıcı kullanımını ve OpenCode arka plan Shell süreçlerini gösterir. Konuşma durumu ve alt konuşma etkinliği; çalışan, sıkıştırılan ve girdi bekleyen oturumları belirtir. Arka plan Shell sürecini izlemek, ileti düzenleyicisinden Shell isteği göndermekten veya ayrı barındırılan terminal SideCar kullanmaktan farklıdır.
 
 1. Seçilen görüşmenin Location'si (veya hiçbir konuşma seçilmediğinde açık çalışma alanı) için **Durum → Arka Plan Shell'leri** öğesini açın.
-2. Sağlandığı yerde komut, kabuk, dizin, durum, PID ve çıkış kodunu inceleyin; mevcut yerel çıktı için **Çıktıyı görüntüle** öğesini seçin.
-3. Birini sonlandırmak için çalışırken **Durdur ve kaldır**, çıktıktan sonra **Kaldır** eylemini kullanıp hedefi onaylayın.
+2. Yalnızca açıkça arka plana alınmış çalışan komutlar, her satırda bir tane listelenir. Üzerine gelince kabuk, klasör ve PID görünür; **Çıktıyı görüntüle** simgesi yerel çıktıyı açar. OpenCode arka plan görevleri API’si yoksa yükleme hatası gösterilir.
+3. Satırdaki **Durdur ve kaldır** simgesini kullanıp hedefi onaylayın.
 
 Çalışan bir Shell'nin kaldırılması bu işlemi durdurur; çıkış penceresini kapatmak bunu yapmaz. Yenileme/yeniden bağlanma, kaçırılan çıktı olaylarını yeniden oluşturmak yerine mevcut yerel durumu okur.
 

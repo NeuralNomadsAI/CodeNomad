@@ -88,7 +88,7 @@ async function assertIndexed(f: HistoryFixture, label: string, rebuild: boolean)
 
   // Open: unsettled work by its own map or pending cleanup, plus damage local to a range.
   const work = new Set([...snapshot.missions.filter(mapWork).map(mission => mission.id),
-    ...(snapshot.cleanups ?? []).filter(cleanup => cleanup.pending > 0).map(cleanup => cleanup.missionID)])
+    ...(snapshot.cleanups ?? []).filter(cleanup => cleanup.pending > 0 || cleanup.documentPending === true).map(cleanup => cleanup.missionID)])
   for (const id of work) assert.ok(read.open.includes(id), `${label}: ${id} open`)
   // Live maps in snapshot order (ties included), then the rest in binary key order.
   const rank = (id: string) => order.includes(id) ? order.indexOf(id) : Infinity

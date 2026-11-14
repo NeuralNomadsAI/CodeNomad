@@ -1,5 +1,7 @@
 # Geçmiş, arama ve temizleme
 
+Arama, zaman çizelgesi, görsel galerisi ve teknik temizleme, OpenCode'un deneysel `part_rows` depolamasını ve ayrı parçalarla satır içi parçaları birlikte içeren iletileri de destekler. Seçenek kapatıldıktan sonra da önceden ayrılmış parçalar okunabilir.
+
 Saklanan geçmiş, konuşma dökümünün şu anda görüntüledikleri ve modelin sıkıştırılmış bağlamı ayrıdır. Herhangi bir şeyi silmeden önce gezinmeyi veya filtrelemeyi seçin.
 
 ## Tüm geçmişi ara {#full-history-search}
@@ -23,7 +25,7 @@ Arama penceresinin süresi dolarsa veya geçmiş değişirse **Yeni arama başla
 
 1. Çevresindeki pasaja atlamak için geçerli oturum arama sonucunu seçin.
 2. Söz konusu mesajın ayrı bir önizlemesini açmak için başka bir oturumdan bir sonuç seçin; o konuşmaya isabetin olduğu yerde gitmek için **Oturumda aç** öğesini kullanın.
-3. **Mesaj zaman çizelgesi** bölümünde bir alıntı için işaretçinin üzerine gelin veya odaklanın, ardından gezinmek için onu seçin: bloğu en üste gelir ve siz kaydırana kadar işaretçi vurgulu kalır; sonra vurgu, konuşmanın en üstündeki bloğu izler. Saklanan geçmişin sonuna dönmek için ilk/en son mesaj kontrollerini kullanın.
+3. **Mesaj zaman çizelgesi** bölümünde bir alıntı için işaretçinin üzerine gelin veya odaklanın, ardından gezinmek için onu seçin: bloğu en üste gelir ve siz kaydırana kadar işaretçi vurgulu kalır; sonra vurgu, konuşmanın en üstündeki bloğu izler. Saklanan geçmişin uçlarına dönmek için ilk/en son mesaj oklarını kullanın. Oklar konuşmanın üzerinde yüzer; **Genel** bölümünde **İlk/en son mesaj oklarını zaman çizelgesinin altına yerleştir** etkinse zaman çizelgesinin altında, **Mesaj gönder** öğesinin sağındaki köşede dururlar ve bulunduğunuz ucun oku soluk görünür.
 
 Zaman çizelgesi, konuşma dökümü yalnızca sınırlı bir pasaj içerdiğinde bile tam oturum yapısını temsil eder. Atlamalar, araya giren her mesajı getirmek yerine hedefi yükler. Diğer oturum arama önizlemeleri o oturumun tüm metnini yüklemez veya onu seçmez; konuşmayı yalnızca **Oturumda aç** değiştirir.
 
@@ -44,7 +46,7 @@ Konuşma çok dar olduğunda (420 CSS pikselinin altında) zaman çizelgesi gizl
 | Oturumu sil | Oturum satırı **Session'ı sil** veya seçilen oturumun silinmesi | Onaylandıktan sonra yerel konuşmayı ve onun alt oturumlarını/geçmişini yinelemeli olarak siler; geri alma yok |
 | Session'ları Temizle | Komut paleti | Görüntüleme veya bağlam boyutu ayarı değil, daha kapsamlı oturum silme |
 
-**Mesaj içeriği** konuşmalar genelinde geçerlidir. Üst kısmından veya **Ayarlar → Sohbet** bölümünden bir hazır ayar (**Hiçbir şey**, **Minimal**, **Dengeli** veya **Her şey**) seçin, ardından satırları tek tek ayarlayın; **Mesaj içeriği** hazır ayar menüsü bundan sonra **Özel** gösterir. Araçları gizlemek araçları devre dışı bırakmaz, izinleri değiştirmez veya saklanan çıktıyı kaldırmaz. Arayüzün akıcı kalması için çok büyük mesajlar atlanan bölümün yerinde **… tane daha göster** kontrolünü gösterir; çok uzun metin veya araç çıktısı ise **Tümünü göster** ile birlikte **Bu mesajın akıcı kalması için … karakter daha gizlendi** satırında durur; çok fazla içerik kaldığında **Tümünü göster** yerine **… tane daha göster** görünür ve bu birkaç adım gerektirebilir. İkisini de açmak yalnızca görüntülemeyi etkiler ve silinmiş içeriği kurtarmaz.
+**Mesaj içeriği** konuşmalar genelinde geçerlidir. Üst kısmından veya **Ayarlar → Sohbet** bölümünden bir hazır ayar (**Hiçbir şey**, **Minimal**, **Dengeli** veya **Her şey**) seçin, ardından satırları tek tek ayarlayın; **Mesaj içeriği** hazır ayar menüsü bundan sonra **Özel** gösterir. Araçları gizlemek araçları devre dışı bırakmaz, izinleri değiştirmez veya saklanan çıktıyı kaldırmaz. Arayüzün akıcı kalması için çok büyük mesajlar atlanan bölümün yerinde **… tane daha göster** kontrolünü gösterir; çok uzun metin veya araç çıktısı ise **Tümünü göster** ile birlikte **Bu mesajın akıcı kalması için … karakter daha gizlendi** satırında durur; çok fazla içerik kaldığında **Tümünü göster** yerine **… tane daha göster** görünür ve bu birkaç adım gerektirebilir. İkisini de açmak yalnızca görüntülemeyi etkiler ve silinmiş içeriği kurtarmaz. Birden fazla satırı tek seferde ayarlamak için göz veya ok düğmelerinin üzerinde sürükleyin: ilk ayrıldığınız düğme değişir ve aynı sütunda üzerinden geçtiğiniz her düğme onun yeni durumunu alır. Konuşma, düğmeyi bıraktığınızda güncellenir.
 
 ## Bir oturumu sıkıştırın {#compact-session}
 

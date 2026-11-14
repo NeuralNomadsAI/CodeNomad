@@ -4,7 +4,7 @@ import { createEffect, createRoot } from "solid-js"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, observeNonEventSettlement, projectOpenCodeMessages, seedOpenCodeSessionMessages, syncOpenCodeSessionInbox } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, invalidateOpenCodeSessionContent, observeNonEventSettlement, projectOpenCodeMessages, seedOpenCodeSessionMessages, syncOpenCodeSessionInbox } from "./opencode-data.ts"
 import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
@@ -988,7 +988,7 @@ describe("OpenCode data projection", () => {
           data: { sessionID: sessionId, assistantMessageID: `fill-${index}`, finish: "stop" },
         } as any)
       }
-      data = applyOpenCodeDataEvent(instanceId, "/work", { id: "model", type: "session.model.selected", created: 501, data: { sessionID: sessionId, model: { providerID: "provider", id: "next" } } } as any,
+      data = applyOpenCodeDataEvent(instanceId, "/work", { id: "evt_model", type: "session.model.selected", created: 501, data: { sessionID: sessionId, model: { providerID: "provider", id: "next" } } } as any,
         (next) => { applied += 1; projectOpenCodeMessages(instanceId, sessionId, next) })
       projectOpenCodeMessages(instanceId, sessionId, data)
       await new Promise<void>((resolve) => setImmediate(resolve))
@@ -998,7 +998,7 @@ describe("OpenCode data projection", () => {
       // the event and duplicate that SDK-owned refresh.
       assert.equal(reads, 1)
       assert.equal(applied, 1)
-      assert.ok(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).includes("model"))
+      assert.ok(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).includes("msg_model"))
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
@@ -1175,7 +1175,7 @@ describe("OpenCode data projection", () => {
       const stranded = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
       assert.equal((stranded?.parts.tool?.data as any)?.state?.status, "pending")
 
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
@@ -1214,7 +1214,7 @@ describe("OpenCode data projection", () => {
       sseManager.seedStatus(instanceId, "connected")
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
@@ -1250,7 +1250,7 @@ describe("OpenCode data projection", () => {
     try {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
@@ -1304,7 +1304,7 @@ describe("OpenCode data projection", () => {
     try {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
       // The stranded tool's terminal event arrives late, same round: the SDK
@@ -1317,6 +1317,83 @@ describe("OpenCode data projection", () => {
       const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
       assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
       assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps a completed read-image part completed while later rounds stream", async () => {
+    const instanceId = "opencode-data-image-rounds"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // Repro of the reported flip: read-image tool results completed in one
+    // round reverted to "running" (image gone) while the agent kept working in
+    // later rounds, healing only at settlement, then flipping again. The
+    // daemon always serves such parts completed (persisted at tool success),
+    // so any regression is a stale re-delivered `session.tool.called` — the
+    // reducer overwrites terminal state unconditionally.
+    const image = { type: "file", mime: "image/jpeg", uri: `data:image/jpeg;base64,${"A".repeat(64)}` }
+    const pageFor = (ids: string[]) => ({
+      data: ids.map((id, index) => ({
+        id, type: "assistant", agent: "build",
+        model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" },
+        time: { created: index * 10 + 1, streamed: index * 10 + 2, completed: index * 10 + 8 },
+        content: [{
+          type: "tool", id: `tool-${id}`, name: "read", time: { created: index * 10 + 3, ran: index * 10 + 4, completed: index * 10 + 7 },
+          state: { status: "completed", input: { path: `/tmp/shot-${id}.png` }, metadata: {}, content: [{ type: "text", text: "Image read successfully" }, image] },
+        }],
+      })),
+      cursor: {},
+    })
+    stubAuthoritativeSession(client, sessionId, async () => pageFor(["step-1"]))
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    const store = () => messageStoreBus.getOrCreate(instanceId)
+    const state = (messageId: string, partId: string) =>
+      (store().getMessage(messageId)?.parts[partId]?.data as any)?.state
+    const imageCount = (messageId: string, partId: string) => {
+      const content = state(messageId, partId)?.content
+      return Array.isArray(content) ? content.filter((item: any) => item?.type === "file").length : -1
+    }
+    try {
+      // Round 1 reads an image through the live event stream.
+      const round1 = { sessionID: sessionId, assistantMessageID: "step-1" }
+      apply("session.step.started", { ...round1, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 1)
+      apply("session.tool.input.started", { ...round1, id: "tool-step-1", name: "read" }, 2)
+      apply("session.tool.called", { ...round1, id: "tool-step-1", input: { path: "/tmp/shot-1.png" }, executed: false }, 3)
+      const completed = apply("session.tool.success", { ...round1, id: "tool-step-1", content: [{ type: "text", text: "Image read successfully" }, image], metadata: {} }, 4)
+      projectOpenCodeMessages(instanceId, sessionId, completed)
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1, "the image content is resident")
+
+      // Round 2 streams and calls other tools; the settled read stays settled.
+      const round2 = { sessionID: sessionId, assistantMessageID: "step-2" }
+      apply("session.step.started", { ...round2, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 10)
+      apply("session.text.started", round2, 11)
+      apply("session.tool.input.started", { ...round2, id: "tool-step-2", name: "bash" }, 13)
+      const running = apply("session.tool.called", { ...round2, id: "tool-step-2", input: { command: "adb shell screencap" }, executed: false }, 14)
+      projectOpenCodeMessages(instanceId, sessionId, running)
+      assert.equal(state("step-2", "tool-step-2")?.status, "running", "round 2's tool runs")
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed", "round 1's read stays completed")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1)
+
+      // A stale `called` for the settled read — re-delivered after its success —
+      // must not regress it to "running" (which hid the image until the next
+      // settlement read healed it).
+      const stale = apply("session.tool.called", { ...round1, id: "tool-step-1", input: { path: "/tmp/shot-1.png" }, executed: false }, 15)
+      projectOpenCodeMessages(instanceId, sessionId, stale)
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed", "a stale called never regresses a settled tool")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1, "the image content stays")
+
+      // A later `called` for a still-streaming tool is legitimate and applies.
+      const round3 = { sessionID: sessionId, assistantMessageID: "step-3" }
+      apply("session.step.started", { ...round3, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 20)
+      apply("session.tool.input.started", { ...round3, id: "tool-step-3", name: "read" }, 21)
+      const called = apply("session.tool.called", { ...round3, id: "tool-step-3", input: { path: "/tmp/shot-3.png" }, executed: false }, 22)
+      projectOpenCodeMessages(instanceId, sessionId, called)
+      assert.equal(state("step-3", "tool-step-3")?.status, "running", "a fresh called still applies")
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
@@ -1421,7 +1498,7 @@ describe("OpenCode data projection", () => {
 
       // The fenced read still reconciled the reducer: the next projection (as
       // the event dispatcher runs for the newer round's settlement) shows it.
-      const settled = { id: "settled-2", type: "session.execution.succeeded", created: 20, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled-2", type: "session.execution.succeeded", created: 20, data: { sessionID: sessionId } } as any
       projectOpenCodeMessages(instanceId, sessionId, applyOpenCodeDataEvent(instanceId, "/work", settled))
       finishOpenCodeDataEvent(instanceId, settled)
       await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
@@ -1479,7 +1556,7 @@ describe("OpenCode data projection", () => {
   it("keeps another session's live reducer after a terminal event", () => {
     const instanceId = "opencode-data-session-isolation"
     const event = (sessionID: string, type: string, data: Record<string, unknown> = {}) => ({
-      id: `${sessionID}-${type}`, type, created: 1,
+      id: `evt_${sessionID}-${type}`, type, created: 1,
       data: { sessionID, assistantMessageID: `${sessionID}-assistant`, ...data },
     } as any)
     try {
@@ -1525,26 +1602,52 @@ describe("OpenCode data projection", () => {
     }
   })
 
-  it("projects native inbox delivery order", () => {
+  it("reconciles delivered prompts to the authoritative page order", async () => {
     const instanceId = "opencode-data-delivery-order"
     const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // Native storage, oldest first; the daemon appends a prompt's row at its
+    // delivery, so the page owns the delivered prompt's position.
+    const stored: any[] = []
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [...stored].reverse(), cursor: {} }))
     const apply = (event: any) => {
       const data = applyOpenCodeDataEvent(instanceId, "/work", event)
       projectOpenCodeMessages(instanceId, sessionId, data)
     }
     try {
-      apply({ id: "queued", type: "session.inbox.enqueued", created: 1, data: {
-        sessionID: sessionId, inboxID: "queued", item: { type: "user", payload: { text: "queued" }, delivery: "queue" },
+      apply({ id: "enqueue-1", type: "session.inbox.enqueued", created: 1, data: {
+        sessionID: sessionId, inboxID: "q1", item: { type: "user", payload: { text: "first" }, delivery: "steer" },
       } })
-      apply({ id: "other", type: "session.inbox.enqueued", created: 2, data: {
-        sessionID: sessionId, inboxID: "other", item: { type: "user", payload: { text: "other" }, delivery: "queue" },
+      apply({ id: "enqueue-2", type: "session.inbox.enqueued", created: 2, data: {
+        sessionID: sessionId, inboxID: "q2", item: { type: "user", payload: { text: "second" }, delivery: "steer" },
       } })
-      apply({ id: "delivered", type: "session.inbox.delivered", created: 3, data: { sessionID: sessionId, inboxID: "queued" } })
+      apply({ id: "enqueue-3", type: "session.inbox.enqueued", created: 3, data: {
+        sessionID: sessionId, inboxID: "q3", item: { type: "user", payload: { text: "third" }, delivery: "steer" },
+      } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3"])
 
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["other", "queued"])
+      for (const [index, id] of ["q1", "q2", "q3"].entries()) {
+        stored.push({ id, type: "user", text: `${["first", "second", "third"][index]} prompt`, time: { created: 10 + index } })
+        apply({ id: `deliver-${id}`, type: "session.inbox.delivered", created: 10 + index, data: { sessionID: sessionId, inboxID: id } })
+      }
+      await waitForReplay(() => messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).join() === "q1,q2,q3")
+
+      apply({ id: "reply", type: "session.step.started", created: 20, data: {
+        sessionID: sessionId, assistantMessageID: "reply", agent: "build", model: { providerID: "provider", id: "model" }, started: 20,
+      } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3", "reply"],
+        "the burst's steers keep the authoritative page order above the reply")
+
+      // An authoritative content replacement (pruning shape) carries no
+      // ordering side state into the next projection.
+      invalidateOpenCodeSessionContent(instanceId, sessionId)
+      apply({ id: "after-replacement", type: "session.text.started", created: 21, data: { sessionID: sessionId, assistantMessageID: "reply" } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3", "reply"],
+        "an authoritative replacement keeps the reconciled order")
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
     }
   })
 })

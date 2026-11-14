@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -22,7 +22,6 @@ import {
   applyRightPanelItemCustomization,
   collectRightPanelItems,
   parseRightPanelCustomization,
-  setRightPanelItemHidden,
   type RightPanelCustomization,
   type RightPanelItem,
   type RightPanelSectionModule,
@@ -35,8 +34,8 @@ import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 import { useI18n } from "../../../../lib/i18n"
 import { useTheme } from "../../../../lib/theme"
 import { ExtensionPanel } from "../../../panel-extensions/extension-panel"
-import { ExtensionManager } from "../../../panel-extensions/extension-manager"
 import { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
+import { RightPanelCustomizationPopover } from "./RightPanelCustomizationPopover"
 import type { RightPanelModule } from "./registry"
 
 function RightPanelTabFallback() {
@@ -109,11 +108,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
-  const [extensionsExpanded, setExtensionsExpanded] = createSignal(false)
   createEffect(() => { props.instanceId; props.isActive(); setRightPanelCustomizationOpen(false) })
-  createEffect(() => { rightPanelCustomizationOpen(); setExtensionsExpanded(false) })
   let customizationTriggerRef: HTMLButtonElement | undefined
-  let customizationPopoverRef: HTMLDivElement | undefined
   let savedCustomization = parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY))
   if (!readClientLayoutValue(FILES_PANEL_MIGRATION_KEY)) {
     savedCustomization = mergeFilesPanelCustomization(savedCustomization)
@@ -127,35 +123,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
-  })
-
-  createEffect(() => {
-    if (!rightPanelCustomizationOpen()) return
-    const fitPopover = () => {
-      const popover = customizationPopoverRef
-      if (popover) popover.style.maxHeight = `${Math.max(0, window.innerHeight - popover.getBoundingClientRect().top - 8)}px`
-    }
-    queueMicrotask(() => { fitPopover(); customizationPopoverRef?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus() })
-    window.addEventListener("resize", fitPopover)
-    const closeOutside = (event: PointerEvent) => {
-      const target = event.target as Node
-      if (!customizationTriggerRef?.contains(target) && !customizationPopoverRef?.contains(target)) {
-        setRightPanelCustomizationOpen(false)
-      }
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return
-      event.preventDefault()
-      setRightPanelCustomizationOpen(false)
-      queueMicrotask(() => customizationTriggerRef?.focus())
-    }
-    document.addEventListener("pointerdown", closeOutside)
-    document.addEventListener("keydown", closeOnEscape)
-    onCleanup(() => {
-      document.removeEventListener("pointerdown", closeOutside)
-      document.removeEventListener("keydown", closeOnEscape)
-      window.removeEventListener("resize", fitPopover)
-    })
   })
 
   const handleAccordionChange = (values: string[]) => {
@@ -224,6 +191,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     customization: rightPanelCustomization,
     onCustomizationChange: updateRightPanelCustomization,
     extraStatusSections: () => extraStatusSections(),
+    extraStatusContent: () => extraStatusContent(),
   })
   const missionsModule = createMissionsRightPanelModule({
     instanceId: props.instanceId,
@@ -237,14 +205,20 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   const extensionForTab = (id: string) => extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
+  // API 4 host actions: the displayed conversation's composer, and closing the phone's floating panel.
+  const extensionHost = { promptInputApi: props.promptInputApi, activeSessionId: props.activeSessionId,
+    isPhoneLayout: props.isPhoneLayout, closePanel: () => props.onCloseRightDrawer() }
   const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().map(entry => {
     const id = `extension:${entry.manifest.id}`
     return { id, displayNameKey: "", origin: "external", tabs: [{ id, labelKey: "", label: entry.manifest.name, order: 1000,
       render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && rightPanelTab() === id}
-        context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }} />,
+        context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }}
+        host={extensionHost} />,
     }] }
   }))
   const rightPanelModules = createMemo(() => [coreModule, missionsModule, ...externalModules()])
+  const extraStatusContent = createMemo(() => rightPanelModules().flatMap(module => module.renderStatusExtras ? [module.renderStatusExtras] : []), [],
+    { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
@@ -255,7 +229,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     ),
   )
   const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
-  const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"))
+  // Same sections, same array: Status keeps its rows mounted across unrelated module updates.
+  const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"), [],
+    { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
   const allStatusSections = createMemo<RightPanelItem[]>(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()])
   const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), rightPanelCustomization().statusSectionOrder, []))
   const visibleStatusSections = createMemo(() =>
@@ -321,92 +297,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       </div>
 
       <Show when={rightPanelCustomizationOpen()}>
-        <div ref={customizationPopoverRef} class="right-panel-customization-popover" role="group" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
-          <div class="right-panel-customization-grid">
-            <For each={orderedRightPanelTabs()}>
-              {(tab) => {
-                const label = () => tab.label ?? props.t(tab.labelKey)
-                const extension = () => extensionForTab(tab.id)
-                const visible = () => extension()?.enabled ?? (tab.alwaysVisible || !rightPanelCustomization().hiddenTabIds.includes(tab.id))
-                return (
-                  <>
-                    <div class="right-panel-customization-row">
-                      <label class="right-panel-customization-label">
-                        <input
-                          type="checkbox"
-                          checked={visible()}
-                          disabled={tab.alwaysVisible || (Boolean(extension()) && (!extensions.verified() || extensions.activating() || !props.isActive()))}
-                          onChange={(event) => {
-                            const entry = extension()
-                            if (entry) {
-                              const enabled = event.currentTarget.checked
-                              event.currentTarget.checked = entry.enabled
-                              void extensions.activate(entry, enabled)
-                              return
-                            }
-                            updateRightPanelCustomization((current) => ({
-                              ...current,
-                              hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
-                            }))
-                          }}
-                        />
-                        <span>{label()}</span>
-                      </label>
-                    </div>
-                    <Show when={tab.id === "status"}>
-                      <For each={orderedStatusSections()}>
-                        {(section) => {
-                          const sectionLabel = () => props.t(section.labelKey)
-                          const sectionVisible = () => !rightPanelCustomization().hiddenStatusSectionIds.includes(section.id)
-                          const disableHide = () => sectionVisible() && visibleStatusSections().length <= 1
-                          return (
-                            <div class="right-panel-customization-row right-panel-customization-row-indent">
-                              <label class="right-panel-customization-label">
-                                <input
-                                  type="checkbox"
-                                  checked={sectionVisible()}
-                                  disabled={disableHide()}
-                                  onChange={(event) =>
-                                    updateRightPanelCustomization((current) => ({
-                                      ...current,
-                                      hiddenStatusSectionIds: setRightPanelItemHidden(
-                                        current.hiddenStatusSectionIds,
-                                        section.id,
-                                        !event.currentTarget.checked,
-                                      ),
-                                    }))
-                                  }
-                                />
-                                <span>{sectionLabel()}</span>
-                              </label>
-                            </div>
-                          )
-                        }}
-                      </For>
-                    </Show>
-                  </>
-                )
-              }}
-            </For>
-
-          </div>
-          <Show when={extensions.failed()}><p role="alert">{props.t("panelExtensions.error")}</p></Show>
-          <button
-            type="button"
-            class="right-panel-customization-button mt-2 w-full"
-            onClick={() => updateRightPanelCustomization(() => parseRightPanelCustomization(null))}
-          >
-            {props.t("instanceShell.rightPanel.customize.reset")}
-          </button>
-          <hr class="panel-extension-divider" />
-          <details class="panel-extension-disclosure" onToggle={event => setExtensionsExpanded(event.currentTarget.open)}>
-            <summary>{props.t("panelExtensions.section")}</summary>
-            <Show when={extensionsExpanded()}><ExtensionManager controller={extensions} /></Show>
-          </details>
-        </div>
+        <RightPanelCustomizationPopover t={props.t} isActive={props.isActive} trigger={() => customizationTriggerRef}
+          onClose={() => setRightPanelCustomizationOpen(false)} extensions={extensions} tabs={orderedRightPanelTabs}
+          statusSections={orderedStatusSections} visibleStatusSectionCount={() => visibleStatusSections().length}
+          customization={rightPanelCustomization} onCustomizationChange={updateRightPanelCustomization} />
       </Show>
 
-      <div class="flex-1 overflow-y-auto">
+      {/* The tab's scroller contains its absolutely positioned descendants, so no tab
+          content can grow the shell's overflow and scroll the whole window. */}
+      <div class="relative flex-1 overflow-y-auto">
         <Show keyed when={activeRightPanelTab()}>
           {(tab) => (
             <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">

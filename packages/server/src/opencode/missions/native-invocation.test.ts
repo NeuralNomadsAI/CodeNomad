@@ -8,6 +8,10 @@ import { nativeInvocation, NATIVE_HUMAN_ANSWER_TIMEOUT_MS as timeout } from "./n
 import { acquireNativeHumanAnswers } from "./native-human-answer"
 
 const origin = Context.Service<never, string>("test/native-invocation/origin")
+test("invocation budgets are explicit positive safe milliseconds", () => {
+  for (const value of [0, -1, NaN, Infinity, 0.5]) assert.throws(() => nativeInvocation(value))
+  assert.doesNotThrow(() => nativeInvocation(95_000))
+})
 const deferred = () => {
   let resolve!: () => void
   const promise = new Promise<void>(done => { resolve = done })

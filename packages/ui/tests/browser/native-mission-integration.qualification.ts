@@ -15,6 +15,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { clickMissionAction, missionToolbarAction, selectMission } from "./mission-actions"
 import type { NativeMissionCapture } from "./fixtures/native-mission-integration"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, server: ViteDevServer, url: string, capture: NativeMissionCapture
 let current: NativeMissionCapture["frames"][number]
@@ -81,7 +82,7 @@ before(async () => {
           if (pathname === "/api/events") { res.setHeader("Content-Type", "text/event-stream"); res.write(": captured-native-fixture transport; events replay via existing publisher\n\n"); return }
           if (req.method !== "GET") return json({ error: "Captured fixture never admits native mutations" }, 405)
           const mission = capturedMission(current), location = coordinator.location
-          if (pathname.endsWith("/missions")) return json({ ...current.snapshot, available: true, missions: [mission] })
+          if (pathname.endsWith("/missions")) return json({ ...current.snapshot, available: true, missions: panelMissions([mission]) })
           if (pathname.endsWith("/worktrees")) return json({ isGitRepo: true, worktrees: [{ slug: "root", directory: location.directory, kind: "root" }] })
           if (pathname.endsWith("/session/active")) return json({ error: "No active-session snapshot captured; runtime state remains unknown" }, 501)
           if (pathname.endsWith("/session")) {
@@ -217,10 +218,11 @@ test("captured actual-native mission frames render dependencies, reports and exa
     await clickMissionAction(page, "Open conversation")
     assert.equal((await page.evaluate(() => window.nativeMissionIntegration.snapshot())).selectedID, finalMission.coordinatorSessionId)
     for (const task of finalMission.tasks) {
-      const open = taskRow(page, task.key).locator(".mission-tree-open")
+      // A selected task gives the header toolbar its own conversation.
       // Tasks without their own worker may only link a derived native delegation; descendants are covered below.
       if (!task.actorSessionId || task.actorSessionId === finalMission.coordinatorSessionId) continue
-      await open.click()
+      await taskRow(page, task.key).locator(".mission-tree-task").click()
+      await clickMissionAction(page, "Open the task's conversation")
       assert.equal((await page.evaluate(() => window.nativeMissionIntegration.snapshot())).selectedID, task.actorSessionId)
     }
     const inventory = capturedSessions(capture.frames.find(frame => frame.label === "finished")!)

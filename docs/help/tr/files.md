@@ -19,6 +19,8 @@ Genişletilmiş klasörler mod değişikliklerinden etkilenmez. Listeleme/durum/
 
 Satır eylemleri arasında **Yolu kopyala** ve istemcinin arka uç yollarının açılmasını desteklediği durumlarda **Varsayılan uygulamayla aç**, **Klasörde göster**, **Dosya yöneticisinde aç** ve **Burada terminal aç** gibi dosya yöneticisi/düzenleyici/terminal eylemleri bulunur. Alan sınırlı olduğunda eylemler **{name} için daha fazla eylem** öğesine taşınabilir; dosya veya klasör adı `{name}`'nin yerine geçer. Uzak bir tarayıcı, sunucu yolunun yerel aygıt yolu olduğunu varsayamaz; bkz. [Uzaktan Kontrol](remote-control.md).
 
+Workspace `.mmd` dosyaları diyagram olarak açılır. Düzenlemek için **Kaynağı göster**, geçerli taslağı önizlemek için **Diyagramı göster** kullanın; Kaydet açık bir işlem olarak kalır. Aynı [Mermaid biçimleri ve sınırları](conversations.md#mermaid) geçerlidir.
+
 ## Kaynağı düzenleyin ve güvenle kaydedin {#edit-save}
 
 1. Çalışma Alanındaki bir metin dosyasını göz simgesiyle açın.
@@ -30,7 +32,7 @@ Kaydetme, bağlantılı çalışma ağacı dahil göz atılan çalışma kopyas�
 
 Kaydedilmemiş kaynak taslakları okuyucu kapatıldığında veya değiştirildiğinde, proje örneği, dizin ve yol kapsamında arayüz belleğinde korunur. Dosya sistemi yenilemeleri bunları sessizce değiştirmez. Bu kalıcı dosya deposu değildir: istemciyi yeniden başlatmadan/yüklemeden önce önemli düzenlemeleri kaydedin veya kopyalayın. Okuma/yazma hataları taslağı korur. Açık **Yenile** eylemi kaydedilmemiş düzenlemeleri atmadan önce uyarır.
 
-Okuyucunun sonundaki kapatma düğmesi konuşmaya döner; ileti düzenleyicisi okuyucunun altında kullanılabilir kalır. Oturumu/çalışma ağacını değiştirmek seçili okuyucuyu temizler, taslağı kaydetme garantisi vermez. Tarayıcı önizlemesi okuyucunun yerini alır; dosya açmak bu görünümü sohbet moduna döndürür.
+Okuyucunun sonundaki kapatma düğmesi konuşmaya döner; ileti düzenleyicisi okuyucunun altında kullanılabilir kalır. Paneli **Sağ panel** ile gizlemek ya da panel için fazla dar bir pencere, okuyucuyu açılan genişlikle açık bırakır; paneli yeniden göstermek onu olduğu gibi korur. Oturumu/çalışma ağacını değiştirmek seçili okuyucuyu temizler, taslağı kaydetme garantisi vermez. Tarayıcı önizlemesi okuyucunun yerini alır; dosya açmak bu görünümü sohbet moduna döndürür.
 
 ## Salt okunur ve sınırlı önizlemeler {#preview-limits}
 

@@ -15,6 +15,7 @@
     "allow-preferences-accept-request",
     "allow-preferences-resolve-transition",
     "allow-preferences-opener-startup-state",
+    "allow-preferences-memory-cleanup",
     "allow-data-profiles-list-others",
     "allow-data-profiles-delete-others",
     "allow-data-profiles-set-next-launch",

@@ -1,10 +1,17 @@
 import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
+import { once } from "node:events"
+import { PassThrough } from "node:stream"
 import { describe, it } from "node:test"
+import { NativeParent, NATIVE_REQUEST_PREFIX, NATIVE_RESPONSE_PREFIX } from "./native-parent"
 import {
   createServerShutdownHandler,
+  installShutdownSignalHandlers,
+  installShutdownStdinHandler,
   orchestrateServerShutdown,
   SERVER_SHUTDOWN_COMPLETE,
   SERVER_SHUTDOWN_INCOMPLETE,
+  STDIN_SHUTDOWN_COMMAND,
   type ServerShutdownOperations,
 } from "./shutdown"
 
@@ -13,6 +20,118 @@ const operations = (overrides: Partial<ServerShutdownOperations> = {}): ServerSh
   stopInstanceEventBridge() {}, stopSidecars() {}, stopClientConnections() {},
   stopRemoteControl() {}, stopRemoteProxySessions() {}, stopWorkspaces() {}, stopHttpServers() {}, stopReleaseMonitor() {},
   ...overrides,
+})
+
+describe("CLI shutdown signal registration", () => {
+  it("routes a second process signal to forced nonzero escalation", async () => {
+    const listeners = new Map<string, () => void>()
+    let finishCleanup!: () => void
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+    const exits: number[] = []
+    let handled: Promise<void> | undefined
+    const shutdown = createServerShutdownHandler({
+      shutdown: () => cleanup,
+      logger: { info() {}, warn() {}, error() {} },
+      forceExit: (code) => exits.push(code),
+      setExitCode: () => undefined,
+      reportStatus: () => undefined,
+    })
+    installShutdownSignalHandlers(
+      { on: (signal, listener) => listeners.set(signal, listener) },
+      (signal) => (handled = shutdown(signal)),
+    )
+
+    listeners.get("SIGINT")?.()
+    listeners.get("SIGTERM")?.()
+    assert.deepEqual(exits, [1])
+
+    finishCleanup()
+    await handled
+  })
+
+  it("coalesces chunked and repeated stdin shutdown commands through the same handler", async () => {
+    const listeners = new Map<string, (chunk: Buffer | string) => void>()
+    const triggers: string[] = []
+    let destroys = 0
+    const source = {
+      on: (event: "data", listener: (chunk: Buffer | string) => void) => listeners.set(event, listener),
+      off: (event: "data", listener: (chunk: Buffer | string) => void) => {
+        if (listeners.get(event) === listener) listeners.delete(event)
+      },
+      destroy: () => { destroys++ },
+    }
+    installShutdownStdinHandler(source, async (trigger) => { triggers.push(trigger) })
+
+    const listener = listeners.get("data")!
+    listener(STDIN_SHUTDOWN_COMMAND.slice(0, 8))
+    listener(`${STDIN_SHUTDOWN_COMMAND.slice(8)}\n${STDIN_SHUTDOWN_COMMAND}\n`)
+    listener(`${STDIN_SHUTDOWN_COMMAND}\n`)
+    await Promise.resolve()
+
+    assert.deepEqual(triggers, ["stdin"])
+    assert.equal(destroys, 1)
+    assert.equal(listeners.has("data"), false)
+  })
+
+  it("forwards native responses arriving during shutdown until cleanup closes stdin", async () => {
+    const source = new PassThrough()
+    const lines: string[] = []
+    const parent = new NativeParent({ write: (line: string | Uint8Array) => { lines.push(String(line)); return true } }, true)
+    const triggers: string[] = []
+    installShutdownStdinHandler(source, async (trigger) => { triggers.push(trigger) }, (line) => parent.handleLine(line))
+    try {
+      const first = parent.request("developer.status", {})
+      const second = parent.request("developer.status", {})
+      const responses = lines.map((line, index) => {
+        const { id } = JSON.parse(line.slice(NATIVE_REQUEST_PREFIX.length)) as { id: string }
+        return `${NATIVE_RESPONSE_PREFIX}${JSON.stringify({ v: 1, id, ok: true, result: index })}`
+      })
+      source.write(Buffer.from(responses[0].slice(0, 12)))
+      assert.deepEqual(triggers, [])
+      source.write(`${responses[0].slice(12)}\r\n ${STDIN_SHUTDOWN_COMMAND} \r\n`)
+      await first
+      source.write(`${STDIN_SHUTDOWN_COMMAND}\n${responses[1]}\n`)
+
+      assert.deepEqual(await Promise.all([first, second]), [0, 1])
+      assert.deepEqual(triggers, ["stdin"])
+      assert.equal(source.destroyed, false)
+      assert.equal(source.listenerCount("data"), 1)
+    } finally {
+      parent.close()
+      source.destroy()
+    }
+  })
+
+  it("preserves UTF-8 native response text split across stdin buffers", async () => {
+    const source = new PassThrough()
+    const lines: string[] = []
+    const parent = new NativeParent({ write: line => { lines.push(String(line)); return true } }, true)
+    installShutdownStdinHandler(source, async () => {}, line => parent.handleLine(line))
+    try {
+      const pending = parent.request("browser.probe", {})
+      const { id } = JSON.parse(lines[0].slice(NATIVE_REQUEST_PREFIX.length))
+      const response = Buffer.from(`${NATIVE_RESPONSE_PREFIX}${JSON.stringify({ v: 1, id, ok: true, result: "é漢🙂" })}\n`)
+      for (const byte of response) source.write(Buffer.from([byte]))
+      assert.equal(await pending, "é漢🙂")
+    } finally {
+      parent.close()
+      source.destroy()
+    }
+  })
+
+  it("allows a real piped process to exit naturally after the shutdown command", { timeout: 5_000 }, async () => {
+    const moduleUrl = new URL("./shutdown.ts", import.meta.url).href
+    const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      import { installShutdownStdinHandler } from ${JSON.stringify(moduleUrl)}
+      installShutdownStdinHandler(process.stdin, async () => { process.exitCode = 0 })
+    `], { stdio: ["pipe", "ignore", "inherit"], windowsHide: true })
+
+    child.stdin.end(`${STDIN_SHUTDOWN_COMMAND}\n`)
+    const [code] = await once(child, "exit")
+    assert.equal(code, 0)
+  })
 })
 
 describe("server shutdown orchestration", () => {
@@ -25,7 +144,7 @@ describe("server shutdown orchestration", () => {
       stopWorkspaces: () => { calls.push(`workspaces-${++attempts}`); if (attempts === 1) throw new Error("still alive") },
       stopHttpServers: () => { calls.push("http") },
     }), logger)
-    assert.deepEqual(calls, ["workspaces-1", "remote-control", "remote-proxy", "workspaces-2", "http"])
+    assert.deepEqual(calls, ["http", "remote-control", "remote-proxy", "workspaces-1", "workspaces-2"])
   })
 
   it("closes remaining resources and aggregates the concrete current error", async () => {
@@ -46,15 +165,23 @@ describe("server shutdown orchestration", () => {
     assert.deepEqual([attempts, closed], [2, ["http", "release-monitor"]])
   })
 
-  it("starts workspace cleanup without waiting for preliminary shutdown", async () => {
+  it("drains HTTP before workspace cleanup without waiting for independent shutdown", async () => {
     let releasePreliminary!: () => void
     const preliminary = new Promise<void>((resolve) => { releasePreliminary = resolve })
     let workspaceStarted = false
+    let httpStarted = false
+    let releaseHttp!: () => void
+    const http = new Promise<void>(resolve => { releaseHttp = resolve })
     const shutdown = orchestrateServerShutdown(operations({
       stopRemoteControl: () => preliminary,
+      stopHttpServers: () => { httpStarted = true; return http },
       stopWorkspaces: () => { workspaceStarted = true },
     }), logger)
 
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(httpStarted, true)
+    assert.equal(workspaceStarted, false)
+    releaseHttp()
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(workspaceStarted, true)
     releasePreliminary()

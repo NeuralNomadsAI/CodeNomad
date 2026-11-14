@@ -499,15 +499,78 @@ test("fake native reads stay at fixed concurrency across roots and inboxes", asy
   assert.equal(pending, 0)
 })
 
-test("oversized snapshot input fails closed before unbounded native fan-out", async () => {
-  const client = native()
-  let reads = 0
-  client.session.get = async () => { reads++; throw new Error("Unexpected read") }
-  const map = snapshot(Array.from({ length: 9 }, (_, i) => actor(`root-${i}`)))
-  const result = await projectMissionActivity({ client, snapshot: map, workspaceID: "workspace-1", ownsLocation: async () => true,
-    isCurrent: () => true })
-  assert.equal(reads, 0)
-  assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] })
+test("a mission with more actors than one refresh observes stays within the actor read budget", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = {}
+  const actors = Array.from({ length: 200 }, (_, i) => actor(`root-${String(i).padStart(3, "0")}`))
+  for (const value of actors) sessions![value.sessionId] = {}
+  const client = native({ sessions })
+  const read = new Set<string>()
+  const get = client.session.get
+  client.session.get = async (...args: Parameters<typeof get>) => { read.add(args[0].sessionID); return get(...args) }
+  const result = await projectMissionActivity({ client, snapshot: snapshot(actors), workspaceID: "workspace-1",
+    ownsLocation: async () => true, isCurrent: () => true })
+  assert.equal(read.size, 160)
+  const states = result.missions[0].actors.map(value => value.state)
+  assert.equal(states.length, 200)
+  assert.ok(states.slice(160).every(state => state === "unknown"), "actors beyond the budget read as unknown")
+  // The family lists the members of the actors read, and says it is partial.
+  assert.equal(result.missions[0].family?.state, "partial")
+  assert.deepEqual(result.missions[0].family?.members.map(member => member.sessionId), actors.slice(0, 160).map(value => value.sessionId))
+})
+
+test("beyond the actor budget, actors asking for an answer and then those with open work are read first", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = {}
+  const actors = Array.from({ length: 200 }, (_, i) => actor(`root-${String(i).padStart(3, "0")}`))
+  for (const value of actors) sessions![value.sessionId] = {}
+  // root-195's request comes from a grandchild; root-190 asks itself; root-180 has queued work.
+  Object.assign(sessions!, { "child-195": { parentID: "root-195" }, "grandchild-195": { parentID: "child-195" } })
+  const client = native({ sessions, forms: [{ sessionID: "root-190" }], permissions: [{ sessionID: "grandchild-195" }] })
+  const read = new Set<string>()
+  const get = client.session.get
+  client.session.get = async (...args: Parameters<typeof get>) => { read.add(args[0].sessionID); return get(...args) }
+  const result = await projectMissionActivity({ client, snapshot: snapshot(actors, [task("root-180")]), workspaceID: "workspace-1",
+    ownsLocation: async () => true, isCurrent: () => true })
+  const state = (id: string) => result.missions[0].actors.find(value => value.sessionId === id)!.state
+  assert.equal(state("root-190"), "form")
+  assert.equal(state("root-195"), "permission")
+  assert.equal(state("root-180"), "idle-without-report")
+  // Then the idle actors in mission order, as many as still fit: root-000 to root-156.
+  const roots = [...read].filter(id => id.startsWith("root-"))
+  assert.equal(roots.length, 160)
+  assert.deepEqual([roots.includes("root-156"), roots.includes("root-157"), roots.includes("root-199")], [true, false, false])
+  // Two ancestry reads attribute the grandchild's request.
+  assert.deepEqual([...read].filter(id => !id.startsWith("root-")).sort(), ["child-195", "grandchild-195"])
+  const family = result.missions[0].family!
+  assert.equal(family.state, "partial")
+  assert.deepEqual(family.members.filter(member => member.actorSessionId === "root-195").map(member => member.sessionId),
+    ["root-195", "child-195", "grandchild-195"])
+  assert.equal(family.members.some(member => member.actorSessionId === "root-199"), false)
+})
+
+test("beyond the actor budget, a gracefully paused mission's finishing steps are read with running missions' work", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = { "paused-a": {}, "paused-b": {} }
+  const actors = Array.from({ length: 200 }, (_, i) => actor(`root-${String(i).padStart(3, "0")}`))
+  for (const value of actors) sessions![value.sessionId] = {}
+  const running = snapshot(actors, actors.map(value => task(value.sessionId))).missions[0]
+  // Just paused, so listed first; its actors still finish their steps.
+  const pausedActors = [actor("paused-a"), actor("paused-b")]
+  const paused: MissionMap = { ...snapshot(pausedActors, pausedActors.map(value => task(value.sessionId))).missions[0], id: "msn_paused",
+    runState: "paused", control: { id: "control", missionID: "msn_paused", requestID: "pause", expectedRevision: 1, action: "pause", graceful: true,
+      targets: [], pending: [] } }
+  const result = await projectMissionActivity({ client: native({ sessions, active: { "paused-a": { type: "running" } } }),
+    snapshot: { ...snapshot([]), missions: [paused, running] }, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true })
+  const states = Object.fromEntries(result.missions.find(mission => mission.missionId === "msn_paused")!.actors.map(value => [value.sessionId, value.state]))
+  assert.deepEqual(states, { "paused-a": "running", "paused-b": "idle-without-report" })
+})
+
+test("a mission of 40 actors is observed as a whole", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = {}
+  const actors = Array.from({ length: 40 }, (_, i) => actor(`root-${i}`))
+  for (const value of actors) sessions![value.sessionId] = {}
+  const result = await projectMissionActivity({ client: native({ sessions }), snapshot: snapshot(actors), workspaceID: "workspace-1",
+    ownsLocation: async () => true, isCurrent: () => true })
+  assert.equal(result.missions[0].family?.state, "observed")
+  assert.equal(result.missions[0].family?.members.length, 40)
 })
 
 test("a shared declared-root observation cannot contradict another mission's ordinary descendant", async () => {

@@ -101,6 +101,26 @@ button {
   font-size: 0.95rem;
 }
 
+.loading-remote-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.loading-remote-message {
+  margin: 8px 0 0;
+  font-size: 0.95rem;
+  color: var(--text-muted, #666666);
+}
+
+.loading-remote-actions {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;

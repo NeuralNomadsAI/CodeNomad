@@ -9,7 +9,7 @@ CodeNomad, yürütme ana bilgisayarındaki paylaşılan bir OpenCode hizmetine b
 3. **Durumu ve güncellemeleri denetle** öğesini kullanın. OpenCode eksikse **OpenCode'u kur ve başlat** öğesini seçin; önce ana bilgisayarı ve kurulum kapsamını inceleyin.
 4. Kurulum **Bağlan ve devam et** sunuyorsa, bildirilen sorunu çözdükten sonra bunu kullanın.
 
-Kurulum, diğer istemcilerle paylaşılan standart bir kullanıcı kurulumu için paketlenmiş Node/npm'yi kullanır. **Kullanıcı için kur ve PATH'i yapılandır** bu kullanıcının terminal kurulumunu değiştirir; daha sonra yeni bir terminal açın. Bir tarayıcı CodeNomad sunucusuna bağlanır: dosya seçicisi ve yürütülebilir seçimi, tarama cihazını değil, söz konusu sunucuyu ilgilendirir.
+Kurulum, diğer istemcilerle paylaşılan standart bir kullanıcı kurulumu için CodeNomad sunucusunun çalıştığı Node çalışma zamanını ve onun npm'ini (masaüstünde Electron'un yerleşik Node'u veya Tauri'nin paketlediği Node) kullanır. **Kullanıcı için kur ve PATH'i yapılandır** bu kullanıcının terminal kurulumunu değiştirir; daha sonra yeni bir terminal açın. Bir tarayıcı CodeNomad sunucusuna bağlanır: dosya seçicisi ve yürütülebilir seçimi, tarama cihazını değil, söz konusu sunucuyu ilgilendirir.
 
 PATH üzerinde önce eski bir OpenCode geliyorsa, sunulan eylem nasıl kurulduğuna bağlıdır. npm ile kurulmuş OpenCode 1.x için **OpenCode {version} sürümünü OpenCode 2 ile değiştir** onay ister, o npm paketini kaldırır ve OpenCode 2'yi aynı npm klasörüne kurar; OpenCode veri klasörü korunur ve OpenCode 2, 1.x konuşmalarını kendisi içe aktarır. Başka bir yolla (winget, Homebrew, elle) kurulmuş eski veya kullanılamayan bir OpenCode asla değiştirilmez: **CodeNomad için OpenCode 2 kur**, OpenCode 2'yi onun yanına, kullanıcı npm klasörüne kurar ve CodeNomad bundan sonra bu kopyayı kullanır. Bu eski komutun kendisi kullanıcı npm klasöründeyse (örneğin `~/.local/bin` içindeki bir bağlantı) ya da bu klasör yazılabilir değilse, kurulum eylemi sunmak yerine nedenini açıklar: komutu taşıyın veya yeniden adlandırın ya da klasör izinlerini düzeltin, ardından **Durumu ve güncellemeleri denetle** seçeneğini seçin. Bir terminaldeki `opencode` komutu yine eski sürümü başlatabilir. Açıkça seçilmiş özel bir yürütülebilir dosya asla değiştirilmez.
 
@@ -19,17 +19,29 @@ Yüklü yürütülebilir dosya ve çalışan hizmetin farklı sürümleri olabil
 
 | Sınıflandırma | Mevcut gereksinim | Anlamı |
 | --- | --- | --- |
-| Asgari | OpenCode **2.1.2** | Code Mode içindeki JavaScript görevlerinin doğru yürütme sırası ve 2.1'in yerel yeniden oynatma ve sıkıştırma biçimi; önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
-| Önerilen | OpenCode **2.2.1** | Teknik alt sınırdan farklı, doğrulanan hedef. |
+| Asgari | OpenCode **2.3.0** | **Görseller** ayarlarının ve Design uzantısının kullandığı görsel oluşturma aracı, Code Mode içindeki JavaScript görevlerinin doğru yürütme sırası ve yerel yeniden oynatma ve sıkıştırma biçimi; önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. Ayrıca alt ajan sonuçlarını arka plan raporları olarak iletir; bunları alt ajan kartları ve Görevler okur. |
+| Önerilen | OpenCode **2.3.0** | Doğrulanan hedef; şu anda asgari sürümle aynı. |
 | Doğrulanmamış | Tam olarak doğrulanmamış daha yeni veya özel bir sürüm | Yalnızca denenmemiş olduğu için reddedilmez; bağlı hizmetin gerçek API sözleşmeleri kontrol edilir. |
 
-Gerekli oturum, izin, Form, gelen kutusu ve oturum-ortam sözleşmelerinin de mevcut olması gerekir. Yürütülebilir bir sürüm tek başına bağlı hizmetin bunları desteklediğini kanıtlamaz. Kurulum, desteklenmeyen bir çalışan hizmet bildirirse desteklenen bir CLI seçin/yükleyin ve hazır olduğunuzda açık paylaşılan hizmet yeniden başlatmayı kullanın.
+Bağlı hizmet gerekli oturum, izin, Form, gelen kutusu ve oturum ortamı sözleşmelerini sunmalıdır. Yerel Görev zamanlaması ayrıca zamanlama API'lerini, eklenti/sağlayıcı paketini ve etkin `experimental.schedules` ayarını denetler. Kullanılabilirlik, uyumlu gelecek sürümler dahil, kullanılan bu yeteneklere bağlıdır. Kurulum desteklenmeyen bir çalışan hizmet bildirirse desteklenen bir CLI seçin/yükleyin ve hazır olduğunuzda paylaşılan hizmeti açıkça yeniden başlatın.
 
 ## Ana bilgisayar, WSL ve paylaşılan hizmet kapsamı {#execution-host}
 
 Windows'ta seçilen bir WSL yürütülebilir dosyası, seçilen dağıtımın içinde çalışır. Oraya yükleyin/güncelleyin ve bu dağıtımda anlamlı olan yolları kullanın. WSL bağlantısı Windows localhost yönlendirmesine bağlıdır. Windows CLI ve WSL CLI, birbirinin yerine kullanılabilen yürütme ortamları değildir.
 
 OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına sahiptir. CodeNomad, pencere veya proje başına özel bir OpenCode veritabanı oluşturmaz. Proje sekmesini kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda yeniden görünür. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz. Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını geri yükleme için korur; ne bu eylemler ne de arka ucun kapanması paylaşılan arka plan programını durdurur. Bkz. [Projeler](projects.md).
+
+## Başlangıçta OpenCode'u başlat {#login-start}
+
+**Ayarlar → OpenCode** içindeki **Başlangıçta OpenCode'u başlat**, oturum açtığınızda işletim sisteminin OpenCode hizmetini arka planda başlatmasını sağlar; CodeNomad kapalıyken de çalışır. Siz açana kadar kapalı kalır, bir sonraki oturum açılışınızda etkinleşir ve CodeNomad sunucusunu çalıştıran bilgisayardaki hesabınız için geçerlidir. **OpenCode Binary** kartında seçilen yürütülebilir dosyayı başlatır; başka bir yerel yürütülebilir dosya seçmek onu günceller, aksi halde öncekini başlatmaya devam eder.
+
+| Sistem | OpenCode'u ne başlatır | Çökmeden sonra |
+| --- | --- | --- |
+| Windows | Hesabınız için gizli bir zamanlanmış görev; parola veya yönetici hakkı gerekmez. Bir WSL yürütülebilir dosyası kendi dağıtımında başlar. | Yeniden başlatılmaz. |
+| macOS | Bir LaunchAgent. | macOS yeniden başlatır. |
+| Linux | Oturum açılışında başlayan bir systemd kullanıcı hizmeti; linger etkinleştirilmez. | systemd yeniden başlatır. |
+
+Kapatmak yalnızca o görevi, LaunchAgent'ı veya hizmeti kaldırır; çalışan bir OpenCode çalışmaya devam eder. Ayar değiştirilemezse altında bir hata görünür: betik sarmalayıcı yerine yerel OpenCode programını seçin ya da sistemin görev zamanlayıcısını veya kullanıcı hizmetlerini denetleyin, ardından yeniden deneyin. CodeNomad sunucusu WSL içinde veya oturum açılışında başlatma olmayan başka bir sistemde çalıştığında **Bu sistemde kullanılamaz.** görünür.
 
 ## Güncelleme, yeniden başlatma veya yeniden yükleme {#maintenance}
 
@@ -38,10 +50,12 @@ OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına
 3. Çalışan hizmet durumunu gözden geçirin. **Paylaşılan hizmeti yeniden başlat** öğesini yalnızca seçilen kurulumu bağlı her istemci için etkinleştirmek istediğinizde kullanın.
 4. Hiçbir şey yüklemeden işlemi yeniden başlatmak için **Sorun giderme** öğesini genişletin ve **OpenCode hizmetini yeniden başlat** öğesini seçip onaylayın.
 
+Arka planda durum yenilenirken yeniden başlatma tıklanabilir kalır. Her istek, hizmeti değiştirmeden önce güncel durumu yeniden denetler; denetim başarısız olursa yeniden başlatma engellenir.
+
 | Eylem | Kapsam ve etki | Güvenli kurtarma |
 | --- | --- | --- |
 | CLI'yi güncelleyin | Desteklenen yüklü yürütülebilir dosyayı değiştirir; çalışan arka plan programını dolaylı olarak yeniden başlatmaz. | Bir arızadan sonra hem yüklü hem de çalışan sürümleri kontrol edin; yalnızca hatayı çözdükten sonra açıkça yeniden deneyin. |
-| Hizmeti yeniden başlat | Paylaşılan süreci değiştirir ve bağlı tüm OpenCode istemcilerindeki etkin işleri keser; oturum geçmişi kalır. | Yeniden bağlanıp konuşmaları ve zamanlanmış Görevleri inceleyin; yeniden başlatma otomatik devam anlamına gelmez. |
+| Hizmeti yeniden başlat | Paylaşılan süreci değiştirir ve bağlı tüm OpenCode istemcilerindeki etkin işleri keser; oturum geçmişi kalır. | Sağlıklı çalışan yerel Görev zamanlamaları otomatik kurtarılır; bekleyen geçişleri ve varsa duraklatma, hata veya belirsizliği inceleyin. Mevcut günlük kayıtlar **Sürdür** gerektirir. Tek seferlik konuşmaları ve kurtarma kontrollerini ayrıca inceleyin; bkz. [Görevler](missions.md#lifetime). |
 | OpenCode yapılandırmasını yeniden yükle | Süreci korur ancak tüm istemcilerdeki **yüklü her Location** bağlamını yeniden kurar. Bekleyen izinleri/Formları iptal eder, terminalleri/arka plan komutlarını kapatır; etkin işler kesilebilir. | Yeniden yükledikten sonra kaynakları ve bekleyen işleri kontrol edin. Yanıt kayboldu diye istemi veya değişiklik işlemini tekrarlamayın. |
 
 Kaydedilmiş bir yapılandırma veya yüklü eklenti kullanılamadığında ve kesinti kabul edilebilir olduğunda, çalışan hizmet destekliyorsa **Sorun giderme** altında bulunan **OpenCode yapılandırmasını yeniden yükle** öğesini açıkça kullanın. Zararsız bir ekran yenileme değildir. CodeNomad, daha yeni çalışan bir arka plan programının sürümünü düşürmek için seçilen eski bir CLI'yi kullanmayacaktır.

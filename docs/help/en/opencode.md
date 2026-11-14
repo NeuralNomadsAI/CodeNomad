@@ -9,7 +9,7 @@ CodeNomad connects to a shared OpenCode service on the execution host. Selecting
 3. Use **Check status and updates**. If OpenCode is missing, choose **Install and start OpenCode**; review the host and installation scope first.
 4. If setup offers **Connect and continue**, use it after resolving the reported problem.
 
-Installation uses bundled Node/npm for a standard user installation shared with other clients. **Install for the user and configure PATH** changes that user's terminal setup; open a new terminal afterward. A browser connects to the CodeNomad server: its file picker and executable selection concern that server, not the browsing device.
+Installation uses the Node runtime the CodeNomad server runs on and its npm (on desktop, Electron's integrated Node or Tauri's bundled Node) for a standard user installation shared with other clients. **Install for the user and configure PATH** changes that user's terminal setup; open a new terminal afterward. A browser connects to the CodeNomad server: its file picker and executable selection concern that server, not the browsing device.
 
 When an older OpenCode comes first on PATH, the offered action depends on how it was installed. For OpenCode 1.x installed with npm, **Replace OpenCode {version} with OpenCode 2** asks for confirmation, removes that npm package and installs OpenCode 2 in the same npm folder; the OpenCode data folder is kept, and OpenCode 2 imports 1.x conversations itself. An older or unusable OpenCode installed another way (winget, Homebrew, manual) is never modified: **Install OpenCode 2 for CodeNomad** installs OpenCode 2 in the user npm folder beside it, and CodeNomad then uses that copy. If that older command itself sits in the user npm folder (for example a link in `~/.local/bin`), or that folder cannot be written, setup explains why instead of offering the action: move or rename the command, or fix the folder's permissions, then choose **Check status and updates**. A terminal's `opencode` command may still start the older version. An explicitly selected custom executable is never replaced.
 
@@ -19,17 +19,29 @@ The installed executable and the running service can have different versions. Co
 
 | Classification | Current requirement | Meaning |
 | --- | --- | --- |
-| Minimum | OpenCode **2.1.2** | Correct JavaScript job ordering in Code Mode, alongside the 2.1 native replay and compaction format; conversations saved by earlier versions stay readable after updating. |
-| Recommended | OpenCode **2.2.1** | Qualified target, distinct from the technical minimum. |
+| Minimum | OpenCode **2.3.0** | The image generation tool used by the **Images** settings and the Design extension, alongside correct JavaScript job ordering in Code Mode and the native replay and compaction format; conversations saved by earlier versions stay readable after updating. It also delivers subagent results as background reports, which subagent cards and Missions read. |
+| Recommended | OpenCode **2.3.0** | Qualified target; currently the same version as the minimum. |
 | Unverified | A newer or custom version not fully validated | Not rejected merely for being untested; the connected service's actual API contracts are checked. |
 
-The required session, permission, Form, inbox and session-environment contracts must also be available. An executable version alone does not prove that the connected service supports them. If setup reports an unsupported running service, select/install a supported CLI and use the explicit shared-service restart when ready.
+The connected service must expose the required session, permission, Form, inbox and session-environment contracts. Native Mission scheduling also checks the schedule APIs, plugin/provider bundle and effective `experimental.schedules` setting. Availability follows those consumed capabilities, including on compatible future versions. If setup reports an unsupported running service, select/install a supported CLI and use the explicit shared-service restart when ready.
 
 ## Host, WSL and shared-service scope {#execution-host}
 
 On Windows, a selected WSL executable runs inside its chosen distribution. Install/update it there and use paths meaningful inside that distribution. WSL connectivity depends on Windows localhost forwarding. A Windows CLI and a WSL CLI are not interchangeable execution environments.
 
 OpenCode owns its global service registration, sessions, messages and database. CodeNomad does not create a private OpenCode database per window or project. Closing a project tab closes that project in CodeNomad; sessions continue in OpenCode and reappear when you reopen the project. CodeNomad never unloads native Locations. Closing a whole window, quitting or reloading preserves project connections for restoration; neither those actions nor backend shutdown stops the shared daemon. See [Projects](projects.md).
+
+## Start OpenCode at startup {#login-start}
+
+In **Settings → OpenCode**, **Start OpenCode at startup** has your operating system start the OpenCode service in the background when you sign in, even with CodeNomad closed. It is off until you turn it on, takes effect at your next sign-in and applies to your account on the computer running the CodeNomad server. It starts the executable selected in the **OpenCode Binary** card; selecting another native executable updates it, otherwise it keeps starting the previous one.
+
+| System | What starts OpenCode | After a crash |
+| --- | --- | --- |
+| Windows | A hidden scheduled task for your account, without password or administrator rights. A WSL executable starts in its distribution. | Not restarted. |
+| macOS | A LaunchAgent. | Restarted by macOS. |
+| Linux | A systemd user service started at login, without enabling lingering. | Restarted by systemd. |
+
+Turning it off removes only that task, LaunchAgent or service; a running OpenCode keeps running. If the setting cannot be changed, an error appears under it: select the native OpenCode program rather than a script wrapper, or check the system's task scheduler or user services, then try again. **Unavailable on this system** appears when the CodeNomad server runs inside WSL or on another system without login start.
 
 ## Update, restart or reload {#maintenance}
 
@@ -38,10 +50,12 @@ OpenCode owns its global service registration, sessions, messages and database. 
 3. Review the running-service status. Use **Restart shared service** only when you intend to activate the selected installation for every connected client.
 4. For a process restart without installing anything, expand **Troubleshooting** and choose **Restart OpenCode service**, then confirm.
 
+Restart remains clickable during a background status refresh. Each request checks the current service status again before changing the service; a failed check blocks the restart.
+
 | Action | Scope and effect | Safe recovery |
 | --- | --- | --- |
 | Update CLI | Changes the supported installed executable; does not implicitly restart the running daemon. | Check both installed and running versions after a failure; retry explicitly only after resolving the error. |
-| Restart service | Replaces the shared process and interrupts active work in all connected OpenCode clients; session history remains. | Reconnect and inspect conversations and scheduled Missions; a restart is not automatic continuation. |
+| Restart service | Replaces the shared process and interrupts active work in all connected OpenCode clients; session history remains. | Healthy running native Mission schedules recover automatically; inspect pending passages and any pause/error/uncertainty. Existing daily entries require Resume. Inspect one-time conversations and their recovery controls separately; see [Missions](missions.md#lifetime). |
 | Reload OpenCode configuration | Keeps the process but rebuilds **every loaded Location** for all clients. Cancels pending permissions/Forms and closes terminals/background commands; active work may be interrupted. | Recheck resources and pending work after reload. Do not repeat a prompt or mutation merely because its reply was lost. |
 
 Use **Reload OpenCode configuration**, under **Troubleshooting** when the running service supports it, explicitly when a saved configuration or installed plugin remains unavailable and the disruption is acceptable. It is not a harmless display refresh. CodeNomad will not use an older selected CLI to downgrade a newer running daemon.

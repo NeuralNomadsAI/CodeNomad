@@ -20,7 +20,36 @@ never upgrade or restart a user's service.
   separately from an untested version. Optional configuration reload follows
   its own route presence. Never probe support with a write.
 
+Scheduled Missions additionally require the consumed Schedule contract and an enabled
+effective native `experimental.schedules` flag in the acquired Location. Play/Resume
+prepare project-only activation automatically, preserving every discovered explicit
+OFF and native environment OFF. An already enabled Location receives a ready proof
+without configuration writes. Native flag resolution, targeted activation and exact
+read-back are described in [Missions](MISSIONS.md) and
+[native contracts](MISSIONS_NATIVE_CONTRACTS.md).
+Missing APIs, explicit OFF, a masking block, failed activation or missing exact
+calendar registration keep the schedule paused or in an explained error state.
+Play of a Mission without launch criteria follows its own admission path.
+
 ## Setup and recovery
+
+### Global log snapshots
+
+`GET /api/opencode/logs` resolves the configured OpenCode executable server-side,
+runs its read-only `debug paths log` command, and reads the fixed `opencode.log`
+file on that execution host. WSL paths use the existing native-to-host translator.
+The route accepts no path or executable selectors, returns `Cache-Control: no-store`,
+and fences an executable change while reading. A snapshot contains at most the
+last 128 KiB, aligned after the first partial line, with an explicit truncation
+flag. Missing files and discovery/read failures return fixed error codes.
+
+Settings → OpenCode opens the snapshot on demand in the common floating output
+window; Refresh requests a new snapshot. Logs may contain private data. Native
+`experimental.session.stats` provides aggregates and `experimental.session.log`
+provides durable session events; diagnostic log-file access uses the selected
+CLI's documented global log directory.
+
+### Setup surfaces
 
 Startup recovery and Preferences share `OpenCodeSetupPanel` and its store, but
 missing installations, known incompatibility and optional updates expose
@@ -48,8 +77,17 @@ command. On Windows, that alias is skipped only when the npm `.cmd` script
 positively invokes the package's `.cjs` target; a customized `.cmd` wrapper
 keeps PATH priority and the automatic npm updater never overwrites it.
 
-Default host installation uses bundled Node/npm to run a standard global npm
-installation of `@opencode/cli`. Existing writable npm installations on PATH are
+Default host installation runs the backend's npm (bundled in Electron's resources
+for its integrated Node, beside Tauri's bundled Node, or beside a standalone server's
+own Node) to run a standard global npm installation of `@opencode/cli`. Both desktop
+hosts bundle the npm release pinned in `.npm-version` (`dev-docs/RUNTIME_MAINTENANCE.md`);
+a standalone server uses the npm installed with its Node. npm blocks dependency install
+scripts unless its `allow-scripts` policy lists them (the default from npm 12), and the
+package's postinstall links the platform executable. CodeNomad's global installation
+therefore allows exactly the `@opencode/cli@<version>` it installs:
+`--allow-scripts` on direct npm, `npm_config_allow_scripts` (with inherited values
+removed) for the npm a native upgrade runs. The platform packages have no install
+scripts. Never enable all scripts or write an npmrc for this. Existing writable npm installations on PATH are
 reused after verifying their manifest and launcher identity; standalone/curl,
 Homebrew and custom installations remain user-managed. With no PATH installation,
 the user prefix is `%APPDATA%/npm` on Windows and `~/.local` on POSIX, or an explicit
@@ -76,7 +114,7 @@ bin, and npm refuses (EEXIST) to link one over the other without `--force`, so
 "Replace OpenCode 1.x with OpenCode 2", also when 1.x cannot run (e.g. a
 placeholder left by a skipped postinstall); confirmation sends the shown command
 path and package version, the server refuses a mismatch under the prefix lock,
-bundled npm uninstalls `opencode-ai`, then the ordinary path installs and
+the backend's npm uninstalls `opencode-ai`, then the ordinary path installs and
 verifies `@opencode/cli`.
 
 The Windows running-image preflight covers every native file of the package:
@@ -138,20 +176,37 @@ CodeNomad backends only. Verified npm installations at 2.0.15 or
 later use the installed CLI's `upgrade <exact-version> --method npm` for version
 changes. OpenCode retains Windows running images itself, so this path skips the
 write preflight, which would reject a supported live upgrade. A private,
-temporary npm command adapter supplies bundled Node/npm and pins the verified prefix
+temporary npm command adapter supplies the backend's npm (bundled in Electron's
+resources, beside Tauri's bundled Node, or beside a standalone server's own Node)
+and pins the verified prefix
 and registry, including when the desktop runtime has no npm launcher on PATH. It is
 also the command's working directory, preventing cwd from shadowing npm on Windows.
+Installer commands live in directories beside the lock inside the npm prefix:
+`.codenomad-upgrade-*` for native upgrade and `.codenomad-npm-*` for direct npm.
+Both supply `npm`/`npx` bound to the selected package and runtime, plus Electron's
+lifecycle `node` command. The prefix must allow execution for its
+installed commands, unlike a temporary directory that may be mounted noexec, and
+npm and the OpenCode command lookup ignore these dot directories.
 If the outer supervisor is terminated by timeout, signal or output limit, descendant
-exit cannot be established: retain the prefix lock and temporary npm adapter rather
-than allowing a competing installation. The server error includes the lock path;
-manual recovery must first verify installer processes have exited. Temporary cleanup
+exit cannot be established: retain the prefix lock and these installer directories
+rather than allowing a competing installation. The server error includes the lock
+path; manual recovery must first verify installer processes have exited. The next
+backend that acquires a fresh lock removes retained installer directories. Cleanup
 never masks the execution error. Native upgrade and direct npm both verify version
 and launcher after installation.
 
 `node --import tsx scripts/test-opencode-upgrade-native.mjs` runs the real
 installer against an isolated prefix/home/service: the installed CLI upgrades
 while the running daemon keeps its PID and version. `CODENOMAD_FIXTURE_NODE`
-selects a packaged Node with bundled npm; cleanup uses the isolated CLI only.
+selects a Node executable with npm beside it, such as Tauri's packaged Node; cleanup
+uses the isolated CLI only.
+The install, upgrade and legacy replacement fixtures also accept
+`CODENOMAD_FIXTURE_ELECTRON=1`, `CODENOMAD_FIXTURE_NODE=<packaged Electron executable>`
+and `CODENOMAD_FIXTURE_RESOURCES=<packaged resources directory>` to qualify
+Electron's npm-only package with system Node excluded from PATH; that mode first
+requires the executable to report an Electron version. Both modes set
+`ELECTRON_RUN_AS_NODE=1`, as both desktop hosts do; Electron mode also sets
+`ELECTRON_NO_ASAR=1`, like the Electron backend.
 
 Explicit custom binaries stay selected. WSL and custom installations receive
 execution-host instructions.
@@ -175,6 +230,11 @@ executable or unmounted view and never resumes a pending workspace-open callback
 Opening settings, checking status, reconnecting and reloading never restart
 implicitly; both actions keep session history.
 
+Both restart controls remain actionable during passive status refreshes, including
+window focus. They exclude concurrent mutations and pending confirmations, retain
+failed-check and executable-selection fences, and use the setup action's fresh
+pre-mutation status read before dispatching the explicit restart.
+
 Mounted Windows discovery directories and Linux aliases are canonicalized through
 the selected distro, then translated for host filesystem access. Native import
 URLs and lease paths stay Linux-native; canonical outside-root storage is kept.
@@ -184,6 +244,108 @@ effect (all loaded locations rebuilt, pending permissions/Forms cancelled,
 terminals/background commands closed for all clients) and never presents it as a
 process restart or memory reclamation. Conflicting service actions are refused
 while an explicit action runs.
+
+## Start OpenCode at login
+
+`host-lifetime/opencode-login-start.ts` backs Settings → OpenCode **Start OpenCode at startup** (started at login):
+a voluntary preference, off by default, whose only state is one OS artifact per account.
+Missions never read or change it. `GET|POST /api/opencode/login-start`
+(`server/routes/opencode-login-start.ts`) returns `{ state: "on" | "off" | "unavailable" }`
+and accepts `{ enabled }`; POST requires the live human session of `recurrenceHumanSession`.
+A GET also applies the replacement of a former ON below, which can install the artifact.
+Failures cross the boundary only as `login-start-unavailable` (503),
+`login-start-unsupported-binary` (422) and `login-start-failed` (500). `OpenCodeLoginStart`
+runs reads, changes and the replacement of the former supervision one at a time; they only
+write or remove the artifact. OpenCode then runs on its own: on Windows a crashed OpenCode
+stays stopped until the next login.
+
+The artifact starts exactly `opencode serve --service` for the selected executable
+(`resolveLoginStartLaunch`). Windows takes the native image `buildSpawnSpec` launches, or
+`%SystemRoot%\System32\wsl.exe --distribution … --exec <binary> serve --service` for a WSL
+UNC selection (a distribution root alone is refused); command wrappers (`.cmd`, `.ps1`) are
+`unsupported-binary`. POSIX takes the absolute executable. Both validate the link target but
+keep the selected path, so a package manager's stable link survives its versioned upgrades.
+The Windows task inherits the session environment. launchd and the systemd user manager supply
+a minimal one, so the plist (`EnvironmentVariables`) and the unit (`Environment=`) carry the
+server's `PATH` as it is at the last ON or refresh, and nothing else
+(`loginStartEnvironment`). Profile overrides are never persisted in the artifact. Explicit
+executable changes (both Settings patch routes) and verified installations
+(`opencode-update/service.ts`) call `refresh()`, which rewrites an installed artifact; its
+failure never refuses the save or the update and leaves the artifact starting the previous
+executable.
+
+- **Windows** (`opencode-login-start-windows.ts`): one root-folder task
+  `CodeNomad-OpenCode-Login` with the description marker `CodeNomad: start OpenCode at login`,
+  registered from XML through Windows PowerShell's ScheduledTasks module (hidden process,
+  process-scoped `-ExecutionPolicy Bypass`, system module path). A single `LogonTrigger` and an
+  `InteractiveToken`/`LeastPrivilege` principal for the current SID: no password, no
+  elevation; `IgnoreNew`, no time limit, normal priority. The action runs a stable copy of the
+  GUI-subsystem `opencode-login-launcher.exe` under `%LOCALAPPDATA%\CodeNomadOpenCodeLogin`,
+  which starts the program with `CreateNoWindow` and exits: no console appears and the task
+  instance ends while OpenCode keeps running. A same-named task with another description is
+  foreign and never replaced or removed. OFF unregisters the owned task and deletes the
+  launcher copy.
+- **macOS** (`opencode-login-start-posix.ts`): `~/Library/LaunchAgents/org.codenomad.opencode-login.plist`
+  with `RunAtLoad` and `KeepAlive { Crashed = true }`: launchd relaunches it after a crash
+  while an explicit `opencode service stop` keeps it stopped. ON writes and OFF deletes the
+  plist without `launchctl`, so it applies at the next login and a running OpenCode is untouched.
+- **Linux**: `~/.config/systemd/user/codenomad-opencode-login.service` with
+  `WantedBy=default.target`, `Restart=on-abnormal` and `RestartPreventExitStatus=SIGKILL`:
+  systemd relaunches it after a crash signal (SIGSEGV, SIGABRT…) but never after an exit code
+  or SIGKILL: an explicit `opencode service stop` (exit 130), a start failing with a code and a
+  forced kill stay stopped. It is enabled with `systemctl --user enable`
+  (never `--now`) and removed with `disable`, its link and file. Lingering stays as the user
+  set it. A server running inside WSL, or a host without `/usr/bin/systemctl`, reports
+  `unavailable`.
+
+`npm run build:host-helpers --workspace @neuralnomads/codenomad` compiles the launcher with
+the Windows .NET Framework compiler and, on macOS, the universal `process-identity-macos`
+helper of `process-identity.ts`. It lands as `dist/host-lifetime/process-identity-macos`, beside
+the module of the same name, so the server's import loader (`src/loader.ts`) resolves
+extensionless relative imports to their compiled `.js` file before the bare path.
+
+### Replacing the former supervision
+
+At server startup and before every read or change, `opencode-login-start-legacy.ts` looks for
+the former supervision root (`%LOCALAPPDATA%\CodeNomadServiceSupervision` on Windows,
+`~/.codenomad-service-supervision` on macOS and Linux). When a service key there was ON, the
+login artifact is installed first; if that fails, the former installation stays untouched for
+the next pass and reads report `on`, since it still starts OpenCode. An explicit OFF retires it
+without installing anything and fails while a former ON cannot be released. Each guard is then released by rewriting its manifest to OFF, and only its exact
+resources are removed:
+
+- Windows disables `CodeNomad-OpenCode-<key>-Main` and `-Recovery` (their description marker
+  matched exactly, directory included), waits for Main to stop running and unregisters both;
+  Main is never ended, because its job still holds the released OpenCode. A same-key task naming
+  another directory keeps the step pending.
+- macOS boots out `org.codenomad.opencode.<key>` (its `AbandonProcessGroup` keeps OpenCode) and
+  deletes the plist once launchd no longer lists the job.
+- Linux stops `codenomad-opencode-<key>.service` only when `systemctl show` reports that exact
+  file loaded with `KillMode=process` and no drop-in (otherwise the step waits), then disables,
+  unlinks and reloads.
+
+Linger recorded in `linux-linger.json` as owned, with an unchanged
+`/var/lib/systemd/linger/<user>` fingerprint, is disabled only while an active or online session
+exists, so the user manager and OpenCode survive. Personal, external, uncertain or altered linger
+is left as it is. Incomplete steps remain for the next pass; the root disappears once empty.
+
+Native qualification also covers a Windows-to-WSL selection
+(`scripts/test-opencode-login-start-wsl-native.mjs DISTRO LINUX_CLI LINUX_ROOT`: isolated
+roots passed through `WSLENV`, port and unique task; the service runs in the distribution,
+reachable from Windows, with no visible window) and Linux
+(`scripts/test-opencode-login-start-linux-native.mjs`, run on a disposable host with an esbuild
+ESM bundle of `opencode-login-start-posix.ts`: a real logout and login starts the unit,
+`opencode service stop` and SIGKILL stay stopped, SIGSEGV is relaunched, OFF keeps the process
+running, no linger).
+
+Checks: `node --import tsx --test packages/server/src/host-lifetime/opencode-login-start.test.ts
+packages/server/src/host-lifetime/opencode-login-start-legacy.test.ts`. Windows native
+qualification: `node --import tsx scripts/test-opencode-login-start-windows-native.mjs
+ABSOLUTE_CLI [EVIDENCE_DIRECTORY]` registers a uniquely named task for an isolated service (own
+HOME/XDG roots and port), runs it on demand, checks the hidden `serve --service` process and
+that removal keeps it running, then stops the service, removes the task and compares the shared
+service registration. macOS is covered by artifact and adapter tests; a real login there is a
+separate qualification gate.
 
 ## Stored-history migration
 
@@ -214,8 +376,9 @@ fully and never discard unknown fields or relax history checks.
   input.
 - Catalogs update through resource-specific events. `session.message.content.updated`
   is replay-only (never published live), so live invalidation ignores it.
-- Pruning preview stays query-only and TUI refresh synchronization stays in
-  place: the plugin API has no `session.message`, and publication can race.
+- Pruning preview stays query-only, and the CodeNomad transcript invalidates and
+  rereads after a prune: the plugin API has no `session.message`, and publication
+  can race.
 - Keep these older-identity authority checks; the synthetic migration seed alone
   never justifies removing them.
 
@@ -231,7 +394,10 @@ resolved latest stable, plus the cross-platform native pruning gate.
 ### Reproduce desktop and WSL acceptance
 
 Windows desktop fixtures launch only the specified worktree's built artifacts,
-use isolated native profiles/service ports and dynamically discover instrumentation:
+use isolated native profiles/service ports and dynamically discover instrumentation.
+Electron runs a private copy with an explicit server `--require` for the fixture's
+PATH-registration guard; Tauri loads that guard through `NODE_OPTIONS`.
+Both require its startup receipt before allowing installation.
 
 ```text
 node scripts/test-opencode-setup-desktop.mjs both ABSOLUTE_CURRENT_CLI
@@ -251,6 +417,6 @@ artifacts with the qualification PR/CI; never document machine-local paths.
 
 - OpenCode settings start with the OpenCode version card (runtime status, install/update and service actions directly inline), followed by the executable selection card, which has only the selector's own "OpenCode binary" heading. Only version details and troubleshooting are collapsed disclosures at the bottom of the runtime panel; log levels remain the final settings card. Troubleshooting always exposes an explicit, confirmed shared-service restart independently of updates; retain the inline activation shortcut after an update, and never downgrade a newer daemon through an older selected CLI. Configuration reload remains a separate process-preserving action. Share controls with the startup recovery dialog; never route settings through a separate management modal. The disclosures use the shared `.settings-disclosure` (`styles/components/settings-disclosure.css`).
 - Startup restoration remembers only definite `426 opencode_update_required` workspace refusals for the recovery dialog's successful action or explicit Continue. Keep this window-owned continuation separate from the latest manually requested folder: run the manual open first, then resume only still-unbound saved tabs under their original selection/order/removal guards. Read-only status refresh and settings maintenance do not replay restoration; disposal cancels it. Never replay uncertain creations, generic errors or session mutations.
-- Verified shared npm OpenCode installations at 2.0.15+ delegate version changes to native `upgrade` through `opencode-update/native-upgrade.ts`, with bundled npm scoped to the verified prefix. Native Windows image retention replaces the write preflight only on that path; first install, older migration and same-version repair retain direct npm/preflight. Never retry a failed native mutation via npm or restart the daemon implicitly. Validate with the isolated `scripts/test-opencode-upgrade-native.mjs` fixture.
-- OpenCode minimum requirements must follow demonstrated technical dependencies, never the latest published or solely tested version. Keep required, recommended/tested and unverified versions distinct in `opencode/runtime-support.ts` and setup diagnostics. Validate authenticated daemon metadata/contract before client use/plugin provisioning. Setup uses bundled Node/npm for a shared user npm installation and prefers PATH. Only a verified `@opencode/cli` npm installation is updated via npm; an OpenCode 1.x `opencode-ai` npm shim (identified by its manifest and shim target, never a version string) is replaced in its prefix only after explicit UI confirmation naming that exact installation (rechecked under the installation lock), with every native image of the package preflighted, npm failure states reported truthfully and failure after removal retryable rather than replayed. Foreign `--version` probes are asynchronous, bounded and tree-killed (`opencode-update/foreign-probe.ts`); unknown keeps PATH precedence and synchronous resolution never spawns. Foreign installations (winget, Homebrew, curl, manual) are never modified: when below the minimum or unusable, OpenCode 2 is installed in the user npm prefix beside them and the verified managed installation wins over that PATH command; valid foreign V2 and explicit custom executables keep their precedence. Detection lives in `opencode-update/legacy-installation.ts`. The CodeNomad-private `~/.local/share/codenomad/opencode` tree (`opencode-update/retired-installation.ts`) must never be discovered or launched; ignore its receipts and saved selections without migrating or deleting it. Keep installer locking and Windows live-executable preflight in `opencode-update/installation-lock.ts`; register terminal PATH only on explicit installation. A running daemon restart is a separate explicit action. Configuration reload is also explicit: native `location.reload` rebuilds every loaded location and cancels pending Forms/permissions, so never use it as an automatic watcher fallback.
+- Verified shared npm OpenCode installations at 2.0.15+ delegate version changes to native `upgrade` through `opencode-update/native-upgrade.ts`, with the backend's npm scoped to the verified prefix. Native Windows image retention replaces the write preflight only on that path; first install, older migration and same-version repair retain direct npm/preflight. Never retry a failed native mutation via npm or restart the daemon implicitly. Validate with the isolated `scripts/test-opencode-upgrade-native.mjs` fixture.
+- OpenCode minimum requirements must follow demonstrated technical dependencies, never the latest published or solely tested version. Keep required, recommended/tested and unverified versions distinct in `opencode/runtime-support.ts` and setup diagnostics. Validate authenticated daemon metadata/contract before client use/plugin provisioning. Setup runs the backend's npm (bundled in Electron's resources for its integrated Node, beside Tauri's bundled Node, or beside a standalone server's own Node) for a shared user npm installation and prefers PATH; only an executable not named `node` (Electron's) receives the scoped lifecycle `node` command. Only a verified `@opencode/cli` npm installation is updated via npm; an OpenCode 1.x `opencode-ai` npm shim (identified by its manifest and shim target, never a version string) is replaced in its prefix only after explicit UI confirmation naming that exact installation (rechecked under the installation lock), with every native image of the package preflighted, npm failure states reported truthfully and failure after removal retryable rather than replayed. Foreign `--version` probes are asynchronous, bounded and tree-killed (`opencode-update/foreign-probe.ts`); unknown keeps PATH precedence and synchronous resolution never spawns. Foreign installations (winget, Homebrew, curl, manual) are never modified: when below the minimum or unusable, OpenCode 2 is installed in the user npm prefix beside them and the verified managed installation wins over that PATH command; valid foreign V2 and explicit custom executables keep their precedence. Detection lives in `opencode-update/legacy-installation.ts`. The CodeNomad-private `~/.local/share/codenomad/opencode` tree (`opencode-update/retired-installation.ts`) must never be discovered or launched; ignore its receipts and saved selections without migrating or deleting it. Keep installer locking and Windows live-executable preflight in `opencode-update/installation-lock.ts`; register terminal PATH only on explicit installation. A running daemon restart is a separate explicit action. Configuration reload is also explicit: native `location.reload` rebuilds every loaded location and cancels pending Forms/permissions, so never use it as an automatic watcher fallback.
 - A selected CLI's `service status` can report `stopped` for a live older daemon. Preserve the bounded, read-only registration fallback in `workspaces/native-service-registration.ts` and authenticate that daemon's metadata before allowing start; `ensure()` repeats discovery. Native service lookup is separate from plugin-root discovery, which must still use the connected daemon's `config.get`. Never write service registration/configuration files from the backend.

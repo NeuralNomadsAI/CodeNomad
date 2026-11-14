@@ -10,7 +10,7 @@ OpenCode gives you the engine. CodeNomad gives you the cockpit. It connects to O
 
 ## Hand long work to Missions {#missions}
 
-Describe the work once. The mission's coordinator plans it as a task tree, delegates bounded tasks to native OpenCode conversations and reports results with their evidence. Run a mission once or every day; creating one never starts work until you choose to. Playbooks cover debugging, product delivery and comparing two models with a blind judge. See [Missions](missions.md).
+Describe the work once. The mission's coordinator plans it as a task tree, delegates bounded tasks to native OpenCode conversations and reports results with their evidence. Run once, at chosen times or intervals, or after a verified project change; creation saves a paused Mission for your explicit start. Playbooks cover debugging, product delivery and comparing two models with a blind judge. See [Missions](missions.md).
 
 ## Keep working from your phone {#phone-access}
 
@@ -46,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projects, conversations, files and history | Backend's folders and native sessions | Connected server's folders and sessions | Host's authorized workspace surfaces |
 | Native Preferences and desktop windows | Available | Browser/remote settings stay in the client | Host-only desktop controls unavailable |
-| Session browser preview | Native in Electron and Windows Tauri; iframe on other Tauri platforms | Iframe where available | Iframe while the host allows web previews (the default) |
+| Session browser preview | Native in Electron and Tauri on Windows, macOS and Linux | Iframe where available | Iframe while the host allows web previews (the default) |
 | Native desktop/browser automation | Owned local windows/previews | Not a substitute for native desktop automation | Host-only automation endpoints unavailable |
 | Authentication | Local bootstrap or password session | Server password session | Paired-device credential |
 | PWA installation | Use the native app or a browser | Browser-dependent; secure context required | Browser-dependent; pairing still required |
@@ -77,20 +77,20 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 | Work across checkouts and conversations | [Projects](projects.md), [Conversations](conversations.md), [Files](files.md) |
 | Find history or safely clean it up | [History](history.md) |
 | Answer native questions and permissions | [Permissions](permissions.md) |
-| Coordinate bounded or daily work | [Missions](missions.md) |
+| Coordinate bounded or scheduled work | [Missions](missions.md) |
 | Configure execution and integrations | [OpenCode](opencode.md), [Providers](providers.md), [Integrations](integrations.md) |
 | Connect another device | [Remote Control](remote-control.md), [Security](security.md), [Mobile](mobile.md) |
 | Adapt the workspace | [Settings](settings.md), [Shortcuts](shortcuts.md), [Voice](voice.md), [Extensions](extensions.md) |
 | Manage the native application | [Desktop](desktop.md), [Browser previews and SideCars](browser-sidecars.md), [Updates](updates.md) |
-| Diagnose or contribute | [Troubleshooting](troubleshooting.md), [Support and source builds](support.md) |
+| Diagnose or contribute | [Troubleshooting](troubleshooting.md), [Bug reports and source builds](support.md), [Support CodeNomad](sponsor.md) |
 
 ## Monitor work without changing it {#monitor-work}
 
 The Status panel exposes the active session's provider usage and native background Shells. Conversation status and child activity identify working, compacting and input-waiting sessions. Monitoring a background Shell is distinct from sending a composer Shell request or using a separately hosted terminal SideCar.
 
 1. Open **Status → Background Shells** for the selected conversation's Location (or the open workspace when no conversation is selected).
-2. Inspect command, shell, directory, status, PID and exit code where provided; choose **View output** for the available native output.
-3. To dispose of one, use **Stop and remove** while running, or **Remove** after exit, and confirm the target.
+2. Only running commands explicitly moved to the background are listed, one per row. Hover a row for the shell, directory and PID; use its **View output** icon for the native output. An OpenCode runtime without the background-job inventory API reports a loading error.
+3. Use the row’s **Stop and remove** icon and confirm the target.
 
 Removing a running Shell stops that process; closing its output window does not. Refresh/reconnect reads current native state rather than reconstructing missed output events.
 

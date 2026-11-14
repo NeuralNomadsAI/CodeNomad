@@ -91,4 +91,5 @@
 .panel-extension-review { overflow-wrap: anywhere; }
 .panel-extension-review details { margin-block: var(--space-sm); color: var(--text-muted); }
 .panel-extension-review code { display: block; font-size: var(--font-size-xs); }
+.panel-extension-permissions { margin: 0; padding-inline-start: 1.25em; list-style: disc; }
 .panel-extension-review label { display: flex; align-items: center; gap: var(--space-xs); }

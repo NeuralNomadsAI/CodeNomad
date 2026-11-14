@@ -4,7 +4,7 @@ import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
 import type { MissionJsonValue } from "../../missions/model"
 import { recurrenceConfigSchema } from "../../missions/recurrence-contract"
 
-test("simple controls CAS desired state once, keep exact requests, and explicitly retry frozen partial targets", async () => {
+function fixture() {
   const values = new Map<string, MissionJsonValue>(), current = () => true as const
   const storage = { get: async (key: string) => structuredClone(values.get(key)),
     set: async (key: string, value: MissionJsonValue) => { values.set(key, structuredClone(value)) },
@@ -16,6 +16,11 @@ test("simple controls CAS desired state once, keep exact requests, and explicitl
     clock: { time: "07:00", zone: "UTC" }, profileID: "profile", executionHost: "local", roots: [{ mode: "directory-only", directory: "/project" }],
     watchedConversationIDs: [], profiles: { coordinator: selection, roles: { specialist: selection } } })
   const profile = { profileID: "profile", executionHost: "local", configYamlPath: "/project/config.yaml" }
+  return { values, current, store, config, profile }
+}
+
+test("simple controls CAS desired state once, keep exact requests, and explicitly retry frozen partial targets", async () => {
+  const { current, store, config, profile } = fixture()
   let doc = await store.create("schedule_one", config, 1, current)
   assert.equal(doc.state, "paused")
   const play = { requestID: "play_one", expectedRevision: doc.revision, action: "play" as const }
@@ -41,4 +46,24 @@ test("simple controls CAS desired state once, keep exact requests, and explicitl
   doc = await store.beginControl(doc.id, { requestID: "resume_one", expectedRevision: doc.revision, action: "resume" }, current, profile)
   assert.equal(doc.state, "running", "pending unknown passage permits reconcile-only Resume")
   assert.equal(doc.pending!.passage.due.kind, "manual")
+})
+
+test("a passage of many actors is paused repeatedly while completed controls keep the schedule within its bound", async () => {
+  const { values, current, store, config, profile } = fixture()
+  const targets = Array.from({ length: 600 }, (_, index) => ({ sessionID: `ses_${String(index).padStart(26, "0")}`, outcome: "unknown" as const }))
+  let doc = await store.create("schedule_many", config, 1, current)
+  for (let cycle = 0; cycle < 70; cycle++) {
+    doc = await store.beginControl(doc.id, { requestID: `play_${cycle}`, expectedRevision: doc.revision, action: "play" }, current, profile)
+    doc = await store.recordControl(doc.id, { ...doc.controls.at(-1)!, targetsKnown: true, controlsComplete: true }, current)
+    doc = await store.beginControl(doc.id, { requestID: `pause_${cycle}`, expectedRevision: doc.revision, action: "pause" }, current)
+    // Every actor is frozen as a target; the record is published before the interrupts.
+    const partial = { ...doc.controls.at(-1)!, targetsKnown: true, schedulerCancellation: "acknowledged" as const, targets }
+    doc = await store.recordControl(doc.id, partial, current)
+    assert.equal(doc.controls.at(-1)!.targets.length, 600)
+    doc = await store.recordControl(doc.id, { ...partial, controlsComplete: true,
+      targets: targets.map(target => ({ ...target, outcome: "acknowledged" as const })) }, current)
+    assert.deepEqual(doc.controls.at(-1)!.targets, [])
+  }
+  assert.equal(doc.controls.length, 64, "the oldest completed controls are evicted")
+  assert.ok(JSON.stringify([...values.values()]).length < 256 * 1024)
 })

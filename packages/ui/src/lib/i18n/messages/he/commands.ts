@@ -1,5 +1,6 @@
 export const commandMessages = {
   "commands.openHelp.failed": "לא ניתן לפתוח את העזרה בדפדפן. פתחו את https://neuralnomadsai.github.io/CodeNomad/ ידנית.",
+  "commands.openSponsor.failed": "לא ניתן לפתוח בדפדפן את הדף תמכו ב־CodeNomad. פתחו את {url} ידנית.",
   "commandPalette.title": "לוח פקודות",
   "commandPalette.description": "חיפוש והפעלה של פקודות",
   "commandPalette.searchPlaceholder": "הקלד פקודה או חיפוש...",
@@ -174,6 +175,9 @@ export const commandMessages = {
   "commands.openHelp.label": "פתיחת עזרה",
   "commands.openHelp.description": "פתיחת המדריך למשתמש של CodeNomad בדפדפן",
   "commands.openHelp.keywords": "עזרה, מדריך, תיעוד",
+  "commands.openSponsor.label": "תמכו ב־CodeNomad",
+  "commands.openSponsor.description": "פתיחת הדף על מתן חסות ל־CodeNomad ועל דרכים נוספות לעזור",
+  "commands.openSponsor.keywords": "תמיכה, חסות, תרומה, לתרום, מימון, השתתפות",
   "commands.openAbout.label": "אודות CodeNomad",
   "commands.openAbout.description": "הצגת הגרסה, העדכונים והאבחון בהגדרות",
   "commands.openAbout.keywords": "אודות, גרסה, עדכונים, אבחון",

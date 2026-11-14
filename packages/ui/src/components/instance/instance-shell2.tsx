@@ -20,7 +20,6 @@ import type { Command } from "../../lib/commands"
 import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette, getCommandPaletteFocusRequest } from "../../stores/command-palette"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
 import InstanceWelcomeView from "../instance-welcome-view"
-import InfoView from "../info-view"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
 import { InterruptionDock } from "../interruption-dock"
@@ -46,6 +45,7 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
+import { useFilePreviewLifetime } from "./shell/file-preview-lifetime"
 import ShellPanelToggle from "./shell/ShellPanelToggle"
 import { useSessionNavigationHistory } from "./shell/useSessionNavigationHistory"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
@@ -79,6 +79,7 @@ import {
 } from "./shell/storage"
 import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { HostedDrawer } from "./shell/HostedDrawer"
+import { isNestedDrawerSurface } from "./shell/drawer-events"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { clampEmbeddedDrawerWidth } from "./shell/drawer-layout"
 import { useSessionCache } from "./shell/useSessionCache"
@@ -162,12 +163,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     sessionThreads,
     activeSessions,
     activeSessionIdForInstance,
+    parentSessionIdForInstance,
     activeSessionForInstance,
     tokenStats,
     handleSessionSelect,
   } = useInstanceSessionContext({
     instanceId: () => props.instance.id,
   })
+  useFilePreviewLifetime(props.instance.id, activeSessionIdForInstance)
 
   // Shell ownership keeps partially answered requests alive as session panes change.
   const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
@@ -266,7 +269,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       if (leftToggleButtonEl()?.contains(target) || rightToggleButtonEl()?.contains(target)) return
       // Menus, selectors and dialogs portal outside the drawer's DOM. Let their
       // own dismissal/selection finish instead of unmounting them on pointerdown.
-      if (target instanceof Element && target.closest('[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"]')) return
+      if (isNestedDrawerSurface(target)) return
 
       const leftContent = leftDrawerContentEl()
       const rightContent = rightDrawerContentEl()
@@ -743,7 +746,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
     : clampRightWidth(width)
 
-  const { handleDrawerResizeMouseDown, handleDrawerResizeTouchStart } = useDrawerResize({
+  const { activeResizeSide, handleDrawerResizePointerDown, handleDrawerResizePointerMove, handleDrawerResizePointerEnd, stopDrawerResize } = useDrawerResize({
     sessionSidebarWidth: leftPanelWidth,
     rightDrawerWidth: rightPanelWidth,
     setSessionSidebarWidth,
@@ -770,9 +773,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           }}
         >
           <div
-            class="session-resize-handle session-resize-handle--left"
-            onMouseDown={handleDrawerResizeMouseDown("left")}
-            onTouchStart={handleDrawerResizeTouchStart("left")}
+            ref={() => onCleanup(() => { if (activeResizeSide() === "left") stopDrawerResize() })}
+            class={`session-resize-handle session-resize-handle--left ${activeResizeSide() === "left" ? "is-resizing" : ""}`}
+            onPointerDown={handleDrawerResizePointerDown("left")}
+            onPointerMove={handleDrawerResizePointerMove}
+            onPointerUp={handleDrawerResizePointerEnd}
+            onPointerCancel={handleDrawerResizePointerEnd}
+            onLostPointerCapture={handleDrawerResizePointerEnd}
             role="presentation"
             aria-hidden="true"
           />
@@ -836,9 +843,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           }}
         >
           <div
-            class="session-resize-handle session-resize-handle--right"
-            onMouseDown={handleDrawerResizeMouseDown("right")}
-            onTouchStart={handleDrawerResizeTouchStart("right")}
+            ref={() => onCleanup(() => { if (activeResizeSide() === "right") stopDrawerResize() })}
+            class={`session-resize-handle session-resize-handle--right ${activeResizeSide() === "right" ? "is-resizing" : ""}`}
+            onPointerDown={handleDrawerResizePointerDown("right")}
+            onPointerMove={handleDrawerResizePointerMove}
+            onPointerUp={handleDrawerResizePointerEnd}
+            onPointerCancel={handleDrawerResizePointerEnd}
+            onLostPointerCapture={handleDrawerResizePointerEnd}
             role="presentation"
             aria-hidden="true"
           />
@@ -895,8 +906,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // Keep action items stable so unrelated updates do not rebuild their icon DOM.
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
-  const readingRecurrence = () => Boolean(props.isActiveInstance)
-    && missionProjectView(props.instance.folder).reader?.kind === "recurrence"
+  // Readers that need no conversation: schedules and playbook details.
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance)
+    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.folder).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
@@ -1035,7 +1047,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   /** Return to the last conversation */
   const handleBackToConversation = () => {
-    const sessionIds = cachedSessionIds()
+    const parent = parentSessionIdForInstance()
+    const sessionIds = parent && allInstanceSessions().has(parent) ? [parent] : cachedSessionIds()
     if (sessionIds.length > 0) {
       handleSessionSelect(sessionIds[0])
     } else {
@@ -1175,9 +1188,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
           class="content-area"
         >
-          <Show
-            when={showingInfoView()}
-            fallback={
               <Show when={cachedSessionIds().length === 0 || !activeSessionIdForInstance()}>
                   <Show when={!activeSessionIdForInstance()} fallback={
                     <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
@@ -1204,7 +1214,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
-                    <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
                     </div>
 
                     <Show when={draftAttachments().length > 0}>
@@ -1248,17 +1258,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                   </div>
                   </Show>
               </Show>
-            }
-          >
-            <div class="info-view-pane mission-transcript-surface flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <InfoView
-                instanceId={props.instance.id}
-                active={Boolean(props.isActiveInstance) && showingInfoView()}
-                onBackToConversation={handleBackToConversation}
-              />
-              <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
-            </div>
-          </Show>
           <For each={mountedSessionIds()}>
             {(sessionId) => {
               const isActive = () => Boolean(props.isActiveInstance) && activeSessionIdForInstance() === sessionId

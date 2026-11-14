@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from "child_process"
-import { existsSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import path, { join } from "path"
 import { fileURLToPath } from "url"
+import electron from "electron"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
 const appDir = join(__dirname, "..")
@@ -82,6 +83,7 @@ function run(command, args, options = {}) {
       cwd: appDir,
       stdio: "inherit",
       shell: process.platform === "win32",
+      windowsHide: true,
       ...options,
       env,
     }
@@ -97,6 +99,13 @@ function run(command, args, options = {}) {
       }
     })
   })
+}
+
+// SignPath requires the full product version across Electron and Tauri.
+// shortVersionWindows feeds the resource editor, patched before packaging to
+// preserve full version strings and numeric Windows prefixes before signing.
+function windowsVersionArgs(args, version) {
+  return args.includes("--win") ? [`-c.extraMetadata.shortVersionWindows=${version}`] : []
 }
 
 function printAvailablePlatforms() {
@@ -150,13 +159,19 @@ async function build(platform) {
         join(appDir, "dist", "renderer"),
         "--target",
         job.nodeTarget,
+        "--electron",
+        electron,
       ], {
         cwd: workspaceRoot,
         shell: false,
       })
 
       console.log(`\n📦 Packaging ${job.nodeTarget}...\n`)
-      await run(npxCmd, ["electron-builder", "--publish=never", ...job.args], {
+      const { version } = JSON.parse(readFileSync(join(appDir, "package.json"), "utf8"))
+      if (job.args.includes("--win")) {
+        await run(process.execPath, [join(appDir, "scripts", "patch-builder-resources.cjs")], { shell: false })
+      }
+      await run(npxCmd, ["electron-builder", "--publish=never", ...job.args, ...windowsVersionArgs(job.args, version)], {
         env: { CODENOMAD_NODE_TARGET: job.nodeTarget },
       })
     }

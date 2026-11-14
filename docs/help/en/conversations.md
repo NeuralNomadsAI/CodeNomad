@@ -6,16 +6,28 @@ Messages render Markdown, code, diffs and supported tool-result images. Text cop
 
 Reasoning and tool headers show how long each step took, counting live while it runs; durations under one second are not shown. When **Tokens** is shown in **Message content** (the **Everything** preset shows it), each agent message ends with one token and cost line after its final text. That line adds up the message and the messages holding the tools and reasoning that its **Remove tools and reasoning from this response** action covers, within the loaded transcript; expand it for reasoning and cache counts. Steps that only ran tools have no line of their own.
 
+## Mermaid diagrams {#mermaid}
+
+Fenced `mermaid` and `mmd` blocks render with Mermaid Tiny after streaming finishes. Use **Show source** / **Show diagram** in the code header; Copy keeps the source text. Tiny excludes mindmaps, architecture diagrams and KaTeX. Invalid, unsupported or oversized diagrams keep their source with an error. Rendering is local and network-disabled, with a 50,000-character and 500-edge limit.
+
 ## Find and navigate conversations {#navigate-conversations}
 
 1. Select a row under **Sessions**, or use **New session** to start a parent conversation.
-2. Expand a parent's chevron to see its subsessions. A collapsed chevron shows its descendants' most urgent state: needing input, working, or recently finished (idle); its tooltip counts them.
-3. Use **Search sessions…**, **Main sessions** / **Subsessions**, the worktree filter and **Activity**, **Name** or **Worktree** sorting to narrow the list.
+2. Click a parent's chevron to expand or collapse its subsessions while keeping their badges intact. Expanded or collapsed, the chevron shows its descendants' most urgent state: needing input, working, compacting or idle; its accessible label counts them. Right-click it and choose **Mark as read** to clear the **Idle** and **Interrupted** badges of the conversation and all its subsessions at once.
+3. Use **Search sessions…**, **Main sessions** / **Subsessions**, the worktree filter and **Activity**, **Name** or **Worktree** sorting to narrow the list. In search results, drag across the rows' checkboxes to select or clear several conversations at once.
 4. Use the sidebar's **Back** and **Forward** to revisit conversations you displayed.
 
-Normal browsing is hierarchical; search/filter results are flat entries with each conversation's own identity and worktree. A newly working subsession is automatically revealed only beneath the active conversation's family. Collapsing that branch dismisses that automatic reveal for the currently running descendants.
+Click an **Idle** or **Interrupted** badge (**Clear**) to acknowledge it without opening the conversation, or press Enter/Space while it is focused. With a mouse or pen, press a badge and drag across others to clear several; touch drags keep scrolling. Working and pending input/permission indicators stay visible. Viewing clears **Idle**; **Interrupted** requires an explicit clear gesture. Acknowledgements are saved with this window's session state; a new interruption shows the badge again. Clearing only changes the indicator; the reload arrow still reloads messages.
+
+Normal browsing is hierarchical; search/filter results are flat entries with each conversation's own identity and worktree. In **Settings → General**, **Automatically expand subsessions** is enabled by default. A visible collapsed row opens the paths to its active subsessions when its chevron changes to working, compacting or awaiting input, provided it is selected or belongs to the selected conversation's descendants. The same rule applies at every depth. Scrolling an already active row into view leaves it closed until a new transition. Disable the option to keep activity from opening branches; manual expansion and explicit navigation remain available. Open branches, including automatically opened ones, are saved for restoration.
 
 Back/Forward is a per-project-tab, per-window visit history, not list order. It is kept in memory, skips unavailable/deleted conversations and is not restored after restart. Selecting a new conversation after going back replaces the forward path. The palette's **Previous Session** / **Next Session** instead cycle the visible list.
+
+## Archive and restore {#archive}
+
+Choose **Archive session** in a session row's actions to keep its history while removing its idle branch from normal browsing. The selected conversation and conversations with running work or pending questions remain reachable. Archiving does not stop work, delete messages or change subsessions' own archive flags.
+
+Open **Search sessions…** and choose **Archived sessions** or **All sessions** to find archived conversations. Rows show **Archived** and offer **Restore session**. Enable **Subsessions** to find children independently, including children beneath an archived parent. **Unarchived sessions** filters by each conversation's own flag. Restore an archived ancestor to bring its idle branch back into normal browsing. If an action is not confirmed, refresh the session list before trying again.
 
 ## Choose Agent, Model and Thinking {#agent-model-thinking}
 
@@ -47,6 +59,12 @@ Choosing a skill removes the `@query` token and adds a chip. Sending clears that
 On desktop, sending moves keyboard focus to the conversation, so arrows, paging and Space scroll it; typing a character returns to the composer with that character. **Clear prompt text** in **More actions** (default **Ctrl/Cmd+K**) clears the composer's draft.
 
 Drafts are client-side working state, not shared native messages. Startup restoration can retain supported composer state, but do not treat an unsent draft or attachment as a backup or assume it appears on another device. Save important text before clearing startup data or closing a client whose restore policy is disabled; see [Desktop](desktop.md).
+
+## Open files from replies {#open-files-from-replies}
+
+1. Agent replies link project files with relative and absolute paths.
+2. A plain click opens the linked file in the file preview, read from the conversation’s worktree.
+3. Modified clicks (Ctrl/Cmd-click, Shift-click, middle-click) and links outside the session’s worktree keep normal link behavior.
 
 ## Commands and Shell mode {#commands-shell}
 
@@ -82,6 +100,14 @@ If a queue update fails, inspect the live queue before trying again. Admission i
 This is one separate model request using the session context. It does not run a tool loop, take actions or append its question/answer to the conversation. File/image attachments stay in the composer; pasted text used in the question is included as text. It is not a new durable conversation or an alternate way to dispatch work.
 
 Closing cancels the pending side request without interrupting the main session. Leaving the active conversation clears this ephemeral window; copy anything you need first. Empty/error responses appear here rather than becoming transcript messages.
+
+## Keep working toward a goal with /goal {#goal}
+
+1. Send `/goal` followed by an objective, for example `/goal Make every test pass`. The session keeps working, turn after turn, until OpenCode's goal reviewer decides the objective is met.
+2. While the conversation has a goal, **Status** shows it on one line above **Tokens**: its state (**Active**, **Paused** or **Complete**), the objective and the rounds used out of the allowed maximum. Hover or focus the objective to read it whole, with the reason for the last change, such as why the goal paused or was met.
+3. Use **Pause goal** or **Resume goal** on that line, or send `/goal pause` or `/goal resume`. Use **Clear goal** or `/goal clear` to remove the goal.
+
+A goal belongs to its conversation: subsessions and forks start without one. OpenCode also pauses a goal itself when you stop the session, when a run fails, when it stops making progress, at its round limit or when the service restarts; resume it to continue. Pausing or clearing does not undo work already done. A command that does not apply, such as pausing without an active goal, shows OpenCode's message. Without a goal, or with an OpenCode service that has no goal support, the line does not appear.
 
 ## Fork, undo and recover a failed run {#fork-errors}
 

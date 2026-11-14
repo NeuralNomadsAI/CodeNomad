@@ -19,6 +19,8 @@ Expanded folders survive mode changes. Listings/status/history use cached snapsh
 
 Row actions include **Copy path** and, where the client supports opening backend paths, file-manager/editor/terminal actions such as **Open with default application**, **Show in folder**, **Open in file manager** and **Open terminal here**. Actions can move into **More actions for {name}** when space is limited; the file or folder name replaces `{name}`. A remote browser cannot assume a server path is a local-device path; see [Remote Control](remote-control.md).
 
+Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show diagram** to preview the current draft; Save remains explicit. The same [Mermaid formats and limits](conversations.md#mermaid) apply.
+
 ## Edit source and save safely {#edit-save}
 
 1. Open a Workspace text file with its eye action.
@@ -30,7 +32,7 @@ Save writes the actual file in the browsed checkout, including a linked worktree
 
 Dirty source drafts are retained in renderer memory by project instance, directory and path when readers are closed or switched. Filesystem refreshes do not silently replace them. This is not durable file storage: save or copy important edits before restarting/reloading the client. Read/write failures retain the draft. Explicit **Refresh** warns before discarding unsaved edits.
 
-Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
+Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Hiding the panel with **Right panel**, or a window too narrow for it, leaves the reader open with the freed width; showing the panel again keeps it as it was. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
 
 ## Read-only and bounded previews {#preview-limits}
 

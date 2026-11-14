@@ -10,7 +10,7 @@ OpenCode 提供引擎，CodeNomad 提供驾驶舱。它连接到 OpenCode 的共
 
 ## 将长时间工作交给任务 {#missions}
 
-只需描述一次工作。任务的协调者将其规划为任务树，把有界任务委派给原生 OpenCode 对话，并报告结果及其证据。任务可以运行一次或每天运行；创建任务后，在你选择启动之前绝不会开始工作。剧本涵盖调试、产品交付，以及由盲评裁判比较两个模型。参阅[任务](missions.md)。
+只需描述一次工作。任务的协调者将其规划为任务树，把有界任务委派给原生 OpenCode 对话，并报告结果及其证据。可以运行一次、按选定时间或间隔运行，或在核实项目变化后运行；创建会保存已暂停的任务，等待你显式启动。剧本涵盖调试、产品交付，以及由盲评裁判比较两个模型。参阅[任务](missions.md)。
 
 ## 用手机继续工作 {#phone-access}
 
@@ -46,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | 项目、对话、文件和历史记录 | 后端的文件夹和原生会话 | 所连接服务器的文件夹和会话 | 主机授权的工作区界面 |
 | 原生偏好设置和桌面窗口 | 可用 | 浏览器/远程设置保留在客户端内 | 主机专用桌面控件不可用 |
-| 会话浏览器预览 | Electron 和 Windows Tauri 使用原生预览；其他 Tauri 平台使用 iframe | 支持时使用 iframe | 主机允许网页预览时使用 iframe（默认） |
+| 会话浏览器预览 | Windows、macOS 和 Linux 上的 Electron 和 Tauri 均使用原生预览 | 支持时使用 iframe | 主机允许网页预览时使用 iframe（默认） |
 | 原生桌面/浏览器自动化 | 所拥有的本地窗口/预览 | 不能代替原生桌面自动化 | 主机专用自动化端点不可用 |
 | 认证 | 本地初始化或密码会话 | 服务器密码会话 | 配对设备凭据 |
 | PWA 安装 | 使用原生应用或浏览器 | 取决于浏览器；需要安全上下文 | 取决于浏览器；仍需配对 |
@@ -77,20 +77,20 @@ npx @neuralnomads/codenomad --generate-token --launch
 | 跨检出目录和对话工作 | [项目](projects.md)、[对话](conversations.md)、[文件](files.md) |
 | 查找历史记录或安全清理 | [历史记录](history.md) |
 | 回答原生问题和权限请求 | [权限](permissions.md) |
-| 协调有界任务或每日工作 | [任务](missions.md) |
+| 协调有界任务或计划工作 | [任务](missions.md) |
 | 配置执行和集成 | [OpenCode](opencode.md)、[提供商](providers.md)、[集成](integrations.md) |
 | 连接另一台设备 | [远程控制](remote-control.md)、[安全](security.md)、[移动设备](mobile.md) |
 | 调整工作区 | [设置](settings.md)、[快捷键](shortcuts.md)、[语音](voice.md)、[扩展](extensions.md) |
 | 管理原生应用 | [桌面](desktop.md)、[浏览器预览与 SideCar](browser-sidecars.md)、[更新](updates.md) |
-| 诊断或贡献 | [故障排查](troubleshooting.md)、[支持与源码构建](support.md) |
+| 诊断或贡献 | [故障排查](troubleshooting.md)、[错误报告与源码构建](support.md)、[赞助 CodeNomad](sponsor.md) |
 
 ## 监控工作而不更改它 {#monitor-work}
 
 状态面板显示活动会话的提供商用量和原生后台 Shell。对话状态和子会话活动标明正在工作、压缩和等待输入的会话。监控后台 Shell 不同于发送输入框 Shell 请求，也不同于使用单独托管的终端 SideCar。
 
 1. 打开所选对话 Location 的**状态 → 后台 Shell**（未选择对话时则为当前工作区）。
-2. 查看已提供的命令、Shell、目录、状态、PID 和退出码；选择**查看输出**查看可用的原生输出。
-3. 若要清除某个 Shell，运行时使用**停止并移除**，退出后使用**移除**，并确认目标。
+2. 仅列出明确转入后台且仍在运行的命令，每个命令占一行。悬停可查看 Shell、目录和 PID；**查看输出**图标打开原生输出。若 OpenCode 不提供后台任务 API，则显示加载错误。
+3. 使用该行的**停止并移除**图标并确认目标。
 
 移除正在运行的 Shell 会停止该进程；关闭其输出窗口则不会。刷新/重新连接会读取当前原生状态，而不是重建错过的输出事件。
 

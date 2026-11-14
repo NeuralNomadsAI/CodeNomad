@@ -1,5 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import { generateUUID } from "../lib/client-identity"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { isRejectedLifecycleIntent, type MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 import { useI18n } from "../lib/i18n"
@@ -10,7 +11,7 @@ import { instances } from "../stores/instances"
 import { showConfirmDialog } from "../stores/alerts"
 import { missionLifecycleIntents, missionLifecycleSource } from "../stores/mission-lifecycle-intents"
 import { partialInterrupt } from "./mission-native-execution-model"
-export interface MissionPrimaryAction { key: string; label: string; ariaLabel?: string; disabled?: boolean; onSelect: () => void | Promise<void> }
+export interface MissionPrimaryAction { key: string; label: string; ariaLabel?: string; disabled?: boolean; busy?: boolean; onSelect: () => void | Promise<void> }
 
 /** Explicit refresh-then-resend of a selected item's unconfirmed control, owned
  * by the panel's refresh button. `reconcile` is read-only and resolves true only
@@ -20,7 +21,9 @@ export interface MissionControlRetry { pending: () => boolean; reconcile: (missi
 
 /** Play/Pause/Stop for the selected Mission: one contextual primary action and
  * Stop. Unresolved requests are checked, and resent only on explicit refresh. */
-export function createMissionLifecycle(props: { instanceId: string; mission: MissionMap; disabled?: boolean }) {
+export function createMissionLifecycle(props: { instanceId: string; mission: MissionPanelMap; disabled?: boolean
+  /** Observed activity: some actor or its sub-agents still runs. */
+  working?: boolean }) {
   const { t } = useI18n()
   const [refreshing, setRefreshing] = createSignal(false)
   const location = () => {
@@ -36,14 +39,27 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   let alive = true, epoch = 0, attempt = 0
   createEffect(() => { identity(); epoch++; setRefreshing(false) })
   onCleanup(() => { alive = false; epoch++ })
-  const pending = () => Boolean(props.mission.control?.pending.length)
+  const pending = () => Boolean(props.mission.panelControl?.pending ?? props.mission.control?.pending.length)
   const state = () => props.mission.runState ?? "running"
   const terminal = () => props.mission.status !== "active"
   const unresolved = () => pending() || Boolean(retry())
   const durableRequest = (): MissionLifecycleInput | undefined => {
-    const operation = props.mission.control
-    return operation?.pending.length ? { action: operation.action, expectedRevision: operation.expectedRevision, requestId: operation.requestID } : undefined
+    const operation = props.mission.panelControl ?? props.mission.control
+    return operation && (typeof operation.pending === "number" ? operation.pending > 0 : operation.pending.length > 0) ? { action: operation.action, expectedRevision: operation.expectedRevision, requestId: operation.requestID,
+      ...(operation.graceful ? { graceful: true as const } : {}) } : undefined
   }
+  /** A graceful Pause whose running steps are still finishing. */
+  const pausing = () => !terminal() && state() === "paused" && (props.mission.panelControl ?? props.mission.control)?.action === "pause"
+    && Boolean((props.mission.panelControl ?? props.mission.control)?.graceful) && Boolean(props.working)
+  // A read showing this exact request saved with nothing pending confirms it;
+  // nothing is resent. Absence alone never resolves an unconfirmed request.
+  createEffect(() => {
+    const record = retry(), control = props.mission.panelControl ?? props.mission.control
+    if (!record || busy() || !control || durableRequest()) return
+    if (control.requestID === record.input.requestId && control.action === record.input.action
+      && control.expectedRevision === record.input.expectedRevision && Boolean(control.graceful) === Boolean(record.input.graceful))
+      missionLifecycleIntents.finish(record, "acknowledged")
+  })
   const retryBlocked = () => {
     const request = durableRequest() ?? retry()?.input
     return !request || !missionLifecycleIntents.canReserve(identity(), props.mission.id, request)
@@ -57,20 +73,20 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     try { await missionStore.refresh(props.instanceId) }
     finally { if (alive && scope === identity() && startedEpoch === epoch) setRefreshing(false) }
   }
-  async function act(action: "start" | "pause" | "stop", replay = false) {
+  async function act(action: "start" | "pause" | "stop", replay = false, graceful = false) {
     if (props.disabled || busy() || !active() || (!replay && retry() && !pending()) || (replay && !pending() && !retry())) return
     const instanceId = props.instanceId, scope = identity(), sourceLocation = location(), startedEpoch = epoch
     const owned = () => alive && identity() === scope && epoch === startedEpoch
     const mission = props.mission
     if (!replay && full()) return
     const input = replay ? durableRequest() ?? retry()?.input
-      : { action, expectedRevision: mission.revision, requestId: crypto.randomUUID() }
+      : { action, expectedRevision: mission.revision, requestId: generateUUID(), ...(graceful ? { graceful: true as const } : {}) }
     if (!input) return
     const intent = missionLifecycleIntents.reserve(scope, mission.id, input)
     if (!intent || !missionLifecycleIntents.start(intent)) return
-    const startedAttempt = ++attempt, initialControlID = mission.control?.id
+    const startedAttempt = ++attempt, initialControlID = (mission.panelControl ?? mission.control)?.id
     const current = () => {
-      const control = props.mission.control
+      const control = props.mission.panelControl ?? props.mission.control
       const sameOperation = !control || control.id === initialControlID || (control.requestID === intent.input.requestId
         && control.action === intent.input.action && control.expectedRevision === intent.input.expectedRevision)
       return owned() && active() && attempt === startedAttempt && sameOperation
@@ -114,8 +130,12 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     const disabled = blocked() || pending()
     if (state() === "prepared") return { key: "start", label: t("missionsPanel.action.start"), ariaLabel: t("missions.control.run.start"), disabled, onSelect: () => act("start") }
     if (state() === "paused") return { key: "resume", label: t("missionsPanel.action.resume"), ariaLabel: t("missions.control.run.resume"), disabled, onSelect: () => act("start") }
-    return { key: "pause", label: t("missionsPanel.action.pause"), ariaLabel: t("missions.control.run.pause"), disabled, onSelect: () => act("pause") }
+    // Pause lets running steps finish; Interrupt now stops them at once.
+    return { key: "pause", label: t("missionsPanel.action.pause"), ariaLabel: t("missions.control.run.pause"), disabled, onSelect: () => act("pause", false, true) }
   }
+  const interruptNow = (): MissionPrimaryAction | undefined => pausing() && !unresolved()
+    ? { key: "interrupt", label: t("missionsPanel.action.interruptNow"), ariaLabel: t("missions.control.run.interruptNow"),
+      disabled: blocked(), onSelect: () => act("pause") } : undefined
   const stop = (): MissionPrimaryAction | undefined => !terminal() && !(retry() && !pending())
     ? { key: "stop", label: t("missions.control.run.stop"), disabled: blocked(), onSelect: confirmStop } : undefined
   /** The unresolved exact request may be resent, unchanged, on an explicit click only. */
@@ -131,9 +151,10 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       && missionStore.state(instanceId).status === "ready" && retryable() && Boolean(original && next
         && original.requestId === next.requestId && original.action === next.action && original.expectedRevision === next.expectedRevision)
   }
-  const resend = () => retryable() ? act(props.mission.control?.action ?? retry()?.input.action ?? "start", true) : Promise.resolve()
+  const resend = () => retryable() ? act((props.mission.panelControl ?? props.mission.control)?.action ?? retry()?.input.action ?? "start", true) : Promise.resolve()
   const feedback = <>
     <Show when={busy()}><small role="status">{t("missions.control.mutation.pending")}</small></Show>
+    <Show when={!busy() && !unresolved() && pausing()}><small role="status">{t("missions.control.run.pausing")}</small></Show>
     <Show when={!busy() && !unresolved() && partialInterrupt(props.mission)}>
       <small role="status">{t("missions.control.run.partialInterrupt")}</small>
     </Show>
@@ -142,5 +163,5 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       <small role="alert">{t(value().reason === "rejected" ? `missions.control.run.rejected.${value().action}` : "missions.control.run.notSent.stop")}</small>}
     </Show>
   </>
-  return { primary, stop, retryable, reconcile, resend, feedback }
+  return { primary, stop, interruptNow, retryable, reconcile, resend, feedback }
 }
