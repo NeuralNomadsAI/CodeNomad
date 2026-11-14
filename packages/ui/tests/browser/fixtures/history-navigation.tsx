@@ -109,6 +109,9 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
     </div>
   </Show>}</For>
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+// This scenario addresses controls by their English accessible names. Linux's
+// navigator language can select French before the fixture's UI config loads.
+if (duplicate) await updatePreferences({ locale: "en" })
 ;(window as any).fixture = {
   id: navigationMessageId,
   releaseMessages,

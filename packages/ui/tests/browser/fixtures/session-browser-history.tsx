@@ -5,7 +5,7 @@ import { initializeClientState, writeClientLayoutValue } from "../../../src/stor
 import { getTabViewState, seedTabViewState } from "../../../src/stores/tab-view-state"
 import { migrateLegacyTabPreviews } from "../../../src/stores/tab-view-state-migration"
 import { publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
-import { removeInstance } from "../../../src/stores/instances"
+import { addInstance, instances, removeInstance } from "../../../src/stores/instances"
 import { missionStore } from "../../../src/stores/missions"
 import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { showSessionChatFor } from "../../../src/stores/session-previews"
@@ -13,6 +13,8 @@ import { getFilePreview, openFilePreview } from "../../../src/stores/files-previ
 import { markSessionListsRestored } from "./session-list-restored"
 import { restoreFixtureTabView } from "./tab-view-restoration"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
+import { sseManager } from "../../../src/lib/sse-manager"
+import { sessions } from "../../../src/stores/session-state"
 
 // The production shell, session switching, preview store and native guests run
 // unchanged. Only server responses and the native registration IPC are fixtures.
@@ -50,11 +52,14 @@ if (new URLSearchParams(location.search).has("legacy")) {
 await import("./header-windows")
 for (const id of ids) markSessionListsRestored(id)
 serverApi.previewWorkspaceFile = async (id, path) => ({
-  workspaceId: id, relativePath: path, encoding: "base64", contents: btoa(`# ${path}\n\nIndependent file content.`
+  workspaceId: id, relativePath: path, encoding: "base64", contents: path.endsWith(".png")
+    ? "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+    : btoa(`# ${path}\n\nIndependent file content.`
     + (path === "Long.md" ? "\n\n" + Array.from({ length: 250 }, (_, index) => `Paragraph ${index}\n\n`).join("") : "")),
 } as any)
 const shell = (window as any).fixture
 shell.addSession("second")
+let eventTime = 1000
 Object.assign(shell, {
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
@@ -75,6 +80,13 @@ Object.assign(shell, {
     removeInstance(instanceId)
   },
   previewCount: () => sessionPreviews().size,
+  registerHiddenOccurrence: (id: string) => addInstance({ ...instances().get(ids[0])!, id, folder: id, proxyPath: `/workspaces/${id}/instance` }),
+  execution: (type: "started" | "succeeded") => {
+    const event = { id: `evt_${++eventTime}`, type: `session.execution.${type}`, created: eventTime,
+      location: { directory: "/repo" }, data: { sessionID: "session" } }
+    for (const id of ids) (sseManager as any).handleEvent(id, event)
+  },
+  status: (id: string) => sessions().get(id)?.get("session")?.status,
   deletedPreviews,
   delayPreview: (url: string, fail = false) => {
     let release!: () => void

@@ -254,6 +254,94 @@ for (const host of ["web", "tauri", "electron"]) {
   })
 }
 
+for (const host of ["web", "tauri", "electron"]) {
+  test(`${host}: duplicate image readers and shared execution preserve the other occurrence's content`, { timeout: 120_000 }, async () => {
+    const native = host === "electron" ? await launchHistoryElectron() : undefined
+    const page = native?.page ?? await browser.newPage({ viewport: { width: 1600, height: 900 } })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    const a = "header-windows", b = "header-duplicate"
+    const rootA = page.locator(`[data-occurrence="${a}"]`), rootB = page.locator(`[data-occurrence="${b}"]`)
+    const select = (id: string) => page.evaluate(id => (window as any).fixture.selectOccurrence(id), id)
+    const state = (id: string) => page.evaluate(id => (window as any).fixture.presentation(id), id)
+    try {
+      await prepare(page, host, "&duplicate=1")
+      await page.evaluate(id => (window as any).fixture.readFile(id, "A.png"), a)
+      const image = rootA.getByRole("img", { name: "A.png", exact: true })
+      await image.waitFor()
+      await page.waitForFunction(() => (document.querySelector(".workspace-image img") as HTMLImageElement)?.naturalWidth === 1)
+      await select(b)
+      await rootB.getByText("Fixture message", { exact: true }).waitFor()
+      await page.evaluate(id => (window as any).fixture.readFile(id, "B.md"), b)
+      await rootB.getByRole("heading", { name: "B.md", exact: true }).waitFor()
+      await select(a)
+      await image.waitFor()
+      assert.equal((await state(b)).file.path, "B.md")
+      await select(b)
+      await rootB.getByRole("button", { name: "Back to conversation", exact: true }).click()
+      await rootB.getByText("Fixture message", { exact: true }).waitFor()
+      await select(a)
+      await rootA.getByRole("button", { name: "Back to conversation", exact: true }).click()
+      await page.evaluate(({ id, url }) => (window as any).fixture.openPreview("session", url, id), { id: a, url: `${base}/page/a` })
+      const pane = rootA.locator('[data-session-id="session"] .window-shell')
+      await pane.waitFor()
+      const before = await page.evaluate(id => (window as any).fixture.preview("session", id), a)
+      await pane.locator("input").focus()
+      for (const [event, status] of [["started", "working"], ["succeeded", "idle"]] as const) {
+        await page.evaluate(event => (window as any).fixture.execution(event), event)
+        await page.waitForFunction(({ a, b, status }) => [a, b].every(id => (window as any).fixture.status(id) === status), { a, b, status })
+        assert.equal(await pane.locator("input").evaluate(element => document.activeElement === element), true)
+        assert.deepEqual(await page.evaluate(id => (window as any).fixture.preview("session", id), a), before)
+        await select(b)
+        await rootB.getByText("Fixture message", { exact: true }).waitFor()
+        assert.equal(await rootB.getByRole("button", { name: "Stop session", exact: true }).isEnabled(), status === "working")
+        await select(a)
+        await pane.waitFor()
+        await pane.locator("input").focus()
+      }
+      assert.deepEqual(errors, [])
+    } finally {
+      if (native) { await native.app.close(); await rm(native.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+      else await page.close()
+    }
+  })
+}
+
+test("browsed worktrees and Files commit filters remain independent between duplicates", async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  const a = "header-windows", b = "header-duplicate"
+  const rootA = page.locator(`[data-occurrence="${a}"]`), rootB = page.locator(`[data-occurrence="${b}"]`)
+  const select = (id: string) => page.evaluate(id => (window as any).fixture.selectOccurrence(id), id)
+  try {
+    await prepare(page, "web", "&duplicate=1&worktrees=1")
+    await page.route("**/git-history*", route => route.fulfill({ json: { commits: [
+      { id: "a".repeat(40), subject: "Alpha change", author: "Fixture", date: "2026-01-01" },
+      { id: "b".repeat(40), subject: "Beta change", author: "Fixture", date: "2026-01-02" },
+    ], hasMore: false } }))
+    await rootA.getByRole("tab", { name: "Files", exact: true }).click()
+    await rootA.locator(".git-panel-worktree").selectOption("other")
+    await rootA.getByRole("button", { name: "Commits", exact: true }).click()
+    await rootA.locator(".git-panel-filter").fill("Alpha")
+    await rootA.getByRole("button", { name: /Alpha change/ }).waitFor()
+    assert.equal(await rootA.getByRole("button", { name: /Beta change/ }).count(), 0)
+    await select(b)
+    await rootB.getByRole("tab", { name: "Files", exact: true }).click()
+    assert.equal(await rootB.locator(".git-panel-worktree").inputValue(), "root")
+    await rootB.getByRole("button", { name: "Commits", exact: true }).click()
+    await rootB.locator(".git-panel-filter").fill("Beta")
+    await rootB.getByRole("button", { name: /Beta change/ }).waitFor()
+    assert.equal(await rootB.getByRole("button", { name: /Alpha change/ }).count(), 0)
+    await select(a)
+    assert.equal(await rootA.locator(".git-panel-worktree").inputValue(), "other")
+    assert.equal(await rootA.locator(".git-panel-filter").inputValue(), "Alpha")
+    await rootA.getByRole("button", { name: /Alpha change/ }).waitFor()
+    await select(b)
+    assert.equal(await rootB.locator(".git-panel-worktree").inputValue(), "root")
+    assert.equal(await rootB.locator(".git-panel-filter").inputValue(), "Beta")
+    await rootB.getByRole("button", { name: /Beta change/ }).waitFor()
+  } finally { await page.close() }
+})
+
 test("panel selections restore per occurrence and source readers retain lightweight view state", { timeout: 90_000 }, async () => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
   const errors: string[] = []
@@ -288,7 +376,12 @@ test("panel selections restore per occurrence and source readers retain lightwei
     const reader = rootA.locator(".workspace-file-view")
     await reader.getByText("Independent file content.", { exact: true }).waitFor()
     const rendered = reader.locator(".workspace-markdown")
-    await rendered.evaluate(element => { element.scrollTop = 1000 })
+    // Capture the real scroll event before unmounting; a DOM write alone can
+    // still be waiting for its next rendering opportunity when the tab switches.
+    await rendered.evaluate(element => new Promise<void>(resolve => {
+      element.addEventListener("scroll", () => resolve(), { once: true })
+      element.scrollTop = 1000
+    }))
     const renderedPosition = await rendered.evaluate(element => element.scrollTop)
     assert.ok(renderedPosition > 900)
     await select(b)
@@ -672,6 +765,7 @@ test("Tauri retains hidden native registrations and restores the correct session
     await page.evaluate(() => (window as any).fixture.selectSession("second"))
     await page.evaluate(url => (window as any).fixture.openPreview("second", url), `${base}/page/c`)
     await page.waitForFunction(() => (window as any).fixture.native.calls.filter((c: any) => c.command === "browser_target_register").length === 2)
+    await page.evaluate(() => (window as any).fixture.registerHiddenOccurrence("/other-project"))
     await page.evaluate(url => (window as any).fixture.openPreview("session", url, "/other-project"), `${base}/page/other`)
     await page.evaluate(() => (window as any).fixture.selectSession("session"))
     await page.getByRole("button", { name: "Open web preview", exact: true }).click()

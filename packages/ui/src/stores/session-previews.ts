@@ -5,7 +5,7 @@ import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHis
 import { updateMissionProjectView } from "./mission-view-state"
 import { getTabViewState, updateTabViewState, type RestorableTabPreview } from "./tab-view-state"
 import { parseLegacySessionPreviews } from "./tab-view-state-codec"
-import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { isInstanceOccurrenceOpen, onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 
 interface SessionPreviewRecord extends PreviewSession {
   mode: "preview" | "chat"
@@ -18,15 +18,23 @@ type StoredSessionPreview = RestorableTabPreview
 const DEFAULT_PREVIEW_URL = "http://localhost:3000"
 const [sessionPreviews, setSessionPreviews] = createSignal<Map<string, SessionPreviewRecord>>(new Map())
 const restorePromises = new Map<string, Promise<SessionPreviewRecord | null>>()
-const operationVersions = new Map<string, number>()
-const closedOccurrences = new Set<string>()
+// Only pending requests need a fence. Object identity prevents ABA after cleanup.
+const operations = new Map<string, object>()
 
-function beginOperation(storageKey: string): number {
-  const version = (operationVersions.get(storageKey) ?? 0) + 1
-  operationVersions.set(storageKey, version)
+function cancelOperation(storageKey: string) {
+  operations.delete(storageKey)
   restorePromises.delete(storageKey)
-  return version
 }
+function beginOperation(storageKey: string): object {
+  cancelOperation(storageKey)
+  const operation = {}
+  operations.set(storageKey, operation)
+  return operation
+}
+function finishOperation(storageKey: string, operation: object) {
+  if (operations.get(storageKey) === operation) operations.delete(storageKey)
+}
+export const getPendingPreviewOperationCount = () => operations.size
 
 export const parseStoredSessionPreviews = parseLegacySessionPreviews
 const previewKey = (sessionId: string, instanceId: string) => JSON.stringify([instanceId, sessionId])
@@ -49,10 +57,10 @@ function getSessionPreview(sessionId: string, instanceId: string): SessionPrevie
   return sessionPreviews().get(previewKey(sessionId, instanceId)) ?? null
 }
 
-async function createPreview(sessionId: string, url: string, instanceId: string, storageKey: string, version: number) {
+async function createPreview(sessionId: string, url: string, instanceId: string, storageKey: string, version: object) {
   try { return await serverApi.createPreview({ sessionId, url }) }
   catch (error) {
-    if (closedOccurrences.has(instanceId) || operationVersions.get(storageKey) !== version) {
+    if (!isInstanceOccurrenceOpen(instanceId) || operations.get(storageKey) !== version) {
       throw new DOMException("Preview navigation was superseded", "AbortError")
     }
     throw error
@@ -60,32 +68,34 @@ async function createPreview(sessionId: string, url: string, instanceId: string,
 }
 
 async function openSessionPreview(sessionId: string, url: string, instanceId: string, canPublish?: () => Promise<boolean>): Promise<SessionPreviewRecord> {
-  if (closedOccurrences.has(instanceId)) throw new DOMException("Preview occurrence is closed", "AbortError")
+  if (!isInstanceOccurrenceOpen(instanceId)) throw new DOMException("Preview occurrence is closed", "AbortError")
   const storageKey = previewKey(sessionId, instanceId)
   const operationVersion = beginOperation(storageKey)
   const existing = sessionPreviews().get(storageKey)
   const saved = savedPreview(sessionId, instanceId)
-  const preview = await createPreview(sessionId, url, instanceId, storageKey, operationVersion)
-  if (canPublish && !await canPublish().catch(() => false)) {
-    void serverApi.deletePreview(preview.token).catch(() => undefined)
-    throw new Error("Preview open request is no longer current")
-  }
-  if (operationVersions.get(storageKey) !== operationVersion || closedOccurrences.has(instanceId)) {
-    void serverApi.deletePreview(preview.token).catch(() => undefined)
-    throw new DOMException("Preview navigation was superseded", "AbortError")
-  }
-  const record: SessionPreviewRecord = { ...preview, mode: "preview", storageKey, instanceId,
-    viewport: existing?.viewport ?? saved?.viewport,
-    history: new BrowserHistoryJournal(existing?.history ?? parseBrowserHistory(saved?.history, saved?.targetUrl ?? preview.targetUrl)).visitUrl(preview.targetUrl) }
-  setSessionPreviews(previous => new Map(previous).set(storageKey, record))
-  storePreview(sessionId, instanceId, record)
-  updateMissionProjectView(instanceId, { reader: undefined })
-  if (existing) void serverApi.deletePreview(existing.token).catch(() => undefined)
-  return record
+  try {
+    const preview = await createPreview(sessionId, url, instanceId, storageKey, operationVersion)
+    if (canPublish && !await canPublish().catch(() => false)) {
+      void serverApi.deletePreview(preview.token).catch(() => undefined)
+      throw new Error("Preview open request is no longer current")
+    }
+    if (operations.get(storageKey) !== operationVersion || !isInstanceOccurrenceOpen(instanceId)) {
+      void serverApi.deletePreview(preview.token).catch(() => undefined)
+      throw new DOMException("Preview navigation was superseded", "AbortError")
+    }
+    const record: SessionPreviewRecord = { ...preview, mode: "preview", storageKey, instanceId,
+      viewport: existing?.viewport ?? saved?.viewport,
+      history: new BrowserHistoryJournal(existing?.history ?? parseBrowserHistory(saved?.history, saved?.targetUrl ?? preview.targetUrl)).visitUrl(preview.targetUrl) }
+    setSessionPreviews(previous => new Map(previous).set(storageKey, record))
+    storePreview(sessionId, instanceId, record)
+    updateMissionProjectView(instanceId, { reader: undefined })
+    if (existing) void serverApi.deletePreview(existing.token).catch(() => undefined)
+    return record
+  } finally { finishOperation(storageKey, operationVersion) }
 }
 
 function restoreSessionPreview(sessionId: string, instanceId: string): Promise<SessionPreviewRecord | null> {
-  if (closedOccurrences.has(instanceId)) return Promise.reject(new DOMException("Preview occurrence is closed", "AbortError"))
+  if (!isInstanceOccurrenceOpen(instanceId)) return Promise.reject(new DOMException("Preview occurrence is closed", "AbortError"))
   const storageKey = previewKey(sessionId, instanceId)
   const current = sessionPreviews().get(storageKey)
   if (current) return Promise.resolve(current)
@@ -95,7 +105,7 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   if (pending) return pending
   const operationVersion = beginOperation(storageKey)
   const restore = createPreview(sessionId, stored.targetUrl, instanceId, storageKey, operationVersion).then(preview => {
-    if (operationVersions.get(storageKey) !== operationVersion || closedOccurrences.has(instanceId)) {
+    if (operations.get(storageKey) !== operationVersion || !isInstanceOccurrenceOpen(instanceId)) {
       void serverApi.deletePreview(preview.token).catch(() => undefined)
       throw new DOMException("Preview navigation was superseded", "AbortError")
     }
@@ -104,6 +114,7 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
     setSessionPreviews(previous => new Map(previous).set(storageKey, record))
     return record
   }).finally(() => {
+    finishOperation(storageKey, operationVersion)
     if (restorePromises.get(storageKey) === restore) restorePromises.delete(storageKey)
   })
   restorePromises.set(storageKey, restore)
@@ -113,7 +124,7 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
 function showSessionPreview(storageKey: string) {
   const current = sessionPreviews().get(storageKey)
   if (!current) return
-  beginOperation(storageKey)
+  cancelOperation(storageKey)
   updateMissionProjectView(current.instanceId, { reader: undefined })
   const next = { ...current, mode: "preview" as const }
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))
@@ -122,7 +133,7 @@ function showSessionPreview(storageKey: string) {
 
 function showSessionChat(storageKey: string) {
   // A reader/chat gesture wins over an earlier browser open or restore.
-  beginOperation(storageKey)
+  cancelOperation(storageKey)
   const current = sessionPreviews().get(storageKey)
   if (!current) {
     const [instanceId, sessionId] = JSON.parse(storageKey) as [string, string]
@@ -164,10 +175,10 @@ export function updateSessionPreviewViewport(storageKey: string, viewport: NonNu
   storePreview(current.sessionId, current.instanceId, next)
 }
 
-export function cancelSessionPreviewNavigation(storageKey: string) { beginOperation(storageKey) }
+export function cancelSessionPreviewNavigation(storageKey: string) { cancelOperation(storageKey) }
 
 async function closeSessionPreview(storageKey: string) {
-  beginOperation(storageKey)
+  cancelOperation(storageKey)
   const [instanceId, sessionId] = JSON.parse(storageKey) as [string, string]
   const current = sessionPreviews().get(storageKey)
   storePreview(sessionId, instanceId, null)
@@ -176,13 +187,12 @@ async function closeSessionPreview(storageKey: string) {
 }
 
 onInstanceLifecycleAuthority(event => {
-  if (event.type === "opened") closedOccurrences.delete(event.instanceId)
-  if (event.type !== "removed") return
-  closedOccurrences.add(event.instanceId)
-  for (const key of operationVersions.keys()) {
+  if (event.type === "opened") return
+  for (const key of operations.keys()) {
     if ((JSON.parse(key) as [string, string])[0] !== event.instanceId) continue
-    beginOperation(key)
+    cancelOperation(key)
   }
+  if (event.type !== "removed") return
   const next = new Map(sessionPreviews())
   for (const [key, preview] of next) {
     if (preview.instanceId !== event.instanceId) continue

@@ -66,7 +66,8 @@ serverApi.fetchSessionOutline = async () => ({ status: "outline", total: 1,
   entries: [{ id: "hello", seq: 0, type: "user", tools: 0, reasoning: 0 }],
   checkpoints: [{ after: -1, through: 0, digest: "0".repeat(64), changed: true }], cursor: null,
 })
-serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] })
+serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" },
+  ...(new URLSearchParams(location.search).has("worktrees") ? [{ slug: "other", directory: "/other", kind: "worktree" }] : [])] } as any)
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
 setActiveInstanceId(id)
 setSessions(previous => new Map(previous).set(id, new Map([[sessionId, session]])))

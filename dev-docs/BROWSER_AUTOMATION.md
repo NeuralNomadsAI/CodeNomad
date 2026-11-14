@@ -169,6 +169,11 @@ WebKitGTK clipboard writes and native Ctrl+C/V use the engine's user-initiated p
 
 The automation targeting rule (D3) separates opening from page actions. The UI routes an autonomous open request to the active open project occurrence containing the session, or to its unique open owner when the active occurrence is unrelated. Ambiguous ownership refuses the request. The selected occurrence stays pinned through claim and asynchronous preview creation; closing it releases the new proxy token and never reroutes the operation to a duplicate. The UI claims the request for one local window, selects that occurrence and session, and opens its preview. Page actions require exactly one visible native target for the invoking session; ambiguity, hiding or closure invalidates the captured target. Keep the real native session ID on every registration and apply this rule on Electron and Tauri Windows/macOS/Linux.
 
+Renderer preview requests retain identity fences only while pending. View gestures
+and occurrence removal invalidate those identities; completion releases the exact
+request's fence. Admission checks the lifecycle authority's open occurrence set,
+whose entries follow occurrence lifetime.
+
 Native open claims retain their request deadline and backend-generation fence. The UI revalidates the claim after asynchronous preview-record creation and before publishing the preview; a rejected record's token is released. Native-parent stdin preserves UTF-8 across buffer boundaries, and timed-out response IDs stay retired independently of subsequent requests.
 
 ## Focused Validation

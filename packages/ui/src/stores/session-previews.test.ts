@@ -1,12 +1,46 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { before, describe, it } from "node:test"
 import { parseStoredSessionPreviews, openSessionPreview, restoreSessionPreview, showSessionChatFor, showSessionPreview, getSessionPreview, closeSessionPreview, updateSessionPreviewHistory, updateSessionPreviewViewport, getPreviewSessionIds } from "./session-previews"
 import { missionProjectView, updateMissionProjectView } from "./mission-view-state"
 import { serverApi } from "../lib/api-client"
 import { getTabViewState, seedTabViewState } from "./tab-view-state"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { getPendingPreviewOperationCount } from "./session-previews"
+
+function registerOccurrence(id: string) {
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId: id, folder: "/same", occurrence: 0 })
+}
+function closeOccurrence(instanceId: string) {
+  publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/same", occurrence: 0 })
+}
+before(() => {
+  for (const id of ["duplicate-a", "duplicate-b", "duplicate-restored", "closed-pending", "restore-race",
+    "error-survivor", "late-error-false", "late-error-true", "restore-reopen", "expired-native", "surface", "race"]) registerOccurrence(id)
+})
 
 describe("session preview persistence", () => {
+  it("retains only pending request fences across 1000 occurrence lifetimes", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview
+    serverApi.deletePreview = async () => undefined as any
+    try {
+      for (let index = 0; index < 1000; index++) {
+        const id = `retention-${index}`
+        registerOccurrence(id)
+        showSessionChatFor("same", id)
+        assert.equal(getPendingPreviewOperationCount(), 0)
+        let resolve!: (value: any) => void
+        serverApi.createPreview = () => new Promise(done => { resolve = done })
+        const pending = openSessionPreview("same", "https://example.com", id)
+        assert.equal(getPendingPreviewOperationCount(), 1)
+        closeOccurrence(id)
+        assert.equal(getPendingPreviewOperationCount(), 0)
+        resolve({ sessionId: "same", token: id, targetUrl: "https://example.com" })
+        await assert.rejects(pending, { name: "AbortError" })
+        assert.equal(getPendingPreviewOperationCount(), 0)
+        assert.equal(getSessionPreview("same", id), null)
+      }
+    } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
+  })
   it("duplicate occurrences keep URLs, mode, history, emulation and persistence independent", async () => {
     const create = serverApi.createPreview, remove = serverApi.deletePreview
     let token = 0
@@ -17,6 +51,7 @@ describe("session preview persistence", () => {
       const a = await openSessionPreview("same", "https://example.com/a", "duplicate-a")
       assert.equal(getSessionPreview("same", "duplicate-b"), null)
       const b = await openSessionPreview("same", "https://example.com/b", "duplicate-b")
+      assert.equal(getPendingPreviewOperationCount(), 0, "settled opens release their fences")
       showSessionChatFor("same", "duplicate-b")
       updateSessionPreviewHistory(a.storageKey, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
       updateSessionPreviewViewport(a.storageKey, "mobile")
@@ -31,7 +66,7 @@ describe("session preview persistence", () => {
       const restored = await restoreSessionPreview("same", "duplicate-restored")
       assert.deepEqual(restored?.history, { urls: ["https://example.com/a", "https://example.com/next"], index: 1 })
       assert.equal(restored?.viewport, "mobile")
-      publishInstanceLifecycleAuthority({ type: "removed", instanceId: "duplicate-a", folder: "/same", occurrence: 0 })
+      closeOccurrence("duplicate-a")
       assert.equal(getSessionPreview("same", "duplicate-a"), null)
       assert.equal(getSessionPreview("same", "duplicate-b")?.token, b.token)
       assert.deepEqual(deleted, [a.token])
@@ -50,7 +85,7 @@ describe("session preview persistence", () => {
     serverApi.deletePreview = async token => { deleted.push(token); return undefined as any }
     try {
       const pending = openSessionPreview("same", "https://example.com/a", "closed-pending")
-      publishInstanceLifecycleAuthority({ type: "removed", instanceId: "closed-pending", folder: "/same", occurrence: 0 })
+      closeOccurrence("closed-pending")
       resolve({ sessionId: "same", token: "late-closed", targetUrl: "https://example.com/a" })
       await assert.rejects(pending, { name: "AbortError", message: "Preview navigation was superseded" })
       assert.equal(getSessionPreview("same", "closed-pending"), null)
@@ -75,6 +110,45 @@ describe("session preview persistence", () => {
       assert.equal(getTabViewState("restore-race").previews?.same.mode, "chat")
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
+  it("an old response cannot match a new request after the same occurrence is reopened", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview
+    const responses: Array<(value: any) => void> = [], deleted: string[] = []
+    serverApi.createPreview = () => new Promise(resolve => { responses.push(resolve) })
+    serverApi.deletePreview = async token => { deleted.push(token); return undefined as any }
+    registerOccurrence("reused")
+    try {
+      const old = openSessionPreview("same", "https://example.com/old", "reused")
+      closeOccurrence("reused")
+      registerOccurrence("reused")
+      const fresh = openSessionPreview("same", "https://example.com/new", "reused")
+      responses[1]({ sessionId: "same", token: "fresh", targetUrl: "https://example.com/new" })
+      const record = await fresh
+      assert.equal(getPendingPreviewOperationCount(), 0)
+      responses[0]({ sessionId: "same", token: "old", targetUrl: "https://example.com/old" })
+      await assert.rejects(old, { name: "AbortError" })
+      assert.equal(getSessionPreview("same", "reused"), record)
+      assert.deepEqual(deleted, ["old"])
+      closeOccurrence("reused")
+    } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
+  })
+  it("unavailable occurrences reject new requests and fence an in-flight response", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview
+    let resolve!: (value: any) => void
+    serverApi.createPreview = () => new Promise(done => { resolve = done })
+    serverApi.deletePreview = async () => undefined as any
+    registerOccurrence("unavailable")
+    try {
+      const pending = openSessionPreview("same", "https://example.com", "unavailable")
+      publishInstanceLifecycleAuthority({ type: "unavailable", instanceId: "unavailable", folder: "/same", occurrence: 0 })
+      await assert.rejects(openSessionPreview("same", "https://example.com", "unavailable"), { name: "AbortError" })
+      registerOccurrence("unavailable")
+      resolve({ sessionId: "same", token: "unavailable", targetUrl: "https://example.com" })
+      await assert.rejects(pending, { name: "AbortError" })
+      assert.equal(getPendingPreviewOperationCount(), 0)
+      assert.equal(getSessionPreview("same", "unavailable"), null)
+      closeOccurrence("unavailable")
+    } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
+  })
   it("late errors after close or a newer view gesture abort only the original occurrence", async () => {
     const create = serverApi.createPreview, remove = serverApi.deletePreview
     let reject!: (error: Error) => void
@@ -86,10 +160,11 @@ describe("session preview persistence", () => {
       for (const close of [false, true]) {
         const id = `late-error-${close}`
         const pending = openSessionPreview("same", "https://example.com/a", id)
-        if (close) publishInstanceLifecycleAuthority({ type: "removed", instanceId: id, folder: "/same", occurrence: 0 })
+        if (close) closeOccurrence(id)
         else showSessionChatFor("same", id)
         reject(new Error("late server failure"))
         await assert.rejects(pending, { name: "AbortError" })
+        assert.equal(getPendingPreviewOperationCount(), 0, "settled errors release their fences")
         assert.equal(getSessionPreview("same", id), null)
         assert.equal(getSessionPreview("same", "error-survivor"), b)
       }
