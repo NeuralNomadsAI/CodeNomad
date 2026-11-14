@@ -181,10 +181,13 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       if (current()) props.refresh()
     } catch (error) {
       if (error instanceof HttpResponseError && error.code === "schedule-activation-refused") {
-        const body = error.body as { refusal?: ActivationRefusal } | undefined
+        const body = error.body as { refusal?: ActivationRefusal; notApplied?: { requestID?: string; expectedRevision?: number } } | undefined
+        if (dispatched?.phase === "activation" && holds.get(key) === dispatched
+          && body?.notApplied?.requestID === dispatched.requestID && body.notApplied.expectedRevision === dispatched.expectedRevision) {
+          holds.delete(key); bump()
+        }
         if (current()) { setRefusal(body?.refusal); setFeedback("missions.scheduleList.activationRefused") }
-        // A refusal after dispatch may follow an attempted write. Keep the exact
-        // activation until an explicit receipt read proves its outcome.
+        // Without exact no-effect proof, preserve the original activation.
       } else if (dispatched?.phase === "activation" && error instanceof HttpResponseError
         && ["schedule-activation-conflict", "schedule-activation-unavailable"].includes(error.code ?? "") && holds.get(key) === dispatched) {
         holds.delete(key); bump()

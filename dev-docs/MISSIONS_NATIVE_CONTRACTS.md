@@ -430,6 +430,12 @@ responses identify the reason, provenance, layer, discovered path, `openable` an
 in the existing global config-file inventory; environment refusals expose their
 source through the information tip.
 
+An activation refusal before any document mutation, for an identity without an
+existing intent, includes `notApplied: { requestID, expectedRevision }`. This exact
+proof releases that local request for a fresh explicit Start after configuration
+correction. A refusal after a document mutation attempt or for an existing intent
+retains the original request and its explicit receipt recovery.
+
 Native regression: `node --import tsx
 scripts/test-mission-experimental-settings-native.mjs <absolute-isolated-cli>`.
 It exercises real discovery/whole-block precedence/watcher acknowledgement and

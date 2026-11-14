@@ -73,7 +73,8 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         enabled: () => props.enabled() && !list.error() && list.fresh(id), refreshVersion: () => props.refresh + revision(), refresh,
         onDeleted: () => props.onDeleted(id) })
       const [expanded, expand] = createSignal(false)
-      const primary = () => (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
+      const primary = () => (["pause", "resume", "play"] as const).find(action => controls.pendingAction() === action)
+        ?? (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
       const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
         disabled: !controls.capable(name), busy: controls.pendingAction() === name, onSelect: () => controls.act(name) })
       const status = () => controls.progress() ?? (controls.held() ? controls.busy() ? undefined

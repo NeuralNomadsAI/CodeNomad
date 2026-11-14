@@ -492,18 +492,28 @@ test("unselected unified passages prioritize their coordinator and descendant re
   } finally { await page.close() }
 })
 
-for (const action of ["Resume", "Run now"] as const)
+for (const action of ["Start", "Pause", "Resume", "Run now"] as const)
 test(`${action} loads only its requested button and keeps Run now confirmation separate`, async () => {
   const page = await browser.newPage(), f = await setup(page, { seed: true })
   const gate = deferred(), submitted = deferred()
   try {
     await f.change(doc => {
-      doc.firstPlayedAt = Date.now(); doc.state = "paused"
+      if (action !== "Start") doc.firstPlayedAt = Date.now()
+      doc.state = action === "Pause" ? "running" : "paused"
       doc.scheduleActivation = { requestID: "ready_activation", expectedRevision: 0, authority: "a".repeat(64), state: "ready", targets: [], effectiveOrigin: null }
     })
     await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
     await page.route("**/msn_schedule/schedule", async route => {
-      if (route.request().method() === "POST") { submitted.resolve(); await gate.promise }
+      if (route.request().method() === "POST") {
+        submitted.resolve(); await gate.promise
+        if (action !== "Run now") {
+          const request = route.request().postDataJSON()
+          f.posts.push(request)
+          const value = f.result()
+          return route.fulfill({ json: { ...value, pending: false,
+            document: { ...value.document, control: { ...request, pending: false } } } })
+        }
+      }
       return route.fallback()
     })
     await button(page, action).click()
@@ -514,9 +524,21 @@ test(`${action} loads only its requested button and keeps Run now confirmation s
       await dialog.getByRole("button", { name: action, exact: true }).click()
     }
     await submitted.promise
+    if (action !== "Run now") {
+      const published = page.waitForResponse(async response => new URL(response.url()).pathname.endsWith("/missions/scheduled")
+        && (await response.json()).schedules?.some((row: any) => row.state === (action === "Pause" ? "paused" : "running")))
+      await f.change(doc => {
+        if (action === "Start") { changes.play(doc, "early-publication", Date.now(), []); doc.synchronization = null }
+        else doc.state = action === "Pause" ? "paused" : "running"
+      })
+      await page.evaluate(() => (window as any).missionFixture.refresh())
+      await (await published).finished()
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    }
     assert.equal(await button(page, action).getAttribute("aria-busy"), "true")
     assert.equal(await page.locator(".mission-action-bar [aria-busy=true]").count(), 1)
-    assert.equal(await page.locator(".mission-picker-selection-actions [role=status]").textContent(), action === "Resume" ? "Resuming…" : "Starting run…")
+    assert.equal(await page.locator(".mission-picker-selection-actions [role=status]").textContent(), action === "Resume" ? "Resuming…"
+      : action === "Start" ? "Starting…" : action === "Run now" ? "Starting run…" : "Saving…")
     gate.resolve()
     await page.waitForFunction(() => !document.querySelector(".mission-action-bar [aria-busy=true]"))
     assert.equal(f.posts.length, 1); assert.equal(f.activations.length, 0)
@@ -591,6 +613,45 @@ test("structured server OFF after dispatch retains its exact activation and a fa
     assert.ok(f.reads.some(url => url.includes(`requestID=${request.requestID}`)))
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, 0, "failed recovery never replays activation or Play")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+for (const proof of ["exact", "foreign-request", "foreign-revision"] as const)
+test(`OFF refusal with ${proof} no-effect proof only releases the exact activation for explicit Start`, async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  let request: any, attempts = 0
+  try {
+    await select(page)
+    await page.route("**/schedule-settings", async route => {
+      if (route.request().method() === "GET" || attempts++) return route.fallback()
+      request = route.request().postDataJSON()
+      return route.fulfill({ status: 403, json: { code: "schedule-activation-refused",
+        notApplied: { requestID: proof === "foreign-request" ? "other" : request.requestID,
+          expectedRevision: request.expectedDocumentRevision + (proof === "foreign-revision" ? 1 : 0) },
+        refusal: { reason: "explicit-off", provenance: "environment", layer: "environment", openable: false } } })
+    })
+    const refused = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/schedule-settings")
+      && response.request().method() === "POST" && response.status() === 403)
+    await click(page, "Play"); await (await refused).finished()
+    await page.waitForFunction(() => !document.querySelector(".mission-action-bar [aria-busy=true]"))
+    assert.equal(f.doc.scheduleActivation, null)
+    assert.equal(f.posts.length, 0, "refusal never sends Play")
+    await page.evaluate(() => (window as any).missionFixture.refresh())
+    if (proof === "exact") {
+      await button(page, "Start").and(page.locator(":enabled")).waitFor()
+      assert.equal(await button(page, "Refresh saved request").count(), 0)
+      assert.equal(f.posts.length, 0, "configuration correction and refresh never start Play")
+      await click(page, "Play")
+      await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+      assert.equal(f.posts.filter(post => post.action === "play").length, 1)
+      assert.notEqual(f.activation?.requestID, request.requestID)
+    } else {
+      await button(page, "Refresh saved request").click()
+      await button(page, "Refresh saved request").and(page.locator(":enabled")).waitFor()
+      assert.equal(await button(page, "Start").isDisabled(), true)
+      assert.equal(f.posts.length, 0, "a negative receipt cannot release a mismatched proof")
+    }
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
