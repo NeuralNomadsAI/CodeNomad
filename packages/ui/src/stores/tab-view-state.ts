@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { normalizeTabViewState, type RestorableTabViewState } from "./tab-view-state-codec"
-import { bindLocalTabView, saveLocalTabView, unbindLocalTabView, adoptLocalLegacyPreview } from "./tab-view-state-local"
+import { bindLocalTabView, saveLocalTabView, unbindLocalTabView, adoptLocalLegacyPreview, retireLocalLegacyPreview } from "./tab-view-state-local"
 export type { RestorableTabViewState, RestorableTabPreview, RestorableTabMissionView } from "./tab-view-state-codec"
 
 const empty: RestorableTabViewState = { version: 1 }
@@ -28,7 +28,10 @@ export function updateTabViewState(instanceId: string, patch: Partial<Omit<Resto
 export function adoptLegacyTabPreview(instanceId: string, sessionId: string): void {
   if (getTabViewState(instanceId).previews !== undefined) return
   const legacy = adoptLocalLegacyPreview(instanceId, sessionId)
-  if (legacy) updateTabViewState(instanceId, { previews: legacy.previews })
+  if (legacy) {
+    updateTabViewState(instanceId, { previews: legacy.view.previews })
+    if (saveLocalTabView(instanceId, getTabViewState(instanceId))) retireLocalLegacyPreview(legacy)
+  }
 }
 
 /** Seed once: repeated asynchronous session hydration must preserve local view gestures. */

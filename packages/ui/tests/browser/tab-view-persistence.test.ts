@@ -56,6 +56,17 @@ for (const remote of [false, true]) test(`${remote ? "remote" : "web"} previews 
       localStorage.setItem("opencode-session-previews-v1", JSON.stringify({ "/same": { mode: "chat", targetUrl: "https://example.com/legacy" } }))
     })
     await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(async () => {
+      const set = Storage.prototype.setItem
+      Storage.prototype.setItem = function(key, value) {
+        if (key === "opencode-session-tab-views-v1") throw new DOMException("Synthetic quota", "QuotaExceededError")
+        return set.call(this, key, value)
+      }
+      await (window as any).fixture.restore("same", "web-a")
+    })
+    assert.notEqual(await page.evaluate(() => localStorage.getItem("opencode-session-previews-v1")), "{}",
+      "a rejected occurrence write retains the legacy migration source")
+    await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
     const restored = await page.evaluate(() => (window as any).fixture.restore("same", "web-a"))
     assert.equal(restored.targetUrl, "https://example.com/legacy")
     assert.equal(await page.evaluate(() => localStorage.getItem("opencode-session-previews-v1")), "{}")

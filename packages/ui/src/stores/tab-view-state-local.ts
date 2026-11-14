@@ -28,9 +28,9 @@ export function bindLocalTabView(instanceId: string, folder: string, occurrence:
 }
 
 export function saveLocalTabView(instanceId: string, view?: RestorableTabViewState) {
-  if (clientStateIsPrimary()) return
+  if (clientStateIsPrimary()) return false
   const key = scopes.get(instanceId)
-  if (!key) return
+  if (!key) return false
   const values = read()
   delete values[key]
   if (view) values[key] = view
@@ -40,7 +40,8 @@ export function saveLocalTabView(instanceId: string, view?: RestorableTabViewSta
     return normalized ? [[key, normalized]] : []
   }).reverse()
   while (entries.length && JSON.stringify(Object.fromEntries(entries)).length > MAX_STORAGE) entries.shift()
-  try { window.localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(entries))) } catch { /* Best-effort layout persistence. */ }
+  try { window.localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(entries))); return true }
+  catch { return false }
 }
 
 export function unbindLocalTabView(instanceId: string) {
@@ -62,12 +63,13 @@ export function unbindLocalTabView(instanceId: string) {
 }
 
 /** Native snapshots migrate by descriptor order; web clients adopt on explicit opening. */
-export function adoptLocalLegacyPreview(instanceId: string, sessionId: string): RestorableTabViewState | undefined {
+export function adoptLocalLegacyPreview(instanceId: string, sessionId: string) {
   if (clientStateIsPrimary()) return
   const scope = scopes.get(instanceId)
   if (!scope) return
   const [folder] = JSON.parse(scope) as [string, number]
-  const entries = parseLegacySessionPreviews(readClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY))
+  const source = readClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY)
+  const entries = parseLegacySessionPreviews(source)
   let adopted: RestorableTabViewState | undefined
   const remaining = entries.filter(([key, preview]) => {
     let path = key, session: string | undefined
@@ -79,6 +81,10 @@ export function adoptLocalLegacyPreview(instanceId: string, sessionId: string): 
     adopted = { version: 1, previews: { [sessionId]: preview } }
     return false
   })
-  if (adopted) writeClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY, JSON.stringify(Object.fromEntries(remaining)))
-  return adopted
+  return adopted ? { view: adopted, source, remaining: JSON.stringify(Object.fromEntries(remaining)) } : undefined
+}
+
+export function retireLocalLegacyPreview(value: { source: string | null; remaining: string }) {
+  if (readClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY) === value.source)
+    writeClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY, value.remaining)
 }
