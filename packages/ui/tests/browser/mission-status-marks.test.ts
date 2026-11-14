@@ -305,7 +305,11 @@ test("daily waiting, unread passage identities, restoration and paused/warning s
   const success = async (id: string) => {
     const result = { passageID: id, outcome: "completed" as const, dueAt: Date.now() - 2, settledAt: Date.now() - 1 }
     schedule.history.push(result); schedule.latestResult = result; schedule.revision++
-    await refreshDaily(); await waitMark("done")
+    const published = page.waitForResponse(async response => new URL(response.url()).pathname.endsWith("/missions/recurrence")
+      && (await response.json()).schedules?.some((row: any) => row.latestResult?.passageID === id))
+    await refreshDaily(); await (await published).finished()
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await waitMark("done")
   }
   try {
     await fixtureCall(page, "connectCatalog")
@@ -362,6 +366,15 @@ test("daily waiting, unread passage identities, restoration and paused/warning s
     await entry.click(); await waitMark("waiting")
     await success("pas_B")
     // Explicit Mark as read also works without selecting a schedule.
+    await page.locator('[data-mission-key="schedule:rec_marks"] .session-item-expander').click({ button: "right" })
+    await success("pas_B_next")
+    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
+    assert.equal(await mark(page, "Daily marks"), "done", "the open menu acknowledges B, not the later passage")
+    assert.deepEqual(await page.evaluate(async () => {
+      const { scheduleSuccessSeen } = await import("/src/stores/mission-view-state.ts")
+      const scope = JSON.stringify(["fixture", "project"])
+      return ["pas_B", "pas_B_next"].map(id => scheduleSuccessSeen(scope, "daily", "rec_marks", id))
+    }), [true, false])
     await page.locator('[data-mission-key="schedule:rec_marks"] .session-item-expander').click({ button: "right" })
     await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
     await waitMark("waiting")

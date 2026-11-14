@@ -289,7 +289,10 @@ attention and exact passage acknowledgement follow the shared marks contract in
 confirmed waiting, accent alone for prepared, orange Pause or warning triangle for
 pause/interruption, yellow pulse during a passage and green for a new successful
 passage awaiting review. Explicit attentive selection or **Mark as read** acknowledges
-that exact passage and returns an armed schedule to waiting; first-loaded history
+that exact passage and returns an armed schedule to waiting. The context menu captures
+its passage identity when opened; a result arriving while it is open stays unread.
+Unselected rows count requests from their live coordinator and loaded descendants;
+the selected passage uses its authoritative request coverage. First-loaded history
 starts read. Acknowledged finished schedules and terminal Stop use neutral.
 Their `technical` projection exposes only the recorded current/retiring carrier
 session and calendar identifiers, role, slot, temporal generation and pending
@@ -697,6 +700,9 @@ Retain pending passage identity and observations rather than clearing live work.
 
 Desired running without a live native Job is displayed as **Interrupted** with
 an interruption reason. Service restart therefore leaves scheduling Interrupted.
+An archived daily passage ending without a report keeps its history outcome;
+a positively running daily Job with a future date shows **Waiting for scheduled run**.
+Failed passages retain their interruption attention.
 Do not rearm from plugin load, a read, UI reopen or backend reconnect.
 Only explicit Resume may restore scheduling; pending work is reconciled first.
 An Interrupted schedule keeps its passage pending. Resume reconciles its original

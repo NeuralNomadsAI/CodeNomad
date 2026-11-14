@@ -102,6 +102,8 @@ export function MissionRows(props: {
     const open = () => opened().has(key)
     const previewing = () => !isSelected() && open()
     const label = () => t(open() ? "missionsPanel.row.collapse" : "missionsPanel.row.expand")
+    // The menu acts on the passage visible when it opened, even after a refresh.
+    const [markRead, setMarkRead] = createSignal<(() => void)>()
     // The session list's own row classes (session-layout.css, session-tree.css).
     return <><div class="session-list-item mission-row" data-mission-key={key}>
       <div class={`session-item-base ${highlighted() ? "session-item-active" : "session-item-inactive"}`}>
@@ -109,8 +111,8 @@ export function MissionRows(props: {
           {/* The session list's chevron: right-click marks the whole hierarchy as read. */}
           <SessionExpander class="session-item-expander opacity-80 hover:opacity-100 hover:bg-surface-hover" expanded={open()}
             activity={entry().childActivity} label={label()} title={label()}
-            markReadLabel={t("sessionList.expand.markRead")} markReadDisabled={!props.markRead?.(key)}
-            onMarkRead={() => props.markRead?.(key)?.()} onOpenChange={() => undefined}
+            markReadLabel={t("sessionList.expand.markRead")} markReadDisabled={!markRead()}
+            onMarkRead={() => markRead()?.()} onOpenChange={open => { if (open) setMarkRead(() => props.markRead?.(key)) }}
             onToggle={() => {
               // A schedule's children are its selected detail: expanding one selects it.
               if (!isSelected() && !props.expandable?.(key)) props.onSelect(entry())

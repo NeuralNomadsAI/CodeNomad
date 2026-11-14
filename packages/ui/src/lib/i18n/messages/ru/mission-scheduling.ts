@@ -81,9 +81,6 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.capacity": "Слишком много неподтверждённых команд. Разрешите сохранённый запрос перед новым.",
   "missions.scheduleList.uncertain": "Запрос не подтверждён. Исходная идентичность сохранена. Обновите сохранённый запрос; автоматической повторной отправки нет.",
   "missions.scheduleList.confirmedRefreshing": "Действие подтверждено. Ожидается обновлённое представление перед следующим действием. Используйте Обновить сохранённый запрос для повторного чтения.",
-  "missionsPanel.action.starting": "Запуск…",
-  "missionsPanel.action.resuming": "Возобновление…",
-  "missionsPanel.action.runningNow": "Запуск прохода…",
   "missionsPanel.action.openSchedulingSettings": "Открыть настройки расписания",
   "missions.scheduleList.activationRefused": "Расписание отключено в настройках OpenCode.",
   "missions.scheduleList.activationRefused.environment": "Окружение службы OpenCode отключает experimental.schedules. Измените окружение и обновите данные.",
@@ -180,4 +177,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "Выберите доступный источник проекта или корректные явные пути файлов.",
   "missions.scheduling.error.empty": "У этого календаря нет будущего времени.",
   "missions.scheduling.error.capability": "Планирование недоступно. Сохраните черновик или удалите критерии запуска.",
+  "missions.scheduleList.activationRefused.layer.project": "Конфигурация проекта",
+  "missions.scheduleList.activationRefused.layer.global": "Глобальная конфигурация",
+  "missions.scheduleList.activationRefused.layer.inherited": "Унаследованная конфигурация",
+  "missions.scheduleList.activationRefused.layer.imposed": "Принудительная конфигурация",
 }

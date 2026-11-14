@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "正在启动…",
+  "missionsPanel.action.resuming": "正在恢复…",
+  "missionsPanel.action.runningNow": "正在启动本次运行…",
   "missionsPanel.pages.raw": "分页读取原始 JSON",
   "missionsPanel.pages.rawPage": "原始 JSON 第 {page} 页，共 {total} 页",
   "missionsPanel.pages.previous": "上一页",

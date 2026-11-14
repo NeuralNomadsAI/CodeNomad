@@ -81,9 +81,6 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.capacity": "Zu viele unbestätigte Befehle. Klären Sie eine gespeicherte Anfrage vor der nächsten.",
   "missions.scheduleList.uncertain": "Diese Anfrage ist unbestätigt. Ihre ursprüngliche Identität bleibt erhalten. Gespeicherte Anfrage aktualisieren; kein automatisches erneutes Senden.",
   "missions.scheduleList.confirmedRefreshing": "Aktion bestätigt. Vor einer weiteren Aktion wird auf die aktualisierte Ansicht gewartet. Verwenden Sie Gespeicherte Anfrage aktualisieren zum erneuten Lesen.",
-  "missionsPanel.action.starting": "Wird gestartet…",
-  "missionsPanel.action.resuming": "Wird fortgesetzt…",
-  "missionsPanel.action.runningNow": "Durchlauf wird gestartet…",
   "missionsPanel.action.openSchedulingSettings": "Zeitplanungseinstellungen öffnen",
   "missions.scheduleList.activationRefused": "Die Zeitplanung ist in den OpenCode-Einstellungen deaktiviert.",
   "missions.scheduleList.activationRefused.environment": "Die Umgebung des OpenCode-Dienstes deaktiviert experimental.schedules. Ändern Sie diese Umgebung und aktualisieren Sie anschließend.",
@@ -180,4 +177,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "Wählen Sie eine verfügbare Projektquelle oder gültige explizite Dateipfade.",
   "missions.scheduling.error.empty": "Dieser Kalender hat keinen zukünftigen Termin.",
   "missions.scheduling.error.capability": "Zeitplanung ist nicht verfügbar. Behalten Sie den Entwurf oder entfernen Sie die Startkriterien.",
+  "missions.scheduleList.activationRefused.layer.project": "Projektkonfiguration",
+  "missions.scheduleList.activationRefused.layer.global": "Globale Konfiguration",
+  "missions.scheduleList.activationRefused.layer.inherited": "Geerbte Konfiguration",
+  "missions.scheduleList.activationRefused.layer.imposed": "Vorgegebene Konfiguration",
 }

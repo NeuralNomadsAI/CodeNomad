@@ -81,9 +81,6 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.capacity": "धेरै आदेश अपुष्ट छन्। अर्को पठाउनुअघि सुरक्षित अनुरोध समाधान गर्नुहोस्।",
   "missions.scheduleList.uncertain": "यो अनुरोध अपुष्ट छ। यसको मूल पहिचान राखिएको छ। सुरक्षित अनुरोध ताजा गर्नुहोस्; स्वतः फेरि पठाइँदैन।",
   "missions.scheduleList.confirmedRefreshing": "कार्य पुष्टि भयो। अर्को कार्यअघि ताजा दृश्य पर्खिँदै छ। फेरि पढ्न सुरक्षित अनुरोध ताजा गर्नुहोस् प्रयोग गर्नुहोस्।",
-  "missionsPanel.action.starting": "सुरु हुँदैछ…",
-  "missionsPanel.action.resuming": "पुनः सुरु हुँदैछ…",
-  "missionsPanel.action.runningNow": "चक्र सुरु हुँदैछ…",
   "missionsPanel.action.openSchedulingSettings": "समयतालिकाका सेटिङ खोल्नुहोस्",
   "missions.scheduleList.activationRefused": "OpenCode सेटिङमा समयतालिका निष्क्रिय छ।",
   "missions.scheduleList.activationRefused.environment": "OpenCode सेवाको वातावरणले experimental.schedules निष्क्रिय पारेको छ। त्यो वातावरण परिवर्तन गरेर ताजा गर्नुहोस्।",
@@ -180,4 +177,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "उपलब्ध परियोजना स्रोत वा मान्य तोकिएका फाइल पथ छान्नुहोस्।",
   "missions.scheduling.error.empty": "यो पात्रोमा भविष्यको कुनै समय छैन।",
   "missions.scheduling.error.capability": "समयतालिका उपलब्ध छैन। मस्यौदा राख्नुहोस् वा सुरु गर्ने मापदण्डहरू हटाउनुहोस्।",
+  "missions.scheduleList.activationRefused.layer.project": "परियोजना कन्फिगरेसन",
+  "missions.scheduleList.activationRefused.layer.global": "विश्वव्यापी कन्फिगरेसन",
+  "missions.scheduleList.activationRefused.layer.inherited": "विरासतमा प्राप्त कन्फिगरेसन",
+  "missions.scheduleList.activationRefused.layer.imposed": "अनिवार्य कन्फिगरेसन",
 }

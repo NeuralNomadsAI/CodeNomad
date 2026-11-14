@@ -81,9 +81,6 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.capacity": "Demasiados comandos sin confirmar. Resuelve una solicitud guardada antes de enviar otra.",
   "missions.scheduleList.uncertain": "Esta solicitud no está confirmada. Se conserva su identidad original. Actualiza la solicitud guardada; no se reenvía automáticamente.",
   "missions.scheduleList.confirmedRefreshing": "Acción confirmada. Esperando la vista actualizada antes de otra acción. Usa Actualizar la solicitud guardada para volver a leer.",
-  "missionsPanel.action.starting": "Iniciando…",
-  "missionsPanel.action.resuming": "Reanudando…",
-  "missionsPanel.action.runningNow": "Iniciando ejecución…",
   "missionsPanel.action.openSchedulingSettings": "Abrir los ajustes de programación",
   "missions.scheduleList.activationRefused": "La programación está desactivada en los ajustes de OpenCode.",
   "missions.scheduleList.activationRefused.environment": "El entorno del servicio OpenCode desactiva experimental.schedules. Modifica ese entorno y actualiza.",
@@ -180,4 +177,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "Elija una fuente disponible del proyecto o rutas explícitas válidas.",
   "missions.scheduling.error.empty": "Este calendario no tiene ningún horario futuro.",
   "missions.scheduling.error.capability": "La programación no está disponible. Conserve el borrador o quite los criterios de lanzamiento.",
+  "missions.scheduleList.activationRefused.layer.project": "Configuración del proyecto",
+  "missions.scheduleList.activationRefused.layer.global": "Configuración global",
+  "missions.scheduleList.activationRefused.layer.inherited": "Configuración heredada",
+  "missions.scheduleList.activationRefused.layer.imposed": "Configuración impuesta",
 }

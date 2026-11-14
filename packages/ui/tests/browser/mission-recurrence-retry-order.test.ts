@@ -113,6 +113,29 @@ async function holdPartial(page: Page, action: "pause" | "stop", title = TITLE) 
   // The partial result schedules a row read; feedback can precede its publication.
   await missionRow(page, title).locator(".sr-only", { hasText: action === "pause" ? /^Daily · Paused/ : /^Daily · Stopped/ }).waitFor({ state: "attached" })
 }
+
+test("daily Resume keeps its loading button and progress announcement until HTTP settles", async () => {
+  const daily = { ...schedule(), state: "paused" as const, nextDueAt: null, actions: ["resume", "stop", "run-now"] as RecurrenceSchedule["actions"] }
+  const { page, state } = await openPage([daily]), gate = deferred(), submitted = deferred()
+  state.controlReply.set(daily.id, async route => { submitted.release(); await gate.promise; await route.abort("connectionreset") })
+  try {
+    await selectMission(page, TITLE)
+    const resume = missionToolbarAction(page, `Resume schedule ${TITLE}`)
+    await resume.click(); await submitted.promise
+    assert.equal(await resume.getAttribute("aria-busy"), "true")
+    assert.equal(await resume.isDisabled(), true)
+    assert.equal(await resume.locator("svg.animate-spin").count(), 1)
+    assert.equal(await missionToolbarAction(page, STOP).getAttribute("aria-busy"), null)
+    const status = page.locator(".mission-picker-selection-actions .mission-action-feedback [role=status]")
+    assert.equal(await status.count(), 1); assert.equal(await status.textContent(), "Resuming…")
+    assert.equal(await missionToolbarAction(page, CHECK()).count(), 0, "no premature uncertain-result button")
+    gate.release()
+    await missionToolbarAction(page, CHECK()).waitFor()
+    assert.equal(await status.count(), 1); assert.equal(await status.textContent(), UNCONFIRMED)
+    assert.equal(await page.locator(".mission-action-bar [aria-busy=true]").count(), 0)
+    assert.deepEqual(state.errors, [])
+  } finally { gate.release(); await page.close() }
+})
 /** Starts an event-driven row read that stays in flight until released. */
 async function rowReadInFlight(page: Page, state: Awaited<ReturnType<typeof openPage>>["state"]) {
   const gate = deferred(), before = state.rows

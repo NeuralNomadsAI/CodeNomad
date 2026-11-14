@@ -81,9 +81,6 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.capacity": "יותר מדי פקודות לא מאושרות. יש להסדיר בקשה שמורה לפני שליחת בקשה נוספת.",
   "missions.scheduleList.uncertain": "הבקשה אינה מאושרת. הזהות המקורית נשמרת. יש לרענן את הבקשה השמורה; דבר לא נשלח שוב אוטומטית.",
   "missions.scheduleList.confirmedRefreshing": "הפעולה אושרה. ממתינים לתצוגה המעודכנת לפני פעולה נוספת. השתמשו ברענון הבקשה השמורה לקריאה חוזרת.",
-  "missionsPanel.action.starting": "מתחיל…",
-  "missionsPanel.action.resuming": "ממשיך…",
-  "missionsPanel.action.runningNow": "מתחיל הרצה…",
   "missionsPanel.action.openSchedulingSettings": "פתיחת הגדרות התזמון",
   "missions.scheduleList.activationRefused": "התזמון מושבת בהגדרות OpenCode.",
   "missions.scheduleList.activationRefused.environment": "סביבת השירות של OpenCode משביתה את experimental.schedules. יש לעדכן את הסביבה ואז לרענן.",
@@ -180,4 +177,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "יש לבחור מקור זמין בפרויקט או נתיבי קבצים מפורשים תקינים.",
   "missions.scheduling.error.empty": "ללוח הזה אין מועד עתידי.",
   "missions.scheduling.error.capability": "התזמון אינו זמין. שמרו את הטיוטה או הסירו את קריטריוני ההפעלה.",
+  "missions.scheduleList.activationRefused.layer.project": "הגדרות הפרויקט",
+  "missions.scheduleList.activationRefused.layer.global": "הגדרות כלליות",
+  "missions.scheduleList.activationRefused.layer.inherited": "הגדרות בירושה",
+  "missions.scheduleList.activationRefused.layer.imposed": "הגדרות כפויות",
 }

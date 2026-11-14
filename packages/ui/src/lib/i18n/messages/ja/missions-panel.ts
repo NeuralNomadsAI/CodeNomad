@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "開始中…",
+  "missionsPanel.action.resuming": "再開中…",
+  "missionsPanel.action.runningNow": "実行を開始中…",
   "missionsPanel.pages.raw": "生のJSONをページ単位で読む",
   "missionsPanel.pages.rawPage": "生のJSON：{page} / {total} ページ",
   "missionsPanel.pages.previous": "前のページ",

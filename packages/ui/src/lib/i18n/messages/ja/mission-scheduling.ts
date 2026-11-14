@@ -81,9 +81,6 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.capacity": "未確認のコマンドが多すぎます。保存済みのリクエストを解決してから送信してください。",
   "missions.scheduleList.uncertain": "リクエストは未確認です。元の識別情報を保持しています。保存済みのリクエストを更新してください。自動再送は行いません。",
   "missions.scheduleList.confirmedRefreshing": "操作は確認済みです。次の操作の前に最新表示を待っています。「保存済みリクエストを更新」で読み取りをやり直してください。",
-  "missionsPanel.action.starting": "開始中…",
-  "missionsPanel.action.resuming": "再開中…",
-  "missionsPanel.action.runningNow": "実行を開始中…",
   "missionsPanel.action.openSchedulingSettings": "スケジュール設定を開く",
   "missions.scheduleList.activationRefused": "OpenCodeの設定でスケジュールが無効になっています。",
   "missions.scheduleList.activationRefused.environment": "OpenCodeサービスの環境でexperimental.schedulesが無効になっています。環境を変更してから更新してください。",
@@ -180,4 +177,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "利用可能なプロジェクトの対象、または有効な明示的ファイルパスを選択してください。",
   "missions.scheduling.error.empty": "この暦には将来の予定がありません。",
   "missions.scheduling.error.capability": "スケジュールを利用できません。下書きを保持するか、起動条件を削除してください。",
+  "missions.scheduleList.activationRefused.layer.project": "プロジェクト設定",
+  "missions.scheduleList.activationRefused.layer.global": "グローバル設定",
+  "missions.scheduleList.activationRefused.layer.inherited": "継承された設定",
+  "missions.scheduleList.activationRefused.layer.imposed": "強制された設定",
 }

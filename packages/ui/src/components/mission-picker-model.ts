@@ -55,7 +55,7 @@ function projectScheduleMark(facts: ScheduleMarkFacts, openRequests: number, see
   if (facts.prepared) return "prepared"
   if (facts.state === "paused") return "paused"
   if (facts.pending) return "working"
-  if (facts.outcome === "failed" || facts.outcome === "ended-without-report") return "interrupted"
+  if (facts.outcome === "failed") return "interrupted"
   if (facts.outcome === "completed" && !seen) return "done"
   return facts.waiting ? "waiting" : "idle"
 }
@@ -63,7 +63,7 @@ function projectScheduleMark(facts: ScheduleMarkFacts, openRequests: number, see
 export function scheduleMark(schedule: RecurrenceSchedule, openRequests = 0, seen = true, fresh = true, now = Date.now()): MissionMark {
   return projectScheduleMark({ state: schedule.state, prepared: false,
     interrupted: schedule.state === "interrupted" || schedule.state === "running" && !schedule.pending
-      && (schedule.latestResult?.outcome === "failed" || schedule.latestResult?.outcome === "ended-without-report"),
+      && schedule.latestResult?.outcome === "failed",
     uncertain: !fresh || schedule.controls.some(control => !control.controlsComplete) || Boolean(schedule.lastError)
       || schedule.state !== "paused" && (schedule.pending?.status === "uncertain"
       || schedule.state === "running" && !schedule.pending && !(schedule.nextDueAt !== null && schedule.nextDueAt > now)),

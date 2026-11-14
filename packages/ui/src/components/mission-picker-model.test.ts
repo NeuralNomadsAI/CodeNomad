@@ -40,6 +40,8 @@ test("schedule mark: an answer first, then the schedule's state, the live passag
   assert.equal(scheduleMark(schedule("paused", null, "failed")), "paused", "a pause is the user's own choice")
   assert.equal(scheduleMark(schedule("stopped", null, "failed")), "idle", "a stopped schedule offers nothing to continue")
   assert.equal(scheduleMark(schedule("running", null, "completed")), "waiting")
+  assert.equal(scheduleMark(schedule("running", null, "ended-without-report")), "waiting",
+    "an archived reportless passage does not interrupt the positively running daily scheduler")
   assert.equal(scheduleMark(schedule("running", null, "completed"), 0, false), "done")
   assert.equal(scheduleMark(schedule("running", null, "completed"), 0, false, false), "unconfirmed")
   assert.equal(scheduleMark({ ...schedule("running", null), nextDueAt: null }), "unconfirmed")

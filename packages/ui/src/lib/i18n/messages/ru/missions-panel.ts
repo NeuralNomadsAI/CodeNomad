@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "Запуск…",
+  "missionsPanel.action.resuming": "Возобновление…",
+  "missionsPanel.action.runningNow": "Запуск прохода…",
   "missionsPanel.pages.raw": "Читать исходный JSON по страницам",
   "missionsPanel.pages.rawPage": "Страница исходного JSON {page} из {total}",
   "missionsPanel.pages.previous": "Предыдущая страница",

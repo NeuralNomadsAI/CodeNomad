@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "Başlatılıyor…",
+  "missionsPanel.action.resuming": "Sürdürülüyor…",
+  "missionsPanel.action.runningNow": "Geçiş başlatılıyor…",
   "missionsPanel.pages.raw": "Ham JSON sayfalarını oku",
   "missionsPanel.pages.rawPage": "Ham JSON sayfası {page} / {total}",
   "missionsPanel.pages.previous": "Önceki sayfa",

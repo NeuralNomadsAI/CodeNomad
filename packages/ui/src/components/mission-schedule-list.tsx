@@ -10,6 +10,7 @@ import { missionLaunchLimit, missionLaunchModel } from "../../../server/src/miss
 import { MissionScheduleDiagnostics } from "./mission-schedule-diagnostics"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { openSettingsConfigFile } from "../stores/settings-screen"
+import { missionPassageRequests } from "./mission-passage-requests"
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
@@ -46,7 +47,8 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   const zoneOf = (doc: UnifiedMissionSchedule) => missionCriteriaZone(doc.configuration.launch)
   const nextWake = (doc: UnifiedMissionSchedule) => `${t(doc.observation.kind === "check" ? "missions.scheduleList.nextCheck" : "missions.scheduleList.nextWake")} · ${date(doc.observation.nextDueAt, zoneOf(doc))}`
   const entries = createMemo((): MissionPickerEntry[] => schedules().map(doc => {
-    const requests = doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID ? props.selectedRequests?.count ?? 0 : 0
+    const requests = doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID ? props.selectedRequests?.count ?? 0
+      : missionPassageRequests(props.instanceId, doc.pendingPassage?.coordinatorSessionID)
     const held = unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, doc.id]))
     const mark = unifiedScheduleMark(doc, requests, !doc.latestResult || scheduleSuccessSeen(seenScope(), "scheduled", doc.id, doc.latestResult.id),
       !list.error() && list.fresh(doc.id) && !held)
@@ -95,7 +97,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
               <Show when={refusal().openable && refusal().configFileID}><button type="button" class="window-action"
                 onClick={() => void openSettingsConfigFile(refusal().configFileID!)}>{t("missionsPanel.action.openSchedulingSettings")}</button></Show>
               <SettingsInfoTip text={`${t(refusal().layer === "environment" ? "missions.scheduleList.activationRefused.environment"
-                : "missions.scheduleList.activationRefused.document", { layer: refusal().layer })}${refusal().path ? `\n${refusal().path}` : ""}`} />
+                : "missions.scheduleList.activationRefused.document", { layer: t(`missions.scheduleList.activationRefused.layer.${refusal().layer}`) })}${refusal().path ? `\n${refusal().path}` : ""}`} />
             </>}</Show>
           </>} />
         <dl class="mission-schedule-facts">

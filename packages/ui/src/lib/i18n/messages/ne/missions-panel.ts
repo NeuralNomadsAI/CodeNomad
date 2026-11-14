@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "सुरु हुँदैछ…",
+  "missionsPanel.action.resuming": "पुनः सुरु हुँदैछ…",
+  "missionsPanel.action.runningNow": "चक्र सुरु हुँदैछ…",
   "missionsPanel.pages.raw": "कच्चा JSON पृष्ठहरू पढ्नुहोस्",
   "missionsPanel.pages.rawPage": "कच्चा JSON पृष्ठ {page}, जम्मा {total}",
   "missionsPanel.pages.previous": "अघिल्लो पृष्ठ",

@@ -81,9 +81,6 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.capacity": "Trop de commandes non confirmées. Résolvez une requête enregistrée avant d’en envoyer une autre.",
   "missions.scheduleList.uncertain": "Cette requête reste non confirmée. Son identité d’origine est conservée. Actualisez la requête enregistrée ; aucun renvoi automatique.",
   "missions.scheduleList.confirmedRefreshing": "Action confirmée. En attente de la vue actualisée avant une autre action. Utilisez Actualiser la requête enregistrée pour relire.",
-  "missionsPanel.action.starting": "Démarrage…",
-  "missionsPanel.action.resuming": "Reprise…",
-  "missionsPanel.action.runningNow": "Lancement du passage…",
   "missionsPanel.action.openSchedulingSettings": "Ouvrir les réglages de programmation",
   "missions.scheduleList.activationRefused": "La programmation est désactivée dans les réglages OpenCode.",
   "missions.scheduleList.activationRefused.environment": "L’environnement du service OpenCode désactive experimental.schedules. Modifiez cet environnement, puis actualisez.",
@@ -180,4 +177,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "Choisissez une source disponible du projet ou des chemins de fichiers explicites valides.",
   "missions.scheduling.error.empty": "Ce calendrier n’a aucun créneau à venir.",
   "missions.scheduling.error.capability": "Programmation indisponible. Conservez le brouillon ou retirez les critères de lancement.",
+  "missions.scheduleList.activationRefused.layer.project": "Configuration du projet",
+  "missions.scheduleList.activationRefused.layer.global": "Configuration globale",
+  "missions.scheduleList.activationRefused.layer.inherited": "Configuration héritée",
+  "missions.scheduleList.activationRefused.layer.imposed": "Configuration imposée",
 }

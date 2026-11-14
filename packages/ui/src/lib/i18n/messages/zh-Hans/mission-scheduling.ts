@@ -81,9 +81,6 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.capacity": "未确认的命令过多。请先解决一条已保存的请求，再发送新请求。",
   "missions.scheduleList.uncertain": "此请求尚未确认，已保留原始身份。请刷新已保存的请求；不会自动重新发送。",
   "missions.scheduleList.confirmedRefreshing": "操作已确认。等待更新后的视图才能进行其他操作。请使用“刷新已保存的请求”重新读取。",
-  "missionsPanel.action.starting": "正在启动…",
-  "missionsPanel.action.resuming": "正在恢复…",
-  "missionsPanel.action.runningNow": "正在启动本次运行…",
   "missionsPanel.action.openSchedulingSettings": "打开计划设置",
   "missions.scheduleList.activationRefused": "OpenCode 设置已禁用计划功能。",
   "missions.scheduleList.activationRefused.environment": "OpenCode 服务环境禁用了 experimental.schedules。请修改该环境，然后刷新。",
@@ -180,4 +177,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.source": "请选择可用的项目来源或有效的指定文件路径。",
   "missions.scheduling.error.empty": "此日历没有未来时段。",
   "missions.scheduling.error.capability": "计划不可用。请保留草稿或移除启动条件。",
+  "missions.scheduleList.activationRefused.layer.project": "项目配置",
+  "missions.scheduleList.activationRefused.layer.global": "全局配置",
+  "missions.scheduleList.activationRefused.layer.inherited": "继承的配置",
+  "missions.scheduleList.activationRefused.layer.imposed": "强制配置",
 }

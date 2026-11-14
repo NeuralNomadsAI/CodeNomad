@@ -175,7 +175,12 @@ test("unified waiting and exact successful passages distinguish prepared, pause,
       changes.admitted(doc, doc.pending!.id, Date.now())
       changes.settle(doc, doc.pending!.id, "completed", Date.now())
     })
-    await refresh(); await waitMark("done")
+    const latest = f.doc.history.at(-1)!.id
+    const published = page.waitForResponse(async response => new URL(response.url()).pathname.endsWith("/missions/scheduled")
+      && (await response.json()).schedules?.some((row: any) => row.latestResult?.id === latest))
+    await refresh(); await (await published).finished()
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await waitMark("done")
   }
   try {
     await entry.waitFor(); await waitMark("prepared")
@@ -189,9 +194,19 @@ test("unified waiting and exact successful passages distinguish prepared, pause,
     await entry.click(); await waitMark("waiting")
     await success("second-result")
     assert.notEqual(f.doc.history.at(-1)!.id, first)
+    const second = f.doc.history.at(-1)!.id
+    await page.locator('[data-mission-key="scheduled:msn_schedule"] .session-item-expander').click({ button: "right" })
+    await success("third-result")
+    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
+    assert.equal(await entry.locator(".mission-row-mark").getAttribute("data-mark"), "done", "the later passage stays unread")
+    assert.deepEqual(await page.evaluate(async ({ second, third }) => {
+      const { scheduleSuccessSeen } = await import("/src/stores/mission-view-state.ts")
+      const scope = JSON.stringify(["fixture", "project"])
+      return [second, third].map(id => scheduleSuccessSeen(scope, "scheduled", "msn_schedule", id))
+    }, { second, third: f.doc.history.at(-1)!.id }), [true, false])
     await page.locator('[data-mission-key="scheduled:msn_schedule"] .session-item-expander').click({ button: "right" })
     await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
-    await waitMark("waiting")
+    await waitMark("idle") // The third passage exhausted this fixture's launch limit.
     await f.change(doc => { doc.state = "finished" }); await refresh(); await waitMark("idle")
     await f.change(doc => { doc.state = "running" })
     await page.route(url => url.pathname.endsWith("/missions/scheduled"), route => {
@@ -381,7 +396,7 @@ test("already ON without a receipt prepares on the server; only Start loads and 
   } finally { gate.resolve(); await page.close() }
 })
 
-for (const layer of ["project", "global", "inherited", "environment"] as const)
+for (const layer of ["project", "global", "inherited", "imposed", "environment"] as const)
 test(`explicit ${layer} OFF exposes only the supported repair action and hides details behind keyboard info`, async () => {
   const page = await browser.newPage(), f = await setup(page, { seed: true })
   try {
@@ -401,6 +416,7 @@ test(`explicit ${layer} OFF exposes only the supported repair action and hides d
     const info = page.locator(".mission-action-feedback .settings-info-tip")
     await info.focus()
     await page.getByRole("tooltip").filter({ hasText: layer === "environment" ? "service environment" : path! }).waitFor()
+    if (layer !== "environment") assert.match(await page.getByRole("tooltip").innerText(), /^(Project|Global|Inherited|Imposed) configuration:/)
     assert.doesNotMatch(await page.locator(".mission-picker-selection-actions").innerText(), /experimental\.schedules|\/private\/responsible/)
     if (openable) {
       await repair.click()
@@ -408,6 +424,70 @@ test(`explicit ${layer} OFF exposes only the supported repair action and hides d
       const hint = await page.evaluate(() => JSON.parse(localStorage.getItem("codenomad.settings.rowTarget")!))
       assert.equal(hint.row, "config-file:responsible-config")
     }
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+const refusalLayers = ["project", "global", "inherited", "imposed"] as const
+const refusalLabels = {
+  en: ["Project configuration", "Global configuration", "Inherited configuration", "Imposed configuration"],
+  fr: ["Configuration du projet", "Configuration globale", "Configuration héritée", "Configuration imposée"],
+  de: ["Projektkonfiguration", "Globale Konfiguration", "Geerbte Konfiguration", "Vorgegebene Konfiguration"],
+  es: ["Configuración del proyecto", "Configuración global", "Configuración heredada", "Configuración impuesta"],
+  he: ["הגדרות הפרויקט", "הגדרות כלליות", "הגדרות בירושה", "הגדרות כפויות"],
+  ja: ["プロジェクト設定", "グローバル設定", "継承された設定", "強制された設定"],
+  ne: ["परियोजना कन्फिगरेसन", "विश्वव्यापी कन्फिगरेसन", "विरासतमा प्राप्त कन्फिगरेसन", "अनिवार्य कन्फिगरेसन"],
+  ru: ["Конфигурация проекта", "Глобальная конфигурация", "Унаследованная конфигурация", "Принудительная конфигурация"],
+  tr: ["Proje yapılandırması", "Genel yapılandırma", "Devralınan yapılandırma", "Zorunlu yapılandırma"],
+  "zh-Hans": ["项目配置", "全局配置", "继承的配置", "强制配置"],
+}
+for (const [locale, labels] of Object.entries(refusalLabels)) test(`${locale}: all document OFF sources are localized in the real information tip`, async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true, locale })
+  let layer: typeof refusalLayers[number] = "project"
+  try {
+    await select(page)
+    await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: { location: { directory: "fixture" },
+      api: { available: true }, enabled: true, origin: null, activation: { available: false, targets: [],
+        refusal: { reason: "explicit-off", provenance: "experimental-block", layer, path: "/private/source.jsonc", openable: false } } } }))
+    for (const [index, value] of refusalLayers.entries()) {
+      layer = value
+      await page.locator(".mission-picker-actions button").last().click()
+      const info = page.locator(".mission-action-feedback .settings-info-tip")
+      await info.focus()
+      const tip = page.getByRole("tooltip").filter({ hasText: labels[index] })
+      await tip.waitFor()
+      assert.match(await tip.innerText(), /\/private\/source\.jsonc/)
+    }
+    assert.equal(f.posts.length, 0); assert.equal(f.activations.length, 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("unselected unified passages prioritize their coordinator and descendant requests over working", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  const entry = page.locator('[data-mission-key="scheduled:msn_schedule"] .mission-row-select')
+  try {
+    await f.change(doc => {
+      changes.play(doc, "play-probe", Date.now(), []); doc.synchronization = null
+      changes.reserve(doc, { kind: "manual", requestID: "request-probe" }, Date.now(), [])
+      changes.admitted(doc, doc.pending!.id, Date.now())
+    })
+    await page.evaluate(() => (window as any).missionFixture.refresh())
+    await page.waitForFunction(() => document.querySelector('[data-mission-key="scheduled:msn_schedule"] .mission-row-mark')?.getAttribute("data-mark") === "working")
+    const root = f.doc.pending!.coordinatorSessionID
+    await page.evaluate(root => {
+      ;(window as any).missionFixture.seedCoordinators([root, "ses_child"], { ses_child: root })
+      ;(window as any).missionFixture.queuePermission("ses_child", "child-permission")
+    }, root)
+    await page.waitForFunction(() => document.querySelector('[data-mission-key="scheduled:msn_schedule"] .mission-row-mark')?.getAttribute("data-mark") === "permission")
+    assert.equal(await entry.getAttribute("aria-current"), null)
+    assert.match(await entry.getAttribute("title") ?? "", /Awaiting your input/)
+    await page.evaluate(async root => {
+      const { clearPermissionQueue } = await import("/src/stores/instances.ts")
+      clearPermissionQueue("fixture")
+      ;(window as any).missionFixture.queuePermission(root, "root-permission")
+    }, root)
+    assert.equal(await entry.locator(".mission-row-mark").getAttribute("data-mark"), "permission")
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

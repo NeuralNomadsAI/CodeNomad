@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "Iniciando…",
+  "missionsPanel.action.resuming": "Reanudando…",
+  "missionsPanel.action.runningNow": "Iniciando ejecución…",
   "missionsPanel.pages.raw": "Leer páginas de JSON sin procesar",
   "missionsPanel.pages.rawPage": "Página de JSON sin procesar {page} de {total}",
   "missionsPanel.pages.previous": "Página anterior",
