@@ -67,6 +67,7 @@ export async function registerTauriBrowserTarget(payload: {
   url: string
   bounds: BrowserTargetBounds
   presentation?: BrowserPresentation
+  logicalAddress?: string
 }): Promise<void> {
   await invoke("browser_target_register", { payload: { ...payload, visible: false } })
 }
@@ -80,8 +81,8 @@ export async function updateTauriBrowserTarget(
   await invoke("browser_target_update", { payload: { registrationId, bounds, visible, ...(presentation ? { presentation } : {}) } })
 }
 
-export async function controlTauriBrowserTarget(registrationId: string, action: "back" | "reload" | "navigate", url?: string): Promise<void> {
-  await invoke("browser_target_action", { payload: { registrationId, action, url } })
+export async function controlTauriBrowserTarget(registrationId: string, action: "back" | "reload" | "navigate", url?: string, logicalAddress?: string): Promise<void> {
+  await invoke("browser_target_action", { payload: { registrationId, action, url, ...(logicalAddress ? { logicalAddress } : {}) } })
 }
 
 export async function readBrowserHistory(registrationId: string, guestWebContentsId?: number): Promise<NativeBrowserHistory> {

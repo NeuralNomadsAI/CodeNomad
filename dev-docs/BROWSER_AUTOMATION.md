@@ -129,6 +129,26 @@ authority header. Retargeting, removal, Forget, observed identity change and
 backend shutdown also revoke transfers. Remote token deletion is best-effort
 under that original generation.
 
+The session preview store uses the owning client's capability API for remote
+projects. Same-application navigation reuses its capability; changing application
+origins creates a replacement. `BrowserFrame` separates the loaded source from
+the displayed application address and maps native history entries before storing
+their logical URLs. Remote dismissal releases live authority while retaining
+saved logical history. Tab detachment and attachment revocation fence pending
+creation/restoration and release live capabilities; `pagehide` uses keepalive
+deletion. Internal content URLs remain confined to embedded loading. The
+`isolatedOrigin` frame policy requires origin-bound HTTP/WS admission on its
+host-issued content origin.
+
+Native remote previews pass a logical address with their registration. Their
+native presentation keeps the content capability private: native context menus,
+clipboard exports, link dragging, printing, pop-ups, downloads, page dialogs and permission prompts
+are suppressed. Electron's guarded before-unload fallback uses the logical
+origin or CodeNomad as its title. WebView2 hides its native status bar; WebKit
+disables link previews/tooltips. The fixed privilege-free
+`lib/native/remote-preview-guards.cjs` document-start program applies only to
+private preview origins. Ordinary native previews retain their browser policy.
+
 Service-worker script requests are refused on the isolated listener before
 transport construction or upstream dispatch. `Service-Worker-Allowed` stays
 outside the response allowlist. An expired content origin's network response
@@ -218,7 +238,16 @@ Native open claims retain their request deadline and backend-generation fence. T
 
 - Server: `automation-plugin.test.ts`, `automation/desktop-plugin.test.ts`, `routes/automation-plugin.test.ts`, and the shared pruning-presence regressions
 - Native discovery: build with `npm run build:automation --workspace @neuralnomads/codenomad`, then run `node scripts/test-automation-native.mjs <absolute-cli-path>`. The fixture uses an isolated daemon/config/database and exercises ordinary-project discovery, all tools at startup, execution fences, independent leases, shutdown and reopening. CI runs it against the minimum and latest OpenCode runtimes.
-- Electron: `browser-controller.test.ts`, `browser-webview-security.test.ts`, preload tests
+- Electron: `browser-controller.test.ts`, `browser-webview-security.test.ts`, preload tests.
+  `npm run test:preloads --workspace @neuralnomads/codenomad-electron-app`
+  builds the production entries and loads them in hidden sandboxed native views.
+  Preload builds use isolated entries with dependencies bundled inline; every
+  entry must load autonomously under Electron's sandboxed module loader.
+  The built regression checks document-start remote guards, ordinary prompt
+  behavior and local/Preferences/remote application bridge fences.
+  Linux runs under Xvfb with Chromium's process sandbox disabled for CI;
+  each tested renderer retains asserted `sandbox: true`, context isolation and
+  disabled page Node integration. Child exit status and bounded output accompany failures.
 - Tauri: `embedded_view_tests.rs`, `browser_controller.rs` and `browser_controller_regressions.rs` tests, including ownership, fail-closed child policy, creation rollback, replacement fencing, actual capability resolution, primary-renderer cleanup, window counting, lock ordering and expired dispatch
 - Native capabilities: `packages/tauri-app/tests/webkit-capabilities/README.md` describes the backend-free production-layer harness on Windows/macOS/Linux and the Electron harness. It covers OAuth, blank/named windows, opener cleanup, HTTP/data/blob downloads, dialog values/cancellation, permission consent/denial, no app globals, fullscreen/Escape, file inputs/drop and WebAuthn availability. Windows runs the release build with scoped accessibility input; Linux uses both display backends. The HTTPS-to-loopback mode records the requesting origin in Electron's consent UI.
 - WebKitGTK history: `python3 packages/tauri-app/scripts/test-webkit-history-linux.py` in a graphical Linux session with GTK 3/WebKitGTK 4.1 development packages. Run with `GDK_BACKEND=wayland` and `GDK_BACKEND=x11`; the standalone native example includes the production adapters, bounded-window selection and handle allocator. It covers redirects, fragments, same-URL `pushState`, `replaceState`, native traversal, branching and the 32-entry bound.

@@ -23,3 +23,14 @@ pub(super) fn request_close<R: tauri::Runtime>(view: &tauri::Webview<R>) -> Resu
 pub(super) fn install<R: tauri::Runtime>(view: &tauri::Webview<R>) -> Result<(), String> {
     super::zoom::install(view)
 }
+
+pub(super) fn privacy<R: tauri::Runtime>(
+    view: &tauri::Webview<R>,
+    restricted: bool,
+) -> Result<(), String> {
+    view.with_webview(move |native| unsafe {
+        if let Some(view) = native.inner().cast::<objc2::runtime::AnyObject>().as_ref() {
+            let _: () = objc2::msg_send![view, setAllowsLinkPreview: objc2::runtime::Bool::from(!restricted)];
+        }
+    }).map_err(|error| error.to_string())
+}

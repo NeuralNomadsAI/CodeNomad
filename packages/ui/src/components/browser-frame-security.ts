@@ -4,16 +4,16 @@ import { PREVIEW_SANDBOX_FLAGS as FRAME_SANDBOX } from "../../../server/src/prev
 /**
  * `allow-same-origin` lets a frame's own fetches and WebSocket handshakes stay
  * same-origin, so the `SameSite=Lax` session cookie reaches app-authenticated
- * routes. Reserved for app-proxied content the user explicitly configured
- * (SideCars): without it the sandboxed frame is an opaque origin, its requests
- * carry `Origin: null`, and `/sidecars/*` rejects them before the proxy runs.
+ * routes. Reserved for explicitly trusted SideCars or host-issued isolated
+ * preview origins with origin-bound content admission. Ordinary path previews
+ * retain opaque origins; SideCars require the application's same-origin cookie.
  */
 export function getBrowserFramePolicy(
   _environment: Pick<RuntimeEnvironment, "host" | "windowContext">,
-  options: { trustedSameOrigin?: boolean } = {},
+  options: { trustedSameOrigin?: boolean; isolatedOrigin?: boolean } = {},
 ) {
   return {
-    sandbox: options.trustedSameOrigin ? `${FRAME_SANDBOX} allow-same-origin` : FRAME_SANDBOX,
+    sandbox: options.trustedSameOrigin || options.isolatedOrigin ? `${FRAME_SANDBOX} allow-same-origin` : FRAME_SANDBOX,
     canInspectDom: false,
   }
 }
@@ -68,11 +68,11 @@ export function normalizeBrowserPreviewUrl(rawUrl: string): string {
 
 export function getPreviewFrameSource(
   environment: Pick<RuntimeEnvironment, "host" | "windowContext">,
-  preview: { token: string; targetUrl: string; proxyUrl: string },
+  preview: { token: string; targetUrl: string; proxyUrl: string; contentUrl?: string },
   parentUrl: string,
   backendId = "local",
 ): string {
-  if (backendId !== "local") return preview.proxyUrl
+  if (backendId !== "local") return preview.contentUrl ?? preview.proxyUrl
   if (environment.windowContext !== "local" || (environment.host !== "electron" && environment.host !== "tauri")) {
     return preview.proxyUrl
   }

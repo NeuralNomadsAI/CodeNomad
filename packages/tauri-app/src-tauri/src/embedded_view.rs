@@ -74,6 +74,13 @@ pub(crate) fn is_allowed_url(url: &tauri::Url) -> bool {
         && url.password().is_none()
 }
 
+#[path = "../../vendor/wry-0.57.1/src/preview_origin.rs"]
+mod preview_origin;
+
+pub(crate) fn private_preview_url(url: &tauri::Url) -> bool {
+    preview_origin::private_preview_url(url.as_str())
+}
+
 fn site_url_allowed(url: &tauri::Url, origin: Option<&str>) -> bool {
     is_allowed_url(url)
         || (url.scheme() == "about" && url.path() == "blank")
@@ -116,6 +123,7 @@ struct Inner {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Record {
+    logical_address: Option<String>,
     owner: String,
     token: u64,
     document: u64,
@@ -130,6 +138,53 @@ struct Record {
 pub(crate) struct EmbeddedViews(Arc<Mutex<Inner>>);
 
 impl EmbeddedViews {
+    pub(crate) fn restricted_browser(&self, label: &str) -> bool {
+        self.0.lock().is_ok_and(|inner| {
+            inner
+                .records
+                .get(label)
+                .is_some_and(|record| record.logical_address.is_some())
+        })
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    pub(crate) fn configure_browser_presentation<R: Runtime>(
+        &self,
+        view: &tauri::Webview<R>,
+        source: &tauri::Url,
+        logical: Option<&str>,
+    ) -> Result<(), String> {
+        let record = self.owned(view.window().label(), view.label())?;
+        let address = if let Some(value) = logical {
+            let parsed = tauri::Url::parse(value).map_err(|_| "Invalid logical browser address")?;
+            if !is_allowed_url(&parsed) || private_preview_url(&parsed) {
+                return Err("Invalid logical browser address".into());
+            }
+            Some(parsed.origin().ascii_serialization())
+        } else if private_preview_url(source) {
+            Some("CodeNomad".into())
+        } else {
+            record.logical_address.clone()
+        };
+        let restricted = address.is_some();
+        if restricted != record.logical_address.is_some() {
+            #[cfg(windows)]
+            windows::privacy(view, restricted)?;
+            #[cfg(target_os = "linux")]
+            linux::privacy(view, restricted)?;
+            #[cfg(target_os = "macos")]
+            macos::privacy(view, restricted)?;
+        }
+        let mut inner = self.0.lock().map_err(|error| error.to_string())?;
+        inner
+            .records
+            .get_mut(view.label())
+            .filter(|current| current.token == record.token)
+            .ok_or("Expired browser view")?
+            .logical_address = address;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(owner: &str, label: &str) -> Self {
         let views = Self::default();
@@ -149,6 +204,7 @@ impl EmbeddedViews {
         }
         inner.sequence = inner.sequence.wrapping_add(1);
         let record = Record {
+            logical_address: None,
             owner: owner.into(),
             token: inner.sequence,
             document: 0,

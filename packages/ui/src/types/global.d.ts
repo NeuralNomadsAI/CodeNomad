@@ -78,7 +78,7 @@ declare global {
     deleteOtherDataProfiles?: (ids: string[]) => Promise<unknown>
     setNextLaunchDataProfile?: (name: string) => Promise<unknown>
     relaunchIntoNextDataProfile?: () => Promise<unknown>
-    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
+    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number; logicalAddress?: string }) => Promise<{ ok: true }>
     unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
     emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>
     browserTargetHistory?: (guestWebContentsId: number, entryId?: number) => Promise<import("../lib/browser-history").NativeBrowserHistory | undefined>

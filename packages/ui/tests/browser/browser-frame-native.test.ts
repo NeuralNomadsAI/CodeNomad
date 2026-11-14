@@ -64,6 +64,53 @@ const snapshot = (page: Page) => page.evaluate(() => {
   return { calls: fixture.calls, errors: fixture.errors, locations: fixture.locations, listeners: fixture.listenerCount() }
 })
 
+test("Tauri remote previews keep loaded capabilities out of addresses and native history", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${url}?isolated&history`)
+    await page.waitForFunction(() => (window as any).nativeFixture?.calls.some((c: any) => c.command === "browser_target_register"))
+    const registered = (await snapshot(page)).calls.find((c: any) => c.command === "browser_target_register")!.payload
+    assert.equal(registered.url, "http://local-cap.preview.localhost:1234/previews/remote-token/start")
+    assert.equal(await page.getByRole("textbox", { name: "Address" }).inputValue(), "http://remote-app.test/start")
+    await page.evaluate(id => (window as any).nativeFixture.navigate(id, "http://local-cap.preview.localhost:1234/previews/remote-token/next?q=1"), registered.registrationId)
+    await page.waitForFunction(() => (window as any).nativeFixture.history?.urls.length === 2)
+    assert.equal(await page.getByRole("textbox", { name: "Address" }).inputValue(), "http://remote-app.test/next?q=1")
+    await page.getByRole("button", { name: "Back", exact: true }).click()
+    await page.waitForFunction(() => (window as any).nativeFixture.history?.index === 0)
+    await page.getByRole("button", { name: "Forward", exact: true }).click()
+    await page.waitForFunction(() => (window as any).nativeFixture.history?.index === 1)
+    await page.getByRole("textbox", { name: "Address" }).fill("http://remote-app.test/typed")
+    await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.payload?.action === "navigate"
+      && c.payload.url.endsWith("/previews/remote-token/typed")))
+    await page.getByRole("button", { name: "Refresh", exact: true }).click()
+    assert.ok((await snapshot(page)).calls.some((c: any) => c.payload?.action === "reload"))
+    assert.ok((await page.evaluate(() => (window as any).nativeFixture.history.urls)).every((value: string) => !value.includes(".preview.localhost")))
+    assert.deepEqual((await snapshot(page)).errors, [])
+  } finally { await page.close() }
+})
+
+test("Electron renderer seam loads remote capabilities while showing only application addresses", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${url}?host=electron&isolated`)
+    const guest = page.locator("webview")
+    await guest.waitFor()
+    assert.equal(await guest.getAttribute("src"), "http://local-cap.preview.localhost:1234/previews/remote-token/start")
+    const address = page.getByRole("textbox", { name: "Address" })
+    await address.fill("http://remote-app.test/next")
+    await address.press("Enter")
+    await page.waitForFunction(() => document.querySelector("webview")?.getAttribute("src")?.endsWith("/previews/remote-token/next"))
+    await page.evaluate(() => {
+      const event = new Event("did-navigate")
+      Object.assign(event, { url: "http://local-cap.preview.localhost:1234/previews/remote-token/committed?q=1" })
+      document.querySelector("webview")!.dispatchEvent(event)
+    })
+    assert.equal(await address.inputValue(), "http://remote-app.test/committed?q=1")
+    assert.deepEqual((await snapshot(page)).errors, [])
+  } finally { await page.close() }
+})
+
 for (const platform of ["macos", "linux"]) {
   test(`Tauri ${platform} keeps dimensions, history and hidden registration independent of emulation`, async () => {
     const page = await browser.newPage({ userAgent: `${platform} WebKit fixture` })
