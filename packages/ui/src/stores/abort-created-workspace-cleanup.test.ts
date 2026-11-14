@@ -32,6 +32,28 @@ function createHarness(options: { failures?: number; pending?: boolean; retryDel
 }
 
 describe("abort-created workspace cleanup", () => {
+  it("confirmed settlement during backoff prevents a further cancellation attempt", async () => {
+    let attempts = 0, resume!: () => void
+    const cleanup = new AbortCreatedWorkspaceCleanup<TestWorkspace>({
+      requestKey: item => item.requestId,
+      discardWorkspace: async () => {},
+      restoreWorkspace: () => {},
+      retryDelaysMs: [1],
+      wait: () => new Promise<void>(resolve => { resume = resolve }),
+    })
+    const flight = cleanup.cancelRequest("request", async () => {
+      attempts++
+      throw new Error("lost cancel response")
+    })
+    assert.equal(cleanup.cancelRequest("request", async () => { attempts++ }), flight)
+    await flushPromises()
+    cleanup.settleRequest("request")
+    resume()
+    await flight
+    await cleanup.cancelRequest("request", async () => { attempts++ })
+    assert.equal(attempts, 1)
+  })
+
   it("committed claims retire same-attachment work while passive observations cannot replace them", async () => {
     const old = { ...workspace("a~w", "old"), key: "old" }, next = { ...workspace("a~w", "next"), key: "next" }
     const discarded: string[] = [], restored: string[] = []
