@@ -261,6 +261,11 @@ The fixed navigation method adaptation remains conditional on method absence.
 
 ## Agent conventions
 
+Readiness ownership fixtures await complete request JSON before one-shot follower
+reconciliation. Exclusive file creation exposes its name before the write settles.
+Replacement fixtures hold backend ACK consumption until foreign bytes are installed;
+overflow fixtures cancel explicitly after observing the refused complete plan.
+
 The bundled `codenomad.memory` plugin exposes `codenomad_memory` with `list`,
 `read` (exact ID or title), `save` (title/type/text), and revision-conditional
 `delete`. It uses the native execution session as provenance and the shared
