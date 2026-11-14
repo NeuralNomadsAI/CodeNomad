@@ -48,7 +48,7 @@ export function updateMissionProjectView(instanceId: string, patch: Partial<Proj
     && previous.selectedScheduled === value.selectedScheduled && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded
     && previous.disclosures === value.disclosures) return
   updateTabViewState(instanceId, { missions: value })
-  if ("reader" in patch) activateSessionSurface({ instanceId, sessionId: null },
+  if ("reader" in patch && previous.reader !== value.reader) activateSessionSurface({ instanceId, sessionId: null },
     value.reader ? { kind: "mission", target: value.reader } : { kind: "conversation" })
 }
 export function missionDisclosureOpen(instanceId: string, missionId: string, id: string, defaultOpen = true): boolean {

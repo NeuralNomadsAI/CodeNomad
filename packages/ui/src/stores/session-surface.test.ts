@@ -29,6 +29,8 @@ it("every central surface replaces every other, independently of duplicate occur
     assert.deepEqual(getSessionSurface(ctx("matrix-a")), to)
     assert.deepEqual(getSessionSurface(ctx("matrix-b")), from)
     if ("target" in to) assert.equal((getSessionSurface(ctx("matrix-a")) as typeof to).target, to.target)
+    updateMissionProjectView("matrix-a", { selected: "unrelated-selection", reader: to.kind === "mission" ? to.target : undefined })
+    assert.deepEqual(getSessionSurface(ctx("matrix-a")), to, "selection bookkeeping preserves the foreground target")
   }
   lifecycle("matrix-a", "removed"); lifecycle("matrix-b", "removed")
 })
