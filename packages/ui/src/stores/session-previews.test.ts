@@ -7,6 +7,7 @@ import { getTabViewState, seedTabViewState } from "./tab-view-state"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getPendingPreviewOperationCount } from "./session-previews"
 import { captureSessionSurfaceIntent } from "./session-surface"
+import { seedRestoredSessionSelection } from "./session-state"
 
 function registerOccurrence(id: string) {
   publishInstanceLifecycleAuthority({ type: "opened", instanceId: id, folder: "/same", occurrence: 0 })
@@ -27,6 +28,7 @@ describe("session preview persistence", () => {
     serverApi.deletePreview = async () => undefined as any
     try {
       const preview = await openSessionPreview("same", "https://example.com/a", id)
+      seedRestoredSessionSelection(id, null, "same")
       const ctx = { instanceId: id, sessionId: "same" }
       const unchanged = captureSessionSurfaceIntent(ctx)
       updateSessionPreviewLocation(preview.storageKey, preview.targetUrl)
@@ -37,6 +39,32 @@ describe("session preview persistence", () => {
       const sameUrl = captureSessionSurfaceIntent(ctx)
       updateSessionPreviewHistory(preview.storageKey, { urls: [preview.targetUrl, preview.targetUrl], index: 1 })
       assert.equal(sameUrl.current(), false, "same URL entries still represent newer navigation")
+    } finally { closeOccurrence(id); serverApi.createPreview = create; serverApi.deletePreview = remove }
+  })
+  it("hidden session location and history updates preserve the displayed session's activation intent", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview, id = "hidden-web-intent"
+    registerOccurrence(id)
+    serverApi.createPreview = async ({ sessionId, url }) => ({ sessionId, token: sessionId, targetUrl: url }) as any
+    serverApi.deletePreview = async () => undefined as any
+    try {
+      const a = await openSessionPreview("a", "https://example.com/a", id)
+      const b = await openSessionPreview("b", "https://example.com/b", id)
+      seedRestoredSessionSelection(id, null, "b")
+      assert.equal(getSessionPreview("a", id)?.mode, "preview", "saved mode also remains preview for the hidden session")
+      const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: "b" })
+      updateSessionPreviewLocation(a.storageKey, "https://example.com/redirect")
+      assert.equal(intent.current(), true)
+      assert.equal(getSessionPreview("a", id)?.targetUrl, "https://example.com/redirect")
+      const history = { urls: [a.targetUrl, "https://example.com/redirect"], index: 1 }
+      updateSessionPreviewHistory(a.storageKey, history)
+      assert.equal(intent.current(), true)
+      assert.deepEqual(getSessionPreview("a", id)?.history, history)
+      assert.deepEqual(getTabViewState(id).previews?.a.history, history)
+      updateSessionPreviewLocation(b.storageKey, "https://example.com/foreground")
+      assert.equal(intent.current(), false)
+      const next = captureSessionSurfaceIntent({ instanceId: id, sessionId: "b" })
+      updateSessionPreviewHistory(b.storageKey, { urls: [b.targetUrl, b.targetUrl], index: 1 })
+      assert.equal(next.current(), false)
     } finally { closeOccurrence(id); serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
   it("retains only pending request fences across 1000 occurrence lifetimes", async () => {

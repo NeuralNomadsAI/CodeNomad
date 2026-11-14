@@ -24,6 +24,41 @@ function ranked(query: string, older = false) {
     })) }
 }
 
+test("Open in session hydration yields to a newer held browser open without changing selection or anchor", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  let releasePreview!: () => void, reached!: () => void
+  const held = new Promise<void>(resolve => { releasePreview = resolve }), started = new Promise<void>(resolve => { reached = resolve })
+  await page.route("**/api/**", route => route.fulfill({ json: route.request().url().endsWith("/session-history/ranked") ? ranked("needle") : {} }))
+  await page.route("**/api/previews", async route => {
+    reached(); await held
+    await route.fulfill({ json: { sessionId: "s", token: "newer", targetUrl: "https://example.com", url: "/preview/newer" } })
+  })
+  try {
+    await page.goto(baseUrl); await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("combobox", { name: "Search scope" }).selectOption("workspace")
+    await page.getByRole("searchbox").fill("needle")
+    await page.getByText("Workspace needle answer 2", { exact: true }).click()
+    const preview = page.locator(".history-message-preview")
+    await preview.locator("pre").filter({ hasText: "Full selected historical message" }).waitFor()
+    await page.evaluate(() => (window as any).fixture.holdSession("other-session-2"))
+    await preview.getByRole("button", { name: "Open in session" }).click()
+    await page.waitForFunction(() => (window as any).fixture.sessionHeld())
+    await page.evaluate(() => { (window as any).previewOpen = (window as any).fixture.openPreview().then(() => "opened", (error: Error) => error.name) })
+    await started
+    await page.evaluate(() => (window as any).fixture.releaseSession())
+    await preview.getByRole("button", { name: "Open in session" }).waitFor()
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".history-message-preview-open")?.disabled)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.opened()), { active: null, anchor: null, surface: null })
+    releasePreview()
+    assert.equal(await page.evaluate(() => (window as any).previewOpen), "opened")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.opened()), { active: null, anchor: null, surface: null })
+    assert.deepEqual(errors, [])
+  } finally { releasePreview(); await page.evaluate(() => (window as any).fixture?.releaseSession()).catch(() => {}); await page.close() }
+})
+
 test("conversation pages stay literal; workspace is one ranked list with Unicode marks, notices and destination highlighting", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const errors: string[] = [], literal: any[] = [], rankedReads: any[] = []

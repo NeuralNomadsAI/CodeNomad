@@ -7,6 +7,7 @@ import type { MissionTask } from "../../../../server/src/api-types"
 import { initializeClientState } from "../../../src/stores/client-state"
 import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { missionStore } from "../../../src/stores/missions"
+import { openSessionPreview } from "../../../src/stores/session-previews"
 import { addInstance, updateInstance } from "../../../src/stores/instances"
 import { activeSessionId, seedRestoredSessionSelection, setSessions, sessions } from "../../../src/stores/session-state"
 import { sseManager } from "../../../src/lib/sse-manager"
@@ -42,6 +43,7 @@ function Fixture() {
   ;(window as any).taskReader = {
     show, refresh: () => missionStore.refresh(instanceId),
     mount,
+    openPreview: () => openSessionPreview("coordinator", "https://example.com", instanceId),
     conversation: (id: string) => seedRestoredSessionSelection(instanceId, null, id),
     reconnect: () => applyOpenCodeDataEvent(instanceId, scope, { id: "reconnected", type: "server.connected", created: 2, data: {} } as V2Event),
     directory: (folder: string) => updateInstance(instanceId, { folder }),

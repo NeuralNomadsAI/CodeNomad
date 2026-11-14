@@ -101,7 +101,7 @@ test("a duplicate's diff, session selection, Info and Back/Forward preserve its 
     await page.evaluate(id => (window as any).fixture.selectOccurrence(id), b)
     await page.evaluate(id => (window as any).fixture.readFile(id, "Long.md"), b)
     const markdown = root(b).locator(".workspace-markdown")
-    await markdown.waitFor()
+    await markdown.getByRole("heading", { name: "Long.md", exact: true }).waitFor()
     await markdown.evaluate(element => new Promise<void>(resolve => {
       element.addEventListener("scroll", () => resolve(), { once: true }); element.scrollTop = 900
     }))
@@ -124,7 +124,7 @@ test("a duplicate's diff, session selection, Info and Back/Forward preserve its 
     await root(a).locator('[data-session-id="second"] .message-stream-container').waitFor()
     assert.deepEqual(await page.evaluate(id => (window as any).fixture.presentation(id), b), before)
     await page.evaluate(id => (window as any).fixture.selectOccurrence(id), b)
-    await markdown.waitFor()
+    await markdown.getByRole("heading", { name: "Long.md", exact: true }).waitFor()
     assert.ok(Math.abs(await markdown.evaluate(element => element.scrollTop) - scroll) <= 2)
     assert.equal(await markdown.textContent(), content)
     assert.equal(await page.evaluate(id => (window as any).fixture.selection(id), b), "session")

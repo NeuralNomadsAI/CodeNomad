@@ -23,6 +23,7 @@ const previewReads: string[] = []
 // Session label reads: count per ID and the peak number in flight.
 const sessionReads: string[] = []
 let sessionReadsInFlight = 0, peakSessionReads = 0
+let heldSession: { id: string; wait: Promise<void>; release: () => void; reached: boolean } | undefined
 serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: "/repo/.codenomad/worktrees", worktrees: [
   { slug: "root", label: "dev", directory: "/repo", kind: "root" as const, branch: "dev" },
   { slug: "feature", label: "feature/search", directory: "/repo/.codenomad/worktrees/feature", kind: "worktree" as const, branch: "feature/search" },
@@ -39,6 +40,7 @@ const client: any = { session: {
     sessionReads.push(sessionID)
     peakSessionReads = Math.max(peakSessionReads, ++sessionReadsInFlight)
     try {
+      if (heldSession?.id === sessionID) { heldSession.reached = true; await heldSession.wait }
       await new Promise(resolve => setTimeout(resolve, 20))
       return sessionID.startsWith("other-session-") ? nativeSession(sessionID) : { title: "Historical session title" }
     } finally { sessionReadsInFlight -= 1 }
@@ -72,6 +74,14 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   activate: () => setActive(true),
   snapshot: () => ({ ids: store.getSessionMessageIds(sessionId), loads, previewReads }),
   sessionReads: () => ({ reads: [...sessionReads], peak: peakSessionReads }),
+  holdSession: (id: string) => {
+    let release!: () => void
+    const wait = new Promise<void>(resolve => { release = resolve })
+    heldSession = { id, wait, release, reached: false }
+  },
+  sessionHeld: () => heldSession?.reached,
+  releaseSession: () => { heldSession?.release(); heldSession = undefined },
+  openPreview: () => openSessionPreview(sessionId, "https://example.com", instanceId),
   // The destination was last left on its browser preview.
   showDestinationPreview: async () => {
     serverApi.createPreview = async () => ({ token: "fixture", sessionId: "other-session-2", targetUrl: "https://example.com", url: "/preview/fixture" }) as any

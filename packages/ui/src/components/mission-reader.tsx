@@ -4,7 +4,7 @@ import { useI18n } from "../lib/i18n"
 import { missionStore as projectMissionStore } from "../stores/missions"
 import { MissionPanelScope, scopedMissionStore } from "./mission-panel-scope"
 import { missionProjectView, updateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
-import { activateSessionSurface, getSessionSurface } from "../stores/session-surface"
+import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface } from "../stores/session-surface"
 import { Markdown } from "./markdown"
 import { copyToClipboard } from "../lib/clipboard"
 import { MissionTaskReader } from "./mission-task-reader"
@@ -308,32 +308,35 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const openActor = async (sessionId: string) => {
     const current = captureNavigation(), intent = ++navigationIntent
     const instanceId = props.instanceId, scope = props.scope
-    const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
-    const authorized = () => {
-      const value = mission()
-      const currentTask = task()
-      if (!value || target()?.kind !== "task" || !currentTask) return false
-      const family = activity()?.missions.find(item => item.missionId === value.id)?.family
-      return missionTaskConversation(value, currentTask, family, missionDerivedTaskSession(props.instanceId, value, currentTask.key),
-        [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) === sessionId
-        && (value.coordinatorSessionId === sessionId || missionIncludesSession([...value.actors, ...missionStore.observedActors(instanceId, value.id)], sessionId, family)
-          || missionDerivedSessionIncludes(props.instanceId, value, sessionId))
-    }
-    const admitted = () => current() && intent === navigationIntent && authorized()
-      && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
-      && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
-    if (!admitted()) return
-    setNavigationError(false)
-    // Native session.get resolves the owned location; the catalog reads only
-    // agents/models/commands. Hydrate this ID and its parents, never list all sessions.
-    try { await hydrateRestoredSessionChain(instanceId, [sessionId], undefined, admitted) }
-    catch { if (admitted()) setNavigationError(true); return }
-    if (!admitted()) return
-    if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
-    batch(() => {
-      setActiveSessionFromList(instanceId, sessionId)
-      activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" })
-    })
+    const surfaceIntent = captureSessionSurfaceIntent({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null })
+    try {
+      const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
+      const authorized = () => {
+        const value = mission()
+        const currentTask = task()
+        if (!value || target()?.kind !== "task" || !currentTask) return false
+        const family = activity()?.missions.find(item => item.missionId === value.id)?.family
+        return missionTaskConversation(value, currentTask, family, missionDerivedTaskSession(props.instanceId, value, currentTask.key),
+          [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) === sessionId
+          && (value.coordinatorSessionId === sessionId || missionIncludesSession([...value.actors, ...missionStore.observedActors(instanceId, value.id)], sessionId, family)
+            || missionDerivedSessionIncludes(props.instanceId, value, sessionId))
+      }
+      const admitted = () => surfaceIntent.current() && current() && intent === navigationIntent && authorized()
+        && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
+        && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
+      if (!admitted()) return
+      setNavigationError(false)
+      // Native session.get resolves the owned location; the catalog reads only
+      // agents/models/commands. Hydrate this ID and its parents, never list all sessions.
+      try { await hydrateRestoredSessionChain(instanceId, [sessionId], undefined, admitted) }
+      catch { if (admitted()) setNavigationError(true); return }
+      if (!admitted()) return
+      if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
+      batch(() => {
+        setActiveSessionFromList(instanceId, sessionId)
+        activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" })
+      })
+    } finally { surfaceIntent.release() }
   }
   // Compact project and current-passage readers resolve their exact body descriptors.
   const oneTime = () => Boolean(target()) && (!target()!.recurrence || Boolean(mission()?.panelPassage)) && target()!.kind !== "recurrence" && target()!.kind !== "playbook"

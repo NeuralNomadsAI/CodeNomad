@@ -2,7 +2,8 @@ import { createSignal } from "solid-js"
 import { serverApi } from "../lib/api-client"
 import type { PreviewSession } from "../../../server/src/api-types"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
-import { activateSessionSurface, captureSessionSurfaceIntent, invalidateSessionSurfaceIntent } from "./session-surface"
+import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, invalidateSessionSurfaceIntent } from "./session-surface"
+import { activeSessionId } from "./session-state"
 import { adoptLegacyTabPreview, getTabViewState, updateTabViewState, type RestorableTabPreview } from "./tab-view-state"
 import { parseLegacySessionPreviews } from "./tab-view-state-codec"
 import { isInstanceOccurrenceOpen, onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
@@ -153,16 +154,21 @@ function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
   const current = sessionPreviews().get(storageKey)
   const target = historyUrl(targetUrl)
   if (!current || !target) return
-  if (current.mode === "preview" && target !== current.targetUrl) invalidateSessionSurfaceIntent(current.instanceId)
+  if (isForegroundPreview(current) && target !== current.targetUrl) invalidateSessionSurfaceIntent(current.instanceId)
   setSessionPreviews(previous => new Map(previous).set(storageKey, withLiveMode({ ...current, targetUrl: target })))
   // History capture persists the committed URL and cursor together.
+}
+
+function isForegroundPreview(preview: SessionPreviewRecord): boolean {
+  const surface = getSessionSurface({ instanceId: preview.instanceId, sessionId: activeSessionId().get(preview.instanceId) ?? null })
+  return surface.kind === "web" && surface.sessionId === preview.sessionId
 }
 
 export function updateSessionPreviewHistory(storageKey: string, history: BrowserHistory) {
   const current = sessionPreviews().get(storageKey)
   const targetUrl = historyUrl(history.urls[history.index])
   if (!current || !targetUrl) return
-  if (current.mode === "preview" && (current.history.index !== history.index || current.history.urls.length !== history.urls.length
+  if (isForegroundPreview(current) && (current.history.index !== history.index || current.history.urls.length !== history.urls.length
     || current.history.urls.some((url, index) => url !== history.urls[index]))) invalidateSessionSurfaceIntent(current.instanceId)
   const next = withLiveMode({ ...current, targetUrl, history: parseBrowserHistory(history, targetUrl) })
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))

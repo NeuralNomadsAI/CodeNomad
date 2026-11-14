@@ -276,10 +276,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         epoch = conversationEpoch
         surfaceIntent = captureSessionSurfaceIntent({ instanceId, sessionId: props.activeSessionId() ?? null })
       },
+      release: () => surfaceIntent.release(),
     }
   }
 
-  const openActor = async (sessionId: string, origin = navigationOrigin(), afterSelection?: () => void,
+  const openActor = async (sessionId: string, origin: ReturnType<typeof navigationOrigin>, afterSelection?: () => void,
     missionId = mission()?.id): Promise<boolean> => {
     const scheduleID = passageSchedule(), passageID = currentPassage.snapshot()?.passageID
     const client = instances().get(origin.instanceId)?.client, generation = getOpenCodeInstanceGeneration(origin.instanceId)
@@ -331,31 +332,35 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       return
     }
     const origin = navigationOrigin()
-    if (!origin.current()) return
-    setNavigationError(false)
-    const active = props.activeSessionId()
-    if (!active || active === "info") {
-      const value = mission()?.id === target.missionId ? mission() : undefined
-      const task = value?.tasks.find(task => task.id === target.itemId)
-      const actor = value && target.kind === "task" ? task && missionTaskConversation(value, task, selectedFamily(),
-         missionDerivedTaskSession(props.instanceId, value, task.key), [...value.actors, ...passageStore().observedActors(props.instanceId, value.id)]) : value?.coordinatorSessionId
-      if (!actor || !await openActor(actor, origin)) return
-    }
-    if (!origin.current()) return
-    batch(() => {
-      updateMissionProjectView(origin.instanceId, { reader: readerTarget(target) })
-    })
-    origin.adoptConversation()
-    if (!origin.current()) return
-    props.onRevealConversation?.()
+    try {
+      if (!origin.current()) return
+      setNavigationError(false)
+      const active = props.activeSessionId()
+      if (!active || active === "info") {
+        const value = mission()?.id === target.missionId ? mission() : undefined
+        const task = value?.tasks.find(task => task.id === target.itemId)
+        const actor = value && target.kind === "task" ? task && missionTaskConversation(value, task, selectedFamily(),
+            missionDerivedTaskSession(props.instanceId, value, task.key), [...value.actors, ...passageStore().observedActors(props.instanceId, value.id)]) : value?.coordinatorSessionId
+        if (!actor || !await openActor(actor, origin)) return
+      }
+      if (!origin.current()) return
+      batch(() => {
+        updateMissionProjectView(origin.instanceId, { reader: readerTarget(target) })
+      })
+      origin.adoptConversation()
+      if (!origin.current()) return
+      props.onRevealConversation?.()
+    } finally { origin.release() }
   }
   const onOpenActor = async (id: string, request?: { id: string; kind: "form" | "permission" }, missionId?: string) => {
     const origin = navigationOrigin()
-    await openActor(id, origin, () => {
-      if (!origin.current() || !request) return
-      const queue = request.kind === "form" ? getFormQueue(origin.instanceId) : getPermissionQueue(origin.instanceId)
-      if (queue.some(item => item.id === request.id && item.sessionID === id)) focusInterruption(origin.instanceId, id, request.id, request.kind)
-    }, missionId)
+    try {
+      await openActor(id, origin, () => {
+        if (!origin.current() || !request) return
+        const queue = request.kind === "form" ? getFormQueue(origin.instanceId) : getPermissionQueue(origin.instanceId)
+        if (queue.some(item => item.id === request.id && item.sessionID === id)) focusInterruption(origin.instanceId, id, request.id, request.kind)
+      }, missionId)
+    } finally { origin.release() }
   }
   // Pending cleanups need an explicit retry and stay in the panel; settled
   // history belongs to the overview reader.
@@ -495,7 +500,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         selection={passageTask()!} disabled onAdmitted={refreshVisible}
         reading={isReading({ missionId: selected().id, kind: "task", itemId: passageTask()!.task.id })}
         onToggleReader={() => { const task = passageTask(); if (task) void read({ missionId: selected().id, kind: "task", itemId: task.task.id }) }}
-        onOpenConversation={id => void openActor(id)} />}</Show>
+        onOpenConversation={id => void onOpenActor(id)} />}</Show>
       <MissionTracking instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
         active={treeShown()} selected={task => isSelectedTask(selected().id, task.id)} onSelect={task => selectTask(selected().id, task.id)}
         onOpenActor={onOpenActor} /></>}</Show></MissionPanelScope>
@@ -510,7 +515,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       if (!passage) return undefined
       const overview: MissionReaderTarget = { missionId: passage.id, kind: "overview" }
       return { reading: isReading(overview), onToggle: () => void read(overview),
-        onOpenConversation: () => void openActor(passage.coordinatorSessionId) }
+        onOpenConversation: () => void onOpenActor(passage.coordinatorSessionId) }
     } })
   const mapsById = createMemo(() => new Map(missions().map(map => [map.id, map])))
   const activityById = createMemo(() => new Map(state().activity?.missions.map(value => [value.missionId, value])))
@@ -608,8 +613,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       const generation = getOpenCodeInstanceGeneration(instanceId)
       const current = () => origin.current() && selectedScheduled() === selected && scheduled.ownsSession(id)
         && getOpenCodeInstanceGeneration(instanceId) === generation
-      if (!current()) return
       try {
+        if (!current()) return
         await hydrateRestoredSessionChain(instanceId, [id], undefined, current)
         if (!current() || !sessions().get(instanceId)?.has(id)) return
         batch(() => { setActiveSessionFromList(instanceId, id); activateSessionSurface({ instanceId, sessionId: id }, { kind: "conversation" }) })
@@ -617,6 +622,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         if (!current()) return
         props.onRevealConversation?.()
       } catch { if (current()) setNavigationError(true) }
+      finally { origin.release() }
     })() })
   createEffect(() => {
     const id = unifiedSelection()
@@ -818,7 +824,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             coordinatorActivity={state().activity?.missions.find(item => item.missionId === id)?.actors
               .find(actor => actor.sessionId === selected().coordinatorSessionId)?.state}
             working={missionActivityWorking(state().activity?.missions.find(item => item.missionId === id)?.actors)}
-            onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
+            onOpenCoordinator={() => void onOpenActor(selected().coordinatorSessionId)}
             interrupted={missionEntries().find(entry => entry.key === `mission:${id}`)?.mark === "interrupted"}
             onAdmitted={refreshVisible} registerRetry={registerRetry} onRevealDetail={() => revealDetail?.()}
             editDisabled={Boolean(editor()) || selected().status !== "active"} deleteDisabled={Boolean(editor())}
@@ -826,7 +832,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             onDelete={() => openEditor({ kind: "delete", mission: selected() })}
              task={readTask()} taskPending={taskSelected()} taskReading={Boolean(readTask()) && isReading({ missionId: id, kind: "task", itemId: readTask()!.task.id })}
             onToggleTask={() => { const task = readTask(); if (task) void read({ missionId: id, kind: "task", itemId: task.task.id }) }}
-            onOpenTask={sessionId => void openActor(sessionId)} />
+            onOpenTask={sessionId => void onOpenActor(sessionId)} />
           {tracking()}
         </section>
       }}</Show>
