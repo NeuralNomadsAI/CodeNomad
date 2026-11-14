@@ -97,6 +97,10 @@ preview replaces that occurrence's file reader; opening a file returns only that
 occurrence's browser to chat mode and closes its Mission reader.
 Cancelling or hiding a view fences pending reads. Workspace/local-diff readers
 refresh on filesystem invalidation, while commit contents remain immutable.
+Explicit Git refresh, stage, unstage and commit capture the shared occurrence
+surface intent before awaiting and recheck it with the file target before
+reconciling the central reader. Passive filesystem refreshes defer central-reader
+reconciliation while a foreground action is pending; their status lists still update.
 
 Switching project tabs unmounts heavy readers and transcripts. The live workspace
 file target retains its source/rendered choice and rendered Markdown position in

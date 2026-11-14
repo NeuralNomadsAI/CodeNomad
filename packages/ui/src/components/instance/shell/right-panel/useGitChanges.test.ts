@@ -64,6 +64,8 @@ const { useGitChanges } = await import("./useGitChanges")
 const { buildGitChangeListItems } = await import("./git-changes-model")
 const { getFilePreview, openFilePreview, closeFilePreview } = await import("../../../../stores/files-preview")
 const { invalidateFilesystemCaches } = await import("../../../../lib/filesystem-events")
+const { captureSessionSurfaceIntent } = await import("../../../../stores/session-surface")
+const { publishInstanceLifecycleAuthority } = await import("../../../../stores/instance-lifecycle-authority")
 
 const entry = (path: string, staged = false): WorktreeGitStatusEntry => ({
   path, originalPath: null, stagedStatus: staged ? "modified" : null, unstagedStatus: staged ? null : "modified",
@@ -82,6 +84,7 @@ async function until(predicate: () => boolean) {
   assert.ok(predicate(), "hook settled before timeout")
 }
 async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")], worktreeSlug = () => "root") {
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId: "test", folder: "/repo", occurrence: 0 })
   fixture.entries = entries
   fixture.requests = []
   fixture.mutationGate = null
@@ -256,6 +259,40 @@ test("pending mutation cannot replace a newly opened reader even without a sideb
       await until(() => h.git.gitSelectedItemId() === "staged:a.ts")
       assert.equal(getFilePreview("test"), newer)
     } finally { h.close() }
+  }
+})
+
+test("held Git reconciliation yields to a newer pending surface action, including passive refresh", async () => {
+  for (const operation of ["stage", "unstage", "refresh", "commit", "passive"] as const) {
+    const staged = operation === "commit" || operation === "unstage"
+    const h = await setup([entry("a.ts", staged)])
+    let intent: ReturnType<typeof captureSessionSurfaceIntent> | undefined
+    const gate = deferred()
+    try {
+      const id = `${staged ? "staged" : "unstaged"}:a.ts`
+      h.click(id)
+      const before = getFilePreview("test")
+      fixture.statusGate = gate.promise
+      h.git.setGitCommitMessage("commit")
+      const reads = fixture.statusOptions.length
+      const pending = operation === "passive" ? (invalidateFilesystemCaches("test"), undefined)
+        : operation === "refresh" ? h.git.refreshGitStatus() : operation === "commit"
+          ? h.git.submitGitCommit() : operation === "unstage" ? h.git.unstageGitFile(h.item(id)) : h.git.stageGitFile(h.item(id))
+      await until(() => fixture.statusOptions.length > reads)
+      intent = captureSessionSurfaceIntent({ instanceId: "test", sessionId: "session" })
+      gate.resolve()
+      await pending
+      await until(() => !h.git.gitStatusLoading() && !h.git.gitCommitSubmitting())
+      assert.equal(getFilePreview("test"), before, `${operation} cannot reopen or close the unchanged target`)
+      assert.equal(intent.current(), true, `${operation} preserves the newer action's authority`)
+      if (operation === "passive") {
+        const currentReads = fixture.statusOptions.length
+        invalidateFilesystemCaches("test")
+        await until(() => fixture.statusOptions.length > currentReads && !h.git.gitStatusLoading())
+        assert.equal(intent.current(), true, "passive admission also leaves an existing foreground action current")
+        assert.equal(getFilePreview("test"), before)
+      }
+    } finally { gate.resolve(); intent?.release(); h.close() }
   }
 })
 

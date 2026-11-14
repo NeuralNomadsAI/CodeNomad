@@ -63,6 +63,9 @@ export function captureSessionSurfaceIntent(ctx: SurfaceContext) {
 
 export function invalidateSessionSurfaceIntent(instanceId: string): void { intents.delete(instanceId) }
 
+/** Passive display reconciliation yields to an admitted foreground action. */
+export function hasPendingSessionSurfaceIntent(instanceId: string): boolean { return intents.has(instanceId) }
+
 onInstanceLifecycleAuthority(event => {
   if (event.type === "opened") return
   intents.delete(event.instanceId)
