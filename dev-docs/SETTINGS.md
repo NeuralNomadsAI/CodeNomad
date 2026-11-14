@@ -8,7 +8,7 @@ Settings rows and actions, the native Preferences window and its project context
 
 - The usage check reserves the Preferences renderer's current native remote context, including an unavailable project, before remote IO and after the inventory read. Reopening Settings from another project releases that context; native context read failures refuse the change.
 
-- Usage refusals retain `RemoteServerInUseError` through profile save/removal consumers and resolve to `remoteRestore.inUse`. Unrecognized persistence and transport failures retain the localized `settings.preferenceSaveFailed` presentation.
+- Positively observed tabs, restored occurrences, native Preferences context or occupied workspace inventory produce `RemoteServerInUseError`, retained through profile save/removal consumers as `remoteRestore.inUse`. Failed admission, native context reads and inventory checks block the mutation with the generic `settings.preferenceSaveFailed` presentation, alongside unrecognized persistence and transport failures.
 
 - Guarded profile edits apply the same usage check inside their serialized lane. Removal checks usage and confirmation before invoking its captured Forget callback, releases the same registry client after successful Forget, rechecks view authority, then persists the removal. A failed persistence keeps the saved row; fresh authentication restores the forgotten connection before another usage check. Cancelled policy edits retain the saved profile; connection admission requires the intended committed origin/TLS/SSH policy.
 
