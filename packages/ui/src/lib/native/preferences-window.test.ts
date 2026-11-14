@@ -3,6 +3,10 @@ import { describe, it } from "node:test"
 import { normalizeNativePreferencesRequest, readPreferencesRequestFromUrl } from "./preferences-window.ts"
 
 describe("native Preferences requests", () => {
+  it("retains the qualified backend project and durable server identity", () => {
+    const request = { section: "providers", instanceId: "remote~same", serverId: "server-a", workspacePath: "/homonym", location: { directory: "/homonym" } }
+    assert.deepEqual(normalizeNativePreferencesRequest(request), request)
+  })
   it("accepts current section-only events and contextual requests", () => {
     assert.deepEqual(normalizeNativePreferencesRequest("speech"), { section: "speech" })
     assert.deepEqual(normalizeNativePreferencesRequest("usage"), { section: "usage" })

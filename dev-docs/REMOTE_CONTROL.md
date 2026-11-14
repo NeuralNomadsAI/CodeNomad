@@ -137,6 +137,7 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 | Identity and connection | GET auth status, metadata, events and read-only Remote Control status; POST connection pong. |
 | Backend data and preferences | Explicit filesystem, config-file, storage owner/instance, usage, runtime, speech, SideCar/previews and panel-extension method/path pairs in `SERVER_DEVICE_ROUTES`; existing host-only exclusions still apply. |
 | Project operations | Workspace inventory/lifecycle, directory-owned background Shell inventory (GET), worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning, pending requests, Missions and Yolo method/path pairs. |
+| Agent memory | The local UI relay requires its current proof for POST `/api/memory` and GET/PUT `/api/memory/settings`; direct transport retains authentication and project-directory ownership. Remote Control ingress keeps this family host-only. |
 | Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
 
 Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership.
