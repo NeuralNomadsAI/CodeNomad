@@ -48,6 +48,14 @@ interrupts, updates a session or replays anything automatically.
 
 ## Display acknowledgement
 
+Remote app-tab recovery preserves the complete saved workspace snapshot in a
+selectable placeholder while its owner is unavailable. Admission and explicit
+Retry rebind folder occurrences through the ordinary restore queue, then run this
+same read-only session hydration. Authentication is scoped to that server;
+successful connection re-admits its client and resumes open placeholders.
+User closure revokes the occurrence's commit guard, including pending creates.
+Uncertain creation outcomes stay parked for authoritative inventory reconciliation.
+
 `session-interruption-seen.ts` owns per-window, per-project-tab acknowledgement
 watermarks keyed by session ID and the native `time.idle` boundary. The session
 list's explicit badge click and sweep acknowledge

@@ -36,6 +36,18 @@ Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de k
 
 Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını kapatmaz; normal başlangıç geri yüklemesi yine uygulanır. Yürütmenin bittiğini doğrulamak istiyorsanız ilgili çalıştırmaları açıkça durdurun. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz; paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
 
+## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
+
+**Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de açık kalan bekleyen sekmeleri kurtarır. Aynı klasörün ayrı sekmeleri kendi taslaklarını korur.
+
+Bir bildirim mevcut bekleyen sekmeyi açar; yeniden bağlanmak için **Yeniden dene** kullanın.
+
+Ayarlar hâlâ bu sunucuyu kullanıyorsa sunucuyu kaldırmadan veya adresini değiştirmeden önce **Ayarlar**'ı başka bir projeden yeniden açın.
+
+Çoklu arka uç etkin olduğunda kayıtlı uzak projeler sekme sırası, taslaklar ve seçimle geri gelir. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kimlik bilgileri veya yeni bir **Eşleştirme bağlantısı** ile **Bağlan** kullanın. Diğer sunucular kullanılabilir kalır. Kurtarma durumu okur; onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
+
+Sunucuyu kaldırmadan veya adresini değiştirmeden önce tüm pencerelerdeki proje sekmelerini kapatın. Erişilemeyen proje listesi, kontrol edilebilene kadar değişikliği engeller.
+
 ## Geçici çalışma alanları {#temporary-workspaces}
 
 1. Başlatıcıda **Geçici** öğesini veya ana sayfada **Yeni geçici instance** öğesini seçin.

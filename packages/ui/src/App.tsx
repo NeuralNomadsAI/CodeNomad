@@ -40,6 +40,7 @@ import { listenMenuActions } from "./lib/native/menu-actions"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
 import { startNotificationIconBadge } from "./lib/notification-icon-badge"
+import RemoteRestoreView from "./components/remote-restore-view"
 import {
   claimNativeBrowserOpen,
   onNativeBrowserOpen,
@@ -662,6 +663,8 @@ const App: Component = () => {
 
     if (tab.kind === "instance") {
       closeInstanceTab(tab.instance.id)
+    } else if (tab.kind === "remote-restore") {
+      tab.remove()
     } else {
       closeSidecarTab(tab.sidecarTab.token)
     }
@@ -870,7 +873,7 @@ const App: Component = () => {
                       data-tab-kind={tab.kind}
                       data-tab-visible={isVisible() ? "true" : "false"}
                     >
-                      <SideCarView tab={tab.sidecarTab} />
+                      {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : <RemoteRestoreView tab={tab} />}
                     </div>
                   )
                 }}

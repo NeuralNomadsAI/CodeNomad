@@ -19,6 +19,7 @@ import { registerBackendRelayRoutes } from "../../../server/src/server/routes/ba
 import { RemoteServerBrowseManager } from "../../../server/src/codenomad-servers/browse-manager"
 import { startFakeCodeNomad } from "../../../server/src/codenomad-servers/test-support/fake-codenomad"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
+import { CODENOMAD_API_CONTRACT } from "../../../server/src/meta-contract"
 
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
 async function fixture(t: TestContext, flag: unknown = true, locale = "en", intent = false, sshOnly = false) {
@@ -35,8 +36,14 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
     forwards.push(forward)
     return { ready: Promise.resolve(Number(new URL(a.origin).port)), close: () => { forward.closed = true } }
   } : undefined), app = Fastify()
+  app.addHook("onRequest", async (_request, reply) => {
+    reply.raw.setHeader("Access-Control-Allow-Origin", selfOrigin)
+    reply.raw.setHeader("Access-Control-Allow-Credentials", "true")
+  })
   let origin = "", selfOrigin = "", holdProbe: ReturnType<typeof deferred> | undefined, holdPatch: ReturnType<typeof deferred> | undefined
   let patchStatus = 200, probeFailure: string | undefined
+  let usageChecks = false
+  const revokedBackends = new Set<string>(), changedPolicies = new WeakMap<object, string[]>()
   const gates = new Set<ReturnType<typeof deferred>>()
   const calls: Array<{ method: string; url: string; body: any }> = []
   app.addHook("preHandler", async (request, reply) => {
@@ -47,6 +54,11 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
       if (probeFailure) return reply.send({ ok: false, normalizedUrl: (request.body as any).baseUrl, errorCode: probeFailure, error: "raw-secret-do-not-display" })
     }
     if (request.method === "PATCH" && request.url === "/api/storage/state/ui") {
+      const next = (request.body as { remoteServers?: RemoteServerProfile[] }).remoteServers
+      if (next) changedPolicies.set(request, (settings.getOwner("state", "ui").remoteServers as RemoteServerProfile[]).filter(before => {
+        const after = next.find(profile => profile.id === before.id)
+        return !after || before.baseUrl !== after.baseUrl || before.skipTlsVerify !== after.skipTlsVerify || before.ssh?.host !== after.ssh?.host
+      }).map(profile => profile.id))
       const hold = holdPatch; holdPatch = undefined; await hold?.promise
       if (patchStatus !== 200) return reply.code(patchStatus).send({ error: "refused" })
     }
@@ -55,7 +67,16 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
   registerRemoteServerRoutes(app, { logger })
   registerRemoteServerBrowseRoutes(app, { manager, getSelfOrigins: () => new Set([origin, selfOrigin]) })
   registerBackendRelayRoutes(app, { manager, getSelfOrigins: () => new Set([origin, selfOrigin]) })
-  app.addHook("onResponse", async request => { if (request.method === "PATCH" && request.url === "/api/storage/state/ui") manager.reconcile() })
+  app.addHook("onResponse", async (request, reply) => {
+    const connected = request.method === "POST" && /^\/api\/remote-servers\/([ab])\/connect$/.exec(request.url)
+    if (connected && reply.statusCode < 400) revokedBackends.delete(connected[1])
+    const forgotten = request.method === "POST" && /^\/api\/remote-servers\/([ab])\/forget$/.exec(request.url)
+    if (forgotten && reply.statusCode < 400) revokedBackends.add(forgotten[1])
+    if (request.method === "PATCH" && request.url === "/api/storage/state/ui") {
+      if (reply.statusCode < 400) for (const id of changedPolicies.get(request) ?? []) revokedBackends.add(id)
+      manager.reconcile()
+    }
+  })
   app.get("/api/meta", async () => ({ localRequest: true }))
   app.get("/api/memory/settings", async () => ({ enabled: false }))
   app.get("/api/speech/capabilities", async () => ({}))
@@ -75,11 +96,27 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
   t.after(async () => { for (const gate of gates) gate.release(); await browser.close(); manager.close(); app.server.closeAllConnections(); await app.close(); await Promise.all([a.close(), b.close()]); await borrowed.close(); fs.rmSync(directory, { recursive: true, force: true }) })
   const page = await browser.newPage({ viewport: { width: 1000, height: 760 } })
   const errors: string[] = [], consoleErrors: string[] = [], forbidden: string[] = [], httpErrors: string[] = [], failedRequests: string[] = []
+  const expectedNetworkErrors = new Set<string>()
   page.on("pageerror", error => errors.push(error.message))
   page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()) })
   page.on("response", response => { if (response.status() >= 400) httpErrors.push(`${response.status()} ${new URL(response.url()).pathname}`) })
-  page.on("requestfailed", request => { if (!request.url().includes("/api/remote-servers/probe") || request.failure()?.errorText !== "net::ERR_ABORTED") failedRequests.push(`${request.failure()?.errorText} ${new URL(request.url()).pathname}`) })
+  page.on("requestfailed", request => {
+    const pathname = new URL(request.url()).pathname, error = request.failure()?.errorText
+    const owned = /^\/api\/backends\/([ab])\/api\/(events|auth\/status)$/.exec(pathname)
+    if (owned && revokedBackends.has(owned[1]) && (error === "net::ERR_ABORTED"
+      || owned[2] === "events" && error === "net::ERR_INCOMPLETE_CHUNKED_ENCODING")) {
+      expectedNetworkErrors.add(error)
+    } else if (!pathname.endsWith("/api/remote-servers/probe") || error !== "net::ERR_ABORTED") failedRequests.push(`${error} ${pathname}`)
+  })
   await page.addInitScript({ content: `{
+    // Use the real stream target at construction so Chromium supplies its native Origin.
+    const NativeEventSource = window.EventSource
+    window.EventSource = class extends NativeEventSource {
+      constructor(url, init) {
+        const target = new URL(url, window.location.origin)
+        super(${JSON.stringify(origin)} + target.pathname + target.search, init)
+      }
+    }
     Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "preferences", electronAPI: {
       getPreferencesRequest: async () => ({ section: "servers" }), acceptPreferencesRequest: async () => {}, preferencesReady: async () => {},
       onPreferencesSection: () => () => {}, onPreferencesCloseRequested: () => () => {}, onPreferencesTransitionRequested: () => () => {}, closeWindow: async () => {},
@@ -88,17 +125,38 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
   }` })
   await page.route("**/api/**", async route => {
     const request = route.request(), url = new URL(request.url())
+    const usage = usageChecks && request.method() === "GET" && /^\/api\/backends\/[ab]\/api\/(?:meta|auth\/status|workspaces|events)$/.test(url.pathname)
     // Preferences already owns one local stream; only remote/new implicit streams are forbidden.
-    if (url.pathname === "/api/events") return route.continue({ url: `${origin}${url.pathname}${url.search}` })
-    if (url.origin !== selfOrigin || /\/workspaces|\/events|\/remote-proxy|view-session/.test(url.pathname)) { forbidden.push(request.url()); return route.abort() }
+    if (url.pathname === "/api/events" || usage && url.pathname.endsWith("/events")) return route.continue({
+      url: `${origin}${url.pathname}${url.search}`, headers: { ...request.headers(), origin: selfOrigin },
+    })
+    if (![origin, selfOrigin].includes(url.origin) || !usage && /\/workspaces|\/events|\/remote-proxy|view-session/.test(url.pathname)) { forbidden.push(request.url()); return route.abort() }
     const response = await route.fetch({ url: `${origin}${url.pathname}${url.search}`, headers: { ...request.headers(), origin: selfOrigin } })
     await route.fulfill({ response })
   })
   await page.goto(borrowed.url + "?preferences=servers" + (intent ? "&intent" : ""))
   await page.waitForFunction(() => (window as any).serversFixture?.config.isLoaded())
-  const check = () => { assert.deepEqual(errors, []); assert.deepEqual(forbidden, []); assert.deepEqual(failedRequests, []); assert(consoleErrors.every(message => /Failed to load resource: the server responded with a status of (400|409|502)/.test(message)), httpErrors.join("\n") + "\n" + consoleErrors.join("\n")) }
+  const check = () => {
+    assert.deepEqual(errors, []); assert.deepEqual(forbidden, []); assert.deepEqual(failedRequests, [])
+    assert(consoleErrors.every(message => /Failed to load resource: the server responded with a status of (400|409|502)/.test(message)
+      || [...expectedNetworkErrors].some(error => message.includes(error))), httpErrors.join("\n") + "\n" + consoleErrors.join("\n"))
+    assert(httpErrors.every(message => /^(400|409|502) /.test(message)), httpErrors.join("\n"))
+  }
   const profileRows = () => settings.getOwner("state", "ui").remoteServers as RemoteServerProfile[]
   return { page, app, origin, manager, a, b, settings, rows, calls, directory, check, profileRows, forwards,
+    allowUsageChecks: async (connected = false) => {
+      usageChecks = true
+      for (const [id, remote] of [["a", a], ["b", b]] as const) {
+        remote.state.overrides.set("/api/meta", { status: 200, body: { apiContract: CODENOMAD_API_CONTRACT, serverId: id } })
+        remote.state.handlers.set("/api/workspaces", (_request, response) => {
+          response.writeHead(200, { "content-type": "application/json" }); response.end("[]")
+        })
+        if (!remote.state.handlers.has("/api/events")) remote.state.handlers.set("/api/events", (_request, response) => {
+          response.writeHead(200, { "content-type": "text/event-stream" }); response.write(": usage check\n\n")
+        })
+        if (!connected) assert.equal((await app.inject({ method: "POST", url: `/api/remote-servers/${id}/connect`, headers: { origin }, payload: { username: "codenomad", password: "remote-password" } })).statusCode, 200)
+      }
+    },
     holdProbe: () => { holdProbe = deferred(); gates.add(holdProbe); return holdProbe }, holdPatch: () => { holdPatch = deferred(); gates.add(holdPatch); return holdPatch },
     failPatch: (status: number) => { patchStatus = status }, failProbe: (code?: string) => { probeFailure = code },
     sync: async () => page.evaluate(value => (window as any).serversFixture.dispatch([{ type: "storage.stateChanged", owner: "ui", value }]), settings.getOwner("state", "ui")),
@@ -128,17 +186,21 @@ test("Preferences CRUD uses host profiles; rename offline, normalized duplicate,
   await page.keyboard.press("Enter")
   await page.locator(".alert-dialog").waitFor({ state: "hidden" })
   assert.equal(f.calls.filter(call => call.url.endsWith("/forget")).length, 0)
+  await f.allowUsageChecks()
   // Real credentials are retained on B while removing A through the actual local routes.
   assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/b/connect", headers: { origin: f.origin }, payload: { username: "codenomad", password: "remote-password" } })).statusCode, 200)
   f.failPatch(400)
   await page.getByRole("button", { name: "Remove saved server: Offline rename", exact: true }).click()
   await page.getByRole("button", { name: "Remove saved server", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await page.getByRole("alert").filter({ hasText: "Could not save the preference." }).waitFor()
   assert.equal(f.profileRows().length, 2)
   assert.equal(f.calls.filter(call => call.url.endsWith("/forget")).length, 1)
   f.failPatch(200)
+  assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/a/connect", headers: { origin: f.origin }, payload: { username: "codenomad", password: "remote-password" } })).statusCode, 200)
   await page.getByRole("button", { name: "Remove saved server: Offline rename", exact: true }).click()
   await page.getByRole("button", { name: "Remove saved server", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await page.locator('[data-remote-server="a"]').waitFor({ state: "hidden" })
   assert.deepEqual(f.profileRows().map(row => row.id), ["b"])
   assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/b/browse", headers: { origin: f.origin }, payload: {} })).statusCode, 200)
@@ -343,7 +405,7 @@ for (const action of ["remove", "retarget"]) test(`UI ${action} of A revokes onl
     remote.state.handlers.set("/api/events", (_request, response) => {
       upstream.set(id, response)
       response.writeHead(200, { "content-type": "text/event-stream" })
-      response.write(`data: ${id}-first\n\n`)
+      response.write(`data: ${JSON.stringify({ type: "fixture", id: `${id}-first` })}\n\n`)
     })
     assert.equal((await f.app.inject({ method: "POST", url: `/api/remote-servers/${id}/connect`, headers: { origin: f.origin }, payload: { username: "codenomad", password: "remote-password" } })).statusCode, 200)
   }
@@ -367,14 +429,17 @@ for (const action of ["remove", "retarget"]) test(`UI ${action} of A revokes onl
     return { request, response: incoming!, frames, closed: () => closed }
   }
   const a = await stream("a"), b = await stream("b")
+  await f.allowUsageChecks(true)
   if (action === "remove") {
     await f.page.getByRole("button", { name: "Remove saved server: Alpha", exact: true }).click()
     await f.page.getByRole("button", { name: "Remove saved server", exact: true }).click()
+    await f.page.getByRole("button", { name: "Confirm", exact: true }).click()
     await f.page.locator('[data-remote-server="a"]').waitFor({ state: "hidden" })
   } else {
     await edit(f.page, "Alpha")
     await f.page.getByRole("textbox", { name: "URL", exact: true }).fill(f.b.origin)
     await f.page.getByRole("textbox", { name: "URL", exact: true }).press("Enter")
+    await f.page.getByRole("button", { name: "Confirm", exact: true }).click()
     await f.page.getByRole("dialog").waitFor({ state: "hidden" })
   }
   if (!a.closed()) await once(a.request, "close", { signal: AbortSignal.timeout(5000) })
@@ -454,7 +519,7 @@ test("adding a saved address retains its own explicit TLS policy without probing
 })
 
 test("Servers editor preserves SSH policy, suggests aliases, saves offline and fences a retargeted edit", { timeout: 90_000 }, async t => {
-  const f = await fixture(t), { page } = f
+  const f = await fixture(t, true, "en", false, true), { page } = f
   const saved = { ...f.rows[0], ssh: { host: "fixture-lab" } }
   f.settings.mergePatchDoc("state", { ui: { remoteServers: [saved, f.rows[1]] } })
   await f.sync()
@@ -468,9 +533,11 @@ test("Servers editor preserves SSH policy, suggests aliases, saves offline and f
   assert.deepEqual(f.profileRows().find(row => row.id === "a")?.ssh, { host: "fixture-lab" })
   assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)
   assert.equal(f.a.state.requests.length, 0)
+  await f.allowUsageChecks()
   await edit(page, "SSH rename")
   await ssh.fill("user@other-lab")
   await page.getByRole("button", { name: "Save", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await page.getByRole("dialog").waitFor({ state: "hidden" })
   assert.deepEqual(f.profileRows().find(row => row.id === "a")?.ssh, { host: "user@other-lab" })
   assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)

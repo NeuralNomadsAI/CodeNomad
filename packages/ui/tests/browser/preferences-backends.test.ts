@@ -59,7 +59,8 @@ async function host(page: Page, kind: "electron" | "tauri", initial: NativePrefe
 
 async function api(page: Page, selected: () => string) {
   const requests: { owner: string; path: string; method: string; body: any }[] = [], errors: string[] = []
-  let restored = false, unavailable = false, identity = "server-a"
+  let restored = false, unavailable = false, missing = false, failWrites = false, identity = "server-a"
+  let verificationFailure: { path: string; status: "network" | 401 | 503 } | undefined
   page.on("pageerror", error => errors.push(error.message))
   await page.route(/\/(?:api|workspaces)\//, async route => {
     const request = route.request(), raw = new URL(request.url()).pathname
@@ -71,6 +72,14 @@ async function api(page: Page, selected: () => string) {
       errors.push(`local sentinel: ${method} ${path}`)
       return route.fulfill({ status: 500, json: {} })
     }
+    if (failWrites && (method === "PATCH" && path === "/api/storage/state/ui"
+      || method === "POST" && path === "/api/remote-servers/a/forget")) {
+      return route.fulfill({ status: 500, json: { error: "private-transport-detail-do-not-display" } })
+    }
+    if (owner === "a" && path === verificationFailure?.path) {
+      return verificationFailure.status === "network" ? route.abort("connectionrefused")
+        : route.fulfill({ status: verificationFailure.status, json: { error: "private-verification-detail-do-not-display" } })
+    }
     if (owner !== "local" && unavailable) return route.fulfill({ status: 503, json: {} })
     const id = restored && owner !== "local" ? "restarted" : "same"
     const data = path.endsWith("/provider") ? [{ id: "ai", name: owner, activation: "enabled" }]
@@ -78,7 +87,7 @@ async function api(page: Page, selected: () => string) {
     const value = path === "/api/storage/config/ui" ? { settings: { locale: "en", multiBackend: true } }
       : path === "/api/storage/state/ui" ? { remoteServers: ["a", "b"].map(id => ({ id, name: id, baseUrl: `http://${id}.test`, skipTlsVerify: false, createdAt: "", updatedAt: "" })) }
       : path === "/api/meta" ? { serverId: owner === "a" ? identity : `server-${owner}`, apiContract: 1 }
-      : path === "/api/workspaces" ? [{ id, path: "/homonym", status: "ready", proxyPath: `/workspaces/${id}/instance` }]
+      : path === "/api/workspaces" ? missing ? [] : [{ id, path: "/homonym", status: "ready", proxyPath: `/workspaces/${id}/instance` }]
       : path === "/api/memory/settings" ? { enabled: true }
       : path === "/api/memory" ? body.operation.action === "list" ? {
         entries: [{ id: "entry", title: `Memory ${owner}`, text: "Verified", type: "fact", sessionId: "s", revision: "a".repeat(64),
@@ -91,10 +100,102 @@ async function api(page: Page, selected: () => string) {
         scopes: [{ scope: "global", path: "/global.jsonc", selection: null }, { scope: "project", path: "/homonym/opencode.jsonc", selection: null }] } : {}
     return route.fulfill({ json: value, headers: owner !== "local" && path === "/api/meta" ? { "X-CodeNomad-Backend-Authority": owner.repeat(43) } : {} })
   })
-  return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true }, replace: () => { identity = "replacement" } }
+  return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true },
+    missing: () => { missing = true }, failWrites: () => { failWrites = true },
+    failVerification: (status: "network" | 401 | 503, path = "/api/meta") => { verificationFailure = { path, status } },
+    replace: () => { identity = "replacement" } }
 }
 
 for (const kind of ["electron", "tauri"] as const) {
+  for (const reason of ["usage", "transport", "network", "401", "503", "inventory"] as const) for (const action of ["delete", "retarget"] as const) test(`${kind}: Servers ${action} shows ${reason === "usage" ? "the actionable remote-context usage refusal" : `a masked ${reason} failure`}`, async () => {
+    const page = await browser.newPage(), f = await api(page, () => "a")
+    f.missing()
+    if (reason === "transport") f.failWrites()
+    if (reason === "network" || reason === "401" || reason === "503") f.failVerification(reason === "network" ? reason : Number(reason) as 401 | 503)
+    if (reason === "inventory") f.failVerification(503, "/api/workspaces")
+    await host(page, kind, reason === "usage" ? project("a", "servers") : { section: "servers" })
+    try {
+      await page.goto(url)
+      await page.locator('[data-remote-server="a"]').waitFor()
+      if (action === "delete") {
+        await page.getByRole("button", { name: "Remove saved server: a", exact: true }).click()
+        await page.getByRole("button", { name: "Remove saved server", exact: true }).click()
+      } else {
+        await page.getByRole("button", { name: "Edit server: a", exact: true }).click()
+        await page.getByLabel("SSH host (optional)", { exact: true }).fill("other-lab")
+        await page.getByRole("button", { name: "Save", exact: true }).click()
+      }
+      if (reason === "transport") await page.getByRole("button", { name: "Confirm", exact: true }).click()
+      const alert = action === "retarget" ? page.getByRole("dialog").getByRole("alert") : page.getByRole("alert").first()
+      await alert.waitFor()
+      assert.equal(await alert.innerText(), reason === "usage"
+        ? "Close this server’s tabs and reopen Settings from another project before removing or changing its address."
+        : "Could not save the preference.")
+      assert.equal((await page.locator("body").innerText()).includes("do-not-display"), false)
+      const forget = (value: typeof f.requests[number]) => value.owner === "local" && value.method === "POST" && value.path === "/api/remote-servers/a/forget"
+      const patch = (value: typeof f.requests[number]) => value.owner === "local" && value.method === "PATCH" && value.path === "/api/storage/state/ui"
+      if (reason !== "transport") {
+        if (reason === "usage") assert.equal(await page.getByText("Could not save the preference.", { exact: true }).count(), 0)
+        else assert.equal(await page.getByText("Close this server’s tabs and reopen Settings from another project before removing or changing its address.", { exact: true }).count(), 0)
+        assert.equal(f.requests.some(value => forget(value) || patch(value)), false)
+      } else assert.ok(f.requests.some(action === "delete" ? forget : patch))
+      if (!["usage", "transport"].includes(reason)) {
+        assert.ok(f.requests.some(value => value.owner === "a" && value.method === "GET"
+          && value.path === (reason === "inventory" ? "/api/workspaces" : "/api/meta")))
+      }
+      assert.equal(await page.locator('[data-remote-server="a"]').count(), 1)
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  })
+
+  for (const state of ["offline", "missing"] as const) test(`${kind}: restored remote Preferences stay unavailable while restoration waits (${state})`, async () => {
+    const page = await browser.newPage(), f = await api(page, () => "a")
+    if (state === "offline") f.unavailable()
+    else f.missing()
+    await host(page, kind, project("a", "providers"))
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => (window as any).ready)
+      await page.getByRole("status").filter({ hasText: "Open a project to connect" }).waitFor()
+      assert.equal(await page.getByLabel("Image generation", { exact: true }).count(), 0)
+      assert.equal(await page.getByLabel("For the current project", { exact: true }).count(), 0)
+      assert.equal(await page.evaluate(() => (window as any).request.instanceId), "a~same")
+      assert.equal(f.requests.some(value => /\/(?:session|worktrees)(?:\/|$)/.test(value.path)), false)
+      assert.equal(f.requests.some(value => value.path === "/api/workspaces" && value.method !== "GET"), false)
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`${kind}: a remote Preferences context reserves its server even with an empty inventory`, async () => {
+    const page = await browser.newPage(), f = await api(page, () => "a")
+    f.missing()
+    await host(page, kind, project("a", "providers"))
+    const check = () => page.evaluate(async () => {
+      const path = "/src/stores/remote-server-usage.ts"
+      const { confirmRemoteServerChange } = await import(path)
+      ;(window as any).usageResult = "pending"
+      void confirmRemoteServerChange("a").then(value => { (window as any).usageResult = value ? "accepted" : "cancelled" },
+        () => { (window as any).usageResult = "refused" })
+    })
+    try {
+      const inventory = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/a/api/workspaces")
+      await page.goto(url)
+      await inventory
+      await page.getByRole("status").filter({ hasText: "Open a project to connect" }).waitFor()
+      const before = f.requests.length
+      await check()
+      await page.waitForFunction(() => (window as any).usageResult !== "pending" || !!document.querySelector(".alert-dialog"))
+      assert.equal(await page.evaluate(() => (window as any).usageResult), "refused")
+      assert.equal(f.requests.length, before, "the native context refuses before registry or inventory work")
+      await page.evaluate(() => (window as any).open({ section: "servers" }))
+      await page.locator('[data-remote-server="a"]').waitFor()
+      await check()
+      await page.getByRole("button", { name: "Cancel", exact: true }).click()
+      await page.waitForFunction(() => (window as any).usageResult === "cancelled")
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  })
+
   test(`${kind}: detached Preferences clears Images and Web search, including retained hook snapshots`, async () => {
     const page = await browser.newPage(), f = await api(page, () => "a")
     await host(page, kind, project("a", "providers"))

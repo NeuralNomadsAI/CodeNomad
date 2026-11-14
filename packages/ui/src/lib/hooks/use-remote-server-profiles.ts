@@ -7,7 +7,8 @@ import { canOpenRemoteWindows, isTauriHost } from "../runtime-env"
 import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
 import { carriesCredentials, classifyCodeNomadLink, codeNomadLinkName } from "../codenomad-link"
-import { RemoteServerRequestError } from "../remote-server-request"
+import { RemoteServerInUseError, RemoteServerRequestError } from "../remote-server-request"
+import { backends } from "../backend-client"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { normalizeExplicitOrigin } from "../../../../server/src/opencode/servers/origin"
 
@@ -24,6 +25,7 @@ export class RemoteServerProbeError extends Error {
 }
 
 export function remoteServerErrorKey(error: unknown): string {
+  if (error instanceof RemoteServerInUseError) return "remoteRestore.inUse"
   const code = error instanceof RemoteServerProbeError || error instanceof RemoteServerRequestError ? error.code : "unreachable"
   return code === "save" ? "settings.preferenceSaveFailed"
     : code === "required" ? "settings.servers.dialog.errorRequired"
@@ -83,10 +85,11 @@ export function useRelayServerProfiles() {
         profile = await config.saveRemoteServerProfile({ id: saved?.id, name: input.name.trim() || (!input.id && saved?.name) || codeNomadLinkName(baseUrl), baseUrl, skipTlsVerify, ssh }, current)
       } catch (error) {
         if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
-        throw new RemoteServerProbeError("save")
+        throw error instanceof RemoteServerInUseError ? error : new RemoteServerProbeError("save")
       }
       // The write may have changed the captured policy. Connect requires the committed exact new policy.
-      if (!enabled() || !viewCurrent() || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
+      if (!enabled() || !viewCurrent() || profile.baseUrl !== baseUrl || profile.skipTlsVerify !== skipTlsVerify
+        || profile.ssh?.host !== ssh?.host || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
       if (link.kind === "pairing") await serverApi.connectRemoteServer(profile.id, { pairingLink: link.entryUrl }, op.signal)
       if (!enabled() || !viewCurrent() || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
       return profile
@@ -97,10 +100,15 @@ export function useRelayServerProfiles() {
     const op = capture({ ...profile })
     try {
       op.assert()
-      await serverApi.forgetRemoteServer(profile.id, op.signal)
-      op.assert()
-      try { await config.removeRemoteServerProfileAsync(profile.id, op.current) }
-      catch (error) { op.assert(); throw new RemoteServerProbeError("save") }
+      try { await config.removeRemoteServerProfileAsync(profile.id, op.current, async () => {
+        const { backendRegistry } = await import("../../stores/remote-backends")
+        op.assert()
+        const backend = backends.get(profile.id)
+        await serverApi.forgetRemoteServer(profile.id, op.signal)
+        op.assert()
+        if (backends.get(profile.id) === backend) backendRegistry.detach(profile.id)
+      }) }
+      catch (error) { op.assert(); throw error instanceof RemoteServerInUseError ? error : new RemoteServerProbeError("save") }
     } finally { op.dispose() }
   }
   return { remoteServers: config.remoteServers, enabled, capture, submitServer, removeServer }
@@ -183,5 +191,10 @@ export function useRemoteServerProfiles() {
     }
   }
 
-  return { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile }
+  return { remoteServers, connectingServerId, saveServer, connectSavedServer,
+    removeRemoteServerProfile: (id: string) => void removeRemoteServerProfile(id).catch(error =>
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("folderSelection.servers.errorTitle"), variant: "warning",
+      })),
+  }
 }
