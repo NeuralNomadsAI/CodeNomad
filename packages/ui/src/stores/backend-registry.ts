@@ -96,7 +96,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       })
       if (!active()) return superseded()
       signal.throwIfAborted()
-      if (response.status === 404) { detach(id, "refused"); return false }
+      if (response.status === 404 || response.status === 426) { detach(id, "refused"); return false }
       if (!response.ok) throw response.status === 401 ? "unauthorized" : "unreachable"
       const meta: ServerMeta | null = await response.json()
       if (!active()) return superseded()

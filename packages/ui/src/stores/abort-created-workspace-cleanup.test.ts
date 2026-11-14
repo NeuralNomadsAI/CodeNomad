@@ -32,6 +32,36 @@ function createHarness(options: { failures?: number; pending?: boolean; retryDel
 }
 
 describe("abort-created workspace cleanup", () => {
+  it("committed claims retire same-attachment work while passive observations cannot replace them", async () => {
+    const old = { ...workspace("a~w", "old"), key: "old" }, next = { ...workspace("a~w", "next"), key: "next" }
+    const discarded: string[] = [], restored: string[] = []
+    let finish!: () => void
+    const cleanup = new AbortCreatedWorkspaceCleanup<typeof old>({
+      requestKey: w => w.key, isCurrent: () => true, retryDelaysMs: [],
+      discardWorkspace: async w => { discarded.push(w.key); await new Promise<void>(resolve => { finish = resolve }); throw new Error("offline") },
+      restoreWorkspace: w => { restored.push(w.key) },
+    })
+    cleanup.track(old)
+    const cancelled = cleanup.discardCreated(old)
+    cleanup.trackCommitted(next)
+    cleanup.track(old)
+    assert.equal(cleanup.get(next.id), next)
+    assert.equal(cleanup.shouldIgnoreObservation(old.id, old.key), true)
+    cleanup.trackCommitted(old)
+    assert.equal(cleanup.get(next.id), next, "an obsolete commit preserves the current claim")
+    assert.equal(cleanup.shouldIgnoreEvent(next.id, next.key), false)
+    finish(); await cancelled
+    assert.deepEqual(discarded, ["old"])
+    assert.deepEqual(restored, [])
+    assert.equal(cleanup.get(next.id), next)
+    cleanup.trackCommitted({ ...next, requestId: undefined, key: "ordinary" })
+    assert.equal(cleanup.get(next.id), undefined, "an ordinary replacement owns no creation claim")
+    await cleanup.releaseAfter(old.id, async w => { assert.equal(w, old) }, old.key)
+    assert.equal(cleanup.shouldIgnoreObservation(old.id, old.key), true)
+    cleanup.track(old)
+    assert.equal(cleanup.get(old.id), undefined)
+    assert.equal(cleanup.isReleased(next.id, next.key), false)
+  })
   it("settles a retired cleanup independently of the replacement claim with the same UI key", async () => {
     let owner = "old", finish!: () => void
     const old = { ...workspace("B~w", "r"), owner: "old" }

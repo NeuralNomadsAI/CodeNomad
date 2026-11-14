@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.incompatible": "互換性のない CodeNomad サーバーです。",
   "remoteBrowse.unreachable": "サーバーに接続できません。",
   "remoteBrowse.pairAgain": "{name}: 新しいペアリングリンクを貼り付けてください。",
   "remoteBrowse.pairingLink": "新しいペアリングリンク",

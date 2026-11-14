@@ -1,5 +1,7 @@
 # Projekte und Worktrees
 
+Wenn Multi-Backend aktiviert ist, wählen Sie einen gespeicherten Server auf der Startseite oder **Öffnen** unter **Einstellungen → Server**. Das Hauptfenster zeigt dessen Ordner und zuletzt verwendete Projekte. Navigieren Sie zu einem Ordner oder geben Sie einen Pfad ein und drücken Sie Enter, um einen normalen Projekt-Tab zu öffnen. Entfernte Tabs zeigen ein Serversymbol und den Servernamen. Schließen Sie den Browser zum Abbrechen; inkompatible Server benötigen einen kompatiblen CodeNomad-Server. Klonen und temporäre Projekte auf der Startseite verwenden diesen Computer.
+
 Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Das Öffnen eines Tabs, Durchsuchen eines Checkouts und Verschieben einer Unterhaltungsfamilie sind verschiedene Vorgänge.
 
 ## Projekt öffnen {#open-project}

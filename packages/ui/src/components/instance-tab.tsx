@@ -2,12 +2,14 @@ import { ContextMenu } from "@kobalte/core/context-menu"
 import { Component, Show, createMemo, createSignal, onCleanup } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceIdleFadeClass, getInstanceSessionIndicatorStatus } from "../stores/session-status"
-import { FolderCheck, FolderOpen, Hourglass, Pencil, ShieldAlert, X } from "lucide-solid"
+import { FolderCheck, FolderOpen, Hourglass, Pencil, Server, ShieldAlert, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { keepTemporaryInstance } from "../stores/temporary-instances"
 import { withHotkey, matchesHotkey } from "../lib/hotkeys"
 import { getInstanceLabel } from "../lib/instance-label"
+import { backendIdOf } from "../lib/backend-identity"
+import { serverDisplayName } from "../lib/codenomad-link"
 
 interface InstanceTabProps {
   instance: Instance
@@ -20,7 +22,7 @@ interface InstanceTabProps {
 
 const InstanceTab: Component<InstanceTabProps> = (props) => {
   const { t } = useI18n()
-  const { preferences } = useConfig()
+  const { preferences, remoteServers } = useConfig()
   const [now, setNow] = createSignal(Date.now())
 
   if (typeof window !== "undefined") {
@@ -55,6 +57,14 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
     }
   })
   const tabLabel = createMemo(() => getInstanceLabel(props.instance))
+  const serverName = createMemo(() => {
+    const id = backendIdOf(props.instance)
+    if (id === "local") return
+    const profile = remoteServers().find(p => p.id === id)
+    if (!profile) return id
+    const name = serverDisplayName(profile, remoteServers())
+    return remoteServers().some(p => p.id !== id && serverDisplayName(p, remoteServers()) === name) ? `${name} (${id})` : name
+  })
   const requestRename = () => props.onRename(tabLabel())
   // The menu restores focus to the tab when it closes; open the dialog after
   // that so the dialog keeps focus on its input.
@@ -76,15 +86,17 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             event.stopPropagation()
             requestRename()
           }}
-          title={props.instance.temporary ? t("instanceTab.temporary.title") : props.instance.folder}
+          title={serverName() ? `${tabLabel()} — ${serverName()}\n${props.instance.folder}` : props.instance.temporary ? t("instanceTab.temporary.title") : props.instance.folder}
           role="tab"
           aria-selected={props.active}
         >
-          <Show when={props.instance.temporary} fallback={<FolderOpen class="w-4 h-4 flex-shrink-0" />}>
-            <Hourglass class="w-4 h-4 flex-shrink-0" aria-label={t("instanceTab.temporary.ariaLabel")} />
+          <Show when={!serverName()} fallback={<Server class="w-4 h-4 flex-shrink-0" aria-hidden="true" />}>
+            <Show when={props.instance.temporary} fallback={<FolderOpen class="w-4 h-4 flex-shrink-0" />}>
+              <Hourglass class="w-4 h-4 flex-shrink-0" aria-label={t("instanceTab.temporary.ariaLabel")} />
+            </Show>
           </Show>
           <span class="tab-label">
-            {tabLabel()}
+            {tabLabel()}{serverName() ? ` — ${serverName()}` : ""}
           </span>
           <Show when={statusClassName() && statusTitle()}>
             <span

@@ -27,6 +27,7 @@ import { decideNavigation, requireHttpUrl } from "./navigation-security"
 import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { setupPreferencesIPC } from "./preferences-ipc"
 import { runMemoryCleanupInWindow } from "./memory-cleanup"
+import { selectServerInWindow } from "./server-selection"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
 import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { loadNewRemoteWindow, navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
@@ -443,6 +444,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     getAllowedOrigins,
     openPreferences,
     getRequest: (window) => preferencesWindows.request(window),
+    selectServer: async (window, intent) => {
+      const opener = preferencesWindows.opener(window)
+      const target = opener?.id ? registry.get(opener.id)?.window : undefined
+      await selectServerInWindow(target, intent, url => isAllowedRendererOrigin(url, getAllowedOrigins(target ?? null)))
+      target?.show()
+      target?.focus()
+    },
     memoryCleanup: async (window, request) => {
       const opener = preferencesWindows.opener(window)
       const target = opener?.id ? registry.get(opener.id)?.window : undefined

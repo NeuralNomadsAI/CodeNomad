@@ -1,5 +1,7 @@
 # Projeler ve çalışma ağaçları
 
+Çoklu arka uç etkinse ana sayfadan kayıtlı bir sunucu seçin veya ayarlardaki sunucu listesinden açın. Ana pencere o sunucunun klasörlerini ve son projelerini gösterir. Klasörlerde gezinin ya da bir yol yazıp Enter tuşuna basarak normal bir proje sekmesi açın. Uzak sekmeler sunucu simgesini ve adını gösterir. İptal etmek için tarayıcıyı kapatın; uyumsuz sunucular için uyumlu bir CodeNomad sunucusu gerekir. Ana sayfadaki klonlama ve geçici proje işlemleri bu bilgisayarı kullanır.
+
 Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. Sekme açmak, bir çalışma kopyasına göz atmak ve konuşma ailesini taşımak farklı işlemlerdir.
 
 ## Bir proje açın {#open-project}

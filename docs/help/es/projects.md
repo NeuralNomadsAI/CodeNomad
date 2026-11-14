@@ -1,5 +1,7 @@
 # Proyectos y worktrees
 
+Con múltiples backends activados, elige un servidor guardado en el inicio o **Abrir** en **Ajustes → Servidores**. La ventana principal muestra sus carpetas y proyectos recientes. Navega por las carpetas o escribe una ruta y pulsa Intro para abrir una pestaña de proyecto normal. Las pestañas remotas muestran el icono y el nombre del servidor. Cierra el explorador para cancelar; los servidores incompatibles requieren un servidor CodeNomad compatible. La clonación y los proyectos temporales del inicio usan este equipo.
+
 Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend. Abrir una pestaña, explorar una copia de trabajo y mover una familia de conversaciones son operaciones distintas.
 
 ## Abrir un proyecto {#open-project}

@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.incompatible": "不兼容的 CodeNomad 服务器。",
   "remoteBrowse.unreachable": "无法连接服务器。",
   "remoteBrowse.pairAgain": "{name}：请粘贴新的配对链接。",
   "remoteBrowse.pairingLink": "新配对链接",

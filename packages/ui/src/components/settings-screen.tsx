@@ -40,6 +40,8 @@ import { useConfig } from "../stores/preferences"
 import { createPreferencesProjectContext } from "./settings/preferences-project-context"
 import { activeInstanceId, instances } from "../stores/instances"
 import { getActiveCatalogLocation } from "../stores/sessions"
+import { requestServerSelection } from "../lib/native/server-selection"
+import { showToastNotification } from "../lib/notifications"
 import { backendRegistry } from "../stores/remote-backends"
 import { parseInstanceKey } from "../lib/backend-identity"
 
@@ -120,7 +122,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "opencode":
         return <OpenCodeSettingsSection />
       case "servers":
-        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} serverId={memoryContext()?.serverId} projectUnavailable={projectUnavailable()} />}><ServersSettingsSection /></Show>
+        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} serverId={memoryContext()?.serverId} projectUnavailable={projectUnavailable()} />}><ServersSettingsSection onSelectServer={intent => {
+          void requestServerSelection(intent).catch(() => showToastNotification({ category: "settings", variant: "error", message: t("remoteBrowse.unreachable") }))
+        }} /></Show>
       case "providers":
         return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "missions":

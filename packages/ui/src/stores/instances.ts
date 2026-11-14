@@ -1775,6 +1775,7 @@ function removeRestoreCreatedInstanceFromUi(instanceId: string): void {
 
 function disposeRestoreWorkspaceResponse(workspace: RestoreWorkspaceDescriptor): Promise<void> {
   if (workspace.reused !== true && workspace.receipt?.attached()
+    && restoreCreatedWorkspaceCleanup.get(workspace.id, true)?.receipt?.requestKey === workspace.receipt.requestKey
     && !restoreCreatedWorkspaceCleanup.isReleased(workspace.id, workspace.receipt.requestKey)) removeRestoreCreatedInstanceFromUi(workspace.id)
   return restoreCreatedWorkspaceCleanup.discardCreated(workspace, { retainTombstone: workspace.reused !== true })
 }
@@ -1782,8 +1783,7 @@ function disposeRestoreWorkspaceResponse(workspace: RestoreWorkspaceDescriptor):
 function disposeRestoreCreatedInstance(instanceId: string): Promise<void> {
   const workspace = restoreCreatedWorkspaceCleanup.get(instanceId)
   if (!workspace) return Promise.resolve()
-  if (workspace.reused !== true && workspace.receipt?.attached()) removeRestoreCreatedInstanceFromUi(instanceId)
-  return restoreCreatedWorkspaceCleanup.discardTracked(instanceId, { retainTombstone: workspace.reused !== true })
+  return disposeRestoreWorkspaceResponse(workspace)
 }
 
 async function releaseRestoreCreatedInstance(instanceId: string, requestId: string): Promise<void> {
@@ -1793,6 +1793,10 @@ async function releaseRestoreCreatedInstance(instanceId: string, requestId: stri
   const receipt = receipts[0]
   if (!receipt) return
   if (receipt.requestId !== requestId) throw new Error("Workspace creation owner unavailable")
+  await releaseCapturedWorkspaceCreation(instanceId, requestId, receipt.requestKey)
+}
+
+async function releaseCapturedWorkspaceCreation(instanceId: string, requestId: string, requestKey: string): Promise<void> {
   await restoreCreatedWorkspaceCleanup.releaseAfter(instanceId, (workspace) => {
     if (!workspace.receipt || workspace.requestId !== requestId) return Promise.reject(new Error("Workspace creation owner unavailable"))
     return retryWithBackoff(() => workspace.receipt!.api.releaseWorkspaceCreation(instanceId, requestId), {
@@ -1801,17 +1805,17 @@ async function releaseRestoreCreatedInstance(instanceId: string, requestId: stri
       maxDelayMs: 2_000,
       backoffMultiplier: 4,
     })
-  }, receipt.requestKey)
+  }, requestKey)
 }
 
 async function cancelRestoreCreationRequest(receipt: WorkspaceOperationReceipt): Promise<void> {
   await cancelRestoreCreation(receipt.requestId!, receipt.api)
 }
 
-function claimRestoreCreatedInstanceForUser(instanceId: string): void {
+function claimRestoreCreatedInstanceForUser(instanceId: string, creation?: WorkspaceCreationOwnership): void {
   const workspace = restoreCreatedWorkspaceCleanup.get(instanceId)
-  if (!workspace?.requestId) return
-  void releaseRestoreCreatedInstance(instanceId, workspace.requestId).catch((error) => {
+  const release = creation ? creation.release() : workspace?.requestId ? releaseRestoreCreatedInstance(instanceId, workspace.requestId) : undefined
+  void release?.catch((error) => {
     log.warn("Failed to transfer restore workspace creation ownership to the user", { instanceId, error })
   })
 }
@@ -1828,6 +1832,13 @@ async function settleRestoreWorkspaceTerminal(
   await disposeRestoreWorkspaceResponse(workspace)
 }
 
+/** Captures one request, API, attachment and occurrence until tab ownership transfers. */
+export interface WorkspaceCreationOwnership {
+  current(instanceId: string): boolean
+  discard(): Promise<void>
+  release(): Promise<void>
+}
+
 async function createInstance(
   folder: string,
   projectName?: string,
@@ -1837,9 +1848,11 @@ async function createInstance(
     shouldCreateCommit?: (instanceId: string) => boolean
     onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
+    onCreation?: (creation: WorkspaceCreationOwnership) => void
     waitForCreateCommit?: () => Promise<void>
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
+  if (options?.onCreation && !options.signal) throw new Error("Creation ownership requires a cancellation signal")
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
   const receipt = captureWorkspaceOperation(folder, options?.backend, restoreRequestId, options?.signal)
   const userOpeningOrder = !options?.signal ? restoreCreatedWorkspaceCleanup.captureOperationOrder() : undefined
@@ -1852,26 +1865,46 @@ async function createInstance(
     ? restoreCreationCommitGates.begin(restoreRequestId, options.waitForCreateCommit(), folder, receipt.backendId, receipt.attached)
     : undefined
   let cancellationRequest: Promise<boolean> | null = null
+  let resolvedWorkspace: RestoreWorkspaceDescriptor | undefined
   let requestResolved = false
   let terminalHandled = false
   const cancelPendingCreation = () => {
     if (!restoreRequestId) return
+    if (cancellationRequest) return cancellationRequest
+    if (restoreCreatedWorkspaceCleanup.isRequestSettled(receipt.requestKey)) return Promise.resolve(true)
+    restoreCreatedWorkspaceCleanup.beginRequest(receipt.requestKey)
     const trackedCleanup = restoreCreatedWorkspaceCleanup.quarantineRequest(receipt.requestKey)
-    cancellationRequest ??= trackedCleanup
-      ? trackedCleanup.then(() => true)
-      : cancelRestoreCreationRequest(receipt)
-          .then(() => {
-            restoreCreationReceipts.delete(receipt.requestKey)
-            restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
-            return true
-          }, (error) => {
-            log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
-            return false
-          })
+    cancellationRequest = Promise.resolve().then(async () => {
+      if (resolvedWorkspace?.requestId) await disposeRestoreWorkspaceResponse(resolvedWorkspace)
+      else if (trackedCleanup) await trackedCleanup
+      else {
+        await cancelRestoreCreationRequest(receipt)
+        restoreCreationReceipts.delete(receipt.requestKey)
+        restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
+      }
+      return restoreCreatedWorkspaceCleanup.isRequestSettled(receipt.requestKey)
+    }).catch(error => {
+      log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
+      return false
+    }).finally(() => {
+      cancellationRequest = null
+    })
+    return cancellationRequest
   }
   signal.addEventListener("abort", cancelPendingCreation, { once: true })
 
   try {
+    if (restoreRequestId) options?.onCreation?.({
+      current: instanceId => receipt.attached() && !!resolvedWorkspace && instanceId === resolvedWorkspace.id && instances().has(instanceId)
+        && restoreCreatedWorkspaceCleanup.get(resolvedWorkspace.id, true)?.receipt?.requestKey === receipt.requestKey
+        && !restoreCreatedWorkspaceCleanup.isReleased(resolvedWorkspace.id, receipt.requestKey)
+        && !restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(resolvedWorkspace.id, receipt.requestKey),
+      discard: async () => { await cancelPendingCreation() },
+      release: async () => {
+        if (!resolvedWorkspace) throw new Error("Workspace creation has not resolved")
+        await releaseCapturedWorkspaceCreation(resolvedWorkspace.id, restoreRequestId, receipt.requestKey)
+      },
+    })
     signal.throwIfAborted()
     if (!receipt.current()) throw new Error("Workspace creation owner unavailable")
     const response = await receipt.api.createWorkspace({
@@ -1883,6 +1916,11 @@ async function createInstance(
     const responseReceipt = Object.freeze({ ...receipt, rawId: response.id, instanceId: id })
     if (restoreRequestId && !restoreCreatedWorkspaceCleanup.isRequestSettled(receipt.requestKey)) restoreCreationReceipts.set(receipt.requestKey, responseReceipt)
     const workspace: RestoreWorkspaceDescriptor = { ...response, id, receipt: responseReceipt }
+    if (options?.onCreation && workspace.requestId !== restoreRequestId) {
+      await cancelPendingCreation()
+      throw new Error("Workspace creation response ownership mismatch")
+    }
+    resolvedWorkspace = workspace
     requestResolved = true
     if (restoreRequestId && !workspace.requestId) {
       restoreCreationReceipts.delete(receipt.requestKey)
@@ -1891,7 +1929,7 @@ async function createInstance(
     const reused = workspace.reused === true
     if (restoreRequestId) restoreCreationCommitGates.bindResponse(restoreRequestId, workspace.id, receipt.attached)
     if (!receipt.current()) {
-      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
+      if (workspace.requestId) await cancelPendingCreation()
       throw getAbortReason(signal)
     }
     if (options?.signal && workspace.requestId) {
@@ -1907,7 +1945,7 @@ async function createInstance(
     else if (!options?.signal) restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(workspace.id, userOpeningOrder)
     if (commitGate) await commitGate.wait
     if (!receipt.current()) {
-      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
+      if (workspace.requestId) await cancelPendingCreation()
       throw getAbortReason(signal)
     }
     const resolution = restoreRequestId
@@ -1919,6 +1957,7 @@ async function createInstance(
       requestId: resolution.workspace.requestId ?? workspace.requestId,
       ...(reused ? { reused: true } : {}),
     }
+    resolvedWorkspace = committedWorkspace
     if (restoreRequestId) restoreCreatedWorkspaceCleanup.track(committedWorkspace)
     const terminal = resolution.terminal ?? (committedWorkspace.status === "error" || committedWorkspace.status === "stopped"
       ? { status: committedWorkspace.status, message: committedWorkspace.error }
@@ -1928,20 +1967,22 @@ async function createInstance(
       await settleRestoreWorkspaceTerminal(committedWorkspace, terminal)
       throw new Error(terminal.message || `Restore-created workspace ${workspace.id} ${terminal.status}`)
     }
-    const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id)
+    const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreObservation(workspace.id, receipt.requestKey, reused)
+      || restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id, receipt.requestKey)
       || options?.shouldCreateCommit?.(workspace.id) === false
     if (!discarded) {
       if (!receipt.current()) throw getAbortReason(signal)
       workspaceListReconciliationFence.markMutation(workspace.id)
       options?.onBeforeCreateCommit?.(workspace.id)
       if (!receipt.current()) throw getAbortReason(signal)
+      restoreCreatedWorkspaceCleanup.trackCommitted(committedWorkspace)
       upsertWorkspace(committedWorkspace, reused ? undefined : projectName, receipt.backendId)
       if (!receipt.current()) throw getAbortReason(signal)
       options?.onCreateCommit?.(workspace.id)
       if (!receipt.current()) throw getAbortReason(signal)
     }
     if (discarded) {
-      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
+      if (workspace.requestId) await cancelPendingCreation()
       throw new Error(`Restore-created workspace ${workspace.id} was closed before startup completed`)
     }
     return { instanceId: workspace.id, reused, requestId: workspace.requestId }

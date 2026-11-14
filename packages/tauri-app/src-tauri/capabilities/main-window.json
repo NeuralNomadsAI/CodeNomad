@@ -37,6 +37,7 @@
     "allow-client-state-navigation-flushed",
     "allow-client-state-startup-command-result",
     "allow-memory-cleanup-result",
+    "allow-server-selection-result",
     "allow-memory-cleanup-claim",
     "allow-data-profiles-list-others",
     "allow-data-profiles-delete-others",

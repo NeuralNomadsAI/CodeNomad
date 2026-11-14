@@ -1,5 +1,7 @@
 # Projets et worktrees
 
+Lorsque le multi-backend est activé, choisissez un serveur enregistré sur l’accueil ou **Ouvrir** dans **Réglages → Serveurs**. La fenêtre principale affiche ses dossiers et projets récents ; parcourez les dossiers ou saisissez un chemin puis Entrée pour ouvrir un onglet de projet ordinaire. Les onglets distants portent une icône et le nom du serveur. Fermez le navigateur pour annuler ; un serveur incompatible nécessite une version compatible de CodeNomad. Le clonage et les projets temporaires de l’accueil utilisent cet ordinateur.
+
 Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend. Ouvrir un onglet, parcourir une copie de travail et déplacer une famille de conversations sont des opérations distinctes.
 
 ## Ouvrir un projet {#open-project}

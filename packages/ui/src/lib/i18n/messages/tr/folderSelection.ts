@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.incompatible": "Uyumsuz CodeNomad sunucusu.",
   "remoteBrowse.unreachable": "Sunucuya ulaşılamıyor.",
   "remoteBrowse.pairAgain": "{name}: yeni bir eşleştirme bağlantısı yapıştırın.",
   "remoteBrowse.pairingLink": "Yeni eşleştirme bağlantısı",

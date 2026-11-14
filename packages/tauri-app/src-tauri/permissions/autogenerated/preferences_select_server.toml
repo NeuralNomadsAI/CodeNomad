@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preferences-select-server"
+description = "Enables the preferences_select_server command without any pre-configured scope."
+commands.allow = ["preferences_select_server"]
+
+[[permission]]
+identifier = "deny-preferences-select-server"
+description = "Denies the preferences_select_server command without any pre-configured scope."
+commands.deny = ["preferences_select_server"]

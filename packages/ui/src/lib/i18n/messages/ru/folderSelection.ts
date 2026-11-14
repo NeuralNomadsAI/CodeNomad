@@ -1,4 +1,5 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.incompatible": "Несовместимый сервер CodeNomad.",
   "remoteBrowse.unreachable": "Сервер недоступен.",
   "remoteBrowse.pairAgain": "{name}: вставьте новую ссылку сопряжения.",
   "remoteBrowse.pairingLink": "Новая ссылка сопряжения",
