@@ -46,6 +46,11 @@ for (const remote of [false, true]) test(`${remote ? "remote" : "web"} previews 
     assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
     await page.evaluate(async () => { await (window as any).fixture.restore("same", "web-a"); await (window as any).fixture.flush() })
     assert.equal(await page.evaluate(() => (window as any).fixture.preview("same", "web-a").targetUrl), "https://example.com/next")
+    await page.evaluate(() => (window as any).fixture.close("web-a"))
+    await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
+    assert.equal(await page.evaluate(() => (window as any).fixture.view("web-a").previews.same.targetUrl), "https://example.com/b",
+      "the surviving duplicate retains its view when backend occurrence ranks compact")
+    assert.equal(await page.evaluate(() => (window as any).fixture.view("web-b").previews), undefined)
     await page.evaluate(() => {
       localStorage.removeItem("opencode-session-tab-views-v1")
       localStorage.setItem("opencode-session-previews-v1", JSON.stringify({ "/same": { mode: "chat", targetUrl: "https://example.com/legacy" } }))

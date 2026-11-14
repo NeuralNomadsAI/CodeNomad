@@ -193,6 +193,7 @@ for (const host of ["web", "tauri", "electron"]) {
       await page.reload()
       await page.waitForFunction(() => (window as any).browserHistoryReady)
       assert.equal(await page.locator(".window-shell").count(), 0)
+      await rootA.locator(".message-stream-container").waitFor({ state: "visible" })
       const saved = await page.evaluate(() => [
         (window as any).fixture.savedPreview("session", "header-windows"),
         (window as any).fixture.savedPreview("session", "header-duplicate"),

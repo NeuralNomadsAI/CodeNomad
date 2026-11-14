@@ -704,7 +704,8 @@ function writeSessionSelection(
   instanceId: string,
   sessionId: string | null,
 ): void {
-  invalidateSessionSurfaceIntent(instanceId)
+  if (setter === setActiveSessionId && activeSessionId().get(instanceId) !== (sessionId ?? undefined))
+    invalidateSessionSurfaceIntent(instanceId)
   // A coalesced transcript page admitted under the previous selection lands
   // before the gates move; nothing pending may cross a selection change.
   flushTranscriptProjections()

@@ -43,7 +43,23 @@ export function saveLocalTabView(instanceId: string, view?: RestorableTabViewSta
   try { window.localStorage.setItem(KEY, JSON.stringify(Object.fromEntries(entries))) } catch { /* Best-effort layout persistence. */ }
 }
 
-export function unbindLocalTabView(instanceId: string) { scopes.delete(instanceId) }
+export function unbindLocalTabView(instanceId: string) {
+  const scope = scopes.get(instanceId)
+  scopes.delete(instanceId)
+  if (clientStateIsPrimary() || !scope) return
+  const [folder, occurrence] = JSON.parse(scope) as [string, number]
+  const values = read()
+  // Backend occurrence ranks compact when a duplicate closes.
+  for (const [id, key] of [...scopes].sort((a, b) => JSON.parse(a[1])[1] - JSON.parse(b[1])[1])) {
+    const [path, rank] = JSON.parse(key) as [string, number]
+    if (path !== folder || rank <= occurrence) continue
+    const next = JSON.stringify([path, rank - 1]), value = values[key]
+    delete values[key]
+    if (value) values[next] = value
+    scopes.set(id, next)
+  }
+  try { window.localStorage.setItem(KEY, JSON.stringify(values)) } catch { /* Best-effort layout persistence. */ }
+}
 
 /** Native snapshots migrate by descriptor order; web clients adopt on explicit opening. */
 export function adoptLocalLegacyPreview(instanceId: string, sessionId: string): RestorableTabViewState | undefined {

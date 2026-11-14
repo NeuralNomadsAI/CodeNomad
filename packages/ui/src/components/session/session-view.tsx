@@ -125,7 +125,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const current = surface()
     return current.kind === "file" ? current.target : null
   })
-  const centralPreview = () => props.isActive !== false && surface().kind === "web"
+  // A restored web choice has metadata only until explicit opening allocates its guest.
+  const centralPreview = () => props.isActive !== false && surface().kind === "web" && Boolean(preview())
 
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null

@@ -1,7 +1,7 @@
 import { createRoot } from "solid-js"
 import { initializeClientState, flushClientState, loadedRestorableSession } from "../../../src/stores/client-state"
 import { addInstance, waitForInitialWorkspaceLoad } from "../../../src/stores/instances"
-import { attachInstanceTab } from "../../../src/stores/app-tabs"
+import { attachInstanceTab, closeInstanceTab } from "../../../src/stores/app-tabs"
 import { getTabViewState } from "../../../src/stores/tab-view-state"
 import { getSessionPreview, openSessionPreview, restoreSessionPreview, showSessionChatFor, updateSessionPreviewHistory, updateSessionPreviewViewport } from "../../../src/stores/session-previews"
 import { useAppSessionCapture } from "../../../src/lib/hooks/use-app-session-capture"
@@ -24,4 +24,5 @@ createRoot(() => { const capture = useAppSessionCapture(); capture.start() })
   view: getTabViewState, preview: getSessionPreview, flush: flushClientState,
   state: loadedRestorableSession, created: () => created,
   history: updateSessionPreviewHistory, viewport: updateSessionPreviewViewport,
+  close: closeInstanceTab,
 }
