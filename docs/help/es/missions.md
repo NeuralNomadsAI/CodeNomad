@@ -86,6 +86,8 @@ El chevrón despliega tareas; hacer clic selecciona Misión o tarea. Sus accione
 
 El ojo alterna el resumen central y sigue la selección. **Abrir conversación** lleva al coordinador o tarea. El menú ⋯ contiene las acciones disponibles de actualización, interrupción, configuración y edición.
 
+La selección, las secciones expandidas y el lector pertenecen a cada pestaña de proyecto y se restauran con ella. Las pestañas duplicadas pueden leer informes distintos o mantener un informe en una y la conversación, un archivo o una vista previa web en otra. Abrir o cerrar un lector cambia solo esa pestaña; el trabajo de las Misiones y las confirmaciones de lectura de resultados terminados siguen compartidos dentro de la ventana.
+
 Más entradas y tareas se cargan automáticamente al acercarse al final. Las páginas quedan en caché independientemente de las filas mostradas. Un error conserva la vista y ofrece **Intentar de nuevo**. Leer no inicia trabajo; la cabecera indica las lecturas de fondo.
 
 ### Colores y estados {#status-colours}

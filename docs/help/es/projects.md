@@ -14,6 +14,8 @@ La clonación escribe un repositorio en el destino. **Eliminar primero la carpet
 
 Las entradas recientes son accesos directos. **Renombrar workspace** cambia su nombre visible; **Eliminar de recientes** elimina el acceso directo, no sus archivos ni conversaciones. Hacer clic en un proyecto reciente que ya esté abierto abre una pestaña nueva; su botón **Abierta** (**Cambiar al proyecto abierto**) selecciona en cambio la pestaña existente.
 
+Abre la misma carpeta dos veces y selecciona la misma conversación en ambas pestañas para mantener el chat en una y una vista previa web, un archivo o un informe de Misión en la otra. Cada pestaña conserva su propia vista, posición de desplazamiento de la conversación, selección del panel derecho y modo de Archivos; los mensajes, la ejecución y los datos del proyecto siguen compartidos.
+
 ## Usar el lanzador de nuevas instancias {#new-instance-launcher}
 
 1. Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
@@ -35,6 +37,8 @@ Un clic normal sigue abriendo la página de inicio completa. El lanzador es un a
 Si otra ventana muestra la misma conexión de proyecto, su pestaña también se cierra y esa ventana muestra una notificación. La ventana que inicia el cierre no muestra ninguna. El cierre es inmediato; si el backend no puede cerrar el proyecto, aparece un error y **Cambiar al proyecto abierto** en la página de inicio sigue llevando a él. No hay reintento automático. Los borradores sin enviar de la pestaña cerrada no se conservan en la restauración al iniciar.
 
 Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
+
+Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y URL e historial guardados del navegador. Las páginas guardadas del navegador se cargan al reabrirlas explícitamente. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
 
 ## Espacios de trabajo temporales {#temporary-workspaces}
 

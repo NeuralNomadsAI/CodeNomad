@@ -4,7 +4,7 @@
 
 1. Konuşmanın araç çubuğunda **Web önizlemesini aç** öğesini seçin.
 2. Kimlik bilgisi içermeyen bir `http://` veya `https://` **Önizleme URL'si** girin, ardından **Önizlemeyi aç** öğesini seçin. Gezinmek, yenilemek ve Geri/İleri gitmek için araç çubuğunu kullanın.
-3. Sohbete geri dönmek için önizlemenin kapat düğmesini kullanın. Devam etmek için bu görüşmede tekrar açın.
+3. Sohbete geri dönmek için önizlemenin kapat düğmesini kullanın. Devam etmek için aynı sekmede ve görüşmede tekrar açın.
 
 Bir görüşmedeki `localhost` veya `127.0.0.1` bağlantısına tıklamak, önizlemelerin kullanılabildiği her istemcide o oturumun web önizlemesinde açar. Remote Control üzerinden host web önizlemelerini kapalı tuttuğunda veya önizlemelerin başka bir nedenle kullanılamadığı bir istemcide bu bağlantılar normal tarayıcı davranışını korur. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bağlantıyı bunun yerine tarayıcınızda açar. Gerçek depolamanın kullanılamadığı yalıtılmış (sandbox) önizleme çerçevesinin içinde sayfa, geçerli sayfa yüklemesi için bellek içinde bir `localStorage`, `sessionStorage` ve `document.cookie` alır; kendi başına açılan token başına önizleme hostu gerçek depolamasını korur.
 

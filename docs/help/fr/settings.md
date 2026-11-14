@@ -15,6 +15,8 @@ La plupart des choix s’appliquent immédiatement, y compris les préférences 
 | Paramètres OpenCode Global/Projet | Changements de plugins/configuration natifs à la portée affichée. Les commandes Projet nécessitent un projet/une Location actif. |
 | Profil de données de bureau | Fenêtres natives, état de restauration et stockage navigateur, indépendamment du fichier de configuration et du service OpenCode partagé. Voir [Fenêtres de bureau et données](desktop.md). |
 
+L’onglet sélectionné du panneau droit et le mode Fichiers sont enregistrés séparément pour chaque onglet de projet. Vos derniers choix explicites servent de valeurs par défaut aux nouveaux onglets ; les dimensions des panneaux, l’ordre des onglets, la personnalisation et l’apparence restent des éléments de disposition et de préférences partagés.
+
 **Stats** couvre tout le service OpenCode connecté (tous les projets, clones indépendants et sous-sessions), pas seulement le dossier ouvert, sur les 7, 30, 90 ou 365 derniers jours. Il nécessite un projet ouvert et affiche les tokens et coûts enregistrés par OpenCode, pas les factures des fournisseurs ni les allocations d’abonnement ; les derniers totaux enregistrés peuvent s’afficher pendant l’actualisation. Les quotas de forfait relèvent de la section Statut **Utilisation**.
 
 Changer les préférences d’affichage ne redémarre pas OpenCode et ne rejoue pas de prompt. Configuration native, maintenance du service et identifiants ont des effets distincts : voir [Configuration d’OpenCode](opencode.md), [Fournisseurs](providers.md) et [Intégrations](integrations.md).

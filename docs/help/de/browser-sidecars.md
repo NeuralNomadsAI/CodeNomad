@@ -4,7 +4,7 @@
 
 1. Wählen Sie in der Symbolleiste einer Unterhaltung **Web-Vorschau öffnen**.
 2. Geben Sie eine `http://`- oder `https://`-**Vorschau-URL** ohne Zugangsdaten ein und wählen Sie dann **Vorschau öffnen**. Verwenden Sie die Symbolleiste für Navigation, Aktualisieren sowie Zurück/Vorwärts.
-3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie in dieser Unterhaltung zum Fortsetzen erneut.
+3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie zum Fortsetzen im selben Tab und in derselben Unterhaltung erneut.
 
 Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn in der Web-Vorschau dieser Sitzung, auf jedem Client mit verfügbarer Vorschau. Über Remote Control, wenn der Host Web-Vorschauen deaktiviert hält, oder auf einem Client ohne verfügbare Vorschau behalten solche Links ihr normales Browser-Verhalten. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet den Link stattdessen im Browser. Innerhalb des Sandbox-Vorschau-Frames, wo kein echtes Storage verfügbar ist, erhält die Seite ein In-Memory-`localStorage`, `sessionStorage` und `document.cookie` für das aktuelle Laden der Seite; ein eigenständig geöffneter Per-Token-Vorschau-Host behält sein echtes Storage.
 

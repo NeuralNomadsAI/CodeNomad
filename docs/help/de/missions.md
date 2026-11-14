@@ -88,6 +88,8 @@ Der Chevron öffnet Aufgaben; ein Zeilenklick wählt Mission oder Aufgabe. Die A
 
 Das Auge schaltet die zentrale Zusammenfassung um und folgt der Auswahl. **Unterhaltung öffnen** führt zum jeweiligen Koordinator oder zur Aufgabe. Das ⋯-Menü enthält anwendbare Aktualisierungs-, Unterbrechungs-, Konfigurations- und Bearbeitungsaktionen.
 
+Auswahl, aufgeklappte Abschnitte und Leseansicht gehören zu jedem Projekt-Tab und werden mit ihm wiederhergestellt. Mehrere Tabs desselben Projekts können unterschiedliche Berichte lesen oder in einem einen Bericht und im anderen die Unterhaltung, eine Datei oder eine Webvorschau bereithalten. Das Öffnen oder Schließen einer Leseansicht ändert nur diesen Tab; Missionsarbeit und Lesebestätigungen abgeschlossener Ergebnisse bleiben innerhalb des Fensters gemeinsam.
+
 Weitere Einträge und Aufgaben laden am Listenende automatisch. Aufgabenseiten bleiben unabhängig von dargestellten Zeilen im Cache. Lesefehler erhalten das letzte Bild und bieten einen expliziten neuen Versuch. Lesen startet keine Arbeit; der Kopf zeigt Hintergrundlesen an.
 
 ### Farben und Zustände {#status-colours}

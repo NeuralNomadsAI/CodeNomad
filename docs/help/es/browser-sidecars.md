@@ -4,7 +4,7 @@
 
 1. En la barra de herramientas de una conversación, elige **Abrir vista previa web**.
 2. Introduce una **URL de vista previa** `http://` o `https://` sin credenciales y elige **Abrir vista previa**. Usa la barra de herramientas para navegar, actualizar e ir Atrás/Adelante.
-3. Usa el botón de cierre de la vista previa para volver al chat. Ábrela de nuevo en esa conversación para continuar.
+3. Usa el botón de cierre de la vista previa para volver al chat. Ábrela de nuevo en la misma pestaña y conversación para continuar.
 
 Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre en la vista previa web de esa sesión, en cualquier cliente donde las vistas previas estén disponibles. A través de Remote Control cuando el host mantiene las vistas previas web desactivadas, o en un cliente donde las vistas previas no están disponibles de otro modo, esos enlaces conservan su comportamiento normal del navegador. Ctrl+clic (⌘-clic en macOS) o clic central abre el enlace en tu navegador en su lugar. Dentro del marco de vista previa aislado (sandbox), donde no hay almacenamiento real disponible, la página recibe un `localStorage`, `sessionStorage` y `document.cookie` en memoria para la carga actual de la página; un host de vista previa por token abierto por sí mismo conserva su almacenamiento real.
 

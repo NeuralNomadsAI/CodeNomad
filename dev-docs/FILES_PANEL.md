@@ -84,14 +84,17 @@ message diagrams. Show source opens the existing editable Monaco source; Show
 diagram renders the current draft, with explicit Save and existing conflict and
 refresh fences. Tiny's unsupported formats retain an error and source fallback.
 The composer stays mounted below it. Selections are bound to the originating
-project/session and cleared on session/worktree changes. The instance shell owns
+tab occurrence/session and cleared on session/worktree changes. Duplicate tabs
+can read different files while sharing the actual filesystem and Git mutations.
+The instance shell owns
 that lifetime (`instance/shell/file-preview-lifetime.ts`): it closes the reader
 on a session or session-worktree change, the removal of the target's worktree
 and shell disposal. The right panel only opens readers and never closes one by
 unmounting, so hiding, docking or floating it (toggle, lost room, Escape) keeps
 the mounted reader, its draft and position. A remounted Changes view revalidates
 its status and rereads the open local diff into the same editor and model. Opening the browser
-preview replaces the file reader; opening a file returns the browser to chat mode.
+preview replaces that occurrence's file reader; opening a file returns only that
+occurrence's browser to chat mode and closes its Mission reader.
 Cancelling or hiding a view fences pending reads. Workspace/local-diff readers
 refresh on filesystem invalidation, while commit contents remain immutable.
 

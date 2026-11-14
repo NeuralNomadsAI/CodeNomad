@@ -4,7 +4,7 @@
 
 1. In a conversation's toolbar, choose **Open web preview**.
 2. Enter a credential-free `http://` or `https://` **Preview URL**, then **Open preview**. Use the toolbar to navigate, refresh and go Back/Forward.
-3. Use the preview's close button to return to chat. Reopen it in that conversation to continue.
+3. Use the preview's close button to return to chat. Reopen it in the same tab and conversation to continue.
 
 Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's web preview, on every client where previews are available. Through Remote Control when the host keeps web previews off, or on a client where previews are otherwise unavailable, such links keep their normal browser behavior. Ctrl+click (⌘-click on macOS) or middle-click opens the link in your browser instead. Inside the sandboxed preview frame, where real storage is unavailable, the page gets an in-memory `localStorage`, `sessionStorage` and `document.cookie` jar for the current page load; a per-token preview host opened on its own keeps its real storage.
 
