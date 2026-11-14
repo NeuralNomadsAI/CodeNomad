@@ -66,6 +66,8 @@ const key = (id = selected.id, project = "project", directory = "/repo") => JSON
 function setup(retain: boolean | "preserve" = true, list?: () => Promise<MissionScheduleList>) {
   if (retain !== "preserve") holds.clear()
   fixture.enabled = true
+  fixture.settings = async (_instance, _id, input) => ({ document: { revision: input.expectedDocumentRevision,
+    scheduleActivation: { requestID: input.requestID, expectedRevision: input.expectedDocumentRevision, state: "ready" } } })
   const hold = { phase: "control" as const, action: "play" as const, requestID: "original_request", expectedRevision: 7, partial: true, document: selected }
   if (retain === true) {
     holds.set(key(), hold)
@@ -224,7 +226,8 @@ const confirmed = (hold: Pick<ReturnType<typeof setup>["hold"], "action" | "requ
 
 test("a native pre-write refusal releases only the matching UI control and keeps Stop available", async () => {
   for (const exact of [true, false]) {
-    const h = setup(false), c = controlsFor(h), doc = { ...selected, availableActions: ["play", "stop"] as typeof selected.availableActions }
+    const h = setup(false), c = controlsFor(h), doc = { ...selected, availableActions: ["play", "stop"] as typeof selected.availableActions,
+      scheduleActivation: { requestID: "ready_receipt", expectedRevision: 0, state: "ready" as const, authority: "a".repeat(64), targets: [], effectiveOrigin: null } }
     try {
       fixture.detail = async () => ({ pending: false, document: doc })
       await until(() => h.store.fresh(selected.id) && c.controls()?.capability() === "available")

@@ -122,6 +122,10 @@ const result = { type: "object", properties: { document: { ...summary, type: ["o
 /** Native RPC validates the wire first; the strict domain codec and signed action
  * are revalidated before any document or native effect. */
 export const missionScheduleRpcMethods = {
+  scheduleFlag: { input: { type: "object", properties: {}, additionalProperties: false },
+    output: { type: "object", properties: { enabled: { type: "boolean" },
+      provenance: { type: "string", enum: ["environment", "experimental-block", "all-flags", "channel-default"] } },
+      required: ["enabled", "provenance"], additionalProperties: false } },
   scheduleList: { input: { type: "object", properties: { after: text, limit: { type: "integer", minimum: 1, maximum: MISSION_SCHEDULE_PAGE_MAX } }, additionalProperties: false },
     output: { type: "object", properties: { version: { const: 1 }, projectID: text, next: text,
       schedules: { type: "array", maxItems: MISSION_SCHEDULE_PAGE_MAX, items: summary } }, required: ["version", "projectID", "schedules"], additionalProperties: false } },

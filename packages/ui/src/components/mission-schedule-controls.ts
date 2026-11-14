@@ -9,6 +9,10 @@ import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
 import { partialMissionScheduleReceipt as partialReceipt, refusedMissionScheduleReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
+import type { MissionScheduleCapability } from "../../../server/src/api-types"
+import { HttpResponseError } from "../lib/retryable-file-search"
+
+type ActivationRefusal = Extract<MissionScheduleCapability["activation"], { available: false }>["refusal"]
 
 // Exact dispatched identities survive navigation and remount. Unresolved entries
 // never evict; the ceiling refuses another control rather than forgetting one.
@@ -28,6 +32,8 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   const { t } = useI18n()
   const identity = () => JSON.stringify([props.instanceId, props.projectID, props.directory, props.document().id])
   const [busy, setBusy] = createSignal(false), [feedback, setFeedback] = createSignal<string>()
+  const [pendingAction, setPendingAction] = createSignal<Action>()
+  const [refusal, setRefusal] = createSignal<ActivationRefusal>()
   let alive = true
   onCleanup(() => { alive = false })
   const held = () => unifiedScheduleHold(identity())
@@ -44,12 +50,16 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   createEffect(() => {
     const owner = capabilityOwner(); props.refreshVersion()
     untrack(() => {
-      if (owner !== previousOwner) { setBusy(false); setCapability("loading"); previousOwner = owner }
+      if (owner !== previousOwner) { setBusy(false); setPendingAction(undefined); setRefusal(undefined); setFeedback(undefined); setCapability("loading"); previousOwner = owner }
       if (!props.active()) return
       const currentView = capture(), abort = new AbortController()
       const current = () => currentView() && !abort.signal.aborted
       void serverApi.fetchMissionScheduleCapability(props.instanceId, props.directory, abort.signal).then(value => {
-        if (current()) setCapability(value.api.available ? value.enabled ? "available" : value.activation.available ? "activatable" : "missing" : "missing")
+        if (current()) {
+          setCapability(value.api.available ? value.enabled ? "available" : value.activation.available ? "activatable" : "missing" : "missing")
+          setRefusal(value.api.available && !value.activation.available ? value.activation.refusal : undefined)
+          if (value.activation.available && feedback() === "missions.scheduleList.activationRefused") setFeedback(undefined)
+        }
       }).catch(() => { if (current()) setCapability("missing") })
       onCleanup(() => abort.abort())
     })
@@ -72,7 +82,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     && !held()
   async function receipt(key: string, hold: Hold, current: () => boolean) {
     const doc = props.document(), result = await serverApi.fetchMissionSchedule(props.instanceId, doc.id,
-      { directory: props.directory, requestID: hold.requestID }).catch(error => {
+      { directory: props.directory, requestID: hold.requestID }, AbortSignal.timeout(30_000)).catch(error => {
         const result = partialReceipt(error); if (result) return result; throw error
       })
     if (exactMissionScheduleControl(result, hold, doc.id)) {
@@ -108,43 +118,48 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   async function act(action: Action, creation = false) {
     if (!capable(action, creation)) return
     const current = capture(), key = identity(), original = props.document()
-    setBusy(true); setFeedback(undefined)
+    setBusy(true); setPendingAction(action); setFeedback(undefined); setRefusal(undefined)
     let dispatched: Hold | undefined
     try {
       // The button/confirmation describes an exact revision, not a live draft.
-      const latest = await serverApi.fetchMissionSchedule(props.instanceId, original.id, { directory: props.directory })
+      const latest = await serverApi.fetchMissionSchedule(props.instanceId, original.id, { directory: props.directory }, AbortSignal.timeout(30_000))
       if (!current()) return
       if (!latest.document || latest.document.id !== original.id || latest.document.revision !== original.revision) {
         setFeedback("missions.scheduleList.conflict"); props.refresh(); return
       }
       if (action === "stop" || action === "delete" || action === "run-now") {
+        setPendingAction(undefined)
         const confirmed = await showConfirmDialog(t(`missions.scheduleList.confirm.${action}`, { title: original.configuration.title }),
           { variant: "warning", confirmLabel: label(action), cancelLabel: t("missions.simple.cancel") })
         if (!confirmed || !current() || props.document().revision !== original.revision) return
+        setPendingAction(action)
       }
       let revision = original.revision
       if (["play", "resume", "run-now"].includes(action) && requiresMissionCalendar(original.configuration.launch)) {
-        const capability = await serverApi.fetchMissionScheduleCapability(props.instanceId, props.directory)
+        const capability = await serverApi.fetchMissionScheduleCapability(props.instanceId, props.directory, AbortSignal.timeout(30_000))
         if (!current()) return
+        if (!capability.activation.available && capability.activation.refusal) {
+          setRefusal(capability.activation.refusal); setFeedback("missions.scheduleList.activationRefused"); return
+        }
         if (!capability.api.available || !capability.enabled && !capability.activation.available) {
           setFeedback("missions.scheduling.capability.missing"); return
         }
         if (action === "run-now" && !capability.enabled) {
           setFeedback("missions.scheduleList.runNowRequiresEnabled"); return
         }
-        if (!capability.enabled) {
-          const targets = capability.activation.targets.map(item => item.path).join("\n")
-          const confirmed = await showConfirmDialog(t("missions.scheduleList.activate", { paths: targets }),
-            { variant: "warning", confirmLabel: label(action), cancelLabel: t("missions.simple.cancel") })
-          if (!confirmed || !current() || props.document().revision !== original.revision) return
+        if (action !== "run-now" && (!capability.enabled || latest.document.scheduleActivation?.state !== "ready")) {
           if (holds.size >= 128 && !holds.has(key)) { setFeedback("missions.scheduleList.capacity"); return }
-          const activation: Hold = { phase: "activation", action, requestID: generateUUID(), expectedRevision: revision, partial: false, document: original }
+          // An ON display alone cannot replace the server's ready proof.
+          // A retained proof keeps its original identity on the server.
+          const previous = latest.document.scheduleActivation
+          const activation: Hold = { phase: "activation", action, requestID: previous?.state === "ready" ? previous.requestID : generateUUID(),
+            expectedRevision: previous?.state === "ready" ? previous.expectedRevision : revision, partial: false, document: original }
           holds.set(key, activation); dispatched = activation; bump()
           const value = await serverApi.missionScheduleSettings(props.instanceId, original.id,
             { requestID: activation.requestID, expectedDocumentRevision: revision }, true)
           const proof = value.document.scheduleActivation
           if (!Number.isSafeInteger(value.document.revision) || value.document.revision < revision
-            || proof?.requestID !== activation.requestID || proof.expectedRevision !== revision || proof.state !== "ready") return
+            || proof?.requestID !== activation.requestID || proof.expectedRevision !== activation.expectedRevision || proof.state !== "ready") return
           settle(key, activation, current, value.document.revision); dispatched = undefined
           if (!current()) return
           revision = value.document.revision
@@ -165,18 +180,33 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       else if (current()) await receipt(key, request, current)
       if (current()) props.refresh()
     } catch (error) {
-      if (dispatched?.phase === "control" && refusedMissionScheduleReceipt(error, dispatched, original.id) && holds.get(key) === dispatched) {
+      if (error instanceof HttpResponseError && error.code === "schedule-activation-refused") {
+        const body = error.body as { refusal?: ActivationRefusal; notApplied?: { requestID?: string; expectedRevision?: number } } | undefined
+        if (dispatched?.phase === "activation" && holds.get(key) === dispatched
+          && body?.notApplied?.requestID === dispatched.requestID && body.notApplied.expectedRevision === dispatched.expectedRevision) {
+          holds.delete(key); bump()
+        }
+        if (current()) { setRefusal(body?.refusal); setFeedback("missions.scheduleList.activationRefused") }
+        // Without exact no-effect proof, preserve the original activation.
+      } else if (dispatched?.phase === "activation" && error instanceof HttpResponseError
+        && ["schedule-activation-conflict", "schedule-activation-unavailable"].includes(error.code ?? "") && holds.get(key) === dispatched) {
+        holds.delete(key); bump()
+        if (current()) setFeedback("missions.scheduleList.conflict")
+      } else if (dispatched?.phase === "control" && refusedMissionScheduleReceipt(error, dispatched, original.id) && holds.get(key) === dispatched) {
         if (dispatched.minimumRevision !== undefined) settle(key, dispatched, current, dispatched.minimumRevision)
         else { holds.delete(key); bump(); if (current()) props.refresh() }
         if (current()) setFeedback("missions.scheduleList.conflict")
       } else if (current() && !dispatched) setFeedback("missions.scheduleList.readFailed")
     }
-    finally { if (current()) { setBusy(false); props.refresh() } }
+    finally { if (current()) { setBusy(false); setPendingAction(undefined); props.refresh() } }
   }
   const label = (action: Action) => t(action === "delete" ? "missionsPanel.picker.delete" : action === "run-now" ? "missionsPanel.action.runNow"
     : action === "play" ? "missionsPanel.action.start" : `missionsPanel.action.${action}`)
   // Direct creation already has an exact document receipt. Its continuation still
   // rereads the document and capability before any activation or Play dispatch.
-  return { held, publishing, busy, feedback, capability, capable, act, reconcile, label,
+  const progress = () => pendingAction() ? pendingAction() === "play" ? "missionsPanel.action.starting"
+    : pendingAction() === "resume" ? "missionsPanel.action.resuming" : pendingAction() === "run-now" ? "missionsPanel.action.runningNow"
+      : "missions.control.mutation.pending" : undefined
+  return { held, publishing, busy, pendingAction, progress, feedback, refusal, capability, capable, act, reconcile, label,
     startCreated: () => act("play", true) }
 }

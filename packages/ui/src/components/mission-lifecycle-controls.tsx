@@ -11,7 +11,7 @@ import { instances } from "../stores/instances"
 import { showConfirmDialog } from "../stores/alerts"
 import { missionLifecycleIntents, missionLifecycleSource } from "../stores/mission-lifecycle-intents"
 import { partialInterrupt } from "./mission-native-execution-model"
-export interface MissionPrimaryAction { key: string; label: string; ariaLabel?: string; disabled?: boolean; onSelect: () => void | Promise<void> }
+export interface MissionPrimaryAction { key: string; label: string; ariaLabel?: string; disabled?: boolean; busy?: boolean; onSelect: () => void | Promise<void> }
 
 /** Explicit refresh-then-resend of a selected item's unconfirmed control, owned
  * by the panel's refresh button. `reconcile` is read-only and resolves true only

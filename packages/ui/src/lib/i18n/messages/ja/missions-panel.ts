@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "開始中…",
+  "missionsPanel.action.resuming": "再開中…",
+  "missionsPanel.action.runningNow": "実行を開始中…",
   "missionsPanel.pages.raw": "生のJSONをページ単位で読む",
   "missionsPanel.pages.rawPage": "生のJSON：{page} / {total} ページ",
   "missionsPanel.pages.previous": "前のページ",
@@ -41,6 +44,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "スケジュール ID",
   "missionsPanel.schedule.zoned": "{time}（{zone}）",
   "missionsPanel.state.inProgress": "進行中",
+  "missionsPanel.state.waiting": "スケジュール実行を待機中",
+  "missionsPanel.state.unreadSuccess": "成功した実行を確認",
+  "missionsPanel.state.unconfirmed": "状態未確認",
   "missionsPanel.state.interrupted": "中断",
   "missionsPanel.run.completed": "完了",
   "missionsPanel.run.failed": "失敗",

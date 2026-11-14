@@ -741,7 +741,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         expanded={() => missionProjectView(scope()).expanded ?? []}
         onExpanded={keys => updateMissionProjectView(scope(), { expanded: keys.slice(-MAX_EXPANDED) })}
         markRead={key => {
-          if (!key.startsWith("mission:")) return undefined
+          if (!key.startsWith("mission:")) return key.startsWith("schedule:") ? recurrence.markRead(key) : scheduled.markRead(key)
           const id = key.slice("mission:".length), entry = missionEntries().find(item => item.key === key)
           const unseen = rowQuestions().get(id)?.unseen ?? [], finished = entry?.mark === "done"
           // Like a session hierarchy: clears the finished-unseen tasks and the Mission's own completion.
@@ -761,6 +761,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         onSelect={entry => {
           const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
           if (kind === "schedule" || kind === "scheduled") {
+            // Capture this displayed result before selection starts any reads. A
+            // restored selection or a later success never inherits this gesture.
+            const acknowledge = entry.mark === "done" ? (kind === "schedule" ? recurrence : scheduled).markRead(entry.key) : undefined
+            if (treeShown() && documentAttention() && !editor()) acknowledge?.()
             intent++
             const follow = viewing()
             batch(() => {

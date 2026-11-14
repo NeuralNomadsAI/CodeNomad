@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { filterMissionPickerEntries, missionMark, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { filterMissionPickerEntries, missionMark, scheduleMark, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import type { RecurrenceSchedule } from "../stores/mission-recurrence"
+import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
 const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark })
 
@@ -24,18 +26,53 @@ test("a mission's mark: an answer first, then resumable stops, observed work, an
 })
 
 test("schedule mark: an answer first, then the schedule's state, the live passage and a retryable failure", () => {
-  const schedule = (state: string, pending: { status: string } | null, outcome?: string) =>
-    ({ state, pending, latestResult: outcome ? { outcome } : null })
+  const schedule = (state: RecurrenceSchedule["state"], pending: { status: NonNullable<RecurrenceSchedule["pending"]>["status"] } | null,
+    outcome?: NonNullable<RecurrenceSchedule["latestResult"]>["outcome"]): RecurrenceSchedule =>
+    ({ id: "daily", revision: 1, title: "Daily", clock: { time: "09:00", zone: "UTC" }, history: [], actions: [],
+      state, pending: pending ? { ...pending, passageID: "pending" } : null,
+      latestResult: outcome ? { outcome, passageID: "last", dueAt: 1, settledAt: 2 } : null, controls: [], nextDueAt: Date.now() + 60_000 })
   assert.equal(scheduleMark(schedule("running", { status: "running" }), 1), "permission")
   assert.equal(scheduleMark(schedule("running", { status: "running" }, "failed")), "working")
-  assert.equal(scheduleMark(schedule("running", { status: "uncertain" })), "idle")
+  assert.equal(scheduleMark(schedule("running", { status: "uncertain" })), "unconfirmed")
   assert.equal(scheduleMark(schedule("running", null, "failed")), "interrupted", "Run now retries a failed run")
   assert.equal(scheduleMark(schedule("interrupted", null, "completed")), "interrupted")
   assert.equal(scheduleMark(schedule("paused", null, "completed")), "paused")
   assert.equal(scheduleMark(schedule("paused", null, "failed")), "paused", "a pause is the user's own choice")
   assert.equal(scheduleMark(schedule("stopped", null, "failed")), "idle", "a stopped schedule offers nothing to continue")
-  assert.equal(scheduleMark(schedule("unavailable", null, "failed")), "idle")
-  assert.equal(scheduleMark(schedule("running", null, "completed")), "idle")
+  assert.equal(scheduleMark(schedule("running", null, "completed")), "waiting")
+  assert.equal(scheduleMark(schedule("running", null, "ended-without-report")), "waiting",
+    "an archived reportless passage does not interrupt the positively running daily scheduler")
+  assert.equal(scheduleMark(schedule("running", null, "completed"), 0, false), "done")
+  assert.equal(scheduleMark(schedule("running", null, "completed"), 0, false, false), "unconfirmed")
+  assert.equal(scheduleMark({ ...schedule("running", null), nextDueAt: null }), "unconfirmed")
+  assert.equal(scheduleMark({ ...schedule("running", null), nextDueAt: 5 }, 0, true, true, 10), "unconfirmed")
+  assert.equal(scheduleMark({ ...schedule("running", null), lastError: { code: "wake-failed", at: 1 } }), "unconfirmed")
+})
+
+test("unified documents share daily priorities and require current positive calendar observation", () => {
+  const doc = { state: "running", firstPlayedAt: 1, timeGeneration: 3, blockReason: null, control: null, pendingPassage: null,
+    latestResult: null, observation: { state: "known", nativeStatus: "active", timeGeneration: 3, nextDueAt: 100 } } as UnifiedMissionSchedule
+  const mark = (patch: Partial<UnifiedMissionSchedule> = {}, seen = true, requests = 0, fresh = true) =>
+    unifiedScheduleMark({ ...doc, ...patch }, requests, seen, fresh, 50)
+  assert.equal(mark(), "waiting")
+  assert.equal(mark({ observation: { ...doc.observation, state: "unknown" } }), "unconfirmed")
+  assert.equal(mark({ observation: { ...doc.observation, timeGeneration: 2 } }), "unconfirmed")
+  assert.equal(mark({ observation: { ...doc.observation, nativeStatus: "paused", nextDueAt: null } }), "unconfirmed")
+  assert.equal(mark({ observation: { ...doc.observation, nextDueAt: 40 } }), "unconfirmed")
+  assert.equal(mark({}, true, 0, false), "unconfirmed")
+  assert.equal(mark({ blockReason: "unknown" }), "unconfirmed")
+  assert.equal(mark({ blockReason: "failed" }, false), "interrupted")
+  const pendingPassage = { id: "passage" } as NonNullable<UnifiedMissionSchedule["pendingPassage"]>
+  assert.equal(mark({ pendingPassage }), "working")
+  assert.equal(mark({ pendingPassage, state: "paused" }), "paused")
+  assert.equal(mark({ pendingPassage, state: "paused" }, false, 1), "permission")
+  assert.equal(mark({ state: "paused", firstPlayedAt: null, observation: { ...doc.observation, state: "unarmed" } }), "prepared")
+  const latestResult = { id: "A", outcome: "completed" } as NonNullable<UnifiedMissionSchedule["latestResult"]>
+  assert.equal(mark({ latestResult }, false), "done")
+  assert.equal(mark({ latestResult }), "waiting")
+  assert.equal(mark({ state: "finished", latestResult }, false), "done")
+  assert.equal(mark({ state: "finished", latestResult }), "idle")
+  assert.equal(mark({ state: "stopped", latestResult }, false), "idle")
 })
 
 test("filter matches titles case-insensitively", () => {
