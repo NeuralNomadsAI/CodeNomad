@@ -177,13 +177,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     return { session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
       kind: surface.kind, target: "target" in surface ? surface.target : undefined }
   }
-  let conversationEpoch = 0, previousConversation = conversation()
-  createComputed(() => {
+  let previousConversation = conversation()
+  // Reading the memo observes a guarded retarget even inside an effect's batch.
+  const conversationEpoch = createMemo((epoch: number) => {
     const next = conversation()
-    if (next.session !== previousConversation.session || next.parent !== previousConversation.parent
-      || next.kind !== previousConversation.kind || next.target !== previousConversation.target) conversationEpoch++
+    const changed = next.session !== previousConversation.session || next.parent !== previousConversation.parent
+      || next.kind !== previousConversation.kind || next.target !== previousConversation.target
     previousConversation = next
-  })
+    return changed ? epoch + 1 : epoch
+  }, 0)
 
   // Session-list restoration keeps priority; activation revalidates afterwards.
   const visible = () => (props.isActive?.() ?? true) && sessionListRestored(props.instanceId)
@@ -267,16 +269,16 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const instanceId = props.instanceId, viewScope = scope(), viewCurrent = captureView(), operation = ++intent
     const schedule = passageSchedule()
     let passage = discoverPassage ? undefined : currentPassage.snapshot()?.passageID
-    let epoch = conversationEpoch
+    let epoch = conversationEpoch()
     let surfaceIntent = captureSessionSurfaceIntent({ instanceId, sessionId: props.activeSessionId() ?? null })
     return { instanceId, scope: viewScope,
-      current: () => surfaceIntent.current() && viewCurrent() && operation === intent && scope() === viewScope && epoch === conversationEpoch
+      current: () => surfaceIntent.current() && viewCurrent() && operation === intent && scope() === viewScope && epoch === conversationEpoch()
         && passageSchedule() === schedule && (!schedule || discoverPassage && passage === undefined || currentPassage.snapshot()?.passageID === passage),
       bindPassage: () => { passage = currentPassage.snapshot()?.passageID },
-      adoptReader: () => { epoch = conversationEpoch },
+      adoptReader: () => { epoch = conversationEpoch() },
       // Adopt only our guarded synchronous batch, never an awaited external change.
       adoptConversation: () => {
-        epoch = conversationEpoch
+        epoch = conversationEpoch()
         surfaceIntent = captureSessionSurfaceIntent({ instanceId, sessionId: props.activeSessionId() ?? null })
       },
       release: () => surfaceIntent.release(),

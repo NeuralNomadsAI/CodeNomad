@@ -215,6 +215,40 @@ test("an admitted red schedule click discovers and opens its asking descendant",
   } finally { await page.close() }
 })
 
+test("a pressed task reader hands its loaded schedule's answer to cold hydration", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  try {
+    const f = await setupReaderFollow(page, true, true)
+    await page.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
+    await selectMission(page, "Daily review")
+    await page.locator('.mission-tree-node[data-task-key="second"] .mission-tree-task').click()
+    await eye(page).click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Next task has no actor", exact: true }).waitFor()
+    await page.evaluate(async () => {
+      const s = await import("/src/stores/session-state.ts" as string)
+      s.setSessions((previous: Map<string, Map<string, any>>) => {
+        const values = new Map(previous.get("fixture"))
+        values.set("ses_child", { ...values.get("ses_child"), catalogSnapshot: true })
+        return new Map(previous).set("fixture", values)
+      })
+      ;(await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_child", sessionID: "ses_child",
+        location: { directory: "/fixture" }, title: "Real child request", tool: { name: "question" }, fields: [], time: { created: 1 } } as never)
+    })
+    await page.route("**/instance/api/session/ses_child", route => route.fulfill({ json: { data: { id: "ses_child", parentID: "ses_task",
+      projectID: "project", title: "Cold asking child", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } }))
+    const row = await inlineMissionEntry(page, "Daily review")
+    await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+    const hydration = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/session/ses_child"))
+    await row.click(); await hydration
+    const active = () => page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture"))
+    for (let attempt = 0; await active() !== "ses_child" && attempt < 100; attempt++) await page.waitForTimeout(50)
+    assert.equal(await active(), "ses_child")
+    assert.equal(await readerTarget(page), undefined)
+    assert.equal(await hasForegroundIntent(page), false)
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { await page.close() }
+})
+
 test("a discovered schedule answer retains its original intent through cold actor hydration", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   const hydration = deferred(), settled = deferred()
