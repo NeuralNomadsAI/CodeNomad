@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { ChevronRight, Flag, Plus, Repeat } from "lucide-solid"
+import { AlertTriangle, Flag, Pause, Plus, Repeat } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import SessionExpander from "./session-expander"
 import { preserveListFocus } from "../lib/preserve-list-focus"
@@ -102,6 +102,8 @@ export function MissionRows(props: {
     const open = () => opened().has(key)
     const previewing = () => !isSelected() && open()
     const label = () => t(open() ? "missionsPanel.row.collapse" : "missionsPanel.row.expand")
+    // The menu acts on the passage visible when it opened, even after a refresh.
+    const [markRead, setMarkRead] = createSignal<(() => void)>()
     // The session list's own row classes (session-layout.css, session-tree.css).
     return <><div class="session-list-item mission-row" data-mission-key={key}>
       <div class={`session-item-base ${highlighted() ? "session-item-active" : "session-item-inactive"}`}>
@@ -109,8 +111,8 @@ export function MissionRows(props: {
           {/* The session list's chevron: right-click marks the whole hierarchy as read. */}
           <SessionExpander class="session-item-expander opacity-80 hover:opacity-100 hover:bg-surface-hover" expanded={open()}
             activity={entry().childActivity} label={label()} title={label()}
-            markReadLabel={t("sessionList.expand.markRead")} markReadDisabled={!props.markRead?.(key)}
-            onMarkRead={() => props.markRead?.(key)?.()} onOpenChange={() => undefined}
+            markReadLabel={t("sessionList.expand.markRead")} markReadDisabled={!markRead()}
+            onMarkRead={() => markRead()?.()} onOpenChange={open => { if (open) setMarkRead(() => props.markRead?.(key)) }}
             onToggle={() => {
               // A schedule's children are its selected detail: expanding one selects it.
               if (!isSelected() && !props.expandable?.(key)) props.onSelect(entry())
@@ -119,7 +121,10 @@ export function MissionRows(props: {
         </Show>
         <button type="button" class="session-item-select mission-row-select" aria-current={highlighted() ? "true" : undefined} title={describe(entry())}
           onClick={() => props.onSelect(entry())}>
-          <Dynamic component={key.startsWith("mission:") ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} aria-hidden="true" />
+          <span class="mission-row-mark" data-mark={entry().mark} aria-hidden="true">
+            <Dynamic component={entry().mark === "paused" ? Pause : entry().mark === "interrupted" ? AlertTriangle
+              : key.startsWith("mission:") ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} />
+          </span>
           <bdi class="session-item-title session-item-title--clamp">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
         </button>
       </div>

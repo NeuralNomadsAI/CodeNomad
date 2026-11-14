@@ -1,7 +1,8 @@
 import type { PluginControlLocation } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { readRuntimeContract } from "./compatibility/negotiate"
-import { effectiveMissionExperimental, readMissionExperimental } from "./native-experimental-settings"
+import { readMissionExperimental } from "./native-experimental-settings"
+import { readNativeScheduleFlag, nativeScheduleFlagOrigin } from "./native-schedule-flag"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
 
 type ObjectValue = Record<string, any>
@@ -78,8 +79,8 @@ export class NativeScheduleCapabilityReader {
     for (const document of snapshot.documents) readMissionExperimental(document.document)
     const contract = await readRuntimeContract(connection.endpoint, connection.fetch, AbortSignal.timeout(5_000))
     connection.assertCurrent()
-    const experimental = effectiveMissionExperimental(snapshot.entries)
-    return { location: snapshot.location, api: nativeScheduleCapability(contract), enabled: experimental.schedules === true,
-      origin: experimental.origin }
+    const flag = await readNativeScheduleFlag(connection, location)
+    return { location: snapshot.location, api: nativeScheduleCapability(contract), enabled: flag.enabled,
+      provenance: flag.provenance, origin: nativeScheduleFlagOrigin(snapshot.entries, flag) }
   }
 }

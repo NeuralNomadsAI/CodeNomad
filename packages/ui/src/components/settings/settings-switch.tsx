@@ -12,6 +12,12 @@ interface SettingsSwitchProps {
   onChange: (checked: boolean) => void
 }
 
+/** The checked colour of an accent switch: the theme accent, as CSS, so palettes apply. */
+export const ACCENT_SWITCH_SX = {
+  "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--accent-primary)" },
+  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--accent-primary)" },
+}
+
 /** On/off control for a lone setting: the Yolo switch, in the plain accent color. */
 export const SettingsSwitch: Component<SettingsSwitchProps> = (props) => (
   <Switch
@@ -19,10 +25,7 @@ export const SettingsSwitch: Component<SettingsSwitchProps> = (props) => (
     checked={props.checked}
     disabled={props.disabled}
     size="small"
-    sx={{
-      "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--accent-primary)" },
-      "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--accent-primary)" },
-    }}
+    sx={ACCENT_SWITCH_SX}
     inputProps={{ role: "switch", "aria-label": props.label, "aria-describedby": props.describedBy }}
     onChange={(_event, checked) => props.onChange(Boolean(checked))}
   />

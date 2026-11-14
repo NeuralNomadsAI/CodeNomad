@@ -21,8 +21,14 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum runtime **2.2.3**, recommended **2.2.7** (`runtime-support.ts`), with
-**2.2.3** client/schema/plugin pins. The minimum carries the image tool contract of
+Minimum and recommended runtime **2.3.0** (`runtime-support.ts`), with **2.3.0**
+client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
+qualifies only the 2.3 subagent contract: every subagent call returns at once
+(`metadata.status: "running"`) and the child reports to its parent through
+synthetic `<subagent sessionID state …>` messages, one per idle period, tagged
+`running` while background work remains (the subagent card in `TRANSCRIPT.md`,
+`scripts/test-missions-native-trajectory.mjs`,
+`scripts/test-subagent-nesting-native.mjs`). The minimum also carries the image tool contract of
 upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
 the Images gallery, the Design agent and skills and the Images settings: one
 name, `experimental_image_generate`, for the tool, its permission action, its job
@@ -254,6 +260,11 @@ with eight-second reads. Native carrier guards use the pruning request's lifetim
 The fixed navigation method adaptation remains conditional on method absence.
 
 ## Agent conventions
+
+Readiness ownership fixtures await complete request JSON before one-shot follower
+reconciliation. Exclusive file creation exposes its name before the write settles.
+Replacement fixtures hold backend ACK consumption until foreign bytes are installed;
+overflow fixtures cancel explicitly after observing the refused complete plan.
 
 The bundled `codenomad.memory` plugin exposes `codenomad_memory` with `list`,
 `read` (exact ID or title), `save` (title/type/text), and revision-conditional

@@ -85,6 +85,10 @@ admitted Location before their first RPC, and surface failed setup immediately.
 ## Agent conventions
 
 - History keyboard scenarios await publication of both exact store keys; a controller-held remote response verifies the absence of premature gestures and the actual keydown recipient.
+- Mermaid initialization-deadline checks use the file preview's single renderer
+  consumer and await the held Tiny module's evaluation before checking late
+  iframe creation. Markdown's deferred highlight pass can remount a fence and
+  admit a separate initialization attempt; fence rendering has its own coverage.
 - Fixture shutdown tracks Vite 7 optimizer disposal and pending requests across every server environment before deleting its owned cache. Qualify the optimized-load hook and native cleanup acknowledgements together when changing Vite.
 - A new browser test either borrows via `borrowFixture({ name, routes })` or
   joins `fixture-exemptions.ts` with a reason that matches reality (the

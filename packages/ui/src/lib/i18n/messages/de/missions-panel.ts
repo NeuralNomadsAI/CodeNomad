@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "Wird gestartet…",
+  "missionsPanel.action.resuming": "Wird fortgesetzt…",
+  "missionsPanel.action.runningNow": "Durchlauf wird gestartet…",
   "missionsPanel.pages.raw": "JSON-Rohdaten seitenweise lesen",
   "missionsPanel.pages.rawPage": "JSON-Rohdatenseite {page} von {total}",
   "missionsPanel.pages.previous": "Vorherige Seite",
@@ -41,6 +44,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "Zeitplan-ID",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "In Arbeit",
+  "missionsPanel.state.waiting": "Wartet auf geplanten Durchlauf",
+  "missionsPanel.state.unreadSuccess": "Erfolgreicher Durchlauf zum Ansehen",
+  "missionsPanel.state.unconfirmed": "Status unbestätigt",
   "missionsPanel.state.interrupted": "Unterbrochen",
   "missionsPanel.run.completed": "Abgeschlossen",
   "missionsPanel.run.failed": "Fehlgeschlagen",

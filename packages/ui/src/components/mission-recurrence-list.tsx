@@ -1,19 +1,17 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack, type JSX } from "solid-js"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
-import { scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { missionMarkStateKey, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
-import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
+import { markScheduleSuccessSeen, missionProjectView, scheduleSuccessSeen, seedScheduleSuccessSeen, updateMissionProjectView } from "../stores/mission-view-state"
 import { showSessionChatFor } from "../stores/session-previews"
 import { activeSessionId } from "../stores/sessions"
-import { getPermissionQueue, instances } from "../stores/instances"
-import { getFormQueue } from "../stores/forms"
-import { sessions } from "../stores/session-state"
-import { getSessionAncestorIdsFromMap } from "../stores/session-tree"
+import { instances } from "../stores/instances"
+import { missionPassageRequests } from "./mission-passage-requests"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { missionScheduleText } from "./mission-schedule-text"
 import { createRecurrenceControlIntent, completedRecurrenceControl, completedRecurrenceManual, partialRecurrenceControl,
@@ -22,9 +20,13 @@ import { createRecurrenceControlIntent, completedRecurrenceControl, completedRec
 // Lost replies survive remounts. Only an exact status read releases the hold.
 const unresolved = new Map<string, RecurrenceControlIntent>()
 const partialResults = new Map<string, RecurrenceControlStatus>()
-// Bumped on each exact release, so every mounted control drops that request
-// even when the release lands after its context changed.
+// Retained requests also fence visual marks while their native outcome is unknown.
+// Exact releases reach mounted controls even after their context changed.
 const [releases, setReleases] = createSignal(0)
+const holdIntent = (key: string, intent: RecurrenceControlIntent) => {
+  if (unresolved.get(key) === intent) return
+  unresolved.set(key, intent); setReleases(value => value + 1)
+}
 const sameIntent = (a: RecurrenceControlIntent, b: RecurrenceControlIntent) => a.scheduleID === b.scheduleID && a.requestID === b.requestID
   && a.expectedRevision === b.expectedRevision && a.action === b.action && a.directory === b.directory
 const PRIMARY: RecurrenceAction[] = ["resume", "play", "pause"]
@@ -41,6 +43,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   const key = createMemo(() => JSON.stringify([props.identity, props.schedule.id]))
   const [held, setHeld] = createSignal(unresolved.get(key()))
   const [busy, setBusy] = createSignal(false)
+  const [pendingAction, setPendingAction] = createSignal<RecurrenceAction | "status">()
   const [partial, setPartial] = createSignal(partialResults.get(key()))
   // Message key of the last request proven to have had no effect.
   const [refusal, setRefusal] = createSignal<string>()
@@ -54,7 +57,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   createEffect(() => {
     const identity = key(); props.active()
     connection()
-    generation++; setHeld(unresolved.get(identity)); setPartial(partialResults.get(identity)); setBusy(false); setRefusal(undefined)
+    generation++; setHeld(unresolved.get(identity)); setPartial(partialResults.get(identity)); setBusy(false); setPendingAction(undefined); setRefusal(undefined)
   })
   onCleanup(() => { generation++ })
   const incomplete = () => props.schedule.controls.filter(control => control.controlsComplete !== true)
@@ -114,7 +117,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     if (retry ? !retryCapable() : !capable(action)) return
     const identity = key(), captured = generation, instanceId = props.instanceId
     const intent = retry ?? createRecurrenceControlIntent(props.schedule.id, props.schedule.revision, action, props.directory)
-    unresolved.set(identity, intent); setHeld(intent); setBusy(true); setRefusal(undefined)
+    holdIntent(identity, intent); setHeld(intent); setBusy(true); setPendingAction(action); setRefusal(undefined)
     try {
       if (action === "run-now") {
         const result = await backendOf(instanceId).api.runMissionRecurrenceNow(instanceId, intent)
@@ -131,7 +134,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
       // The exact request is released wherever it is; only its own context sees the message.
       if (refusal) settle(intent, identity, refusal, operation.current() && captured === generation)
     }
-    finally { if (captured === generation) setBusy(false) }
+    finally { if (captured === generation) { setBusy(false); setPendingAction(undefined) } }
   }
   /** Read-only status read. A refresh (`reconcile`) records a witness only when its
    * own completed read, still in this context, leaves the exact request partial. */
@@ -142,8 +145,8 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     witness = undefined
     // A refresh's own row read must not skip it; the explicit button keeps the full gate.
     if (!intent || busy() || !(reconcile ? props.retryEnabled() : props.enabled())) return false
-    unresolved.set(identity, intent); setHeld(intent)
-    setBusy(true)
+    holdIntent(identity, intent); setHeld(intent)
+    setBusy(true); setPendingAction("status")
     try {
       if (intent.action === "run-now") {
         const result = await backendOf(props.instanceId).api.missionRecurrenceRunNowStatus(props.instanceId, intent)
@@ -160,7 +163,7 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
         }
       }
     } catch { /* Retain the exact request identity. */ }
-    finally { if (captured === generation) setBusy(false) }
+    finally { if (captured === generation) { setBusy(false); setPendingAction(undefined) } }
     return Boolean(witness)
   }
   /** Resends only the request its preceding read witnessed, once, in that same context. */
@@ -183,31 +186,33 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     ? "missionsPanel.action.runNow" : action === "play" ? "missionsPanel.action.start" : action === "stop" ? "missionsPanel.action.stop"
     : `missionsPanel.action.${action}`)
   const description = (action: RecurrenceAction) => t(`missions.recurrence.${action}`, { id: props.schedule.title })
-  const primaryAction = () => !heldIntent() ? PRIMARY.find(action => props.schedule.actions.includes(action))
+  const primaryAction = () => PRIMARY.includes(pendingAction() as RecurrenceAction) ? pendingAction() as RecurrenceAction
+    : !heldIntent() ? PRIMARY.find(action => props.schedule.actions.includes(action))
     : supersedable() ? PRIMARY.find(action => SUPERSEDING.includes(action) && props.schedule.actions.includes(action)) : undefined
   const statusAction = (): MissionPrimaryAction => ({ key: "status", label: t("missionsPanel.action.checkStatus"),
-    ariaLabel: t("missions.recurrence.check", { id: props.schedule.title }), disabled: busy() || !props.enabled(), onSelect: () => void check() })
+    ariaLabel: t("missions.recurrence.check", { id: props.schedule.title }), disabled: busy() || !props.enabled(), busy: pendingAction() === "status", onSelect: () => void check() })
   const primary = (): MissionPrimaryAction | undefined => {
     const action = primaryAction()
     if (heldIntent() && !action) return statusAction()
-    return action ? { key: action, label: label(action), ariaLabel: description(action), disabled: !capable(action), onSelect: () => act(action) } : undefined
+    return action ? { key: action, label: label(action), ariaLabel: description(action), disabled: !capable(action), busy: pendingAction() === action, onSelect: () => act(action) } : undefined
   }
   // Always the schedule's own Stop, disabled when unavailable or a request is held,
   // so the toolbar never falls back to the one-time Mission wording.
-  const stopAction = (): MissionPrimaryAction => ({ key: "stop", label: label("stop"), ariaLabel: description("stop"), disabled: !capable("stop"), onSelect: stop })
+  const stopAction = (): MissionPrimaryAction => ({ key: "stop", label: label("stop"), ariaLabel: description("stop"), disabled: !capable("stop"), busy: pendingAction() === "stop", onSelect: stop })
   // The panel refresh first reads the exact request's status, then resends it
   // only when that completed read leaves it partially applied.
   const retry: MissionControlRetry = { pending: () => Boolean(heldIntent()) && props.retryEnabled(),
     reconcile: () => check(true), resend }
   // Always present for schedules, disabled while unavailable or a request is held.
   const runNow = (): MissionPrimaryAction => ({ key: "run-now", label: label("run-now"), ariaLabel: description("run-now"),
-    disabled: !capable("run-now"), onSelect: () => act("run-now") })
-  const feedback = <Show when={heldIntent()} fallback={<Show when={refusal()}>{message => <small role="status">{t(message())}</small>}</Show>}>
-    <small role="status">{t("missions.recurrence.uncertain")}</small></Show>
+    disabled: !capable("run-now"), busy: pendingAction() === "run-now", onSelect: () => act("run-now") })
+  const feedback = <p role="status">{pendingAction() ? t(pendingAction() === "play" ? "missionsPanel.action.starting"
+    : pendingAction() === "resume" ? "missionsPanel.action.resuming" : pendingAction() === "run-now" ? "missionsPanel.action.runningNow"
+    : "missions.control.mutation.pending") : heldIntent() ? t("missions.recurrence.uncertain") : refusal() ? t(refusal()!) : ""}</p>
   // While a superseding action holds the primary place, the unknown intent's exact status read stays one click away.
   const statusButton = <button type="button" class="window-action" title={statusAction().ariaLabel} aria-label={statusAction().ariaLabel}
     disabled={statusAction().disabled} onClick={() => statusAction().onSelect()}>{statusAction().label}</button>
-  const superseding = createMemo(() => Boolean(heldIntent() && primaryAction()))
+  const superseding = createMemo(() => Boolean(heldIntent() && primaryAction() && !busy()))
   const secondary = () => superseding() ? statusButton : undefined
   return { primary, stop: stopAction, runNow, retry, feedback, secondary }
 }
@@ -230,6 +235,13 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   // explicit refresh's own in-flight row read must not silently skip it.
   const admissible = () => !error() && props.active() && snapshot()?.projectID === props.projectID && Boolean(props.projectID)
   const valid = () => !loading() && admissible()
+  const seenScope = () => JSON.stringify([props.scope, props.projectID])
+  createEffect(() => {
+    const schedules = snapshot()?.schedules, scope = seenScope()
+    if (!schedules || error()) return
+    untrack(() => { for (const schedule of schedules) seedScheduleSuccessSeen(scope, "daily", schedule.id,
+      schedule.latestResult?.outcome === "completed" ? schedule.latestResult.passageID : undefined) })
+  })
   const text = missionScheduleText(t, locale)
   const { date } = text
   /** One sentence; its action is the row's primary control (Resume). */
@@ -268,19 +280,18 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   const passageRequests = (schedule: RecurrenceSchedule) => {
     const selected = schedule.id === props.selectedSchedule ? props.selectedRequests : undefined
     if (selected && selected.passageID === schedule.pending?.passageID) return selected.count
-    const root = schedule.pending?.conversationID
-    if (!root) return 0
-    const family = sessions().get(props.instanceId) ?? new Map()
-    const owned = (sessionID?: string) => Boolean(sessionID)
-      && (sessionID === root || getSessionAncestorIdsFromMap(family, sessionID!).includes(root))
-    return getFormQueue(props.instanceId).filter(form => owned(form.sessionID)).length
-      + getPermissionQueue(props.instanceId).filter(permission => owned(permission.sessionID)).length
+    return missionPassageRequests(props.instanceId, schedule.pending?.conversationID)
   }
   const entries = createMemo((): MissionPickerEntry[] => (snapshot()?.schedules ?? []).map(schedule => {
+    releases()
+    const held = unresolved.has(JSON.stringify([JSON.stringify([props.instanceId, props.projectID, props.scope]), schedule.id]))
     const state = t(`missions.recurrence.state.${schedule.state}`), next = text.next(schedule)
-    const mark = scheduleMark(schedule, passageRequests(schedule))
+    const mark = scheduleMark(schedule, passageRequests(schedule), !schedule.latestResult
+      || scheduleSuccessSeen(seenScope(), "daily", schedule.id, schedule.latestResult.passageID), !error() && !held)
+    const stateKey = missionMarkStateKey(mark)
     return { key: `schedule:${schedule.id}`, title: schedule.title, mark,
-      status: [t("missionsPanel.dailyBadge"), state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
+      status: [t("missionsPanel.dailyBadge"), mark === "unconfirmed" && (schedule.state === "paused" || schedule.state === "stopped") ? state : "",
+        stateKey ? t(stateKey) : state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
         .filter(Boolean).join(" · ") }
   }))
   const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined
@@ -312,5 +323,11 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       </section>
     }}</Show>
   </>
-  return { entries, view, listView, loading }
+  const markRead = (key: string) => {
+    const schedule = snapshot()?.schedules.find(item => key === `schedule:${item.id}`), result = schedule?.latestResult
+    const scope = seenScope()
+    return schedule && result?.outcome === "completed" && !scheduleSuccessSeen(scope, "daily", schedule.id, result.passageID)
+      ? () => markScheduleSuccessSeen(scope, "daily", schedule.id, result.passageID) : undefined
+  }
+  return { entries, view, listView, loading, markRead }
 }

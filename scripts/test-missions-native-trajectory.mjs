@@ -39,7 +39,7 @@ let stage = "isolated setup", nativeToolBefore, rootAfterLaunch = false, rootRel
 let capture
 let decision = false, decisionStep = 0, assignment, storeAssignment, journalBefore, humanArtifact
 let compare = false, compareStep = 0, compareCalls = [], comparison
-const compareAssignments = new Map(), runModels = new Set()
+const compareAssignments = new Map(), runModels = new Set(), deliveries = new Map()
 const journal = () => {
   const db = new DatabaseSync(path.join(root, "fixture.db"), { readOnly: true })
   try { return db.prepare("SELECT key,value FROM kv WHERE key LIKE '%codenomad-missions/v2/%' ORDER BY key").all() } finally { db.close() }
@@ -63,6 +63,18 @@ const provider = createServer(async (request, response) => {
           const content = body.messages.findLast(message => message.role === "tool" && message.tool_call_id === id)?.content
           return typeof content === "string" ? content : content?.map(part => part.text ?? "").join("")
       }
+      /** A subagent call's delivered result: the child's final report after the call's launch acknowledgement. */
+      const delivered = id => {
+        const child = result(id)?.match(/working in the background \(sessionID: (ses_[A-Za-z0-9]+)\)/)?.[1]
+        if (!child) return undefined
+        const reports = body.messages.map(message => typeof message.content === "string" ? message.content : (message.content ?? []).map(part => part.text ?? "").join(""))
+          .flatMap(value => [...value.matchAll(/<subagent sessionID="(ses_[A-Za-z0-9]+)" state="(\w+)"[^>]*>\n([\s\S]*?)\n<\/subagent>/g)])
+          .filter(match => match[1] === child)
+        // A report tagged running is intermediate: the child still owns background work.
+        const final = reports.findLast(match => match[2] !== "running")
+        if (final) deliveries.set(id, { child, intermediate: reports.filter(match => match[2] === "running").length, state: final[2] })
+        return final?.[3]
+      }
       if (compare) {
         if (sessionID !== coordinator) {
           const role = text.includes("Role: Model A (model-a)") ? "model-a" : text.includes("Role: Model B (model-b)") ? "model-b" : "comparator"
@@ -70,22 +82,27 @@ const provider = createServer(async (request, response) => {
           if (role !== "comparator") runModels.add(body.model)
           answer = role === "comparator" ? JSON.stringify(comparison) : "RUN_OUTPUT: 4"
         } else {
-          const previous = compareCalls[compareStep - 1], returned = previous && result(previous.id)
-          if (previous?.reject) {
-            assert.match(returned, /byte-identical/)
-            assert.deepEqual(journal(), journalBefore, "Unequal-brief refusal leaves the journal unchanged")
-          } else if (previous?.tool === "mission_delegate") compareAssignments.set(previous.input.taskKey, JSON.parse(returned))
-          else if (previous?.tool === "mission_report") assert.equal(JSON.parse(returned).disposition, previous.input.final ? "finished" : "reported")
-          else if (previous?.tool === "subagent") {
-            if (previous.id === "launch_judge") compareCalls[compareStep].input.artifact = JSON.parse(returned.match(/\{"version":1[^\n]+\}/)[0])
-            else assert.match(returned, /RUN_OUTPUT: 4/)
-          }
-          answer = compareCalls[compareStep++] ?? "Done"
-          assert(compareStep <= compareCalls.length + 1)
-          if (answer.reject) journalBefore = journal()
-          if (answer.tool === "subagent") {
-            answer.input.prompt = compareAssignments.get(answer.taskKey).assignmentPrompt
-            if (answer.taskKey === "judge") assert(!/fixture\/model-[ab]/.test(answer.input.prompt), "Judge prompt hides model identities")
+          const previous = compareCalls[compareStep - 1]
+          const returned = previous && (previous.tool === "subagent" ? delivered(previous.id) : result(previous.id))
+          // A background run acknowledges at once: end the round until its report wakes the coordinator.
+          if (previous?.tool === "subagent" && returned === undefined) answer = "Awaiting the run's report."
+          else {
+            if (previous?.reject) {
+              assert.match(returned, /byte-identical/)
+              assert.deepEqual(journal(), journalBefore, "Unequal-brief refusal leaves the journal unchanged")
+            } else if (previous?.tool === "mission_delegate") compareAssignments.set(previous.input.taskKey, JSON.parse(returned))
+            else if (previous?.tool === "mission_report") assert.equal(JSON.parse(returned).disposition, previous.input.final ? "finished" : "reported")
+            else if (previous?.tool === "subagent") {
+              if (previous.id === "launch_judge") compareCalls[compareStep].input.artifact = JSON.parse(returned.match(/\{"version":1[^\n]+\}/)[0])
+              else assert.match(returned, /RUN_OUTPUT: 4/)
+            }
+            answer = compareCalls[compareStep++] ?? "Done"
+            assert(compareStep <= compareCalls.length + 1)
+            if (answer.reject) journalBefore = journal()
+            if (answer.tool === "subagent") {
+              answer.input.prompt = compareAssignments.get(answer.taskKey).assignmentPrompt
+              if (answer.taskKey === "judge") assert(!/fixture\/model-[ab]/.test(answer.input.prompt), "Judge prompt hides model identities")
+            }
           }
         }
       } else if (decision) {
@@ -93,6 +110,9 @@ const provider = createServer(async (request, response) => {
           // The decision worker returns a brief; only the coordinator asks the human.
           assert.match(text, /Never ask the human yourself/)
           answer = "DECISION_BRIEF: Module owns the boundary and is cheap to undo; Adapter adds a layer. Recommendation: Module."
+        } else if (decisionStep === 3 && delivered("launch") === undefined) {
+          // A background decision worker acknowledges at once; its brief arrives in a later report.
+          answer = "Awaiting the decision worker's brief."
         } else {
           if (decisionStep === 1) { assignment = JSON.parse(result("declare")); journalBefore = journal(); assert(journalBefore.length) }
           if (decisionStep === 2) {
@@ -100,7 +120,7 @@ const provider = createServer(async (request, response) => {
             assert.deepEqual(journal(), journalBefore, "Refusal leaves every one-time journal row unchanged")
           }
           if (decisionStep === 3) {
-            assert.match(result("launch"), /DECISION_BRIEF/)
+            assert.match(delivered("launch"), /DECISION_BRIEF/)
             assert.match(assignment.questionTag, /^\[decision decision [0-9a-f]{8}\]$/)
           }
           if (decisionStep === 4) storeAssignment = JSON.parse(result("declare_store"))
@@ -153,12 +173,12 @@ const provider = createServer(async (request, response) => {
             return value.assignmentPrompt
           }
           answer = ["alpha", "beta"].map(key => call("subagent", { agent: "trajectory_child", description: `Native ${key}`,
-            prompt: declared(key), background: true }, `trajectory_launch_${key}`))
+            prompt: declared(key) }, `trajectory_launch_${key}`))
         } else if (coordinatorStep === 4) {
           rootAfterLaunch = true
           await new Promise(resolve => { holds.set("coordinator", resolve); response.once("close", resolve) })
           answer = "Private native work launched; await native returns."
-        } else if (text.includes("ALPHA_NATIVE_RETURN") && text.includes("BETA_NATIVE_RETURN")) {
+        } else if (delivered("trajectory_launch_alpha")?.includes("ALPHA_NATIVE_RETURN") && delivered("trajectory_launch_beta")?.includes("BETA_NATIVE_RETURN")) {
           if (coordinatorStep === 5) answer = call("mission_report", { taskKey: "alpha", outcome: "completed",
             summary: "Alpha returned recursive evidence", evidence: ["ALPHA_NATIVE_RETURN", "LEAF_NATIVE_RETURN"] }, "trajectory_report_alpha")
           else if (coordinatorStep === 6) answer = call("mission_report", { taskKey: "beta", outcome: "completed",
@@ -176,7 +196,14 @@ const provider = createServer(async (request, response) => {
         } else if (assignment.includes("TRAJECTORY_ALPHA")) {
           if (first) answer = call("subagent", { agent: "trajectory_child", description: "Bounded recursive leaf",
             prompt: "TRAJECTORY_LEAF: Return only bounded helper evidence." }, "trajectory_recurse")
-          else { assert(text.includes("LEAF_NATIVE_RETURN")); answer = "ALPHA_NATIVE_RETURN: consumed LEAF_NATIVE_RETURN" }
+          else if (text.includes("LEAF_NATIVE_RETURN")) answer = "ALPHA_NATIVE_RETURN: consumed LEAF_NATIVE_RETURN"
+          else {
+            // A background launch returns before the leaf: wait (held, so alpha stays observably active)
+            // and end this round; the leaf's later `<subagent>` report wakes alpha for its actual return.
+            assert(!holds.has("alpha"), "One awaiting round per launch")
+            await new Promise(resolve => { holds.set("alpha", resolve); response.once("close", resolve) })
+            answer = "ALPHA_AWAITING_LEAF: launched the bounded recursive leaf"
+          }
         } else if (assignment.includes("TRAJECTORY_BETA")) {
           if (first) await new Promise(resolve => { holds.set("beta", resolve); response.once("close", resolve) })
           answer = "BETA_NATIVE_RETURN: independent ready work evidence"
@@ -306,6 +333,16 @@ try {
     console.log(`CHECKPOINT ${label}: ${snapshot.missions.map(value => `${value.runState}/${value.status}, ${value.tasks.length} tasks, ${value.reports.length} reports`).join("; ")}`)
     return record
   }
+  /** The family is done only once no conversation is active and none wakes again: no late report reaches the provider. */
+  const quiesced = async label => {
+    const idle = async () => !Object.keys(await client.session.active({}, { signal: AbortSignal.timeout(20_000) })).length
+    await until(idle, `${label}: family quiescence`)
+    const seen = requests.length
+    await delay(1_500)
+    assert(await idle(), `${label}: a conversation became active again`)
+    assert.equal(requests.length, seen, `${label}: no late wake after the final delivery`)
+    receipt.quiescence = { ...receipt.quiescence, [label]: { providerRequests: seen } }
+  }
   await checkpoint("before")
   const missionURL = `/api/workspaces/${workspace.id}/missions`
   stage = "prepared create"
@@ -341,7 +378,16 @@ try {
   gate("real OpenCode parallel siblings and recursive grandchild active simultaneously")
   gate("owned display route observes four genuine conversations without guessed task associations")
   stage = "native return and coordinator consumption"
-  release("leaf"); release("beta")
+  release("beta")
+  // Alpha's recursion is acknowledged at once and alpha holds an awaiting round. Ending that round
+  // while the leaf still runs yields an intermediate report.
+  await until(() => holds.has("alpha"), "alpha's launch acknowledgement")
+  release("alpha")
+  await until(async () => !(await client.session.active({}, { signal: AbortSignal.timeout(20_000) }))[alpha.id], "alpha's awaiting round ends")
+  assert(holds.has("leaf"), "The leaf still runs when alpha's awaiting round ends")
+  release("leaf")
+  // Alpha answers only after it actually received the leaf's evidence.
+  await until(() => requests.some(value => value.sessionID === alpha.id && JSON.stringify(value.body.messages).includes("LEAF_NATIVE_RETURN")))
   await Promise.all([alpha.id, beta.id, leaf.id].map(sessionID => client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })))
   const returned = await checkpoint("returned-before-readout")
   assert.equal(returned.snapshot.missions[0].reports.length, 0)
@@ -351,6 +397,7 @@ try {
   rootReleased = true; release("coordinator")
   await until(async () => (await rpc.snapshot({}, options())).missions[0]?.status === "completed")
   await client.session.wait({ sessionID: coordinator }, { signal: AbortSignal.timeout(20_000) })
+  await quiesced("custom")
   const after = await checkpoint("completed")
   mission = after.snapshot.missions[0]
   assert(mission.tasks.every(value => value.status === "completed" && value.report.delivery === "coordinator-readout"))
@@ -363,6 +410,25 @@ try {
   const consumed = requests.find(value => value.sessionID === coordinator && value.kind === "primary" && JSON.stringify(value.body.messages).includes("ALPHA_NATIVE_RETURN") && JSON.stringify(value.body.messages).includes("BETA_NATIVE_RETURN"))
   assert(consumed, "Provider actually saw both native returns before reports")
   receipt.consumedRequestIndex = consumed.index
+  // Each launch is only acknowledged. Alpha's first idle round left its leaf running, so its report is
+  // tagged running (intermediate) before the final report carries the return.
+  const alphaDelivery = deliveries.get("trajectory_launch_alpha"), betaDelivery = deliveries.get("trajectory_launch_beta")
+  assert(alphaDelivery && betaDelivery, JSON.stringify([...deliveries]))
+  assert.equal(alphaDelivery.child, alpha.id); assert.equal(betaDelivery.child, beta.id)
+  assert.equal(alphaDelivery.state, "completed"); assert.equal(betaDelivery.state, "completed")
+  assert(alphaDelivery.intermediate >= 1, "Alpha's leaf-awaiting round is reported as still running")
+  assert.equal(betaDelivery.intermediate, 0)
+  // The job finished its period, so the metadata says completed while the model-facing tag says running.
+  const reports = messages.data.filter(message => message.type === "synthetic" && message.metadata?.source === "subagent" && message.metadata.childID === alpha.id)
+  const intermediate = reports.find(message => message.text.includes('state="running"'))
+  assert(intermediate?.text.includes("Background work still running:") && intermediate.text.includes(leaf.id), JSON.stringify(reports))
+  assert.equal(intermediate.metadata.state, "completed")
+  // Listing order need not follow delivery order: the final report is identified by its tag and content.
+  const final = reports.find(message => message.text.includes('state="completed"') && message.text.includes("ALPHA_NATIVE_RETURN"))
+  assert(final, JSON.stringify(reports.map(({ id, text, metadata }) => ({ id, text: text.slice(0, 120), metadata }))))
+  receipt.alphaReports = reports.map(message => ({ id: message.id, created: message.time.created,
+    tagRunning: message.text.includes('state="running"'), metadataState: message.metadata.state }))
+  receipt.deliveries = Object.fromEntries(deliveries)
   gate("coordinator consumes native returns then reports two tasks and terminal completion")
   assert.deepEqual(await client.rpc(definition).inspect({}, options()), nativeToolBefore)
   assert.equal((await client.server.info()).pid, info.pid)
@@ -384,6 +450,8 @@ try {
   assert.equal(reply.statusCode, 204, reply.body)
   await until(() => decisionStep === 13)
   await client.session.wait({ sessionID: coordinator }, { signal: AbortSignal.timeout(20_000) })
+  await quiesced("wayfinder")
+  assert.equal(deliveries.get("launch")?.state, "completed")
   const completed = (await rpc.snapshot({}, options())).missions.find(value => value.id === wayfinder.mission.id)
   assert.equal(completed.status, "completed"); assert(completed.tasks.every(task => task.status === "completed"))
   const report = completed.tasks.find(task => task.key === "decision").report
@@ -430,6 +498,8 @@ try {
   assert.equal(comparePlay.statusCode, 200, comparePlay.body)
   await until(() => compareStep === compareCalls.length + 1)
   await client.session.wait({ sessionID: coordinator }, { signal: AbortSignal.timeout(20_000) })
+  await quiesced("compare")
+  for (const id of ["launch_x", "launch_y", "launch_judge"]) assert(deliveries.has(id), `Delivered run result: ${id}`)
   const compared = (await rpc.snapshot({}, options())).missions.find(value => value.id === made.mission.id)
   assert.equal(compared.status, "completed"); assert.equal(runModels.size, 2)
   assert.deepEqual(compared.tasks.find(task => task.role === "comparator").report.artifact, comparison)

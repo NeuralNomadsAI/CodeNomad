@@ -113,7 +113,8 @@ test("the list is a list: one-line titled entries, nothing below until a selecti
     assert.equal(await detail(page).count(), 0, "no selection, no detail")
     assert.equal(await selectedMissionTitle(page).count(), 0, "nothing is selected by default")
     for (const entry of await inlineEntries(page).all()) {
-      assert.deepEqual(await entry.evaluate(el => [...el.children].map(child => child.getAttribute("class")!.split(" ")[0])), ["lucide", "session-item-title", "sr-only"])
+      assert.deepEqual(await entry.evaluate(el => [...el.children].map(child => child.getAttribute("class")!.split(" ")[0])), ["mission-row-mark", "session-item-title", "sr-only"])
+      assert.equal(await entry.locator(".mission-row-mark > svg.mission-row-flag").count(), 1)
       const [row, title, line] = await entry.evaluate(el => { const title = el.querySelector(".session-item-title")!
         return [el.getBoundingClientRect().height, title.getBoundingClientRect().height, parseFloat(getComputedStyle(title).lineHeight)] })
       assert.ok(title <= line + 0.5 && row <= 32, "exactly one short line, even for long titles")
@@ -228,7 +229,8 @@ test("recurring selected: Daily entry, Next in the schedule zone, current tree s
   try {
     await open(page, [audit, active], [schedule])
     await (await inlineMissionEntry(page, "Daily source review")).waitFor()
-    assert.match(await missionEntryStatus(page, "Daily source review"), /^Daily · Running · Next: (today|tomorrow) 8:15 AM \(UTC\)( · |$)/)
+    assert.match(await missionEntryStatus(page, "Daily source review"), /^Daily · Waiting for scheduled run · Next: (today|tomorrow) 8:15 AM \(UTC\)( · |$)/)
+    assert.equal(await (await inlineMissionEntry(page, "Daily source review")).locator(".mission-row-mark").getAttribute("data-mark"), "waiting")
     await selectMission(page, "Daily source review")
     assert.deepEqual(await toolbar(page), [["Pause schedule Daily source review", false], ["Stop schedule Daily source review", false],
       ["Run Daily source review now", false], ["Summary", false], ["Open conversation", true], ["Delete selected mission…", true], ["More actions", true]])
@@ -266,7 +268,7 @@ test("a viewer in the schedule's own zone sees no zone label", async () => {
   try {
     await open(page, [], [schedule])
     await (await inlineMissionEntry(page, "Daily source review")).waitFor()
-    assert.match(await missionEntryStatus(page, "Daily source review"), /^Daily · Running · Next: (today|tomorrow) 8:15 AM( · |$)/)
+    assert.match(await missionEntryStatus(page, "Daily source review"), /^Daily · Waiting for scheduled run · Next: (today|tomorrow) 8:15 AM( · |$)/)
     assert.doesNotMatch(await missionEntryStatus(page, "Daily source review"), /\(UTC\)/)
   } finally { await page.close() }
 })

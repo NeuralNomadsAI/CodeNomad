@@ -7,12 +7,15 @@
  * replay contract read by the pinned client reducer and codecs (`native` provider
  * data, `metadata.keepID` compactions, `native.messages` windows) and Code Mode
  * jobs that keep JavaScript run-to-completion (scripts/test-codemode-jobs-native.mjs).
+ * CodeNomad qualifies only the 2.3 subagent contract: every subagent runs in the
+ * background and delivers synthetic `<subagent>` reports to its parent
+ * (scripts/test-missions-native-trajectory.mjs, scripts/test-subagent-nesting-native.mjs).
  * OpenCode reads data stored by older releases. See
  * dev-docs/OPENCODE_COMPATIBILITY.md for the demonstrated boundary.
  */
-export const MINIMUM_OPENCODE_VERSION = "2.2.3"
+export const MINIMUM_OPENCODE_VERSION = "2.3.0"
 /** Qualification target, independent of the technically required minimum. */
-export const RECOMMENDED_OPENCODE_VERSION = "2.2.7"
+export const RECOMMENDED_OPENCODE_VERSION = "2.3.0"
 export const OPENCODE_UPDATE_REQUIRED = "opencode_update_required"
 
 export function isBelowOpenCodeMinimum(version: string): boolean {
@@ -36,7 +39,7 @@ export class UnsupportedOpenCodeError extends Error {
   readonly minimumVersion = MINIMUM_OPENCODE_VERSION
   constructor(readonly actualVersion: string, readonly reason: OpenCodeIncompatibility = "native_contract") {
     super(`${OPENCODE_UPDATE_REQUIRED}: OpenCode ${actualVersion}; ${reason === "native_contract"
-      ? `requires the experimental_image_generate tool contract, native replay and compaction contract (native, metadata.keepID) and Code Mode job ordering of ${MINIMUM_OPENCODE_VERSION}`
+      ? `requires the background subagent report contract, experimental_image_generate tool contract, native replay and compaction contract (native, metadata.keepID) and Code Mode job ordering of ${MINIMUM_OPENCODE_VERSION}`
       : reason === "session_environment" ? "requires PUT /api/session/{sessionID}/environment with variables"
         : "does not expose the canonical session, permission, Form and inbox API contract"}`)
     this.name = "UnsupportedOpenCodeError"

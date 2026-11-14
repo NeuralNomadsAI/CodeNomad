@@ -42,7 +42,7 @@ La programación basada en calendario requiere agente y modelo explícitos para 
 
 ### Iniciar automáticamente {#automatic-start}
 
-**Iniciar automáticamente** está fuera de Programación y desactivado por defecto. Desactivado crea una Misión en pausa para iniciarla después desde ▶. Activado solicita el inicio tras confirmar la creación, con las comprobaciones habituales y el consentimiento nativo necesario.
+**Iniciar automáticamente** está fuera de Programación y desactivado por defecto. Desactivado crea una Misión en pausa para iniciarla después desde ▶. Activado solicita el inicio tras confirmar la creación, con las comprobaciones habituales y la preparación automática de la programación.
 
 Si se pierde la confirmación, leer el recibo deja el inicio manual. Conserva la solicitud original no confirmada y comprueba lista y conversación antes de crear otra vez.
 
@@ -55,6 +55,8 @@ La información de profundidad de subagentes identifica su origen efectivo en **
 El primer criterio es **Una vez, ahora**. **Añadir un criterio** agrega otro. Elige su tipo, elimina con × o reordena por el asa; Alt+Arriba/Abajo mueve el asa enfocada.
 
 Hay una vez ahora, cada N horas, diario, días de semana, día del mes y cron. Se usa la zona guardada; su campo aparece si difiere de la del sistema. Los meses sin el día elegido se omiten. Una vez ahora fija su instante al iniciar y ofrece una sola oportunidad, que una condición puede consumir sin lanzar. Se necesitan OpenCode y el equipo de ejecución disponibles.
+
+Al iniciar o reanudar, la programación se prepara automáticamente en la configuración OpenCode del proyecto. Se conserva un OFF explícito: **Abrir los ajustes de programación**, cuando esté disponible, abre el archivo responsable; **i** muestra el origen o los detalles del entorno. El botón pulsado indica carga solo durante la solicitud. Un resultado sin confirmar permite verificarlo; recuperar la activación deja el inicio como acción explícita.
 
 ### Eventos y combinaciones {#scheduling-conditions}
 
@@ -88,9 +90,11 @@ Más entradas y tareas se cargan automáticamente al acercarse al final. Las pá
 
 ### Colores y estados {#status-colours}
 
-La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta, amarillo pulsante indica trabajo observado, naranja pausa/interrupción, verde un resultado no visto y azul preparación o tarea no iniciada.
+La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo pulsante indica trabajo observado. Un símbolo de pausa naranja indica pausa; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
 
-Seleccionar o pulsar/barrer iconos verdes confirma resultados; el menú del chevrón permite marcarlos como leídos. Un bloqueo no siempre es una pregunta; un informe no prueba que toda operación nativa haya terminado. Las tareas retiradas conservan historial.
+Un icono de acento con una pequeña línea neutra estática debajo significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados, las programaciones detenidas y **Estado sin confirmar** son neutros; consulta el texto de estado.
+
+Seleccionar o pulsar/barrer iconos verdes confirma resultados; el menú del chevrón ofrece **Marcar como leído**. Para **Ejecución correcta por revisar**, selecciona explícitamente la fila recurrente en la ventana activa o usa **Marcar como leído** para confirmar esa ejecución. El icono vuelve a espera si la programación sigue activa; en caso contrario, a neutro. La selección restaurada y los resultados que llegan a una fila ya seleccionada mantienen el nuevo resultado sin leer. Los éxitos históricos presentes en la primera carga comienzan como leídos. Las tareas retiradas conservan historial.
 
 ### Preguntas y decisiones {#questions}
 

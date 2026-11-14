@@ -60,6 +60,12 @@ Auf dem Desktop verschiebt Senden den Tastaturfokus in die Unterhaltung, sodass 
 
 Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrichten. Die Startwiederherstellung kann unterstützten Eingabezustand behalten; behandeln Sie einen ungesendeten Entwurf oder Anhang aber nicht als Sicherung und nehmen Sie nicht an, dass er auf einem anderen Gerät erscheint. Sichern Sie wichtigen Text vor dem Löschen von Startdaten oder dem Schließen eines Clients mit deaktivierter Wiederherstellung; siehe [Desktop](desktop.md).
 
+## Dateien aus Antworten öffnen {#open-files-from-replies}
+
+1. Agent-Antworten verlinken Projektdateien mit relativen und absoluten Pfaden.
+2. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
+3. Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees behalten das normale Linkverhalten.
+
 ## Befehle und Shell-Modus {#commands-shell}
 
 1. Geben Sie `/` ein, wählen Sie einen gefundenen benutzerdefinierten Befehl und geben Sie dessen Argumente an.

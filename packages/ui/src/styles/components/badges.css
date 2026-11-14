@@ -44,19 +44,7 @@
   color: var(--text-primary);
 }
 
-.integration-state-badge:is([data-integration-state="ready"], [data-integration-state="available"], [data-integration-state="attached"]) {
-  border-color: var(--status-ready-fg);
-  background-color: var(--status-ready-bg);
-}
-
-.integration-state-badge:is([data-integration-state="installing"], [data-integration-state="uncertain"], [data-integration-state="unconfirmed"],
-  [data-integration-state="hostOutdated"], [data-integration-state="legacy"], [data-integration-state="update"]) {
-  border-color: var(--status-starting-fg);
-  background-color: var(--status-starting-bg);
-}
-
-.integration-state-badge:is([data-integration-state="failed"], [data-integration-state="nonConforming"], [data-integration-state="incompatible"],
-  [data-integration-state="hostAbsent"]) {
+.integration-state-badge[data-integration-state="nonConforming"] {
   border-color: var(--status-error-fg);
   background-color: var(--status-error-bg);
 }

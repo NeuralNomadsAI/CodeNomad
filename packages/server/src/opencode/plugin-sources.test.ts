@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
 import { pathToFileURL } from "node:url"
+import { setImmediate as nextTurn } from "node:timers/promises"
 import Fastify from "fastify"
 import { parse } from "jsonc-parser"
 import { PluginControls } from "./plugin-controls"
@@ -21,13 +22,16 @@ async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCat
   const globalFile = path.join(global, "opencode.jsonc")
   const projectFile = path.join(project, ".opencode", "opencode.jsonc")
   const state = { runtime: [] as unknown[], hideProject: false, current: true, gate: undefined as Promise<void> | undefined, normalized: undefined as unknown,
-    rpcOutput: undefined as unknown, rpcError: undefined as unknown, rpcCalls: [] as string[] }
+    rpcOutput: undefined as unknown, rpcError: undefined as unknown, rpcCalls: [] as string[],
+    onConfigRead: undefined as (() => void) | undefined }
   const documentEntry = async (file: string) => readFile(file, "utf8").then(text => [{ type: "document", path: file, info: state.normalized ?? parse(text) }], () => [])
   const connection: any = {
     assertCurrent: () => { if (!state.current) throw new Error("replaced connection") },
     client: {
       config: { get: async () => {
-        await state.gate
+        const gate = state.gate
+        state.onConfigRead?.()
+        await gate
         return [{ type: "directory", path: global }, ...await documentEntry(globalFile),
           ...(options.sameScopes || state.hideProject ? [] : await documentEntry(projectFile))]
       } },
@@ -144,23 +148,35 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
-  it("refuses an add whose OpenCode reads stall, releases the queue, and never writes it later", async () => {
+  it("refuses an add whose OpenCode reads stall, releases the queue, and never writes it later", async t => {
     const f = await fixture()
     try {
       await writeFile(f.globalFile, "{}")
+      t.mock.timers.enable({ apis: ["setTimeout"] })
       // This fake client ignores the abort signal: the grace period still releases the queue.
       const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any, addTimeoutMs: 500, abortGraceMs: 50 })
-      let release!: () => void
+      let release!: () => void, enter!: () => void, reads = 0
+      const admitted = new Promise<void>(resolve => { enter = resolve })
+      f.state.onConfigRead = () => { if (++reads === 2) enter() }
+      const pendingReads: Promise<unknown>[] = []
+      const track = <T>(pending: Promise<T>) => { pendingReads.push(pending); return pending }
+      const read = f.controls.read.bind(f.controls), readDocuments = f.controls.readConfigDocuments.bind(f.controls)
+      t.mock.method(f.controls, "read", (...args: Parameters<typeof read>) => track(read(...args)))
+      t.mock.method(f.controls, "readConfigDocuments", (...args: Parameters<typeof readDocuments>) => track(readDocuments(...args)))
       f.state.gate = new Promise<void>(resolve => { release = resolve })
       const stalled = sources.add("w", { location: f.location, scope: "global", spec: "stalled-plugin" })
-      // Let the queued turn start its daemon reads before later reads stop stalling.
-      await new Promise(resolve => setTimeout(resolve, 10))
+      const refused = assert.rejects(stalled, code("timeout", "unavailable"))
+      // Both parallel reads must hold the old gate before the next turn can proceed.
+      await admitted
       f.state.gate = undefined
       const next = sources.add("w2", { location: f.location, scope: "global", spec: "next-plugin" })
-      await assert.rejects(stalled, code("timeout", "unavailable"))
+      t.mock.timers.tick(500)
+      t.mock.timers.tick(50)
+      await refused
       await next
       release()
-      await new Promise(resolve => setTimeout(resolve, 50))
+      await Promise.allSettled(pendingReads)
+      await nextTurn()
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["next-plugin"], "the abandoned add never writes")
     } finally { await f.cleanup() }
   })

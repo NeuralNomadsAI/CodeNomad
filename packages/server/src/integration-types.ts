@@ -19,7 +19,7 @@ export type {
 export type { IntegrationCatalogState } from "./opencode/integrations/catalog"
 export type { IntegrationRuntimeState } from "./opencode/integrations/status"
 
-/** One catalog integration in a Location, without the catalog's plugin ID, `rpc`, `sources` and `package`. */
+/** One catalog integration in a Location, with its recognized runtime identity and projected status. */
 export interface IntegrationView {
   id: string
   displayName: string
@@ -33,9 +33,10 @@ export interface IntegrationView {
   configured: boolean
   /**
    * `declared`: at least one recognised source declaration (Global, Project or inherited); `runtime`: the native
-   * inventory loaded it or it failed to load, absent otherwise. Activation rules alone set neither.
+   * inventory loaded it or it failed to load, absent otherwise. `runtimeId` identifies an unambiguous runtime
+   * entry for display correlation, independently of writable declarations. Activation rules alone set neither.
    */
-  plugin: { declared: boolean; runtime?: "loaded" | "failed" }
+  plugin: { declared: boolean; runtime?: "loaded" | "failed"; runtimeId?: string }
   /**
    * A source designates another integration too or loaded under another plugin ID, a failure is shared by several
    * sources, or two runtime candidates exist: those sources and the runtime entry are attributed to none.

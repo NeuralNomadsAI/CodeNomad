@@ -4,7 +4,7 @@ import type { ConfigEntry } from "@opencode/client"
 import { PluginControlDocumentError, type PluginControlDocument } from "./plugin-control-document"
 import { editNativeSetting, readNativeSetting, removeEmptyNativeObject } from "./native-setting-document"
 
-export interface MissionExperimentalSettings { schedules?: boolean; subagent_depth?: number }
+export interface MissionExperimentalSettings { [key: string]: unknown; schedules?: boolean; subagent_depth?: number }
 
 export function nativeSettingExpectation(document: PluginControlDocument): string {
   return createHash("sha256").update(JSON.stringify([
@@ -20,11 +20,10 @@ function settings(value: unknown): MissionExperimentalSettings {
   if (block.schedules !== undefined && typeof block.schedules !== "boolean"
     || block.subagent_depth !== undefined && (!Number.isSafeInteger(block.subagent_depth) || Number(block.subagent_depth) < 0))
     throw new PluginControlDocumentError("Invalid Missions experimental setting", "invalid")
-  return { ...(block.schedules === undefined ? {} : { schedules: block.schedules as boolean }),
-    ...(block.subagent_depth === undefined ? {} : { subagent_depth: block.subagent_depth as number }) }
+  return { ...block } as MissionExperimentalSettings
 }
 
-/** Native precedence selects one whole block. Only the two owned keys leave this reader. */
+/** Native precedence selects one whole block; authors preserve its inherited companions. */
 export function effectiveMissionExperimental(entries: readonly ConfigEntry[]) {
   const entry = [...entries].reverse().find(entry => entry.type === "document" && entry.info.experimental !== undefined)
   return entry?.type === "document"
@@ -78,7 +77,7 @@ export function inheritedMissionExperimental(entries: readonly ConfigEntry[], ta
 /** Both authors use one JSONC edit under the existing physical-file lock/byte expectation. */
 export function editMissionExperimental(
   document: PluginControlDocument,
-  key: keyof MissionExperimentalSettings,
+  key: "schedules" | "subagent_depth",
   value: boolean | number | undefined,
   inherited: MissionExperimentalSettings,
   scope: "global" | "project" = "project",
@@ -89,7 +88,7 @@ export function editMissionExperimental(
     throw new PluginControlDocumentError("OpenCode schedules are explicitly disabled in this document", "conflict")
   settings({ [key]: value })
   let current = document
-  const apply = (field: keyof MissionExperimentalSettings, next: unknown) => {
+  const apply = (field: string, next: unknown) => {
     const updated = editNativeSetting(current, ["experimental", field], next)
     current = { ...current, text: current.byteOrderMark ? updated.slice(1) : updated }
   }
@@ -99,9 +98,8 @@ export function editMissionExperimental(
     // still shadows it and needs the same companion preservation as a save.
     if (value !== undefined || block && Object.keys(block).some(field => field !== "subagent_depth")) apply("schedules", true)
   }
-  if (key === "schedules" && readNativeSetting(document, ["experimental"]) === undefined
-    && local.subagent_depth === undefined && inherited.subagent_depth !== undefined)
-    apply("subagent_depth", inherited.subagent_depth)
+  if (key === "schedules" && readNativeSetting(document, ["experimental"]) === undefined)
+    for (const [field, companion] of Object.entries(inherited)) if (field !== key) apply(field, companion)
   apply(key, value)
   return removeEmptyNativeObject(current, ["experimental"])
     ?? `${current.byteOrderMark ? "\uFEFF" : ""}${current.text}`

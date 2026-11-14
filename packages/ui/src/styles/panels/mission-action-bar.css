@@ -1,6 +1,7 @@
 /* Selected Mission/schedule icon toolbar (mission-action-bar.tsx), mounted in the
    header's selection line, with the header's icon geometry. */
 .mission-action-bar { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.mission-action-bar .mission-control-icon-button:disabled[aria-busy="true"] { opacity: 1; }
 /* Text actions (Save as brief, a schedule's checks) share a wrapping row at the top
    of the selection's detail, left-aligned. */
 .mission-action-texts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-sm); min-width: 0; }

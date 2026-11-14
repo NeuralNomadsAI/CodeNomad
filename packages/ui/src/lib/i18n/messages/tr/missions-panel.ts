@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "Başlatılıyor…",
+  "missionsPanel.action.resuming": "Sürdürülüyor…",
+  "missionsPanel.action.runningNow": "Geçiş başlatılıyor…",
   "missionsPanel.pages.raw": "Ham JSON sayfalarını oku",
   "missionsPanel.pages.rawPage": "Ham JSON sayfası {page} / {total}",
   "missionsPanel.pages.previous": "Önceki sayfa",
@@ -41,6 +44,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "Zamanlama kimliği",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "Sürüyor",
+  "missionsPanel.state.waiting": "Zamanlanmış çalıştırma bekleniyor",
+  "missionsPanel.state.unreadSuccess": "İncelenecek başarılı çalıştırma",
+  "missionsPanel.state.unconfirmed": "Durum doğrulanmadı",
   "missionsPanel.state.interrupted": "Kesintiye uğradı",
   "missionsPanel.run.completed": "Tamamlandı",
   "missionsPanel.run.failed": "Başarısız",

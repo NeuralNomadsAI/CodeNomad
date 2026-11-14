@@ -12,6 +12,7 @@ import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurre
 import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
 import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
 import { activityActorWindow, missionActivityContext } from "../../../server/src/missions/mission-activity-context"
+import { BUILT_IN_COLOR_SCHEMES } from "../../src/lib/theme-scheme"
 
 let browser: Browser, url: string
 before(async () => {
@@ -284,6 +285,124 @@ test("a failed mission reads as interrupted and resumes through coordinator reco
     await missionToolbarAction(page, "Recover interrupted mission").click()
     for (let attempt = 0; !recoveries.length && attempt < 100; attempt++) await page.waitForTimeout(20)
     assert.deepEqual(recoveries, [{ expectedRevision: 1, target: "coordinator" }])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("daily waiting, unread passage identities, restoration and paused/warning shapes use the real shared rows", async () => {
+  const schedule: RecurrenceSchedule = { id: "rec_marks", title: "Daily marks", revision: 1, state: "running",
+    clock: { time: "09:00", zone: "UTC" }, nextDueAt: Date.now() + 3_600_000, pending: null, latestResult: null,
+    history: [], actions: ["pause", "stop", "run-now"], controls: [] }
+  const { page, errors } = await open(() => [mission("other", { runState: "prepared" })], () => [], [schedule])
+  const entry = page.locator('[data-mission-key="schedule:rec_marks"] .mission-row-select')
+  const waitMark = (expected: string) => page.waitForFunction(expected =>
+    document.querySelector('[data-mission-key="schedule:rec_marks"] .mission-row-flag')?.getAttribute("data-mark") === expected, expected)
+  const refreshDaily = () => page.evaluate(async data => {
+    const { serverEvents } = await import("/src/lib/server-events.ts")
+    ;(serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture",
+      event: { type: "rpc.codenomad.missions.scheduleChanged", data } }])
+  }, { scheduleID: schedule.id, revision: schedule.revision })
+  const success = async (id: string) => {
+    const result = { passageID: id, outcome: "completed" as const, dueAt: Date.now() - 2, settledAt: Date.now() - 1 }
+    schedule.history.push(result); schedule.latestResult = result; schedule.revision++
+    const published = page.waitForResponse(async response => new URL(response.url()).pathname.endsWith("/missions/recurrence")
+      && (await response.json()).schedules?.some((row: any) => row.latestResult?.passageID === id))
+    await refreshDaily(); await (await published).finished()
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await waitMark("done")
+  }
+  try {
+    await fixtureCall(page, "connectCatalog")
+    await entry.waitFor(); await waitMark("waiting")
+    assert.match(await entry.getAttribute("title") ?? "", /Waiting for scheduled run.*Next:/)
+    // All ready-made palettes, on idle, hover, focus and selected rows. The
+    // secondary-text underline supplies the shape contrast even on pale accents.
+    for (const scheme of BUILT_IN_COLOR_SCHEMES) {
+      await page.evaluate(async id => {
+        const module = await import("/src/lib/theme-scheme.ts")
+        module.applyColorScheme(module.normalizeColorScheme(id))
+      }, scheme.id)
+      for (const state of ["idle", "hover", "focus", "selected"] as const) {
+        if (state === "idle") { await (await inlineMissionEntry(page, "Objective other")).click(); await page.mouse.move(0, 0) }
+        if (state === "hover") await entry.hover()
+        if (state === "focus") { await page.mouse.move(0, 0); await entry.focus() }
+        if (state === "selected") await entry.click()
+        const sample = await entry.evaluate(element => {
+          const cell = element.querySelector(".mission-row-mark")!, icon = cell.querySelector("svg")!, line = getComputedStyle(cell, "::after")
+          const style = getComputedStyle(cell), svg = getComputedStyle(icon), row = getComputedStyle(element.parentElement!)
+          const probe = document.createElement("span"); element.append(probe)
+          probe.style.color = "var(--text-secondary)"; const secondary = getComputedStyle(probe).color
+          probe.style.color = "var(--accent-primary)"; const accent = getComputedStyle(probe).color
+          probe.style.color = "var(--surface-canvas)"; const surface = getComputedStyle(probe).color
+          const canvas = document.createElement("canvas").getContext("2d")!
+          canvas.fillStyle = surface; canvas.fillRect(0, 0, 1, 1)
+          canvas.fillStyle = row.backgroundColor; canvas.fillRect(0, 0, 1, 1)
+          if (row.backgroundImage !== "none" || element.parentElement!.matches(":hover")) {
+            probe.style.color = "var(--surface-hover-overlay)"; canvas.fillStyle = getComputedStyle(probe).color; canvas.fillRect(0, 0, 1, 1)
+          }
+          const background = [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3)
+          canvas.clearRect(0, 0, 1, 1); canvas.fillStyle = line.backgroundColor; canvas.fillRect(0, 0, 1, 1)
+          const foreground = [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3)
+          probe.remove()
+          return { width: style.width, height: style.height, lineWidth: line.width, lineHeight: line.height, lineTop: line.top,
+            lineColor: line.backgroundColor, secondary, accent, color: svg.color, opacity: svg.opacity,
+            animation: svg.animationName, lineOpacity: line.opacity, foreground, background }
+        })
+        assert.deepEqual([sample.width, sample.height, sample.lineWidth, sample.lineHeight, sample.lineTop], ["16px", "20px", "8px", "1px", "19px"])
+        assert.equal(sample.lineColor, sample.secondary); assert.equal(sample.color, sample.accent)
+        assert.equal(sample.opacity, "1"); assert.equal(sample.lineOpacity, "1"); assert.equal(sample.animation, "none")
+        const lum = (rgb: number[]) => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+          .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0)
+        const [a, b] = [lum(sample.foreground), lum(sample.background)].sort((a, b) => b - a)
+        assert.ok((a + .05) / (b + .05) >= 3, `${scheme.id}/${state}: ${JSON.stringify(sample)}`)
+      }
+    }
+    await success("pas_A")
+    await fixtureCall(page, "flush")
+    await page.reload()
+    await fixtureCall(page, "connectCatalog")
+    await entry.waitFor(); await waitMark("done")
+    assert.equal(await entry.getAttribute("aria-current"), "true", "selection restores, unread result remains")
+    await entry.click(); await waitMark("waiting")
+    await success("pas_B")
+    // Explicit Mark as read also works without selecting a schedule.
+    await page.locator('[data-mission-key="schedule:rec_marks"] .session-item-expander').click({ button: "right" })
+    await success("pas_B_next")
+    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
+    assert.equal(await mark(page, "Daily marks"), "done", "the open menu acknowledges B, not the later passage")
+    assert.deepEqual(await page.evaluate(async () => {
+      const { scheduleSuccessSeen } = await import("/src/stores/mission-view-state.ts")
+      const scope = JSON.stringify(["fixture", "project"])
+      return ["pas_B", "pas_B_next"].map(id => scheduleSuccessSeen(scope, "daily", "rec_marks", id))
+    }), [true, false])
+    await page.locator('[data-mission-key="schedule:rec_marks"] .session-item-expander').click({ button: "right" })
+    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
+    await waitMark("waiting")
+    // A result arriving while the panel is hidden stays unread on returning.
+    await page.evaluate(() => (window as any).missionFixture.active(false))
+    const result = { passageID: "pas_C", outcome: "completed" as const, dueAt: Date.now() - 2, settledAt: Date.now() - 1 }
+    schedule.history.push(result); schedule.latestResult = result; schedule.revision++
+    await page.evaluate(() => (window as any).missionFixture.active(true))
+    await waitMark("done")
+    await entry.click(); await waitMark("waiting")
+    await page.emulateMedia({ reducedMotion: "reduce" })
+    schedule.pending = { passageID: "pas_D", status: "running" }; schedule.revision++
+    await refreshDaily(); await waitMark("working")
+    const motion = await entry.locator("svg").evaluate(element => {
+      const style = getComputedStyle(element); return [style.animationDuration, style.animationIterationCount]
+    })
+    assert.ok(parseFloat(motion[0]) <= .00001); assert.equal(motion[1], "1")
+    schedule.state = "paused"; schedule.nextDueAt = null; schedule.revision++
+    await refreshDaily(); await waitMark("paused")
+    assert.equal(await entry.locator("svg rect").count(), 2, "Pause has two bars")
+    schedule.state = "interrupted"; schedule.pending.status = "uncertain"; schedule.revision++
+    await refreshDaily(); await waitMark("interrupted")
+    assert.equal(await entry.locator("svg path").count(), 3, "interruption has a warning triangle and exclamation")
+    schedule.state = "running"; schedule.nextDueAt = Date.now() + 3_600_000; schedule.revision++
+    await refreshDaily(); await waitMark("unconfirmed")
+    assert.match(await entry.getAttribute("title") ?? "", /State unconfirmed/)
+    schedule.state = "stopped"; schedule.nextDueAt = null; schedule.revision++
+    await refreshDaily(); await waitMark("idle")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

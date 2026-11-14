@@ -205,6 +205,8 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.refresh": "רענון פקדי התוספים",
   "instanceServiceStatus.plugins.toggleAriaLabel": "שינוי כלל ההפעלה עבור {name}",
   "instanceServiceStatus.plugins.globalOverridden": "כלל פרויקט דורס כאן את המצב הכללי.",
+  "instanceServiceStatus.plugins.kind.plugin": "תוסף: {id}",
+  "instanceServiceStatus.plugins.kind.integration": "אינטגרציה: {id}",
   "instanceServiceStatus.plugins.source.package": "חבילה: {source}",
   "instanceServiceStatus.plugins.source.local": "מקור מקומי: {source}",
   "instanceServiceStatus.plugins.source.builtin": "מובנה ב-OpenCode",

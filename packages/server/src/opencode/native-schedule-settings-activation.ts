@@ -3,9 +3,9 @@ import type { PluginControlLocation, PluginControlScope } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { readRuntimeContract } from "./compatibility/negotiate"
 import { encodePluginControlOriginal } from "./plugin-control-document"
-import { readNativeSetting } from "./native-setting-document"
-import { editMissionExperimental, effectiveMissionExperimental, inheritedMissionExperimental,
+import { editMissionExperimental, inheritedMissionExperimental,
   nativeExperimentalTargetPosition, nativeSettingExpectation, readMissionExperimental } from "./native-experimental-settings"
+import { readNativeScheduleFlag, nativeScheduleFlagOrigin, type NativeScheduleFlag } from "./native-schedule-flag"
 import { nativeScheduleCapability } from "./native-schedule-capability"
 import { PluginControlsError, type NativeConfigDocuments, type NativeConfigEdit, type PluginControls } from "./plugin-controls"
 
@@ -22,30 +22,39 @@ export interface NativeScheduleActivationJournal {
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex")
 const digestPattern = /^[a-f0-9]{64}$/
 
-/** Plan only from acquired native discovery. Upper imposed blocks cannot be bypassed. */
-export function planNativeScheduleActivation(view: NativeConfigDocuments): NativeConfigEdit[] {
-  const global = view.documents.find(item => item.scope === "global")
-  const project = view.documents.find(item => item.scope === "project")
-  if (!global) throw new PluginControlsError("Global OpenCode configuration is unavailable", "unavailable")
-  const local = project && readMissionExperimental(project.document)
-  if (local?.schedules === false) throw new PluginControlsError("Project schedules are explicitly disabled", "forbidden")
-  const effective = effectiveMissionExperimental(view.entries)
-  const target = project ?? global
-  const position = nativeExperimentalTargetPosition(view.entries, target.path, view.location.directory)
-  const imposed = view.entries.slice(position.after).some(entry => entry.type === "document" && entry.info.experimental !== undefined)
-  if (imposed && effective.schedules !== true)
-    throw new PluginControlsError("A higher-priority OpenCode configuration prevents schedule activation", "forbidden")
-  const edits: NativeConfigEdit[] = []
-  const add = (item: typeof global, scope: PluginControlScope) => {
-    const updated = editMissionExperimental(item.document, "schedules", true,
-      inheritedMissionExperimental(view.entries, item.path, view.location.directory), scope)
-    edits.push({ scope, path: item.path, expectation: nativeSettingExpectation(item.document), updated })
+export type NativeScheduleActivationRefusal = { reason: "explicit-off" | "masked";
+  provenance: NativeScheduleFlag["provenance"]; layer: "environment" | "global" | "project" | "inherited" | "imposed"; path?: string }
+export class NativeScheduleActivationRefused extends PluginControlsError {
+  readonly code = "schedule-activation-refused"
+  constructor(readonly refusal: NativeScheduleActivationRefusal) {
+    super("Native schedule activation refused by configuration", "forbidden")
   }
-  if (readMissionExperimental(global.document).schedules !== true) add(global, "global")
-  const block = project && readNativeSetting(project.document, ["experimental"])
-  if (project && !imposed && local?.schedules !== true && (block !== undefined || effective.origin !== null && effective.origin !== global.path))
-    add(project, "project")
-  return edits
+}
+
+/** Plan only from acquired native discovery. Upper imposed blocks cannot be bypassed. */
+export function planNativeScheduleActivation(view: NativeConfigDocuments, flag: NativeScheduleFlag): NativeConfigEdit[] {
+  const project = view.documents.find(item => item.scope === "project")
+  const refuse = (path: string | undefined, reason: NativeScheduleActivationRefusal["reason"] = "explicit-off"): never => {
+    const scope = view.documents.find(item => item.path === path)?.scope
+    throw new NativeScheduleActivationRefused({ reason, provenance: "experimental-block",
+      layer: reason === "masked" ? "imposed" : scope ?? (path ? "inherited" : "imposed"), ...(path ? { path } : {}) })
+  }
+  // Inspect every discovered layer, including OFF hidden by a higher ON; the
+  // owned raw documents also fence native watcher lag before a write.
+  for (const entry of view.entries)
+    if (entry.type === "document" && entry.info.experimental?.schedules === false) refuse(entry.path)
+  for (const item of view.documents)
+    if (readMissionExperimental(item.document).schedules === false) refuse(item.path)
+  if (!flag.enabled && flag.provenance === "environment")
+    throw new NativeScheduleActivationRefused({ reason: "explicit-off", provenance: "environment", layer: "environment" })
+  if (flag.enabled) return []
+  if (!project) throw new PluginControlsError("Project OpenCode configuration is unavailable", "unavailable")
+  const position = nativeExperimentalTargetPosition(view.entries, project.path, view.location.directory)
+  const imposed = view.entries.slice(position.after).find(entry => entry.type === "document" && entry.info.experimental !== undefined)
+  if (imposed?.type === "document") refuse(imposed.path, "masked")
+  const updated = editMissionExperimental(project.document, "schedules", true,
+    inheritedMissionExperimental(view.entries, project.path, view.location.directory))
+  return [{ scope: "project", path: project.path, expectation: nativeSettingExpectation(project.document), updated }]
 }
 
 /** Authenticated Play preparation owns the durable journal callbacks. This executor
@@ -66,13 +75,21 @@ export class NativeScheduleSettingsActivation {
     const contract = await readRuntimeContract(connection.endpoint, connection.fetch, AbortSignal.timeout(5_000))
     connection.assertCurrent()
     if (!nativeScheduleCapability(contract).available) throw new PluginControlsError("Native schedule API is unavailable", "unavailable")
-    return { view, connection }
+    const flag = await readNativeScheduleFlag(connection, location)
+    return { view, connection, flag }
   }
   async prepare(workspaceID: string, location: PluginControlLocation): Promise<NativeScheduleActivationPlan> {
-    const { view } = await this.context(workspaceID, location)
-    return { authority: this.authority(workspaceID, view), targets: planNativeScheduleActivation(view).map(item => ({
+    const { view, flag } = await this.context(workspaceID, location)
+    return { authority: this.authority(workspaceID, view), targets: planNativeScheduleActivation(view, flag).map(item => ({
       scope: item.scope, path: item.path, expectation: item.expectation, resultDigest: hash(item.updated),
     })) }
+  }
+  async verify(workspaceID: string, location: PluginControlLocation, authority: string): Promise<void> {
+    const { view, flag } = await this.context(workspaceID, location)
+    if (this.authority(workspaceID, view) !== authority)
+      throw new PluginControlsError("OpenCode configuration authority changed", "conflict")
+    planNativeScheduleActivation(view, flag)
+    if (!flag.enabled) throw new PluginControlsError("Native schedule activation is not effective", "conflict")
   }
   async apply(workspaceID: string, location: PluginControlLocation, intent: NativeScheduleActivationIntent,
     journal: NativeScheduleActivationJournal): Promise<void> {
@@ -80,15 +97,18 @@ export class NativeScheduleSettingsActivation {
       || intent.targets.some(item => !["global", "project"].includes(item.scope) || !digestPattern.test(item.expectation)
         || !digestPattern.test(item.resultDigest) || typeof item.attempted !== "boolean" || typeof item.acknowledged !== "boolean"))
       throw new PluginControlsError("Invalid native schedule activation intent", "invalid")
-    const { connection } = await this.context(workspaceID, location)
+    const { connection, flag } = await this.context(workspaceID, location)
+    // Two-target persisted intentions keep their exact identity and digests;
+    // reconciliation observes effects already attempted and never resumes writes.
+    const legacy = intent.targets.some(target => target.scope === "global")
     const acknowledged: NativeScheduleActivationTarget[] = []
     await this.documents.editConfigDocuments(workspaceID, location, view => {
       connection.assertCurrent()
       if (this.authority(workspaceID, view) !== intent.authority)
         throw new PluginControlsError("OpenCode configuration authority changed", "conflict")
       // Recheck OFF and imposed layers before any preparation/rename, even on replay.
-      const required = planNativeScheduleActivation(view)
-      if (required.some(edit => !intent.targets.some(target => target.scope === edit.scope && target.path === edit.path)))
+      const required = planNativeScheduleActivation(view, flag)
+      if (!legacy && required.some(edit => !intent.targets.some(target => target.scope === edit.scope && target.path === edit.path)))
         throw new PluginControlsError("OpenCode activation targets changed; refresh before saving", "conflict")
       return intent.targets.flatMap(target => {
         const actual = view.documents.find(item => item.scope === target.scope && item.path === target.path)
@@ -101,6 +121,8 @@ export class NativeScheduleSettingsActivation {
         }
         if (target.attempted || target.acknowledged)
           throw new PluginControlsError("Native schedule configuration effect is uncertain", "conflict")
+        if (legacy)
+          throw new PluginControlsError("Original native schedule activation requires observation of its attempted effects", "conflict")
         if (nativeSettingExpectation(actual.document) !== target.expectation)
           throw new PluginControlsError("OpenCode configuration changed; activation remains paused", "conflict")
         const updated = editMissionExperimental(actual.document, "schedules", true,
@@ -117,6 +139,14 @@ export class NativeScheduleSettingsActivation {
       },
       beforeCommit: async edit => {
         connection.assertCurrent()
+        const fresh = await this.context(workspaceID, location)
+        connection.assertCurrent()
+        if (this.authority(workspaceID, fresh.view) !== intent.authority)
+          throw new PluginControlsError("OpenCode configuration authority changed", "conflict")
+        const required = planNativeScheduleActivation(fresh.view, fresh.flag)
+        if (!required.some(target => target.path === edit.path && target.scope === edit.scope
+          && target.expectation === edit.expectation && hash(target.updated) === hash(edit.updated)))
+          throw new PluginControlsError("OpenCode configuration changed before activation", "conflict")
         await journal.attempting(edit.scope, hash(edit.updated))
       },
       afterWrite: async edit => {
@@ -139,11 +169,10 @@ export class NativeScheduleSettingsActivation {
         const view = await this.documents.readConfigDocuments(workspaceID, location, undefined, true)
         connection.assertCurrent(); controller.signal.throwIfAborted()
         if (this.authority(workspaceID, view) !== intent.authority) throw new PluginControlsError("OpenCode configuration authority changed", "conflict")
-        planNativeScheduleActivation(view)
-        const global = view.documents.find(item => item.scope === "global")!
-        const nativeGlobal = [...view.entries].reverse().find(entry => entry.type === "document" && entry.path === global.path && entry.info.experimental !== undefined)
-        const effective = effectiveMissionExperimental(view.entries)
-        if (nativeGlobal?.type === "document" && nativeGlobal.info.experimental?.schedules === true && effective.schedules === true) return effective.origin
+        const effective = await readNativeScheduleFlag(connection, location)
+        controller.signal.throwIfAborted()
+        planNativeScheduleActivation(view, effective)
+        if (effective.enabled) return nativeScheduleFlagOrigin(view.entries, effective)
         await new Promise(resolve => setTimeout(resolve, 100))
         controller.signal.throwIfAborted()
       }

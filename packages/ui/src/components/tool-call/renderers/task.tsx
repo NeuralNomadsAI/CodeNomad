@@ -21,6 +21,7 @@ import { getMessageWindowPageKey } from "../../message-history-pagination"
 import { useTaskStepCopy } from "./task-copy"
 import { getCanonicalToolName } from "../tool-presentation"
 import { describeTaskTitle, readSubagentName } from "./task-title"
+import { cachedSubagentDeliveries, indexSubagentDeliveries, isBackgroundSubagentLaunch, latestReportForLaunch, subagentCallTime, type SubagentReport } from "./subagent-report"
 
 const TASK_MESSAGE_SCAN_LIMIT = 10_000
 
@@ -41,6 +42,25 @@ function extractSessionIdFromTaskState(state?: ToolState): string {
   const metadata = (state as unknown as { metadata?: Record<string, unknown> }).metadata ?? {}
   const directId = (metadata as any)?.sessionId ?? (metadata as any)?.sessionID
   return typeof directId === "string" ? directId : ""
+}
+
+/** A background launch's latest report in the parent session; null for foreground calls. */
+function readBackgroundReport(context: Pick<import("../types").ToolRendererContext, "instanceId" | "sessionId" | "toolCall" | "toolState">): SubagentReport | null | undefined {
+  const state = context.toolState()
+  if (!isBackgroundSubagentLaunch(state)) return undefined
+  const childId = extractSessionIdFromTaskState(state)
+  if (!childId) return null
+  const store = messageStoreBus.getOrCreate(context.instanceId)
+  // Track the parent session's revision only; the index is shared by its cards.
+  const revision = store.getSessionRevision(context.sessionId)
+  const messageIds = store.getSessionMessageIds(context.sessionId)
+  const index = untrack(() => cachedSubagentDeliveries(messageIds, revision, () => indexSubagentDeliveries(messageIds, store.getMessage)))
+  const call = context.toolCall()
+  const launchedAt = subagentCallTime(call, untrack(() => call.messageID ? store.getMessage(call.messageID)?.createdAt : undefined) ?? 0)
+  return latestReportForLaunch(index.get(childId), launchedAt, (messageId, partId) => {
+    const text = (store.getMessage(messageId)?.parts[partId]?.data as { text?: unknown } | undefined)?.text
+    return typeof text === "string" ? text : undefined
+  })
 }
 
 function splitToolKey(key: string): { messageId: string; partId: string } | null {
@@ -172,8 +192,9 @@ export const taskRenderer: ToolRenderer = {
   tools: ["task"],
   getSearchText: getTaskToolSearchText,
   getAction: ({ t }) => t("toolCall.task.action.delegating"),
-  getOutputChrome({ toolState }) {
-    const output = getTaskOutputCopyText(toolState())
+  getOutputChrome(context) {
+    const report = readBackgroundReport(context)
+    const output = report === undefined ? getTaskOutputCopyText(context.toolState()) : report?.body || null
     return output ? { getCopyText: () => output, hasCopyText: true } : undefined
   },
   getTitle({ toolState, toolName }) {
@@ -182,7 +203,7 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input, toolName())
   },
-  renderBody({ toolState, instanceId, isActive, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
+  renderBody({ toolState, toolCall, sessionId, instanceId, isActive, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
 
     const childSessionId = createMemo(() => {
@@ -333,7 +354,17 @@ export const taskRenderer: ToolRenderer = {
       return hasVisibleText(prompt) ? prompt : null
     })
 
+    // A background launch's tool output only acknowledges it: show the child's latest report instead.
+    const backgroundReport = createMemo(() => readBackgroundReport({ instanceId, sessionId, toolCall, toolState }))
+    const backgroundStatus = createMemo((): ToolState["status"] | undefined => {
+      const report = backgroundReport()
+      if (report === undefined) return undefined
+      return !report || report.state === "running" ? "running" : report.state === "completed" ? "completed" : "error"
+    })
+
     const outputContent = createMemo(() => {
+      const report = backgroundReport()
+      if (report !== undefined) return report && hasVisibleText(report.body) ? report.body : null
       const state = toolState()
       if (!state) return null
       const output = typeof (state as { output?: unknown }).output === "string" ? ((state as { output?: string }).output as string) : null
@@ -570,22 +601,31 @@ export const taskRenderer: ToolRenderer = {
           </section>
         </Show>
 
-        <Show when={outputContent()}>
-          <section class="tool-call-task-section">
+        <Show when={outputContent() || backgroundStatus()}>
+          <section class="tool-call-task-section" data-subagent-report={backgroundStatus()}>
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.output")}</span>
+              <Show when={backgroundStatus()}>
+                {(status) => (
+                  <span class="tool-call-task-status" role="status" aria-label={t(`toolCall.status.${summarizeStatusLabel(status())}`)} title={t(`toolCall.status.${summarizeStatusLabel(status())}`)}>
+                    {summarizeStatusIcon(status())}
+                  </span>
+                )}
+              </Show>
               <Show when={headerMeta()}>
                 <span class="tool-call-task-section-meta">{headerMeta()}</span>
               </Show>
             </header>
-            <div class="tool-call-task-section-body">
-              {renderMarkdown({
-                content: outputContent()!,
-                renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
-                cacheKey: "task:output",
-                disableScrollTracking: true,
-              })}
-            </div>
+            <Show when={outputContent()}>
+              <div class="tool-call-task-section-body">
+                {renderMarkdown({
+                  content: outputContent()!,
+                  renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
+                  cacheKey: "task:output",
+                  disableScrollTracking: true,
+                })}
+              </div>
+            </Show>
           </section>
         </Show>
       </div>

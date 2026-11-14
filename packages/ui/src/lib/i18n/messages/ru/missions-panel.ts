@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "Запуск…",
+  "missionsPanel.action.resuming": "Возобновление…",
+  "missionsPanel.action.runningNow": "Запуск прохода…",
   "missionsPanel.pages.raw": "Читать исходный JSON по страницам",
   "missionsPanel.pages.rawPage": "Страница исходного JSON {page} из {total}",
   "missionsPanel.pages.previous": "Предыдущая страница",
@@ -41,6 +44,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "ID расписания",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "Выполняется",
+  "missionsPanel.state.waiting": "Ожидание запуска по расписанию",
+  "missionsPanel.state.unreadSuccess": "Успешный запуск для просмотра",
+  "missionsPanel.state.unconfirmed": "Состояние не подтверждено",
   "missionsPanel.state.interrupted": "Прервана",
   "missionsPanel.run.completed": "Завершено",
   "missionsPanel.run.failed": "Сбой",
