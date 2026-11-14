@@ -10,6 +10,7 @@ import { addInstance } from "../../../src/stores/instances"
 import { setSessions } from "../../../src/stores/session-state"
 import type { Session } from "../../../src/types/session"
 import { getFilePreview } from "../../../src/stores/files-preview"
+import { getSessionSurface } from "../../../src/stores/session-surface"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { getServerMeta } from "../../../src/lib/server-meta"
@@ -20,7 +21,7 @@ const client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => t
 const createPreviewCalls: Array<{ sessionId: string; url: string }> = []
 serverApi.createPreview = async (input: { sessionId: string; url: string }) => {
   createPreviewCalls.push({ sessionId: input.sessionId, url: input.url })
-  return { token: "t", targetUrl: input.url, proxyUrl: "/preview" } as never
+  return { sessionId: input.sessionId, token: "t", targetUrl: input.url, proxyUrl: "/preview" } as never
 }
 serverApi.fetchServerMeta = async () => ({ previewsUnavailable: false }) as never
 addInstance({ id, folder: scope, port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client,
@@ -76,6 +77,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
 ;(window as any).fixture = {
   target: () => getFilePreview(id)?.path ?? null,
   targetFull: () => { const target = getFilePreview(id); return target ? { path: target.path, directory: target.directory } : null },
+  surface: () => getSessionSurface({ instanceId: id, sessionId: "ses_link" }),
   previews: () => [...createPreviewCalls],
   clicks: () => [...clicks],
   rendered: () => renderCount,
