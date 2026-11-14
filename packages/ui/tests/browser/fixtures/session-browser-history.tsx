@@ -14,7 +14,7 @@ import { markSessionListsRestored } from "./session-list-restored"
 import { restoreFixtureTabView } from "./tab-view-restoration"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import { sseManager } from "../../../src/lib/sse-manager"
-import { sessions } from "../../../src/stores/session-state"
+import { sessions, activeSessionId } from "../../../src/stores/session-state"
 
 // The production shell, session switching, preview store and native guests run
 // unchanged. Only server responses and the native registration IPC are fixtures.
@@ -57,6 +57,7 @@ serverApi.previewWorkspaceFile = async (id, path) => ({
     : btoa(`# ${path}\n\nIndependent file content.`
     + (path === "Long.md" ? "\n\n" + Array.from({ length: 250 }, (_, index) => `Paragraph ${index}\n\n`).join("") : "")),
 } as any)
+serverApi.fetchWorktreeGitDiff = async () => ({ path: "diff.ts", before: "const value = 1\n", after: "const value = 2\n" } as any)
 const shell = (window as any).fixture
 shell.addSession("second")
 let eventTime = 1000
@@ -74,7 +75,10 @@ Object.assign(shell, {
     showSessionChatFor("session", instanceId)
     openFilePreview(instanceId, { sessionId: "session", kind: "workspace", slug: "root", directory: "/repo", path })
   },
+  readDiff: (instanceId: string) => openFilePreview(instanceId, { sessionId: "session", kind: "diff",
+    slug: "root", directory: "/repo", path: "diff.ts", scope: "unstaged" }),
   presentation: (instanceId: string) => ({ mission: missionProjectView(instanceId), file: getFilePreview(instanceId) }),
+  selection: (instanceId: string) => activeSessionId().get(instanceId),
   closeOccurrence: (instanceId: string) => {
     publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: ids.indexOf(instanceId) })
     removeInstance(instanceId)

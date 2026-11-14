@@ -72,6 +72,66 @@ async function prepare(page: Page, host: string, query = "") {
 }
 const preview = (page: Page, sessionId: string) => page.evaluate(id => (window as any).fixture.preview(id), sessionId)
 
+test("localhost transcript links open only the clicked duplicate occurrence", { timeout: 90_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  const a = "header-windows", b = "header-duplicate"
+  try {
+    await prepare(page, "web", "&duplicate=1&assistant=1&links=1")
+    const root = (id: string) => page.locator(`[data-occurrence="${id}"]`)
+    await root(a).getByRole("link", { name: "Local preview", exact: true }).click()
+    await root(a).locator(".window-shell").waitFor({ state: "visible" })
+    assert.equal(await page.evaluate(id => (window as any).fixture.preview("session", id), b), null)
+    const original = await page.evaluate(id => (window as any).fixture.preview("session", id), a)
+    await page.evaluate(id => (window as any).fixture.selectOccurrence(id), b)
+    await root(b).getByRole("link", { name: "Local preview", exact: true }).click()
+    await root(b).locator(".window-shell").waitFor({ state: "visible" })
+    const other = await page.evaluate(id => (window as any).fixture.preview("session", id), b)
+    assert.notEqual(original.token, other.token)
+    assert.equal(other.targetUrl, base.replace("127.0.0.1", "localhost") + "/page/a")
+    assert.deepEqual(await page.evaluate(id => (window as any).fixture.preview("session", id), a), original)
+  } finally { await page.close() }
+})
+
+test("a duplicate's diff, session selection, Info and Back/Forward preserve its sibling's reader and scroll", { timeout: 90_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  const a = "header-windows", b = "header-duplicate"
+  const root = (id: string) => page.locator(`[data-occurrence="${id}"]`)
+  try {
+    await prepare(page, "web", "&duplicate=1")
+    await page.evaluate(id => (window as any).fixture.selectOccurrence(id), b)
+    await page.evaluate(id => (window as any).fixture.readFile(id, "Long.md"), b)
+    const markdown = root(b).locator(".workspace-markdown")
+    await markdown.waitFor()
+    await markdown.evaluate(element => new Promise<void>(resolve => {
+      element.addEventListener("scroll", () => resolve(), { once: true }); element.scrollTop = 900
+    }))
+    const scroll = await markdown.evaluate(element => element.scrollTop)
+    const content = await markdown.textContent()
+    assert.ok(scroll > 500)
+    const before = await page.evaluate(id => (window as any).fixture.presentation(id), b)
+    await page.evaluate(id => (window as any).fixture.selectOccurrence(id), a)
+    await page.evaluate(id => (window as any).fixture.readDiff(id), a)
+    await root(a).locator(".monaco-diff-editor").waitFor()
+    assert.ok(await root(a).getByText("diff.ts", { exact: true }).count())
+    await page.evaluate(() => (window as any).fixture.selectSession("second"))
+    await root(a).locator('[data-session-id="second"] .message-stream-container').waitFor()
+    await page.evaluate(() => (window as any).fixture.showInfo())
+    await root(a).getByRole("button", { name: "Back", exact: true }).click()
+    await root(a).locator('[data-session-id="second"] .message-stream-container').waitFor()
+    await root(a).getByRole("button", { name: "Back", exact: true }).click()
+    await root(a).locator('[data-session-id="session"] .message-stream-container').waitFor()
+    await root(a).getByRole("button", { name: "Forward", exact: true }).click()
+    await root(a).locator('[data-session-id="second"] .message-stream-container').waitFor()
+    assert.deepEqual(await page.evaluate(id => (window as any).fixture.presentation(id), b), before)
+    await page.evaluate(id => (window as any).fixture.selectOccurrence(id), b)
+    await markdown.waitFor()
+    assert.ok(Math.abs(await markdown.evaluate(element => element.scrollTop) - scroll) <= 2)
+    assert.equal(await markdown.textContent(), content)
+    assert.equal(await page.evaluate(id => (window as any).fixture.selection(id), b), "session")
+    assert.equal(await root(b).locator('.session-cache-pane[data-session-id="session"][data-session-active="true"]').count(), 1)
+  } finally { await page.close() }
+})
+
 for (const host of ["web", "tauri", "electron"]) {
   test(`${host}: duplicate occurrences own independent previews, history, restoration and cleanup`, { timeout: 120_000 }, async () => {
     const native = host === "electron" ? await launchHistoryElectron() : undefined
