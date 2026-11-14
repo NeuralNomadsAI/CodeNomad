@@ -132,6 +132,34 @@ test("a duplicate's diff, session selection, Info and Back/Forward preserve its 
   } finally { await page.close() }
 })
 
+for (const host of ["web", "tauri", "electron"]) test(`${host}: browser gestures supersede pending surface activation before committing`, { timeout: 120_000 }, async () => {
+  const native = host === "electron" ? await launchHistoryElectron() : undefined
+  const page = native?.page ?? await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await prepare(page, host)
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), `${base}/page/a`)
+    const pane = page.locator('[data-session-id="session"] .window-shell')
+    await pane.waitFor({ state: "visible" })
+    for (const gesture of ["go", "refresh", "back", "forward"]) {
+      if (host !== "web") await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
+      await page.evaluate(() => (window as any).fixture.captureSurfaceIntent())
+      assert.equal(await page.evaluate(() => (window as any).fixture.surfaceIntentCurrent()), true)
+      if (gesture === "go") {
+        await pane.locator("input").fill(`${base}/page/b`)
+        await pane.locator("input").press("Enter")
+      } else await pane.getByRole("button", { name: ({ refresh: "Refresh", back: "Back", forward: "Forward" })[gesture], exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.surfaceIntentCurrent()), false, `${gesture} retires the captured activation`)
+      await page.waitForFunction(target => (window as any).fixture.preview("session").targetUrl === target, `${base}/page/${gesture === "back" ? "a" : "b"}`)
+    }
+    assert.deepEqual(errors, [])
+  } finally {
+    if (native) { await native.app.close(); await rm(native.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
+    else await page.close()
+  }
+})
+
 for (const host of ["web", "tauri", "electron"]) {
   test(`${host}: duplicate occurrences own independent previews, history, restoration and cleanup`, { timeout: 120_000 }, async () => {
     const native = host === "electron" ? await launchHistoryElectron() : undefined

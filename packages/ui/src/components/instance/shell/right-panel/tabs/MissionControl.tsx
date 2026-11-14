@@ -11,7 +11,7 @@ import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-da
 import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
-import { activateSessionSurface, getSessionSurface } from "../../../../../stores/session-surface"
+import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface } from "../../../../../stores/session-surface"
 import { MAX_EXPANDED, forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, updateMissionProjectView,
   type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { markMissionTasksSeen, missionTaskUnseen, seedMissionTasksSeen } from "../../../../../stores/mission-task-seen"
@@ -267,11 +267,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const instanceId = props.instanceId, viewScope = scope(), viewCurrent = captureView(), operation = ++intent
     const schedule = passageSchedule(), passage = currentPassage.snapshot()?.passageID
     let epoch = conversationEpoch
+    let surfaceIntent = captureSessionSurfaceIntent({ instanceId, sessionId: props.activeSessionId() ?? null })
     return { instanceId, scope: viewScope,
-      current: () => viewCurrent() && operation === intent && scope() === viewScope && epoch === conversationEpoch
+      current: () => surfaceIntent.current() && viewCurrent() && operation === intent && scope() === viewScope && epoch === conversationEpoch
         && passageSchedule() === schedule && (!schedule || currentPassage.snapshot()?.passageID === passage),
       // Adopt only our guarded synchronous batch, never an awaited external change.
-      adoptConversation: () => { epoch = conversationEpoch },
+      adoptConversation: () => {
+        epoch = conversationEpoch
+        surfaceIntent = captureSessionSurfaceIntent({ instanceId, sessionId: props.activeSessionId() ?? null })
+      },
     }
   }
 
@@ -600,15 +604,17 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     get selected() { return unifiedSelection() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
     onDeleted: id => { if (selectedScheduled() === id) updateView({ selectedScheduled: undefined }) },
     onOpenConversation: id => void (async () => {
-      const view = captureView(), selected = selectedScheduled(), instanceId = props.instanceId
+      const origin = navigationOrigin(), selected = selectedScheduled(), instanceId = props.instanceId
       const generation = getOpenCodeInstanceGeneration(instanceId)
-      const current = () => view() && selectedScheduled() === selected && scheduled.ownsSession(id)
+      const current = () => origin.current() && selectedScheduled() === selected && scheduled.ownsSession(id)
         && getOpenCodeInstanceGeneration(instanceId) === generation
       if (!current()) return
       try {
         await hydrateRestoredSessionChain(instanceId, [id], undefined, current)
         if (!current() || !sessions().get(instanceId)?.has(id)) return
         batch(() => { setActiveSessionFromList(instanceId, id); activateSessionSurface({ instanceId, sessionId: id }, { kind: "conversation" }) })
+        origin.adoptConversation()
+        if (!current()) return
         props.onRevealConversation?.()
       } catch { if (current()) setNavigationError(true) }
     })() })

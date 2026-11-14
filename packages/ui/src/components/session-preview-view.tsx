@@ -5,6 +5,7 @@ import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, upda
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
+import { invalidateSessionSurfaceIntent } from "../stores/session-surface"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
@@ -71,6 +72,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         initialViewport={props.preview.viewport}
         onViewportChange={viewport => updateSessionPreviewViewport(props.preview.storageKey, viewport)}
         onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
+        onNavigationStart={() => invalidateSessionSurfaceIntent(props.preview.instanceId)}
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"

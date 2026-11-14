@@ -21,8 +21,11 @@ function read(): Record<string, RestorableTabViewState> {
   } catch { return {} }
 }
 
-export function bindLocalTabView(instanceId: string, folder: string, occurrence: number) {
-  const key = JSON.stringify([normalizeWorkspacePath(folder), occurrence])
+export function bindLocalTabView(instanceId: string, folder: string) {
+  const path = normalizeWorkspacePath(folder)
+  // Allocation and closure share the bound inventory, including while backend DELETE is pending.
+  const occurrence = [...scopes.values()].filter(key => JSON.parse(key)[0] === path).length
+  const key = scopes.get(instanceId) ?? JSON.stringify([path, occurrence])
   scopes.set(instanceId, key)
   return clientStateIsPrimary() ? undefined : read()[key]
 }
@@ -50,7 +53,7 @@ export function unbindLocalTabView(instanceId: string) {
   if (clientStateIsPrimary() || !scope) return
   const [folder, occurrence] = JSON.parse(scope) as [string, number]
   const values = read()
-  // Backend occurrence ranks compact when a duplicate closes.
+  // Compact the same bound inventory used when admitting a new occurrence.
   for (const [id, key] of [...scopes].sort((a, b) => JSON.parse(a[1])[1] - JSON.parse(b[1])[1])) {
     const [path, rank] = JSON.parse(key) as [string, number]
     if (path !== folder || rank <= occurrence) continue
@@ -70,18 +73,22 @@ export function adoptLocalLegacyPreview(instanceId: string, sessionId: string) {
   const [folder] = JSON.parse(scope) as [string, number]
   const source = readClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY)
   const entries = parseLegacySessionPreviews(source)
-  let adopted: RestorableTabViewState | undefined
-  const remaining = entries.filter(([key, preview]) => {
+  let exact: typeof entries[number] | undefined, fallback: typeof entries[number] | undefined
+  for (const entry of entries) {
+    const [key] = entry
     let path = key, session: string | undefined
     try {
       const tuple: unknown = JSON.parse(key)
       if (Array.isArray(tuple) && tuple.length === 2 && tuple.every(part => typeof part === "string")) [path, session] = tuple
     } catch { /* A project-wide record uses its folder directly. */ }
-    if (normalizeWorkspacePath(path) !== folder || session !== undefined && session !== sessionId) return true
-    adopted = { version: 1, previews: { [sessionId]: preview } }
-    return false
-  })
-  return adopted ? { view: adopted, source, remaining: JSON.stringify(Object.fromEntries(remaining)) } : undefined
+    if (normalizeWorkspacePath(path) !== folder) continue
+    if (session === sessionId) exact = entry
+    else if (session === undefined) fallback = entry
+  }
+  const adopted = exact ?? fallback
+  if (!adopted) return
+  const view: RestorableTabViewState = { version: 1, previews: { [sessionId]: adopted[1] } }
+  return { view, source, remaining: JSON.stringify(Object.fromEntries(entries.filter(([key]) => key !== adopted[0]))) }
 }
 
 export function retireLocalLegacyPreview(value: { source: string | null; remaining: string }) {

@@ -16,6 +16,88 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
+for (const remote of [false, true]) for (const exactFirst of [false, true]) {
+  test(`${remote ? "remote" : "web"} legacy session adoption merges sequential sessions, exact first=${exactFirst}`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.addInitScript(({ remote, exactFirst }) => {
+        const w = window as any
+        w.__name = (value: unknown) => value
+        w.__CODENOMAD_RUNTIME_HOST__ = "web"
+        w.__CODENOMAD_WINDOW_CONTEXT__ = remote ? "remote" : "local"
+        w.EventSource = class extends EventTarget { close() {} }
+        if (sessionStorage.getItem("legacy-seeded")) return
+        sessionStorage.setItem("legacy-seeded", "true")
+        const preview = (name: string) => ({ mode: "chat", targetUrl: `https://example.com/${name}` })
+        const exact = [JSON.stringify(["/same", "one"]), preview("one")]
+        const project = ["/same", preview("project")]
+        localStorage.setItem("opencode-session-previews-v1", JSON.stringify(Object.fromEntries([
+          ...(exactFirst ? [exact, project] : [project, exact]), [JSON.stringify(["/same", "two"]), preview("two")],
+        ])))
+      }, { remote, exactFirst })
+      await page.route("**/api/**", route => route.fulfill({ json: [] }))
+      await page.goto(webUrl); await page.waitForFunction(() => Boolean((window as any).fixture))
+      assert.equal(await page.evaluate(async () => (await (window as any).fixture.restore("one", "web-a")).targetUrl), "https://example.com/one")
+      const remaining = await page.evaluate(() => JSON.parse(localStorage.getItem("opencode-session-previews-v1")!))
+      assert.deepEqual(Object.keys(remaining).sort(), ["/same", JSON.stringify(["/same", "two"])].sort(), "only the exact consumed source retires")
+      assert.equal(await page.evaluate(async () => (await (window as any).fixture.restore("two", "web-a")).targetUrl), "https://example.com/two")
+      assert.deepEqual(await page.evaluate(() => Object.values((window as any).fixture.view("web-a").previews).map((p: any) => p.targetUrl)),
+        ["https://example.com/one", "https://example.com/two"], "adopting the next session preserves the first")
+      assert.equal(await page.evaluate(async () => (await (window as any).fixture.restore("three", "web-a")).targetUrl), "https://example.com/project")
+      assert.equal(await page.evaluate(() => localStorage.getItem("opencode-session-previews-v1")), "{}")
+      await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
+      assert.deepEqual(await page.evaluate(() => Object.values((window as any).fixture.view("web-a").previews).map((p: any) => p.targetUrl)),
+        ["https://example.com/one", "https://example.com/two", "https://example.com/project"])
+      assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
+    } finally { await page.close() }
+  })
+}
+
+for (const remote of [false, true]) test(`${remote ? "remote" : "web"} duplicate opened during held DELETE keeps its compacted view after reload`, async () => {
+  const page = await browser.newPage()
+  let release!: () => void, reached!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve }), arrival = new Promise<void>(resolve => { reached = resolve })
+  try {
+    await page.addInitScript(remote => {
+      const w = window as any
+      w.__name = (value: unknown) => value
+      w.__CODENOMAD_RUNTIME_HOST__ = "web"; w.__CODENOMAD_WINDOW_CONTEXT__ = remote ? "remote" : "local"
+      w.EventSource = class extends EventTarget { close() {} }
+    }, remote)
+    await page.route("**/api/**", async route => {
+      if (route.request().method() === "DELETE" && new URL(route.request().url()).pathname === "/api/workspaces/web-a") {
+        reached(); await hold
+        await route.fulfill({ status: 204 })
+        return
+      }
+      await route.fulfill({ json: [] })
+    })
+    await page.goto(webUrl); await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(async () => {
+      const f = (window as any).fixture
+      await f.open("same", "https://example.com/a", "web-a")
+      await f.open("same", "https://example.com/b", "web-b")
+      f.close("web-a")
+    })
+    await arrival
+    await page.evaluate(async () => {
+      const f = (window as any).fixture
+      f.add("web-c")
+      await f.open("same", "https://example.com/c", "web-c")
+    })
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.ids()), ["web-a", "web-b", "web-c"], "closing workspace remains in backend inventory")
+    const deleted = page.waitForResponse(response => response.request().method() === "DELETE" && response.url().endsWith("/api/workspaces/web-a"))
+    release(); await deleted
+    await page.evaluate(() => (window as any).fixture.removed("web-a"))
+    await page.waitForFunction(() => !(window as any).fixture.ids().includes("web-a"))
+    await page.evaluate(() => sessionStorage.setItem("workspace-inventory", JSON.stringify((window as any).fixture.ids())))
+    await page.reload(); await page.waitForFunction(() => Boolean((window as any).fixture))
+    assert.deepEqual(await page.evaluate(() => ["web-b", "web-c"].map(id => (window as any).fixture.view(id).previews?.same.targetUrl)),
+      ["https://example.com/b", "https://example.com/c"])
+    assert.equal(await page.evaluate(() => (window as any).fixture.created()), 0)
+  } finally { release(); await page.close() }
+})
+
 for (const remote of [false, true]) test(`${remote ? "remote" : "web"} previews persist through the production lifecycle and adopt legacy URLs`, async () => {
   const page = await browser.newPage()
   try {
@@ -87,7 +169,10 @@ for (const close of [false, true]) test(`production capture/restore binds recrea
     w.EventSource = class extends EventTarget { close() {} }
     const boot = Number(sessionStorage.getItem("boot") ?? 0) + 1
     sessionStorage.setItem("boot", String(boot)); w.boot = boot
-    const initial = { version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 0,
+    const initial = { version: 1, revision: 1, savedAt: 1, layout: {
+      "opencode-session-previews-v1": JSON.stringify(Object.fromEntries(["one", "two"].map(id =>
+        [JSON.stringify(["/same", id]), { mode: "chat", targetUrl: `https://example.com/${id}` }]))),
+    }, session: { activeTabIndex: 0,
       tabs: [0, 1].map(occurrence => ({ kind: "workspace", folder: "/same", occurrence,
         activeSessionId: "same", activeParentSessionId: "same", drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} })) } }
     w.electronAPI = {
@@ -123,6 +208,12 @@ for (const close of [false, true]) test(`production capture/restore binds recrea
     await page.locator('[data-restoring="false"]').waitFor()
     await page.waitForFunction(() => (window as any).tabViews.ids().length === 2)
     const ids = await page.evaluate(() => (window as any).tabViews.ids()) as string[]
+    const legacyUrls = await page.evaluate(async id => {
+      const f = (window as any).tabViews
+      return [(await f.restore("one", id)).targetUrl, (await f.restore("two", id)).targetUrl]
+    }, ids[0])
+    assert.deepEqual(legacyUrls, ["https://example.com/one", "https://example.com/two"], "native migration restores both sessions sequentially in one occurrence")
+    assert.deepEqual(await page.evaluate(id => Object.keys((window as any).tabViews.view(id).previews), ids[0]), ["one", "two"])
     await page.evaluate(async ([a, b]) => {
       const f = (window as any).tabViews
       await f.open("same", "https://example.com/a", a); f.files(a)

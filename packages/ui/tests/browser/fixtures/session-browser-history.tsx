@@ -15,6 +15,7 @@ import { restoreFixtureTabView } from "./tab-view-restoration"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { sessions, activeSessionId } from "../../../src/stores/session-state"
+import { captureSessionSurfaceIntent } from "../../../src/stores/session-surface"
 
 // The production shell, session switching, preview store and native guests run
 // unchanged. Only server responses and the native registration IPC are fixtures.
@@ -61,7 +62,10 @@ serverApi.fetchWorktreeGitDiff = async () => ({ path: "diff.ts", before: "const 
 const shell = (window as any).fixture
 shell.addSession("second")
 let eventTime = 1000
+let surfaceIntent: ReturnType<typeof captureSessionSurfaceIntent>
 Object.assign(shell, {
+  captureSurfaceIntent: () => { surfaceIntent = captureSessionSurfaceIntent({ instanceId: ids[0], sessionId: "session" }) },
+  surfaceIntentCurrent: () => surfaceIntent.current(),
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
   preview: (sessionId: string, instanceId = ids[0]) => getSessionPreview(sessionId, instanceId),

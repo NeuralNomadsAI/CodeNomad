@@ -97,6 +97,7 @@ interface BrowserFrameProps {
   onViewportChange?: (viewport: BrowserViewportPreset) => void
   onHistoryChange?: (history: BrowserHistory) => void
   onCancelNavigation?: () => void
+  onNavigationStart?: () => void
   commentBridge?: boolean
   commentMode?: boolean
   onToggleCommentMode?: () => void
@@ -769,6 +770,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     event.preventDefault()
     event.stopPropagation()
     if (journal) { void traverseHistory(-1); return }
+    props.onNavigationStart?.()
     if (nativeMode()) {
       if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "back").catch(reportNativeError)
       else if (webviewReady && webviewRef?.canGoBack()) webviewRef.goBack()
@@ -785,6 +787,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (!journal || historyBusy()) return
     const index = journal.value.index + offset
     if (index < 0 || index >= journal.value.urls.length) return
+    props.onNavigationStart?.()
     setHistoryBusy(true)
     const version = ++historyTravelVersion
     ++historyRead // Fence reads started before this explicit traversal.
@@ -814,6 +817,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   }
 
   const handleRefresh = () => {
+    props.onNavigationStart?.()
     supersedeHistoryTraversal()
     if (nativeMode()) {
       if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "reload").catch(reportNativeError)
@@ -837,6 +841,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (nativeBrowserAvailable) {
         try {
           const target = normalizeBrowserPreviewUrl(pathInput())
+          props.onNavigationStart?.()
           supersedeHistoryTraversal()
           setPathInput(target)
           if (nativeMode() && webviewReady && webviewRef?.getURL() === target) {
@@ -854,6 +859,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         return
       }
       const restoreNative = nativeMode()
+      props.onNavigationStart?.()
       supersedeHistoryTraversal()
       setNativeMode(false)
       setNavigating(true)

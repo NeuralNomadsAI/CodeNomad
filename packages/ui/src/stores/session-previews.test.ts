@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
 import { before, describe, it } from "node:test"
-import { parseStoredSessionPreviews, openSessionPreview, restoreSessionPreview, showSessionChatFor, showSessionPreview, getSessionPreview, closeSessionPreview, updateSessionPreviewHistory, updateSessionPreviewViewport, getPreviewSessionIds } from "./session-previews"
+import { parseStoredSessionPreviews, openSessionPreview, restoreSessionPreview, showSessionChatFor, showSessionPreview, getSessionPreview, closeSessionPreview, updateSessionPreviewHistory, updateSessionPreviewLocation, updateSessionPreviewViewport, getPreviewSessionIds } from "./session-previews"
 import { missionProjectView, updateMissionProjectView } from "./mission-view-state"
 import { serverApi } from "../lib/api-client"
 import { getTabViewState, seedTabViewState } from "./tab-view-state"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getPendingPreviewOperationCount } from "./session-previews"
+import { captureSessionSurfaceIntent } from "./session-surface"
 
 function registerOccurrence(id: string) {
   publishInstanceLifecycleAuthority({ type: "opened", instanceId: id, folder: "/same", occurrence: 0 })
@@ -19,6 +20,25 @@ before(() => {
 })
 
 describe("session preview persistence", () => {
+  it("changed browser locations and same-URL history entries supersede activation, unchanged history samples preserve it", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview, id = "web-intent"
+    registerOccurrence(id)
+    serverApi.createPreview = async ({ sessionId, url }) => ({ sessionId, token: "intent", targetUrl: url }) as any
+    serverApi.deletePreview = async () => undefined as any
+    try {
+      const preview = await openSessionPreview("same", "https://example.com/a", id)
+      const ctx = { instanceId: id, sessionId: "same" }
+      const unchanged = captureSessionSurfaceIntent(ctx)
+      updateSessionPreviewLocation(preview.storageKey, preview.targetUrl)
+      updateSessionPreviewHistory(preview.storageKey, preview.history)
+      assert.equal(unchanged.current(), true)
+      updateSessionPreviewLocation(preview.storageKey, "https://example.com/b")
+      assert.equal(unchanged.current(), false)
+      const sameUrl = captureSessionSurfaceIntent(ctx)
+      updateSessionPreviewHistory(preview.storageKey, { urls: [preview.targetUrl, preview.targetUrl], index: 1 })
+      assert.equal(sameUrl.current(), false, "same URL entries still represent newer navigation")
+    } finally { closeOccurrence(id); serverApi.createPreview = create; serverApi.deletePreview = remove }
+  })
   it("retains only pending request fences across 1000 occurrence lifetimes", async () => {
     const create = serverApi.createPreview, remove = serverApi.deletePreview
     serverApi.deletePreview = async () => undefined as any

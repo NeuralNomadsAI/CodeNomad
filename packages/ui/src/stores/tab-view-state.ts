@@ -26,10 +26,11 @@ export function updateTabViewState(instanceId: string, patch: Partial<Omit<Resto
 }
 
 export function adoptLegacyTabPreview(instanceId: string, sessionId: string): void {
-  if (getTabViewState(instanceId).previews !== undefined) return
+  const previews = getTabViewState(instanceId).previews
+  if (previews?.[sessionId] !== undefined) return
   const legacy = adoptLocalLegacyPreview(instanceId, sessionId)
   if (legacy) {
-    updateTabViewState(instanceId, { previews: legacy.view.previews })
+    updateTabViewState(instanceId, { previews: { ...previews, ...legacy.view.previews } })
     if (saveLocalTabView(instanceId, getTabViewState(instanceId))) retireLocalLegacyPreview(legacy)
   }
 }
@@ -51,7 +52,7 @@ export function clearTabViewState(instanceId: string): void {
 
 onInstanceLifecycleAuthority(event => {
   if (event.type === "opened") {
-    const local = bindLocalTabView(event.instanceId, event.folder, event.occurrence)
+    const local = bindLocalTabView(event.instanceId, event.folder)
     if (local) seedTabViewState(event.instanceId, local)
   }
   if (event.type === "removed") {
