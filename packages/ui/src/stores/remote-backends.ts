@@ -7,6 +7,6 @@ export const backendRegistry = createBackendRegistry({
   profiles: () => preferencesForBackend("local").remoteServers(),
   loadWorkspaces: async (client, signal) => {
     const { refreshWorkspaceList } = await import("./instances")
-    if (!signal.aborted) await refreshWorkspaceList(client.id, client.api, signal)
+    return !signal.aborted && refreshWorkspaceList(client.id, client.api, signal)
   },
 })

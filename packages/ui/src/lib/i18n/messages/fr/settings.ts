@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.nav.servers": "Serveurs",
+  "settings.servers.open": "Ouvrir",
+  "settings.servers.dialog.name": "Nom",
+  "settings.servers.dialog.url": "URL",
+  "settings.servers.dialog.skipTls": "Désactive la vérification du certificat de ce serveur. Son identité ne peut pas être vérifiée.",
+  "settings.servers.dialog.errorRequired": "L'URL du serveur est requise.",
   "settings.preferenceSaveFailed": "Impossible d'enregistrer la préférence.",
   "settings.behavior.keepComputerAwake.title": "Garder l’ordinateur éveillé tant que CodeNomad tourne",
   "settings.behavior.keepComputerAwake.info": "Empêche la mise en veille de l’ordinateur tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée) ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille.",

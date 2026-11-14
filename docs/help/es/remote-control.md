@@ -15,6 +15,8 @@ Para emparejar otro CodeNomad de escritorio, elige **Conectar servidor CodeNomad
 
 ## Gestionar dispositivos emparejados {#paired-devices}
 
+Con los ajustes multibackend experimentales, pega el enlace de vinculación en **Configuración → Servidores → Dirección o enlace del servidor**. El campo se vacía antes de la solicitud; solo se guarda el origen. El backend local conserva su identidad privada de dispositivo entre inicios. **Eliminar servidor guardado** olvida primero la conexión de ese perfil. La vinculación verifica TLS y no abre un proyecto. Las instrucciones anteriores sobre ventanas remotas se aplican al modo predeterminado.
+
 1. En el equipo anfitrión, vuelve a **Configuración → Acceso remoto → Control remoto**.
 2. Revisa **Dispositivos emparejados** y su hora de **Última actividad**. Cada dispositivo recibe el nombre de la plataforma y el navegador que lo emparejaron, como `iPhone · Safari`.
 3. Elige **Revocar** para un dispositivo que ya no deba conectarse.

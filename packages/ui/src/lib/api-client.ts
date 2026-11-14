@@ -98,6 +98,7 @@ import { validMissionContentSlice } from "./mission-content-slice"
 import { assertTaskReadLive, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
+import { remoteServerRequest, type RemoteServerConnectInput } from "./remote-server-request"
 
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
@@ -286,9 +287,9 @@ export function createServerApi(ctx: BackendHttp) {
         method: "POST", body: JSON.stringify(input), signal,
       })
     },
-    imagesConversation(instanceId: string, input: ImagesConversationRequest): Promise<ImagesConversationResponse> {
+    imagesConversation(instanceId: string, input: ImagesConversationRequest, signal?: AbortSignal): Promise<ImagesConversationResponse> {
       return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/images-conversation`, {
-        method: "POST", body: JSON.stringify(input),
+        method: "POST", body: JSON.stringify(input), signal,
       })
     },
     fetchSessionGoal(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<SessionGoalResponse> {
@@ -371,6 +372,7 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     releaseWorkspaceCreation(id: string, requestId: string): Promise<void> {
+      id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}/creation/release`, {
         method: "POST",
         body: JSON.stringify({ requestId }),
@@ -421,14 +423,21 @@ export function createServerApi(ctx: BackendHttp) {
     fetchServerMeta(): Promise<ServerMeta> {
       return request<ServerMeta>("/api/meta")
     },
-    probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
+    connectRemoteServer(id: string, input: RemoteServerConnectInput, signal?: AbortSignal) {
+      return remoteServerRequest(ctx, id, "connect", input, signal)
+    },
+    forgetRemoteServer(id: string, signal?: AbortSignal) {
+      return remoteServerRequest(ctx, id, "forget", {}, signal)
+    },
+    probeRemoteServer(payload: RemoteServerProbeRequest, signal?: AbortSignal): Promise<RemoteServerProbeResponse> {
       return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
         method: "POST",
         body: JSON.stringify(payload),
+        signal,
       })
     },
-    listSshHosts(): Promise<{ hosts: string[] }> {
-      return request("/api/remote-servers/ssh-hosts")
+    listSshHosts(signal?: AbortSignal): Promise<{ hosts: string[] }> {
+      return request("/api/remote-servers/ssh-hosts", { signal })
     },
     createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
       return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
@@ -482,7 +491,7 @@ export function createServerApi(ctx: BackendHttp) {
       return secondaryRead(signal, () => request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal }))
     },
     getWebSearchSettings(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`, { signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/websearch-settings?${new URLSearchParams({ directory })}`, { signal })
     },
     getServiceUsageOwner(instanceId: string, signal?: AbortSignal): Promise<{ owner: string; identity?: string; connection?: string }> {
       return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/owner`, { signal })
@@ -494,13 +503,13 @@ export function createServerApi(ctx: BackendHttp) {
       return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone, ...(query.restorePeriod ? { restorePeriod: "true" } : {}) })}`, { signal })
     },
     setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation, signal?: AbortSignal): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload), signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload), signal })
     },
     getImageSettings(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ImageSettingsSnapshot> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings?${new URLSearchParams({ directory })}`, { signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/image-settings?${new URLSearchParams({ directory })}`, { signal })
     },
     setImageSettings(instanceId: string, payload: import("../../../server/src/api-types").ImageSettingsMutation, signal?: AbortSignal): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload), signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload), signal })
     },
     getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
       return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
@@ -527,6 +536,7 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     deleteWorkspace(id: string): Promise<void> {
+      id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
     },
     createTemporaryFolder(): Promise<{ path: string }> {

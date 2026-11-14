@@ -122,7 +122,8 @@ function describeProbeError(error: unknown): { code: string; message: string } {
   const code = (detailed?.code ?? "").toString()
   const exactMessage = detailed?.message?.trim() || chain.find((entry) => entry.message?.trim())?.message?.trim()
 
-  if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN" || code === "CERT_HAS_EXPIRED") {
+  if (["DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID",
+    "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"].includes(code)) {
     return {
       code: "tls_error",
       message: "Certificate check failed while connecting to the remote server.",

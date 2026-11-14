@@ -17,6 +17,12 @@ type Entry = {
   detach?: () => void
   remove?: () => void
   revoked: boolean
+  validation: number
+  validationResult?: Promise<boolean>
+  health: number
+  inventoryFailed?: boolean
+  inventory?: Promise<BackendClient>
+  inventoryDirty?: boolean
 }
 
 export interface BackendRegistryOptions {
@@ -25,7 +31,8 @@ export interface BackendRegistryOptions {
   createClient?: (id: string) => BackendClient
   register?: (client: BackendClient) => () => void
   events?: BackendEvents
-  loadWorkspaces(client: BackendClient, signal: AbortSignal): Promise<void>
+  /** False marks a superseded read; only a current completion can repair availability. */
+  loadWorkspaces(client: BackendClient, signal: AbortSignal): Promise<boolean>
 }
 
 /** Owns candidates, attachment authority and disposal; observing profiles never probes them. */
@@ -70,8 +77,16 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     return dispose
   })
 
-  async function validate(id: string, entry: Entry, attempt?: AbortSignal): Promise<boolean> {
-    const active = () => !attempt?.aborted && current(id, entry)
+  function validate(id: string, entry: Entry, attempt?: AbortSignal, publish = true): Promise<boolean> {
+    return entry.validationResult = runValidation(id, entry, attempt, publish)
+  }
+
+  async function runValidation(id: string, entry: Entry, attempt?: AbortSignal, publish = true): Promise<boolean> {
+    const validation = ++entry.validation
+    const active = () => validation === entry.validation && !attempt?.aborted && current(id, entry)
+    // A superseded stream gate follows the newer verdict, without publishing its own reply.
+    const superseded = () => publish && !attempt?.aborted && current(id, entry)
+      ? entry.validationResult! : false
     if (!active()) return false
     const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(8000), ...attempt ? [attempt] : []])
     try {
@@ -79,12 +94,12 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       const response = await entry.client.fetch(entry.client.url("/api/meta"), {
         credentials: "include", cache: "no-store", signal,
       })
-      if (!active()) return false
+      if (!active()) return superseded()
       signal.throwIfAborted()
       if (response.status === 404) { detach(id, "refused"); return false }
       if (!response.ok) throw response.status === 401 ? "unauthorized" : "unreachable"
       const meta: ServerMeta | null = await response.json()
-      if (!active()) return false
+      if (!active()) return superseded()
       signal.throwIfAborted()
       if (backendCompatibility(meta) !== "compatible" || entry.serverId && entry.serverId !== meta?.serverId) {
         detach(id, "refused")
@@ -95,10 +110,12 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         detach(id, "refused")
         return false
       }
-      if (entry.detach) setState(id, "compatible")
+      if (entry.detach && publish && !entry.inventoryFailed) setState(id, "compatible")
       return active()
     } catch (error) {
+      if (!active()) return superseded()
       if (active()) {
+        entry.health++
         if (error instanceof SyntaxError) { detach(id, "refused"); return false }
         // Temporary connection failure preserves the attachment and its ordinary retry path.
         setState(id, error === "unauthorized" ? "unauthorized" : "unreachable")
@@ -118,7 +135,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
     if (active) return active.revoked ? Promise.resolve(undefined) : active.pending
     const client = options.createClient ? options.createClient(id) : createRemoteBackendClient(id, { bindRelayAuthority: true })
     const entry: Entry = { profile: { ...profile }, client, controller: new AbortController(),
-      pending: Promise.resolve(undefined), revoked: false }
+      pending: Promise.resolve(undefined), revoked: false, validation: 0, health: 0 }
     entries.set(id, entry)
     setState(id, "admitting")
     entry.pending = (async () => {
@@ -137,19 +154,65 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
         if (states[id] !== "compatible") return client
         // Start the stream first; domain reads always retain this exact attachment.
         const signal = events.signal(id)!
-        await options.loadWorkspaces(client, signal)
+        if (!await options.loadWorkspaces(client, signal)) throw new Error("Backend inventory superseded")
         return current(id, entry) ? client : undefined
       } catch {
         if (current(id, entry) && !entry.detach) detach(id, "unreachable")
-        if (current(id, entry)) { setState(id, "unreachable"); return client }
+        if (current(id, entry)) { entry.inventoryFailed = true; setState(id, "unreachable"); return client }
         return undefined
       }
     })()
     return entry.pending
   }
 
+  /** Explicit demand only. Concurrent readers join; invalidations request one trailing read. */
+  function retryWorkspaces(id: string, demand: { invalidate?: boolean } = {}): Promise<BackendClient> {
+    const entry = entries.get(id)
+    const signal = events.signal(id)
+    const unavailable = () => new Error(`Backend inventory unavailable: ${id}`)
+    const active = () => entry && current(id, entry) && !!entry.detach && !!signal && !signal.aborted
+      && events.signal(id) === signal
+    if (!entry || !active()) return Promise.reject(unavailable())
+    if (entry.inventory) {
+      if (demand.invalidate) entry.inventoryDirty = true
+      return entry.inventory
+    }
+    entry.inventoryDirty = false
+    const flight = (async () => {
+      // Admission owns the initial list; an explicit recovery never races that read.
+      await entry.pending
+      for (let pass = 0; pass < 2; pass++) {
+        if (!active()) throw unavailable()
+        if (!await validate(id, entry, signal, false) || !active()) throw unavailable()
+        const health = entry.health
+        try {
+          if (!await options.loadWorkspaces(entry.client, signal!)) throw unavailable()
+        } catch (error) {
+          if (active()) {
+            entry.inventoryFailed = true
+            if (states[id] !== "unauthorized") setState(id, "unreachable")
+          }
+          throw error
+        }
+        if (!active() || entry.health !== health) throw unavailable()
+        if (!entry.inventoryDirty) {
+          entry.inventoryFailed = false
+          setState(id, "compatible")
+          return entry.client
+        }
+        entry.inventoryDirty = false
+      }
+      // Continuous invalidations park until another explicit demand.
+      throw unavailable()
+    })().finally(() => {
+      if (entry.inventory === flight) entry.inventory = undefined
+    })
+    entry.inventory = flight
+    return flight
+  }
+
   return {
-    ensure, detach,
+    ensure, detach, retryWorkspaces,
     state: (id: string): BackendAdmissionState => states[id] ?? "idle",
     dispose() {
       if (disposed) return
