@@ -308,6 +308,9 @@ test("late Location response never installs data into a different reader or list
     await page.evaluate(() => window.passageHistory.directory("/other"))
     await expandList(page)
     await scheduleEntry(page, "Daily review new").waitFor()
+    assert.equal(reads, 3, "the retained reader and list share one first read after the new Location matches")
+    assert.equal(await page.getByText("rcp_rec_old_29", { exact: true }).count(), 0,
+      "the old reader content is revoked before its held Location response returns")
     release()
     await (await readAll(page, "Daily review new")).click()
     await page.locator(".mission-reader").getByText("rcp_rec_new_29", { exact: true }).waitFor({ state: "attached" })
