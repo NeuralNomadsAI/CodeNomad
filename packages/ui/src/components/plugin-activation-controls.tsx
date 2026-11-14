@@ -1,5 +1,4 @@
-import { For, Show, createEffect, createMemo, createUniqueId, onCleanup, type Component } from "solid-js"
-import { Tooltip } from "@kobalte/core/tooltip"
+import { For, Show, createEffect, createMemo, createUniqueId, onCleanup, type Component, type JSX } from "solid-js"
 import { Loader2, RefreshCw } from "lucide-solid"
 import type {
   PluginConfiguredSource,
@@ -10,14 +9,14 @@ import type {
 } from "../../../server/src/api-types"
 import type { IntegrationView } from "../../../server/src/integration-types"
 import { useI18n } from "../lib/i18n"
-import { integrationAttention, integrationConnection, integrationConnectionMessage } from "../lib/integration-row-state"
+import { integrationConnection, integrationConnectionMessage, integrationStateLine } from "../lib/integration-row-state"
 import { integrationDisplayPlugin } from "../lib/integration-rows"
 import { integrationBindings, integrations } from "../stores/integrations"
 import { pluginControlsCache } from "../stores/plugin-controls"
 import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
 import { createIntegrationHostInstallation } from "./integration-host-installation"
 import { createIntegrationRowBinding } from "./integration-row-binding"
-import { IntegrationAttentionIndicator, IntegrationLinkButton } from "./integration-row-indicators"
+import { IntegrationStateLineView } from "./integration-state-line"
 import { PluginActivationSwitch } from "./plugin-activation-switch"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginAddMenu } from "./plugin-add-menu"
@@ -204,7 +203,11 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const binding = createIntegrationRowBinding({
       instanceId: () => props.instanceId, directory, sessionId: () => props.session?.id, integration, active: () => props.active !== false,
     })
-    const attention = () => { const entry = integration(); return entry ? integrationAttention(entry) : undefined }
+    const line = createMemo(() => {
+      const entry = integration()
+      return entry ? integrationStateLine({ entry, link: binding.link(), offers: binding.offers(), conversation: Boolean(props.session),
+        canInstall: Boolean(installation.action(entry.id)) }) : undefined
+    }, undefined, { equals: (left, right) => JSON.stringify(left) === JSON.stringify(right) })
     const connection = () => {
       const entry = integration()
       if (!entry) return undefined
@@ -215,7 +218,6 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       const entry = integration(), action = entry ? installation.action(entry.id) : undefined
       return entry && action ? { action, run: () => void installation.open(entry.id) } : undefined
     }, undefined, { equals: (left, right) => left?.action === right?.action })
-    const detach = () => binding.link()?.state === "attached" ? { run: () => void binding.detach(), busy: binding.busy() } : undefined
     const details = () => {
       const current = control(), entry = integration()
       const lines = [t(`instanceServiceStatus.plugins.kind.${entry ? "integration" : "plugin"}`, { id: pluginId }),
@@ -240,21 +242,16 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     }
     const nameId = `${headingId}-name-${pluginId}`
     return (
-      <div class="plugin-control-row" data-plugin-id={pluginId} data-integration={integration()?.id} role="group" aria-labelledby={nameId}>
-        <div class="plugin-control-identity"><span class="plugin-control-title"><Tooltip placement="top-start" openDelay={300}>
-          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{name()}</bdi></Tooltip.Trigger>
-          <Tooltip.Portal>
-            <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
-          </Tooltip.Portal>
-        </Tooltip>
-          <Show when={version()}>{value => <span class="plugin-control-version"><bdi>{value()}</bdi></span>}</Show></span>
-          <Show when={binding.link()}><IntegrationLinkButton binding={binding} /></Show>
-          <Show when={attention()}>{value => <IntegrationAttentionIndicator attention={value()} app={integration()!.app.name} />}</Show>
+      <div class="plugin-control-row" data-plugin-id={pluginId} data-integration={integration()?.id} role="group" aria-labelledby={nameId}
+        aria-describedby={`${nameId}-details`}>
+        <div class="plugin-control-identity"><PluginName id={nameId} name={name()} details={details()} version={version()} />
           {nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={name()}
           source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id}
-          info={connection()} hostAction={hostAction()} detach={detach()} /></div>
+          info={connection()} hostAction={hostAction()} docs={integration()?.docs} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
+        <Show when={line()}>{value => <IntegrationStateLineView line={value()} binding={binding}
+          install={() => { const entry = integration(); if (entry) void installation.open(entry.id) }} />}</Show>
       </div>
     )
   }
@@ -277,17 +274,16 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       return lines.map(bidi).join("\n")
     }
     return <div class="plugin-control-row" data-package-target={entry()?.source.type === "package" ? target : undefined}
-      data-local-path={entry()?.source.type === "local" ? target : undefined} data-integration={integration()?.id} role="group" aria-labelledby={nameId}>
+      data-local-path={entry()?.source.type === "local" ? target : undefined} data-integration={integration()?.id} role="group" aria-labelledby={nameId}
+      aria-describedby={`${nameId}-details`}>
       <div class="plugin-control-identity">
-        <span class="plugin-control-title"><Tooltip placement="top-start" openDelay={300}>
-          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{integration()?.displayName ?? target}</bdi></Tooltip.Trigger>
-          <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
-        </Tooltip>
-          <Show when={packageVersion()}>{value => <span class="plugin-control-version"><bdi>{value()}</bdi></span>}</Show></span>
+        <PluginName id={nameId} name={integration()?.displayName ?? target} details={details()} version={packageVersion()} />
         {nonConformingLabel(declarationsFor(source => source.target === target))}
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
-          removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} />
+          removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id}
+          docs={integration()?.docs} />
       </div>
+      <Show when={integration()}>{value => <IntegrationStateLineView line={integrationStateLine({ entry: value(), conversation: false, canInstall: false })} />}</Show>
     </div>
   }
 
@@ -306,12 +302,9 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
         ? `${scopeLabel(source.scope)} — ${source.path ?? ""}` : source.path ?? ""),
     ].map(bidi).join("\n")
     return <div class="plugin-control-row" data-source-target={target} data-source-state={state()} data-integration={integration()?.id}
-      role="group" aria-labelledby={nameId} aria-busy={state() === "pending"}>
+      role="group" aria-labelledby={nameId} aria-describedby={`${nameId}-details`} aria-busy={state() === "pending"}>
       <div class="plugin-control-identity">
-        <span class="plugin-control-title"><Tooltip placement="top-start" openDelay={300}>
-          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{integration()?.displayName ?? target}</bdi></Tooltip.Trigger>
-          <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
-        </Tooltip></span>
+        <PluginName id={nameId} name={integration()?.displayName ?? target} details={details()} />
         <Show when={state() === "pending"} fallback={<span class="plugin-source-state" role="status">{t("instanceServiceStatus.plugins.sources.unconfirmedLabel")}</span>}>
           <span class="plugin-source-state" role="status">
             <Loader2 class="h-3 w-3 animate-spin" aria-hidden="true" />{t("instanceServiceStatus.plugins.sources.pendingLabel")}
@@ -382,6 +375,18 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return t(`instanceServiceStatus.plugins.scope.${value}`)
   }
 
+}
+
+/**
+ * A row's name and version. Details use the native `title` like the rest of the app, and a hidden copy that the row
+ * names through `aria-describedby` (`<id>-details`) for keyboard and screen-reader users.
+ */
+function PluginName(props: { id: string; name: string; details: string; version?: string }): JSX.Element {
+  return <span class="plugin-control-title">
+    <span id={props.id} class="plugin-control-name" title={props.details}><bdi>{props.name}</bdi></span>
+    <Show when={props.version}>{value => <span class="plugin-control-version"><bdi>{value()}</bdi></span>}</Show>
+    <span id={`${props.id}-details`} class="sr-only">{props.details}</span>
+  </span>
 }
 
 function sourcesOverlap(left: readonly Pick<PluginConfiguredSource, "scope" | "entryIndex">[], right: readonly Pick<PluginConfiguredSource, "scope" | "entryIndex">[]): boolean {

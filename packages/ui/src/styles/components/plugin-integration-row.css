@@ -1,5 +1,5 @@
-/* A Plugins row's version, an integration's chain button and attention indicator, and its menus' information line
-   (components/plugin-activation-controls.tsx, integration-row-indicators.tsx, plugin-row-actions.tsx). */
+/* A Plugins row's version, an integration's state line and its menus' information line
+   (components/plugin-activation-controls.tsx, integration-state-line.tsx, plugin-row-actions.tsx). */
 .plugin-control-version {
   flex-shrink: 0;
   font-size: 10px;
@@ -7,30 +7,59 @@
   color: var(--text-muted);
 }
 
-.plugin-control-indicator {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
+/* One state under an integration's name: muted when it informs, accent when it acts, warning when it warns. */
+.plugin-control-state {
+  grid-column: 1 / -1;
+  display: flex;
+  min-width: 0;
+  padding-top: 2px;
+  font-size: 11px;
+  line-height: 1rem;
   color: var(--text-muted);
 }
 
-.plugin-control-indicator:focus-visible {
+.plugin-control-state-info,
+.plugin-control-state-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.plugin-control-state-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-control-state[data-tone="warning"] {
+  color: var(--status-warning);
+}
+
+.plugin-control-state-action {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--accent-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.plugin-control-state-action:hover:not([aria-disabled="true"]) .plugin-control-state-text {
+  text-decoration: underline;
+}
+
+.plugin-control-state-action:focus-visible {
   outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
-/* The chain button: the row's framed icon button; pressed while attached (shared `.icon-toggle` rule). */
-.plugin-control-link[data-integration-link="unknown"] svg {
-  opacity: 0.5;
-}
-
-.plugin-controls .plugin-control-link[aria-disabled="true"] {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.plugin-control-indicator[data-integration-attention] {
-  color: var(--status-warning);
+.plugin-control-state-action[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.6;
 }
 
 .plugin-control-switch[data-locked] .MuiSwitch-root {
