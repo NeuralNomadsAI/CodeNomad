@@ -42,6 +42,8 @@ import { activeInstanceId, instances } from "../stores/instances"
 import { getActiveCatalogLocation } from "../stores/sessions"
 import { requestServerSelection } from "../lib/native/server-selection"
 import { showToastNotification } from "../lib/notifications"
+import { backendRegistry } from "../stores/remote-backends"
+import { parseInstanceKey } from "../lib/backend-identity"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -51,7 +53,8 @@ type SettingsSectionOption = {
 
 interface SettingsScreenProps {
   standalone?: boolean
-  providerContext?: { instanceId?: string; location?: LocationRef }
+  providerContext?: { instanceId?: string; location?: LocationRef; serverId?: string }
+  projectUnavailable?: boolean
   onClose?: () => void | Promise<void>
   onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
   scrollPosition?: { scrollTop?: number }
@@ -65,10 +68,13 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const serversEnabled = () => config.preferences().multiBackend === true
   const embeddedProject = createPreferencesProjectContext(() => {
     const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
-    return { section: "general", instanceId, workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
+    return { section: "general", instanceId, serverId: instanceId ? backendRegistry.serverId(parseInstanceKey(instanceId).backendId) : undefined,
+      workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
       location: instanceId ? getActiveCatalogLocation(instanceId) : undefined }
   }, () => !props.standalone && !props.providerContext && settingsOpen() && activeSettingsSection() === "general", () => {})
   const memoryContext = () => props.providerContext ?? embeddedProject()
+  const projectUnavailable = () => props.projectUnavailable || !props.standalone && !props.providerContext &&
+    parseInstanceKey(activeInstanceId() ?? "").backendId !== "local" && !embeddedProject()
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -116,15 +122,15 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "opencode":
         return <OpenCodeSettingsSection />
       case "servers":
-        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} />}><ServersSettingsSection onSelectServer={intent => {
+        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} serverId={memoryContext()?.serverId} projectUnavailable={projectUnavailable()} />}><ServersSettingsSection onSelectServer={intent => {
           void requestServerSelection(intent).catch(() => showToastNotification({ category: "settings", variant: "error", message: t("remoteBrowse.unreachable") }))
         }} /></Show>
       case "providers":
-        return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "missions":
-        return <MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "usage":
-        return <UsageSettingsSection instanceId={props.providerContext?.instanceId} />
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><UsageSettingsSection instanceId={props.providerContext?.instanceId} /></Show>
       case "sidecars":
         return <SideCarsSettingsSection />
       case "config-files":
@@ -135,7 +141,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return <InfoSettingsSection />
       case "general":
       default:
-        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} />
+        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} serverId={memoryContext()?.serverId} projectUnavailable={projectUnavailable()} />
     }
   }
 

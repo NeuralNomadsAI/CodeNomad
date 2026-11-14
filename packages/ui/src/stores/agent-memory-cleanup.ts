@@ -1,4 +1,7 @@
-import { agentMemoryApi } from "../lib/agent-memory-api"
+import { agentMemoryFor } from "../lib/agent-memory-api"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { parseInstanceKey } from "../lib/backend-identity"
+import { backendRegistry } from "./remote-backends"
 import { memoryCleanupPrompt, type MemoryCleanupRequest } from "../lib/native/memory-cleanup-command"
 import { instances } from "./instances"
 import { createSession } from "./session-api"
@@ -18,17 +21,22 @@ export function runMemoryCleanup(request: MemoryCleanupRequest): Promise<void> {
 }
 
 async function launchMemoryCleanup(request: MemoryCleanupRequest): Promise<void> {
+  const operation = captureBackendOperation(request.workspaceId)
+  const { backendId } = parseInstanceKey(request.workspaceId)
+  const api = agentMemoryFor(request.workspaceId)
   const instance = instances().get(request.workspaceId)
   const client = instance?.client, folder = instance?.folder
   const assertCurrent = () => {
     const current = instances().get(request.workspaceId)
-    if (!client || current?.status !== "ready" || current.client !== client || current.folder !== folder) throw new Error("Cleanup project unavailable")
+    if (!operation.current() || backendId !== "local" && (!request.serverId || backendRegistry.serverId(backendId) !== request.serverId)
+      || !client || current?.status !== "ready" || current.client !== client || current.folder !== folder) throw new Error("Cleanup project unavailable")
   }
   assertCurrent()
   // Fresh checks before the sole non-idempotent creation; the proxy authorizes the captured directory.
-  const settings = await agentMemoryApi.settings()
+  const settings = await api.settings()
+  assertCurrent()
   if (!settings.enabled) throw new Error("Memory disabled")
-  const result = await agentMemoryApi.list(request.scope, { workspaceId: request.workspaceId, directory: request.directory })
+  const result = await api.list(request.scope, { workspaceId: request.workspaceId, directory: request.directory })
   if (!result.cleanupDirectory || !result.cleanupWritable || !result.entries.some(entry => !entry.flagged)) throw new Error("Memory empty or unavailable")
   assertCurrent()
   const session = await createSession(request.workspaceId, undefined, { directory: request.directory })

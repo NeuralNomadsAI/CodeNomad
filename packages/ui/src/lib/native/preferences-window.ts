@@ -14,7 +14,9 @@ const sections = new Set<SettingsSectionId>([
 export interface NativePreferencesRequest {
   section: SettingsSectionId
   scrollTop?: number
+  /** Qualified instanceKey: backend identity plus its workspace record; local keys stay unchanged. */
   instanceId?: string
+  serverId?: string
   /** Opened folder on the CodeNomad backend host, separate from the native Location (WSL/worktrees). */
   workspacePath?: string
   location?: LocationRef
@@ -30,6 +32,7 @@ export function normalizeNativePreferencesRequest(value: unknown): NativePrefere
     section: candidate.section as SettingsSectionId,
     ...(Number.isSafeInteger(candidate.scrollTop) && (candidate.scrollTop as number) >= 0 && (candidate.scrollTop as number) <= 10_000_000 ? { scrollTop: candidate.scrollTop as number } : {}),
     ...(typeof candidate.instanceId === "string" && candidate.instanceId ? { instanceId: candidate.instanceId } : {}),
+    ...(typeof candidate.serverId === "string" && candidate.serverId && candidate.serverId.length <= 512 ? { serverId: candidate.serverId } : {}),
     ...(typeof candidate.workspacePath === "string" && candidate.workspacePath && candidate.workspacePath.length <= 32768 && !candidate.workspacePath.includes("\0")
       ? { workspacePath: candidate.workspacePath } : {}),
     ...(location && typeof location === "object" && typeof (location as LocationRef).directory === "string"
@@ -58,7 +61,7 @@ export async function openNativePreferences(request: NativePreferencesRequest, t
   if (runtimeEnv.host === "electron") {
     const open = window.electronAPI?.openPreferences
     if (!open) throw new Error("Native Preferences is unavailable")
-    await open(request.section, { instanceId: request.instanceId, workspacePath: request.workspacePath, location: request.location }, toggle, resume)
+    await open(request.section, { instanceId: request.instanceId, serverId: request.serverId, workspacePath: request.workspacePath, location: request.location }, toggle, resume)
     return
   }
   if (runtimeEnv.host === "tauri") {
