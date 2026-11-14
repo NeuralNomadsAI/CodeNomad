@@ -17,6 +17,8 @@ import { showConfirmDialog } from "../stores/alerts"
 
 const MonacoFileViewer = lazy(() => import("./file-viewer/monaco-file-viewer").then(module => ({ default: module.MonacoFileViewer })))
 const imageTypes: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml", ico: "image/x-icon", bmp: "image/bmp", avif: "image/avif" }
+// One light snapshot per live target; releasing a selection releases its view.
+const views = new WeakMap<FilePreviewTarget, { source: boolean; scrollTop: number }>()
 
 export function WorkspaceFileView(props: { instanceId: string; target: FilePreviewTarget; active: boolean; onClose: () => void }) {
   const { t } = useI18n(), { isDark } = useTheme()
@@ -63,7 +65,9 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   }
   function cancel() { controller?.abort(); controller = undefined; pending = false; setLoading(false) }
   createEffect(on(() => props.target, () => {
-    cancel(); setContent(null); setError(null); setSource(false)
+    const target = props.target
+    onCleanup(() => views.set(target, { source: source(), scrollTop: views.get(target)?.scrollTop ?? 0 }))
+    cancel(); setContent(null); setError(null); setSource(views.get(props.target)?.source ?? false)
     const draft = editor.reset()
     if (draft !== undefined) setContent({ text: draft })
     else void load()
@@ -106,7 +110,11 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
         <Show when={previewable() && !source()} fallback={<div class="git-diff-content"><Suspense>
           <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} onContentChange={editor.change} onSave={value => void editor.save(value)} />
         </Suspense></div>}>
-          <Show when={mermaid()} fallback={<div class="workspace-markdown"><Markdown part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml /></div>}>
+          <Show when={mermaid()} fallback={<div class="workspace-markdown" ref={element => {
+            queueMicrotask(() => { if (element.isConnected) element.scrollTop = views.get(props.target)?.scrollTop ?? 0 })
+          }} onScroll={event => views.set(props.target, { source: source(), scrollTop: event.currentTarget.scrollTop })}>
+            <Markdown part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml />
+          </div>}>
             <div class="workspace-mermaid"><MermaidDiagram code={editor.text()} isDark={isDark()} showSourceOnError /></div>
           </Show>
         </Show>

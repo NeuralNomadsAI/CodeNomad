@@ -467,6 +467,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id)
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return
+      if (props.isActiveInstance === false || activeSessionIdForInstance() !== sessionId) return
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1189,7 +1190,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
           class="content-area"
         >
-              <Show when={cachedSessionIds().length === 0 || !activeSessionIdForInstance()}>
+              <Show when={props.isActiveInstance !== false && (cachedSessionIds().length === 0 || !activeSessionIdForInstance())}>
                   <Show when={!activeSessionIdForInstance()} fallback={
                     <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
                       <MessageSection

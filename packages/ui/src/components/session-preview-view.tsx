@@ -34,6 +34,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
   const { t } = useI18n()
   const [commentMode, setCommentMode] = createSignal(false)
   function showNavigationError(error: unknown) {
+    if (props.active === false) return
     if (error instanceof Error && error.name === "AbortError") return
     showAlertDialog(t("sessionPreview.open.title"), {
       title: t("sessionPreview.open.title"),

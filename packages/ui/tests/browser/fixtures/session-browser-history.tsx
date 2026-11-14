@@ -18,13 +18,14 @@ import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/sh
 // unchanged. Only server responses and the native registration IPC are fixtures.
 let nextToken = 0
 const deletedPreviews: string[] = []
-let delayedPreview: { url: string; requested: boolean; promise: Promise<void>; release: () => void } | undefined
+let delayedPreview: { url: string; requested: boolean; promise: Promise<void>; release: () => void; fail?: boolean } | undefined
 serverApi.createPreview = async ({ sessionId, url }) => {
   const delay = delayedPreview
   if (delay?.url === url && !delay.requested) {
     delay.requested = true
     await delay.promise
     delayedPreview = undefined
+    if (delay.fail) throw new Error("Delayed preview failure")
   }
   return { sessionId, targetUrl: url, token: `preview-${++nextToken}`, proxyUrl: url, createdAt: new Date().toISOString() }
 }
@@ -49,7 +50,8 @@ if (new URLSearchParams(location.search).has("legacy")) {
 await import("./header-windows")
 for (const id of ids) markSessionListsRestored(id)
 serverApi.previewWorkspaceFile = async (id, path) => ({
-  workspaceId: id, relativePath: path, encoding: "base64", contents: btoa(`# ${path}\n\nIndependent file content.`),
+  workspaceId: id, relativePath: path, encoding: "base64", contents: btoa(`# ${path}\n\nIndependent file content.`
+    + (path === "Long.md" ? "\n\n" + Array.from({ length: 250 }, (_, index) => `Paragraph ${index}\n\n`).join("") : "")),
 } as any)
 const shell = (window as any).fixture
 shell.addSession("second")
@@ -74,10 +76,10 @@ Object.assign(shell, {
   },
   previewCount: () => sessionPreviews().size,
   deletedPreviews,
-  delayPreview: (url: string) => {
+  delayPreview: (url: string, fail = false) => {
     let release!: () => void
     const promise = new Promise<void>(resolve => { release = resolve })
-    delayedPreview = { url, requested: false, promise, release }
+    delayedPreview = { url, requested: false, promise, release, fail }
   },
   isPreviewDelayed: () => Boolean(delayedPreview?.requested),
   releasePreview: () => delayedPreview?.release(),

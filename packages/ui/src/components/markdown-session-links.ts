@@ -2,11 +2,11 @@ import { tGlobal } from "../lib/i18n"
 import { previewsUnavailable, previewsAvailabilityResolved, getServerMeta } from "../lib/server-meta"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { showAlertDialog } from "../stores/alerts"
-import { instances } from "../stores/instances"
+import { activeInstanceId, instances } from "../stores/instances"
 import { openFilePreview } from "../stores/files-preview"
 import { getWorktreeForDirectory } from "../stores/worktrees"
 import { openSessionPreview, showSessionChatFor } from "../stores/session-previews"
-import { sessions } from "../stores/session-state"
+import { activeSessionId, sessions } from "../stores/session-state"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 
 // One session-bound Markdown instance asks for the server meta; the answer
@@ -35,6 +35,7 @@ export function warmLoopbackPreviewMeta(instanceId: string | undefined, sessionI
 const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
   void openSessionPreview(sessionId, url, instanceId).catch((error) => {
     if (error instanceof Error && error.name === "AbortError") return
+    if (activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== sessionId) return
     showAlertDialog(tGlobal("sessionPreview.open.title"), {
       title: tGlobal("sessionPreview.open.title"),
       detail: error instanceof Error ? error.message : String(error),

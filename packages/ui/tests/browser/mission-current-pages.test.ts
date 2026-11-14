@@ -155,7 +155,9 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     // Root notes are unrelated to the task reader, but are visible overview
     // content. Restore the exact task demand before checking cache retention.
     await openTaskReader()
-    await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ }).click()
+    assert.equal(await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ })
+      .evaluate(summary => (summary.parentElement as HTMLDetailsElement).open), true,
+    "the occurrence retains its task-brief disclosure across reader navigation")
     await page.locator(".mission-reader").getByText(/Exact brief/).first().waitFor()
     const taskReads = selections.filter(input => input.selector.source === "tasks").length, bodyReads = selections.filter(input => input.body).length
     await f.control.update({ missionID: map.id, requestID: "notes-only", expectedRevision: map.revision, objective: map.objective, notes: "Unrelated root notes" })

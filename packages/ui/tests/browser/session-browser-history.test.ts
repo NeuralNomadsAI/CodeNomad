@@ -15,13 +15,16 @@ import { build } from "esbuild"
 import type { MissionMap } from "../../../server/src/api-types"
 import { missionPanelRoute } from "./mission-panel-route"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
+import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
 
 let server: ViteDevServer, browser: Browser, base: string
 const pageRequests: string[] = []
 let holdHistoryRequest: ((release: () => void) => void) | undefined
 before(async () => {
+  prepareGitPrototypeAssets()
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)),
+    publicDir: fileURLToPath(new URL("../../src/renderer/public", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
     plugins: [shutdown.plugin, solid(), { name: "session-browser-history", configureServer(s) {
       s.middlewares.use("/history-fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -248,6 +251,104 @@ for (const host of ["web", "tauri", "electron"]) {
       if (native) { await native.app.close(); await rm(native.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
       else await page.close()
     }
+  })
+}
+
+test("panel selections restore per occurrence and source readers retain lightweight view state", { timeout: 90_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const a = "header-windows", b = "header-duplicate"
+  const rootA = page.locator(`[data-occurrence="${a}"]`), rootB = page.locator(`[data-occurrence="${b}"]`)
+  const select = (id: string) => page.evaluate(id => (window as any).fixture.selectOccurrence(id), id)
+  try {
+    await prepare(page, "web", "&duplicate=1")
+    await rootA.getByRole("tab", { name: "Files", exact: true }).click()
+    await rootA.getByRole("button", { name: "Commits", exact: true }).click()
+    await rootA.getByRole("tab", { name: "Status", exact: true }).click()
+    await select(b)
+    await rootB.getByRole("tab", { name: "Files", exact: true }).click()
+    await rootB.getByRole("button", { name: "Changes", exact: true }).click()
+    await select(a)
+    assert.equal(await rootA.getByRole("tab", { name: "Status", exact: true }).getAttribute("aria-selected"), "true")
+    await rootA.getByRole("tab", { name: "Files", exact: true }).click()
+    assert.equal(await rootA.getByRole("button", { name: "Commits", exact: true }).getAttribute("aria-pressed"), "true")
+    await rootA.getByRole("tab", { name: "Status", exact: true }).click()
+    await page.reload()
+    await page.waitForFunction(() => (window as any).browserHistoryReady)
+    assert.equal(await rootA.getByRole("tab", { name: "Status", exact: true }).getAttribute("aria-selected"), "true")
+    await page.waitForFunction(() => performance.getEntriesByType("paint").length > 0)
+    await rootA.getByRole("tab", { name: "Files", exact: true }).click()
+    assert.equal(await rootA.getByRole("button", { name: "Commits", exact: true }).getAttribute("aria-pressed"), "true")
+    await select(b)
+    assert.equal(await rootB.getByRole("tab", { name: "Files", exact: true }).getAttribute("aria-selected"), "true")
+    assert.equal(await rootB.getByRole("button", { name: "Changes", exact: true }).getAttribute("aria-pressed"), "true")
+    await select(a)
+    await page.evaluate(id => (window as any).fixture.readFile(id, "Long.md"), a)
+    const reader = rootA.locator(".workspace-file-view")
+    await reader.getByText("Independent file content.", { exact: true }).waitFor()
+    const rendered = reader.locator(".workspace-markdown")
+    await rendered.evaluate(element => { element.scrollTop = 1000 })
+    const renderedPosition = await rendered.evaluate(element => element.scrollTop)
+    assert.ok(renderedPosition > 900)
+    await select(b)
+    await rootB.locator(".message-stream-container").waitFor({ state: "visible" })
+    await select(a)
+    await rendered.waitFor()
+    await page.waitForFunction(expected => (document.querySelector(".workspace-markdown")?.scrollTop ?? 0) >= expected - 2, renderedPosition)
+    await reader.getByRole("button", { name: "Show source", exact: true }).click()
+    await reader.locator(".view-line").filter({ hasText: "Independent file content." }).waitFor()
+    await page.evaluate(() => {
+      const editor = (window as any).monaco.editor.getEditors().at(-1)
+      editor.revealLineInCenter(81)
+      editor.setSelection({ startLineNumber: 81, startColumn: 1, endLineNumber: 81, endColumn: 10 })
+    })
+    await select(b)
+    await rootB.locator(".message-stream-container").waitFor({ state: "visible" })
+    await rootA.locator(".message-stream-container").waitFor({ state: "detached" })
+    await select(a)
+    await reader.getByRole("button", { name: "Preview Markdown", exact: true }).waitFor()
+    await reader.locator(".monaco-editor .view-line").first().waitFor()
+    assert.equal(await page.evaluate(() => (window as any).monaco.editor.getEditors().at(-1).getSelection().toString()), "[81,1 -> 81,10]")
+    assert.ok(await page.evaluate(() => (window as any).monaco.editor.getEditors().at(-1).getScrollTop()) > 500)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const navigation of [false, true]) for (const fail of [false, true]) {
+  test(`closing an occurrence during preview ${navigation ? "navigation" : "open"} ${fail ? "failure" : "completion"} leaves the survivor's focus and view untouched`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    const a = "header-windows", b = "header-duplicate"
+    const rootB = page.locator(`[data-occurrence="${b}"]`)
+    try {
+      await prepare(page, "web", "&duplicate=1")
+      const rootA = page.locator(`[data-occurrence="${a}"]`)
+      if (navigation) await page.evaluate(url => (window as any).fixture.openPreview("session", url), `${base}/page/a`)
+      const url = navigation ? `${base}/page/late` : "http://localhost:3000"
+      await page.evaluate(({ url, fail }) => (window as any).fixture.delayPreview(url, fail), { url, fail })
+      if (navigation) {
+        const address = rootA.locator('[data-session-id="session"] .window-shell input')
+        await address.fill(url)
+        await address.press("Enter")
+      } else await rootA.getByRole("button", { name: "Open web preview", exact: true }).click()
+      await page.waitForFunction(() => (window as any).fixture.isPreviewDelayed())
+      await page.evaluate(id => (window as any).fixture.selectOccurrence(id), b)
+      const composer = rootB.locator("textarea.prompt-input")
+      await composer.fill("Keep B focused")
+      await composer.focus()
+      await page.evaluate(id => { (window as any).fixture.closeOccurrence(id); (window as any).fixture.releasePreview() }, a)
+      await page.waitForFunction(() => !(window as any).fixture.isPreviewDelayed())
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      assert.equal(await composer.evaluate(element => document.activeElement === element), true)
+      assert.equal(await composer.inputValue(), "Keep B focused")
+      assert.equal(await rootB.locator(".message-stream-container").isVisible(), true)
+      assert.equal(await page.getByRole("alertdialog").count(), 0)
+      assert.equal(await page.evaluate(id => (window as any).fixture.preview("session", id), b), null)
+      assert.equal(await page.evaluate(() => (window as any).fixture.previewCount()), 0)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
   })
 }
 

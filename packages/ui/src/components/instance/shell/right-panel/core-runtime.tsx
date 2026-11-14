@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, lazy, on, type Accessor, type JSX } from "solid-js"
+import { createEffect, createMemo, createSignal, lazy, on, untrack, type Accessor, type JSX } from "solid-js"
 import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
@@ -16,6 +16,7 @@ import { useGitInit } from "./useGitInit"
 import { FILES_PANEL_MODE_KEY, type FilesPanelMode } from "./files-panel-state"
 import { readStoredEnum } from "../storage"
 import { writeClientLayoutValue } from "../../../../stores/client-state"
+import { getTabViewState, updateTabViewState } from "../../../../stores/tab-view-state"
 
 const LazyFilesPanel = lazy(() => import("./tabs/FilesPanel"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
@@ -41,8 +42,16 @@ interface CoreRightPanelRuntimeOptions {
 }
 
 export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOptions) {
-  const [mode, setMode] = createSignal<FilesPanelMode>(readStoredEnum(FILES_PANEL_MODE_KEY, ["workspace", "changes", "history"] as const) ?? "workspace")
-  createEffect(() => writeClientLayoutValue(FILES_PANEL_MODE_KEY, mode()))
+  const [mode, selectMode] = createSignal<FilesPanelMode>(getTabViewState(options.instanceId).filesMode
+    ?? readStoredEnum(FILES_PANEL_MODE_KEY, ["workspace", "changes", "history"] as const) ?? "workspace")
+  const setMode = (value: FilesPanelMode) => {
+    selectMode(value)
+    writeClientLayoutValue(FILES_PANEL_MODE_KEY, value)
+  }
+  createEffect(() => {
+    const selected = mode()
+    untrack(() => updateTabViewState(options.instanceId, { filesMode: selected }))
+  })
   const [browsedWorktree, setBrowsedWorktree] = createSignal<string | null>(null)
   // The open file reader outlives this panel (useFilePreviewLifetime); only the
   // browsed worktree is panel state.

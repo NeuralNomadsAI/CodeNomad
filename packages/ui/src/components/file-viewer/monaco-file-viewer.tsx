@@ -5,6 +5,10 @@ import { inferMonacoLanguageId } from "../../lib/monaco/language"
 import { ensureMonacoLanguageLoaded } from "../../lib/monaco/setup"
 import { useMonacoTheme } from "../../lib/monaco/theme"
 import { matchesHotkey } from "../../lib/hotkeys"
+import type { editor as MonacoEditor } from "monaco-editor"
+
+// Model lifetime bounds these small snapshots to the existing five-model cache.
+const viewStates = new WeakMap<object, MonacoEditor.ICodeEditorViewState>()
 
 interface MonacoFileViewerProps {
   scopeKey: string
@@ -27,6 +31,8 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
   useMonacoTheme(() => ready() ? monaco : null)
 
   const disposeEditor = () => {
+    const model = editor?.getModel(), view = editor?.saveViewState()
+    if (model && view) viewStates.set(model, view)
     removeSaveListener?.()
     removeSaveListener = undefined
     try {
@@ -64,7 +70,8 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
         value: "",
         language: "plaintext",
         readOnly: props.readOnly ?? false,
-        occurrencesHighlight: props.readOnly ? "off" : "singleFile",
+        // Monaco 0.52 leaks a cancellation when a selection's highlighter unmounts.
+        occurrencesHighlight: "off",
         automaticLayout: true,
         lineNumbers: "on",
         lineNumbersMinChars: lineNumbersMinChars(props.content),
@@ -124,7 +131,13 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
     const languageId = inferMonacoLanguageId(monaco, props.path)
     const cacheKey = `${props.scopeKey}:file:${props.path}`
     const model = getOrCreateTextModel({ monaco, cacheKey, value: props.content, languageId })
-    editor.setModel(model)
+    if (editor.getModel() !== model) {
+      const previous = editor.getModel(), view = editor.saveViewState()
+      if (previous && view) viewStates.set(previous, view)
+      editor.setModel(model)
+      const saved = viewStates.get(model)
+      if (saved) editor.restoreViewState(saved)
+    }
 
     void ensureMonacoLanguageLoaded(languageId).then(() => {
       try {

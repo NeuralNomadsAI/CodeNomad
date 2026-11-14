@@ -28,7 +28,7 @@ before(async () => {
 after(async () => { await browser?.close() })
 
 async function fixture(mixed = false, pausePreviews = false, holdMessages = false, deep = false, hiddenTimeline = false,
-  options: { mac?: boolean } = {}) {
+  options: { mac?: boolean; duplicate?: boolean } = {}) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   // Default shortcuts follow `navigator.platform`. A string, like `waitFrames`: the
   // test transpiler's helpers do not exist in the page.
@@ -101,7 +101,7 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
   })
-  await page.goto(url + `?${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${hiddenTimeline ? "hiddenTimeline&" : ""}${holdMessages ? "holdMessages" : ""}`)
+  await page.goto(url + `?${options.duplicate ? "duplicate&" : ""}${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${hiddenTimeline ? "hiddenTimeline&" : ""}${holdMessages ? "holdMessages" : ""}`)
   await page.waitForFunction(() => Boolean((window as any).fixture))
   // The deep fixture's tool rows contribute extra segments.
   if (deep) await page.waitForFunction(() => Number(document.querySelector(".message-timeline")?.getAttribute("data-segment-count")) >= 1500)
@@ -142,6 +142,49 @@ async function clickTimeline(page: Page, index: number, checkReaderPosition = fa
   await page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(index)}"]`).click()
 }
 const snapshot = (page: Page) => page.evaluate(() => (window as any).fixture.snapshot())
+
+test("duplicate occurrences receive the same native messages while old history and latest follow stay independent", { timeout: 90_000 }, async () => {
+  const f = await fixture(false, false, false, false, false, { duplicate: true })
+  const a = "navigation", b = "navigation-duplicate"
+  const select = (id: string) => f.page.evaluate(id => (window as any).fixture.selectOccurrence(id), id)
+  const state = (id: string) => f.page.evaluate(id => (window as any).fixture.occurrenceSnapshot(id), id)
+  try {
+    await select(b)
+    await f.page.locator(`[data-occurrence="${b}"] .message-stream`).waitFor()
+    await f.page.waitForFunction(id => (window as any).fixture.occurrenceSnapshot(id).ids.length === 200, b)
+    await f.page.evaluate(() => (window as any).fixture.stream("Common native reply"))
+    await f.page.getByText("Common native reply", { exact: true }).waitFor()
+    await select(a)
+    await f.page.getByText("Common native reply", { exact: true }).waitFor()
+    assert.equal((await state(a)).ids.includes("msg_streaming"), true)
+    assert.equal((await state(b)).ids.includes("msg_streaming"), true)
+    await f.page.getByRole("button", { name: /Scroll to first message/ }).click()
+    await f.page.waitForFunction(id => (window as any).fixture.occurrenceSnapshot(id).ids[0] === "msg_00000", a)
+    await f.page.getByText("Passage 0", { exact: false }).first().waitFor()
+    await select(b)
+    await f.page.getByText("Common native reply", { exact: true }).waitFor()
+    const old = await state(a)
+    assert.equal(old.window.kind, "history")
+    assert.equal(old.scroll.atBottom, false)
+    await f.page.evaluate(() => (window as any).fixture.stream(" with live growth"))
+    await f.page.getByText("Common native reply with live growth", { exact: true }).waitFor()
+    assert.deepEqual((await state(a)).ids, old.ids)
+    assert.deepEqual((await state(a)).scroll, old.scroll)
+    assert.equal((await state(b)).window.kind, "latest")
+    await f.page.waitForFunction(() => {
+      const scroller = document.querySelector(".message-stream")!
+      return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 2
+    })
+    await select(a)
+    await f.page.getByText("Passage 0", { exact: false }).first().waitFor()
+    assert.equal(await f.page.locator(".message-stream").count(), 1, "inactive transcripts stay unmounted")
+    assert.equal((await state(a)).window.kind, "history")
+    assert.equal(await f.page.getByText("Common native reply with live growth", { exact: true }).count(), 0)
+    await select(b)
+    await f.page.getByText("Common native reply with live growth", { exact: true }).waitFor()
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
 
 for (const evict of [false, true]) test(`missing saved anchor recovers once on session return (${evict ? 'evicted' : 'resident'})`, async () => {
   const f = await fixture()

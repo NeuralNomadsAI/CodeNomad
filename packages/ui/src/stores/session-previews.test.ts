@@ -75,6 +75,27 @@ describe("session preview persistence", () => {
       assert.equal(getTabViewState("restore-race").previews?.same.mode, "chat")
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
+  it("late errors after close or a newer view gesture abort only the original occurrence", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview
+    let reject!: (error: Error) => void
+    serverApi.createPreview = async ({ sessionId, url }) => ({ sessionId, token: "survivor", targetUrl: url }) as any
+    serverApi.deletePreview = async () => undefined as any
+    try {
+      const b = await openSessionPreview("same", "https://example.com/b", "error-survivor")
+      serverApi.createPreview = () => new Promise((_, no) => { reject = no })
+      for (const close of [false, true]) {
+        const id = `late-error-${close}`
+        const pending = openSessionPreview("same", "https://example.com/a", id)
+        if (close) publishInstanceLifecycleAuthority({ type: "removed", instanceId: id, folder: "/same", occurrence: 0 })
+        else showSessionChatFor("same", id)
+        reject(new Error("late server failure"))
+        await assert.rejects(pending, { name: "AbortError" })
+        assert.equal(getSessionPreview("same", id), null)
+        assert.equal(getSessionPreview("same", "error-survivor"), b)
+      }
+      await closeSessionPreview(b.storageKey)
+    } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
+  })
   it("reopening after a hide starts a fresh restore and an old completion cannot clear it", async () => {
     const create = serverApi.createPreview, remove = serverApi.deletePreview
     const responses: Array<(value: any) => void> = [], deleted: string[] = []

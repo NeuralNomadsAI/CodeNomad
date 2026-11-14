@@ -49,13 +49,23 @@ function getSessionPreview(sessionId: string, instanceId: string): SessionPrevie
   return sessionPreviews().get(previewKey(sessionId, instanceId)) ?? null
 }
 
+async function createPreview(sessionId: string, url: string, instanceId: string, storageKey: string, version: number) {
+  try { return await serverApi.createPreview({ sessionId, url }) }
+  catch (error) {
+    if (closedOccurrences.has(instanceId) || operationVersions.get(storageKey) !== version) {
+      throw new DOMException("Preview navigation was superseded", "AbortError")
+    }
+    throw error
+  }
+}
+
 async function openSessionPreview(sessionId: string, url: string, instanceId: string, canPublish?: () => Promise<boolean>): Promise<SessionPreviewRecord> {
   if (closedOccurrences.has(instanceId)) throw new DOMException("Preview occurrence is closed", "AbortError")
   const storageKey = previewKey(sessionId, instanceId)
   const operationVersion = beginOperation(storageKey)
   const existing = sessionPreviews().get(storageKey)
   const saved = savedPreview(sessionId, instanceId)
-  const preview = await serverApi.createPreview({ sessionId, url })
+  const preview = await createPreview(sessionId, url, instanceId, storageKey, operationVersion)
   if (canPublish && !await canPublish().catch(() => false)) {
     void serverApi.deletePreview(preview.token).catch(() => undefined)
     throw new Error("Preview open request is no longer current")
@@ -84,7 +94,7 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   const pending = restorePromises.get(storageKey)
   if (pending) return pending
   const operationVersion = beginOperation(storageKey)
-  const restore = serverApi.createPreview({ sessionId, url: stored.targetUrl }).then(preview => {
+  const restore = createPreview(sessionId, stored.targetUrl, instanceId, storageKey, operationVersion).then(preview => {
     if (operationVersions.get(storageKey) !== operationVersion || closedOccurrences.has(instanceId)) {
       void serverApi.deletePreview(preview.token).catch(() => undefined)
       throw new DOMException("Preview navigation was superseded", "AbortError")
