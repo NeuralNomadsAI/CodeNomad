@@ -1590,7 +1590,8 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     assert.equal(await selectedMissionTitle(page).count(), 0)
     // Each entry is one line: a status mark and the title; the state · time stays in the tooltip and screen-reader text.
     const parts = await rows[0].evaluate(el => [...el.children].map(child => child.getAttribute("class")!.split(" ")[0]))
-    assert.deepEqual(parts, ["lucide", "session-item-title", "sr-only"])
+    assert.deepEqual(parts, ["mission-row-mark", "session-item-title", "sr-only"])
+    assert.equal(await rows[0].locator(".mission-row-mark > svg.mission-row-flag").count(), 1)
     assert.match(await rows[0].locator(".sr-only").textContent() ?? "", /^In progress · /)
     assert.match(await rows[0].getAttribute("title") ?? "", new RegExp(`^${titleOf(0).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} — In progress · `))
     const title = await rows[0].locator(".session-item-title").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))

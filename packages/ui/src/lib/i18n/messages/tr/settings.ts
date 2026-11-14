@@ -205,6 +205,8 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.refresh": "Plugin denetimlerini yenile",
   "instanceServiceStatus.plugins.toggleAriaLabel": "{name} için etkinleştirme kuralını değiştir",
   "instanceServiceStatus.plugins.globalOverridden": "Bir proje kuralı burada genel durumu geçersiz kılıyor.",
+  "instanceServiceStatus.plugins.kind.plugin": "Eklenti: {id}",
+  "instanceServiceStatus.plugins.kind.integration": "Entegrasyon: {id}",
   "instanceServiceStatus.plugins.source.package": "Paket: {source}",
   "instanceServiceStatus.plugins.source.local": "Yerel kaynak: {source}",
   "instanceServiceStatus.plugins.source.builtin": "OpenCode'a yerleşik",

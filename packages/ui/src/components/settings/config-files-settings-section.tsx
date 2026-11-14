@@ -1,5 +1,5 @@
 import { Select } from "@kobalte/core/select"
-import { createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, Suspense, untrack, type Component } from "solid-js"
 import { ChevronDown, RefreshCw, Save } from "lucide-solid"
 import type { ConfigFileDescriptor } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
@@ -7,6 +7,7 @@ import { useI18n } from "../../lib/i18n"
 import { showToastNotification } from "../../lib/notifications"
 import { showConfirmDialog } from "../../stores/alerts"
 import { registerSettingsDirtyGuard } from "../../stores/settings-dirty-guard"
+import { claimSettingsRow, settingsRowTarget } from "../../stores/settings-screen"
 
 const LazyMonacoFileViewer = lazy(() =>
   import("../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
@@ -20,10 +21,16 @@ export const ConfigFilesSettingsSection: Component = () => {
   const [originalContent, setOriginalContent] = createSignal("")
   const [exists, setExists] = createSignal<boolean | null>(null)
   const [loadingList, setLoadingList] = createSignal(false)
+  const [loaded, setLoaded] = createSignal(false)
   const [loadingContent, setLoadingContent] = createSignal(false)
   const [saving, setSaving] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   let loadVersion = 0
+  let selector: HTMLButtonElement | undefined
+  const targetedFile = () => {
+    const target = settingsRowTarget()
+    return target?.startsWith("config-file:") ? target.slice("config-file:".length) : undefined
+  }
 
   const selectedFile = createMemo(() => files().find((file) => file.id === selectedFileId()) ?? null)
   const dirty = createMemo(() => content() !== originalContent())
@@ -50,14 +57,16 @@ export const ConfigFilesSettingsSection: Component = () => {
     }
   }
 
-  const confirmDiscardIfDirty = async () => {
-    if (!dirty()) return true
-    return showConfirmDialog(t("settings.configFiles.confirmDiscard.message"), {
+  let discardConfirmation: Promise<boolean> | undefined
+  const confirmDiscardIfDirty = () => {
+    if (!dirty()) return Promise.resolve(true)
+    // A native file hint and its Preferences request share the same consent.
+    return discardConfirmation ??= showConfirmDialog(t("settings.configFiles.confirmDiscard.message"), {
       variant: "warning",
       confirmLabel: t("settings.configFiles.confirmDiscard.confirmLabel"),
       cancelLabel: t("settings.configFiles.confirmDiscard.cancelLabel"),
       dismissible: false,
-    })
+    }).finally(() => { discardConfirmation = undefined })
   }
 
   const loadFiles = async () => {
@@ -65,11 +74,12 @@ export const ConfigFilesSettingsSection: Component = () => {
     setError(null)
     try {
       const response = await serverApi.listConfigFiles()
-      setFiles(response)
-      const first = response[0]
+      const first = response.find(file => file.id === targetedFile()) ?? response[0]
       if (first) {
         await loadContent(first)
       }
+      setFiles(response)
+      setLoaded(true)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t("settings.configFiles.errors.loadList"))
     } finally {
@@ -83,6 +93,15 @@ export const ConfigFilesSettingsSection: Component = () => {
     if (!confirmed) return
     await loadContent(file)
   }
+  createEffect(() => {
+    const target = settingsRowTarget()
+    if (!target?.startsWith("config-file:") || !loaded() || loadingList()) return
+    const file = files().find(file => file.id === targetedFile())
+    untrack(() => {
+      if (!claimSettingsRow(target)) return
+      if (file) void handleFileChange(file).then(() => selector?.focus())
+    })
+  })
 
   const handleReload = async () => {
     const file = selectedFile()
@@ -142,7 +161,7 @@ export const ConfigFilesSettingsSection: Component = () => {
                 </Select.Item>
               )}
             >
-              <Select.Trigger class="selector-trigger config-files-selector-trigger" aria-label={t("settings.configFiles.selector.label")}>
+              <Select.Trigger ref={selector} class="selector-trigger config-files-selector-trigger" aria-label={t("settings.configFiles.selector.label")}>
                 <div class="config-files-selector-value">
                   <Select.Value<ConfigFileDescriptor>>
                     {(state) => (

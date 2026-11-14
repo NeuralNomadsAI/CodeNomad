@@ -1,4 +1,5 @@
 import { render } from "solid-js/web"
+import { createSignal } from "solid-js"
 import type { PluginControlsSnapshot } from "../../../../server/src/api-types"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import AlertDialog from "../../../src/components/alert-dialog"
@@ -11,12 +12,11 @@ import { serverEvents } from "../../../src/lib/server-events"
 import { getToastHistory } from "../../../src/lib/notifications"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { activeSessionId, sessions, setActiveSession, setSessions } from "../../../src/stores/session-state"
-import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
-import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
+import { initializeClientState } from "../../../src/stores/client-state"
 import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
 
-const instanceId = "integration-status", directory = "/repo"
+const instanceId = "integration-row", directory = "/repo"
 const globalPath = "/config/opencode.jsonc", projectPath = "/repo/.opencode/opencode.jsonc"
 const session = (id: string, title: string): Session => ({
   id, instanceId, parentId: null, title, agent: "build", model: { providerId: "fixture", modelId: "fixture" }, status: "idle", retry: null,
@@ -51,6 +51,8 @@ serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.patchConfigOwner = async (_owner, patch: any) => ({ settings: { locale: "en", ...patch.settings } }) as any
 serverApi.fetchStateOwner = async () => ({} as any)
 serverApi.getPluginControls = async () => { snapshotReads++; return structuredClone(snapshot) }
+// Yolo turns on locally, so its accent switch can be compared with an integration's.
+serverApi.toggleYolo = async () => ({ enabled: true }) as any
 serverApi.setPluginActivation = async (_id: string, request: any) => {
   mutations.push(request)
   const control = snapshot.controls.find(item => item.id === request.pluginId)!
@@ -69,12 +71,13 @@ addInstance({ id: instanceId, folder: directory, port: 0, pid: 0, proxyPath: `/w
 setSessions(previous => new Map(previous).set(instanceId, new Map([["first", session("first", "First conversation")], ["second", session("second", "Second conversation")]])))
 setActiveSession(instanceId, "first")
 
+const [activePanel, setActivePanel] = createSignal(true)
 function Fixture() {
   const { t } = useI18n()
   const active = () => sessions().get(instanceId)?.get(activeSessionId().get(instanceId) ?? "") ?? null
   return <div style={{ width: "380px", height: "900px", display: "flex", "flex-direction": "column" }}>
     <AlertDialog />
-    <RightPanel isActive={() => true} t={t} instanceId={instanceId} instance={instances().get(instanceId)!}
+    <RightPanel isActive={activePanel} t={t} instanceId={instanceId} instance={instances().get(instanceId)!}
       activeSessionId={() => active()?.id ?? null} activeSession={active} isPhoneLayout={() => false}
       rightDrawerWidth={() => 380} rightDrawerWidthInitialized={() => true}
       onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
@@ -87,22 +90,16 @@ await updatePreferences({ locale: new URLSearchParams(location.search).get("loca
 const event = (type: string, data: unknown = {}) => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId,
   event: { id: `event-${Math.random()}`, created: Date.now(), type, data, location: { directory } } }])
 
-;(window as any).integrationStatus = {
+;(window as any).integrationRow = {
   event,
   reconnect: () => (serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId, status: "connected" }]),
   snapshotReads: () => snapshotReads,
   mutations: () => mutations,
   packageRequests: () => packageRequests,
-  customization: () => JSON.parse(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY) ?? "{}"),
   toasts: getToastHistory,
   /** Replaces the plugin inventory, then notifies like OpenCode does. */
-  plugins: (next: PluginControlsSnapshot) => { snapshot = next; event("plugin.updated") },
+  plugins: (next: PluginControlsSnapshot, notify = true) => { snapshot = next; if (notify) event("plugin.updated") },
   base: baseSnapshot,
+  active: setActivePanel,
   select: (id: string | null) => setActiveSession(instanceId, id ?? "info"),
-  hint: (integration: string, label: string) => setSessions(previous => {
-    const next = new Map(previous), values = new Map(next.get(instanceId))
-    const current = values.get("first")!
-    values.set("first", { ...current, metadata: { "codenomad.integrationAttachment": { integration, label, attachedAt: 1 } } } as any)
-    next.set(instanceId, values); return next
-  }),
 }

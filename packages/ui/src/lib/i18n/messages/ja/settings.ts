@@ -205,6 +205,8 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.refresh": "プラグインコントロールを更新",
   "instanceServiceStatus.plugins.toggleAriaLabel": "{name} の有効化ルールを変更",
   "instanceServiceStatus.plugins.globalOverridden": "ここではプロジェクトルールがグローバル状態を上書きしています。",
+  "instanceServiceStatus.plugins.kind.plugin": "プラグイン: {id}",
+  "instanceServiceStatus.plugins.kind.integration": "連携: {id}",
   "instanceServiceStatus.plugins.source.package": "パッケージ: {source}",
   "instanceServiceStatus.plugins.source.local": "ローカルソース: {source}",
   "instanceServiceStatus.plugins.source.builtin": "OpenCode 組み込み",

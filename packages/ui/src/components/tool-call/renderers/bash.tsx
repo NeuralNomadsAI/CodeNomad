@@ -1,7 +1,8 @@
 import { Show, createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
 import type { ToolState } from "../../../types/tool-state"
 import type { MarkdownRenderOptions, ToolRenderer, ToolScrollHelpers } from "../types"
-import { formatUnknownForCopy, formatUnknownForRender, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
+import { formatUnknownForCopy, formatUnknownForRender, getToolName, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
+import { interruptedShellOutput, shellOutput } from "./bash-data"
 import { tGlobal } from "../../../lib/i18n"
 import { createStableAnsiStreamUpdater } from "../ansi-render"
 import { ansiToHtml, hasAnsi } from "../../../lib/ansi"
@@ -77,15 +78,9 @@ function FinalAnsiOutput(props: {
 function getBashCopyText(state: ToolState | undefined): string {
   if (!state || state.status === "pending") return ""
 
-  const { input, metadata } = readToolStatePayload(state)
+  const { input } = readToolStatePayload(state)
   const command = typeof input.command === "string" && input.command.length > 0 ? `$ ${input.command}` : ""
-  const outputResult = formatUnknownForCopy(
-    isToolStateCompleted(state)
-      ? state.output
-      : (isToolStateRunning(state) || isToolStateError(state)) && metadata.output
-        ? metadata.output
-        : undefined,
-  )
+  const outputResult = formatUnknownForCopy(shellOutput(state))
   return [command, outputResult?.text].filter(Boolean).join("\n")
 }
 
@@ -103,15 +98,9 @@ function BashToolBody(props: {
     const current = state()
     if (!current || current.status === "pending") return []
 
-    const { input, metadata } = readToolStatePayload(current)
+    const { input } = readToolStatePayload(current)
     const command = typeof input.command === "string" ? input.command : ""
-    const output = formatUnknownForRender(
-      isToolStateCompleted(current)
-        ? current.output
-        : (isToolStateRunning(current) || isToolStateError(current)) && metadata.output
-          ? metadata.output
-          : undefined,
-    )?.text ?? ""
+    const output = formatUnknownForRender(shellOutput(current))?.text ?? ""
     if (!command) return output ? [output] : []
     return output ? ["$ ", command, "\n", output] : ["$ ", command]
   })
@@ -169,13 +158,14 @@ export const bashRenderer: ToolRenderer = {
   getOutputChrome({ toolState }) {
     const state = toolState()
     if (!state || state.status === "pending") return undefined
-    const { input, metadata } = readToolStatePayload(state)
-    const output = isToolStateCompleted(state) ? state.output : (isToolStateRunning(state) || isToolStateError(state)) ? metadata.output : undefined
+    const { input } = readToolStatePayload(state)
+    const output = shellOutput(state)
     const hasCopyText = (typeof input.command === "string" && input.command.length > 0)
       || (output !== undefined && output !== null && output !== "" && (!Array.isArray(output) || output.length > 0))
     if (!hasCopyText) return undefined
     return { language: "bash", getCopyText: () => getBashCopyText(state), hasCopyText: true, wrapToggle: true, suppressInnerHeader: true }
   },
+  getErrorText: ({ toolState }) => interruptedShellOutput(toolState())?.notice,
   renderBody({ toolState, renderMarkdown, scrollHelpers, textRevealTarget }) {
     return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown} revealTarget={textRevealTarget("output")} scrollHelpers={scrollHelpers} />
   },

@@ -472,6 +472,9 @@ jobs:
           packages/ui/src/lib/native/browser.test.ts
           packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/session-transcript-lru.test.ts
+          packages/ui/src/lib/session-transcript-measurement.test.ts
+          packages/ui/src/lib/markdown-highlight-schedule.test.ts
+          packages/ui/src/lib/frame-batch-schedule.test.ts
           packages/ui/src/lib/server-meta.test.ts
           packages/ui/src/lib/theme-scheme.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
@@ -588,6 +591,9 @@ jobs:
           packages/ui/src/components/tool-call/diff-payload.test.ts
           packages/ui/src/components/tool-call/renderers/edit.test.ts
           packages/ui/src/components/tool-call/renderers/task-title.test.ts
+          packages/ui/src/components/tool-call/renderers/subagent-report.test.ts
+          packages/ui/src/components/tool-call/renderers/execute-data.test.ts
+          packages/ui/src/components/tool-call/renderers/bash-data.test.ts
           packages/ui/src/components/prompt-input/usePromptState.test.ts
           packages/ui/src/components/prompt-input/backend-history.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
@@ -649,8 +655,7 @@ jobs:
           packages/ui/src/lib/settings/behavior-registry.test.ts
           packages/ui/src/components/instance/shell/right-panel/core-plugin.test.ts
           packages/ui/src/components/instance/shell/right-panel/registry.test.ts
-          packages/ui/src/components/instance/shell/right-panel/integration-sections.test.ts
-          packages/ui/src/components/integration-section-state.test.ts
+          packages/ui/src/lib/integration-row-state.test.ts
           packages/ui/src/lib/i18n/messages/integrations-locales.test.ts
           packages/ui/src/stores/message-v2/empty-content.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts

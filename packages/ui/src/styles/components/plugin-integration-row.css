@@ -1,0 +1,49 @@
+/* A Plugins row's version, an integration's chain button and attention indicator, and its menus' information line
+   (components/plugin-activation-controls.tsx, integration-row-indicators.tsx, plugin-row-actions.tsx). */
+.plugin-control-version {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.plugin-control-indicator {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.plugin-control-indicator:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* The chain button: the row's framed icon button; pressed while attached (shared `.icon-toggle` rule). */
+.plugin-control-link[data-integration-link="unknown"] svg {
+  opacity: 0.5;
+}
+
+.plugin-controls .plugin-control-link[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.plugin-control-indicator[data-integration-attention] {
+  color: var(--status-warning);
+}
+
+.plugin-control-switch[data-locked] .MuiSwitch-root {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.action-overflow-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}

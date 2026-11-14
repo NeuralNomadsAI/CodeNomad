@@ -152,7 +152,7 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.equal(linter.snapshot.controls.find((entry) => entry.id === "acme.linter")?.project, "disabled")
   })
 
-  it("serializes same-target mutations while letting other scopes proceed", async () => {
+  it("serializes same-target mutations while letting other scopes proceed", { timeout: 5_000 }, async () => {
     const fixture = createFixture({
       globalPlugins: [{ package: "@acme/reviewer", options: { strict: true } }],
       projectPlugins: [],
@@ -161,30 +161,40 @@ describe("OpenCode V2 plugin activation controls", () => {
     const manager = (fixture.controls as any).options.workspaceManager
     const innerIdentity = manager.getWorktreeIdentityForPath.bind(manager)
     const gate = deferred<void>()
+    const globalEntered = deferred<void>()
     let identityCalls = 0
-    let projectSettled = false
     manager.getWorktreeIdentityForPath = async (...args: [string, string]) => {
       identityCalls += 1
-      // The first mutation (global scope) is held here; a per-target queue
-      // lets the project-scope mutation overtake it instead of blocking.
-      if (identityCalls === 1) await gate.promise
+      if (identityCalls === 1) {
+        globalEntered.resolve()
+        await gate.promise
+      }
       return innerIdentity(...args)
     }
 
     const global = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: false })
+    // Discovery includes filesystem IO: invocation order cannot identify which
+    // scope reaches the fence first. Admit Global before launching its siblings.
+    await globalEntered.promise
+    const nextGlobal = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true })
     const project = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "project", enabled: false })
-    void project.then(() => { projectSettled = true })
-    const deadline = Date.now() + 5_000
-    while (!projectSettled && Date.now() < deadline) await tick()
-    assert.equal(projectSettled, true)
-    gate.resolve()
-    const [globalResponse, projectResponse] = await Promise.all([global, project])
+    let projectResponse: Awaited<typeof project>
+    try {
+      projectResponse = await project
+      assert.equal(identityCalls, 2, "the second Global mutation stays queued while Project completes")
+    } finally {
+      gate.resolve()
+      await Promise.allSettled([global, nextGlobal, project])
+    }
+    const [globalResponse, nextGlobalResponse] = await Promise.all([global, nextGlobal])
 
     assert.equal(globalResponse.changed, true)
+    assert.equal(nextGlobalResponse.changed, true)
     assert.equal(projectResponse.changed, true)
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [
       { package: "@acme/reviewer", options: { strict: true } },
       "-acme.reviewer",
+      "acme.reviewer",
     ])
     assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["-acme.reviewer"])
   })
@@ -928,8 +938,4 @@ function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T | Promi
   let resolve!: (value: T | PromiseLike<T>) => void
   const promise = new Promise<T>((accept) => { resolve = accept })
   return { promise, resolve }
-}
-
-function tick(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve))
 }

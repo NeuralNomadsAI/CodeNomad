@@ -46,9 +46,10 @@
 @import "./components/plugin-controls.css";
 @import "./components/plugin-system-attention.css";
 @import "./components/plugin-source-add.css";
+@import "./components/plugin-integration-row.css";
 @import "./components/interruption-dock.css";
 @import "./components/composer-notice.css";
-@import "./components/integration-attachment.css";
+@import "./components/info-popover.css";
 @import "./components/integration-catalog.css";
 @import "./components/server-add-field.css";
 @import "./components/remote-server-browser.css";

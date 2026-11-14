@@ -74,8 +74,9 @@ export async function writeFixtureServiceRegistration(env, { url, pid, version, 
 // `registry` points the daemon's package installs at a loopback fake npm registry
 // (`npm_config_registry`), so package fixtures never reach the public registry.
 // `service` enables native persisted calendar wakes in this owned child only.
+// `flags` sets OPENCODE_FLAGS in the owned daemon for native flag qualification.
 // `run` also receives the daemon's `env`, the environment of every other fixture-owned child.
-export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry, service = false } = {}) {
+export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry, service = false, flags } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
   assert(!registry || /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(registry), "A fixture registry must be loopback")
   const root = await mkdtemp(path.join(await fixtureParent({ projectConfig }), "product-native-"))
@@ -84,7 +85,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     ...(registry ? { npm_config_registry: registry, npm_config_audit: "false", npm_config_fund: "false" } : {}),
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
     ...(projectConfig ? {} : { OPENCODE_CONFIG_PROJECT_DISABLE: "1" }), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
-    OPENCODE_SERVER_PASSWORD: password })
+    OPENCODE_SERVER_PASSWORD: password, ...(flags === undefined ? {} : { OPENCODE_FLAGS: flags }) })
   await mkdir(env.OPENCODE_CONFIG_DIR)
   const configuration = await prepare({ root, configDirectory: env.OPENCODE_CONFIG_DIR })
   const requests = []

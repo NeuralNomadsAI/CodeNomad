@@ -7,6 +7,7 @@ import { backendEvents } from "./backend-events"
 import { captureBackendOperation } from "./backend-operation"
 import { fetchIntegrationBinding, fetchIntegrations, installIntegration, integrationAttachmentRequest } from "./integrations-api"
 import { HttpResponseError } from "./retryable-file-search"
+import { integrationAttachChoice } from "./integration-row-state"
 import { integrations, integrationBindings } from "../stores/integrations"
 import { createIntegrationBindingsStore } from "../stores/integration-bindings-store"
 import { pluginSourcesStore } from "../stores/plugin-sources"
@@ -65,27 +66,28 @@ function hostConsumer(id: string) {
 }
 function detachConsumer(id: string) {
   const bindingTarget = target(id), messages: unknown[] = []
-  const scope = { props: { instanceId: id, session: { id: "ses_1" }, onMessage: (value: unknown) => messages.push(value) },
-    identity: () => id, target: () => bindingTarget, disposed: false, receiptGeneration: 0, attached: () => true,
-    receipts: () => new Map(), captureBackendOperation, integrationBindings, integrationAttachmentRequest,
-    receipt: () => messages.push("receipt"), fail: () => "error" }
-  return { detach: consumer("../components/integration-attachment.tsx", "detach", scope), messages }
+  const scope = { options: { active: () => true }, target: () => bindingTarget, disposed: false,
+    link: () => ({ state: "attached" }), busy: () => integrationBindings.busy(bindingTarget),
+    sameTarget: (left: unknown, right: unknown) => left === right,
+    captureBackendOperation, integrationBindings, integrationAttachmentRequest,
+    fail: () => messages.push("error") }
+  return { detach: consumer("../components/integration-row-binding.ts", "detach", scope), messages }
 }
 function attachmentConsumer(id: string) {
-  let captured: any, selected: any, pending = false, outcome: unknown
-  const scope = { props: { instanceId: id, directory: "/repo dir", session: { id: "ses_1" } },
-    shown: () => [{ id: "fixture" }], canOpen: () => true, capture: () => captured,
-    setCapture: (value: unknown) => { captured = value }, selected: () => selected,
-    setSelected: (value: unknown) => { selected = value }, setPending: (value: boolean) => { pending = value }, pending: () => pending,
-    setOutcome: (value: unknown) => { outcome = value }, setError() {}, setOffers() {}, setKnownOffers() {}, setOperation() {},
-    ready: () => true, setReady() {}, identity: () => id, epoch: () => "epoch", target: () => target(id),
-    captureBackendOperation, claimIntegrationConfirmation: () => () => {}, document: { activeElement: null }, HTMLElement: class {},
-    viewGeneration: 0, receiptGeneration: 0, controller: undefined, readyTimer: undefined,
-    INTEGRATION_CONFIRM_DELAY_MS: 0, integrationAttachmentRequest, integrationBindings,
-    owns: (value: any) => captured === value && value.authority.current(),
-    current: (value: any) => captured === value && value.authority.current(), fail: () => "error", receipt() {}, t: (key: string) => key }
-  return { open: consumer("../components/integration-attachment.tsx", "open", scope),
-    attach: consumer("../components/integration-attachment.tsx", "attach", scope), outcome: () => outcome }
+  const bindingTarget = target(id), messages: unknown[] = []
+  let reading = false, choices: any[] | undefined
+  const scope = { options: { active: () => true, integration: () => ({ id: "fixture", app: { name: "Fixture" } }) },
+    target: () => bindingTarget, disposed: false, intent: undefined as any, epoch: () => "epoch",
+    chainAction: () => "attach", busy: () => reading || integrationBindings.busy(bindingTarget),
+    setReading: (value: boolean) => { reading = value }, setChoices: (value: any[]) => { choices = value },
+    captureBackendOperation, integrationAttachmentRequest, integrationBindings, integrationAttachChoice,
+    OUTCOMES: new Set(["busy", "gone", "refused"]), fail: () => messages.push("error"),
+    owns: (value: any) => scope.intent === value && value.authority.current() && !value.controller.signal.aborted,
+    revoke: () => { scope.intent?.controller.abort(); scope.intent = undefined; reading = false; choices = undefined },
+    attach: undefined as any, detach: undefined }
+  scope.attach = consumer("../components/integration-row-binding.ts", "attach", scope)
+  return { activate: consumer("../components/integration-row-binding.ts", "activate", scope),
+    choices: () => choices, reading: () => reading, messages }
 }
 async function exercise(id: string) {
   const value = target(id)
@@ -96,8 +98,8 @@ async function exercise(id: string) {
   release(); unbind()
   await installIntegration(id, value.directory, value.integrationId, "global")
   const attachment = attachmentConsumer(id)
-  await attachment.open("fixture"); await attachment.attach(); assert.equal(attachment.outcome(), "attached")
-  const detach = detachConsumer(id); await detach.detach("fixture"); assert.deepEqual(detach.messages, [])
+  await attachment.activate(); assert.deepEqual(attachment.messages, [])
+  const detach = detachConsumer(id); await detach.detach(); assert.deepEqual(detach.messages, [])
   const host = hostConsumer(id); await host.open("fixture"); assert.equal(host.pending(), false); assert.equal(host.messages.length, 1)
 }
 
@@ -142,7 +144,7 @@ test("missing backend and HTTP errors fail closed without local fallback or succ
   await assert.rejects(installIntegration(id, "/repo", "fixture", "global"), /Backend unavailable/)
   const host = hostConsumer(id); await host.open("fixture")
   assert.equal(host.pending(), false); assert.equal((host.messages[0] as any).variant, "error")
-  const detach = detachConsumer(id); await detach.detach("fixture"); assert.deepEqual(detach.messages, ["receipt", "error"])
+  const detach = detachConsumer(id); await detach.detach(); assert.deepEqual(detach.messages, ["error"])
   assert.equal(localCalls, 0)
   const failed = fixture(t, "integrationsError"), failedId = "integrationsError~w/1"
   failed.transport.answer = async () => Response.json({ code: "forbidden" }, { status: 403 })
@@ -188,6 +190,61 @@ test("revocation after headers and JSON awaits fences results and releases repla
   owner.transport.answer = async () => ({ ok: true, json: () => new Promise(done => { finishJson = done }) }) as Response
   const late = installIntegration(id, "/repo", "fixture", "global"), rejected = assert.rejects(late, { name: "AbortError" })
   await flush(); owner.detach(); finishJson({ scope: "global", spec: "late", reloadPending: true }); await rejected
+})
+
+test("row offer reads and captured document choices cannot attach through a replacement backend", async t => {
+  const owner = fixture(t, "integrationsChoices"), id = "integrationsChoices~w/1"
+  let finishJson!: (value: unknown) => void
+  owner.transport.answer = async () => ({ ok: true, json: () => new Promise(done => { finishJson = done }) }) as Response
+  const row = attachmentConsumer(id)
+  const reading = row.activate()
+  await flush()
+  owner.detach(); owner.reattach()
+  finishJson({ offers: [{ offerID: "offer_1", protocol: "ok", label: "Scene" }] })
+  await reading
+  assert.equal(owner.calls.length, 1, "late hosts cannot auto-attach on the new attachment")
+  assert.equal(row.choices(), undefined); assert.deepEqual(row.messages, [])
+
+  owner.transport.answer = async () => Response.json({ offers: [
+    { offerID: "offer_1", protocol: "ok", label: "Scene" },
+    { offerID: "offer_2", protocol: "ok", label: "Other" },
+  ] })
+  await row.activate()
+  const choice = row.choices()![0]!
+  owner.detach(); owner.reattach()
+  choice.attach(); await flush()
+  assert.equal(owner.calls.length, 2, "an old document choice cannot dispatch through the replacement")
+})
+
+test("admitted row attach keeps exclusivity until settlement and suppresses revoked feedback", async t => {
+  const owner = fixture(t, "integrationsAttach"), id = "integrationsAttach~w/1"
+  let finish!: () => void
+  owner.transport.answer = async call => new URL(call.url).pathname.endsWith("/attach")
+    ? new Promise(done => { finish = () => done(Response.json({ outcome: "busy" })) }) : reply(call)
+  const row = attachmentConsumer(id), first = row.activate()
+  await flush()
+  assert.equal(integrationBindings.busy(target(id)), true)
+  owner.detach(); owner.reattach()
+  const replacement = attachmentConsumer(id)
+  await replacement.activate()
+  assert.equal(owner.calls.length, 2, "admitted attach remains exclusive")
+  finish(); await first
+  assert.equal(integrationBindings.busy(target(id)), false)
+  assert.deepEqual(row.messages, [])
+})
+
+test("row menu defers host confirmation only for its captured backend attachment", async t => {
+  const owner = fixture(t, "integrationsMenu"), id = "integrationsMenu~w/1"
+  let opened = 0
+  const scope = { props: { instanceId: id, hostAction: { run: () => { opened++ } } },
+    captureBackendOperation, afterClose: undefined as (() => void) | undefined }
+  const run = consumer("../components/plugin-row-actions.tsx", "run", scope)
+  run({ kind: "host" })
+  owner.detach(); owner.reattach()
+  scope.afterClose!()
+  assert.equal(opened, 0)
+  run({ kind: "host" }); scope.afterClose!()
+  assert.equal(opened, 1)
 })
 
 test("binding mutation admission stays exclusive across generations until settlement even without a demanded read", async () => {

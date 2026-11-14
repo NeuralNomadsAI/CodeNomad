@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, onCleanup } from "solid-js"
 import { DropdownMenu } from "@kobalte/core/dropdown-menu"
-import { Download, MoreHorizontal, PackageSearch, RefreshCw, Trash2 } from "lucide-solid"
+import { AppWindow, Download, Info, MoreHorizontal, PackageSearch, RefreshCw, Trash2, Unlink2 } from "lucide-solid"
 import type { PluginConfiguredSource, PluginControlLocation, PluginControlScope, PluginRuntimeSource } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
@@ -13,13 +13,16 @@ import { backendEvents as serverEvents } from "../lib/server-events"
 
 type RemovableSource = PluginConfiguredSource & { scope: PluginControlScope }
 type Item =
+  | { kind: "host"; action: "install" | "update" }
+  | { kind: "detach" }
   | { kind: "package"; action: "check" | "update"; target: string }
   | { kind: "remove"; source: RemovableSource }
   | { kind: "refresh" }
 
 export const PLUGIN_SOURCE_CONFIRM_EXPIRY_MS = 120_000
 
-/** One compact menu per Plugins row: the native package check/update, removal of each removable
+/** One compact menu per Plugins row: for an integration its connection state, the application part's
+ * installation and the displayed conversation's detach; the native package check/update, removal of each removable
  * declaration from its scope's own document, and Refresh for sources the inventory never confirmed. */
 export function PluginRowActions(props: {
   instanceId: string
@@ -31,10 +34,12 @@ export function PluginRowActions(props: {
   active?: boolean
   consentEpoch?: number
   sessionId?: string
-  /** Integration surfaces never show configuration paths. */
-  hidePaths?: boolean
-  /** Receives focus when the menu's trigger is gone or disabled; the surface's Refresh button otherwise. */
-  focusFallback?: () => HTMLElement | null | undefined
+  /** An integration's connection state, labelling the menu's items. */
+  info?: string
+  /** Installs or updates an integration's application part, after its own confirmation. */
+  hostAction?: { action: "install" | "update"; run: () => void }
+  /** Detaches the displayed conversation from an integration's application. */
+  detach?: { run: () => void; busy: boolean }
 }) {
   const { t } = useI18n()
   let afterClose: (() => void | Promise<void>) | undefined
@@ -45,7 +50,7 @@ export function PluginRowActions(props: {
   let admittedOwner: string | undefined
   let disposed = false
   const presentationOwner = () => JSON.stringify([props.instanceId, props.location.directory, props.sessionId, props.active !== false])
-  const fallback = () => props.focusFallback?.() ?? surface?.querySelector<HTMLButtonElement>("[data-plugin-refresh]")
+  const fallback = () => surface?.querySelector<HTMLButtonElement>("[data-plugin-refresh]")
   const restoreFocus = () => {
     if (trigger?.isConnected && !trigger.disabled) trigger.focus()
     else fallback()?.focus()
@@ -61,8 +66,7 @@ export function PluginRowActions(props: {
     disposed = true; generation++; cancel()
     if (admittedOwner && (document.activeElement === trigger || document.activeElement === document.body)) queueMicrotask(() => {
       if (presentationOwner() !== admittedOwner || props.active === false) return
-      if (props.focusFallback) props.focusFallback()?.focus()
-      else if (surface?.isConnected) surface.querySelector<HTMLButtonElement>("[data-plugin-refresh]")?.focus()
+      if (surface?.isConnected) fallback()?.focus()
     })
   })
   const pkg = () => props.source?.type === "package" ? props.source : undefined
@@ -71,21 +75,28 @@ export function PluginRowActions(props: {
   const busy = () => packageBusy() || props.removable.some(removing)
   const scopeLabel = (scope: PluginControlScope) => t(`instanceServiceStatus.plugins.scope.${scope}`)
   // Stable descriptors: icons are created by the item renderer, once per rendered item.
+  const hostAction = () => props.hostAction?.action
   const items = createMemo<Item[]>(() => [
+    ...(hostAction() ? [{ kind: "host" as const, action: hostAction()! }] : []),
+    ...(props.detach ? [{ kind: "detach" as const }] : []),
     ...(pkg() ? [{ kind: "package" as const, action: pkg()!.outdated ? "update" as const : "check" as const, target: pkg()!.target }] : []),
     ...props.removable.filter(source => source.expectedRevision).map(source => ({ kind: "remove" as const, source })),
     ...(props.refresh ? [{ kind: "refresh" as const }] : []),
   ])
   const packageLabel = (item: Extract<Item, { kind: "package" }>) => t(`settings.pluginPackages.${item.action}`, { target: item.target })
   const label = (item: Item) => item.kind === "package" ? packageLabel(item)
-    : item.kind === "remove" ? t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(item.source.scope) })
-      : t("instanceServiceStatus.plugins.refresh")
+    : item.kind === "host" ? t(`integrations.installHost.${item.action}`)
+      : item.kind === "detach" ? t("integrations.detachConversation")
+        : item.kind === "remove" ? t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(item.source.scope) })
+          : t("instanceServiceStatus.plugins.refresh")
   const hint = (item: Item) => item.kind === "package" ? t("settings.pluginPackages.shared")
-    : item.kind === "remove" ? (props.hidePaths ? undefined : `${item.source.target}\n${item.source.path ?? ""}`) : undefined
-  const triggerLabel = () => {
-    const only = items().length === 1 ? items()[0] : undefined
-    return only?.kind === "package" ? packageLabel(only) : t("instanceServiceStatus.plugins.sources.actions", { name: props.name })
-  }
+    : item.kind === "host" ? t("integrations.installHost.machine")
+      : item.kind === "remove" ? `${item.source.target}\n${item.source.path ?? ""}` : undefined
+  // A lone package action is the trigger itself; an integration's menu always opens on its connection state.
+  const lonePackage = () => !props.info && items().length === 1 && items()[0]!.kind === "package"
+  const triggerLabel = () => lonePackage() ? packageLabel(items()[0] as Extract<Item, { kind: "package" }>)
+    : t("instanceServiceStatus.plugins.sources.actions", { name: props.name })
+  const itemDisabled = (item: Item) => busy() || props.active === false || (item.kind === "detach" && props.detach?.busy === true)
 
   const runPackage = (item: Extract<Item, { kind: "package" }>) => {
     if (packageBusy() || props.active === false) return
@@ -102,7 +113,7 @@ export function PluginRowActions(props: {
     const instanceId = props.instanceId, location = { ...props.location }, selected = { ...source }
     const owner = ownership()
     const feedbackOwner = presentationOwner()
-    surface = trigger?.closest<HTMLElement>(".plugin-controls, .integration-section")
+    surface = trigger?.closest<HTMLElement>(".plugin-controls")
     confirmation = new AbortController()
     const operation = captureBackendOperation(instanceId, confirmation.signal)
     const signal = operation.signal
@@ -110,7 +121,7 @@ export function PluginRowActions(props: {
     const action = t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(source.scope) })
     const accepted = await confirmIntegrationAction(t("instanceServiceStatus.plugins.sources.removeWarning"), {
       title: `${action} — ⁨${props.name}⁩`,
-      detail: `${props.hidePaths ? "" : source.target + "\n"}${source.scope === "global" ? t("instanceServiceStatus.plugins.sources.removeGlobalWarning") + "\n" : ""}${t("instanceServiceStatus.plugins.sources.removeRecovery")}`,
+      detail: `${source.target}\n${source.scope === "global" ? t("instanceServiceStatus.plugins.sources.removeGlobalWarning") + "\n" : ""}${t("instanceServiceStatus.plugins.sources.removeRecovery")}`,
       confirmLabel: action, variant: "warning",
       expiresAfterMs: PLUGIN_SOURCE_CONFIRM_EXPIRY_MS, returnFocus: () => { if (operation.current() && presentationOwner() === feedbackOwner) restoreFocus() },
     }, signal)
@@ -122,30 +133,42 @@ export function PluginRowActions(props: {
       const stale = error instanceof HttpResponseError && error.status === 409
       showToastNotification({ category: "opencode", variant: "error", message: t(stale
         ? "instanceServiceStatus.plugins.sources.errors.removeStale"
-         : "instanceServiceStatus.plugins.sources.errors.remove", { name: props.hidePaths ? props.name : source.target, scope: scopeLabel(source.scope) }) })
+         : "instanceServiceStatus.plugins.sources.errors.remove", { name: source.target, scope: scopeLabel(source.scope) }) })
     })
   }
   const run = (item: Item) => {
     const operation = captureBackendOperation(props.instanceId)
     if (!operation.current()) return
-    return item.kind === "package" ? runPackage(item) : item.kind === "remove"
-      ? (afterClose = () => { if (operation.current()) return runRemove(item.source) }) : props.refresh?.()
+    return item.kind === "package" ? runPackage(item)
+      : item.kind === "host" ? (afterClose = () => { if (operation.current()) props.hostAction?.run() })
+        : item.kind === "detach" ? props.detach?.run()
+          : item.kind === "remove" ? (afterClose = () => { if (operation.current()) return runRemove(item.source) }) : props.refresh?.()
   }
 
   const icon = (item: Item, pulse = false) => item.kind === "package"
     ? (item.action === "update"
       ? <Download class="h-3.5 w-3.5" classList={{ "animate-pulse": pulse }} aria-hidden="true" />
       : <PackageSearch class="h-3.5 w-3.5" classList={{ "animate-pulse": pulse }} aria-hidden="true" />)
-    : item.kind === "remove" ? <Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
-      : <RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />
+    : item.kind === "host" ? <AppWindow class="h-3.5 w-3.5" aria-hidden="true" />
+      : item.kind === "detach" ? <Unlink2 class="h-3.5 w-3.5" aria-hidden="true" />
+        : item.kind === "remove" ? <Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
+          : <RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />
 
-  return <Show when={items().length > 0}>
+  const entries = () => <For each={items()}>{item => (
+    <DropdownMenu.Item class="action-overflow-item" disabled={itemDisabled(item)}
+      title={hint(item)} onSelect={() => run(item)}>
+      <span class="action-overflow-item-icon" aria-hidden="true">{icon(item)}</span>
+      <span class="action-overflow-item-label">{label(item)}</span>
+    </DropdownMenu.Item>
+  )}</For>
+
+  return <Show when={items().length > 0 || props.info}>
     <DropdownMenu placement="bottom-end" gutter={4}>
       <DropdownMenu.Trigger type="button" class="icon-button-compact" disabled={busy() || props.active === false}
         ref={trigger}
-        title={items().length === 1 ? [label(items()[0]!), hint(items()[0]!)].filter(Boolean).join("\n") : triggerLabel()}
+        title={!props.info && items().length === 1 ? [label(items()[0]!), hint(items()[0]!)].filter(Boolean).join("\n") : triggerLabel()}
         aria-label={triggerLabel()} aria-busy={busy()}>
-        <Show when={items()[0]?.kind === "package"} fallback={<MoreHorizontal class="h-3.5 w-3.5" classList={{ "animate-pulse": busy() }} aria-hidden="true" />}>
+        <Show when={lonePackage()} fallback={<MoreHorizontal class="h-3.5 w-3.5" classList={{ "animate-pulse": busy() }} aria-hidden="true" />}>
           {icon(items()[0]!, busy())}
         </Show>
       </DropdownMenu.Trigger>
@@ -154,13 +177,14 @@ export function PluginRowActions(props: {
           const action = afterClose; afterClose = undefined
           if (action) queueMicrotask(() => void action())
         }}>
-          <For each={items()}>{item => (
-            <DropdownMenu.Item class="action-overflow-item" disabled={busy() || props.active === false}
-              title={hint(item)} onSelect={() => run(item)}>
-              <span class="action-overflow-item-icon" aria-hidden="true">{icon(item)}</span>
-              <span class="action-overflow-item-label">{label(item)}</span>
-            </DropdownMenu.Item>
-          )}</For>
+          <Show when={props.info} fallback={entries()}>{info => (
+            <DropdownMenu.Group>
+              <DropdownMenu.GroupLabel class="action-overflow-info" data-integration-connection>
+                <Info class="h-3.5 w-3.5" aria-hidden="true" /><bdi>{info()}</bdi>
+              </DropdownMenu.GroupLabel>
+              {entries()}
+            </DropdownMenu.Group>
+          )}</Show>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu>

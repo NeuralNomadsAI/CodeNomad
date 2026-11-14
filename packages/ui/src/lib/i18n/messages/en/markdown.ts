@@ -12,4 +12,5 @@ export const markdownMessages = {
   "markdown.copy": "Copy",
 
   "markdown.link.previewOpens": "Opens in the web preview. Ctrl+click (⌘-click on macOS) or middle-click opens it in your browser.",
+  "markdown.link.fileOpens": "Opens in the file preview. Ctrl+click (⌘-click on macOS) or middle-click opens it in your browser.",
 } as const

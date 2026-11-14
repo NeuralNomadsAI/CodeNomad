@@ -1,4 +1,4 @@
-import { Show, createSignal, onCleanup } from "solid-js"
+import { createSignal, onCleanup } from "solid-js"
 import Switch from "@suid/material/Switch"
 import type { PluginActivationControl, PluginControlLocation, PluginControlScope } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -7,6 +7,7 @@ import { getLogger } from "../lib/logger"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { pluginControlsCache } from "../stores/plugin-controls"
+import { ACCENT_SWITCH_SX } from "./settings/settings-switch"
 
 const log = getLogger("session")
 const [pending, setPending] = createSignal<ReadonlySet<string>>(new Set())
@@ -50,8 +51,8 @@ export function PluginActivationSwitch(props: {
   active?: boolean
   /** Shown but not writable here, with this reason as its tooltip; it stays focusable. */
   lockedReason?: string
-  /** A visible scope caption, for surfaces without column headers. */
-  caption?: string
+  /** An integration's switch: the accent switch of Yolo and the settings, where a plain plugin's is the green variant. */
+  integration?: boolean
 }) {
   const { t } = useI18n()
   let disposed = false
@@ -77,13 +78,14 @@ export function PluginActivationSwitch(props: {
     }
   }
   return (
-    <div class="plugin-control-switch" data-scope={props.scope} data-locked={props.lockedReason ? "" : undefined} title={props.lockedReason}>
-      <Show when={props.caption}><span class="plugin-control-switch-caption" aria-hidden="true">{props.caption}</span></Show>
+    <div class="plugin-control-switch" data-scope={props.scope} data-locked={props.lockedReason ? "" : undefined}
+      data-integration={props.integration ? "" : undefined} title={props.lockedReason}>
       <Switch
         checked={props.control ? pluginScopeChecked(props.control, props.scope) : false}
         disabled={!props.available}
-        color="success"
+        color={props.integration ? "primary" : "success"}
         size="small"
+        sx={props.integration ? ACCENT_SWITCH_SX : undefined}
         inputProps={{
           "aria-label": props.label,
           "aria-describedby": props.describedBy,
