@@ -210,7 +210,7 @@
   "stores/session-actions.ts": ["continuation:delegated x9","delegated:backend x23","sdk:session.background x1","sdk:session.command x1","sdk:session.compact x1","sdk:session.interrupt x2","sdk:session.message.get x2","sdk:session.prompt x1","sdk:session.revert.stage x2","sdk:session.shell x1","sdk:session.switchAgent x2","sdk:session.switchModel x3","sdk:session.update x1","sdk:session.wait x1"],
   "stores/session-api.ts": ["continuation:delegated x2","continuation:flatMap x1","continuation:map x2","delegated:backend x50","sdk:agent.get x1","sdk:agent.list x1","sdk:message.list x3","sdk:model.default x1","sdk:model.list x1","sdk:provider.list x1","sdk:session.active x4","sdk:session.create x1","sdk:session.fork x1","sdk:session.get x2","sdk:session.list x1","sdk:session.remove x1"],
   "stores/session-archive.ts": ["continuation:delegated x1","delegated:backend x1","sdk:session.update x1"],
-  "stores/session-events.ts": ["continuation:setTimeout x1","continuation:then x3","delegated:backend x33","sdk:session.active x1","sdk:session.get x1"],
+  "stores/session-events.ts": ["continuation:setTimeout x1","continuation:then x3","delegated:backend x35","sdk:session.active x1","sdk:session.get x1"],
   "stores/session-fork.ts": ["sdk:message.list x1","sdk:session.fork x1","sdk:session.remove x1"],
   "stores/session-goal.ts": ["api-client:fetchSessionGoal x1","backend-events:on x3","backend-events:onOpen x1","continuation:delegated x2","delegated:backend x1"],
   "stores/session-history.ts": ["api-client:pruneSessionHistory x1","api-client:queryRankedHistory x1","api-client:querySessionHistory x1","delegated:backend x4"],

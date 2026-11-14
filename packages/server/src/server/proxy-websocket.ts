@@ -1,4 +1,5 @@
 import { request as httpRequest, ServerResponse, type IncomingMessage, type IncomingHttpHeaders } from "node:http"
+import type { RequestOptions } from "node:https"
 import { request as httpsRequest } from "node:https"
 import type { Socket } from "node:net"
 import type { Logger } from "../logger"
@@ -14,12 +15,17 @@ export function proxyWebSocket(args: {
   responseHeaders: (headers: IncomingHttpHeaders) => IncomingHttpHeaders
   logger: Logger
   logContext: Record<string, unknown>
+  connection?: RequestOptions
+  signal?: AbortSignal
 }) {
   const { request, socket, head, targetUrl } = args
   let upgraded: Socket | undefined
   let replied = false
   const send = targetUrl.protocol === "https:" ? httpsRequest : httpRequest
-  const upstream = send(targetUrl, { method: request.method, headers: args.headers, agent: false })
+  const upstream = send(targetUrl, { ...args.connection, method: request.method, headers: args.headers, agent: false, signal: args.signal })
+  const abort = () => { upstream.destroy(); upgraded?.destroy(); socket.destroy() }
+  args.signal?.addEventListener("abort", abort, { once: true })
+  if (args.signal?.aborted) abort()
   upstream.setTimeout(15_000, () => upstream.destroy(new Error("WebSocket handshake timed out")))
   upstream.on("error", () => {
     args.logger.warn(args.logContext, "SideCar/preview WebSocket upstream failed")
@@ -28,7 +34,7 @@ export function proxyWebSocket(args: {
     upgraded?.destroy()
   })
   socket.on("error", () => { upstream.destroy(); upgraded?.destroy() })
-  socket.once("close", () => { upstream.destroy(); upgraded?.destroy() })
+  socket.once("close", () => { upstream.destroy(); upgraded?.destroy(); args.signal?.removeEventListener("abort", abort) })
   upstream.once("upgrade", (response, remote, buffered) => {
     upgraded = remote
     upstream.setTimeout(0)

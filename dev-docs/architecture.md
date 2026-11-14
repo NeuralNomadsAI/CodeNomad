@@ -105,6 +105,21 @@ Renaming a saved profile retains its client. Address/TLS change, removal, explic
 
 `server/routes/backend-relay.ts` relays `/api/*` and `/workspaces/*` through `codenomad-servers/browse-manager.ts`. The manager resolves the saved `state.ui.remoteServers` profile and owns its client, TLS policy and private credential store. `opencode/servers/transport.ts` validates and pins each DNS answer for the dial, verifies TLS against the saved hostname, refuses redirects, strips caller credentials and browser metadata, and adds only the backend-held identity. Remote mutations use the explicit device protocol described in [REMOTE_CONTROL.md](REMOTE_CONTROL.md#saved-profile-relay). Login and logout at the relay operate on the backend's saved identity. Host-only remote routes and nested relays remain inaccessible.
 
+Remote preview content has its own lazy loopback listener in `codenomad-servers/preview-capabilities.ts`.
+The host-only `server/routes/remote-preview-capabilities.ts` API creates a remote
+preview under an admitted backend proof and publishes a distinct random
+`preview.localhost` content origin. That listener reserves all HTTP/WS routes for
+the captured backend, generation and preview token. It uses credential-free,
+destination-pinned content transport, the existing remote preview rewriting and
+an origin-preserving sandbox on its exclusive content origin. Origin carriers
+and CORS/WS admission bind to that exact origin. Same-origin resource policy
+protects no-CORS resources, and frame ancestors bind to the content origin and
+the guarded creation request's local UI origin. Scoped redirects remain inside that preview.
+Capability deletion or backend-generation revocation closes live transfers;
+explicit preview detachment is shared across the backend's listeners. Listener
+shutdown destroys its sockets. The API and lifetime are specified in
+[Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport).
+
 `index.ts` owns one `RemoteServerBrowseManager`, its settings-change subscription and shutdown across HTTP, HTTPS and the private bridge listener. Standalone listener managers sharing the backend's `SettingsService` retain the same connection state: credentials, clients, pending connections, queues and profile authorities. Closing one owner releases its lease; the last owner closes the shared connections. Forget revokes the shared authority immediately, across every listener.
 
 Connection and browse admission captures an immutable profile authority before queueing: profile id, normalized origin, TLS policy and an object-identity generation. Dispatch and credential publication check that captured generation and the current saved profile. Address/TLS changes and removal revoke queued work as well as active connections; queued passwords remain bound to their admitted destination. The private store binds each identity to both origin and TLS policy. An entry without a TLS-policy field binds to verified TLS.
@@ -245,7 +260,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `lib/hooks/use-foreground-refresh.ts` | A | backend controller allocation/open/status/detach; foreground trigger | Captured backend signal, per-backend controller map and cleanup. |
 | `stores/session-api.ts` | A+C | refreshSessionCatalog; fetchV2Sessions/complete inventory/runtime status; restored parent-chain hydration/retry; fetch/load-more/load-all/search; create/fork/delete session; fetch/load agents/providers; loadMessages/invalidation retry | Captured attachment/client/native generation plus caller signal, request IDs/message intent and page lanes/controllers. Catalog refresh/agent/provider lanes join current owners; readiness, parent-chain retries, cursor pages and runtime status recheck the captured owner. Sent mutations retain captured client; publication/readback uses A. |
 | `stores/session-message-pages.ts` | P | listMessageWindow; message cursor/limit reads | Caller client and AbortSignal; deferred-media request header. |
-| `stores/session-events.ts` | A | terminal status reconciliation; fetchSessionInfo/ensureSessionStatus; created/moved/started continuations; delayed worktree/session/message refresh; terminal inbox/message follow-up | Event authority captures signalForInstance/client/native generation; fetchSessionInfo checks it after SDK read. pendingSessionFetches joins only a current owner with the same attachment signal under the instance/native generation/session key; finally checks pending-entry identity. |
+| `stores/session-events.ts` | A | terminal status reconciliation; fetchSessionInfo/ensureSessionStatus; created/moved/started continuations; delayed worktree/session/message refresh; terminal inbox/message follow-up; qualified notice actions | Event authority captures signalForInstance/client/native generation; fetchSessionInfo checks it after SDK read. pendingSessionFetches joins only a current owner with the same attachment signal under the instance/native generation/session key; finally checks pending-entry identity. Notice lifetime and navigation retain the event attachment; backend-qualified claims and bubbles separate homonymous native IDs. |
 | `stores/session-model-reconciliation.ts` | A | reconcileSessionModel; catalog load → model choice publication | Captured signalForInstance, native generation, client/current session-model snapshot; delegated catalog reads. |
 | `stores/session-models.ts` | A | getDefaultModel | captureBackendOperation; delegated provider/agent/default model ownership. |
 | `stores/session-fork.ts` | P+C | forkAfterMessage; paginated source messages; native fork; abandoned fork removal | Caller isCurrent predicate and captured SDK client; fork/removal is durable sent mutation; caller must supply attachment guard. |
@@ -292,7 +307,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/panel-extensions/use-panel-extensions.ts` | A+C | coalesced/trailing list refresh; activate → refresh; reconnect/reactive attachment refresh | Instance-owned adapter; captureBackendOperation with controller/generation/disposed, instance/active/connected checks; generation-owned read and activation records fence deduplication/cleanup; lifetime resets manager presentation; sent activation is retained mutation. |
 | `components/panel-extensions/extension-panel.tsx` | V+A | panel HTML load; local srcdoc construction; iframe handshake; channel factory and cleanup | HTML read and frame messaging share captured attachment/view signal; revocation closes port and clears document; generation/current/disposed fences publication/handshake; channel requests independently capture A. |
 | `components/panel-extensions/extension-manager.tsx` | A+C | catalog load/refresh; inspect ZIP/catalog; install/installCatalog/remove; consent and runtime refresh | Controller captures project backend/attachment before administration; lifetime-keyed view generation/disposed/controller and abortable FileReader fence presentation; runtime current guards results and rereads; admitted install/removal runs once. |
-| `stores/images-conversation.ts` | A+C | resolve/show/openImagesConversation; agents and session navigation | captureBackendOperation/current for read/navigation; conversation creation retains admitted client. |
+| `stores/images-conversation.ts` | A+C | resolve/show/openImagesConversation; agents and session navigation | captureBackendOperation/current for read/navigation/publication; conversation creation uses the owning backend API and signal, retaining its admitted client. |
 | `stores/session-instructions.ts` | A+C | syncVoiceModeInstruction/syncSessionInstructions; native instruction entry put | captureBackendOperation and caller signal/current; sent instruction mutation retains captured SDK client. |
 | `stores/session-previews.ts` | A+C | open/restore/close preview; create/delete token; superseded response cleanup | Backend/project/session persistence identity, attachment/navigation generation and captured client own restoration flights and publication; original client/token owns cleanup even after supersession or revocation. |
 | `stores/sidecars.ts` | C | ensureSidecarsLoaded/openSidecarTab; pending load; storage/event reconciliation | Local client cache and pending identity; local-source events; tab demand retained. |
@@ -440,7 +455,8 @@ Remote media blobs admit only PNG, JPEG, GIF, WebP, AVIF, BMP and ICO bytes veri
 |---|---|---|
 | Transcript/navigation/history | fetchPermissionReceipts, fetchHistoryWindow, fetchSessionOutline, fetchOutlinePreviews, querySessionHistory, queryRankedHistory, pruneSessionHistory, fetchSessionGoal | S; background queue for secondary reads |
 | Background Shell inventory | fetchBackgroundShells | S; owner backend, raw workspace boundary and public directory; secondary queue and attachment-owned watch/read lane |
-| Transcript mutations/images | pruneSessionMessage, imagesConversation | C; callers fence publication with their operation |
+| Transcript mutations | pruneSessionMessage | C; callers fence publication with their operation |
+| Images conversation | imagesConversation | S+C; owning attachment signal; sent creation retains the admitted client and callers fence publication |
 | Provider usage | fetchProviderUsage | S; usage coalescer/view generation fences publication |
 | Workspace reads/creation | fetchWorkspaces, fetchWorktrees, fetchLocalGitBranches, fetchRepositorySource, createWorkspace | S (createWorkspace takes options.signal) |
 | Workspace lifecycle | createWorktree, deleteWorktree, moveSessionFamily, cancelWorkspaceCreation, releaseWorkspaceCreation, deleteWorkspace, createTemporaryFolder, abandonTemporaryFolder, keepTemporaryWorkspace, discardTemporaryWorkspace, cloneWorkspaceRepository | C; original mutation/creation request owner |

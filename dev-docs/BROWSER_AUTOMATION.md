@@ -101,6 +101,49 @@ Background WKWebView has qualified input limits: an initial standalone hover aft
 
 The hidden Electron fixture supplies visible ownership to the controller. Before input, its preparation waits for the loaded guest's non-empty hidden `capturePage` within one monotonic 10 s load/capture budget, retaining the exact guest while its window stays hidden and unfocused. `automation-preview-preparation.test.ts` executes the fixture against fake Electron objects to check loading, capture errors, guest replacement, owner state, deadlines and timer cleanup.
 
+## Remote preview content transport
+
+`codenomad-servers/preview-capabilities.ts` owns a lazy, content-only IPv4 loopback
+listener. Each remote preview receives a fresh `<capability>.preview.localhost`
+origin on that listener's ephemeral port. Every HTTP path and WebSocket upgrade
+on the listener resolves only through that capability's remote preview token.
+Responses use a sandbox with `allow-same-origin` on that capability's exclusive
+content origin and the existing remote path proxy's asset/runtime rewriting.
+HTTP Origin carriers, CORS preflights and WebSocket upgrades bind to that exact
+origin; opaque/null and foreign Origin carriers are refused before upstream
+dispatch. `Cross-Origin-Resource-Policy: same-origin` protects no-CORS resources.
+The sandbox's `frame-ancestors` admits the content origin and its issuing local
+UI origin, captured during guarded creation. Request cookies and authorization, response
+cookies and remote connection credentials stay outside content traffic, matching
+the local path-preview policy.
+
+The owning local UI creates a capability with
+`POST /api/backends/:id/preview-capabilities` and `{ sessionId, url }`, carrying its
+current `X-CodeNomad-Backend-Authority` header. The response is
+`RemotePreviewCapability`: the remote preview plus `capability` and `contentUrl`.
+Issuance retains the backend generation through remote creation and publication.
+`DELETE /api/backends/:id/preview-capabilities/:capability` jointly revokes the
+capability and its HTTP/WS transfers; deleting the collection detaches that
+generation's previews across listeners. Both operations retain the original
+authority header. Retargeting, removal, Forget, observed identity change and
+backend shutdown also revoke transfers. Remote token deletion is best-effort
+under that original generation.
+
+Service-worker script requests are refused on the isolated listener before
+transport construction or upstream dispatch. `Service-Worker-Allowed` stays
+outside the response allowlist. An expired content origin's network response
+carries `Clear-Site-Data: "storage"` as best-effort cleanup; the control API
+retains the trusted UI's storage. A worker-synthesized response can bypass
+network headers, so registration prevention and fresh capability origins own
+the authority boundary.
+
+`preview-capabilities.test.ts` covers content-origin reservation, equal remote
+tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
+destination ownership, revocation and the real remote CodeNomad path proxy.
+`tests/browser/remote-preview-origin-isolation.test.ts` drives Chromium against identical remote
+tokens to qualify fetch/XHR/WS, no-CORS scripts/images/fetch, iframe embedding,
+opaque callers and legitimate own-origin resources.
+
 ## Design constraints
 
 Browser and developer tools ship together in this one bundled plugin (user decision), every tool available. Execution re-reads session ownership through the shared connection and validated worktree inventory; never let a plugin location or a caller-provided session ID alone grant access. The visible preview, its window, storage partition and permissions stay in the native hosts; the daemon stays independently owned and the connection-scoped compatibility adapter stays.

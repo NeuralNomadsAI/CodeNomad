@@ -658,6 +658,11 @@ export interface PreviewSession {
   createdAt: string
 }
 
+export interface RemotePreviewCapability extends PreviewSession {
+  capability: string
+  contentUrl: string
+}
+
 export interface BinaryRecord {
   id: string
   path: string
