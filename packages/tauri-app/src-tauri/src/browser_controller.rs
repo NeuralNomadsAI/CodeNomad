@@ -38,6 +38,7 @@ mod webkit_navigation;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserTargetRegistration {
+    logical_address: Option<String>,
     session_id: String,
     registration_id: String,
     url: String,
@@ -58,6 +59,7 @@ pub(crate) struct BrowserTargetUpdate {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserTargetAction {
+    logical_address: Option<String>,
     registration_id: String,
     action: String,
     url: Option<String>,
@@ -182,6 +184,16 @@ impl BrowserController {
                 true
             },
         )?;
+        if let Err(error) = self.embedded_views.configure_browser_presentation(
+            &webview,
+            &url,
+            input.logical_address.as_deref(),
+        ) {
+            let _ = self
+                .embedded_views
+                .close(window.app_handle(), window.label(), &label);
+            return Err(error);
+        }
         let registration = Registration {
             session_id: input.session_id,
             registration_id: input.registration_id.clone(),
@@ -464,6 +476,19 @@ impl BrowserController {
             }
             return bounded_history(result);
         }
+        if input.action == "navigate" {
+            let url = allowed_url(
+                input
+                    .url
+                    .as_deref()
+                    .ok_or("Browser navigation URL is required")?,
+            )?;
+            self.embedded_views.configure_browser_presentation(
+                &webview,
+                &url,
+                input.logical_address.as_deref(),
+            )?;
+        }
         match input.action.as_str() {
             "emulate" => self.emulate(app, window_label, &input),
             "back" => webview
@@ -510,6 +535,19 @@ impl BrowserController {
         let webview = app
             .get_webview(&registration.webview_label)
             .ok_or("Browser preview is no longer available")?;
+        if input.action == "navigate" {
+            let url = allowed_url(
+                input
+                    .url
+                    .as_deref()
+                    .ok_or("Browser navigation URL is required")?,
+            )?;
+            self.embedded_views.configure_browser_presentation(
+                &webview,
+                &url,
+                input.logical_address.as_deref(),
+            )?;
+        }
         match input.action.as_str() {
             "emulate" => self
                 .emulate(app, window_label, &input)

@@ -162,6 +162,11 @@ issuing local UI.
 See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
 for the API and revocation lifetime.
 
+Remote project previews retain their issuing client for dismissal, tab cleanup
+and attachment revocation. Renderer `pagehide` sends keepalive capability deletion
+under that same proof. Displayed addresses and persisted history use application
+URLs; loading capabilities remain inside the embedded preview.
+
 The isolated listener refuses service-worker script fetches before dispatch and
 keeps scope-widening response headers private. Expired content-origin network
 responses request storage cleanup independently of the host UI's storage.

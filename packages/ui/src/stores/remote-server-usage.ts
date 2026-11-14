@@ -15,10 +15,16 @@ export async function confirmRemoteServerChange(id: string): Promise<boolean> {
     || loadedRestorableSession()?.tabs.some(tab => tab.kind === "workspace" && backendIdOf(tab) === id)
     || isPreferencesWindow() && parseInstanceKey((await getNativePreferencesRequest()).instanceId ?? "").backendId === id
   const refuse = () => { throw new RemoteServerInUseError(tGlobal("remoteRestore.inUse")) }
+  const unavailable = () => new Error(tGlobal("settings.preferenceSaveFailed"))
   try {
     if (await inUse()) refuse()
     const backend = await backendRegistry.ensure(id)
-    if (!backend || (await backend.api.fetchWorkspaces()).length || await inUse()) refuse()
-  } catch { refuse() }
+    if (!backend) throw unavailable()
+    const workspaces = await backend.api.fetchWorkspaces()
+    if (!Array.isArray(workspaces)) throw unavailable()
+    if (workspaces.length || await inUse()) refuse()
+  } catch (error) {
+    throw error instanceof RemoteServerInUseError ? error : unavailable()
+  }
   return showConfirmDialog(tGlobal("remoteRestore.confirmChange"), { variant: "warning" })
 }

@@ -26,6 +26,27 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
             use std::{cell::Cell, rc::Rc};
             use tauri::Manager;
             let generation = Rc::new(Cell::new(0u64));
+            let dialogs = policy.clone();
+            let menus = policy.clone();
+            let menu_label = view.label().to_string();
+            platform
+                .inner()
+                .connect_context_menu(move |_, _, _, _| menus.restricted_browser(&menu_label));
+            let dialog_label = view.label().to_string();
+            platform.inner().connect_script_dialog(move |_, dialog| {
+                if !dialogs.restricted_browser(&dialog_label) {
+                    return false;
+                }
+                if matches!(
+                    dialog.dialog_type(),
+                    webkit2gtk::ScriptDialogType::Confirm
+                        | webkit2gtk::ScriptDialogType::BeforeUnloadConfirm
+                ) {
+                    dialog.confirm_set_confirmed(false);
+                }
+                dialog.close();
+                true
+            });
             let loading = generation.clone();
             platform.inner().connect_load_changed(move |_, event| {
                 if event == webkit2gtk::LoadEvent::Started {
@@ -57,7 +78,9 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
             platform
                 .inner()
                 .connect_permission_request(move |page, request| {
-                    if !policy.current(view.label(), token) {
+                    if !policy.current(view.label(), token)
+                        || policy.restricted_browser(view.label())
+                    {
                         request.deny();
                         return true;
                     }
@@ -179,6 +202,15 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
         .recv_timeout(Duration::from_secs(5))
         .map_err(|_| "Timed out configuring WebKitGTK browser security".to_string())?;
     super::zoom::install(webview)
+}
+
+pub(super) fn privacy<R: tauri::Runtime>(
+    view: &tauri::Webview<R>,
+    restricted: bool,
+) -> Result<(), String> {
+    use gtk::prelude::WidgetExt;
+    view.with_webview(move |native| native.inner().set_has_tooltip(!restricted))
+        .map_err(|error| error.to_string())
 }
 
 // Keep the requesting Wayland surface focused: a separate modal window causes

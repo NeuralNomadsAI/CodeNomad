@@ -5123,6 +5123,11 @@ You may have it installed on another user account, but it is not available for t
     }
   }
 
+  if browser_guest {
+    webview_builder = webview_builder.with_initialization_script_for_main_only(
+      include_str!("../../../../ui/src/lib/native/remote-preview-guards.cjs"), false);
+  }
+
   for (scheme, protocol) in uri_scheme_protocols {
     // Preview documents retain their browser globals (not app plugin overrides)
     // and carry neither the application IPC bridge nor app resource protocols.
