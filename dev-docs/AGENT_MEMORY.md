@@ -323,6 +323,15 @@ the main window's active project and selected session Location on General demand
 native Preferences keeps its explicit resolved context. Without an authorized
 project only About you can be selected. Titles/types/text have localized labels
 in all ten UI languages, and supplementary copy uses `SettingsInfoTip`.
+Qualified remote projects select `agentMemoryFor(instanceId)`: scopes, enablement,
+reads, edits and cleanup checks retain that backend's attachment and relay transport.
+HTTP context carries its raw workspace ID. Draft and badge frontiers include the
+backend identity; unavailable Preferences projects keep the card inactive and
+retain unsent drafts for the same project owner.
+Local calls retain `localHttp`. The local UI relay requires a current relay proof
+for exact POST `/api/memory` and GET/PUT `/api/memory/settings`. The destination
+admits these methods over its authenticated direct server-device transport;
+Remote Control ingress keeps memory host-only.
 The cleanup action and its info tip wrap as one group. Editable title/text fields
 derive direction from their contents, and list titles use bidirectional isolation.
 
@@ -372,6 +381,9 @@ in the project's session inventory and shows the localized cleanup failure.
 intent. Electron and Tauri accept it only from the trusted Preferences main
 frame, compare it to the host's current Preferences project, and forward to that
 window's exact local opener. Missing openers fail explicitly. The main renderer
+also checks the remote intent's `serverId` against its admitted backend before
+any preflight or session creation; both native hosts compare it to their current request.
+The main renderer
 claims each Tauri event hint through the native host, which returns the pending
 intent only to its targeted local window and only once. The main renderer
 alone owns session creation, tab/session activation and the initial send through

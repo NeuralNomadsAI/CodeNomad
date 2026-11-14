@@ -5,6 +5,13 @@ import { requireMemoryCleanup, runMemoryCleanupInWindow } from "./memory-cleanup
 import type { RendererFlushWindow } from "./renderer-client-state-flush"
 
 const request = { id: "one", scope: "global", workspaceId: "project-a", directory: "/repo-a" } as const
+test("remote cleanup binds the durable server identity as well as the qualified project", () => {
+  const remote = { ...request, workspaceId: "remote~same", serverId: "server-a" }
+  const context = { section: "general", instanceId: remote.workspaceId, serverId: "server-a", location: { directory: remote.directory } } as const
+  assert.deepEqual(requireMemoryCleanup(remote, context), remote)
+  assert.throws(() => requireMemoryCleanup({ ...remote, serverId: "replacement" }, context))
+  assert.throws(() => requireMemoryCleanup({ ...remote, serverId: undefined }, context))
+})
 test("cleanup forwards only a fixed intent with the exact Preferences project", async () => {
   const context = { section: "general", instanceId: "project-a", location: { directory: "/repo-a" } } as const
   assert.deepEqual(requireMemoryCleanup(request, context), request)
