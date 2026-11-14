@@ -6,6 +6,9 @@ export type RemoteServerErrorCode = typeof codes[number]
 export class RemoteServerRequestError extends Error {
   constructor(readonly code: RemoteServerErrorCode) { super(code); this.name = "RemoteServerRequestError" }
 }
+export class RemoteServerInUseError extends Error {
+  constructor(message: string) { super(message); this.name = "RemoteServerInUseError" }
+}
 export type RemoteServerConnectInput = { username?: string; password?: string; pairingLink?: string }
 
 /** Host-only browsing and credential operations; failures expose only stable codes. */
