@@ -11,6 +11,7 @@ import {
 } from "./app-tab-membership"
 import { workspaceIdentity } from "./app-session-reconciliation"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { remoteRestoreTabs, type RemoteRestoreTab } from "./remote-restore-tabs"
 
 export interface InstanceAppTab {
   id: string
@@ -24,7 +25,7 @@ export interface SideCarAppTab {
   sidecarTab: SideCarTabRecord
 }
 
-export type AppTabRecord = InstanceAppTab | SideCarAppTab
+export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab
 
 function getInstanceAppTabId(instanceId: string): string {
   return `instance:${instanceId}`
@@ -69,6 +70,7 @@ const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
   // project must not remount every shell (and restart their Git/status reads).
   const previousById = new Map(previous.map((tab) => [tab.id, tab]))
   const currentTabs = [
+    ...remoteRestoreTabs(),
     ...Array.from(instances().values())
       .filter((instance) => openInstanceTabIds().has(instance.id))
       .map((instance) => previousById.get(getInstanceAppTabId(instance.id)) ?? ({
@@ -125,7 +127,7 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore"; crea
   }
 
   setActiveInstanceId(null)
-  setActiveSidecarToken(tab.sidecarTab.token)
+  setActiveSidecarToken(tab.kind === "sidecar" ? tab.sidecarTab.token : null)
   return true
 }
 
@@ -221,6 +223,14 @@ function setAppTabOrder(tabIds: string[]) {
   }
 
   setTabOrder(orderedIds)
+}
+
+export function replaceRestoredAppTab(tabId: string, replacementId: string, replace: () => void) {
+  const order = appTabs().map(tab => tab.id === tabId ? replacementId : tab.id)
+  const selected = activeAppTabId() === tabId
+  replace()
+  setAppTabOrder(order)
+  if (selected) selectAppTab(replacementId, { source: "restore" })
 }
 
 function selectNextAppTab() {

@@ -113,6 +113,31 @@ test("retry invalidations coalesce into at most one serialized follow-up", async
   } finally { h.registry.dispose() }
 })
 
+test("current reconnect publication repairs inventory availability; obsolete health and attachments stay fenced", async () => {
+  const h = harness()
+  try {
+    h.load(async () => { throw new Error("offline") })
+    await h.registry.ensure("saved")
+    assert.equal(h.registry.state("saved"), "unreachable")
+    const stale = h.registry.workspaceReadGuard("saved", h.events.signal("saved"))
+    h.read(async () => new Response("", { status: 401 }))
+    await assert.rejects(h.registry.retryWorkspaces("saved"))
+    stale()
+    assert.equal(h.registry.state("saved"), "unauthorized")
+    h.read(async () => Response.json(metadata))
+    h.load(async () => {})
+    await h.registry.retryWorkspaces("saved")
+    h.load(async () => { throw new Error("inventory failed") })
+    await assert.rejects(h.registry.retryWorkspaces("saved"))
+    const publish = h.registry.workspaceReadGuard("saved", h.events.signal("saved"))
+    publish()
+    assert.equal(h.registry.state("saved"), "compatible")
+    h.registry.detach("saved")
+    publish()
+    assert.equal(h.registry.state("saved"), "idle")
+  } finally { h.registry.dispose() }
+})
+
 test("retry validates fresh identity, contract, authorization and immutable proof before listing", async () => {
   for (const change of ["identity", "contract", "auth", "proof"]) {
     const h = harness(true, true), header = "x-codenomad-backend-authority"

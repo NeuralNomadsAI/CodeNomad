@@ -244,10 +244,20 @@ test("a detached workspace-list response cannot remove its retained project", as
   addInstance(instance)
   t.after(() => removeInstance(instance.id, { authoritative: false }))
   let release!: (value: []) => void
-  const read = refreshWorkspaceList("list_owner", { fetchWorkspaces: async () => new Promise<[]>(resolve => { release = resolve }) })
+  let started!: () => void
+  const requested = new Promise<void>(resolve => { started = resolve })
+  const signal = backendEvents.signal("list_owner")!
+  const read = refreshWorkspaceList("list_owner", { fetchWorkspaces: async requestSignal => {
+    assert.equal(requestSignal, signal)
+    return new Promise<[]>(resolve => { release = resolve; started() })
+  } })
+  await requested
+  assert.equal(signal.aborted, false)
   detach()
-  release([]); await read
-  assert.ok(instances().has(instance.id))
+  assert.equal(signal.aborted, true)
+  release([])
+  assert.equal(await read, false)
+  assert.equal(instances().get(instance.id), instance)
 })
 
 test("a detached worktree read neither publishes nor starts its queued follow-up", async t => {

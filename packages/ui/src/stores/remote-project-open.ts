@@ -3,7 +3,8 @@ import { normalizeServerSelection, type ServerSelectionIntent } from "../lib/nat
 import { preferences, preferencesForBackend } from "./preferences"
 import { backendRegistry } from "./remote-backends"
 import { createInstance, type WorkspaceCreationOwnership } from "./instances"
-import { selectInstanceTab } from "./app-tabs"
+import { appTabs, selectAppTab, selectInstanceTab } from "./app-tabs"
+import { workspaceIdentity } from "./app-session-reconciliation"
 import { closeSettings } from "./settings-screen"
 
 const [selection, setSelection] = createSignal<ServerSelectionIntent>()
@@ -28,11 +29,21 @@ export async function openRemoteProject(path: string, signal: AbortSignal): Prom
   const intent = selection()
   const current = () => !signal.aborted && selection() === intent && !!selectedRemoteProfile(intent)
   if (!current() || !intent || !path.trim()) throw new Error("Server selection changed")
+  const selectWaiting = () => {
+    const waiting = appTabs().find(tab => tab.kind === "remote-restore"
+      && workspaceIdentity(tab.snapshot.folder, tab.snapshot.backendId) === workspaceIdentity(path, intent.id))
+    if (!waiting) return false
+    selectAppTab(waiting.id)
+    if (current()) closeRemoteServer()
+    return true
+  }
+  if (selectWaiting()) return true
   let client = await backendRegistry.ensure(intent.id)
   if (!current()) return false
   // Opening is an explicit demand: recover one superseded/failed initial inventory.
   if (client && backendRegistry.state(intent.id) === "unreachable") client = await backendRegistry.retryWorkspaces(intent.id)
   if (!current()) return false
+  if (selectWaiting()) return true
   if (!client || backendRegistry.state(intent.id) !== "compatible") throw new Error(backendRegistry.state(intent.id))
   let creation: WorkspaceCreationOwnership | undefined
   let transferred = false

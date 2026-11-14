@@ -38,6 +38,18 @@ Si une autre fenêtre affiche la même connexion de projet, son onglet se ferme 
 
 Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions de projet ; la restauration normale au démarrage s’applique toujours. Arrêtez explicitement les exécutions concernées si vous devez vérifier qu’elles sont terminées. CodeNomad ne décharge jamais les Locations natives ; la maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
 
+## Restaurer les onglets distants {#restore-remote-tabs}
+
+**Réessayer** reprend aussi les onglets en attente encore ouverts lorsque la restauration automatique au démarrage est désactivée. Chaque onglet d’un même dossier conserve ses propres brouillons.
+
+Une notification ouvre l’onglet en attente existant ; utilisez **Réessayer** pour vous reconnecter.
+
+Si les paramètres ciblent encore ce serveur, rouvrez **Paramètres** depuis un autre projet avant de supprimer le serveur ou de changer son adresse.
+
+Lorsque le multi-backend est activé, les projets distants enregistrés retrouvent leur ordre, leurs brouillons et la sélection. Un serveur indisponible conserve un onglet en attente : utilisez **Réessayer** à son retour, ou **Se connecter** avec ses identifiants ou un nouveau **Lien d’appairage**. Les autres serveurs restent utilisables. La reprise relit l’état ; vérifiez le résultat d’une action de conversation incertaine avant de la renvoyer vous-même.
+
+Fermez les onglets de projet de ce serveur dans chaque fenêtre avant de le supprimer ou de changer son adresse. Un inventaire inaccessible bloque ce changement jusqu’à sa vérification.
+
 ## Espaces de travail temporaires {#temporary-workspaces}
 
 1. Choisissez **Temporaire** dans le lanceur ou **Nouvelle instance temporaire** sur l’accueil.

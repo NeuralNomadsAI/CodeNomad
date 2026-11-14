@@ -38,6 +38,18 @@ Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab 
 
 Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Projektverbindungen nicht; die normale Startwiederherstellung gilt weiterhin. Stoppen Sie relevante Ausführungen ausdrücklich, wenn Sie sicherstellen müssen, dass sie beendet sind. CodeNomad entlädt niemals native Locations; die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
 
+## Remote-Tabs wiederherstellen {#restore-remote-tabs}
+
+**Wiederholen** stellt auch weiterhin geöffnete wartende Tabs wieder her, wenn die automatische Wiederherstellung beim Start deaktiviert ist. Einzelne Tabs desselben Ordners behalten ihre eigenen Entwürfe.
+
+Eine Benachrichtigung öffnet den vorhandenen wartenden Tab; verwenden Sie **Wiederholen**, um die Verbindung wiederherzustellen.
+
+Wenn Einstellungen noch diesen Server verwendet, öffnen Sie **Einstellungen** von einem anderen Projekt aus, bevor Sie den Server entfernen oder seine Adresse ändern.
+
+Bei aktiviertem Multi-Backend kehren gespeicherte Remote-Projekte mit Tab-Reihenfolge, Entwürfen und Auswahl zurück. Ein nicht verfügbarer Server behält einen wartenden Tab: Verwenden Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Zugangsdaten oder einem neuen **Kopplungslink**. Andere Server bleiben nutzbar. Die Wiederherstellung liest den Zustand; prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie selbst erneut senden.
+
+Schließen Sie die Projekttabs dieses Servers in allen Fenstern, bevor Sie ihn entfernen oder seine Adresse ändern. Ein unerreichbarer Bestand blockiert die Änderung bis zur Prüfung.
+
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 
 1. Wählen Sie **Temporär** im Schnellstarter oder **Neue temporäre Instanz** auf der Startseite.

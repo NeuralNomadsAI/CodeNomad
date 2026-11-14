@@ -145,6 +145,21 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   }
   const select = (page: Page, id: string) => page.evaluate(id => (window as any).remoteOpenFixture.select(id), id)
   const dialog = (page: Page) => page.getByRole("dialog")
+  await t.test("opening a waiting project selects its restore placeholder without creation or implicit retry", async () => {
+    const page = await prepare(), before = mutations.length
+    try {
+      await page.evaluate(() => (window as any).remoteOpenFixture.addWaiting("a"))
+      await select(page, "a")
+      const waiting = await page.evaluate(() => (window as any).remoteOpenFixture.waiting())
+      await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
+      await dialog(page).waitFor({ state: "detached" })
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
+        tabs: [{ id: "instance:w", kind: "instance" }, { id: "waiting:a", kind: "remote-restore" }], active: "waiting:a",
+      })
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.waiting()), waiting)
+      assert.deepEqual(mutations.slice(before), [])
+    } finally { await page.close() }
+  })
   for (const boundary of ["commit-microtask", "post-create", "pre-publication", "ensure", "inventory"] as const) await t.test(`${boundary} settles stale A before any tab transfer`, async () => {
     const page = await prepare(), before = mutations.length
     failInventory = boundary === "inventory"

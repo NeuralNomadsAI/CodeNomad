@@ -8,6 +8,7 @@ import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
 import { carriesCredentials, classifyCodeNomadLink, codeNomadLinkName } from "../codenomad-link"
 import { RemoteServerRequestError } from "../remote-server-request"
+import { backends } from "../backend-client"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { normalizeExplicitOrigin } from "../../../../server/src/opencode/servers/origin"
 
@@ -86,7 +87,8 @@ export function useRelayServerProfiles() {
         throw new RemoteServerProbeError("save")
       }
       // The write may have changed the captured policy. Connect requires the committed exact new policy.
-      if (!enabled() || !viewCurrent() || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
+      if (!enabled() || !viewCurrent() || profile.baseUrl !== baseUrl || profile.skipTlsVerify !== skipTlsVerify
+        || profile.ssh?.host !== ssh?.host || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
       if (link.kind === "pairing") await serverApi.connectRemoteServer(profile.id, { pairingLink: link.entryUrl }, op.signal)
       if (!enabled() || !viewCurrent() || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
       return profile
@@ -97,9 +99,14 @@ export function useRelayServerProfiles() {
     const op = capture({ ...profile })
     try {
       op.assert()
-      await serverApi.forgetRemoteServer(profile.id, op.signal)
-      op.assert()
-      try { await config.removeRemoteServerProfileAsync(profile.id, op.current) }
+      try { await config.removeRemoteServerProfileAsync(profile.id, op.current, async () => {
+        const { backendRegistry } = await import("../../stores/remote-backends")
+        op.assert()
+        const backend = backends.get(profile.id)
+        await serverApi.forgetRemoteServer(profile.id, op.signal)
+        op.assert()
+        if (backends.get(profile.id) === backend) backendRegistry.detach(profile.id)
+      }) }
       catch (error) { op.assert(); throw new RemoteServerProbeError("save") }
     } finally { op.dispose() }
   }
@@ -183,5 +190,10 @@ export function useRemoteServerProfiles() {
     }
   }
 
-  return { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile }
+  return { remoteServers, connectingServerId, saveServer, connectSavedServer,
+    removeRemoteServerProfile: (id: string) => void removeRemoteServerProfile(id).catch(error =>
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("folderSelection.servers.errorTitle"), variant: "warning",
+      })),
+  }
 }

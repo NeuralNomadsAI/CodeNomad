@@ -11,6 +11,7 @@ import { appTabs, activeAppTabId, selectInstanceTab } from "../../../src/stores/
 import { selectRemoteServer } from "../../../src/stores/remote-project-open"
 import { backendRegistry } from "../../../src/stores/remote-backends"
 import { setActiveSettingsSection } from "../../../src/stores/settings-screen"
+import { addRemoteRestoreTab, remoteRestoreTabs, removeRemoteRestoreTab } from "../../../src/stores/remote-restore-tabs"
 import "../../../src/index.css"
 
 await preferencesForBackend("local").ensureLoaded()
@@ -36,6 +37,13 @@ render(() => <ConfigProvider><I18nProvider>
   snapshot: () => ({ tabs: appTabs().map(tab => ({ id: tab.id, kind: tab.kind })), active: activeAppTabId() }),
   records: () => [...instances().keys()],
   details: (id: string) => instances().get(id),
+  waiting: () => remoteRestoreTabs().map(tab => ({ id: tab.id, snapshot: tab.snapshot })),
+  addWaiting: (backendId: string) => addRemoteRestoreTab({
+    id: `waiting:${backendId}`, kind: "remote-restore", retry: async () => { throw new Error("Unexpected restore retry") },
+    remove: () => removeRemoteRestoreTab(`waiting:${backendId}`),
+    snapshot: { kind: "workspace", backendId, folder: "/same", occurrence: 0,
+      drafts: { __no_session_draft__: "preserved draft" }, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} },
+  }),
   state: (id: string) => backendRegistry.state(id),
   home: () => setHome(true),
   select: (id: string) => {

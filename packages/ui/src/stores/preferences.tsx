@@ -1259,12 +1259,24 @@ async function saveRemoteServerProfile(input: RemoteServerProfileInput, current?
     const duplicate = !input.id && remoteServers().find(entry => entry.baseUrl === input.baseUrl && entry.ssh?.host === input.ssh?.host)
     if (duplicate && duplicate.skipTlsVerify !== input.skipTlsVerify) throw new DOMException("Changed server policy", "AbortError")
     const profile = buildRemoteServerProfile({ ...input, id: input.id ?? (duplicate ? duplicate.id : undefined) }, remoteServers())
+    const cancelled = await confirmRemoteServerPolicy(profile)
+    if (cancelled) return cancelled
     await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) }, current)
     return profile
   })
   const profile = buildRemoteServerProfile(input, remoteServers())
+  const cancelled = await confirmRemoteServerPolicy(profile)
+  if (cancelled) return cancelled
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) })
   return profile
+}
+
+async function confirmRemoteServerPolicy(profile: RemoteServerProfile): Promise<RemoteServerProfile | undefined> {
+  const previous = remoteServers().find(value => value.id === profile.id)
+  if (preferences().multiBackend === true && previous && (previous.baseUrl !== profile.baseUrl
+    || previous.skipTlsVerify !== profile.skipTlsVerify || previous.ssh?.host !== profile.ssh?.host)) {
+    if (!await (await import("./remote-server-usage")).confirmRemoteServerChange(profile.id)) return previous
+  }
 }
 
 async function markRemoteServerConnected(id: string): Promise<void> {
@@ -1279,13 +1291,19 @@ async function markRemoteServerConnected(id: string): Promise<void> {
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(updated, remoteServers()) })
 }
 
-function removeRemoteServerProfile(id: string): void {
+async function removeRemoteServerProfile(id: string): Promise<void> {
+  if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
   const next = remoteServers().filter((entry) => entry.id !== id)
-  void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
+  await patchStateOwner("ui", { remoteServers: next })
 }
 
-function removeRemoteServerProfileAsync(id: string, current: () => boolean): Promise<void> {
-  return queueRemoteServerEdit(current, () => patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, current))
+function removeRemoteServerProfileAsync(id: string, current: () => boolean, beforeRemove?: () => Promise<void>): Promise<void> {
+  return queueRemoteServerEdit(current, async () => {
+    if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
+    if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
+    await beforeRemove?.()
+    await patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, current)
+  })
 }
 
 function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {

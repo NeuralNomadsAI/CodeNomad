@@ -38,6 +38,18 @@ Si otra ventana muestra la misma conexión de proyecto, su pestaña también se 
 
 Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
 
+## Restaurar pestañas remotas {#restore-remote-tabs}
+
+**Reintentar** también recupera las pestañas en espera que siguen abiertas cuando la restauración automática al iniciar está desactivada. Cada pestaña de una misma carpeta conserva sus propios borradores.
+
+Una notificación abre la pestaña en espera existente; usa **Reintentar** para volver a conectar.
+
+Si Configuración sigue usando este servidor, vuelve a abrir **Configuración** desde otro proyecto antes de eliminar el servidor o cambiar su dirección.
+
+Con multi-backend activado, los proyectos remotos guardados recuperan el orden de pestañas, los borradores y la selección. Un servidor no disponible conserva una pestaña en espera: usa **Reintentar** cuando vuelva, o **Conectar** con sus credenciales o un nuevo **Enlace de emparejamiento**. Los demás servidores siguen disponibles. La recuperación lee el estado; comprueba el resultado de una acción de conversación no confirmada antes de enviarla otra vez.
+
+Cierra las pestañas de proyecto de este servidor en todas las ventanas antes de eliminarlo o cambiar su dirección. Un inventario inaccesible bloquea el cambio hasta que pueda comprobarse.
+
 ## Espacios de trabajo temporales {#temporary-workspaces}
 
 1. Elige **Temporal** en el lanzador o **Nueva instancia temporal** en la página de inicio.

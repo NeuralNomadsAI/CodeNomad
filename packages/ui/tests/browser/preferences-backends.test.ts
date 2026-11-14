@@ -59,7 +59,7 @@ async function host(page: Page, kind: "electron" | "tauri", initial: NativePrefe
 
 async function api(page: Page, selected: () => string) {
   const requests: { owner: string; path: string; method: string; body: any }[] = [], errors: string[] = []
-  let restored = false, unavailable = false, identity = "server-a"
+  let restored = false, unavailable = false, missing = false, identity = "server-a"
   page.on("pageerror", error => errors.push(error.message))
   await page.route(/\/(?:api|workspaces)\//, async route => {
     const request = route.request(), raw = new URL(request.url()).pathname
@@ -78,7 +78,7 @@ async function api(page: Page, selected: () => string) {
     const value = path === "/api/storage/config/ui" ? { settings: { locale: "en", multiBackend: true } }
       : path === "/api/storage/state/ui" ? { remoteServers: ["a", "b"].map(id => ({ id, name: id, baseUrl: `http://${id}.test`, skipTlsVerify: false, createdAt: "", updatedAt: "" })) }
       : path === "/api/meta" ? { serverId: owner === "a" ? identity : `server-${owner}`, apiContract: 1 }
-      : path === "/api/workspaces" ? [{ id, path: "/homonym", status: "ready", proxyPath: `/workspaces/${id}/instance` }]
+      : path === "/api/workspaces" ? missing ? [] : [{ id, path: "/homonym", status: "ready", proxyPath: `/workspaces/${id}/instance` }]
       : path === "/api/memory/settings" ? { enabled: true }
       : path === "/api/memory" ? body.operation.action === "list" ? {
         entries: [{ id: "entry", title: `Memory ${owner}`, text: "Verified", type: "fact", sessionId: "s", revision: "a".repeat(64),
@@ -91,10 +91,59 @@ async function api(page: Page, selected: () => string) {
         scopes: [{ scope: "global", path: "/global.jsonc", selection: null }, { scope: "project", path: "/homonym/opencode.jsonc", selection: null }] } : {}
     return route.fulfill({ json: value, headers: owner !== "local" && path === "/api/meta" ? { "X-CodeNomad-Backend-Authority": owner.repeat(43) } : {} })
   })
-  return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true }, replace: () => { identity = "replacement" } }
+  return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true },
+    missing: () => { missing = true }, replace: () => { identity = "replacement" } }
 }
 
 for (const kind of ["electron", "tauri"] as const) {
+  for (const state of ["offline", "missing"] as const) test(`${kind}: restored remote Preferences stay unavailable while restoration waits (${state})`, async () => {
+    const page = await browser.newPage(), f = await api(page, () => "a")
+    if (state === "offline") f.unavailable()
+    else f.missing()
+    await host(page, kind, project("a", "providers"))
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => (window as any).ready)
+      await page.getByRole("status").filter({ hasText: "Open a project to connect" }).waitFor()
+      assert.equal(await page.getByLabel("Image generation", { exact: true }).count(), 0)
+      assert.equal(await page.getByLabel("For the current project", { exact: true }).count(), 0)
+      assert.equal(await page.evaluate(() => (window as any).request.instanceId), "a~same")
+      assert.equal(f.requests.some(value => /\/(?:session|worktrees)(?:\/|$)/.test(value.path)), false)
+      assert.equal(f.requests.some(value => value.path === "/api/workspaces" && value.method !== "GET"), false)
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`${kind}: a remote Preferences context reserves its server even with an empty inventory`, async () => {
+    const page = await browser.newPage(), f = await api(page, () => "a")
+    f.missing()
+    await host(page, kind, project("a", "providers"))
+    const check = () => page.evaluate(async () => {
+      const path = "/src/stores/remote-server-usage.ts"
+      const { confirmRemoteServerChange } = await import(path)
+      ;(window as any).usageResult = "pending"
+      void confirmRemoteServerChange("a").then(value => { (window as any).usageResult = value ? "accepted" : "cancelled" },
+        () => { (window as any).usageResult = "refused" })
+    })
+    try {
+      const inventory = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/a/api/workspaces")
+      await page.goto(url)
+      await inventory
+      await page.getByRole("status").filter({ hasText: "Open a project to connect" }).waitFor()
+      const before = f.requests.length
+      await check()
+      await page.waitForFunction(() => (window as any).usageResult !== "pending" || !!document.querySelector(".alert-dialog"))
+      assert.equal(await page.evaluate(() => (window as any).usageResult), "refused")
+      assert.equal(f.requests.length, before, "the native context refuses before registry or inventory work")
+      await page.evaluate(() => (window as any).open({ section: "servers" }))
+      await page.locator('[data-remote-server="a"]').waitFor()
+      await check()
+      await page.getByRole("button", { name: "Cancel", exact: true }).click()
+      await page.waitForFunction(() => (window as any).usageResult === "cancelled")
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  })
+
   test(`${kind}: detached Preferences clears Images and Web search, including retained hook snapshots`, async () => {
     const page = await browser.newPage(), f = await api(page, () => "a")
     await host(page, kind, project("a", "providers"))

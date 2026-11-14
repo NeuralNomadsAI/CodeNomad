@@ -118,3 +118,13 @@ test("server selection requires the current Preferences section, saved policy an
   assert.throws(() => other.handlers.get("preferences:selectServer")!(other.event(other.preferencesContents), intent), /Invalid server selection/)
   assert.deepEqual(h.calls, ["server:a:https://a.test"])
 })
+
+test("server selection preserves the qualified Preferences request on its separate channel", async () => {
+  const request: PreferencesRequest = { section: "servers", instanceId: "b~w", serverId: "server-b",
+    workspacePath: "/same", location: { directory: "/worktree" } }
+  const h = harness(request)
+  const event = h.event(h.preferencesContents)
+  await h.handlers.get("preferences:selectServer")!(event, { id: "a", baseUrl: "https://a.test", skipTlsVerify: false })
+  assert.deepEqual(h.handlers.get("preferences:getSection")!(event), request)
+  assert.deepEqual(h.calls, ["server:a:https://a.test"])
+})

@@ -62,7 +62,7 @@ function workspace(folder: string): RestorableWorkspaceTabState {
 function captureTabs(): RestorableSessionState {
   const tabs = appTabs().map((tab) => tab.kind === "instance"
     ? workspace(tab.instance.folder)
-    : { kind: "sidecar" as const, sidecarId: tab.sidecarTab.sidecarId })
+    : tab.kind === "remote-restore" ? tab.snapshot : { kind: "sidecar" as const, sidecarId: tab.sidecarTab.sidecarId })
   return { tabs, activeTabIndex: appTabs().findIndex((tab) => tab.id === activeAppTabId()) }
 }
 
