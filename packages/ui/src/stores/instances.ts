@@ -117,7 +117,6 @@ import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
 import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "../lib/trailing-resync"
 import { retryWithBackoff } from "../lib/retry-utils"
-import { cancelRestoreCreation } from "./restore-creation-cancellation"
 import {
   RestoreWorkspaceCommitGates, type RestoreWorkspaceCommitGate, type RestoreWorkspaceTerminal,
 } from "./restore-workspace-commit-gates"
@@ -1809,7 +1808,7 @@ async function releaseCapturedWorkspaceCreation(instanceId: string, requestId: s
 }
 
 async function cancelRestoreCreationRequest(receipt: WorkspaceOperationReceipt): Promise<void> {
-  await cancelRestoreCreation(receipt.requestId!, receipt.api)
+  await restoreCreatedWorkspaceCleanup.cancelRequest(receipt.requestKey, () => receipt.api.cancelWorkspaceCreation(receipt.requestId!))
 }
 
 function claimRestoreCreatedInstanceForUser(instanceId: string, creation?: WorkspaceCreationOwnership): void {

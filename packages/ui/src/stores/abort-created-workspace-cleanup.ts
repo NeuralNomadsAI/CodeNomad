@@ -46,6 +46,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   private observationSequence = 0
   private readonly markers = new Map<string, { requestKey: string; tombstone: boolean }>()
   private readonly pendingRequestIds = new Map<string, boolean>()
+  private readonly cancellationFlights = new Map<string, Promise<void>>()
 
   constructor(private readonly options: AbortCreatedWorkspaceCleanupOptions<T>) {}
 
@@ -127,6 +128,26 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
 
   isRequestSettled(requestKey: string): boolean {
     return this.settledRequests.has(requestKey)
+  }
+
+  /** Direct cancellation and observed cleanup share the captured request's retry budget. */
+  cancelRequest(requestKey: string, cancel: () => Promise<void>): Promise<void> {
+    if (this.isRequestSettled(requestKey)) return Promise.resolve()
+    const pending = this.cancellationFlights.get(requestKey)
+    if (pending) return pending
+    this.beginCancellation(requestKey)
+    let resolve!: () => void, reject!: (error: unknown) => void
+    const flight = new Promise<void>((yes, no) => { resolve = yes; reject = no })
+    this.cancellationFlights.set(requestKey, flight)
+    void this.retryCancellation(() => this.isRequestSettled(requestKey) ? Promise.resolve() : cancel()).then(() => {
+      this.settleRequest(requestKey)
+      this.cancellationFlights.delete(requestKey)
+      resolve()
+    }, error => {
+      this.cancellationFlights.delete(requestKey)
+      reject(error)
+    })
+    return flight
   }
 
   shouldIgnoreObservation(workspaceId: string, requestKey: string, reused = false): boolean {
@@ -323,16 +344,12 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   private async run(entry: PendingCleanup<T>): Promise<void> {
     let lastError: unknown
     let deleted = false
-    const retryDelays = this.options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
-    let retryIndex = 0
 
     try {
-      await retryWithBackoff(() => this.options.discardWorkspace(entry.workspace), {
-        maxAttempts: retryDelays.length + 1,
-        wait: () => (this.options.wait ?? ((delay) => new Promise((resolve) => setTimeout(resolve, delay))))(
-          retryDelays[retryIndex++] ?? 0,
-        ),
-      })
+      const cancel = () => this.options.discardWorkspace(entry.workspace)
+      const requestKey = this.options.requestKey?.(entry.workspace)
+      if (requestKey) await this.cancelRequest(requestKey, cancel)
+      else await this.retryCancellation(cancel)
       deleted = true
     } catch (error) {
       lastError = error
@@ -356,5 +373,16 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     } catch {
       // Cleanup has already reached its safe terminal state.
     }
+  }
+
+  private retryCancellation(cancel: () => Promise<void>): Promise<void> {
+    const retryDelays = this.options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
+    let retryIndex = 0
+    return retryWithBackoff(cancel, {
+      maxAttempts: retryDelays.length + 1,
+      wait: () => (this.options.wait ?? ((delay) => new Promise((resolve) => setTimeout(resolve, delay))))(
+        retryDelays[retryIndex++] ?? 0,
+      ),
+    })
   }
 }
