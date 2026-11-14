@@ -53,17 +53,6 @@
   color: var(--text-primary);
 }
 
-.plugin-control-name:focus-visible {
-  outline: 1px solid var(--focus-ring-color);
-  outline-offset: 2px;
-}
-
-.plugin-control-tooltip {
-  max-width: min(20rem, calc(100vw - 24px));
-  white-space: pre-line;
-  overflow-wrap: anywhere;
-}
-
 .plugin-control-scope-label {
   @apply text-center text-[10px] font-medium uppercase tracking-wide;
   color: var(--text-muted);
