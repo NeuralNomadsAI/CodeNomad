@@ -166,6 +166,7 @@ function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): 
     expandedSessionIds: (source.expandedSessionIds ?? []).filter((id) => unavailable.has(id)),
   }
   if (source.occurrence !== undefined) tab.occurrence = source.occurrence
+  if (source.viewState) tab.viewState = source.viewState
   if (source.seenInterruptions) tab.seenInterruptions = keep(source.seenInterruptions)
   if (source.outlineIndexes) tab.outlineIndexes = keep(source.outlineIndexes)
   if (source.sessionCatalog) tab.sessionCatalog = source.sessionCatalog.filter(row => unavailable.has(row.id))
@@ -187,6 +188,7 @@ function mergeWorkspaceState(
   }
   const result: RestorableWorkspaceTabState = {
     ...current,
+    ...(current.viewState ?? preserved.viewState ? { viewState: current.viewState ?? preserved.viewState } : {}),
     drafts: mergeRecords(current.drafts, preserved.drafts, authority.drafts),
     attachments: mergeRecords(current.attachments, preserved.attachments, authority.attachments),
     scrollSnapshots: mergeRecords(current.scrollSnapshots, preserved.scrollSnapshots, authority.scrollSnapshots),

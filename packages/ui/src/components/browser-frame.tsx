@@ -51,7 +51,7 @@ interface BrowserFrameLabels {
   viewportMobileLandscape?: string
 }
 
-type BrowserViewportPreset = "responsive" | "desktop" | "tablet" | "tabletLandscape" | "mobile" | "mobileLandscape"
+export type BrowserViewportPreset = "responsive" | "desktop" | "tablet" | "tabletLandscape" | "mobile" | "mobileLandscape"
 
 const VIEWPORT_PRESETS: Record<BrowserViewportPreset, { width: number | null; height: number | null }> = {
   responsive: { width: null, height: null },
@@ -93,8 +93,11 @@ interface BrowserFrameProps {
   onNavigationError?: (error: unknown) => void
   onFrameLocation?: (path: string) => string | void
   initialHistory?: BrowserHistory
+  initialViewport?: BrowserViewportPreset
+  onViewportChange?: (viewport: BrowserViewportPreset) => void
   onHistoryChange?: (history: BrowserHistory) => void
   onCancelNavigation?: () => void
+  onNavigationStart?: () => void
   commentBridge?: boolean
   commentMode?: boolean
   onToggleCommentMode?: () => void
@@ -138,7 +141,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [registrationReady, setRegistrationReady] = createSignal(false)
   const [frameSrc, setFrameSrc] = createSignal(props.initialUrl)
   const [pathInput, setPathInput] = createSignal(props.initialAddress ?? "/")
-  const [viewportPreset, setViewportPreset] = createSignal<BrowserViewportPreset>("responsive")
+  const [viewportPreset, setViewportPreset] = createSignal<BrowserViewportPreset>(props.initialViewport ?? "responsive")
+  const commitViewport = (preset: BrowserViewportPreset) => { setViewportPreset(preset); props.onViewportChange?.(preset) }
   const [viewportMenuOpen, setViewportMenuOpen] = createSignal(false)
   const [navigating, setNavigating] = createSignal(false)
   const [highlight, setHighlight] = createSignal<{ x: number; y: number; width: number; height: number } | null>(null)
@@ -245,13 +249,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     setViewportMenuOpen(false)
     const previous = appliedEmulation?.registrationId === browserRegistrationId ? appliedEmulation.preset : undefined
     const next = emulationProfile(preset)
-    if ((previous === next && !webkitEmulation) || !nativeMode() || !capabilities.emulation) { setViewportPreset(preset); return }
+    if ((previous === next && !webkitEmulation) || !nativeMode() || !capabilities.emulation) { commitViewport(preset); return }
     setEmulationBusy(true)
     const generation = ++emulationGeneration
     const registrationId = browserRegistrationId
     try {
       await applyEmulation(registrationId, next, preset)
-      if (!disposed && registrationId === browserRegistrationId) setViewportPreset(preset)
+      if (!disposed && registrationId === browserRegistrationId) commitViewport(preset)
     } catch (error) { if (registrationId === browserRegistrationId) reportNativeError(error) }
     finally { if (!disposed && generation === emulationGeneration) setEmulationBusy(false) }
   }
@@ -766,6 +770,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     event.preventDefault()
     event.stopPropagation()
     if (journal) { void traverseHistory(-1); return }
+    props.onNavigationStart?.()
     if (nativeMode()) {
       if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "back").catch(reportNativeError)
       else if (webviewReady && webviewRef?.canGoBack()) webviewRef.goBack()
@@ -782,6 +787,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (!journal || historyBusy()) return
     const index = journal.value.index + offset
     if (index < 0 || index >= journal.value.urls.length) return
+    props.onNavigationStart?.()
     setHistoryBusy(true)
     const version = ++historyTravelVersion
     ++historyRead // Fence reads started before this explicit traversal.
@@ -811,6 +817,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   }
 
   const handleRefresh = () => {
+    props.onNavigationStart?.()
     supersedeHistoryTraversal()
     if (nativeMode()) {
       if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "reload").catch(reportNativeError)
@@ -834,6 +841,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (nativeBrowserAvailable) {
         try {
           const target = normalizeBrowserPreviewUrl(pathInput())
+          props.onNavigationStart?.()
           supersedeHistoryTraversal()
           setPathInput(target)
           if (nativeMode() && webviewReady && webviewRef?.getURL() === target) {
@@ -851,6 +859,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         return
       }
       const restoreNative = nativeMode()
+      props.onNavigationStart?.()
       supersedeHistoryTraversal()
       setNativeMode(false)
       setNavigating(true)

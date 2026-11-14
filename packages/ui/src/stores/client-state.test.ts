@@ -37,6 +37,53 @@ const boot = async (api?: NativeApi, storage?: MemoryStorage) => {
 const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
   ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false)
 describe("client state ownership and persistence", () => {
+  it("publishes migrated descriptor views before retiring legacy preview entries; failed publication retains the source", async () => {
+    const key = "opencode-session-previews-v1"
+    const source = JSON.stringify({ '[\"/same\",\"session\"]': { targetUrl: "https://example.com/", mode: "preview" } })
+    const storage = new MemoryStorage(), saved: any[] = []
+    storage.setItem(key, source)
+    const workspace = { kind: "workspace", folder: "/same", activeSessionId: "session",
+      drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} }
+    let fail = true
+    const state = await boot({
+      loadClientState: async () => loadResult({ ...snapshot("unused", { [key]: source }),
+        session: { tabs: [workspace, { ...workspace, occurrence: 1 }], activeTabIndex: 0 } }),
+      saveClientState: async (_token, value) => {
+        saved.push(value)
+        assert.ok(value.session.tabs.every((tab: any) => tab.viewState.previews.session.targetUrl === "https://example.com/"))
+        if (fail) throw new Error("publication failed")
+        return true
+      },
+    }, storage)
+    await assert.rejects(state.flushClientState(), /publication failed/)
+    assert.equal(storage.getItem(key), source)
+    fail = false
+    await state.flushClientState()
+    assert.equal(saved.find(value => value.layout[key] === source)?.session.tabs.length, 2)
+    assert.equal(saved.at(-1).layout[key], "{}")
+    assert.equal(storage.getItem(key), "{}")
+  })
+  it("preserves a concurrent legacy preview write during migration publication", async () => {
+    const key = "opencode-session-previews-v1", storage = new MemoryStorage()
+    const source = JSON.stringify({ '[\"/same\",\"session\"]': { targetUrl: "https://example.com/a", mode: "preview" } })
+    const concurrent = JSON.stringify({ '[\"/same\",\"session\"]': { targetUrl: "https://example.com/b", mode: "chat" } })
+    const workspace = { kind: "workspace", folder: "/same", activeSessionId: "session",
+      drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} }
+    storage.setItem(key, source)
+    const saved: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult({ ...snapshot("unused", { [key]: source }),
+        session: { tabs: [workspace], activeTabIndex: 0 } }),
+      saveClientState: async (_token, value) => {
+        saved.push(value)
+        storage.setItem(key, concurrent)
+        return true
+      },
+    }, storage)
+    await state.flushClientState()
+    assert.equal(storage.getItem(key), concurrent)
+    assert.equal(saved.at(-1).layout[key], concurrent)
+  })
   it("removes layout entries from native and legacy storage, freeing the bounded budget", async () => {
     const entries = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`entry-${i}`, "saved"]))
     const saved: any[] = [], storage = new MemoryStorage()

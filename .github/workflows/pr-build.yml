@@ -508,6 +508,7 @@ jobs:
           packages/ui/src/stores/session-pending-state.test.ts
           packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
+          packages/ui/src/stores/tab-view-state.test.ts
           packages/ui/src/lib/browser-history.test.ts
           packages/ui/src/lib/keyboard-offset.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts
@@ -557,6 +558,7 @@ jobs:
           packages/ui/src/stores/missions.test.ts
           packages/ui/src/stores/session-generation-recovery-integration.test.ts
           packages/ui/src/stores/session-list-restoration.test.ts
+          packages/ui/src/stores/session-surface.test.ts
 
       - name: Test restore ownership integration
         run: >-
@@ -584,6 +586,7 @@ jobs:
           packages/ui/src/stores/instance-startup-priority.test.ts
           packages/ui/src/stores/session-list-startup.test.ts
           packages/ui/src/stores/app-tabs.test.ts
+          packages/ui/src/stores/app-session-workspace-hydration.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/preferences-favorites-mode.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts

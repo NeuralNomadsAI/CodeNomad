@@ -19,6 +19,19 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { useGitChanges } from "../../../src/components/instance/shell/right-panel/useGitChanges"
+import { getTabViewState, updateTabViewState } from "../../../src/stores/tab-view-state"
+import { openSessionPreview, getSessionPreview, restoreSessionPreview } from "../../../src/stores/session-previews"
+import { updateMissionProjectView } from "../../../src/stores/mission-view-state"
+import { moveAppTab } from "../../../src/stores/app-tabs"
+
+;(window as any).tabViews = {
+  ids: () => appTabs().filter(tab => tab.kind === "instance").map(tab => tab.instance.id),
+  view: getTabViewState, preview: getSessionPreview, open: openSessionPreview, restore: restoreSessionPreview,
+  files: (id: string) => updateTabViewState(id, { rightPanelTab: "files", filesMode: "history" }),
+  mission: (id: string) => updateMissionProjectView(id, { selected: "mission-b", reader: { kind: "playbook", missionId: "debug" } }),
+  reorder: (a: string, b: string) => moveAppTab(`instance:${a}`, `instance:${b}`, "before"),
+  close: closeInstanceTab,
+}
 
 function GitPanel(props: { instanceId: string }) {
   const git = useGitChanges({ instanceId: props.instanceId, t: key => key,

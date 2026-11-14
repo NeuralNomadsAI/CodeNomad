@@ -34,6 +34,8 @@ Kaydedilmemiş kaynak taslakları okuyucu kapatıldığında veya değiştirildi
 
 Okuyucunun sonundaki kapatma düğmesi konuşmaya döner; ileti düzenleyicisi okuyucunun altında kullanılabilir kalır. Paneli **Sağ panel** ile gizlemek ya da panel için fazla dar bir pencere, okuyucuyu açılan genişlikle açık bırakır; paneli yeniden göstermek onu olduğu gibi korur. Oturumu/çalışma ağacını değiştirmek seçili okuyucuyu temizler, taslağı kaydetme garantisi vermez. Tarayıcı önizlemesi okuyucunun yerini alır; dosya açmak bu görünümü sohbet moduna döndürür.
 
+Okuyucunun değiştirilmesi ve kapatılması yalnızca geçerli proje sekmesini etkiler. Aynı projeye ait sekmeler farklı dosyaları okuyabilir veya bir dosyayı sohbet, web ya da Görev içeriğinin yanında tutabilir. Hedef ve model bellekte tutulduğu sürece kaynak/işlenmiş görünüm tercihi, düzenleyici seçimi ve kaydırma konumu sekme geçişlerinde korunur; yeniden yüklemeden önce önemli taslakları kaydedin. Dosyalar modu sekme başına geri yüklenir; diff ve satır kaydırma tercihleri ortak kalır.
+
 ## Salt okunur ve sınırlı önizlemeler {#preview-limits}
 
 1. Göz eylemiyle bir görüntüyü, ikili dosyayı veya geçmiş değişikliği açın.

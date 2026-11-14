@@ -6,7 +6,9 @@ The right panel has one Files entry with three compact modes:
 - **Changes**: indexed and working-tree changes, including new/deleted files.
 - **Commits**: paginated history, commit message and changed-file list.
 
-The last selected mode and diff/wrap preferences use client layout storage. A
+The selected mode uses the tab occurrence's restorable view envelope; the last
+layout value supplies the default for a new occurrence. Diff/wrap preferences
+use shared client layout storage. A
 one-time migration merges the old Git and Files tab positions and visibility,
 keeping access when either was visible. Each mode keeps its mounted navigation
 while switching. Tree snapshots are scoped to the physical worktree directory;
@@ -82,16 +84,29 @@ message diagrams. Show source opens the existing editable Monaco source; Show
 diagram renders the current draft, with explicit Save and existing conflict and
 refresh fences. Tiny's unsupported formats retain an error and source fallback.
 The composer stays mounted below it. Selections are bound to the originating
-project/session and cleared on session/worktree changes. The instance shell owns
+tab occurrence/session and cleared on session/worktree changes. Duplicate tabs
+can read different files while sharing the actual filesystem and Git mutations.
+The instance shell owns
 that lifetime (`instance/shell/file-preview-lifetime.ts`): it closes the reader
 on a session or session-worktree change, the removal of the target's worktree
 and shell disposal. The right panel only opens readers and never closes one by
 unmounting, so hiding, docking or floating it (toggle, lost room, Escape) keeps
 the mounted reader, its draft and position. A remounted Changes view revalidates
 its status and rereads the open local diff into the same editor and model. Opening the browser
-preview replaces the file reader; opening a file returns the browser to chat mode.
+preview replaces that occurrence's file reader; opening a file returns only that
+occurrence's browser to chat mode and closes its Mission reader.
 Cancelling or hiding a view fences pending reads. Workspace/local-diff readers
 refresh on filesystem invalidation, while commit contents remain immutable.
+Explicit Git refresh, stage, unstage and commit capture the shared occurrence
+surface intent before awaiting and recheck it with the file target before
+reconciling the central reader. Passive filesystem refreshes defer central-reader
+reconciliation while a foreground action is pending; their status lists still update.
+
+Switching project tabs unmounts heavy readers and transcripts. The live workspace
+file target retains its source/rendered choice and rendered Markdown position in
+a weak snapshot; Monaco selection, folds and scroll follow the existing bounded
+five-model cache, keyed by occurrence/directory/path. Releasing a target or evicting
+a model releases its corresponding snapshot.
 
 ### Hide whitespace-only changes
 
@@ -135,7 +150,7 @@ process. Ownership checks and cancellation fencing apply to all of them.
 `lib/monaco/theme.ts` resolves the selected palette's CSS tokens into Monaco hex
 colors, including source tokens, editor surfaces and added/removed-line tints.
 Its observer follows live appearance/custom-palette changes and is disposed with
-the viewer. Read-only previews disable cross-model occurrence highlighting to
+the viewer. Workspace and diff previews disable occurrence highlighting to
 avoid Monaco 0.52's leaked cancellation on fast model changes; text selection and
 insertion into the composer remain available.
 

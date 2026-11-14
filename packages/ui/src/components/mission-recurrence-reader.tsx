@@ -3,6 +3,7 @@ import type { RecurrenceSchedule } from "../stores/mission-recurrence"
 import { useI18n } from "../lib/i18n"
 import { MissionRecurrencePassageReader } from "./mission-recurrence-passage-reader"
 import { missionScheduleText } from "./mission-schedule-text"
+import { createMissionDisclosure } from "./mission-disclosure"
 
 /** Central schedule reader in the one-time overview's plain grammar: the rule,
  * the selected run's result, every run, and identifiers folded at the bottom. */
@@ -11,6 +12,7 @@ export function MissionRecurrenceReader(props: {
   passageID?: string; onSelect: (passageID: string) => void
 }) {
   const { t, locale } = useI18n()
+  const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => props.schedule.id, () => "recurrence:technical")
   const text = missionScheduleText(t, locale)
   const selectedID = () => props.passageID ?? props.schedule.latestResult?.passageID
   const selected = () => props.schedule.history.find(receipt => receipt.passageID === selectedID())
@@ -33,7 +35,7 @@ export function MissionRecurrenceReader(props: {
           onClick={() => props.onSelect(receipt.passageID)}><bdi>{text.run(props.schedule, receipt)}</bdi></button>
       </li>}</For></ol>
     </Show>
-    <details class="mission-report-technical"><summary>{t("missionsPanel.technical")}</summary>
+    <details class="mission-report-technical" open={technicalOpen()} onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missionsPanel.technical")}</summary>
       <dl class="mission-technical">
         <dt>{t("missionsPanel.technical.schedule")}</dt><dd><bdi>{props.schedule.id}</bdi></dd>
         <Show when={selected()}>{receipt => <>

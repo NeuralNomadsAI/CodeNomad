@@ -13,6 +13,7 @@ import { preferences } from "../../../../stores/preferences"
 import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { closeFilePreview, getFilePreview, openFilePreview } from "../../../../stores/files-preview"
+import { captureSessionSurfaceIntent, hasPendingSessionSurfaceIntent } from "../../../../stores/session-surface"
 
 type UseGitChangesOptions = {
   isActive: Accessor<boolean>
@@ -187,20 +188,22 @@ export function useGitChanges(options: UseGitChangesOptions) {
     return `${item.path}::${item.originalPath ?? ""}::${item.section}::${item.status}::${item.additions}::${item.deletions}`
   }
 
-  const captureGitSelection = () => {
+  const captureGitSelection = (passive = false) => {
     const selection = describeGitSelection(gitSelectedItemId())
     const target = options.externalDiff ? getFilePreview(options.instanceId) : null
     const preview = target && target.kind !== "workspace" && !target.commit &&
       target.slug === options.worktreeSlug() &&
       target.directory === gitLocation(target.slug).directory ? target : null
-    return { selection, preview, version: gitDiffRequestVersion }
+    const surfaceIntent = preview && !passive ? captureSessionSurfaceIntent({ instanceId: options.instanceId, sessionId: preview.sessionId }) : undefined
+    return { selection, preview, version: gitDiffRequestVersion, surfaceIntent }
   }
 
   const reconcileGitSelection = async (previous: ReturnType<typeof captureGitSelection>) => {
     // The eye and sidebar selection are independent. Reader navigation is fenced
-    // by target identity; sidebar clicks are fenced by their selection version.
+    // by target identity and shared surface intent; sidebar clicks keep their selection version.
     const preview = previous.preview
-    if (preview && getFilePreview(options.instanceId) === preview) {
+    const current = previous.surfaceIntent?.current() ?? !hasPendingSessionSurfaceIntent(options.instanceId)
+    if (preview && current && getFilePreview(options.instanceId) === preview) {
       const candidates = gitListItems().filter(item => item.path === preview.path)
       const item = candidates.find(item => item.section === (preview.scope ?? "unstaged")) ?? candidates[0]
       if (item) {
@@ -350,7 +353,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (gitCommitSubmitting()) return
 
     const refresh = passiveGitRefresh = {}
-    const previous = captureGitSelection()
+    const previous = captureGitSelection(true)
     const previousSelection = previous.selection
     const previousFingerprint = describeGitSelectionFingerprint(previousSelection.itemId)
     const hadSelectedDiff =
@@ -415,7 +418,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         message: error instanceof Error ? error.message : `Failed to ${action} file`,
         variant: "error",
       })
-    }
+    } finally { previous.surfaceIntent?.release() }
   }
 
   const handleGitRowClick = (item: GitChangeListItem, event: MouseEvent) => {
@@ -467,6 +470,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         variant: "error",
       })
     } finally {
+      previous.surfaceIntent?.release()
       if (!disposed && commitOperation === operation) { commitOperation = null; setGitCommitSubmitting(false) }
     }
   }
@@ -474,8 +478,10 @@ export function useGitChanges(options: UseGitChangesOptions) {
   const refreshGitStatus = async () => {
     const context = captureGitContext()
     const previous = captureGitSelection()
-    if (!await loadGitStatus(true) || !context.current()) return
-    await reconcileGitSelection(previous)
+    try {
+      if (!await loadGitStatus(true) || !context.current()) return
+      await reconcileGitSelection(previous)
+    } finally { previous.surfaceIntent?.release() }
   }
 
   const insertGitChangeContext = (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => {

@@ -96,6 +96,8 @@ The chevron expands or collapses a Mission's tasks. Clicking a row selects the M
 
 The eye toggles **Summary** in the central reader and follows your selection while pressed. Use **Open conversation** to go to the coordinator or selected task. **More actions** (⋯) contains the applicable update, interruption, save-configuration and edit commands.
 
+Selection, expanded sections and the reader belong to each project tab and restore with it. Duplicate tabs can read different reports or keep a report in one and the conversation, a file or a web preview in another. Opening or closing a reader changes only that tab; Mission work and completion acknowledgements remain shared within the window.
+
 More directory entries and tasks load as you approach the end. Loaded task pages stay cached independently of the rendered rows. A failed read keeps its last display and offers **Try again**. Background reading uses the header's refresh indicator. Reading or retrying a read never starts work.
 
 ### Colours and states {#status-colours}

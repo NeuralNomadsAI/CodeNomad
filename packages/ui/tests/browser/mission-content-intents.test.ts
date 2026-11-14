@@ -63,7 +63,7 @@ async function panel(options: { list: () => MissionMap; content: () => MissionMa
   await page.evaluate(async () => {
     const instances = "/src/stores/instances.ts", view = "/src/stores/mission-view-state.ts"
     ;(await import(instances)).setActiveInstanceId("fixture")
-    ;(await import(view)).updateMissionProjectView("/fixture", { selected: "msn_intent" })
+    ;(await import(view)).updateMissionProjectView("fixture", { selected: "msn_intent" })
   })
   await missionToolbar(page).getByRole("button", { name: "More actions", exact: true }).waitFor()
   return { page, errors, writes, preferenceWrites, reads }

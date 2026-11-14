@@ -15,6 +15,8 @@ Most choices apply immediately, including Mission preferences, which save each c
 | Global/Project OpenCode settings | Native plugin/configuration changes at their displayed scope. Project controls require an active project/Location. |
 | Desktop data profile | Native windows, restore state and browser storage, independently of the configuration file and shared OpenCode service. See [Desktop windows and data](desktop.md). |
 
+The selected right-panel tab and Files mode are saved separately for each project tab. Your latest explicit choices supply defaults for new tabs; panel sizes, tab order, customization and appearance remain shared layout/preferences.
+
 **Stats** covers the entire connected OpenCode service (all projects, independent clones and subsessions), not only the opened folder, for the last 7, 30, 90 or 365 days. It needs an open project and shows OpenCode's recorded tokens and cost, not provider invoices or subscription allowances; previous saved totals can appear while it refreshes. Plan quotas belong to the **Usage** Status section.
 
 Changing display preferences does not restart OpenCode or replay a prompt. Native configuration, service maintenance and credentials have separate effects: see [OpenCode setup](opencode.md), [Providers](providers.md) and [Integrations](integrations.md).

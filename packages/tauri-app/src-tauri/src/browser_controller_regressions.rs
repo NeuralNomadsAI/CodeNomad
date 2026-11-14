@@ -161,6 +161,56 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn duplicate_occurrences_require_exactly_one_visible_session_target() {
+    let (app, _, _) = app_with_preview();
+    app.get_window(OWNER).unwrap().show().unwrap();
+    let (controller, first) = controller_with_registration();
+    let mut second = first.clone();
+    second.registration_id = "duplicate".into();
+    second.webview_label = "browser-duplicate".into();
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .insert(second.registration_id.clone(), second.clone());
+    assert!(controller
+        .resolve(app.handle(), "session")
+        .err()
+        .unwrap()
+        .contains("Multiple visible"));
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("duplicate")
+        .unwrap()
+        .visible = false;
+    assert_eq!(
+        controller
+            .resolve(app.handle(), "session")
+            .unwrap()
+            .registration_id,
+        first.registration_id
+    );
+    {
+        let mut inner = controller.inner.0.lock().unwrap();
+        inner.registrations.remove(&first.registration_id);
+        inner.registrations.get_mut("duplicate").unwrap().visible = true;
+    }
+    assert_eq!(
+        controller
+            .resolve(app.handle(), "session")
+            .unwrap()
+            .registration_id,
+        second.registration_id
+    );
+}
+
+#[test]
 fn windows_and_webkit_navigation_recover_from_blank_without_relaxing_reads() {
     // Both dispatchers must admit recovery by identity, not the current document's URL.
     for source in [

@@ -66,7 +66,17 @@ describe("native browser adapter", () => {
   it("uses a sole owner and rejects unresolved duplicate owners", () => {
     const only = { id: "only" }
     assert.equal(selectBrowserOpenOwner([only], undefined), only)
+    assert.equal(selectBrowserOpenOwner([only], "unrelated-active"), only)
+    assert.equal(selectBrowserOpenOwner([], "closed"), undefined)
     assert.equal(selectBrowserOpenOwner([{ id: "first" }, { id: "second" }], undefined), undefined)
     assert.equal(selectBrowserOpenOwner([{ id: "first" }, { id: "second" }], "missing"), undefined)
+  })
+
+  it("retains the selected occurrence identity when selection changes or its owner closes", () => {
+    const owners = [{ id: "a" }, { id: "b" }]
+    const selected = selectBrowserOpenOwner(owners, "a")
+    owners.shift()
+    assert.equal(selected?.id, "a", "an admitted open keeps the captured occurrence, never the surviving duplicate")
+    assert.equal(selectBrowserOpenOwner(owners, "b")?.id, "b", "only a new open may select B")
   })
 })

@@ -113,7 +113,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     assert.ok(selections.some(input => input.selector.source === "tasks" && input.selector.task.offset > 0
       && input.selector.task.missionID === map.id && input.source.owner === owner && input.source.missionID === map.id), "scroll continuation retains the exact passage owner")
     const openTaskReader = () => page.evaluate(async ({ root, missionID, scheduleID, passageID, owner, taskID }) => {
-      (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "task", itemId: taskID,
+      (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { reader: { missionId: missionID, kind: "task", itemId: taskID,
         recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
     }, { root: f.root, missionID: map.id, scheduleID: f.scheduleID, passageID: f.passage.passageID, owner, taskID: map.tasks.at(-1)!.id })
     await openTaskReader()
@@ -155,7 +155,9 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     // Root notes are unrelated to the task reader, but are visible overview
     // content. Restore the exact task demand before checking cache retention.
     await openTaskReader()
-    await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ }).click()
+    assert.equal(await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ })
+      .evaluate(summary => (summary.parentElement as HTMLDetailsElement).open), true,
+    "the occurrence retains its task-brief disclosure across reader navigation")
     await page.locator(".mission-reader").getByText(/Exact brief/).first().waitFor()
     const taskReads = selections.filter(input => input.selector.source === "tasks").length, bodyReads = selections.filter(input => input.body).length
     await f.control.update({ missionID: map.id, requestID: "notes-only", expectedRevision: map.revision, objective: map.objective, notes: "Unrelated root notes" })
@@ -169,7 +171,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     assert.ok(selections.filter(input => input.selector.source === "tasks").every(input => JSON.stringify(input.source) === JSON.stringify(source)), "every task continuation retains the exact frozen source")
     const beforeFields = await f.page({ source, selector: headerSelector })
     await page.evaluate(async ({ root, missionID, scheduleID, passageID, owner }) => {
-      (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "overview",
+      (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { reader: { missionId: missionID, kind: "overview",
         recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
     }, { root: f.root, missionID: map.id, scheduleID: f.scheduleID, passageID: source.passageID, owner })
     await page.locator(".mission-reader .mission-overview-details > details").filter({ has: page.locator("summary").filter({ hasText: /^Technical details$/ }) }).locator(":scope > summary").click()
@@ -278,7 +280,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page
     await page.goto(url + "?directory=" + encodeURIComponent(f.root))
     await selectMission(page, owner === "daily" ? "Daily contraction" : "Scheduled current")
     await page.evaluate(async ({ root, missionID, taskID, scheduleID, passageID, owner }) => {
-      (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "task", itemId: taskID,
+      (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { reader: { missionId: missionID, kind: "task", itemId: taskID,
         recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
     }, { root: f.root, missionID: map.id, taskID: map.tasks[0].id, scheduleID: f.scheduleID, passageID: source.passageID, owner })
     const section = page.locator(".mission-task-reader > details").filter({ has: page.locator("summary").filter({ hasText: /^Task brief$/ }) })

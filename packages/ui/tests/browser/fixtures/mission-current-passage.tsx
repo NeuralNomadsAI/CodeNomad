@@ -13,8 +13,10 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { setSessions } from "../../../src/stores/session-state"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
+import { restoreFixtureTabView } from "./tab-view-restoration"
 
 await initializeClientState()
+restoreFixtureTabView("fixture")
 const directory = new URLSearchParams(window.location.search).get("directory") ?? "/fixture"
 markSessionListsRestored("fixture")
 addInstance({ id: "fixture", folder: directory, port: 0, pid: 0, proxyPath: "/workspaces/fixture/instance", status: "ready",
@@ -40,7 +42,7 @@ function Fixture() {
   } } })
   return <main style={{ display: "flex", height: "100vh" }}>
     <aside style={{ width: "390px", overflow: "auto" }}><MissionControl instanceId="fixture" isActive={active} activeSessionId={() => "ses_existing"} t={t} /></aside>
-    <div class="mission-transcript-surface"><Show when={missionProjectView(directory).reader}><MissionReader instanceId="fixture" scope={directory} /></Show></div>
+    <div class="mission-transcript-surface"><Show when={missionProjectView("fixture").reader}><MissionReader instanceId="fixture" scope={directory} /></Show></div>
   </main>
 }
 render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)

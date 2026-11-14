@@ -4,7 +4,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { instances } from "./instances"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
-import { showSessionChatFor } from "./session-previews"
+import { activateSessionSurface, captureSessionSurfaceIntent } from "./session-surface"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 import { setSessionSearchDestination } from "./session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -109,21 +109,24 @@ export function createHistorySessionLabels(instanceId: () => string) {
  */
 export async function openHistoryMatchSession(instanceId: string, sessionId: string, messageId: string, current: () => boolean,
   highlight?: { query: string; match: SessionSearchMatch }): Promise<boolean> {
-  const client = instances().get(instanceId)?.client
-  const generation = getOpenCodeInstanceGeneration(instanceId)
-  const admitted = () => current() && instances().get(instanceId)?.client === client
-    && getOpenCodeInstanceGeneration(instanceId) === generation
-    && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
-  if (!admitted()) return false
-  await hydrateRestoredSessionChain(instanceId, [sessionId], undefined, admitted)
-  if (!admitted() || !sessions().get(instanceId)?.has(sessionId)) return false
-  messageStoreBus.getOrCreate(instanceId).setScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE,
-    { scrollTop: 0, atBottom: false, anchorKey: messageId, anchorOffset: 0, followModeType: "escaped" })
-  // A destination left on its browser preview would hide the transcript.
-  batch(() => {
-    if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
-    setActiveSessionFromList(instanceId, sessionId)
-    showSessionChatFor(sessionId, instances().get(instanceId)?.folder ?? "")
-  })
-  return true
+  const intent = captureSessionSurfaceIntent({ instanceId, sessionId })
+  try {
+    const client = instances().get(instanceId)?.client
+    const generation = getOpenCodeInstanceGeneration(instanceId)
+    const admitted = () => intent.current() && current() && instances().get(instanceId)?.client === client
+      && getOpenCodeInstanceGeneration(instanceId) === generation
+      && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
+    if (!admitted()) return false
+    await hydrateRestoredSessionChain(instanceId, [sessionId], undefined, admitted)
+    if (!admitted() || !sessions().get(instanceId)?.has(sessionId)) return false
+    messageStoreBus.getOrCreate(instanceId).setScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE,
+      { scrollTop: 0, atBottom: false, anchorKey: messageId, anchorOffset: 0, followModeType: "escaped" })
+    // A destination left on its browser preview would hide the transcript.
+    batch(() => {
+      if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
+      setActiveSessionFromList(instanceId, sessionId)
+      activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" })
+    })
+    return true
+  } finally { intent.release() }
 }

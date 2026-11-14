@@ -5,6 +5,8 @@ import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
 import { canCommitClientSnapshotV2, decodeClientSnapshotV2, encodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
 import type { ClientSnapshotV2 } from "./client-state-partitions"
+import { LEGACY_SESSION_PREVIEWS_KEY } from "./tab-view-state-codec"
+import { migrateLegacyTabPreviews } from "./tab-view-state-migration"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
@@ -30,6 +32,7 @@ let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
+let previewMigration: { source: string; remaining: string } | undefined
 const transactionLayoutWrites = new Set<string>()
 function useLocalStorage<T>(fallback: T, operation: (storage: Storage) => T): T {
   try {
@@ -120,6 +123,17 @@ function enqueuePendingSave(): Promise<void> {
         throw new Error("Native client state save was rejected")
       }
       lastSaveError = undefined
+      // Retire the legacy entries only after a snapshot carrying descriptor views
+      // is durably accepted. Changed concurrent legacy writes retain their authority.
+      if (previewMigration && normalizedSnapshot.session?.tabs.some(tab => tab.kind === "workspace" && tab.viewState)) {
+        const migration = previewMigration
+        previewMigration = undefined
+        if (layout[LEGACY_SESSION_PREVIEWS_KEY] === migration.source) {
+          const concurrent = readLegacyLayoutValue(LEGACY_SESSION_PREVIEWS_KEY)
+          writeClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY,
+            concurrent !== null && concurrent !== migration.source ? concurrent : migration.remaining)
+        }
+      }
     } catch (error) {
       dirty = true
       lastSaveError = error
@@ -319,6 +333,7 @@ export function initializeClientState(): Promise<void> {
       lastSaveError = undefined
       writeBlock = false
       transactionLayoutWrites.clear()
+      previewMigration = undefined
       initialized = true
       if (!loaded.isPrimary || !loaded.restoreEnabled) return
       let snapshot: ClientSnapshotV1 | null
@@ -340,7 +355,16 @@ export function initializeClientState(): Promise<void> {
         writeBlock = loaded.snapshot !== null && snapshot === null ? "snapshot" : false
       }
       resetLoadedState(snapshot, true)
-      if (!writeBlock && migrateLegacyLayoutValues()) scheduleSave()
+      if (!writeBlock) {
+        const migratedLayout = migrateLegacyLayoutValues()
+        const source = layout[LEGACY_SESSION_PREVIEWS_KEY]
+        const migration = migrateLegacyTabPreviews(loadedRestorableSession(), source ?? null)
+        if (migration && source !== undefined) {
+          previewMigration = { source, remaining: migration.remaining }
+          setLoadedRestorableSession(migration.state)
+        }
+        if (migratedLayout || migration) scheduleSave()
+      }
     } catch (error) {
       initialized = true
       setClientStateIsPrimary(false)

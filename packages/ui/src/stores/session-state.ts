@@ -1,4 +1,6 @@
 import { batch, createSignal } from "solid-js"
+import { invalidateSessionSurfaceIntent } from "./session-surface"
+import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
 import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
@@ -62,7 +64,6 @@ export interface SessionInfo {
 }
 
 const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
-const [activeSessionId, setActiveSessionId] = createSignal<Map<string, string>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
 // The Location authority key each instance's `agents` list was read for.
@@ -703,6 +704,8 @@ function writeSessionSelection(
   instanceId: string,
   sessionId: string | null,
 ): void {
+  if (setter === setActiveSessionId && activeSessionId().get(instanceId) !== (sessionId ?? undefined))
+    invalidateSessionSurfaceIntent(instanceId)
   // A coalesced transcript page admitted under the previous selection lands
   // before the gates move; nothing pending may cross a selection change.
   flushTranscriptProjections()

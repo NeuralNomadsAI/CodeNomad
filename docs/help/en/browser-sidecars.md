@@ -4,17 +4,19 @@
 
 1. In a conversation's toolbar, choose **Open web preview**.
 2. Enter a credential-free `http://` or `https://` **Preview URL**, then **Open preview**. Use the toolbar to navigate, refresh and go Back/Forward.
-3. Use the preview's close button to return to chat. Reopen it in that conversation to continue.
+3. Use the preview's close button to return to chat. Reopen it in the same tab and conversation to continue.
 
 Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's web preview, on every client where previews are available. Through Remote Control when the host keeps web previews off, or on a client where previews are otherwise unavailable, such links keep their normal browser behavior. Ctrl+click (⌘-click on macOS) or middle-click opens the link in your browser instead. Inside the sandboxed preview frame, where real storage is unavailable, the page gets an in-memory `localStorage`, `sessionStorage` and `document.cookie` jar for the current page load; a per-token preview host opened on its own keeps its real storage.
 
-Each preview belongs to its project folder and session. Switching conversation, project, Info or chat hides an explicitly opened native guest without discarding its live document/history. Hidden guests are not automation targets. Closing the project/window or restarting the renderer ends the live document.
+Each preview belongs to one project-tab occurrence and session. Duplicate tabs can show chat and a preview, or different pages, for the same session; messages and execution stay shared. Opening, hiding or closing a preview affects only its own tab. Switching conversation, project, Info or chat retains the native document/history. Closing that tab/window or restarting the renderer ends its live document.
 
-Saved history restores only when you explicitly reopen that session's browser, not at startup/session selection. It stores URLs and a cursor, not unsent forms, DOM, POST bodies or JavaScript memory. History is bounded to 32 URLs per session and a shared layout budget; older entries may be trimmed. Restoring a URL may perform a fresh page load; it is not transaction replay.
+Each tab saves its preview URL, chat/preview choice, viewport template and history independently. Saved pages load only when you explicitly reopen that tab's session browser. Persistence keeps URLs and a cursor; live forms, DOM, POST bodies and JavaScript memory end with the document. History is bounded to 32 URLs per tab/session and a shared window budget; older entries may be trimmed. Restoring a URL may load a fresh page.
 
 ## Shared sign-ins and automation boundaries {#signins-automation}
 
-Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments remain session-owned. Iframe previews are not a full shared native browser profile.
+Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments belong to each tab/session pair. Iframe previews are not a full shared native browser profile.
+
+An agent's browser open targets the active tab owning its session, or its sole open owner. Ambiguous ownership is refused. The chosen tab stays fixed while opening; closing it cancels that open. Page actions require exactly one visible native preview for the session; hidden previews are excluded.
 
 | Client | Preview implementation | Agent browser automation | Mobile templates |
 | --- | --- | --- | --- |

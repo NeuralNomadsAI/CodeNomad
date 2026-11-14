@@ -37,7 +37,7 @@ function mission(id: string): MissionMap {
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 function gate() { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
-async function setup(missing = false, holdEvents = false) {
+async function setup(missing = false, holdEvents = false, web = false) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1600, height: 950 } })
   const errors: string[] = [], networkErrors: string[] = [], requests: string[] = [], hold = gate(), reached = gate(), complete = gate()
   const panelReads = collectPanelReadFailures(page, url)
@@ -52,7 +52,7 @@ async function setup(missing = false, holdEvents = false) {
     if (request.headers()[MISSION_READ_HEADER]) { missionReads.record(request, networkErrors); return }
     if (!panelReads.record(request, networkErrors)) networkErrors.push(`${request.url()} ${request.failure()?.errorText}`)
   })
-  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:${JSON.stringify(web ? "web" : "electron")},__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", async route => {
     const pathname = new URL(route.request().url()).pathname; requests.push(`${route.request().method()} ${pathname}`)
@@ -67,7 +67,10 @@ async function setup(missing = false, holdEvents = false) {
       if (defer) complete.release(); return
     }
     if (pathname.endsWith("/worktrees")) return route.fulfill({ json: { isGitRepo: true, worktrees: [{ slug: "root", directory: "/fixture", kind: "root" }] } })
-    if (pathname === "/api/previews") return route.fulfill({ json: { token: "private-preview", sessionId: "ses_initial", targetUrl: "https://example.invalid/", proxyUrl: "/private-preview-frame", createdAt: "2026-10-03" } })
+    if (pathname === "/api/previews") {
+      const input = route.request().postDataJSON()
+      return route.fulfill({ json: { token: "private-preview", sessionId: input.sessionId, targetUrl: input.url, proxyUrl: "/private-preview-frame", createdAt: "2026-10-03" } })
+    }
     if (pathname.endsWith("/command")) return route.fulfill({ json: { location, data: [] } })
     if (pathname.endsWith("/agent")) return route.fulfill({ json: { location, data: [{ id: "build", name: "build", mode: "primary" }, { id: "plan", name: "plan", mode: "primary" }] } })
     if (pathname.endsWith("/provider") || pathname.endsWith("/model")) return route.fulfill({ json: { location, data: [] } })
@@ -169,6 +172,29 @@ async function navigate(page: Page, origin: "actor" | "reader", id = "A") {
 }
 async function ordinarySession(page: Page, name: string) { await page.locator(".session-sidebar").getByText(`Conversation ${name}`, { exact: true }).click() }
 async function settle(page: Page) { await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))) }
+for (const gesture of ["go", "refresh"] as const) test(`shell deferred actor respects newer web-to-web ${gesture}`, async () => {
+  const { page, panelReads, errors, networkErrors, hold, reached, complete, defer } = await setup(false, false, true)
+  try {
+    await page.getByRole("button", { name: "Open web preview", exact: true }).click()
+    const pane = page.locator('[data-session-id="ses_initial"] .window-shell')
+    await pane.waitFor({ state: "visible" })
+    defer(); await navigate(page, "actor"); await reached.promise
+    if (gesture === "go") {
+      await pane.getByRole("textbox", { name: "Preview URL", exact: true }).fill("https://example.invalid/newer")
+      await pane.getByRole("textbox", { name: "Preview URL", exact: true }).press("Enter")
+      await page.waitForFunction(() => window.missionCrossNavigation.snapshot().previewUrl === "https://example.invalid/newer")
+    } else await pane.getByRole("button", { name: "Refresh", exact: true }).click()
+    const before = await page.evaluate(() => ({ state: window.missionCrossNavigation.snapshot(), writes: window.missionCrossNavigation.history().length }))
+    assert.equal(before.state.mode, "preview")
+    hold.release(); await complete.promise; await settle(page)
+    assert.deepEqual(await page.evaluate(() => ({ state: window.missionCrossNavigation.snapshot(), writes: window.missionCrossNavigation.history().length })), before)
+    await pane.waitFor({ state: "visible" })
+    await panelReads.drain()
+    assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
+    assert.equal(await page.locator(".mission-control > [role=alert]").count(), 0)
+  } finally { hold.release(); await page.close() }
+})
+
 test("receipt cancellation requires its exact owning signal and rejects same-URL network aborts and reused identities", { timeout: 45_000 }, async () => {
   const { page, panelReads, missionReads, errors, networkErrors, hold } = await setup()
   const receipt = new URL("/api/workspaces/cross-navigation/sessions/ses_B/permission-receipts?unanchored=true", url).href

@@ -78,6 +78,7 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 import { openSessionPreview } from "./stores/session-previews"
+import { captureSessionSurfaceIntent } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -261,7 +262,8 @@ const App: Component = () => {
       }
     }, 30_000)
     const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      const findOwners = () => appTabs().flatMap(tab => tab.kind === "instance"
+        && getSessions(tab.instance.id).some(session => session.id === sessionID) ? [tab.instance] : [])
       let owners = findOwners()
       if (owners.length === 0) {
         await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
@@ -280,11 +282,13 @@ const App: Component = () => {
         })
         return
       }
-      if (!await claimNativeBrowserOpen(requestID)) return
+      const intent = captureSessionSurfaceIntent({ instanceId: owner.id, sessionId: sessionID })
       try {
+        if (!await claimNativeBrowserOpen(requestID)) return
         const instance = owner
-        await openSessionPreview(sessionID, url, instance.folder, async () => !disposed && await claimNativeBrowserOpen(requestID))
-        if (disposed) {
+        const stillOwned = () => !disposed && findOwners().some(candidate => candidate.id === instance.id)
+        await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned(), intent)
+        if (!stillOwned()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }
@@ -296,7 +300,7 @@ const App: Component = () => {
           log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
         })
         throw error
-      }
+      } finally { intent.release() }
     }
     void onNativeBrowserOpen(({ sessionID, url, requestID }) => {
       void openRequestedPreview(sessionID, url, requestID).catch((error) => log.warn("Failed to open agent-requested web preview", { sessionID, error }))

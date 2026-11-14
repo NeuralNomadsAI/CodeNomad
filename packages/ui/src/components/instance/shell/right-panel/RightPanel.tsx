@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, untrack, type Accessor, type Component } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -17,6 +17,7 @@ import type { PromptInputApi } from "../../../prompt-input/types"
 import type { RightPanelTab } from "./types"
 
 import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
+import { getTabViewState, updateTabViewState } from "../../../../stores/tab-view-state"
 import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, RIGHT_PANEL_TAB_STORAGE_KEY, readStoredRightPanelTab } from "../storage"
 import {
   applyRightPanelItemCustomization,
@@ -103,8 +104,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const { locale } = useI18n()
   const theme = useTheme()
   const extensions = usePanelExtensions(() => props.instanceId, props.isActive)
-  const savedTab = readStoredRightPanelTab("files")
-  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
+  const savedTab = getTabViewState(props.instanceId).rightPanelTab ?? readStoredRightPanelTab("files")
+  const [rightPanelTab, selectRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
+  const setRightPanelTab = (tab: RightPanelTab) => {
+    selectRightPanelTab(tab)
+    writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, tab)
+  }
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
@@ -122,7 +127,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`
 
   createEffect(() => {
-    writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
+    const tab = rightPanelTab()
+    untrack(() => updateTabViewState(props.instanceId, { rightPanelTab: tab }))
   })
 
   const handleAccordionChange = (values: string[]) => {
@@ -246,7 +252,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   createEffect(() => {
     const active = activeRightPanelTab()
     if (active && active.id !== rightPanelTab()) {
-      setRightPanelTab(active.id)
+      selectRightPanelTab(active.id)
     }
   })
 
@@ -306,13 +312,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       {/* The tab's scroller contains its absolutely positioned descendants, so no tab
           content can grow the shell's overflow and scroll the whole window. */}
       <div class="relative flex-1 overflow-y-auto">
-        <Show keyed when={activeRightPanelTab()}>
-          {(tab) => (
+        <For each={visibleRightPanelTabs()}>
+          {(tab) => <Show when={rightPanelTab() === tab.id}>
             <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">
               <Suspense fallback={<RightPanelTabFallback />}>{tab.render()}</Suspense>
             </div>
-          )}
-        </Show>
+          </Show>}
+        </For>
       </div>
     </div>
   )

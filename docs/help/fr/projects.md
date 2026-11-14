@@ -14,6 +14,8 @@ Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier
 
 Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** change son nom affiché ; **Retirer des récents** retire le raccourci, pas ses fichiers ni ses conversations. Cliquer sur un projet récent déjà ouvert ouvre un nouvel onglet ; son bouton **Ouvert** (**Basculer vers le projet ouvert**) sélectionne plutôt l’onglet existant.
 
+Ouvrez deux fois le même dossier et sélectionnez la même conversation dans les deux onglets pour garder le chat dans l’un et un aperçu web, un fichier ou un rapport de Mission dans l’autre. Chaque onglet conserve sa propre vue, la position de défilement de la conversation, la sélection du panneau droit et le mode Fichiers ; les messages, l’exécution et les données du projet restent partagés.
+
 ## Utiliser le lanceur de nouvelle instance {#new-instance-launcher}
 
 1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
@@ -35,6 +37,8 @@ Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, 
 Si une autre fenêtre affiche la même connexion de projet, son onglet se ferme aussi et cette fenêtre affiche une notification. La fenêtre à l’origine de la fermeture n’en affiche pas. La fermeture est immédiate ; si le backend ne peut pas fermer le projet, une erreur apparaît et **Basculer vers le projet ouvert** sur l’accueil permet encore d’y accéder. Il n’y a pas de nouvel essai automatique. Les brouillons non envoyés de l’onglet fermé ne sont pas conservés par la restauration au démarrage.
 
 Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions de projet ; la restauration normale au démarrage s’applique toujours. Arrêtez explicitement les exécutions concernées si vous devez vérifier qu’elles sont terminées. CodeNomad ne décharge jamais les Locations natives ; la maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
+
+Lorsque la restauration au démarrage est activée, chaque onglet restant retrouve ses propres choix de panneaux, sa sélection et son lecteur de Mission ainsi que l’URL et l’historique du navigateur enregistrés. Les pages du navigateur enregistrées se chargent à leur réouverture explicite. Fermer une occurrence retire uniquement sa vue enregistrée ; rouvrir le dossier crée une nouvelle occurrence.
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 

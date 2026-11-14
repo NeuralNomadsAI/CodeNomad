@@ -4,17 +4,19 @@
 
 1. Konuşmanın araç çubuğunda **Web önizlemesini aç** öğesini seçin.
 2. Kimlik bilgisi içermeyen bir `http://` veya `https://` **Önizleme URL'si** girin, ardından **Önizlemeyi aç** öğesini seçin. Gezinmek, yenilemek ve Geri/İleri gitmek için araç çubuğunu kullanın.
-3. Sohbete geri dönmek için önizlemenin kapat düğmesini kullanın. Devam etmek için bu görüşmede tekrar açın.
+3. Sohbete geri dönmek için önizlemenin kapat düğmesini kullanın. Devam etmek için aynı sekmede ve görüşmede tekrar açın.
 
 Bir görüşmedeki `localhost` veya `127.0.0.1` bağlantısına tıklamak, önizlemelerin kullanılabildiği her istemcide o oturumun web önizlemesinde açar. Remote Control üzerinden host web önizlemelerini kapalı tuttuğunda veya önizlemelerin başka bir nedenle kullanılamadığı bir istemcide bu bağlantılar normal tarayıcı davranışını korur. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bağlantıyı bunun yerine tarayıcınızda açar. Gerçek depolamanın kullanılamadığı yalıtılmış (sandbox) önizleme çerçevesinin içinde sayfa, geçerli sayfa yüklemesi için bellek içinde bir `localStorage`, `sessionStorage` ve `document.cookie` alır; kendi başına açılan token başına önizleme hostu gerçek depolamasını korur.
 
-Her önizleme kendi proje klasörüne ve oturumuna aittir. Konuşma, proje, Bilgi veya sohbet arasında geçiş yapmak, açıkça açılmış native tarayıcıyı canlı belgesini/geçmişini atmadan gizler. Gizli tarayıcılar otomasyon hedefi değildir. Projeyi/pencereyi kapatmak veya arayüzü yeniden başlatmak canlı belgeyi sonlandırır.
+Her önizleme belirli bir proje sekmesi örneğine ve oturuma aittir. Yinelenen sekmeler aynı oturum için sohbet ve önizleme ya da farklı sayfalar gösterebilir; mesajlar ve yürütme ortak kalır. Önizlemeyi açmak, gizlemek veya kapatmak yalnızca kendi sekmesini etkiler. Konuşma, proje, Bilgi veya sohbet geçişleri yerel belgeyi ve geçmişi korur. Bu sekmeyi veya penceresini kapatmak ya da arayüzü yeniden başlatmak onun canlı belgesini sonlandırır.
 
-Kaydedilen geçmiş, başlangıç/oturum seçiminde değil, yalnızca o oturumun tarayıcısını açıkça yeniden açtığınızda geri yüklenir. Gönderilmemiş formları, DOM, POST gövdelerini veya JavaScript belleğini değil, URL'leri ve imleci saklar. Geçmiş, oturum başına 32 URL ve paylaşılan düzen bütçesiyle sınırlıdır; eski girişler kırpılabilir. Bir URL'nin geri yüklenmesi yeni bir sayfa yüklemesi gerçekleştirebilir; işlem tekrarı değildir.
+Her sekme URL'sini, sohbet/önizleme seçimini, görünüm şablonunu ve geçmişini bağımsız kaydeder. Kaydedilen sayfalar yalnızca o sekmenin oturum tarayıcısını açıkça yeniden açtığınızda yüklenir. URL'ler ve imleç saklanır; canlı formlar, DOM, POST gövdeleri ve JavaScript belleği belgeyle birlikte sona erer. Geçmiş, sekme/oturum başına 32 URL ve ortak pencere bütçesiyle sınırlıdır; eski girişler kırpılabilir. URL geri yüklendiğinde sayfa yeniden yüklenebilir.
 
 ## Paylaşılan oturum açma işlemleri ve otomasyon sınırları {#signins-automation}
 
-Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamındaki projeler/oturumlar arasında çerezleri, oturum açma bilgilerini ve site depolamasını paylaşır; bunlar güvenilir CodeNomad arayüzünden ayrıdır. Önizlemede siteden çıkış yapmak aynı depoyu kullanan diğer önizlemeleri etkiler. Belgeler, formlar, oturum depolaması, gezinme geçmişi ve otomasyon bağlantıları oturuma ait kalır. Iframe önizlemeleri tam bir ortak native tarayıcı profili değildir.
+Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamındaki projeler/oturumlar arasında çerezleri, oturum açma bilgilerini ve site depolamasını paylaşır; bunlar güvenilir CodeNomad arayüzünden ayrıdır. Önizlemede siteden çıkış yapmak aynı depoyu kullanan diğer önizlemeleri etkiler. Belgeler, formlar, oturum depolaması, gezinme geçmişi ve otomasyon bağlantıları her sekme/oturum çiftine aittir. Iframe önizlemeleri tam bir ortak native tarayıcı profili değildir.
+
+Ajanın tarayıcı açma işlemi, oturumuna sahip etkin sekmeyi veya tek açık sahibini hedefler. Belirsiz sahiplik reddedilir. Seçilen sekme açılış boyunca sabit kalır; onu kapatmak bu açılışı iptal eder. Sayfa eylemleri oturum için tam bir görünür yerel önizleme gerektirir; gizli önizlemeler dışarıda bırakılır.
 
 | İstemci | Önizleme uygulaması | Ajan tarayıcı otomasyonu | Mobil şablonlar |
 | --- | --- | --- | --- |

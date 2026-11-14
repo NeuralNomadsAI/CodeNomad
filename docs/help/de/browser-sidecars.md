@@ -4,17 +4,19 @@
 
 1. Wählen Sie in der Symbolleiste einer Unterhaltung **Web-Vorschau öffnen**.
 2. Geben Sie eine `http://`- oder `https://`-**Vorschau-URL** ohne Zugangsdaten ein und wählen Sie dann **Vorschau öffnen**. Verwenden Sie die Symbolleiste für Navigation, Aktualisieren sowie Zurück/Vorwärts.
-3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie in dieser Unterhaltung zum Fortsetzen erneut.
+3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie zum Fortsetzen im selben Tab und in derselben Unterhaltung erneut.
 
 Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn in der Web-Vorschau dieser Sitzung, auf jedem Client mit verfügbarer Vorschau. Über Remote Control, wenn der Host Web-Vorschauen deaktiviert hält, oder auf einem Client ohne verfügbare Vorschau behalten solche Links ihr normales Browser-Verhalten. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet den Link stattdessen im Browser. Innerhalb des Sandbox-Vorschau-Frames, wo kein echtes Storage verfügbar ist, erhält die Seite ein In-Memory-`localStorage`, `sessionStorage` und `document.cookie` für das aktuelle Laden der Seite; ein eigenständig geöffneter Per-Token-Vorschau-Host behält sein echtes Storage.
 
-Jede Vorschau gehört zu ihrem Projektordner und ihrer Sitzung. Wechsel von Unterhaltung, Projekt, Info oder Chat verbirgt einen ausdrücklich geöffneten nativen Gast, ohne dessen aktives Dokument/Verlauf zu verwerfen. Verborgene Gäste sind keine Automatisierungsziele. Projekt-/Fensterschließen oder Renderer-Neustart beendet das aktive Dokument.
+Jede Vorschau gehört zu einer einzelnen Projektregisterkarte und Sitzung. Doppelte Registerkarten können für dieselbe Sitzung Chat und Vorschau oder verschiedene Seiten zeigen; Nachrichten und Ausführung bleiben gemeinsam. Öffnen, Ausblenden oder Schließen einer Vorschau betrifft nur ihre Registerkarte. Wechsel von Unterhaltung, Projekt, Info oder Chat erhält das native Dokument und seinen Verlauf. Schließen dieser Registerkarte oder ihres Fensters sowie Renderer-Neustart beendet ihr aktives Dokument.
 
-Gespeicherter Verlauf wird nur wiederhergestellt, wenn Sie den Sitzungsbrowser ausdrücklich erneut öffnen, nicht beim Start/bei Sitzungsauswahl. Er speichert URLs und einen Zeiger, keine ungesendeten Formulare, DOM, POST-Inhalte oder JavaScript-Speicher. Verlauf ist auf 32 URLs pro Sitzung und ein gemeinsames Layoutbudget begrenzt; ältere Einträge können gekürzt werden. URL-Wiederherstellung kann eine frische Seite laden; sie ist keine Transaktionswiederholung.
+Jede Registerkarte speichert URL, Chat-/Vorschauwahl, Viewport-Vorlage und Verlauf unabhängig. Gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen ihres Sitzungsbrowsers. Gespeichert werden URLs und ein Zeiger; aktive Formulare, DOM, POST-Inhalte und JavaScript-Speicher enden mit dem Dokument. Der Verlauf ist auf 32 URLs je Registerkarte/Sitzung und ein gemeinsames Fensterbudget begrenzt; ältere Einträge können gekürzt werden. Eine wiederhergestellte URL kann neu geladen werden.
 
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 
-Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen bleiben sitzungsbezogen. Iframe-Vorschauen sind kein vollständiges gemeinsames natives Browserprofil.
+Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zum Paar aus Registerkarte und Sitzung. Iframe-Vorschauen sind kein vollständiges gemeinsames natives Browserprofil.
+
+Ein Agent öffnet den Browser in der aktiven Registerkarte seiner Sitzung oder deren einzigem offenen Besitzer. Mehrdeutige Zuordnung wird abgelehnt. Die gewählte Registerkarte bleibt während des Öffnens fest; ihr Schließen bricht das Öffnen ab. Seitenaktionen erfordern genau eine sichtbare native Vorschau der Sitzung; ausgeblendete Vorschauen bleiben ausgeschlossen.
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |

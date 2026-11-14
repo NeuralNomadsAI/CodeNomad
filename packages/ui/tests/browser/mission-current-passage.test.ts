@@ -64,7 +64,7 @@ const deferred = () => {
   return { promise, resolve }
 }
 
-async function setupReaderFollow(page: Page, nativePending = true) {
+async function setupReaderFollow(page: Page, nativePending = true, attention = false) {
   page.setDefaultTimeout(10_000)
   const errors: string[] = [], writes: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -107,7 +107,8 @@ async function setupReaderFollow(page: Page, nativePending = true) {
       origin: null, activation: { available: true, targets: [] } } })
     if (path.endsWith("/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture",
       location: { directory: "/fixture" }, schedules: [{ id: "rec_daily", title: "Daily review", revision: 2, state: "paused", clock: { time: "08:15", zone: "UTC" },
-        nextDueAt: null, actions: [], controls: [], pending: { passageID: "pas_daily", status: "running", missionID: passages.rec_daily.id }, latestResult: null, history: [] }] }) })
+         nextDueAt: null, actions: [], controls: [], pending: { passageID: "pas_daily", status: "running", missionID: passages.rec_daily.id,
+           conversationID: "ses_coordinator" }, latestResult: null, history: [] }] }) })
     const id = path.match(/\/recurrence\/(rec_daily|msn_native)\/current/)?.[1] as keyof typeof passages | undefined
     if (id) {
       const value = passages[id], scheduled = id === "msn_native"
@@ -131,7 +132,9 @@ async function setupReaderFollow(page: Page, nativePending = true) {
         [{ available: true, ...readMissionContent("project", input.body, value) }], input.selector.cursor) })
         if (input.selector.source === "activity") return route.fulfill({ json: missionPanelPage({ source: "activity", missionID: value.id, projectID: "project", revision: value.revision,
           ...damage, passage: input.source, phase: "observed", observedAt: 4 }, [{ context: activityActorWindow(missionActivityContext(value, damage), 0, 160), coverage: "observed",
-          requests: { state: "observed", items: [] }, activity: { actors: [], family: { state: "observed", members: [] } } }], input.selector.cursor) })
+           requests: { state: "observed", items: [] }, activity: { actors: [{ sessionId: value.coordinatorSessionId, state: attention ? "form" : "unknown" }], family: { state: "observed", members: attention
+             ? [{ sessionId: "ses_task", parentSessionId: "ses_coordinator", actorSessionId: "ses_coordinator", kind: "ordinary" },
+               { sessionId: "ses_child", parentSessionId: "ses_task", actorSessionId: "ses_coordinator", kind: "ordinary" }] : [] } } }], input.selector.cursor) })
         return route.fulfill({ json: projectMissionPanel(value, input.selector, damage, { passage: input.source }) })
       }
     }
@@ -140,7 +143,7 @@ async function setupReaderFollow(page: Page, nativePending = true) {
   })
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 })
   await (await inlineMissionEntry(page, "One-time review")).waitFor()
-  await page.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
+   if (!attention) await page.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
   return { errors, writes, ordinary, passages, passageID,
     startNative: () => { startNative(); passages.msn_native.id = doc.pending!.missionID },
     settleNative: () => missionDocumentChanges.settle(doc, doc.pending!.id, "completed", Date.now()),
@@ -149,9 +152,196 @@ async function setupReaderFollow(page: Page, nativePending = true) {
   } }
 }
 
-const readerTarget = (page: Page) => page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").reader)
+const readerTarget = (page: Page) => page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").reader)
 const eye = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const paint = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+async function holdBrowser(page: Page) {
+  const started = deferred(), release = deferred()
+  await page.route("**/api/previews", async route => {
+    started.resolve(); await release.promise
+    const { sessionId, url } = route.request().postDataJSON()
+    await route.fulfill({ json: { sessionId, targetUrl: url, token: "held-preview", proxyUrl: "/held-preview", createdAt: "2026-11-14" } })
+  })
+  await page.evaluate(async () => {
+    const { openSessionPreview } = await import("/src/stores/session-previews.ts" as string)
+    ;(window as any).heldBrowser = openSessionPreview("ses_existing", "https://example.invalid/newer", "fixture")
+      .then(() => "opened", () => "superseded")
+  })
+  await started.promise
+  return { release: release.resolve, finish: () => page.evaluate(() => (window as any).heldBrowser) }
+}
+const hasForegroundIntent = (page: Page) => page.evaluate(async () =>
+  (await import("/src/stores/session-surface.ts" as string)).hasPendingSessionSurfaceIntent("fixture"))
+
+for (const mode of ["reader", "answer", "reader and answer"]) test(`deferred schedule ${mode} yields to a newer held browser open`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  let passage: ReturnType<Awaited<ReturnType<typeof setupReaderFollow>>["hold"]> | undefined
+  let web: Awaited<ReturnType<typeof holdBrowser>> | undefined
+  try {
+    const answer = mode !== "reader", f = await setupReaderFollow(page, true, answer)
+    if (mode !== "answer") {
+      await selectMission(page, "One-time review"); await eye(page).click()
+      await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
+    }
+    passage = f.hold("rec_daily")
+    const row = await inlineMissionEntry(page, "Daily review")
+    if (answer) await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+    await row.click(); await passage.started.promise
+    const before = await readerTarget(page)
+    web = await holdBrowser(page)
+    passage.release.resolve(); await passage.settled.promise
+    await page.locator('.mission-tree-node[data-task-key="second"]').waitFor({ state: "attached" }); await paint(page)
+    assert.equal(await page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), undefined)
+    assert.deepEqual(await readerTarget(page), before, "discovery cannot retarget the foreground")
+    assert.equal(await hasForegroundIntent(page), true, "the browser still owns admission")
+    web.release(); assert.equal(await web.finish(), "opened")
+    assert.equal(await hasForegroundIntent(page), false)
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { passage?.release.resolve(); web?.release(); await page.close() }
+})
+
+test("an admitted red schedule click discovers and opens its asking descendant", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  try {
+    const f = await setupReaderFollow(page, true, true)
+    const row = await inlineMissionEntry(page, "Daily review")
+    await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+    await row.click()
+    const active = () => page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture"))
+    for (let attempt = 0; await active() !== "ses_child" && attempt < 100; attempt++) await page.waitForTimeout(50)
+    assert.equal(await active(), "ses_child")
+    assert.equal(await hasForegroundIntent(page), false)
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { await page.close() }
+})
+
+test("a pressed task reader hands its loaded schedule's answer to cold hydration", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  try {
+    const f = await setupReaderFollow(page, true, true)
+    await page.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
+    await selectMission(page, "Daily review")
+    await page.locator('.mission-tree-node[data-task-key="second"] .mission-tree-task').click()
+    await eye(page).click()
+    await page.locator(".mission-reader").getByRole("heading", { name: "Next task has no actor", exact: true }).waitFor()
+    await page.evaluate(async () => {
+      const s = await import("/src/stores/session-state.ts" as string)
+      s.setSessions((previous: Map<string, Map<string, any>>) => {
+        const values = new Map(previous.get("fixture"))
+        values.set("ses_child", { ...values.get("ses_child"), catalogSnapshot: true })
+        return new Map(previous).set("fixture", values)
+      })
+      ;(await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_child", sessionID: "ses_child",
+        location: { directory: "/fixture" }, title: "Real child request", tool: { name: "question" }, fields: [], time: { created: 1 } } as never)
+    })
+    await page.route("**/instance/api/session/ses_child", route => route.fulfill({ json: { data: { id: "ses_child", parentID: "ses_task",
+      projectID: "project", title: "Cold asking child", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } }))
+    const row = await inlineMissionEntry(page, "Daily review")
+    await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+    const hydration = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/session/ses_child"))
+    await row.click(); await hydration
+    const active = () => page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture"))
+    for (let attempt = 0; await active() !== "ses_child" && attempt < 100; attempt++) await page.waitForTimeout(50)
+    assert.equal(await active(), "ses_child")
+    assert.equal(await readerTarget(page), undefined)
+    assert.equal(await hasForegroundIntent(page), false)
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { await page.close() }
+})
+
+test("a discovered schedule answer retains its original intent through cold actor hydration", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  const hydration = deferred(), settled = deferred()
+  let web: Awaited<ReturnType<typeof holdBrowser>> | undefined
+  let passage: ReturnType<Awaited<ReturnType<typeof setupReaderFollow>>["hold"]> | undefined
+  try {
+    const f = await setupReaderFollow(page, true, true)
+    passage = f.hold("rec_daily")
+    const row = await inlineMissionEntry(page, "Daily review")
+    await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
+    await row.click(); await passage.started.promise
+    await page.evaluate(async () => {
+      const s = await import("/src/stores/session-state.ts" as string)
+      s.setSessions((previous: Map<string, Map<string, unknown>>) => {
+        const values = new Map(previous.get("fixture")); values.delete("ses_child")
+        return new Map(previous).set("fixture", values)
+      })
+    })
+    await page.route("**/instance/api/session/ses_child", async route => {
+      await hydration.promise
+      await route.fulfill({ json: { data: { id: "ses_child", parentID: "ses_task", projectID: "project", title: "Cold child",
+        location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } })
+      settled.resolve()
+    })
+    const actorRead = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/session/ses_child"))
+    passage.release.resolve(); await actorRead
+    web = await holdBrowser(page)
+    hydration.resolve(); await settled.promise; await paint(page)
+    assert.equal(await page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), undefined)
+    assert.equal(await hasForegroundIntent(page), true)
+    web.release(); assert.equal(await web.finish(), "opened")
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { passage?.release.resolve(); hydration.resolve(); web?.release(); await page.close() }
+})
+
+for (const first of [false, true]) test(`passive ${first ? "first-passage" : "no-passage"} reader reconciliation preserves a held browser intent`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  let web: Awaited<ReturnType<typeof holdBrowser>> | undefined
+  let passage: ReturnType<Awaited<ReturnType<typeof setupReaderFollow>>["hold"]> | undefined
+  try {
+    const f = await setupReaderFollow(page, !first)
+    await selectMission(page, "Native scheduled review"); await eye(page).click()
+    await page.locator(".mission-reader").getByText(first ? "Saved native instructions" : "Native passage instructions", { exact: true }).waitFor()
+    const before = await readerTarget(page)
+    web = await holdBrowser(page)
+    if (first) f.startNative()
+    else { f.settleNative(); passage = f.hold("msn_native") }
+    await page.evaluate(() => (window as any).passageFixture.invalidate("plugin.updated"))
+    if (first) await page.locator('section.mission-detail[aria-label="Native scheduled review"] .mission-tree-task').waitFor()
+    else {
+      await passage!.started.promise
+      await page.locator(".mission-tree").waitFor({ state: "detached" })
+    }
+    await paint(page)
+    assert.deepEqual(await readerTarget(page), before)
+    assert.equal(await hasForegroundIntent(page), true)
+    if (passage) { passage.release.resolve(); await passage.settled.promise; await paint(page) }
+    assert.equal(await hasForegroundIntent(page), true)
+    web.release(); assert.equal(await web.finish(), "opened")
+    assert.equal(await readerTarget(page), undefined)
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { passage?.release.resolve(); web?.release(); await page.close() }
+})
+
+test("Mission deletion's reader cleanup yields to a newer held browser open", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 950 } }), deletion = deferred()
+  let web: Awaited<ReturnType<typeof holdBrowser>> | undefined
+  try {
+    const f = await setupReaderFollow(page)
+    await selectMission(page, "One-time review"); await eye(page).click()
+    await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
+    const before = await readerTarget(page)
+    await page.route("**/missions/msn_one", async route => {
+      if (route.request().method() !== "DELETE") return route.fallback()
+      await deletion.promise; await route.fulfill({ json: { deleted: true } })
+    })
+    const deleting = page.waitForRequest(request => request.method() === "DELETE" && request.url().endsWith("/missions/msn_one"))
+    await missionToolbarAction(page, "Delete selected mission…").click(); await deleting
+    web = await holdBrowser(page)
+    const deleted = page.waitForResponse(response => response.request().method() === "DELETE" && response.url().endsWith("/missions/msn_one"))
+    deletion.resolve(); await deleted
+    await page.waitForFunction(async () => {
+      const { missionEditor } = await import("/src/stores/mission-editor-state.ts" as string)
+      return !missionEditor(JSON.stringify(["fixture", "/fixture"]))
+    })
+    await paint(page)
+    assert.deepEqual(await readerTarget(page), before)
+    assert.equal(await hasForegroundIntent(page), true)
+    web.release(); assert.equal(await web.finish(), "opened")
+    assert.equal(await readerTarget(page), undefined)
+    assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
+  } finally { deletion.resolve(); web?.release(); await page.close() }
+})
 
 test("pressed eye follows one-time → daily passage → native scheduled passage → one-time task", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
@@ -269,7 +459,7 @@ for (const remount of [false, true]) test(`native settlement retires its selecte
     }
     const assertSettled = async () => {
       await page.locator(".mission-reader").getByText("Saved native instructions", { exact: true }).waitFor()
-      const view = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture"))
+      const view = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture"))
       assert.equal(view.selectedTask, undefined)
       assert.equal(view.selectedScheduled, "msn_native")
       assert.deepEqual(view.reader, { kind: "recurrence", missionId: "msn_native", instanceId: "fixture", projectID: "project", scheduleOwner: "scheduled" })
@@ -380,7 +570,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         const row = await inlineMissionEntry(probe, "Daily commit review")
         await row.locator('.mission-row-flag[data-mark="permission"]').waitFor({ timeout: 30_000 })
         await row.click()
-        await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("/fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
+        await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
         release(); hold = undefined
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)
@@ -494,7 +684,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.locator(".mission-reader").getByText("Exact isolated result", { exact: true }).waitFor()
     assert.equal(await page.locator(".mission-reader").getByText("Newer result must not replace the historical body", { exact: true }).count(), 0)
     mission.tasks[0].report = historical
-    const target = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").reader)
+    const target = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").reader)
     assert.deepEqual(target?.recurrence, { instanceId: "fixture", projectID: "project", scheduleID: "rec_current", passageID: "pas_current" })
     assert.ok(sourceReads.some(input => input.kind === "report" && input.reportId === "rpt_first" && input.field === "summary"), "result reader reads the exact isolated report body")
     assert.ok(sourceReads.every(input => input.scheduleID === "rec_current" && input.passageID === "pas_current" && input.missionID === mission.id))
@@ -610,7 +800,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     // Its plan holds no task yet: the row has no chevron, so its detail stays folded.
     await page.locator('section.mission-detail[aria-label="One-shot from recurring"]').waitFor({ state: "attached" })
     assert.equal(await missionRow(page, "One-shot from recurring").locator("button.session-item-expander").count(), 0)
-    const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").selectedRecurrence)
+    const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").selectedRecurrence)
     assert.equal(selected, undefined, "successful one-shot creation clears overriding recurrence selection")
     assert.deepEqual(writes, ["/api/workspaces/fixture/missions"], "only the explicit creation uses a mock mutation")
     assert.deepEqual(errors, [])

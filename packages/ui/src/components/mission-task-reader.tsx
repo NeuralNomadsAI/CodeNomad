@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
+import { For, Show, createMemo } from "solid-js"
 import type { MissionActorActivity, MissionPanelMap, MissionPanelReport, MissionPanelTask } from "../../../server/src/api-types"
 import type { MissionReport, MissionTaskExecutionMode } from "../../../server/src/missions/model"
 import { missionReportExcerpt } from "../../../server/src/missions/mission-panel-map"
@@ -17,6 +17,7 @@ import { openMissionTask } from "./mission-task-open"
 import { MissionReportArtifact, MissionReportProse, useReportBodies } from "./mission-report-prose"
 import { useMissionPanelStore } from "./mission-panel-scope"
 import { MissionPanelPaging } from "./mission-panel-paging"
+import { createMissionDisclosure } from "./mission-disclosure"
 
 /** Read-only task facts; dependency navigation changes only this window's reader target. */
 export function MissionTaskReader(props: {
@@ -34,10 +35,7 @@ export function MissionTaskReader(props: {
     onClick={() => navigate(key)}>{t(label, { tasks: byKey(key)?.title ?? key, task: byKey(key)?.title ?? key })}</button>
   const latest = createMemo<MissionPanelReport | undefined>(() => missionTaskReport(props.mission, props.task))
   // A compact row holds its newest reports and counts them all; Show all reads them whole.
-  // Another task, never another copy of this one (a refresh), folds the history again.
-  const [allHistory, setAllHistory] = createSignal(false)
-  const taskKey = createMemo(() => props.task.key)
-  createEffect(on(taskKey, () => setAllHistory(false), { defer: true }))
+  const [allHistory, setAllHistory] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `task:${props.task.id}:history`)
   const loadedReports = () => missionReports(props.mission).filter(report => report.taskKey === props.task.key).length
   const omittedHistory = () => paged() ? Math.max(0, (props.task.reportCount ?? 0) - loadedReports()) : 0
   const wholeHistory = useReaderValue<MissionReport[]>({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime: () => !props.recurrence || Boolean(props.mission.panelPassage),
@@ -61,8 +59,8 @@ export function MissionTaskReader(props: {
   // A one-time mission's bodies come from the content route, a disclosure's only while open; a passage's from its own map.
   const oneTime = () => !props.recurrence || Boolean(props.mission.panelPassage)
   const briefSelector = (): MissionContentSelector => ({ kind: "task", taskKey: props.task.key, field: "brief" })
-  const [briefOpen, setBriefOpen] = createSignal(false)
-  const [technicalOpen, setTechnicalOpen] = createSignal(false)
+  const [briefOpen, setBriefOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `task:${props.task.id}:brief`)
+  const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `task:${props.task.id}:technical`)
   // An independent mode's explanation (never empty), read whole with its mode.
   const independent = () => props.task.executionMode?.kind === "independent"
   const executionMode = useReaderValue<MissionTaskExecutionMode>({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime,
@@ -116,8 +114,9 @@ export function MissionTaskReader(props: {
           <MissionBodyPending failed={wholeHistory.failed()} onRetry={wholeHistory.retry} /></Show>
         <For each={history().map(report => report.id)}>{id => {
           const report = () => history().find(report => report.id === id)!
-          const [open, setOpen] = createSignal(false), [details, setDetails] = createSignal(false)
-          return <details onToggle={event => setOpen(event.currentTarget.open)}>
+          const [open, setOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `report:${id}`)
+          const [details, setDetails] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `report:${id}:technical`)
+          return <details open={open()} onToggle={event => setOpen(event.currentTarget.open)}>
             <summary>
               <span>{t(report().late ? "missions.control.report.late" : "missions.progress.previousAttempt")}</span>{" · "}
               <time dateTime={new Date(report().createdAt).toISOString()}>{new Date(report().createdAt).toLocaleString()}</time>
@@ -127,7 +126,7 @@ export function MissionTaskReader(props: {
               <p>{t(`missions.control.report.outcome.${report().outcome}`)}</p>
               <MissionReportProse instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()}
                 identity={`${props.identity}:history:${id}`} source={label => reportSource(label, report())} />
-              <details onToggle={event => setDetails(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
+              <details open={details()} onToggle={event => setDetails(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
                 <MissionReportNotification report={report()} />
                 <MissionReportArtifact instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()} active={details()}
                   identity={`${props.identity}:history:${id}`} source={source("artifact", report())} />
@@ -137,12 +136,12 @@ export function MissionTaskReader(props: {
         }}</For>
       </section>
     </Show>
-    <details onToggle={event => setBriefOpen(event.currentTarget.open)}><summary>{t("missions.control.brief")}</summary>
+    <details open={briefOpen()} onToggle={event => setBriefOpen(event.currentTarget.open)}><summary>{t("missions.control.brief")}</summary>
     <MissionReaderSection label="missions.control.brief" text={missionOwnBody<string>(props.mission, briefSelector())}
       body={missionReaderBody(props.instanceId, props.mission, oneTime(), briefSelector())}
       active={briefOpen()} identity={props.identity} instanceId={props.instanceId} source={source("brief")} />
     </details>
-    <details onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
+    <details open={technicalOpen()} onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
     <Show when={independent()}>
       <MissionReaderSection label="missions.control.notes" text={executionMode.settled() ? explanation(executionMode.value()) : ""}
         read={executionMode.read()}

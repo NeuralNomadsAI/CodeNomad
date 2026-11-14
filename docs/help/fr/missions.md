@@ -96,6 +96,8 @@ Le chevron déplie ou replie les tâches. Cliquer une ligne sélectionne la Miss
 
 L’œil active **Résumé** dans le lecteur central et suit la sélection tant qu’il est enfoncé. **Ouvrir la conversation** mène au coordinateur ou à la tâche sélectionnée. **Plus d’actions** (⋯) contient les commandes applicables de point d’avancement, interruption, enregistrement de configuration et modification.
 
+La sélection, les sections développées et le lecteur appartiennent à chaque onglet de projet et sont restaurés avec lui. Des onglets ouverts sur le même projet peuvent lire des rapports différents ou garder un rapport dans l’un et la conversation, un fichier ou un aperçu web dans l’autre. Ouvrir ou fermer un lecteur change uniquement cet onglet ; le travail des Missions et les confirmations de lecture des résultats terminés restent partagés dans la fenêtre.
+
 Les missions et tâches suivantes se chargent à l’approche de la fin. Les pages de tâches restent en cache indépendamment des lignes affichées. Un échec de lecture conserve l’affichage et propose **Réessayer**. Le chargement utilise l’indicateur d’actualisation de l’en-tête. Lire ou réessayer une lecture ne démarre aucun travail.
 
 ### Couleurs et états {#status-colours}

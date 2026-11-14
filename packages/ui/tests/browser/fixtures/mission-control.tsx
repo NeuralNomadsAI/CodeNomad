@@ -19,8 +19,13 @@ import { missionStore } from "../../../src/stores/missions"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
+import { restoreFixtureTabView } from "./tab-view-restoration"
+import { publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
 
 await initializeClientState()
+// This standalone panel fixture owns the occurrence that a real shell opens.
+publishInstanceLifecycleAuthority({ type: "opened", instanceId: "fixture", folder: "fixture", occurrence: 0 })
+restoreFixtureTabView("fixture")
 markSessionListsRestored("fixture")
 // The real shell opens Settings for the active project; its Missions section reads that Location.
 setActiveInstanceId("fixture")

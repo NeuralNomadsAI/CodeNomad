@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import { MAX_LAYOUT_VALUE_LENGTH, readClientLayoutValue, writeClientLayoutValue, removeClientLayoutValue } from "./client-state"
-import { missionProfileRoles } from "../../../server/src/missions/playbook-profiles"
+import { getTabViewState, updateTabViewState, type RestorableTabMissionView } from "./tab-view-state"
+import { activateSessionSurface, hasPendingSessionSurfaceIntent } from "./session-surface"
 
 export interface MissionReaderTarget {
   /** For `playbook`, the playbook id, read without any Mission. */
@@ -21,11 +22,9 @@ export interface MissionReaderTarget {
  * Mission or passage (`selectedTask`, its Mission id beside it). */
 export interface MissionTaskSelectionKey { missionId: string; taskId: string }
 /** `expanded`: the rows whose chevron shows their children, newest last (at most `MAX_EXPANDED`). */
-interface ProjectView { selected?: string; selectedRecurrence?: string; selectedScheduled?: string; selectedTask?: MissionTaskSelectionKey; reader?: MissionReaderTarget; expanded?: readonly string[] }
+type ProjectView = RestorableTabMissionView
 export const MAX_EXPANDED = 30
-const [version, setVersion] = createSignal(0)
-const projects = new Map<string, ProjectView>()
-const disclosures = new Map<string, Map<string, boolean>>()
+const emptyView: ProjectView = {}
 
 // Compact stable keys keep a mission's toggled sections within the native layout
 // entry budget. Store identities/preferences only, never report contents.
@@ -38,67 +37,35 @@ function key(value: string): string {
   return btoa(String.fromCharCode(a >>> 24, (a >>> 16) & 255, (a >>> 8) & 255, a & 255,
     b >>> 24, (b >>> 16) & 255, (b >>> 8) & 255, b & 255)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "")
 }
-function projectKey(scope: string) { return `mission-project-${key(scope)}` }
-function missionKey(id: string) { return `mission-disclosures-${key(id)}` }
-
-export function missionProjectView(scope: string): ProjectView {
-  version()
-  const storageKey = projectKey(scope)
-  if (!projects.has(storageKey)) {
-    let value: ProjectView = {}
-    try {
-      const stored = JSON.parse(readClientLayoutValue(storageKey) ?? "{}")
-      if (typeof stored.selected === "string") value.selected = stored.selected
-      if (typeof stored.selectedRecurrence === "string") value.selectedRecurrence = stored.selectedRecurrence
-      if (typeof stored.selectedScheduled === "string") value.selectedScheduled = stored.selectedScheduled
-      const task = stored.selectedTask
-      if (task && typeof task.missionId === "string" && typeof task.taskId === "string") value.selectedTask = { missionId: task.missionId, taskId: task.taskId }
-      if (Array.isArray(stored.expanded)) value.expanded = stored.expanded.filter((key: unknown): key is string => typeof key === "string" && key.length <= 100).slice(-MAX_EXPANDED)
-      const r = stored.reader
-      if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change", "recurrence", "playbook"].includes(r.kind)
-        && (r.itemId === undefined || typeof r.itemId === "string")
-        && (r.recurrence === undefined || ["instanceId", "projectID", "scheduleID", "passageID"].every(key => typeof r.recurrence?.[key] === "string"))
-        && (r.kind !== "recurrence" || typeof r.instanceId === "string" && typeof r.projectID === "string")
-        && (r.kind !== "playbook" || Object.prototype.hasOwnProperty.call(missionProfileRoles, r.missionId) && r.recurrence === undefined
-          && (r.taskMode === undefined || r.taskMode === "native" || r.taskMode === "independent"))) value.reader = r
-    } catch { /* Ignore malformed saved layout. */ }
-    projects.set(storageKey, value)
-  }
-  return projects.get(storageKey)!
+/** Presentation belongs to the tab occurrence; completion acknowledgements below belong to the project. */
+export function missionProjectView(instanceId: string): ProjectView {
+  return getTabViewState(instanceId).missions ?? emptyView
 }
-export function updateMissionProjectView(scope: string, patch: Partial<ProjectView>): void {
-  const previous = missionProjectView(scope)
+export function updateMissionProjectView(instanceId: string, patch: Partial<ProjectView>): void {
+  const previous = missionProjectView(instanceId)
   const value = { ...previous, ...patch }
   if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
-    && previous.selectedScheduled === value.selectedScheduled && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded) return
-  projects.set(projectKey(scope), value)
-  writeClientLayoutValue(projectKey(scope), JSON.stringify(value))
-  setVersion(v => v + 1)
+    && previous.selectedScheduled === value.selectedScheduled && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded
+    && previous.disclosures === value.disclosures) return
+  updateTabViewState(instanceId, { missions: value })
+  if ("reader" in patch && previous.reader !== value.reader) activateSessionSurface({ instanceId, sessionId: null },
+    value.reader ? { kind: "mission", target: value.reader } : { kind: "conversation" })
 }
-function disclosureState(missionId: string): Map<string, boolean> {
-  version()
-  const storageKey = missionKey(missionId)
-  if (!disclosures.has(storageKey)) {
-    const entries = (readClientLayoutValue(storageKey) ?? "").split(",")
-      .filter(value => /^[+-][a-zA-Z0-9_-]{11}$/.test(value))
-      .map(value => [value.slice(1), value[0] === "+"] as const)
-    disclosures.set(storageKey, new Map(entries))
-  }
-  return disclosures.get(storageKey)!
+/** Retarget an already displayed reader under the caller's foreground/reconciliation fence. */
+export function retargetMissionReader(instanceId: string, previous: MissionReaderTarget, target: MissionReaderTarget): void {
+  const view = missionProjectView(instanceId)
+  if (view.reader !== previous) return
+  updateTabViewState(instanceId, { missions: { ...view, reader: target } })
 }
-export function missionDisclosureOpen(missionId: string, id: string, defaultOpen = true): boolean {
-  return disclosureState(missionId).get(key(id)) ?? defaultOpen
+export function missionDisclosureOpen(instanceId: string, missionId: string, id: string, defaultOpen = true): boolean {
+  return missionProjectView(instanceId).disclosures?.[key(JSON.stringify([missionId, id]))] ?? defaultOpen
 }
-// "+key," per toggled section within one layout value.
-const SAVED_DISCLOSURES = Math.floor((MAX_LAYOUT_VALUE_LENGTH + 1) / 13)
-export function setMissionDisclosureOpen(missionId: string, id: string, open: boolean): void {
-  const values = disclosureState(missionId)
-  // Newest last: this window keeps every toggle, and a mission with more toggled
-  // sections than one value holds persists the latest.
-  values.delete(key(id))
-  values.set(key(id), open)
-  writeClientLayoutValue(missionKey(missionId), [...values].slice(-SAVED_DISCLOSURES).map(([id, open]) => `${open ? "+" : "-"}${id}`).join(","))
-  setVersion(v => v + 1)
+export function setMissionDisclosureOpen(instanceId: string, missionId: string, id: string, open: boolean): void {
+  const disclosures = { ...missionProjectView(instanceId).disclosures }, section = key(JSON.stringify([missionId, id]))
+  if (disclosures[section] === open) return
+  delete disclosures[section]
+  disclosures[section] = open
+  updateMissionProjectView(instanceId, { disclosures })
 }
 
 // Completed Missions this window has shown, per project (compact keys), under their
@@ -207,16 +174,13 @@ export function markMissionsFinishedSeen(scope: string, shownIds: readonly strin
   setSeenVersion(value => value + 1)
 }
 
-export function forgetMissionView(scope: string, missionId: string): void {
-  disclosures.delete(missionKey(missionId))
-  removeClientLayoutValue(missionKey(missionId))
-  const view = missionProjectView(scope)
-  updateMissionProjectView(scope, {
+export function forgetMissionView(instanceId: string, missionId: string): void {
+  const view = missionProjectView(instanceId)
+  updateMissionProjectView(instanceId, {
     selected: view.selected === missionId ? undefined : view.selected,
     selectedTask: view.selectedTask?.missionId === missionId ? undefined : view.selectedTask,
-    reader: view.reader?.missionId === missionId ? undefined : view.reader,
+    reader: view.reader?.missionId === missionId && !hasPendingSessionSurfaceIntent(instanceId) ? undefined : view.reader,
   })
-  setVersion(v => v + 1)
 }
 
 export type ScheduleOwner = "daily" | "scheduled"

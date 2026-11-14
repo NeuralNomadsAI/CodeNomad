@@ -15,6 +15,8 @@ Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçi
 | Genel/Proje OpenCode ayarları | Görüntülenen kapsamda yerel eklenti/yapılandırma değişiklikleri. Proje kontrolleri etkin bir proje/Location gerektirir. |
 | Masaüstü veri profili | Yerel pencereler, yapılandırma dosyasından ve paylaşılan OpenCode hizmetinden bağımsız olarak geri yükleme durumu ve tarayıcı depolaması. Bkz. [Masaüstü pencereleri ve veriler](desktop.md). |
 
+Seçilen sağ panel sekmesi ve Dosyalar modu her proje sekmesi için ayrı kaydedilir. Son açık seçimleriniz yeni sekmelerin varsayılanlarını belirler; panel boyutları, sekme sırası, özelleştirme ve görünüm ortak düzen ve tercihler olarak kalır.
+
 **İstatistikler**, yalnızca açılan klasörü değil, bağlı OpenCode hizmetinin tamamını (tüm projeler, bağımsız klonlar ve alt oturumlar) son 7, 30, 90 veya 365 gün için kapsar. Açık bir proje gerektirir ve sağlayıcı faturalarını veya abonelik haklarını değil, OpenCode'un kaydettiği token ve maliyetleri gösterir; yenileme sırasında daha önce kaydedilmiş toplamlar görünebilir. Plan kotaları **Kullanım** Durum bölümüne aittir.
 
 Görüntü tercihlerinin değiştirilmesi OpenCode'u yeniden başlatmaz veya bir istemi yeniden oynatmaz. Yerel yapılandırma, hizmet bakımı ve kimlik bilgilerinin ayrı etkileri vardır: bkz. [OpenCode kurulumu](opencode.md), [Sağlayıcılar](providers.md) ve [Entegrasyonlar](integrations.md).

@@ -15,6 +15,8 @@ La mayoría de las elecciones se aplican inmediatamente, incluidas las preferenc
 | Ajustes Global/Proyecto de OpenCode | Cambios nativos de plugins/configuración en el ámbito mostrado. Los controles de Proyecto requieren un proyecto/Location activo. |
 | Perfil de datos de escritorio | Ventanas nativas, estado de restauración y almacenamiento del navegador, independientemente del archivo de configuración y del servicio compartido de OpenCode. Consulta [Ventanas y datos de escritorio](desktop.md). |
 
+La pestaña seleccionada del panel derecho y el modo de Archivos se guardan por separado para cada pestaña de proyecto. Tus últimas elecciones explícitas proporcionan los valores predeterminados para las pestañas nuevas; los tamaños de los paneles, el orden de las pestañas, la personalización y la apariencia siguen siendo opciones de disposición y preferencias compartidas.
+
 **Estadísticas** abarca todo el servicio OpenCode conectado (todos los proyectos, clones independientes y subsesiones), no solo la carpeta abierta, durante los últimos 7, 30, 90 o 365 días. Necesita un proyecto abierto y muestra los tokens y el coste registrados por OpenCode, no facturas del proveedor ni cuotas de suscripción; los totales guardados anteriormente pueden aparecer mientras se actualiza. Las cuotas del plan pertenecen a la sección **Uso** de Estado.
 
 Cambiar preferencias de visualización no reinicia OpenCode ni repite un mensaje. La configuración nativa, el mantenimiento del servicio y las credenciales tienen efectos independientes: consulta [configuración de OpenCode](opencode.md), [Proveedores](providers.md) e [Integraciones](integrations.md).
