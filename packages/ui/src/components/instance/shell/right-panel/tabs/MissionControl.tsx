@@ -11,8 +11,8 @@ import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-da
 import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
-import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface } from "../../../../../stores/session-surface"
-import { MAX_EXPANDED, forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, updateMissionProjectView,
+import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, hasPendingSessionSurfaceIntent } from "../../../../../stores/session-surface"
+import { MAX_EXPANDED, forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, retargetMissionReader, updateMissionProjectView,
   type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { markMissionTasksSeen, missionTaskUnseen, seedMissionTasksSeen } from "../../../../../stores/mission-task-seen"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
@@ -263,14 +263,17 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   }
   const selectedFamily = () => observedActivity()?.missions.find(item => item.missionId === mission()?.id)?.family
 
-  const navigationOrigin = () => {
+  const navigationOrigin = (discoverPassage = false) => {
     const instanceId = props.instanceId, viewScope = scope(), viewCurrent = captureView(), operation = ++intent
-    const schedule = passageSchedule(), passage = currentPassage.snapshot()?.passageID
+    const schedule = passageSchedule()
+    let passage = discoverPassage ? undefined : currentPassage.snapshot()?.passageID
     let epoch = conversationEpoch
     let surfaceIntent = captureSessionSurfaceIntent({ instanceId, sessionId: props.activeSessionId() ?? null })
     return { instanceId, scope: viewScope,
       current: () => surfaceIntent.current() && viewCurrent() && operation === intent && scope() === viewScope && epoch === conversationEpoch
-        && passageSchedule() === schedule && (!schedule || currentPassage.snapshot()?.passageID === passage),
+        && passageSchedule() === schedule && (!schedule || discoverPassage && passage === undefined || currentPassage.snapshot()?.passageID === passage),
+      bindPassage: () => { passage = currentPassage.snapshot()?.passageID },
+      adoptReader: () => { epoch = conversationEpoch },
       // Adopt only our guarded synchronous batch, never an awaited external change.
       adoptConversation: () => {
         epoch = conversationEpoch
@@ -352,8 +355,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       props.onRevealConversation?.()
     } finally { origin.release() }
   }
-  const onOpenActor = async (id: string, request?: { id: string; kind: "form" | "permission" }, missionId?: string) => {
-    const origin = navigationOrigin()
+  const onOpenActor = async (id: string, request?: { id: string; kind: "form" | "permission" }, missionId?: string,
+    origin = navigationOrigin()) => {
     try {
       await openActor(id, origin, () => {
         if (!origin.current() || !request) return
@@ -397,40 +400,42 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // click's fences hold throughout: the same view, no newer selection or navigation
   // intent, no conversation change, the same connection and no editor; otherwise the
   // answer is dropped, never replayed later.
-  const clickFence = () => {
-    const viewCurrent = captureView(), operation = intent, epoch = conversationEpoch, instanceId = props.instanceId
-    const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
-    return () => viewCurrent() && operation === intent && epoch === conversationEpoch && !editor()
-      && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
+  const [pendingSchedule, setPendingSchedule] = createSignal<{ key: string; origin: ReturnType<typeof navigationOrigin>;
+    current: () => boolean; reader: boolean; answer: boolean; passageID?: string }>()
+  const retireSchedule = () => {
+    pendingSchedule()?.origin.release()
+    setPendingSchedule(undefined)
   }
-  const [pendingAnswer, setPendingAnswer] = createSignal<{ key: string; current: () => boolean; passageID?: string }>()
-  const [pendingReader, setPendingReader] = createSignal<{ key: string; current: () => boolean }>()
+  onCleanup(retireSchedule)
   const scheduleTarget = (id: string, scheduled: boolean): MissionReaderTarget => ({ kind: "recurrence", missionId: id,
     instanceId: props.instanceId, projectID: projectID(), ...(scheduled ? { scheduleOwner: "scheduled" as const } : {}) })
   createEffect(() => {
-    const pending = pendingReader()
+    const pending = pendingSchedule()
     if (!pending) return
-    if (selectedKey() !== pending.key || !untrack(pending.current)) { setPendingReader(undefined); return }
-    const snapshot = currentPassage.snapshot()
-    if (!snapshot || snapshot.scheduleID !== passageSchedule() || currentPassage.loading()) return
-    setPendingReader(undefined)
-    if (snapshot.mission && snapshot.passageID && !currentPassage.error())
-      untrack(() => updateView({ reader: readerTarget({ missionId: snapshot.mission!.id, kind: "overview" }) }))
-  })
-  createEffect(() => {
-    const pending = pendingAnswer()
-    if (!pending) return
-    if (selectedKey() !== pending.key || !untrack(pending.current)) { setPendingAnswer(undefined); return }
+    if (!(props.isActive?.() ?? true) || editor() || selectedKey() !== pending.key || !untrack(pending.current)) { retireSchedule(); return }
     // A failed read before any passage is shown, or a schedule with no current passage,
     // retires the intent: it never waits for a later read.
     const snapshot = currentPassage.snapshot()
     if ((currentPassage.error() && !mission()) || (!currentPassage.loading() && snapshot?.scheduleID === passageSchedule() && !snapshot?.passageID)) {
-      setPendingAnswer(undefined); return
+      retireSchedule(); return
     }
     // Only the passage first read after the click: a replacement retires the intent.
     const passageID = snapshot?.passageID ?? undefined
     if (passageID && pending.passageID === undefined) pending.passageID = passageID
-    else if (pending.passageID !== undefined && passageID !== pending.passageID) { setPendingAnswer(undefined); return }
+    else if (pending.passageID !== undefined && passageID !== pending.passageID) { retireSchedule(); return }
+    if (pending.reader && snapshot?.mission && passageID && !currentPassage.loading() && !currentPassage.error()) {
+      untrack(() => {
+        pending.origin.bindPassage()
+        const reader = view().reader
+        if (reader) retargetMissionReader(props.instanceId, reader, readerTarget({ missionId: snapshot.mission!.id, kind: "overview" }))
+        pending.origin.adoptReader()
+      })
+      pending.reader = false
+    }
+    if (!pending.answer) {
+      if (!currentPassage.loading() && snapshot?.scheduleID === passageSchedule()) retireSchedule()
+      return
+    }
     // Tracked: reruns as the passage, its activity and its request windows arrive.
     const question = passageQuestion()
     if (!question) {
@@ -438,11 +443,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       // intent, so a later unrelated question never triggers it.
       const value = mission()
       if (value && observedActivity()?.missions.some(item => item.missionId === value.id) && !currentPassage.loading()
-        && !passageStore().reading(props.instanceId)) setPendingAnswer(undefined)
+        && !passageStore().reading(props.instanceId)) retireSchedule()
       return
     }
-    setPendingAnswer(undefined)
-    untrack(() => void onOpenActor(question.sessionId, question.request))
+    setPendingSchedule(undefined)
+    untrack(() => {
+      pending.origin.bindPassage()
+      void onOpenActor(question.sessionId, question.request, undefined, pending.origin)
+    })
   })
   // Whether the selection is a task of the selected row's Mission (or passage) rather than the row.
   // Restored/off-page task selection owns the toolbar while its bounded read resolves.
@@ -485,8 +493,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       && Boolean(reader.scheduleOwner === "scheduled") === Boolean(selectedScheduled())
     const passageReader = reader.recurrence?.scheduleID === snapshot.scheduleID && reader.recurrence.passageID !== snapshot.passageID
     if (!(scheduleReader && snapshot.mission && snapshot.passageID) && !passageReader) return
-    untrack(() => updateView({ reader: snapshot.mission && snapshot.passageID
-      ? readerTarget({ missionId: snapshot.mission.id, kind: "overview" }) : scheduleTarget(snapshot.scheduleID, Boolean(selectedScheduled())) }))
+    if (hasPendingSessionSurfaceIntent(props.instanceId)) return
+    untrack(() => retargetMissionReader(props.instanceId, reader, snapshot.mission && snapshot.passageID
+      ? readerTarget({ missionId: snapshot.mission.id, kind: "overview" }) : scheduleTarget(snapshot.scheduleID, Boolean(selectedScheduled()))))
   })
   // A schedule's current passage: its selected task takes the toolbar from the schedule's.
   const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
@@ -586,8 +595,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       const reader = view().reader
       batch(() => {
         if (selectedTaskKey()) updateView({ selectedTask: undefined })
-        if (reader?.recurrence?.scheduleID === id && reader.recurrence.owner === "scheduled")
-          updateView({ reader: scheduleTarget(id, true) })
+        if (!hasPendingSessionSurfaceIntent(props.instanceId) && reader?.recurrence?.scheduleID === id && reader.recurrence.owner === "scheduled")
+          retargetMissionReader(props.instanceId, reader, scheduleTarget(id, true))
       })
     },
     get tracking() { return selectedScheduled() ? tracking() : undefined },
@@ -786,9 +795,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 : { selected: undefined, selectedRecurrence: undefined, selectedScheduled: id, selectedTask: undefined })
               if (follow) updateView({ reader: scheduleTarget(id, kind === "scheduled") })
             })
-            setPendingReader(follow ? { key: entry.key, current: clickFence() } : undefined)
+            retireSchedule()
             // A red row asks for an answer: open its passage's question, as for a Mission row.
-            setPendingAnswer(entry.mark === "permission" ? { key: entry.key, current: clickFence() } : undefined)
+            if (follow || entry.mark === "permission") {
+              const origin = navigationOrigin(true), instanceId = props.instanceId
+              const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
+              setPendingSchedule({ key: entry.key, origin, reader: follow, answer: entry.mark === "permission",
+                current: () => origin.current() && !editor() && instances().get(instanceId)?.client === client
+                  && getOpenCodeInstanceGeneration(instanceId) === generation })
+            }
           }
           else {
             batch(() => { followReader(id); selectMission(id) })

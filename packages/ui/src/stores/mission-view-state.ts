@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import { MAX_LAYOUT_VALUE_LENGTH, readClientLayoutValue, writeClientLayoutValue, removeClientLayoutValue } from "./client-state"
 import { getTabViewState, updateTabViewState, type RestorableTabMissionView } from "./tab-view-state"
-import { activateSessionSurface } from "./session-surface"
+import { activateSessionSurface, hasPendingSessionSurfaceIntent } from "./session-surface"
 
 export interface MissionReaderTarget {
   /** For `playbook`, the playbook id, read without any Mission. */
@@ -50,6 +50,12 @@ export function updateMissionProjectView(instanceId: string, patch: Partial<Proj
   updateTabViewState(instanceId, { missions: value })
   if ("reader" in patch && previous.reader !== value.reader) activateSessionSurface({ instanceId, sessionId: null },
     value.reader ? { kind: "mission", target: value.reader } : { kind: "conversation" })
+}
+/** Retarget an already displayed reader under the caller's foreground/reconciliation fence. */
+export function retargetMissionReader(instanceId: string, previous: MissionReaderTarget, target: MissionReaderTarget): void {
+  const view = missionProjectView(instanceId)
+  if (view.reader !== previous) return
+  updateTabViewState(instanceId, { missions: { ...view, reader: target } })
 }
 export function missionDisclosureOpen(instanceId: string, missionId: string, id: string, defaultOpen = true): boolean {
   return missionProjectView(instanceId).disclosures?.[key(JSON.stringify([missionId, id]))] ?? defaultOpen
@@ -173,7 +179,7 @@ export function forgetMissionView(instanceId: string, missionId: string): void {
   updateMissionProjectView(instanceId, {
     selected: view.selected === missionId ? undefined : view.selected,
     selectedTask: view.selectedTask?.missionId === missionId ? undefined : view.selectedTask,
-    reader: view.reader?.missionId === missionId ? undefined : view.reader,
+    reader: view.reader?.missionId === missionId && !hasPendingSessionSurfaceIntent(instanceId) ? undefined : view.reader,
   })
 }
 
