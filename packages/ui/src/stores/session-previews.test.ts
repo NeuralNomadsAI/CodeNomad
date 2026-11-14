@@ -7,7 +7,7 @@ import { getTabViewState, seedTabViewState } from "./tab-view-state"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getPendingPreviewOperationCount } from "./session-previews"
 import { captureSessionSurfaceIntent } from "./session-surface"
-import { seedRestoredSessionSelection } from "./session-state"
+import { setActiveSessionId } from "./session-selection-state"
 
 function registerOccurrence(id: string) {
   publishInstanceLifecycleAuthority({ type: "opened", instanceId: id, folder: "/same", occurrence: 0 })
@@ -28,7 +28,7 @@ describe("session preview persistence", () => {
     serverApi.deletePreview = async () => undefined as any
     try {
       const preview = await openSessionPreview("same", "https://example.com/a", id)
-      seedRestoredSessionSelection(id, null, "same")
+      setActiveSessionId(previous => new Map(previous).set(id, "same"))
       const ctx = { instanceId: id, sessionId: "same" }
       const unchanged = captureSessionSurfaceIntent(ctx)
       updateSessionPreviewLocation(preview.storageKey, preview.targetUrl)
@@ -49,7 +49,7 @@ describe("session preview persistence", () => {
     try {
       const a = await openSessionPreview("a", "https://example.com/a", id)
       const b = await openSessionPreview("b", "https://example.com/b", id)
-      seedRestoredSessionSelection(id, null, "b")
+      setActiveSessionId(previous => new Map(previous).set(id, "b"))
       assert.equal(getSessionPreview("a", id)?.mode, "preview", "saved mode also remains preview for the hidden session")
       const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: "b" })
       updateSessionPreviewLocation(a.storageKey, "https://example.com/redirect")

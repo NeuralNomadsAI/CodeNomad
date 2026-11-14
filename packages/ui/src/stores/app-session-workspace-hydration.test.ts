@@ -6,6 +6,8 @@ import { addInstance, removeInstance } from "./instances.ts"
 import { hydrateRestoredWorkspaceState } from "./app-session-workspace-hydration.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getTabViewState, updateTabViewState, clearTabViewState } from "./tab-view-state.ts"
+import { activeSessionId as selectedSessionId } from "./session-selection-state.ts"
+import { captureSessionSurfaceIntent } from "./session-surface.ts"
 import {
   clearInstanceDraftPrompts,
   clearInstanceSessionSelection,
@@ -100,10 +102,16 @@ it("waits for a saved Info selection's parent without claiming user-selection au
     await new Promise<void>(resolve => setImmediate(resolve))
     assert.equal(activeParentSessionId().get(instanceId), "parent")
     assert.equal(activeSessionId().get(instanceId), "info")
+    assert.equal(selectedSessionId, activeSessionId, "view stores and session actions share one selection signal")
+    assert.equal(selectedSessionId().get(instanceId), "info")
     assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
+    const intent = captureSessionSurfaceIntent({ instanceId, sessionId: "info" })
+    assert.equal(intent.current(), true)
     parent.resolve(apiSession("parent"))
     await hydration
     assert.equal(activeSessionId().get(instanceId), "parent")
+    assert.equal(selectedSessionId().get(instanceId), "parent")
+    assert.equal(intent.current(), false, "restored selection changes still fence foreground activation")
     assert.equal(getSessionDraftPrompt(instanceId, "parent"), "saved draft")
     assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
   } finally {
