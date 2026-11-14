@@ -5,7 +5,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { activeInstanceId, instances } from "../stores/instances"
 import { openFilePreview } from "../stores/files-preview"
 import { getWorktreeForDirectory } from "../stores/worktrees"
-import { openSessionPreview, showSessionChatFor } from "../stores/session-previews"
+import { openSessionPreview } from "../stores/session-previews"
 import { activeSessionId, sessions } from "../stores/session-state"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 
@@ -100,8 +100,6 @@ export function routeSessionLink(instanceId: string, sessionId: string, href: st
   }
   const resolution = resolveSessionProjectLink(instanceId, sessionId, href)
   if (resolution) {
-    // A browser preview owning the central surface steps aside for the reader.
-    showSessionChatFor(sessionId, instanceId)
     openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution })
     return true
   }

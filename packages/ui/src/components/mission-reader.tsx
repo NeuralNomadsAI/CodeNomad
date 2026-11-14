@@ -4,7 +4,7 @@ import { useI18n } from "../lib/i18n"
 import { missionStore as projectMissionStore } from "../stores/missions"
 import { MissionPanelScope, scopedMissionStore } from "./mission-panel-scope"
 import { missionProjectView, updateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
-import { getSessionPreview, showSessionChatFor } from "../stores/session-previews"
+import { activateSessionSurface, getSessionSurface } from "../stores/session-surface"
 import { Markdown } from "./markdown"
 import { copyToClipboard } from "../lib/clipboard"
 import { MissionTaskReader } from "./mission-task-reader"
@@ -292,7 +292,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const captureNavigation = createMissionViewFence(() => JSON.stringify([
     props.instanceId, props.scope, target(), instances().get(props.instanceId)?.folder,
     instances().get(props.instanceId)?.metadata?.project?.id, missionStore.state(props.instanceId).projectID,
-    activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId), getSessionPreview(activeSessionId().get(props.instanceId) ?? "", props.instanceId),
+    activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId),
+    getSessionSurface({ instanceId: props.instanceId, sessionId: activeSessionId().get(props.instanceId) ?? null }),
   ]), () => Boolean(target()))
   let navigationIntent = 0
   const taskConversation = () => {
@@ -331,8 +332,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
     batch(() => {
       setActiveSessionFromList(instanceId, sessionId)
-      showSessionChatFor(sessionId, instanceId)
-      updateMissionProjectView(instanceId, { reader: undefined })
+      activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" })
     })
   }
   // Compact project and current-passage readers resolve their exact body descriptors.
@@ -462,7 +462,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     closeButton?.focus()
   })
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
-  const close = () => { showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.instanceId); updateMissionProjectView(props.instanceId, { reader: undefined }) }
+  const close = () => activateSessionSurface({ instanceId: props.instanceId, sessionId: activeSessionId().get(props.instanceId) ?? null }, { kind: "conversation" })
    return <MissionPanelScope value={panel}><section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">

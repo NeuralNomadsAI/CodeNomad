@@ -1,4 +1,5 @@
 import { batch, createSignal } from "solid-js"
+import { invalidateSessionSurfaceIntent } from "./session-surface"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
 import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
@@ -703,6 +704,7 @@ function writeSessionSelection(
   instanceId: string,
   sessionId: string | null,
 ): void {
+  invalidateSessionSurfaceIntent(instanceId)
   // A coalesced transcript page admitted under the previous selection lands
   // before the gates move; nothing pending may cross a selection change.
   flushTranscriptProjections()

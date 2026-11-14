@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import { MAX_LAYOUT_VALUE_LENGTH, readClientLayoutValue, writeClientLayoutValue, removeClientLayoutValue } from "./client-state"
 import { getTabViewState, updateTabViewState, type RestorableTabMissionView } from "./tab-view-state"
+import { activateSessionSurface } from "./session-surface"
 
 export interface MissionReaderTarget {
   /** For `playbook`, the playbook id, read without any Mission. */
@@ -47,6 +48,8 @@ export function updateMissionProjectView(instanceId: string, patch: Partial<Proj
     && previous.selectedScheduled === value.selectedScheduled && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded
     && previous.disclosures === value.disclosures) return
   updateTabViewState(instanceId, { missions: value })
+  if ("reader" in patch) activateSessionSurface({ instanceId, sessionId: null },
+    value.reader ? { kind: "mission", target: value.reader } : { kind: "conversation" })
 }
 export function missionDisclosureOpen(instanceId: string, missionId: string, id: string, defaultOpen = true): boolean {
   return missionProjectView(instanceId).disclosures?.[key(JSON.stringify([missionId, id]))] ?? defaultOpen

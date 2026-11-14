@@ -7,7 +7,6 @@ import type { RightPanelCustomization, RightPanelSectionModule } from "./registr
 import { getWorktrees, getGitRepoStatus } from "../../../../stores/worktrees"
 import { sessionWorktreeSlug } from "../file-preview-lifetime"
 import { closeFilePreview, openFilePreview, type FilePreviewTarget } from "../../../../stores/files-preview"
-import { showSessionChatFor } from "../../../../stores/session-previews"
 import { useGitChanges } from "./useGitChanges"
 import { useGitHistory } from "./useGitHistory"
 import { createCoreRightPanelModule } from "./core-plugin"
@@ -79,7 +78,6 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   const openFile = (file: Pick<FilePreviewTarget, "kind" | "path" | "originalPath" | "scope" | "commit" | "subject">) => {
     const sessionId = options.activeSessionId()
     if (!sessionId || sessionId === "info") return
-    showSessionChatFor(sessionId, options.instanceId)
     openFilePreview(options.instanceId, { ...file, sessionId, slug: slug(), directory: directory(), serviceDirectory: worktree()?.serviceDirectory })
   }
   return createCoreRightPanelModule({

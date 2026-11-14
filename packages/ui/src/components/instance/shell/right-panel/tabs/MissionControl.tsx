@@ -11,7 +11,7 @@ import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-da
 import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
-import { getSessionPreview, showSessionChatFor } from "../../../../../stores/session-previews"
+import { activateSessionSurface, getSessionSurface } from "../../../../../stores/session-surface"
 import { MAX_EXPANDED, forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, updateMissionProjectView,
   type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { markMissionTasksSeen, missionTaskUnseen, seedMissionTasksSeen } from "../../../../../stores/mission-task-seen"
@@ -167,19 +167,21 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // in-flight conversation navigation (conversationEpoch).
   const showPlaybook = (template: MissionPanelMap["template"], taskMode: "native" | "independent") => {
     batch(() => {
-      showSessionChatFor(props.activeSessionId() ?? "", props.instanceId)
       updateView({ reader: { missionId: template, kind: "playbook", taskMode } })
     })
     props.onRevealConversation?.()
   }
 
-  const conversation = () => ({ session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
-    preview: getSessionPreview(props.activeSessionId() ?? "", props.instanceId), reader: view().reader })
+  const conversation = () => {
+    const surface = getSessionSurface({ instanceId: props.instanceId, sessionId: props.activeSessionId() ?? null })
+    return { session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
+      kind: surface.kind, target: "target" in surface ? surface.target : undefined }
+  }
   let conversationEpoch = 0, previousConversation = conversation()
   createComputed(() => {
     const next = conversation()
     if (next.session !== previousConversation.session || next.parent !== previousConversation.parent
-      || next.preview !== previousConversation.preview || next.reader !== previousConversation.reader) conversationEpoch++
+      || next.kind !== previousConversation.kind || next.target !== previousConversation.target) conversationEpoch++
     previousConversation = next
   })
 
@@ -301,8 +303,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     }
     batch(() => {
       setActiveSessionFromList(origin.instanceId, sessionId)
-      showSessionChatFor(sessionId, origin.instanceId)
-      updateMissionProjectView(origin.instanceId, { reader: undefined })
+      activateSessionSurface({ instanceId: origin.instanceId, sessionId }, { kind: "conversation" })
     })
      origin.adoptConversation()
      if (!origin.current()) return false
@@ -322,7 +323,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const read = async (target: MissionReaderTarget) => {
     if (isReading(target)) {
       intent++
-      batch(() => { showSessionChatFor(props.activeSessionId() ?? "", props.instanceId); updateView({ reader: undefined }) })
+      activateSessionSurface({ instanceId: props.instanceId, sessionId: props.activeSessionId() ?? null }, { kind: "conversation" })
       return
     }
     const origin = navigationOrigin()
@@ -338,7 +339,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     }
     if (!origin.current()) return
     batch(() => {
-      showSessionChatFor(props.activeSessionId() ?? "", origin.instanceId)
       updateMissionProjectView(origin.instanceId, { reader: readerTarget(target) })
     })
     origin.adoptConversation()
@@ -608,7 +608,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       try {
         await hydrateRestoredSessionChain(instanceId, [id], undefined, current)
         if (!current() || !sessions().get(instanceId)?.has(id)) return
-        batch(() => { setActiveSessionFromList(instanceId, id); showSessionChatFor(id, instanceId); updateMissionProjectView(instanceId, { reader: undefined }) })
+        batch(() => { setActiveSessionFromList(instanceId, id); activateSessionSurface({ instanceId, sessionId: id }, { kind: "conversation" }) })
         props.onRevealConversation?.()
       } catch { if (current()) setNavigationError(true) }
     })() })

@@ -4,7 +4,7 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { instances } from "./instances"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
-import { showSessionChatFor } from "./session-previews"
+import { activateSessionSurface } from "./session-surface"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 import { setSessionSearchDestination } from "./session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -123,7 +123,7 @@ export async function openHistoryMatchSession(instanceId: string, sessionId: str
   batch(() => {
     if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
     setActiveSessionFromList(instanceId, sessionId)
-    showSessionChatFor(sessionId, instanceId)
+    activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" })
   })
   return true
 }
