@@ -42,7 +42,7 @@ Kalenderbasierte Zeitplanung benötigt einen expliziten Agenten und ein Modell f
 
 ### Automatisch starten {#automatic-start}
 
-**Automatisch starten** steht außerhalb der Zeitplanung und ist standardmäßig aus. Ausgeschaltet erstellt es eine pausierte Mission für späteres ▶ Starten. Eingeschaltet fordert es den Start nach bestätigter Erstellung unter den üblichen Prüfungen und gegebenenfalls mit Zustimmung zu nativen Einstellungen an.
+**Automatisch starten** steht außerhalb der Zeitplanung und ist standardmäßig aus. Ausgeschaltet erstellt es eine pausierte Mission für späteres ▶ Starten. Eingeschaltet fordert es den Start nach bestätigter Erstellung mit den üblichen Prüfungen und automatischer Vorbereitung der Zeitplanung an.
 
 Bei verlorener Bestätigung bleibt der Start nach Lesen der Quittung manuell. Behalten Sie die ursprüngliche unbestätigte Anfrage und prüfen Sie Liste und Unterhaltung vor einer erneuten Erstellung.
 
@@ -92,9 +92,11 @@ Weitere Einträge und Aufgaben laden am Listenende automatisch. Aufgabenseiten b
 
 ### Farben und Zustände {#status-colours}
 
-Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, pulsierendes Gelb zeigt beobachtete Arbeit, Orange Pause/Unterbrechung, Grün einen ungesehenen Abschluss und Blau Vorbereitung beziehungsweise noch nicht gestartete Aufgaben.
+Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, pulsierendes Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause, ein orangefarbenes Warndreieck Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
 
-Auswahl oder grüne Aufgabensymbole bestätigen Ergebnisse; das Chevron-Menü bietet **Als gelesen markieren**. Status und Ergebnis sind getrennt: ein Blocker ist nicht zwingend eine Frage, ein Bericht beweist nicht das Ende aller nativen Vorgänge. Zurückgezogene Aufgaben bleiben im Verlauf.
+Ein Akzentsymbol mit einem kleinen statischen neutralen Strich darunter bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse, gestoppte Zeitpläne und **Status unbestätigt** sind neutral; lesen Sie den Statustext.
+
+Auswahl oder Klick/Streichen über grüne Aufgabensymbole bestätigt Ergebnisse; das Chevron-Menü bietet **Als gelesen markieren**. Bei **Erfolgreicher Durchlauf zum Ansehen** bestätigt eine ausdrückliche Auswahl der wiederkehrenden Zeile im aktiven Fenster oder **Als gelesen markieren** genau diesen Durchlauf. Bei aktiver Zeitplanung kehrt das Symbol zum Warten zurück, sonst zu neutral. Wiederhergestellte Auswahl und neue Ergebnisse in einer bereits ausgewählten Zeile bleiben ungelesen. Historische Erfolge beim ersten Laden gelten als gelesen. Zurückgezogene Aufgaben bleiben im Verlauf.
 
 ### Fragen und Entscheidungen {#questions}
 

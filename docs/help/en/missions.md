@@ -46,7 +46,7 @@ Calendar-backed scheduling requires an explicit agent and model for the coordina
 
 ### Start automatically {#automatic-start}
 
-**Start automatically** is outside Scheduling and off by default. Leave it off to create a paused Mission, then use ▶ **Start** in the header. Turn it on to request Start after creation is confirmed, with the ordinary checks and any required native-settings consent.
+**Start automatically** is outside Scheduling and off by default. Leave it off to create a paused Mission, then use ▶ **Start** in the header. Turn it on to request Start after creation is confirmed, with the ordinary checks and automatic scheduling preparation.
 
 If creation's acknowledgement is lost, reading its receipt leaves Start manual. An unconfirmed creation keeps its original request; inspect the list and conversation before creating anything again.
 
@@ -102,13 +102,18 @@ More directory entries and tasks load as you approach the end. Loaded task pages
 
 The flag shows the Mission's state; its chevron carries its tasks' attention state. A recurring entry uses a repeat icon.
 
-| Colour | Meaning |
+| Colour and shape | Meaning |
 | --- | --- |
 | Red | An open question or permission needs your answer. Select the asking Mission or task to open the interruption dock. |
 | Yellow, pulsing | Native work was observed running. |
-| Orange | Paused or interrupted, with an action to continue. |
-| Green | A Mission or task finished and has not been seen in this window. Select it, click or sweep green task icons, or use **Mark as read** on the chevron's context menu. |
-| Blue | Prepared Mission or a task that has not started. |
+| Orange pause symbol | Paused. |
+| Orange warning triangle | Interrupted, with an action to continue. |
+| Green | A Mission, task or successful scheduled run awaits review in this window. |
+| Accent icon with a small static neutral line below | **Waiting for scheduled run**: the next wake is confirmed. The accent follows your palette. |
+| Accent icon alone | Prepared Mission or a task that has not started. |
+| Neutral | Reviewed completion, stopped schedule or **State unconfirmed**; read the status text. |
+
+Select a green Mission or task, click or sweep green task icons, or use **Mark as read** on the chevron's context menu. For **Successful run to review**, explicitly select the recurring row in the active window or use **Mark as read** to acknowledge that run. Its icon returns to waiting while scheduling remains active, otherwise neutral. Restored selection and results arriving on an already selected row keep the new result unread. Historical successes present on first loading start as read.
 
 Status text distinguishes Assigned, Active, Waiting, Blocked, Done, Failed and Retired. A reported blockage is not necessarily a question for you. A recorded result is not proof that every native operation has stopped. Retiring a task keeps its history.
 

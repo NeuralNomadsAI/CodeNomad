@@ -285,7 +285,12 @@ active principal/next-wake evidence for **Waiting for scheduled run**. Daily doc
 use the native snapshot's positively observed running state and next date. A missing,
 stale, blocked or unresolved observation keeps **State unconfirmed**. Successful-history
 attention and exact passage acknowledgement follow the shared marks contract in
-`MISSIONS.md` (Agent conventions).
+`MISSIONS.md` (Agent conventions): accent icon with a static neutral underline for
+confirmed waiting, accent alone for prepared, orange Pause or warning triangle for
+pause/interruption, yellow pulse during a passage and green for a new successful
+passage awaiting review. Explicit attentive selection or **Mark as read** acknowledges
+that exact passage and returns an armed schedule to waiting; first-loaded history
+starts read. Acknowledged finished schedules and terminal Stop use neutral.
 Their `technical` projection exposes only the recorded current/retiring carrier
 session and calendar identifiers, role, slot, temporal generation and pending
 cleanup. It derives these from the same document read, including attempted
@@ -346,6 +351,12 @@ document OFF refuse preparation, including an OFF hidden by a higher ON.
 The native document preparation endpoint owns authenticated project-only
 configuration writes; an already enabled Location receives a zero-target ready
 proof. Existing ready proofs are retained and revalidated read-only.
+Play/Resume perform this preparation automatically under the original view fences.
+A structured refusal offers **Open scheduling settings** only for a server-openable
+configuration ID; source/path and environment details use the focusable **i** tip.
+The requested button shows loading and `aria-busy` during HTTP work, with a status
+announcement. Uncertain activation keeps the exact receipt check available and
+leaves the next Play explicit after recovery.
 Both display routes revalidate workspace, connection, physical checkout and request
 lifetime after asynchronous work. Missing methods or capabilities return an
 explicit unavailable response. UI reads use the shared secondary HTTP budget.

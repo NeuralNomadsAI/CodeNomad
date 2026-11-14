@@ -46,7 +46,7 @@ Une programmation gérée par calendrier nécessite un agent et un modèle expli
 
 ### Démarrer automatiquement {#automatic-start}
 
-**Démarrer automatiquement** se trouve hors de Programmation et reste décoché par défaut. Laissez-le décoché pour créer une Mission en pause, puis utilisez ▶ **Démarrer** dans l’en-tête. Cochez-le pour demander le démarrage après confirmation de la création, avec les contrôles habituels et l’éventuel consentement aux réglages natifs.
+**Démarrer automatiquement** se trouve hors de Programmation et reste décoché par défaut. Laissez-le décoché pour créer une Mission en pause, puis utilisez ▶ **Démarrer** dans l’en-tête. Cochez-le pour demander le démarrage après confirmation de la création, avec les contrôles habituels et la préparation automatique de la programmation.
 
 Si l’accusé de création est perdu, lire le reçu laisse le démarrage manuel. Une création non confirmée garde sa requête d’origine ; vérifiez la liste et la conversation avant de créer à nouveau.
 
@@ -102,13 +102,18 @@ Les missions et tâches suivantes se chargent à l’approche de la fin. Les pag
 
 Le drapeau indique l’état de la Mission ; son chevron porte l’attention de ses tâches. Une entrée récurrente utilise une icône de répétition.
 
-| Couleur | Sens |
+| Couleur et forme | Sens |
 | --- | --- |
 | Rouge | Une question ou permission attend votre réponse. Sélectionnez la Mission ou la tâche concernée pour ouvrir le panneau d’interruption. |
 | Jaune pulsant | Une activité native a été observée. |
-| Orange | En pause ou interrompue, avec une action pour continuer. |
-| Vert | Une Mission ou tâche terminée n’a pas encore été vue dans cette fenêtre. Sélectionnez-la, cliquez ou balayez les icônes vertes des tâches, ou choisissez **Marquer comme lu** dans le menu du chevron. |
-| Bleu | Mission préparée ou tâche qui n’a pas commencé. |
+| Symbole pause orange | En pause. |
+| Triangle d’avertissement orange | Interrompue, avec une action pour continuer. |
+| Vert | Une Mission, tâche ou exécution programmée réussie attend votre consultation dans cette fenêtre. |
+| Icône d’accent avec un petit trait neutre statique dessous | **En attente programmée** : le prochain réveil est confirmé. L’accent suit votre palette. |
+| Icône d’accent seule | Mission préparée ou tâche qui n’a pas commencé. |
+| Neutre | Fin consultée, programmation arrêtée ou **État non confirmé** ; lisez le texte d’état. |
+
+Sélectionnez une Mission ou tâche verte, cliquez ou balayez les icônes vertes des tâches, ou choisissez **Marquer comme lu** dans le menu du chevron. Pour **Passage réussi à consulter**, sélectionnez explicitement la ligne récurrente dans la fenêtre active ou utilisez **Marquer comme lu** pour acquitter ce passage. L’icône revient à l’attente si la programmation reste active, sinon au neutre. La sélection restaurée et les résultats reçus sur une ligne déjà sélectionnée gardent le nouveau résultat à consulter. Les succès historiques présents au premier chargement commencent comme lus.
 
 Le texte d’état distingue Affectée, Active, En attente, Bloquée, Terminée, Échouée et Retirée. Un blocage signalé n’est pas nécessairement une question pour vous. Un résultat enregistré ne prouve pas que chaque opération native est arrêtée. Retirer une tâche conserve son historique.
 

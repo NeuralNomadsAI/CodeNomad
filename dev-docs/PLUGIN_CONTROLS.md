@@ -280,23 +280,25 @@ receives the current acquired configuration entries and native target position.
 Missions settings request strict document acquisition, rejecting JSON and JSONC
 coexistence in the same layer; plugin source edits retain the selected target
 and propagate their deadline signal through acquisition and commit. Missions'
-`native-experimental-settings.ts` edits only schedules/depth, retaining explicit
+`native-experimental-settings.ts` authors schedules/depth, retaining explicit
 companion values. Depth writes preserve inherited schedule activation when the
-local block omits its flag. Schedule activation materializes inherited depth
-only when creating a whole-block override. Adding schedules to an existing block
-keeps its effective depth choice, including the native default selected by an
+local block omits its flag. Schedule activation copies every effective inherited
+experimental option when creating a whole-block override. Adding schedules to an
+existing block keeps its options, including the native default selected by an
 absent depth key. Existing file-byte expectations and the
 physical replacement lock fence concurrent writers.
 
 `editConfigDocuments` prepares and verifies each required target before its first
-rename. The Missions activation journal records the plan before effects, an
-attempt before each rename, and each exact acknowledgement. A read-only target
-or conflicting source refuses preparation; a partial global/project write keeps
-its durable receipts and preserves the successful write. An uncertain attempted
-write is reconciled only by its exact result bytes, preserving a later explicit
-OFF. `native-schedule-settings-activation.ts` acknowledges readiness only after
-the native global and effective Location blocks both enable schedules, within
-ten seconds, under the acquired connection and host/distro authority.
+rename. The Missions activation journal records its project-only plan before effects,
+an attempt before each rename, and each exact acknowledgement. A read-only target,
+masking block, discovered explicit OFF or native environment OFF refuses preparation.
+An already enabled Location receives a zero-target ready proof without configuration
+writes. Persisted intentions with global targets retain exact attempted effects for
+read-only reconciliation. Never write global or unattempted targets from those intentions.
+An uncertain attempted write is reconciled only by its exact result bytes, preserving
+a later explicit OFF. `native-schedule-settings-activation.ts` acknowledges readiness
+after the effective native Location flag enables schedules, within ten seconds,
+under the acquired connection and host/distro authority.
 
 OpenCode watches these configuration roots. Never restart the daemon or report a
 successful file write as an active plugin: the mutation response publishes the

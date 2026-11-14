@@ -424,9 +424,11 @@ channel default. `all_flags:false` falls through to that default. The daemon's
 Flag service supplies environment and channel decisions.
 Activation refuses every discovered explicit `schedules:false`, including a
 hidden lower layer, and a native environment OFF. An upper experimental block
-masking the project target also refuses activation. Responses identify the reason,
-provenance, layer and discovered path; an editor action requires exact membership
-in the existing global config-file inventory.
+masking the project target also refuses activation. `schedule-activation-refused`
+responses identify the reason, provenance, layer, discovered path, `openable` and
+`configFileID`. An editor action requires an openable ID with exact membership
+in the existing global config-file inventory; environment refusals expose their
+source through the information tip.
 
 Native regression: `node --import tsx
 scripts/test-mission-experimental-settings-native.mjs <absolute-isolated-cli>`.
@@ -439,6 +441,8 @@ POST accepts only `requestID` and `expectedDocumentRevision`. It holds the owned
 worktree admission, refreshes authority before every typed `documentActivation`
 phase and composes the project-only executor with native document CAS. An already
 enabled Location records a ready proof with zero targets and zero config writes.
+The sole writable target is the owned Location's project configuration; global
+configuration contributes discovery, refusal and exact editor targeting.
 Existing ready proofs retain their original request/revision, authority and digests;
 preparation revalidates them read-only. Incomplete persisted intentions containing
 a global target observe exact already-attempted effects only; never write global
