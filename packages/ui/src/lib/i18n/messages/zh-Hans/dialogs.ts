@@ -8,7 +8,7 @@ export const dialogMessages = {
   "remoteRestore.unauthorized": "需要登录",
   "remoteRestore.unreachable": "服务器不可用",
   "remoteRestore.pairingLink": "配对链接",
-  "remoteRestore.inUse": "移除该服务器或更改其地址前，请关闭所有窗口中该服务器的项目标签页。",
+  "remoteRestore.inUse": "移除该服务器或更改其地址前，请关闭其标签页，并从另一个项目重新打开设置。",
   "authRecovery.title": "重新登录 CodeNomad",
   "authRecovery.description": "你的 CodeNomad 登录已失效。这可能发生在服务器重启之后。请重新登录以恢复连接。",
   "authRecovery.pairing": "此设备已不再与 CodeNomad 配对。请在主机上打开 设置 → 远程访问，创建新的配对链接并在此设备上打开，然后重新检查。",

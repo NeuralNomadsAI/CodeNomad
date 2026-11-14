@@ -42,6 +42,8 @@ Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Pro
 
 Eine Benachrichtigung öffnet den vorhandenen wartenden Tab; verwenden Sie **Wiederholen**, um die Verbindung wiederherzustellen.
 
+Wenn Einstellungen noch diesen Server verwendet, öffnen Sie **Einstellungen** von einem anderen Projekt aus, bevor Sie den Server entfernen oder seine Adresse ändern.
+
 Bei aktiviertem Multi-Backend kehren gespeicherte Remote-Projekte mit Tab-Reihenfolge, Entwürfen und Auswahl zurück. Ein nicht verfügbarer Server behält einen wartenden Tab: Verwenden Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Zugangsdaten oder einem neuen **Kopplungslink**. Andere Server bleiben nutzbar. Die Wiederherstellung liest den Zustand; prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie selbst erneut senden.
 
 Schließen Sie die Projekttabs dieses Servers in allen Fenstern, bevor Sie ihn entfernen oder seine Adresse ändern. Ein unerreichbarer Bestand blockiert die Änderung bis zur Prüfung.

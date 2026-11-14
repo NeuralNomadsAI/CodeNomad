@@ -42,6 +42,8 @@ Closing a whole window, quitting or reloading does not close its project connect
 
 A notification opens the existing waiting tab; use **Retry** to reconnect.
 
+If Settings still targets this server, reopen **Settings** from another project before removing the server or changing its address.
+
 With multi-backend enabled, saved remote projects return in their tab order with their drafts and selection. An unavailable server keeps a waiting tab: use **Retry** when it returns, or **Connect** with its username/password or a fresh **Pairing link**. Other servers remain usable. Recovery reads state; send any unconfirmed conversation action yourself only after checking its outcome.
 
 Close this server’s project tabs in every window before removing it or changing its address. An unreachable inventory keeps that change blocked until it can be checked.

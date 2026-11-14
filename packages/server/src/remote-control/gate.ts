@@ -30,6 +30,8 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 // media and panel extensions. Keep methods and paths closed as callers evolve.
 // instance/api delegates to isAllowedInstanceApiRoute in http-server.ts.
 const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
+  ["POST", /^\/api\/memory$/],
+  ["GET PUT", /^\/api\/memory\/settings$/],
   ["GET", /^\/api\/(?:auth\/status|meta|events|remote-control\/status|missions\/playbooks)$/],
   ["POST", /^\/api\/client-connections\/pong$/],
   ["GET", /^\/api\/usage\/[^/]+$/],
@@ -162,7 +164,8 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
     reject(reply, 404, "Not found")
     return true
   }
-  if (isHostOnlyPath(pathname, method) && !(PUBLIC_PATHS.has(pathname) && !serverRequest)) {
+  if ((isHostOnlyPath(pathname, method) || ingress && (pathname === "/api/memory" || pathname.startsWith("/api/memory/")))
+    && !(PUBLIC_PATHS.has(pathname) && !serverRequest)) {
     reject(reply, 404, "Not found")
     return true
   }
@@ -216,4 +219,10 @@ export function isHostOnlyPath(pathname: string, method: string, direct = false)
   if (direct && ["/login", "/api/auth/login", "/api/auth/logout"].includes(pathname)) return false
   if (method === "GET" && REMOTE_MANAGEMENT_READS.has(pathname)) return false
   return LOCAL_ONLY_PATHS.has(pathname) || LOCAL_ONLY_PREFIXES.some((prefix) => pathname.startsWith(prefix) || `${pathname}/` === prefix)
+}
+
+/** Reviewed memory methods exposed by the local UI relay; ingress stays host-only. */
+export function isMemoryRelayRoute(pathname: string, method: string): boolean {
+  return pathname === "/api/memory" && method === "POST"
+    || pathname === "/api/memory/settings" && ["GET", "HEAD", "PUT"].includes(method)
 }

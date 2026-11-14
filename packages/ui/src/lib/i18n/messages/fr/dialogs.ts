@@ -8,7 +8,7 @@ export const dialogMessages = {
   "remoteRestore.unauthorized": "Connexion requise",
   "remoteRestore.unreachable": "Serveur indisponible",
   "remoteRestore.pairingLink": "Lien d’appairage",
-  "remoteRestore.inUse": "Fermez les onglets de projet de ce serveur dans chaque fenêtre avant de le supprimer ou de changer son adresse.",
+  "remoteRestore.inUse": "Fermez les onglets de ce serveur et rouvrez Paramètres depuis un autre projet avant de le supprimer ou de changer son adresse.",
   "authRecovery.title": "Se reconnecter à CodeNomad",
   "authRecovery.description": "Votre connexion à CodeNomad n’est plus valide. Cela peut arriver après un redémarrage du serveur. Identifiez-vous à nouveau pour vous reconnecter.",
   "authRecovery.pairing": "Cet appareil n’est plus appairé à CodeNomad. Sur l’hôte, ouvrez Paramètres → Accès distant, créez un nouveau lien d’appairage et ouvrez-le sur cet appareil, puis vérifiez à nouveau.",

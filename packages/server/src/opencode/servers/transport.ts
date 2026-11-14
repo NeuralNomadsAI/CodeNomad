@@ -41,6 +41,8 @@ export function createExplicitTransport(options: {
   onSetCookie?: (values: string[]) => void
   /** Explicit server protocols must not carry Fetch's automatically generated browser metadata. */
   omitFetchMetadata?: boolean
+  /** Preview responses keep redirects for capability-scoped rewriting by their isolated listener. */
+  previewRedirects?: boolean
   /** Owned local endpoint that carries this origin (an SSH forward). The origin stays the request and TLS identity. */
   dial?: () => Promise<{ address: string; family: 4 | 6; port: number }>
 }, resolve?: ResolveAddresses) {
@@ -88,7 +90,7 @@ export function createExplicitTransport(options: {
         body: request.body as never, duplex: "half", signal, redirect: "manual", dispatcher,
       })
       signal.throwIfAborted()
-      if (response.status >= 300 && response.status < 400 && response.status !== 304) {
+      if (!options.previewRedirects && response.status >= 300 && response.status < 400 && response.status !== 304) {
         void response.body?.cancel().catch(() => {})
         throw new ExplicitEndpointError("redirect")
       }

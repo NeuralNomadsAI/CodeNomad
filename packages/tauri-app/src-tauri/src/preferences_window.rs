@@ -48,6 +48,8 @@ pub(crate) struct PreferencesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) server_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) workspace_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) location: Option<PreferencesLocation>,
@@ -106,6 +108,7 @@ impl Default for PreferencesWindow {
                     section: DEFAULT_SECTION.to_string(),
                     scroll_top: None,
                     instance_id: None,
+                    server_id: None,
                     workspace_path: None,
                     location: None,
                 },
@@ -172,6 +175,9 @@ fn validate_section(section: &str) -> Result<(), String> {
 
 pub(crate) fn validate_request(request: PreferencesRequest) -> Result<PreferencesRequest, String> {
     validate_section(&request.section)?;
+    if request.server_id.as_ref().is_some_and(|value| value.is_empty() || value.len() > 512) {
+        return Err("Invalid Preferences server ID".to_string());
+    }
     if request.scroll_top.is_some_and(|top| top > 10_000_000) {
         return Err("Invalid Preferences scroll position".to_string());
     }
@@ -725,7 +731,8 @@ mod tests {
         let request = validate_request(PreferencesRequest {
             scroll_top: None,
             section: "providers".into(),
-            instance_id: Some("workspace-1".into()),
+            instance_id: Some("remote~workspace-1".into()),
+            server_id: Some("remote-server".into()),
             workspace_path: Some("C:\\repo".into()),
             location: Some(PreferencesLocation {
                 directory: "/mnt/c/repo".into(),
@@ -739,6 +746,7 @@ mod tests {
         );
         let serialized = serde_json::to_value(&request).unwrap();
         assert_eq!(serialized["workspacePath"], "C:\\repo");
+        assert_eq!(serialized["serverId"], "remote-server");
         assert_eq!(serialized["location"]["directory"], "/mnt/c/repo");
         assert_eq!(
             serde_json::from_value::<PreferencesRequest>(serialized).unwrap(),

@@ -8,7 +8,7 @@ export const dialogMessages = {
   "remoteRestore.unauthorized": "Oturum açılması gerekiyor",
   "remoteRestore.unreachable": "Sunucu kullanılamıyor",
   "remoteRestore.pairingLink": "Eşleştirme bağlantısı",
-  "remoteRestore.inUse": "Bu sunucuyu kaldırmadan veya adresini değiştirmeden önce tüm pencerelerdeki proje sekmelerini kapatın.",
+  "remoteRestore.inUse": "Bu sunucuyu kaldırmadan veya adresini değiştirmeden önce sekmelerini kapatın ve Ayarlar'ı başka bir projeden yeniden açın.",
   "authRecovery.title": "CodeNomad’a yeniden giriş yapın",
   "authRecovery.description": "CodeNomad oturumunuz artık geçerli değil. Bu, sunucu yeniden başlatıldıktan sonra olabilir. Yeniden bağlanmak için tekrar giriş yapın.",
   "authRecovery.pairing": "Bu cihaz artık CodeNomad ile eşleştirilmiş değil. Ana bilgisayarda Ayarlar → Uzak Erişim'i açın, yeni bir eşleştirme bağlantısı oluşturup bu cihazda açın, ardından tekrar kontrol edin.",

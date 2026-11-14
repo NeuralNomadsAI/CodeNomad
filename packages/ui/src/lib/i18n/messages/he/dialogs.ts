@@ -8,7 +8,7 @@ export const dialogMessages = {
   "remoteRestore.unauthorized": "נדרשת כניסה",
   "remoteRestore.unreachable": "השרת אינו זמין",
   "remoteRestore.pairingLink": "קישור צימוד",
-  "remoteRestore.inUse": "יש לסגור את לשוניות הפרויקט של שרת זה בכל החלונות לפני הסרתו או שינוי כתובתו.",
+  "remoteRestore.inUse": "סגרו את לשוניות השרת ופתחו שוב את הגדרות מפרויקט אחר לפני הסרתו או שינוי כתובתו.",
   "authRecovery.title": "התחברות מחדש ל-CodeNomad",
   "authRecovery.description": "ההתחברות שלך ל-CodeNomad אינה תקפה עוד. זה יכול לקרות לאחר הפעלה מחדש של השרת. יש להתחבר שוב כדי לחדש את החיבור.",
   "authRecovery.pairing": "המכשיר הזה כבר אינו מצומד ל-CodeNomad. במחשב המארח, יש לפתוח הגדרות ← גישה מרחוק, ליצור קישור צימוד חדש ולפתוח אותו במכשיר הזה, ואז לבדוק שוב.",

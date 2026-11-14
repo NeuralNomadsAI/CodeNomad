@@ -8,7 +8,7 @@ export const dialogMessages = {
   "remoteRestore.unauthorized": "Inicio de sesión requerido",
   "remoteRestore.unreachable": "Servidor no disponible",
   "remoteRestore.pairingLink": "Enlace de emparejamiento",
-  "remoteRestore.inUse": "Cierra las pestañas de proyecto de este servidor en todas las ventanas antes de eliminarlo o cambiar su dirección.",
+  "remoteRestore.inUse": "Cierra las pestañas de este servidor y vuelve a abrir Configuración desde otro proyecto antes de eliminarlo o cambiar su dirección.",
   "authRecovery.title": "Volver a iniciar sesión en CodeNomad",
   "authRecovery.description": "Tu sesión de CodeNomad ya no es válida. Esto puede ocurrir después de reiniciar el servidor. Inicia sesión de nuevo para reconectarte.",
   "authRecovery.pairing": "Este dispositivo ya no está vinculado con CodeNomad. En el equipo anfitrión, abre Configuración → Acceso remoto, crea un nuevo enlace de vinculación, ábrelo en este dispositivo y vuelve a comprobar.",

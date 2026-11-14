@@ -223,6 +223,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       }
     },
     state: (id: string): BackendAdmissionState => states[id] ?? "idle",
+    serverId: (id: string) => entries.get(id)?.serverId,
     dispose() {
       if (disposed) return
       disposed = true

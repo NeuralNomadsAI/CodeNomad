@@ -1,7 +1,7 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import type { MemoryContext, MemoryUIEntry } from "../../../server/src/api-types"
 import { agentMemoryApi, AgentMemoryError } from "../lib/agent-memory-api"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { showConfirmDialog } from "./alerts"
 import { registerSettingsDirtyGuard } from "./settings-dirty-guard"
 import { useI18n } from "../lib/i18n"
@@ -15,12 +15,12 @@ const failure = (error: unknown) => error instanceof AgentMemoryError ? error : 
 const consultationKey = (scopeKey: string) => `codenomad.memory.seen.${scopeKey}`
 
 /** Visit-local baselines stay frozen; only a successful read advances the persisted frontier. */
-export function createAgentMemoryReview(context: () => MemoryContext | undefined, enabled: () => boolean) {
+export function createAgentMemoryReview(context: () => MemoryContext | undefined, enabled: () => boolean, api: () => typeof agentMemoryApi = () => agentMemoryApi, backendId: () => string = () => "local") {
   const { t } = useI18n()
   const [scope, setScope] = createSignal<Scope>(context() ? "project" : "global")
   let scopeChosen = false
   createEffect(() => { if (context() && !scopeChosen) setScope("project") })
-  const owner = createMemo(() => JSON.stringify([scope(), scope() === "project" ? context() ?? null : null]))
+  const owner = createMemo(() => JSON.stringify([backendId(), scope(), scope() === "project" ? context() ?? null : null]))
   const drafts = new Map<string, Draft>(), baselines = new Map<string, number>()
   const [draft, setDraft] = createSignal<Draft>()
   const [entries, setEntries] = createSignal<MemoryUIEntry[]>([])
@@ -46,15 +46,16 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
     if (!available()) return
     const key = owner(), targetScope = scope(), target = targetScope === "project" ? context() : undefined
     try {
-      const result = await agentMemoryApi.list(targetScope, target)
+      const result = await api().list(targetScope, target)
       if (disposed || current !== generation) return
       if (!result || !Array.isArray(result.entries) || typeof result.scopeKey !== "string" || !Number.isFinite(Date.parse(result.observedAt))) throw new AgentMemoryError("unreadable")
-      if (!baselines.has(result.scopeKey)) {
+      const scopeKey = backendId() === "local" ? result.scopeKey : `${backendId()}~${result.scopeKey}`
+      if (!baselines.has(scopeKey)) {
         let seen = 0
-        try { seen = Number(localStorage.getItem(consultationKey(result.scopeKey))) || 0 } catch { /* Optional display preference. */ }
-        baselines.set(result.scopeKey, seen)
+        try { seen = Number(localStorage.getItem(consultationKey(scopeKey))) || 0 } catch { /* Optional display preference. */ }
+        baselines.set(scopeKey, seen)
       }
-      setBaseline(baselines.get(result.scopeKey)!); setEntries(result.entries); setHasSnapshot(true)
+      setBaseline(baselines.get(scopeKey)!); setEntries(result.entries); setHasSnapshot(true)
       setCleanupWritable(result.cleanupWritable === true)
       setError(previous => previous?.code === "conflict" ? previous : undefined)
       const opened = drafts.get(key)
@@ -67,8 +68,8 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
         }
       }
       try {
-        const stored = Number(localStorage.getItem(consultationKey(result.scopeKey))) || 0
-        localStorage.setItem(consultationKey(result.scopeKey), String(Math.max(stored, Date.parse(result.observedAt))))
+        const stored = Number(localStorage.getItem(consultationKey(scopeKey))) || 0
+        localStorage.setItem(consultationKey(scopeKey), String(Math.max(stored, Date.parse(result.observedAt))))
       } catch { /* Badges remain visit-local if storage is unavailable. */ }
     } catch (cause) { if (!disposed && current === generation) setError(failure(cause)) }
   }
@@ -87,7 +88,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
     return owned.promise
   }
   createEffect(() => {
-    owner(); enabled()
+    owner(); enabled(); api()
     generation++; consent.abort(); consent = new AbortController(); pendingRead = undefined; trailing = false
     setEntries([]); setHasSnapshot(false); setCleanupWritable(false); setError(undefined); setLoading(false); setBusy(false); setDraft(drafts.get(owner()))
     untrack(() => { void load() })
@@ -111,7 +112,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
     if (revision !== undefined && selected.entry.revision !== revision) { setError(new AgentMemoryError("conflict")); return }
     setBusy(true); setError(undefined)
     try {
-      const result = await agentMemoryApi.operation<{ revision: string; flagged: boolean }>(remove
+      const result = await api().operation<{ revision: string; flagged: boolean }>(remove
         ? { action: "delete", scope: targetScope, id: selected.entry.id, revision: selected.entry.revision }
         : { action: "save", scope: targetScope, id: selected.entry.id, revision: selected.entry.revision,
           content: { title: selected.title, type: selected.type, text: selected.text } }, target)
@@ -130,11 +131,14 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
     } catch (cause) { if (!disposed && current === generation) setError(failure(cause)) }
     finally { if (!disposed && current === generation) setBusy(false) }
   }
-  onMount(() => {
+  createEffect(() => {
+    context(); api()
     const refresh = () => { void load() }
-    const stop = serverEvents.on("memory.changed", refresh), reconnect = serverEvents.onOpen(refresh)
-    onCleanup(() => { disposed = true; generation++; consent.abort(); stop(); reconnect() })
+    const events = serverEvents.forInstance(() => context()?.workspaceId ?? "")
+    const stop = events.on("memory.changed", refresh), reconnect = events.onOpen(refresh)
+    onCleanup(() => { stop(); reconnect() })
   })
+  onCleanup(() => { disposed = true; generation++; consent.abort() })
   return { scope, changeScope, available, entries, hasSnapshot, cleanupWritable, baseline, draft, loading, busy, error, load, open, discard,
     consentSignal: () => consent.signal,
     dirty: () => dirty(draft()), valid: () => !!draft() && memoryTitleValid(draft()!.title) && memoryCharacters(draft()!.text) <= 2000,
