@@ -13,6 +13,80 @@ const deferred = <T,>() => {
   return { promise, resolve }
 }
 
+for (const recovery of ["discard", "event"] as const) for (const mode of recovery === "discard"
+  ? ["lost-response", "resolved", "retired", "removed"] as const
+  : ["lost-response", "resolved", "retired"] as const) it(`${mode}: exhausted cancellation resumes through ${recovery}`, async t => {
+  const previous = preferences().multiBackend
+  preferences().multiBackend = true
+  const id = `recover-${mode}-${recovery}`
+  let receipts!: Map<string, any>, original!: WorkspaceCreationOwnership, replacement!: WorkspaceCreationOwnership
+  let offline = true, attempts = 0, acknowledgements = 0, sequence = 0, requestId = ""
+  const set = Map.prototype.set
+  t.mock.method(Map.prototype, "set", function(this: Map<any, any>, key: any, value: any) {
+    if (value?.backendId === id && value.api && value.requestKey) receipts = this
+    return set.call(this, key, value)
+  })
+  const resumed = deferred<void>(), finish = deferred<void>()
+  const client = createBackendClient({ id, baseUrl: "https://recovery.invalid", relayProfileId: id, bindRelayAuthority: true,
+    fetcher: async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? "{}"))
+      if (path.endsWith("/creation/cancel")) {
+        assert.equal(body.requestId, requestId, "cancel retains the original request")
+        attempts++
+        if (offline) return Response.json({}, { status: 503 })
+        resumed.resolve(); await finish.promise
+        acknowledgements++
+        return Response.json({})
+      }
+      if (path.endsWith("/creation/release")) return Response.json({})
+      if (!path.endsWith("/api/workspaces") || init?.method !== "POST") return Response.json([])
+      sequence++; requestId ||= body.requestId
+      if (mode === "lost-response") throw new TypeError("lost create ACK")
+      return Response.json({ id: "w", requestId: body.requestId, path: "/same", binaryLabel: `occurrence-${sequence}`,
+        status: "starting", proxyPath: "", createdAt: "", updatedAt: "" })
+    } })
+  client.admitRelayAuthority!("a".repeat(43))
+  const remove = registerBackendClient(client), detach = backendEvents.attach(id, client.events)
+  t.after(() => { finish.resolve(); detach(); remove(); client.events.dispose(); preferences().multiBackend = previous; removeInstance(`${id}~w`, { authoritative: false }) })
+  const retained = () => [...receipts.values()].filter(value => value.backendId === id).length
+  const opening = createInstance("/same", undefined, { backend: client, signal: new AbortController().signal, onCreation: owner => { original = owner } })
+  if (mode === "lost-response") await assert.rejects(opening)
+  else await opening
+  await Promise.all([original.discard(), original.discard()])
+  assert.equal(attempts, 4, "one shared flight exhausts four real attempts")
+  assert.equal(acknowledgements, 0)
+  assert.equal(retained(), 1, "unknown settlement retains its receipt")
+  if (mode === "retired") {
+    await createInstance("/same", undefined, { backend: client, signal: new AbortController().signal, onCreation: owner => { replacement = owner } })
+    assert.equal(replacement.current(`${id}~w`), true)
+  }
+  if (mode === "removed") { detach(); remove() }
+  offline = false
+  const observe = () => (client.events as any).dispatch({ type: "workspace.created", workspace: {
+    id: "w", requestId, path: "/same", binaryLabel: "old-event", status: "starting", proxyPath: "", createdAt: "", updatedAt: "",
+  } })
+  // A later demand starts real IO; repeated demands during it share that IO.
+  if (recovery === "event") {
+    observe(); observe()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(attempts, 5, "observation alone resumes the retained cancellation")
+  }
+  const pending = Promise.all([original.discard(), original.discard()])
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(attempts, 5, "recovery admits one new cancellation, coalesced with observations")
+  await resumed.promise
+  finish.resolve(); await pending
+  if (mode === "retired") {
+    assert.equal(instances().get(`${id}~w`)?.binaryLabel, "occurrence-2")
+    assert.equal(replacement.current(`${id}~w`), true)
+    await replacement.release()
+  } else if (mode !== "removed") assert.equal(instances().has(`${id}~w`), false)
+  assert.equal(acknowledgements, 1)
+  assert.equal(retained(), 0)
+  await original.discard()
+  assert.equal(attempts, 5, "confirmed settlement stays inert")
+})
+
 it("creation ownership without a scope is refused before dispatch", async t => {
   let calls = 0
   t.mock.method(serverApi, "createWorkspace", async () => { calls++; throw new Error("unexpected dispatch") })
@@ -138,19 +212,21 @@ for (const phase of ["POST", "commit"] as const) it(`revokes publication during 
   client.admitRelayAuthority!("p".repeat(43))
   const remove = registerBackendClient(client), detach = backendEvents.attach(client.id, client.events)
   t.after(() => { preferences().multiBackend = previous; detach(); remove(); client.events.dispose(); removeInstance("pending~w", { authoritative: false }) })
-  let callbacks = 0
+  let callbacks = 0, owner!: WorkspaceCreationOwnership
   const create = createInstance("/same", undefined, { backend: client, signal: new AbortController().signal,
+    onCreation: value => { owner = value },
     waitForCreateCommit: () => commit.promise,
     onBeforeCreateCommit: () => { callbacks++ }, onCreateCommit: () => { callbacks++ } })
   const rejected = assert.rejects(create)
   await entered.promise
   if (phase === "commit") await new Promise<void>(resolve => setImmediate(resolve))
   detach(); remove()
+  const cleanup = owner.discard()
   post.resolve(); commit.resolve()
-  await rejected
+  await rejected; await cleanup; await owner.discard()
   assert.equal(callbacks, 0)
   assert.equal(instances().has("pending~w"), false)
-  assert(calls.some(call => call.path.endsWith("/creation/cancel")))
+  assert.equal(calls.filter(call => call.path.endsWith("/creation/cancel")).length, 1, "abort, continuation and caller share one cancellation")
   assert(calls.filter(call => call.path.endsWith("/creation/cancel")).every(call => call.body.requestId === calls[0].body.requestId))
   assert.equal(calls.some(call => call.method === "DELETE"), false)
 })

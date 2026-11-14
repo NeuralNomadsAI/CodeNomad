@@ -130,7 +130,13 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
   }
 
   shouldIgnoreObservation(workspaceId: string, requestKey: string, reused = false): boolean {
-    if (this.superseded.has(requestKey)) return true
+    if (this.superseded.has(requestKey)) {
+      const entry = this.retired.get(requestKey)
+      if (entry && this.pendingRequestIds.get(requestKey)) {
+        void this.discardCreated(entry.workspace, { retainTombstone: entry.workspace.reused !== true })
+      }
+      return true
+    }
     const cancelled = this.cancelledRequests.get(requestKey)
     if (reused || cancelled === undefined) return false
     if (this.options.isCurrentKey && !this.options.isCurrentKey(workspaceId, requestKey)) return false
@@ -162,9 +168,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     this.pendingRequestIds.set(requestId, true)
     for (const [workspaceId, entry] of this.owned) {
       if ("released" in entry || "tombstone" in entry || this.requestKey(entry.workspace) !== requestId) continue
-      const cleanup = this.discardTracked(workspaceId, { retainTombstone: entry.workspace.reused !== true })
-      void cleanup.finally(() => this.finishRequest(requestId))
-      return cleanup
+      return this.discardTracked(workspaceId, { retainTombstone: entry.workspace.reused !== true })
     }
     return undefined
   }
@@ -176,7 +180,6 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     if (quarantined === undefined) return false
     this.track(workspace)
     if (quarantined) void this.discardCreated(workspace, { retainTombstone: workspace.reused !== true })
-      .finally(() => this.finishRequest(requestId))
     return true
   }
 
@@ -203,6 +206,7 @@ export class AbortCreatedWorkspaceCleanup<T extends CreatedWorkspace> {
     if (requestKey) {
       if (this.options.requestKey) this.settledRequests.add(requestKey)
       else this.settled.add(JSON.stringify([workspace.id, requestKey]))
+      this.finishRequest(requestKey)
       if (tombstone && !this.cancelledRequests.has(requestKey)) this.cancelledRequests.set(requestKey, this.beginCancellation(requestKey))
       if (owner === this.owned && tombstone) this.markCancelledOccurrence(workspace.id, requestKey)
     }

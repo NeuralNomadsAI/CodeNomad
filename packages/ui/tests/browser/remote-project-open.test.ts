@@ -89,6 +89,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
         const file = id.replaceAll("\\", "/").split("?")[0]
         const gate = (phase: string, value: string) => `\nif ((window as any).__openingGate) await (window as any).__openingGate("${phase}", ${value}, signal);\n`
         if (file.endsWith("/src/stores/remote-project-open.ts")) {
+          source = source.replaceAll("\r\n", "\n")
           const create = "const result = await createInstance(path, undefined, {"
           assert(source.includes(create), "observe the real create callback")
           source = source.replace(create, `${create} onCreateCommit: id => (window as any).__onCreateCommit?.(id),`)
@@ -190,6 +191,9 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   await t.test("tab transfer retains A through a later intent while its captured release completes", async () => {
     const page = await prepare(), before = mutations.length
     try {
+      await page.evaluate(async () => {
+        ;(window as any).__openingReceipts = (await import("/src/stores/instances.ts") as any).__openingReceipts
+      })
       await page.evaluate(() => { (window as any).__afterTabSelection = () => (window as any).remoteOpenFixture.select("b") })
       await select(page, "a")
       const released = page.waitForResponse(response => response.url().includes("/backends/a/api/workspaces/w/creation/release"))
@@ -197,7 +201,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       await dialog(page).getByRole("button", { name: "Same", exact: true }).click()
       await dialog(page).getByRole("heading", { name: "Beta", exact: true }).waitFor()
       await released
-      await page.waitForFunction(async () => !(await import("/src/stores/instances.ts") as any).__openingReceipts().some((r: any) => r.backendId === "a"))
+      await page.waitForFunction(() => !(window as any).__openingReceipts().some((r: any) => r.backendId === "a"))
       assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot()), {
         tabs: [{ id: "instance:w", kind: "instance" }, { id: "instance:a~w", kind: "instance" }], active: "instance:a~w",
       })

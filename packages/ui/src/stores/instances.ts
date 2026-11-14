@@ -1877,10 +1877,12 @@ async function createInstance(
         restoreCreationReceipts.delete(receipt.requestKey)
         restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
       }
-      return true
+      return restoreCreatedWorkspaceCleanup.isRequestSettled(receipt.requestKey)
     }).catch(error => {
       log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
       return false
+    }).finally(() => {
+      cancellationRequest = null
     })
     return cancellationRequest
   }
