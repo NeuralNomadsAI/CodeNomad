@@ -3,6 +3,7 @@ import { loadedRestorableSession } from "./client-state"
 import { backendIdOf, parseInstanceKey } from "../lib/backend-identity"
 import { isPreferencesWindow } from "../lib/runtime-env"
 import { getNativePreferencesRequest } from "../lib/native/preferences-window"
+import { RemoteServerInUseError } from "../lib/remote-server-request"
 import { backendRegistry } from "./remote-backends"
 import { tGlobal } from "../lib/i18n"
 import { showConfirmDialog } from "./alerts"
@@ -13,7 +14,7 @@ export async function confirmRemoteServerChange(id: string): Promise<boolean> {
     || tab.kind === "remote-restore" && backendIdOf(tab.snapshot) === id)
     || loadedRestorableSession()?.tabs.some(tab => tab.kind === "workspace" && backendIdOf(tab) === id)
     || isPreferencesWindow() && parseInstanceKey((await getNativePreferencesRequest()).instanceId ?? "").backendId === id
-  const refuse = () => { throw new Error(tGlobal("remoteRestore.inUse")) }
+  const refuse = () => { throw new RemoteServerInUseError(tGlobal("remoteRestore.inUse")) }
   try {
     if (await inUse()) refuse()
     const backend = await backendRegistry.ensure(id)

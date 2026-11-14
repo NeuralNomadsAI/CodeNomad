@@ -59,7 +59,7 @@ async function host(page: Page, kind: "electron" | "tauri", initial: NativePrefe
 
 async function api(page: Page, selected: () => string) {
   const requests: { owner: string; path: string; method: string; body: any }[] = [], errors: string[] = []
-  let restored = false, unavailable = false, missing = false, identity = "server-a"
+  let restored = false, unavailable = false, missing = false, failWrites = false, identity = "server-a"
   page.on("pageerror", error => errors.push(error.message))
   await page.route(/\/(?:api|workspaces)\//, async route => {
     const request = route.request(), raw = new URL(request.url()).pathname
@@ -70,6 +70,10 @@ async function api(page: Page, selected: () => string) {
     if (owner === "local" && selected() !== "local" && (path.startsWith("/api/memory") || path === "/api/workspaces" || path.includes("/workspaces/"))) {
       errors.push(`local sentinel: ${method} ${path}`)
       return route.fulfill({ status: 500, json: {} })
+    }
+    if (failWrites && (method === "PATCH" && path === "/api/storage/state/ui"
+      || method === "POST" && path === "/api/remote-servers/a/forget")) {
+      return route.fulfill({ status: 500, json: { error: "private-transport-detail-do-not-display" } })
     }
     if (owner !== "local" && unavailable) return route.fulfill({ status: 503, json: {} })
     const id = restored && owner !== "local" ? "restarted" : "same"
@@ -92,10 +96,44 @@ async function api(page: Page, selected: () => string) {
     return route.fulfill({ json: value, headers: owner !== "local" && path === "/api/meta" ? { "X-CodeNomad-Backend-Authority": owner.repeat(43) } : {} })
   })
   return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true },
-    missing: () => { missing = true }, replace: () => { identity = "replacement" } }
+    missing: () => { missing = true }, failWrites: () => { failWrites = true }, replace: () => { identity = "replacement" } }
 }
 
 for (const kind of ["electron", "tauri"] as const) {
+  for (const reason of ["usage", "transport"] as const) for (const action of ["delete", "retarget"] as const) test(`${kind}: Servers ${action} shows ${reason === "usage" ? "the actionable remote-context usage refusal" : "a masked transport failure"}`, async () => {
+    const page = await browser.newPage(), f = await api(page, () => "a")
+    f.missing()
+    if (reason === "transport") f.failWrites()
+    await host(page, kind, reason === "usage" ? project("a", "servers") : { section: "servers" })
+    try {
+      await page.goto(url)
+      await page.locator('[data-remote-server="a"]').waitFor()
+      if (action === "delete") {
+        await page.getByRole("button", { name: "Remove saved server: a", exact: true }).click()
+        await page.getByRole("button", { name: "Remove saved server", exact: true }).click()
+      } else {
+        await page.getByRole("button", { name: "Edit server: a", exact: true }).click()
+        await page.getByLabel("SSH host (optional)", { exact: true }).fill("other-lab")
+        await page.getByRole("button", { name: "Save", exact: true }).click()
+      }
+      if (reason === "transport") await page.getByRole("button", { name: "Confirm", exact: true }).click()
+      const alert = action === "retarget" ? page.getByRole("dialog").getByRole("alert") : page.getByRole("alert").first()
+      await alert.waitFor()
+      assert.equal(await alert.innerText(), reason === "usage"
+        ? "Close this server’s tabs and reopen Settings from another project before removing or changing its address."
+        : "Could not save the preference.")
+      assert.equal((await page.locator("body").innerText()).includes("private-transport-detail-do-not-display"), false)
+      const forget = (value: typeof f.requests[number]) => value.owner === "local" && value.method === "POST" && value.path === "/api/remote-servers/a/forget"
+      const patch = (value: typeof f.requests[number]) => value.owner === "local" && value.method === "PATCH" && value.path === "/api/storage/state/ui"
+      if (reason === "usage") {
+        assert.equal(await page.getByText("Could not save the preference.", { exact: true }).count(), 0)
+        assert.equal(f.requests.some(value => forget(value) || patch(value)), false)
+      } else assert.ok(f.requests.some(action === "delete" ? forget : patch))
+      assert.equal(await page.locator('[data-remote-server="a"]').count(), 1)
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  })
+
   for (const state of ["offline", "missing"] as const) test(`${kind}: restored remote Preferences stay unavailable while restoration waits (${state})`, async () => {
     const page = await browser.newPage(), f = await api(page, () => "a")
     if (state === "offline") f.unavailable()
