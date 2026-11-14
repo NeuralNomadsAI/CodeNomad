@@ -78,6 +78,8 @@ interface BrowserFrameProps {
   title: string
   initialUrl: string
   initialAddress?: string
+  isolatedSource?: boolean
+  sourceAddress?: (source: string) => string | undefined
   proxyBasePath: string
   /**
    * Content proxied through the app's authenticated origin that the user
@@ -148,7 +150,9 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const emulationReady = () => registrationReady() && capabilities.emulation
   const nativeBrowserAvailable = Boolean(browserHost) && props.addressMode === "url"
   const [nativeMode, setNativeMode] = createSignal(nativeBrowserAvailable)
-  const [nativeTarget, setNativeTarget] = createSignal(props.initialAddress ?? "")
+  const [nativeTarget, setNativeTarget] = createSignal(props.isolatedSource ? props.initialUrl : props.initialAddress ?? "")
+  let observedFrameSource: string | undefined
+  let appliedInitialSource: string | undefined
   let iframeRef: HTMLIFrameElement | undefined
   let webviewRef: ElectronBrowserWebviewElement | undefined
   // Electron exposes the methods before its guest is ready to accept them.
@@ -161,6 +165,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let tauriRegistered = false
   let browserRegistrationId = nativeBrowserAvailable ? generateUUID() : ""
   let disposed = false
+  const loadFrameSource = (source: string) => {
+    if (props.isolatedSource) {
+      // Site navigation changes the document without changing the iframe's src attribute.
+      if (source === frameSrc() && observedFrameSource !== undefined && observedFrameSource !== source) iframeRef?.setAttribute("src", source)
+      observedFrameSource = source
+    }
+    setFrameSrc(source)
+  }
   let appliedEmulation: { registrationId: string; preset: BrowserEmulationPreset } | undefined
   let emulationGeneration = 0
   const journal = props.onHistoryChange ? new BrowserHistoryJournal(untrack(() => props.initialHistory ?? { urls: [props.initialAddress ?? props.initialUrl], index: 0 })) : undefined
@@ -169,6 +181,15 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let historyRead = 0
   let historyTravelVersion = 0
   const historyGuestId = () => webviewReady ? webviewRef?.getWebContentsId() : undefined
+  const logicalHistory = (value: NativeBrowserHistory): NativeBrowserHistory => {
+    if (!props.isolatedSource) return value
+    const current = value.entries[value.index]?.id
+    const entries = value.entries.flatMap(entry => {
+      const url = props.sourceAddress?.(entry.url)
+      return url ? [{ ...entry, url }] : []
+    })
+    return { entries, index: entries.findIndex(entry => entry.id === current) }
+  }
   const supersedeHistoryTraversal = () => {
     if (journal?.traversing || historyBusy()) props.onCancelNavigation?.()
     ++historyTravelVersion
@@ -198,7 +219,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       // event. Publishing that intent as a prop would start a second navigation.
       if (browserHost === "electron" && value.entries[value.index]?.url !== webviewObservedUrl) return
       if (browserHost === "tauri" && value.entries[value.index]?.url !== nativeTarget()) return
-      publishHistory(journal.observe(value))
+      publishHistory(journal.observe(logicalHistory(value)))
     } catch (error) {
       if (!disposed && sequence === historyRead) {
         journal.cancel()
@@ -208,7 +229,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
-  const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin })
+  const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin, isolatedOrigin: props.isolatedSource })
   const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
   const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")
@@ -257,6 +278,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   }
 
   const getEditablePathFromUrl = (url: string): string => {
+    if (props.isolatedSource) return props.sourceAddress?.(url) ?? props.initialAddress ?? "/"
     try {
       const parsed = new URL(url, window.location.origin)
       const basePath = props.proxyBasePath
@@ -332,11 +354,12 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (props.commentBridge && !framePolicy.canInspectDom) {
       frameWindow.postMessage({ type: "codenomad-preview-comment-mode", enabled: Boolean(props.commentMode) }, "*")
       const handleMessage = (event: MessageEvent) => {
-        if (event.source !== frameWindow || event.origin !== "null") return
+        if (event.source !== frameWindow || event.origin !== (props.isolatedSource ? new URL(props.initialUrl).origin : "null")) return
         if (event.data?.type === "codenomad-preview-location") {
           const path = event.data.path
           if (typeof path !== "string" || path.length > 4_096 || !path.startsWith("/")) return
           const address = props.onFrameLocation?.(path)
+          if (props.isolatedSource) observedFrameSource = new URL(`${props.proxyBasePath}${path}`, props.initialUrl).href
           if (address) setPathInput(address)
           if (address && journal) publishHistory(journal.visitUrl(address))
           return
@@ -406,7 +429,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const currentHref = iframeRef?.contentWindow?.location.href
       if (currentHref) setPathInput(getEditablePathFromUrl(currentHref))
     } catch {
-      setPathInput(getEditablePathFromUrl(frameSrc()))
+      setPathInput(getEditablePathFromUrl(observedFrameSource ?? frameSrc()))
     }
     attachCommentListeners()
     // A trusted same-origin document (SideCar) opens its new-window links like the app's own.
@@ -422,7 +445,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const requestNativeTarget = (address: string) => {
     webviewObservedUrl = undefined
     const previousTarget = nativeTarget()
-    if (nativeMode() && (browserHost === "electron" || previousTarget !== address)) supersedeHistoryTraversal()
+    if (!props.isolatedSource && nativeMode() && (browserHost === "electron" || previousTarget !== address)) supersedeHistoryTraversal()
     setNativeTarget(address)
     // Electron reflects redirects into src, while the desired-URL signal can
     // still hold the original URL. Reapply that explicit intent when the signal
@@ -449,8 +472,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const url = (event as Event & { url?: string }).url ?? (webviewReady ? webview.getURL() : undefined)
       if (!url) return
       webviewObservedUrl = url
-      setPathInput(url)
-      props.onFrameLocation?.(url)
+      const address = props.isolatedSource ? props.sourceAddress?.(url) : url
+      if (!address) { void navigateIsolated(url); return }
+      setPathInput(address)
+      props.onFrameLocation?.(address)
       void captureHistory()
     }
     const reportLoadError = (event: Event) => {
@@ -513,6 +538,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           sessionId,
           registrationId,
           guestWebContentsId: webview.getWebContentsId(),
+          ...(props.isolatedSource ? { logicalAddress: props.initialAddress } : {}),
         }).then(async () => {
           registering = false
           if (!active) {
@@ -652,8 +678,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       void onTauriBrowserNavigation(registrationId, (url) => {
         if (!active) return
         setNativeTarget(url)
-        setPathInput(url)
-        props.onFrameLocation?.(url)
+        const address = props.isolatedSource ? props.sourceAddress?.(url) : url
+        if (!address) { void navigateIsolated(url); return }
+        setPathInput(address)
+        props.onFrameLocation?.(address)
         void captureHistory()
       }).then(async (unlisten) => {
         if (!active) {
@@ -666,6 +694,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           sessionId,
           registrationId,
           url: target,
+          ...(props.isolatedSource ? { logicalAddress: props.initialAddress } : {}),
           bounds: next,
           ...(webkitEmulation ? { presentation: presentation() } : {}),
         })
@@ -725,17 +754,25 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     const initialUrl = props.initialUrl
     const initialAddress = props.initialAddress
     untrack(() => {
+      if (props.isolatedSource && appliedInitialSource === initialUrl) return
+      appliedInitialSource = initialUrl
+      observedFrameSource = undefined
       setFrameSrc(initialUrl)
       const address = initialAddress ?? getEditablePathFromUrl(initialUrl)
+      const source = props.isolatedSource ? initialUrl : address
       setPathInput(address)
+      if (props.isolatedSource && browserHost === "electron" && webviewReady && webviewRef) {
+        void window.electronAPI?.registerBrowserTarget?.({ sessionId: props.sessionId!, registrationId: browserRegistrationId,
+          guestWebContentsId: webviewRef.getWebContentsId(), logicalAddress: address }).catch(reportNativeError)
+      }
       // A redirect commits before dom-ready; do not reload it when its location
       // notification comes back through the preview props.
-      if (nativeMode() && webviewRef && (webviewReady ? webviewRef.getURL() : webviewObservedUrl) === address) return
+      if (nativeMode() && webviewRef && (webviewReady ? webviewRef.getURL() : webviewObservedUrl) === source) return
       const previousTarget = nativeTarget()
-      requestNativeTarget(address)
+      requestNativeTarget(source)
       const nextNativeMode = nativeBrowserAvailable
-      if (nextNativeMode && browserHost === "tauri" && tauriRegistered && previousTarget !== address) {
-        void controlTauriBrowserTarget(browserRegistrationId, "navigate", address).catch(reportNativeError)
+      if (nextNativeMode && browserHost === "tauri" && tauriRegistered && previousTarget !== source) {
+        void controlTauriBrowserTarget(browserRegistrationId, "navigate", source, props.isolatedSource ? address : undefined).catch(reportNativeError)
       }
       setNativeMode(nextNativeMode)
     })
@@ -789,15 +826,17 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const native: NativeBrowserHistory = nativeMode() ? await readBrowserHistory(browserRegistrationId, historyGuestId()) : { entries: [], index: -1 }
       if (disposed || version !== historyTravelVersion) return
       if (props.active === false) { setHistoryBusy(false); return }
-      const target = journal.request(index, native)
+      const target = journal.request(index, logicalHistory(native))
       if (target.id !== undefined) await goToBrowserHistoryEntry(browserRegistrationId, target.id, historyGuestId())
       else if (nativeMode()) {
-        if (browserHost === "tauri") await controlTauriBrowserTarget(browserRegistrationId, "navigate", target.url)
-        else if (webviewReady) await webviewRef?.loadURL(target.url)
+        const source = props.isolatedSource ? await props.onNavigate!(target.url) : target.url
+        if (disposed || version !== historyTravelVersion) return
+        if (browserHost === "tauri") await controlTauriBrowserTarget(browserRegistrationId, "navigate", source, props.isolatedSource ? target.url : undefined)
+        else if (webviewReady) await webviewRef?.loadURL(source)
       } else {
         const source = await props.onNavigate!(target.url)
         if (disposed || version !== historyTravelVersion) return
-        setFrameSrc(source)
+        loadFrameSource(source)
         publishHistory(journal.visitUrl(target.url))
       }
       // Committed navigation/load events capture the result, not the early CDP
@@ -823,14 +862,39 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     } catch {
       // Fall back to resetting the iframe source if the frame cannot be reloaded directly.
     }
+    const source = props.isolatedSource ? observedFrameSource ?? frameSrc() : props.initialUrl
     setFrameSrc("about:blank")
-    requestAnimationFrame(() => setFrameSrc(props.initialUrl))
+    requestAnimationFrame(() => { if (!props.isolatedSource || !disposed) setFrameSrc(source) })
+  }
+
+  const navigateIsolated = async (address: string) => {
+    if (navigating() || disposed) return
+    setNavigating(true)
+    try {
+      const target = normalizeBrowserPreviewUrl(address)
+      if (new URL(target).hostname.endsWith(".preview.localhost")) throw new Error(props.labels.invalidUrl ?? props.labels.path)
+      supersedeHistoryTraversal()
+      const version = historyTravelVersion
+      const source = await props.onNavigate!(target)
+      if (disposed || version !== historyTravelVersion) return
+      setPathInput(target)
+      if (journal) publishHistory(journal.visitUrl(target))
+      if (nativeMode()) {
+        requestNativeTarget(source)
+        if (browserHost === "tauri" && tauriRegistered) await controlTauriBrowserTarget(browserRegistrationId, "navigate", source, target)
+      } else {
+        loadFrameSource(source)
+        props.onFrameLocation?.(target)
+      }
+    } catch (error) { if (!disposed) reportNativeError(error) }
+    finally { if (!disposed) setNavigating(false) }
   }
 
   const handleGo = async (event?: Event) => {
     event?.preventDefault()
     if (props.addressMode === "url" && props.onNavigate) {
       if (navigating()) return
+      if (props.isolatedSource) { await navigateIsolated(pathInput()); return }
       if (nativeBrowserAvailable) {
         try {
           const target = normalizeBrowserPreviewUrl(pathInput())

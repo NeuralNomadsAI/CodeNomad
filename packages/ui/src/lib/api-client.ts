@@ -35,6 +35,7 @@ import type {
   SpeechTranscriptionResponse,
   SideCar,
   PreviewSession,
+  RemotePreviewCapability,
   PluginActivationMutationRequest,
   PluginActivationMutationResponse,
   PluginControlLocation,
@@ -412,6 +413,12 @@ export function createServerApi(ctx: BackendHttp) {
     },
     deletePreview(token: string): Promise<void> {
       return request(`/api/previews/${encodeURIComponent(token)}`, { method: "DELETE" })
+    },
+    createPreviewCapability(payload: { sessionId: string; url: string }): Promise<RemotePreviewCapability> {
+      return request("/preview-capabilities", { method: "POST", body: JSON.stringify(payload) })
+    },
+    deletePreviewCapability(capability: string, keepalive = false): Promise<void> {
+      return request(`/preview-capabilities/${encodeURIComponent(capability)}`, { method: "DELETE", keepalive })
     },
     fetchServerMeta(): Promise<ServerMeta> {
       return request<ServerMeta>("/api/meta")

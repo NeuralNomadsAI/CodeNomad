@@ -8,7 +8,8 @@ import { captureBackendOperation } from "../lib/backend-operation"
 import { projectScope, parseInstanceKey } from "../lib/backend-identity"
 import { selectBrowserOpenOwner } from "../lib/native/browser"
 import { getPreviewFrameSource } from "../components/browser-frame-security"
-import { closeSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, showSessionChatFor, showSessionPreview } from "./session-previews"
+import { closeSessionPreview, dismissSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, showSessionChatFor, showSessionPreview, updateSessionPreviewHistory } from "./session-previews"
+import { detachInstanceTabMembership } from "./app-tab-membership"
 
 const registry = backends as Map<string, BackendClient>
 function fixture(id: string, baseUrl = `https://${id}.example/tenant/`) {
@@ -22,7 +23,8 @@ function fixture(id: string, baseUrl = `https://${id}.example/tenant/`) {
     const number = ++token
     if (held) await new Promise<void>(resolve => pending.push(resolve))
     return Response.json({ token: `${id}-${number}`, sessionId: body.sessionId, targetUrl: body.url,
-      proxyUrl: `/previews/${id}-${number}/app?q=1#hash`, createdAt: "" })
+      proxyUrl: `/previews/${id}-${number}/app?q=1#hash`, createdAt: "", capability: `cap-${id}-${number}`,
+      contentUrl: `http://cap-${id}-${number}.preview.localhost:1234/previews/${id}-${number}/app?q=1#hash` })
   } })
   registry.set(id, backend)
   let detach = backendEvents.attach(id, backend.events)
@@ -40,14 +42,14 @@ test("preview store routes creation, replacement and deletion by instance; local
     const scope = projectScope({ folder: "/same", backendId: owner.backend.id }), instanceId = `${owner.backend.id}~workspace`
     const first = await openSessionPreview("same-session", "http://localhost:3000/app?q=1#hash", scope, instanceId)
     assert.equal(first.storageKey, JSON.stringify([scope, "same-session"]))
-    assert.equal(first.proxyUrl, `https://${owner.backend.id}.example/previews/${owner.backend.id}-1/app?q=1#hash`)
+    assert.equal(first.proxyUrl, `/previews/${owner.backend.id}-1/app?q=1#hash`)
     for (const host of ["web", "electron", "tauri"] as const) {
-      assert.equal(getPreviewFrameSource({ host, windowContext: "local" }, first, "http://127.0.0.1:9899/src/", owner.backend.id), first.proxyUrl)
+      assert.equal(getPreviewFrameSource({ host, windowContext: "local" }, first, "http://127.0.0.1:9899/src/", owner.backend.id), first.contentUrl)
     }
     const next = await openSessionPreview("same-session", "https://example.com/next", scope, instanceId)
     await closeSessionPreview(next.storageKey)
     assert.deepEqual(owner.calls.map(call => [call.method, new URL(call.url).pathname]), [
-      ["POST", "/api/previews"], ["POST", "/api/previews"], ["DELETE", `/api/previews/${owner.backend.id}-1`], ["DELETE", `/api/previews/${owner.backend.id}-2`],
+      ["POST", "/preview-capabilities"], ["POST", "/preview-capabilities"], ["DELETE", `/preview-capabilities/cap-${owner.backend.id}-1`], ["DELETE", `/preview-capabilities/cap-${owner.backend.id}-2`],
     ])
     assert.deepEqual(owner.calls[0].body, { sessionId: "same-session", url: "http://localhost:3000/app?q=1#hash" })
   }
@@ -70,7 +72,7 @@ test("revoked creates clean their own tokens and restore deduplication never joi
   assert.equal(getSessionPreview("session", scope), null)
   assert.equal(sessionPreviews().has(first.storageKey), false, "revocation removes the published record, independently of filtered getters")
   assert.deepEqual(owner.calls.filter(call => call.method === "DELETE"), [{
-    url: `https://preview_generation.example/api/previews/${first.token}`, method: "DELETE", body: undefined,
+    url: `https://preview_generation.example/preview-capabilities/${first.capability}`, method: "DELETE", body: undefined,
   }], "revocation deletes the exact published token through its owning backend")
   assert.deepEqual(localDeletes, [], "remote token cleanup never falls back to the host")
   owner.reattach(); owner.hold()
@@ -86,14 +88,14 @@ test("revoked creates clean their own tokens and restore deduplication never joi
   const restored = await replacement
   assert.equal(restored?.token, "preview_generation-3")
   assert.equal(restored?.targetUrl, first.targetUrl)
-  assert.ok(owner.calls.some(call => call.method === "DELETE" && call.url.endsWith("/preview_generation-2")))
+  assert.ok(owner.calls.some(call => call.method === "DELETE" && call.url.endsWith("/cap-preview_generation-2")))
   await closeSessionPreview(restored!.storageKey)
   owner.hold()
   const opening = openSessionPreview("late", "https://example.com/late", scope, id)
   owner.detach(); owner.release()
   await assert.rejects(opening, /superseded/)
   assert.equal(getSessionPreview("late", scope), null)
-  assert.ok(owner.calls.some(call => call.method === "DELETE" && call.url.endsWith("/preview_generation-4")))
+  assert.ok(owner.calls.some(call => call.method === "DELETE" && call.url.endsWith("/cap-preview_generation-4")))
 })
 
 test("missing preview owner refuses create and restore without local requests", async t => {
@@ -104,14 +106,51 @@ test("missing preview owner refuses create and restore without local requests", 
   assert.equal(localCalls, 0)
 })
 
+test("remote close revokes live authority but retains logical history for explicit reopening", async t => {
+  const owner = fixture("preview_close")
+  t.after(owner.dispose)
+  const id = `${owner.backend.id}~workspace`, scope = `${owner.backend.id}~/repo`
+  const preview = await openSessionPreview("s", "https://example.com/start", scope, id)
+  updateSessionPreviewHistory(preview.storageKey, { urls: ["https://example.com/start", "https://example.com/next"], index: 1 })
+  updateSessionPreviewHistory(preview.storageKey, { urls: [preview.contentUrl!], index: 0 })
+  assert.equal(getSessionPreview("s", scope)?.targetUrl, "https://example.com/next")
+  dismissSessionPreview(preview.storageKey)
+  assert.equal(getSessionPreview("s", scope), null)
+  const restored = await restoreSessionPreview("s", scope, id)
+  assert.equal(restored?.targetUrl, "https://example.com/next")
+  assert.deepEqual(restored?.history, { urls: ["https://example.com/start", "https://example.com/next"], index: 1 })
+  assert.notEqual(restored?.capability, preview.capability)
+  await closeSessionPreview(restored!.storageKey)
+})
+
+test("tab detachment fences pending creates and restore coalescence without touching a replacement", async t => {
+  const owner = fixture("preview_tab")
+  t.after(owner.dispose)
+  const id = `${owner.backend.id}~workspace`, scope = `${owner.backend.id}~/repo`
+  await openSessionPreview("s", "https://example.com/start", scope, id)
+  owner.detach(); owner.reattach(); owner.hold()
+  const old = restoreSessionPreview("s", scope, id)
+  detachInstanceTabMembership(id)
+  const fresh = restoreSessionPreview("s", scope, id)
+  assert.notEqual(old, fresh)
+  const rejected = assert.rejects(old, { name: "AbortError" })
+  owner.pending.shift()!()
+  await rejected
+  owner.release()
+  const restored = await fresh
+  assert.equal(getSessionPreview("s", scope)?.capability, restored?.capability)
+  await closeSessionPreview(restored!.storageKey)
+})
+
 test("preview URLs reject embedded credentials and foreign frame sources before publication", async t => {
   const owner = fixture("preview_urls")
   t.after(owner.dispose)
   const id = `${owner.backend.id}~workspace`, scope = `${owner.backend.id}~/repo`
   await assert.rejects(openSessionPreview("s", "https://user:secret@localhost/app", scope, id), TypeError)
   assert.equal(owner.calls.length, 0)
-  for (const proxyUrl of ["https://user:secret@preview_urls.example/previews/t", "https://other.example/previews/t", "javascript:alert(1)"]) {
-    t.mock.method(owner.backend.api, "createPreview", async () => ({ token: "bad", sessionId: "s", targetUrl: "https://example.com/", proxyUrl, createdAt: "" }))
+  for (const contentUrl of ["https://user:secret@preview_urls.example/previews/t", "https://other.example/previews/t", "javascript:alert(1)"]) {
+    t.mock.method(owner.backend.api, "createPreviewCapability", async () => ({ token: "bad", capability: "bad-cap", contentUrl,
+      sessionId: "s", targetUrl: "https://example.com/", proxyUrl: "/previews/bad/", createdAt: "" }))
     await assert.rejects(openSessionPreview("s", "https://example.com/", scope, id), TypeError)
     assert.equal(getSessionPreview("s", scope), null)
   }

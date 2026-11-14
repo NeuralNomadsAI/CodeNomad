@@ -14,6 +14,10 @@ Cada vista previa pertenece a su carpeta de proyecto y sesión. Cambiar de conve
 
 El historial guardado solo se restaura cuando vuelves a abrir explícitamente el navegador de esa sesión, no al iniciar/seleccionar una sesión. Guarda URL y un cursor, no formularios sin enviar, DOM, cuerpos POST ni memoria JavaScript. El historial se limita a 32 URL por sesión y a un presupuesto compartido de disposición; pueden recortarse las entradas antiguas. Restaurar una URL puede realizar una carga nueva de página; no es una repetición de transacciones.
 
+Las pestañas de proyectos remotos cargan las vistas previas mediante el servidor CodeNomad del proyecto. La barra de direcciones y el historial guardado muestran la URL de la aplicación. Cerrar la vista previa o la pestaña, desconectar/eliminar el servidor o salir termina la página activa y sus conexiones; al reabrirla se carga la dirección guardada con su historial. Las credenciales del servidor permanecen en el backend; las cookies de aplicación transmitidas se filtran. Mantén las direcciones internas de carga dentro de CodeNomad.
+
+Las vistas previas remotas nativas desactivan menús contextuales, exportación al portapapeles, arrastre de enlaces, impresión, ventanas emergentes, descargas, diálogos de página y solicitudes de permisos para mantener privadas las direcciones internas. Guarda el trabajo de la página antes de cerrarla.
+
 ## Inicios de sesión compartidos y límites de automatización {#signins-automation}
 
 Las vistas previas nativas comparten cookies, inicios de sesión y almacenamiento de sitios entre proyectos/sesiones dentro del mismo motor de escritorio y ámbito de perfil/configuración, separados del renderer de confianza de CodeNomad. Cerrar sesión en un sitio desde una vista previa afecta a las demás que usen ese almacén. Documentos, formularios, almacenamiento de sesión, historiales de navegación y vínculos de automatización siguen perteneciendo a cada sesión. Las vistas previas iframe no son un perfil completo compartido de navegador nativo.

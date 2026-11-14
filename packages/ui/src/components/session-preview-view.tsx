@@ -1,10 +1,12 @@
 import { createSignal, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
+import { openSessionPreview, dismissSessionPreview, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
+import { remotePreviewAddress, remotePreviewSource } from "../lib/remote-preview-address"
+import type { RemotePreviewCapability } from "../../../server/src/api-types"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
@@ -61,7 +63,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
     <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface-canvas" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
       <BrowserFrame
         active={props.active}
-        onClose={() => showSessionChat(props.preview.storageKey)}
+        onClose={() => dismissSessionPreview(props.preview.storageKey)}
         sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}
         initialUrl={frameSource()}
@@ -71,10 +73,16 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
-        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder, props.preview.instanceId))}
+        isolatedSource={Boolean(props.preview.capability)}
+        sourceAddress={source => remotePreviewAddress(props.preview as RemotePreviewCapability, source)}
+        onNavigate={async (address) => {
+          const source = props.preview.capability && remotePreviewSource(props.preview as RemotePreviewCapability, address)
+          return source || frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder, props.preview.instanceId))
+        }}
         onNavigationError={showNavigationError}
         onFrameLocation={(path) => {
           const target = new URL(path, props.preview.targetUrl)
+          if (props.preview.capability && target.origin !== new URL(props.preview.targetUrl).origin) return
           updateSessionPreviewLocation(props.preview.storageKey, target.href)
           return target.href
         }}

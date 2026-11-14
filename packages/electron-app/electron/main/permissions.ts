@@ -5,6 +5,7 @@ import { nativeMenuLabels } from "./view-menu"
 import { configureBrowserDeviceChoosers } from "./browser-device-chooser"
 import { configureBrowserDisplayChooser } from "./browser-display-chooser"
 import { browserGuestLifetime } from "./browser-guest-lifetime"
+import { isPrivatePreviewUrl, restrictedBrowserGuest } from "./browser-presentation"
 
 export { isAllowedRendererOrigin } from "./renderer-origin"
 
@@ -45,9 +46,9 @@ export function configureBrowserPermissionHandlers(targetSession: Session) {
   const unknown = new Set<string>()
   const key = (origin: string, permission: string, resource = "") => JSON.stringify([origin, permission, resource])
   targetSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
-    if (!_webContents || !browserGuestLifetime.live(_webContents)) return false
+    if (!_webContents || restrictedBrowserGuest(_webContents) || !browserGuestLifetime.live(_webContents)) return false
     const origin = permissionOrigin(details.securityOrigin ?? requestingOrigin)
-    if (!origin) return false
+    if (!origin || isPrivatePreviewUrl(origin)) return false
     const decision = browserPermissionDecision(permission)
     if (decision !== "consent") return decision === "browser" || decision === "chooser"
     let embeddingOrigin = details.embeddingOrigin
@@ -60,11 +61,12 @@ export function configureBrowserPermissionHandlers(targetSession: Session) {
     const owner = browserGuestLifetime.owner(contents)
     const live = () => Boolean(owner && browserGuestLifetime.owner(contents) === owner && browserGuestLifetime.revision(contents) === revision)
     const decision = browserPermissionDecision(permission)
-    if (decision === "deny" || !live()) { callback(false); return }
+    if (decision === "deny" || restrictedBrowserGuest(contents) || !live()) { callback(false); return }
     const frameOrigins = new Set(contents.mainFrame.framesInSubtree
       .filter(frame => frame.url === details.requestingUrl && (!details.isMainFrame || frame === contents.mainFrame))
       .map(frame => permissionOrigin(frame.origin)).filter((origin): origin is string => Boolean(origin)))
     const origin = permissionOrigin(details.requestingUrl) ?? (frameOrigins.size === 1 ? [...frameOrigins][0] : undefined)
+    if (origin && isPrivatePreviewUrl(origin)) { callback(false); return }
     const resource = permissionResource(permission, details, contents.mainFrame.origin)
     const labels = nativeMenuLabels(owner ?? null)
     const requestKey = key(origin ?? "null", permission, resource)
