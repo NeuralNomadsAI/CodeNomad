@@ -170,8 +170,6 @@ async function holdBrowser(page: Page) {
   await started.promise
   return { release: release.resolve, finish: () => page.evaluate(() => (window as any).heldBrowser) }
 }
-const hasForegroundIntent = (page: Page) => page.evaluate(async () =>
-  (await import("/src/stores/session-surface.ts" as string)).hasPendingSessionSurfaceIntent("fixture"))
 
 for (const mode of ["reader", "answer", "reader and answer"]) test(`deferred schedule ${mode} yields to a newer held browser open`, async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
@@ -187,15 +185,12 @@ for (const mode of ["reader", "answer", "reader and answer"]) test(`deferred sch
     const row = await inlineMissionEntry(page, "Daily review")
     if (answer) await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
     await row.click(); await passage.started.promise
-    const before = await readerTarget(page)
     web = await holdBrowser(page)
     passage.release.resolve(); await passage.settled.promise
     await page.locator('.mission-tree-node[data-task-key="second"]').waitFor({ state: "attached" }); await paint(page)
     assert.equal(await page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), undefined)
-    assert.deepEqual(await readerTarget(page), before, "discovery cannot retarget the foreground")
-    assert.equal(await hasForegroundIntent(page), true, "the browser still owns admission")
+    if (mode !== "answer") assert.equal((await readerTarget(page))?.missionId, "msn_daily_passage", "passive passage discovery retargets immediately")
     web.release(); assert.equal(await web.finish(), "opened")
-    assert.equal(await hasForegroundIntent(page), false)
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
   } finally { passage?.release.resolve(); web?.release(); await page.close() }
 })
@@ -210,7 +205,6 @@ test("an admitted red schedule click discovers and opens its asking descendant",
     const active = () => page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture"))
     for (let attempt = 0; await active() !== "ses_child" && attempt < 100; attempt++) await page.waitForTimeout(50)
     assert.equal(await active(), "ses_child")
-    assert.equal(await hasForegroundIntent(page), false)
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
   } finally { await page.close() }
 })
@@ -244,7 +238,6 @@ test("a pressed task reader hands its loaded schedule's answer to cold hydration
     for (let attempt = 0; await active() !== "ses_child" && attempt < 100; attempt++) await page.waitForTimeout(50)
     assert.equal(await active(), "ses_child")
     assert.equal(await readerTarget(page), undefined)
-    assert.equal(await hasForegroundIntent(page), false)
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
   } finally { await page.close() }
 })
@@ -278,7 +271,6 @@ test("a discovered schedule answer retains its original intent through cold acto
     web = await holdBrowser(page)
     hydration.resolve(); await settled.promise; await paint(page)
     assert.equal(await page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), undefined)
-    assert.equal(await hasForegroundIntent(page), true)
     web.release(); assert.equal(await web.finish(), "opened")
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
   } finally { passage?.release.resolve(); hydration.resolve(); web?.release(); await page.close() }
@@ -304,9 +296,7 @@ for (const first of [false, true]) test(`passive ${first ? "first-passage" : "no
     }
     await paint(page)
     assert.deepEqual(await readerTarget(page), before)
-    assert.equal(await hasForegroundIntent(page), true)
     if (passage) { passage.release.resolve(); await passage.settled.promise; await paint(page) }
-    assert.equal(await hasForegroundIntent(page), true)
     web.release(); assert.equal(await web.finish(), "opened")
     assert.equal(await readerTarget(page), undefined)
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
@@ -336,7 +326,6 @@ test("Mission deletion's reader cleanup yields to a newer held browser open", as
     })
     await paint(page)
     assert.deepEqual(await readerTarget(page), before)
-    assert.equal(await hasForegroundIntent(page), true)
     web.release(); assert.equal(await web.finish(), "opened")
     assert.equal(await readerTarget(page), undefined)
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])

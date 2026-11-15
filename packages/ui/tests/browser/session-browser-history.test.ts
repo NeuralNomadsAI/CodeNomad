@@ -163,8 +163,8 @@ for (const inventory of ["missing", "unavailable", "recovered"]) test(`real shel
     refreshed = true
     await page.evaluate(cold => (window as any).fixture.refreshMissions(cold), inventory !== "missing")
     assert.equal(await page.evaluate(() => (window as any).fixture.missionStatus()), inventory !== "missing" ? "unavailable" : "ready")
-    assert.equal(await page.evaluate(() => (window as any).fixture.presentation("header-windows").mission.reader?.missionId), "mission-a",
-      "passive cleanup waits for the admitted browser gesture")
+    assert.equal(await page.evaluate(() => (window as any).fixture.presentation("header-windows").mission.reader?.missionId),
+      inventory === "missing" ? undefined : "mission-a", "confirmed absence clears immediately; unavailable inventory retains the reader")
     if (inventory === "recovered") {
       refreshed = false
       await page.evaluate(() => (window as any).fixture.refreshMissions(true))
@@ -174,7 +174,7 @@ for (const inventory of ["missing", "unavailable", "recovered"]) test(`real shel
     if (inventory === "recovered") {
       assert.match(await page.evaluate(() => (window as any).previewAttempt), /Error:/)
       assert.equal(await page.evaluate(() => (window as any).fixture.presentation("header-windows").mission.reader?.missionId), "mission-a",
-        "a recovered inventory cancels the deferred cleanup before the browser fails")
+        "a recovered inventory preserves the reader when the browser fails")
       await page.locator(".mission-reader").getByText("Retained reader", { exact: true }).waitFor()
       assert.deepEqual(errors, [])
       return

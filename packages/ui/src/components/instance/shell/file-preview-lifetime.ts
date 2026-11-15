@@ -17,10 +17,7 @@ export function useFilePreviewLifetime(instanceId: string, activeSessionId: Acce
     const worktrees = getWorktrees(instanceId)
     // A removed worktree must never silently turn into a root-file read.
     if (target && worktrees.length && !worktrees.some(entry => entry.slug === target.slug))
-      closeFilePreview(instanceId, () => {
-        const current = getWorktrees(instanceId)
-        return current.length > 0 && !current.some(entry => entry.slug === target.slug)
-      })
+      closeFilePreview(instanceId)
   })
   onCleanup(() => closeFilePreview(instanceId))
 }

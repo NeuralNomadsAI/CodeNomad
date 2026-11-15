@@ -8,7 +8,7 @@ import { serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
 import { resolveImagesConversation, showImagesConversation } from "../../stores/images-conversation"
-import { captureSessionSurfaceIntent } from "../../stores/session-surface"
+import { beginGesture } from "../../stores/session-surface"
 import type { PromptInputApi } from "../prompt-input/types"
 import { assertThumbnailBounds } from "./image-bounds"
 import { thumbnail } from "./assets-channel"
@@ -152,23 +152,17 @@ export function useApi4Channel(props: {
   }) as Array<[keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>]>)
 
   async function conversation(mode: "open" | "new", signal: AbortSignal): Promise<Answer> {
-    const intent = captureSessionSurfaceIntent({ instanceId: props.instanceId, sessionId: props.sessionId ?? null })
-    signal.addEventListener("abort", intent.release, { once: true })
-    let deferred = false
-    try {
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.sessionId ?? null })
     const result = await resolveImagesConversation(props.instanceId, mode,
       (_instance, request) => panelExtensionsApi4.conversation(authority, request, signal))
     if (result.status !== "found") return { result: mode === "new" ? { opened: false } : { opened: false, created: false } }
     // Answer the frame first; showing the conversation then remounts the panel. A conversation
     // the user selects during hydration wins: navigation needs the mount's selection unchanged.
     const selected = props.sessionId
-    deferred = true
     return { result: mode === "new" ? { opened: true } : { opened: true, created: result.created }, after: () => {
       void showImagesConversation(props.instanceId, result, () => !signal.aborted && (props.host.activeSessionId() ?? null) === selected, intent)
-        .finally(() => { signal.removeEventListener("abort", intent.release); intent.release() })
       if (intent.current() && props.host.isPhoneLayout()) props.host.closePanel()
     } }
-    } finally { if (!deferred) { signal.removeEventListener("abort", intent.release); intent.release() } }
   }
 
   async function prefill(value: unknown, signal: AbortSignal): Promise<Answer> {

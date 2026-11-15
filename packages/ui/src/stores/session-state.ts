@@ -1,5 +1,5 @@
 import { batch, createSignal } from "solid-js"
-import { reconcileSessionSurface, sessionSurfaceGesture, type SessionSurfaceIntent } from "./session-surface"
+import { beginGesture, type SurfaceGesture } from "./session-surface"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
@@ -730,56 +730,45 @@ function writeActiveParentSession(instanceId: string, parentSessionId: string | 
   writeSessionSelection(setActiveParentSessionId, instanceId, parentSessionId)
 }
 
-function applySessionSelection(instanceId: string, apply: () => void, intent?: SessionSurfaceIntent): void {
-  if (intent) { if (intent.current()) apply() }
-  else {
-    const previous = activeSessionId().get(instanceId), parent = activeParentSessionId().get(instanceId)
-    reconcileSessionSurface(instanceId, "session-selection", () => {
-      if (activeSessionId().get(instanceId) === previous && activeParentSessionId().get(instanceId) === parent) apply()
-    })
-  }
+function setActiveSession(instanceId: string, sessionId: string, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current()) return
+  markSessionSelectionAuthoritative(instanceId)
+  writeActiveSession(instanceId, sessionId)
 }
 
-function setActiveSession(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
-  applySessionSelection(instanceId, () => {
-    markSessionSelectionAuthoritative(instanceId)
-    writeActiveSession(instanceId, sessionId)
-  }, intent)
-}
-
-function setActiveParentSession(instanceId: string, parentSessionId: string, intent?: SessionSurfaceIntent): void {
-  applySessionSelection(instanceId, () => batch(() => {
+function setActiveParentSession(instanceId: string, parentSessionId: string, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current()) return
+  batch(() => {
     markSessionSelectionAuthoritative(instanceId)
     writeActiveParentSession(instanceId, parentSessionId)
     writeActiveSession(instanceId, parentSessionId)
-  }), intent)
+  })
 }
 
-export function selectActiveSession(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
-  sessionSurfaceGesture({ instanceId, sessionId }, admitted => setActiveSession(instanceId, sessionId, admitted), intent)
+export function selectActiveSession(instanceId: string, sessionId: string, gesture = beginGesture({ instanceId, sessionId })): void {
+  setActiveSession(instanceId, sessionId, gesture)
 }
 
-export function selectActiveParentSession(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
-  sessionSurfaceGesture({ instanceId, sessionId }, admitted => setActiveParentSession(instanceId, sessionId, admitted), intent)
+export function selectActiveParentSession(instanceId: string, sessionId: string, gesture = beginGesture({ instanceId, sessionId })): void {
+  setActiveParentSession(instanceId, sessionId, gesture)
 }
 
-function clearActiveParentSession(instanceId: string, intent?: SessionSurfaceIntent): void {
-  applySessionSelection(instanceId, () => batch(() => {
+function clearActiveParentSession(instanceId: string, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current()) return
+  batch(() => {
     markSessionSelectionAuthoritative(instanceId)
     writeActiveParentSession(instanceId, null)
     writeActiveSession(instanceId, null)
-  }), intent)
+  })
 }
 
 export function clearSelectedSession(instanceId: string): void {
-  sessionSurfaceGesture({ instanceId, sessionId: null }, intent => clearActiveParentSession(instanceId, intent))
+  clearActiveParentSession(instanceId, beginGesture({ instanceId, sessionId: null }))
 }
 
 function clearActiveSession(instanceId: string): void {
-  applySessionSelection(instanceId, () => {
-    markSessionSelectionAuthoritative(instanceId)
-    writeActiveSession(instanceId, null)
-  })
+  markSessionSelectionAuthoritative(instanceId)
+  writeActiveSession(instanceId, null)
 }
 
 function hydrateActiveSessionSelection(
@@ -789,26 +778,25 @@ function hydrateActiveSessionSelection(
   isCurrent: () => boolean = () => true,
 ): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
-  applySessionSelection(instanceId, () => batch(() => {
-    if (hasAuthoritativeSessionSelection(instanceId) || !isCurrent()) return
+  batch(() => {
+    if (!isCurrent()) return
     const selection = resolveRestoredSessionSelection(getSessions(instanceId), parentSessionId, sessionId)
     writeActiveParentSession(instanceId, selection?.parentSessionId ?? null)
     writeActiveSession(instanceId, sessionId === "info" && !parentSessionId ? "info" : selection?.activeSessionId ?? null)
-  }))
+  })
 }
 
 // Restore selection identity before HTTP hydration, without starting any
 // session-scoped effects until the native session has actually been resolved.
 function seedRestoredSessionSelection(instanceId: string, parentSessionId: string | null, sessionId: string | null): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
-  applySessionSelection(instanceId, () => batch(() => {
-    if (hasAuthoritativeSessionSelection(instanceId)) return
+  batch(() => {
     const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
     const parent = parentSessionId && !deleted.has(parentSessionId) ? parentSessionId : null
     const active = parentSessionId && !parent || sessionId && deleted.has(sessionId) ? parent : sessionId
     writeActiveParentSession(instanceId, parent)
     writeSessionSelection(setActiveSessionId, instanceId, active)
-  }))
+  })
 }
 
 function clearInstanceSessionSelection(instanceId: string): void {
@@ -1056,22 +1044,21 @@ function getVisibleSessionIds(instanceId: string): string[] {
   return collectVisibleSessionIds(threads, expanded)
 }
 
-function setActiveSessionFromList(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
-  applySessionSelection(instanceId, () => {
-    const session = sessions().get(instanceId)?.get(sessionId)
-    if (!session) return
-    const root = getSessionRoot(instanceId, sessionId) ?? session
-    ensureSessionAncestorsExpanded(instanceId, sessionId)
-    batch(() => {
-      markSessionSelectionAuthoritative(instanceId)
-      writeActiveParentSession(instanceId, root.id)
-      writeActiveSession(instanceId, session.id)
-    })
-  }, intent)
+function setActiveSessionFromList(instanceId: string, sessionId: string, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current()) return
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) return
+  const root = getSessionRoot(instanceId, sessionId) ?? session
+  ensureSessionAncestorsExpanded(instanceId, sessionId)
+  batch(() => {
+    markSessionSelectionAuthoritative(instanceId)
+    writeActiveParentSession(instanceId, root.id)
+    writeActiveSession(instanceId, session.id)
+  })
 }
 
-export function selectSessionFromList(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
-  sessionSurfaceGesture({ instanceId, sessionId }, admitted => setActiveSessionFromList(instanceId, sessionId, admitted), intent)
+export function selectSessionFromList(instanceId: string, sessionId: string, gesture = beginGesture({ instanceId, sessionId })): void {
+  setActiveSessionFromList(instanceId, sessionId, gesture)
 }
 
 function isSessionMessagesLoading(instanceId: string, sessionId: string): boolean {

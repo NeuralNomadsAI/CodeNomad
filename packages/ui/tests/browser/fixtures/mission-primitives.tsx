@@ -9,7 +9,7 @@ import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { initializeClientState } from "../../../src/stores/client-state"
 import { missionProjectView, navigateMissionProjectView } from "../../../src/stores/mission-view-state"
-import { captureSessionSurfaceIntent } from "../../../src/stores/session-surface"
+import { beginGesture } from "../../../src/stores/session-surface"
 import { publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
 import { missionStore } from "../../../src/stores/missions"
 import type { Instance } from "../../../src/types/instance"
@@ -24,11 +24,9 @@ function Fixture() {
   const { t } = useI18n()
   ;(window as any).track3 = {
     show: async (kind: "overview" | "task" | "report" | "change", itemId?: string) => {
-      const intent = captureSessionSurfaceIntent({ instanceId: instance.id, sessionId: null })
-      try {
-        await missionStore.refresh(instance.id)
-        navigateMissionProjectView(instance.id, { reader: { missionId: "reader", kind, itemId } }, intent)
-      } finally { intent.release() }
+      const intent = beginGesture({ instanceId: instance.id, sessionId: null })
+      await missionStore.refresh(instance.id)
+      navigateMissionProjectView(instance.id, { reader: { missionId: "reader", kind, itemId } }, intent)
     },
     locale: (locale: "en" | "he" | "tr") => updatePreferences({ locale }),
     bounded: (text: string) => getRenderTextWindow(text, MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT).text,

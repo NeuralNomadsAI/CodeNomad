@@ -64,7 +64,7 @@ const { useGitChanges } = await import("./useGitChanges")
 const { buildGitChangeListItems } = await import("./git-changes-model")
 const { getFilePreview, openFilePreview, closeFilePreview } = await import("../../../../stores/files-preview")
 const { invalidateFilesystemCaches } = await import("../../../../lib/filesystem-events")
-const { captureSessionSurfaceIntent } = await import("../../../../stores/session-surface")
+const { beginGesture } = await import("../../../../stores/session-surface")
 const { publishInstanceLifecycleAuthority } = await import("../../../../stores/instance-lifecycle-authority")
 
 const entry = (path: string, staged = false): WorktreeGitStatusEntry => ({
@@ -266,7 +266,7 @@ test("held Git reconciliation yields to a newer pending surface action, includin
   for (const operation of ["stage", "unstage", "refresh", "commit", "passive"] as const) {
     const staged = operation === "commit" || operation === "unstage"
     const h = await setup([entry("a.ts", staged)])
-    let intent: ReturnType<typeof captureSessionSurfaceIntent> | undefined
+    let intent: ReturnType<typeof beginGesture> | undefined
     const gate = deferred()
     try {
       const id = `${staged ? "staged" : "unstaged"}:a.ts`
@@ -279,20 +279,21 @@ test("held Git reconciliation yields to a newer pending surface action, includin
         : operation === "refresh" ? h.git.refreshGitStatus() : operation === "commit"
           ? h.git.submitGitCommit() : operation === "unstage" ? h.git.unstageGitFile(h.item(id)) : h.git.stageGitFile(h.item(id))
       await until(() => fixture.statusOptions.length > reads)
-      intent = captureSessionSurfaceIntent({ instanceId: "test", sessionId: "session" })
+      intent = beginGesture({ instanceId: "test", sessionId: "session" })
       gate.resolve()
       await pending
       await until(() => !h.git.gitStatusLoading() && !h.git.gitCommitSubmitting())
-      assert.equal(getFilePreview("test"), before, `${operation} cannot reopen or close the unchanged target`)
+      if (operation === "passive") assert.equal(getFilePreview("test")?.path, before?.path)
+      else assert.equal(getFilePreview("test"), before, `${operation} cannot reopen or close the unchanged target`)
       assert.equal(intent.current(), true, `${operation} preserves the newer action's authority`)
       if (operation === "passive") {
         const currentReads = fixture.statusOptions.length
         invalidateFilesystemCaches("test")
         await until(() => fixture.statusOptions.length > currentReads && !h.git.gitStatusLoading())
         assert.equal(intent.current(), true, "passive admission also leaves an existing foreground action current")
-        assert.equal(getFilePreview("test"), before)
+        assert.equal(getFilePreview("test")?.path, before?.path)
       }
-    } finally { gate.resolve(); intent?.release(); h.close() }
+    } finally { gate.resolve(); h.close() }
   }
 })
 
@@ -469,30 +470,28 @@ test("passive refresh and commits reconcile an eye-opened file without selecting
   } finally { h.close() }
 })
 
-for (const clear of ["filesystem", "whitespace"] as const) test(`deferred status preserves a reader when ${clear} clears the inactive inventory`, async () => {
+for (const clear of ["filesystem", "whitespace"] as const) test(`status preserves a reader when ${clear} clears the inactive inventory`, async () => {
   const [active, setActive] = createSignal(true)
   setHideWhitespace(true)
   const h = await setup([entry("a.ts")], () => "root", active)
   try {
     h.eye("unstaged:a.ts")
-    const intent = captureSessionSurfaceIntent({ instanceId: "test", sessionId: "session" })
-    try {
-      const target = getFilePreview("test")
+    const intent = beginGesture({ instanceId: "test", sessionId: "session" })
       const reads = fixture.statusOptions.length
       invalidateFilesystemCaches("test")
       await until(() => fixture.statusOptions.length > reads && !h.git.gitStatusLoading())
-      assert.equal(getFilePreview("test"), target)
+      assert.equal(getFilePreview("test")?.path, "a.ts")
+      const target = getFilePreview("test")
       setActive(false)
       if (clear === "filesystem") invalidateFilesystemCaches("test")
       else setHideWhitespace(false)
       assert.equal(h.git.gitStatusEntries(), null)
-      intent.release()
+      assert.equal(intent.current(), true)
       assert.equal(getFilePreview("test"), target, "unloaded status is not authoritative absence")
       // A valid later read still reconciles actual disappearance.
       fixture.entries = []
       setActive(true)
       await until(() => !h.git.gitStatusLoading() && h.git.gitStatusEntries() !== null)
       assert.equal(getFilePreview("test"), null)
-    } finally { intent.release() }
   } finally { h.close(); setHideWhitespace(undefined) }
 })

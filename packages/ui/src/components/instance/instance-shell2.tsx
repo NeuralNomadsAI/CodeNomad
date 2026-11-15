@@ -64,7 +64,7 @@ import {
   showSessionPreview,
 } from "../../stores/session-previews"
 import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
-import { captureSessionSurfaceIntent } from "../../stores/session-surface"
+import { beginGesture } from "../../stores/session-surface"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -462,7 +462,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
-    const intent = captureSessionSurfaceIntent({ instanceId: props.instance.id, sessionId })
+    const intent = beginGesture({ instanceId: props.instance.id, sessionId })
     try {
       const restored = await restoreSessionPreview(sessionId, props.instance.id)
       if (!intent.current()) return
@@ -476,7 +476,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
-    } finally { intent.release() }
+    }
   }
 
   function handlePreviewButtonClick() {
@@ -991,9 +991,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   function createAndActivateDraftSession() {
     if (draftSessionCreation) return draftSessionCreation
-    const intent = captureSessionSurfaceIntent({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() ?? null })
+    const intent = beginGesture({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() ?? null })
     const creation = (async () => {
-      try {
       const agent = draftAgent()
       const model = draftModel()
       if (agent && model.providerId && model.modelId) {
@@ -1008,7 +1007,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       }
       setActiveParentSession(props.instance.id, session.id, intent)
       return session
-      } finally { intent.release() }
     })()
     draftSessionCreation = creation
     void creation.finally(() => {

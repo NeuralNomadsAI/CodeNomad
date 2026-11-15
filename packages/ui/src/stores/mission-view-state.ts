@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import { MAX_LAYOUT_VALUE_LENGTH, readClientLayoutValue, writeClientLayoutValue, removeClientLayoutValue } from "./client-state"
 import { getTabViewState, updateTabViewState, type RestorableTabMissionView } from "./tab-view-state"
-import { activateSessionSurface, reconcileSessionSurface, sessionSurfaceGesture, type SessionSurfaceIntent } from "./session-surface"
+import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
 
 export interface MissionReaderTarget {
   /** For `playbook`, the playbook id, read without any Mission. */
@@ -41,32 +41,15 @@ function key(value: string): string {
 export function missionProjectView(instanceId: string): ProjectView {
   return getTabViewState(instanceId).missions ?? emptyView
 }
-export function updateMissionProjectView(instanceId: string, update: Partial<ProjectView> | (() => Partial<ProjectView>)): void {
-  const patch = typeof update === "function" ? update() : update
-  if ("reader" in patch) {
-    const previous = missionProjectView(instanceId).reader, { reader, ...data } = patch
-    updateMissionProjectView(instanceId, data)
-    if (previous === reader) return
-    reconcileSessionSurface(instanceId, "mission-reader", () => {
-      if (missionProjectView(instanceId).reader !== previous) return
-      const current = typeof update === "function" ? update() : patch
-      if ("reader" in current) writeMissionProjectView(instanceId, { reader: current.reader })
-    })
-    return
-  }
-  writeMissionProjectView(instanceId, patch)
-}
-
 /** Explicit reader/selection gesture; async callers pass their original admitted intent. */
-export function navigateMissionProjectView(instanceId: string, patch: Partial<ProjectView>, intent?: SessionSurfaceIntent): void {
-  sessionSurfaceGesture({ instanceId, sessionId: null }, admitted => {
-    writeMissionProjectView(instanceId, patch)
-    if ("reader" in patch) activateSessionSurface({ instanceId, sessionId: null },
-      patch.reader ? { kind: "mission", target: patch.reader } : { kind: "conversation" }, admitted)
-  }, intent)
+export function navigateMissionProjectView(instanceId: string, patch: Partial<ProjectView>, gesture = beginGesture({ instanceId, sessionId: null })): void {
+  if (!gesture.current()) return
+  updateMissionProjectView(instanceId, patch)
+  if ("reader" in patch) applySurface({ instanceId, sessionId: null },
+    patch.reader ? { kind: "mission", target: patch.reader } : { kind: "conversation" }, gesture)
 }
 
-function writeMissionProjectView(instanceId: string, patch: Partial<ProjectView>): void {
+export function updateMissionProjectView(instanceId: string, patch: Partial<ProjectView>): void {
   const previous = missionProjectView(instanceId)
   const value = { ...previous, ...patch }
   if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
@@ -75,14 +58,9 @@ function writeMissionProjectView(instanceId: string, patch: Partial<ProjectView>
   updateTabViewState(instanceId, { missions: value })
 }
 /** Retarget an already displayed reader under the caller's foreground/reconciliation fence. */
-export function retargetMissionReader(instanceId: string, previous: MissionReaderTarget, target: MissionReaderTarget | (() => MissionReaderTarget | undefined), intent?: SessionSurfaceIntent): void {
-  const apply = () => {
-    if (missionProjectView(instanceId).reader !== previous) return
-    const next = typeof target === "function" ? target() : target
-    if (next) writeMissionProjectView(instanceId, { reader: next })
-  }
-  if (intent) { if (intent.current()) apply() }
-  else reconcileSessionSurface(instanceId, "mission-reader", apply)
+export function retargetMissionReader(instanceId: string, previous: MissionReaderTarget, target: MissionReaderTarget, gesture?: SurfaceGesture): void {
+  if (gesture && !gesture.current() || missionProjectView(instanceId).reader !== previous) return
+  updateMissionProjectView(instanceId, { reader: target })
 }
 export function missionDisclosureOpen(instanceId: string, missionId: string, id: string, defaultOpen = true): boolean {
   return missionProjectView(instanceId).disclosures?.[key(JSON.stringify([missionId, id]))] ?? defaultOpen

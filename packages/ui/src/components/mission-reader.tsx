@@ -4,7 +4,7 @@ import { useI18n } from "../lib/i18n"
 import { missionStore as projectMissionStore } from "../stores/missions"
 import { MissionPanelScope, scopedMissionStore } from "./mission-panel-scope"
 import { missionProjectView, navigateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
-import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, sessionSurfaceGesture } from "../stores/session-surface"
+import { applySurface, beginGesture } from "../stores/session-surface"
 import { Markdown } from "./markdown"
 import { copyToClipboard } from "../lib/clipboard"
 import { MissionTaskReader } from "./mission-task-reader"
@@ -12,7 +12,7 @@ import { openMissionTask } from "./mission-task-open"
 import { MissionReportNotification } from "./mission-native-execution"
 import { createMissionViewFence } from "../lib/mission-view-fence"
 import { instances } from "../stores/instances"
-import { activeSessionId, activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../stores/sessions"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { sessionListRestored } from "../stores/session-list-restoration"
 import { missionIncludesSession } from "./mission-attention-model"
@@ -292,8 +292,6 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const captureNavigation = createMissionViewFence(() => JSON.stringify([
     props.instanceId, props.scope, target(), instances().get(props.instanceId)?.folder,
     instances().get(props.instanceId)?.metadata?.project?.id, missionStore.state(props.instanceId).projectID,
-    activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId),
-    getSessionSurface({ instanceId: props.instanceId, sessionId: activeSessionId().get(props.instanceId) ?? null }),
   ]), () => Boolean(target()))
   let navigationIntent = 0
   const taskConversation = () => {
@@ -307,9 +305,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     active: () => true, pulse: () => undefined })
   const openActor = async (sessionId: string) => {
     const current = captureNavigation(), intent = ++navigationIntent
-    const instanceId = props.instanceId, scope = props.scope
-    const surfaceIntent = captureSessionSurfaceIntent({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null })
-    try {
+    const instanceId = props.instanceId
+    const surfaceIntent = beginGesture({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null })
       const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
       const authorized = () => {
         const value = mission()
@@ -334,9 +331,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
       batch(() => {
         setActiveSessionFromList(instanceId, sessionId, surfaceIntent)
-        activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" }, surfaceIntent)
+        applySurface({ instanceId, sessionId }, { kind: "conversation" }, surfaceIntent)
       })
-    } finally { surfaceIntent.release() }
   }
   // Compact project and current-passage readers resolve their exact body descriptors.
   const oneTime = () => Boolean(target()) && (!target()!.recurrence || Boolean(mission()?.panelPassage)) && target()!.kind !== "recurrence" && target()!.kind !== "playbook"
@@ -467,7 +463,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
   const close = () => {
     const ctx = { instanceId: props.instanceId, sessionId: activeSessionId().get(props.instanceId) ?? null }
-    sessionSurfaceGesture(ctx, intent => activateSessionSurface(ctx, { kind: "conversation" }, intent))
+    applySurface(ctx, { kind: "conversation" })
   }
    return <MissionPanelScope value={panel}><section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>

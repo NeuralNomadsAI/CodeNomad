@@ -15,7 +15,7 @@ import { restoreFixtureTabView } from "./tab-view-restoration"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { sessions, activeSessionId } from "../../../src/stores/session-state"
-import { captureSessionSurfaceIntent } from "../../../src/stores/session-surface"
+import { beginGesture } from "../../../src/stores/session-surface"
 import { startNewSession } from "../../../src/stores/session-actions"
 
 // The production shell, session switching, preview store and native guests run
@@ -63,7 +63,7 @@ serverApi.fetchWorktreeGitDiff = async () => ({ path: "diff.ts", before: "const 
 const shell = (window as any).fixture
 shell.addSession("second")
 let eventTime = 1000
-let surfaceIntent: ReturnType<typeof captureSessionSurfaceIntent>
+let surfaceIntent: ReturnType<typeof beginGesture>
 let releaseNewSession: (() => void) | undefined
 Object.assign(shell, {
   delayNewSession: () => {
@@ -83,7 +83,7 @@ Object.assign(shell, {
     return missionStore.refresh(ids[0])
   },
   missionStatus: () => missionStore.state(ids[0]).status,
-  captureSurfaceIntent: () => { surfaceIntent = captureSessionSurfaceIntent({ instanceId: ids[0], sessionId: "session" }) },
+  captureSurfaceIntent: () => { surfaceIntent = beginGesture({ instanceId: ids[0], sessionId: "session" }) },
   surfaceIntentCurrent: () => surfaceIntent.current(),
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),

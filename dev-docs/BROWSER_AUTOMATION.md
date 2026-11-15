@@ -174,13 +174,14 @@ Lifecycle unavailability or removal invalidates those fences; completion release
 the exact operation's fence. Admission checks the lifecycle authority's open
 occurrence set.
 
-`stores/session-surface.ts` supplies foreground activation intents. Autonomous opens
-capture their intent after owner selection and before claiming, and recheck it with
+`stores/session-surface.ts` supplies occurrence gesture generations. Autonomous opens
+capture their generation after owner selection and before claiming, and recheck it with
 ownership and operation fences before adoption. Passive browser resource restoration
 uses its own occurrence/session operation fence, allocates independently of foreground
 authority and preserves the saved foreground mode. Rejected creations release their
 own proxy tokens. SessionView reads the shared typed foreground projection; browser
-resources retain their independent lifetimes.
+resources retain their independent lifetimes. Location/history notifications apply
+immediately while pending gestures retain their generation.
 
 Native open claims retain their request deadline and backend-generation fence. The UI revalidates the claim after asynchronous preview-record creation and before publishing the preview; a rejected record's token is released. Native-parent stdin preserves UTF-8 across buffer boundaries, and timed-out response IDs stay retired independently of subsequent requests.
 

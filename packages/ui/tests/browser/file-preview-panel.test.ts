@@ -152,7 +152,7 @@ test("a window too narrow for the docked panel keeps the reader, and so does wid
   } finally { await page.close() }
 })
 
-test("a deferred status refresh keeps the diff when switching to Workspace and invalidating its unloaded status", async () => {
+test("a passive status refresh preserves a pending gesture and the diff across an unloaded Workspace inventory", async () => {
   const { page, errors } = await setup({ width: 1600, height: 950 }, "?changes")
   const diffReader = page.locator(".git-diff-view:not(.workspace-file-view)")
   try {
@@ -171,8 +171,8 @@ test("a deferred status refresh keeps the diff when switching to Workspace and i
     await eye(page).waitFor()
     await page.evaluate(() => {
       window.filePreviewPanel.invalidate()
-      window.filePreviewPanel.release()
     })
+    assert.equal(await page.evaluate(() => window.filePreviewPanel.current()), true)
     assert.equal(await page.evaluate(() => window.filePreviewPanel.target()), "src/app.ts")
     assert.equal(await diffReader.getAttribute("data-mounted"), "first")
     assert.deepEqual(errors, [])

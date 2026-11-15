@@ -78,7 +78,7 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 import { openSessionPreview } from "./stores/session-previews"
-import { captureSessionSurfaceIntent } from "./stores/session-surface"
+import { beginGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -282,7 +282,7 @@ const App: Component = () => {
         })
         return
       }
-      const intent = captureSessionSurfaceIntent({ instanceId: owner.id, sessionId: sessionID })
+      const intent = beginGesture({ instanceId: owner.id, sessionId: sessionID })
       try {
         if (!await claimNativeBrowserOpen(requestID)) return
         const instance = owner
@@ -300,7 +300,7 @@ const App: Component = () => {
           log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
         })
         throw error
-      } finally { intent.release() }
+      }
     }
     void onNativeBrowserOpen(({ sessionID, url, requestID }) => {
       void openRequestedPreview(sessionID, url, requestID).catch((error) => log.warn("Failed to open agent-requested web preview", { sessionID, error }))

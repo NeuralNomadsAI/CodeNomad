@@ -12,51 +12,27 @@ export type CentralSurface =
   | { kind: "mission"; target: MissionReaderTarget }
 
 const conversation: CentralSurface = { kind: "conversation" }
-const [files, setFiles] = createSignal<ReadonlyMap<string, { target: FilePreviewTarget; lifetime: object }>>(new Map())
-const intents = new Map<string, object>()
-const reconciliations = new Map<string, Map<string, () => void>>()
+const [files, setFiles] = createSignal<ReadonlyMap<string, FilePreviewTarget>>(new Map())
+const generations = new Map<string, { value: number }>()
+export type SurfaceGesture = ReturnType<typeof beginGesture>
 
-export type SessionSurfaceIntent = ReturnType<typeof captureSessionSurfaceIntent>
-
-/** A synchronous gesture, or a synchronous step of the gesture admitted before an await. */
-export function sessionSurfaceGesture(ctx: SurfaceContext, apply: (intent: SessionSurfaceIntent) => void, intent?: SessionSurfaceIntent): void {
-  if (intent) {
-    if (intent.current()) apply(intent)
-    return
-  }
-  const admitted = captureSessionSurfaceIntent(ctx)
-  try { if (admitted.current()) apply(admitted) }
-  finally { admitted.release() }
+/** Admit once, before awaiting; only a later gesture or a closed occurrence retires it. */
+export function beginGesture({ instanceId }: SurfaceContext) {
+  if (!isInstanceOccurrenceOpen(instanceId)) return { current: () => false }
+  const occurrence = generations.get(instanceId) ?? { value: 0 }
+  generations.set(instanceId, occurrence)
+  const generation = ++occurrence.value
+  return { current: () => generations.get(instanceId) === occurrence && occurrence.value === generation && isInstanceOccurrenceOpen(instanceId) }
 }
 
-/** Passive callers retain only their latest reconciliation and recheck their data fences on settlement. */
-export function reconcileSessionSurface(instanceId: string, key: string, apply: () => void): void {
-  if (!intents.has(instanceId)) { apply(); return }
-  const pending = reconciliations.get(instanceId) ?? new Map()
-  pending.set(key, apply)
-  reconciliations.set(instanceId, pending)
-}
-
-function settle(instanceId: string): void {
-  const pending = reconciliations.get(instanceId)
-  reconciliations.delete(instanceId)
-  if (isInstanceOccurrenceOpen(instanceId)) batch(() => { for (const apply of pending?.values() ?? []) apply() })
-}
-
-/** File lifetime/status reconciliation changes only the still-matching runtime target. */
-export function reconcileFileSurface(instanceId: string, previous: FilePreviewTarget, update?: FilePreviewTarget | (() => FilePreviewTarget | undefined), key: "file-reader" | "file-worktree" | "file-lifetime" = "file-reader"): void {
-  const lifetime = files().get(instanceId)?.lifetime
-  if (!lifetime) return
-  reconcileSessionSurface(instanceId, key, () => {
-    const current = files().get(instanceId)
-    if (!current || current.lifetime !== lifetime || (key === "file-reader" && current.target !== previous)) return
-    const target = typeof update === "function" ? update() : update
-    setFiles(current => {
-      const next = new Map(current)
-      if (target) next.set(instanceId, { target, lifetime })
-      else next.delete(instanceId)
-      return next
-    })
+/** Passive file reconciliation applies to the current matching target immediately. */
+export function reconcileFileSurface(instanceId: string, previous: FilePreviewTarget, target?: FilePreviewTarget): void {
+  if (files().get(instanceId) !== previous) return
+  setFiles(current => {
+    const next = new Map(current)
+    if (target) next.set(instanceId, target)
+    else next.delete(instanceId)
+    return next
   })
 }
 
@@ -65,18 +41,15 @@ export function reconcileFileSurface(instanceId: string, previous: FilePreviewTa
 export function getSessionSurface({ instanceId, sessionId }: SurfaceContext): CentralSurface {
   const view = getTabViewState(instanceId)
   if (view.missions?.reader) return { kind: "mission", target: view.missions.reader }
-  const file = files().get(instanceId)?.target
+  const file = files().get(instanceId)
   if (file && (sessionId === null || file.sessionId === sessionId)) return { kind: "file", target: file }
   if (sessionId && view.previews?.[sessionId]?.mode === "preview") return { kind: "web", sessionId }
   return conversation
 }
 
 /** Every explicit central-view gesture supersedes pending activation in this occurrence. */
-export function activateSessionSurface(ctx: SurfaceContext, surface: CentralSurface, intent: SessionSurfaceIntent): void {
-  if (intent.current()) writeSessionSurface(ctx, surface)
-}
-
-function writeSessionSurface(ctx: SurfaceContext, surface: CentralSurface): void {
+export function applySurface(ctx: SurfaceContext, surface: CentralSurface, gesture = beginGesture(ctx)): void {
+  if (!gesture.current()) return
   batch(() => {
     const view = getTabViewState(ctx.instanceId)
     let previews = view.previews
@@ -94,38 +67,16 @@ function writeSessionSurface(ctx: SurfaceContext, surface: CentralSurface): void
     setFiles(previous => {
       if (!target && !previous.has(ctx.instanceId)) return previous
       const next = new Map(previous)
-      if (target) next.set(ctx.instanceId, { target, lifetime: {} })
+      if (target) next.set(ctx.instanceId, target)
       else next.delete(ctx.instanceId)
       return next
     })
   })
 }
 
-export function captureSessionSurfaceIntent(ctx: SurfaceContext) {
-  const token = {}
-  intents.set(ctx.instanceId, token)
-  return {
-    current: () => intents.get(ctx.instanceId) === token && isInstanceOccurrenceOpen(ctx.instanceId),
-    release: () => {
-      if (intents.get(ctx.instanceId) !== token) return
-      intents.delete(ctx.instanceId)
-      settle(ctx.instanceId)
-    },
-  }
-}
-
-export function invalidateSessionSurfaceIntent(instanceId: string): void {
-  intents.delete(instanceId)
-  settle(instanceId)
-}
-
-/** Passive display reconciliation yields to an admitted foreground action. */
-export function hasPendingSessionSurfaceIntent(instanceId: string): boolean { return intents.has(instanceId) }
-
 onInstanceLifecycleAuthority(event => {
   if (event.type === "opened") return
-  intents.delete(event.instanceId)
-  reconciliations.delete(event.instanceId)
+  generations.delete(event.instanceId)
   if (event.type === "removed") setFiles(previous => {
     const next = new Map(previous)
     next.delete(event.instanceId)

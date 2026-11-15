@@ -18,7 +18,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   onEdit: (id: string) => void; onDeleted: (id: string) => void; onOpenConversation: (id: string) => void;
   tracking?: JSX.Element; passage?: { reading: boolean; onToggle(): void }; onPassage?: (id: string | undefined) => void;
   overview?: { reading: boolean; onToggle(): void };
-  onNoPassage?: (id: string, stillNoPassage: () => boolean) => void;
+  onNoPassage?: (id: string) => void;
   selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
@@ -36,11 +36,8 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   createEffect(() => {
     const doc = schedules().find(row => row.id === props.selected)
     // Retire the former passage selection before releasing its current-source demand.
-    const stillNoPassage = () => {
-      const current = schedules().find(row => row.id === doc?.id && row.id === props.selected)
-      return Boolean(current && !current.pendingPassage && list.fresh(current.id) && !list.loading() && !list.error() && !list.selectionError())
-    }
-    if (doc && stillNoPassage()) props.onNoPassage?.(doc.id, stillNoPassage)
+    if (doc && !doc.pendingPassage && list.fresh(doc.id) && !list.loading() && !list.error() && !list.selectionError())
+      props.onNoPassage?.(doc.id)
     props.onPassage?.(doc?.pendingPassage ? props.selected : undefined)
   })
   const date = (value: number | null, zone?: string) => value === null ? t("missions.scheduleList.none")

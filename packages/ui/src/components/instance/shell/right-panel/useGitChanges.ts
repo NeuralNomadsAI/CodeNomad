@@ -13,7 +13,7 @@ import { preferences } from "../../../../stores/preferences"
 import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { closeFilePreview, getFilePreview, openFilePreview, reconcileFilePreview } from "../../../../stores/files-preview"
-import { captureSessionSurfaceIntent } from "../../../../stores/session-surface"
+import { beginGesture } from "../../../../stores/session-surface"
 
 type UseGitChangesOptions = {
   isActive: Accessor<boolean>
@@ -50,7 +50,6 @@ export function useGitChanges(options: UseGitChangesOptions) {
   let statusController: AbortController | undefined
   let diffController: AbortController | undefined
   let lifecycle = 0
-  let worktreeLifetime = 0
   let disposed = false
   let commitOperation: object | null = null
   let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
@@ -195,7 +194,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const preview = target && target.kind !== "workspace" && !target.commit &&
       target.slug === options.worktreeSlug() &&
       target.directory === gitLocation(target.slug).directory ? target : null
-    const surfaceIntent = preview && !passive ? captureSessionSurfaceIntent({ instanceId: options.instanceId, sessionId: preview.sessionId }) : undefined
+    const surfaceIntent = !passive ? beginGesture({ instanceId: options.instanceId, sessionId: preview?.sessionId ?? null }) : undefined
     return { selection, preview, version: gitDiffRequestVersion, surfaceIntent }
   }
 
@@ -204,19 +203,12 @@ export function useGitChanges(options: UseGitChangesOptions) {
     // by target identity and shared surface intent; sidebar clicks keep their selection version.
     const preview = previous.preview
     const current = previous.surfaceIntent?.current() ?? true
-    if (preview && current && getFilePreview(options.instanceId) === preview) {
-      const lifetime = worktreeLifetime
-      const resolve = () => {
-        // An unloaded cache carries no absence evidence; only this hook/worktree
-        // lifetime's loaded inventory may reconcile the reader at settlement.
-        if (disposed || lifetime !== worktreeLifetime || gitStatusInventory() === null) return preview
-        const candidates = gitListItems().filter(item => item.path === preview.path)
-        const item = candidates.find(item => item.section === (preview.scope ?? "unstaged")) ?? candidates[0]
-        return item ? { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section } : undefined
-      }
-      if (!previous.surfaceIntent) reconcileFilePreview(options.instanceId, preview, resolve)
+    if (preview && current && !disposed && gitStatusInventory() !== null && (previous.surfaceIntent || getFilePreview(options.instanceId) === preview)) {
+      const candidates = gitListItems().filter(item => item.path === preview.path)
+      const item = candidates.find(item => item.section === (preview.scope ?? "unstaged")) ?? candidates[0]
+      const target = item ? { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section } : undefined
+      if (!previous.surfaceIntent) reconcileFilePreview(options.instanceId, preview, target)
       else {
-        const target = resolve()
         // A fresh target also reloads unchanged content on explicit refresh.
         if (target) openFilePreview(options.instanceId, target, previous.surfaceIntent)
         else closeFilePreview(options.instanceId, previous.surfaceIntent)
@@ -429,7 +421,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         message: error instanceof Error ? error.message : `Failed to ${action} file`,
         variant: "error",
       })
-    } finally { previous.surfaceIntent?.release() }
+    }
   }
 
   const handleGitRowClick = (item: GitChangeListItem, event: MouseEvent) => {
@@ -481,7 +473,6 @@ export function useGitChanges(options: UseGitChangesOptions) {
         variant: "error",
       })
     } finally {
-      previous.surfaceIntent?.release()
       if (!disposed && commitOperation === operation) { commitOperation = null; setGitCommitSubmitting(false) }
     }
   }
@@ -489,10 +480,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
   const refreshGitStatus = async () => {
     const context = captureGitContext()
     const previous = captureGitSelection()
-    try {
-      if (!await loadGitStatus(true) || !context.current()) return
-      await reconcileGitSelection(previous)
-    } finally { previous.surfaceIntent?.release() }
+    if (!await loadGitStatus(true) || !context.current()) return
+    await reconcileGitSelection(previous)
   }
 
   const insertGitChangeContext = (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => {
@@ -502,7 +491,6 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   createEffect(on(options.worktreeSlug, () => {
-    worktreeLifetime += 1
     cancelGitReads()
     setGitStatusEntries(null)
     setGitStatusError(null)

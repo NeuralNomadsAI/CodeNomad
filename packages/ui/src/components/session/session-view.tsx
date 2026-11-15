@@ -6,7 +6,7 @@ import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { MissionReader } from "../mission-reader"
 import { updateMissionProjectView } from "../../stores/mission-view-state"
-import { captureSessionSurfaceIntent, getSessionSurface } from "../../stores/session-surface"
+import { beginGesture, getSessionSurface } from "../../stores/session-surface"
 import { missionStore } from "../../stores/missions"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
@@ -117,11 +117,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   createEffect(() => {
     const target = missionReader()
     if (!target || target.kind === "recurrence" || target.kind === "playbook" || target.recurrence) return
-    updateMissionProjectView(props.instanceId, () => {
-      const state = missionStore.state(props.instanceId)
-      return (state.status === "ready" || state.status === "unavailable") && !state.summaries.some(row => row.id === target.missionId)
-        ? { reader: undefined } : {}
-    })
+    if (missionStore.mapMissing(props.instanceId, target.missionId))
+      updateMissionProjectView(props.instanceId, { reader: undefined })
   })
   const filePreview = createMemo(() => {
     const current = surface()
@@ -589,7 +586,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
 
     const parentTitle = (session()?.title ?? "").trim() || t("sessionList.session.untitled")
-    const intent = captureSessionSurfaceIntent({ instanceId: props.instanceId, sessionId: props.sessionId })
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.sessionId })
 
     try {
       const forkedSession = await forkSession(props.instanceId, props.sessionId, { afterMessageId: messageId })
@@ -608,7 +605,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         title: t("sessionView.alerts.forkFailed.title"),
         variant: "error",
       })
-    } finally { intent.release() }
+    }
   }
   return (
     <Show

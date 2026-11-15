@@ -11,7 +11,7 @@ import { serverEvents } from "../../../src/lib/server-events"
 import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { activeSessionId, clearActiveParentSession, sessions, setActiveParentSession, setProviders } from "../../../src/stores/session-state"
 import { clearSelectedSession } from "../../../src/stores/session-state"
-import { captureSessionSurfaceIntent } from "../../../src/stores/session-surface"
+import { beginGesture } from "../../../src/stores/session-surface"
 import { getAttachments } from "../../../src/stores/attachments"
 import { fetchAgents, fetchSessions, hydrateRestoredSessionChain } from "../../../src/stores/session-api"
 import { updateSessionAgent } from "../../../src/stores/session-actions"
@@ -102,9 +102,9 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
 ;(window as any).fixture = {
   frameMessages: () => frameMessages.splice(0),
   show: async (id: string) => {
-    const intent = captureSessionSurfaceIntent({ instanceId, sessionId: id })
-    try { await hydrateRestoredSessionChain(instanceId, [id]); setActiveParentSession(instanceId, id, intent) }
-    finally { intent.release() }
+    const intent = beginGesture({ instanceId, sessionId: id })
+    await hydrateRestoredSessionChain(instanceId, [id])
+    setActiveParentSession(instanceId, id, intent)
   },
   clear: () => clearSelectedSession(instanceId),
   holdHydration: (id: string) => { held = id },

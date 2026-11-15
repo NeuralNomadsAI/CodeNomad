@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
-import { activateSessionSurface as commitSurface, captureSessionSurfaceIntent, getSessionSurface, type CentralSurface, type SurfaceContext } from "./session-surface"
+import { applySurface, beginGesture, getSessionSurface, type CentralSurface } from "./session-surface"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getTabViewState, seedTabViewState, updateTabViewState } from "./tab-view-state"
 import { getSessionPreview, openSessionPreview } from "./session-previews"
@@ -17,11 +17,6 @@ import { captureState } from "../lib/hooks/use-app-session-capture"
 import { attachInstanceTabMembership, detachInstanceTabMembership } from "./app-tab-membership"
 
 const ctx = (instanceId: string) => ({ instanceId, sessionId: "same" })
-function activateSessionSurface(context: SurfaceContext, surface: CentralSurface) {
-  const intent = captureSessionSurfaceIntent(context)
-  try { commitSurface(context, surface, intent) }
-  finally { intent.release() }
-}
 const lifecycle = (instanceId: string, type: "opened" | "removed" | "unavailable") =>
   publishInstanceLifecycleAuthority({ type, instanceId, folder: "/repo", occurrence: 0 })
 const surfaces: CentralSurface[] = [
@@ -36,9 +31,9 @@ it("every central surface replaces every other, independently of duplicate occur
     seedTabViewState(id, { version: 1, previews: { same: { mode: "chat", targetUrl: "https://example.com/" } } })
   }
   for (const from of surfaces) for (const to of surfaces) {
-    activateSessionSurface(ctx("matrix-b"), from)
-    activateSessionSurface(ctx("matrix-a"), from)
-    activateSessionSurface(ctx("matrix-a"), to)
+    applySurface(ctx("matrix-b"), from)
+    applySurface(ctx("matrix-a"), from)
+    applySurface(ctx("matrix-a"), to)
     assert.deepEqual(getSessionSurface(ctx("matrix-a")), to)
     assert.deepEqual(getSessionSurface(ctx("matrix-b")), from)
     if ("target" in to) assert.equal((getSessionSurface(ctx("matrix-a")) as typeof to).target, to.target)
@@ -59,7 +54,7 @@ it("a delayed browser releases only its token after a file, Mission or conversat
       let resolve!: (value: any) => void
       serverApi.createPreview = () => new Promise(done => { resolve = done })
       const pending = openSessionPreview("same", "https://example.com/", id)
-      activateSessionSurface(ctx(id), surface)
+      applySurface(ctx(id), surface)
       resolve({ sessionId: "same", token: id, targetUrl: "https://example.com/" })
       await assert.rejects(pending, { name: "AbortError" })
       assert.deepEqual(getSessionSurface(ctx(id)), surface)
@@ -73,14 +68,13 @@ it("a delayed browser releases only its token after a file, Mission or conversat
 it("unavailability and removal invalidate only their own activation, retaining unavailable restoration", () => {
   for (const type of ["unavailable", "removed"] as const) {
     lifecycle("lifetime-a", "opened"); lifecycle("lifetime-b", "opened")
-    activateSessionSurface(ctx("lifetime-a"), surfaces[3])
-    activateSessionSurface(ctx("lifetime-b"), surfaces[2])
-    const a = captureSessionSurfaceIntent(ctx("lifetime-a")), b = captureSessionSurfaceIntent(ctx("lifetime-b"))
+    applySurface(ctx("lifetime-a"), surfaces[3])
+    applySurface(ctx("lifetime-b"), surfaces[2])
+    const a = beginGesture(ctx("lifetime-a")), b = beginGesture(ctx("lifetime-b"))
     lifecycle("lifetime-a", type)
     assert.equal(a.current(), false); assert.equal(b.current(), true)
     assert.equal(getSessionSurface(ctx("lifetime-a")).kind, type === "removed" ? "conversation" : "mission")
     assert.equal(getSessionSurface(ctx("lifetime-b")).kind, "file")
-    b.release()
     lifecycle("lifetime-a", "removed"); lifecycle("lifetime-b", "removed")
   }
 })
@@ -92,7 +86,7 @@ it("schedule and playbook readers activate without a fabricated conversation", (
     { kind: "recurrence" as const, missionId: "schedule", instanceId: context.instanceId, projectID: "project" },
     { kind: "playbook" as const, missionId: "debug" },
   ]) {
-    activateSessionSurface(context, { kind: "mission", target })
+    applySurface(context, { kind: "mission", target })
     assert.equal(getTabViewState(context.instanceId).missions?.reader, target)
     assert.deepEqual(getSessionSurface(context), { kind: "mission", target })
   }
@@ -107,17 +101,17 @@ for (const [name, reconcile] of Object.entries({
   clearConversation: clearActiveSession,
   hydrate: (id: string) => hydrateActiveSessionSelection(id, "next", "next"),
   seed: (id: string) => seedRestoredSessionSelection(id, "next", "next"),
-})) it(`passive ${name} selection yields to an admitted surface gesture`, () => {
+})) it(`passive ${name} selection applies immediately without cancelling an admitted gesture`, () => {
   const id = `passive-selection-${name}`
   lifecycle(id, "opened")
   setSessions(previous => new Map(previous).set(id, new Map([["next", { id: "next", parentId: null } as any]])))
   setActiveSessionId(previous => new Map(previous).set(id, "same"))
-  const intent = captureSessionSurfaceIntent(ctx(id))
+  const intent = beginGesture(ctx(id))
   reconcile(id)
   assert.equal(intent.current(), true)
-  assert.equal(activeSessionId().get(id), "same")
-  intent.release()
   assert.equal(activeSessionId().get(id), name.startsWith("clear") ? undefined : "next")
+  setActiveSession(id, "same", intent)
+  assert.equal(activeSessionId().get(id), "same", "the current gesture adopts over passive selection")
   lifecycle(id, "removed")
 })
 
@@ -141,7 +135,7 @@ it("unrelated envelope updates preserve live Mission identities and an in-flight
   lifecycle(id, "removed")
 })
 
-for (const order of [["parent", "child"], ["child", "parent"]]) it(`deferred deletion reconciles the whole selection and persisted capture (${order.join(", ")})`, () => {
+for (const order of [["parent", "child"], ["child", "parent"]]) it(`passive deletion reconciles the whole selection and persisted capture immediately (${order.join(", ")})`, () => {
   const id = `deleted-selection-${order.join("-")}`
   addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client: null })
   attachInstanceTabMembership(id)
@@ -150,64 +144,61 @@ for (const order of [["parent", "child"], ["child", "parent"]]) it(`deferred del
   setSessions(previous => new Map(previous).set(id, new Map([["parent", parent], ["child", child]])))
   setActiveParentSession(id, "parent")
   setActiveSession(id, "child")
-  const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: "child" })
+  const intent = beginGesture({ instanceId: id, sessionId: "child" })
   try {
     for (const sessionId of order) removeSessionRuntimeState(id, sessionId)
-    assert.equal(activeParentSessionId().get(id), "parent")
-    assert.equal(activeSessionId().get(id), "child")
-    intent.release()
+    assert.equal(intent.current(), true)
     const captured = captureState(new Map()).state.tabs.find(tab => tab.kind === "workspace" && tab.folder === "/repo")
     assert.ok(captured?.kind === "workspace")
     assert.deepEqual([captured.activeParentSessionId, captured.activeSessionId], [undefined, undefined],
       "the saved window must not retain a deleted parent or child")
     assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], [undefined, undefined])
     assert.equal(sessions().get(id), undefined)
-  } finally { intent.release(); detachInstanceTabMembership(id); removeInstance(id) }
+  } finally { detachInstanceTabMembership(id); removeInstance(id) }
 })
 
-it("deferred hydration resolves against the current inventory and binding", () => {
+it("hydration resolves against its current inventory and binding", () => {
   for (const invalidation of ["inventory", "binding"]) {
     const id = `hydration-${invalidation}`
     lifecycle(id, "opened")
     setSessions(previous => new Map(previous).set(id, new Map([["parent", { id: "parent", parentId: null } as any]])))
     let current = true
-    const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: null })
-    hydrateActiveSessionSelection(id, "parent", "parent", () => current)
+    const intent = beginGesture({ instanceId: id, sessionId: null })
     if (invalidation === "inventory") setSessions(previous => { const next = new Map(previous); next.delete(id); return next })
     else current = false
-    intent.release()
+    hydrateActiveSessionSelection(id, "parent", "parent", () => current)
+    assert.equal(intent.current(), true)
     assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], [undefined, undefined])
     lifecycle(id, "removed")
   }
 })
 
-it("deletion reconciliation preserves an unrelated unavailable selection and a recovered runtime", () => {
+it("deletion preserves an unrelated unavailable selection and later recovery can select the returned runtime", () => {
   const id = "deletion-selection-fences"
   lifecycle(id, "opened")
   setActiveParentSession(id, "unavailable")
   setActiveSession(id, "unavailable-child")
-  const unrelated = captureSessionSurfaceIntent({ instanceId: id, sessionId: "unavailable-child" })
+  const unrelated = beginGesture({ instanceId: id, sessionId: "unavailable-child" })
   removeSessionRuntimeState(id, "unrelated")
-  unrelated.release()
+  assert.equal(unrelated.current(), true)
   assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], ["unavailable", "unavailable-child"])
-  const recovery = captureSessionSurfaceIntent({ instanceId: id, sessionId: "unavailable-child" })
+  const recovery = beginGesture({ instanceId: id, sessionId: "unavailable-child" })
   removeSessionRuntimeState(id, "unavailable-child", false)
+  assert.equal(activeSessionId().get(id), undefined)
   setSessions(previous => new Map(previous).set(id, new Map([["unavailable-child", { id: "unavailable-child" } as any]])))
-  recovery.release()
+  setActiveSessionFromList(id, "unavailable-child", recovery)
   assert.equal(activeSessionId().get(id), "unavailable-child")
   lifecycle(id, "removed")
 })
 
-for (const removed of ["parent", "child"]) it(`deferred restoration seeds honor the ${removed} deletion tombstone`, () => {
+for (const removed of ["parent", "child"]) it(`restoration seeds honor the ${removed} deletion tombstone`, () => {
   const id = `seed-deletion-${removed}`
   lifecycle(id, "opened")
   setSessions(previous => new Map(previous).set(id, new Map([
     ["parent", { id: "parent", parentId: null } as any], ["child", { id: "child", parentId: "parent" } as any],
   ])))
-  const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: null })
-  seedRestoredSessionSelection(id, "parent", "child")
   removeSessionRuntimeState(id, removed)
-  intent.release()
+  seedRestoredSessionSelection(id, "parent", "child")
   const expected = removed === "parent" ? undefined : "parent"
   assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], [expected, expected])
   lifecycle(id, "removed")

@@ -7,7 +7,7 @@ import { hydrateRestoredWorkspaceState } from "./app-session-workspace-hydration
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getTabViewState, updateTabViewState, clearTabViewState } from "./tab-view-state.ts"
 import { activeSessionId as selectedSessionId } from "./session-selection-state.ts"
-import { captureSessionSurfaceIntent } from "./session-surface.ts"
+import { beginGesture } from "./session-surface.ts"
 import {
   clearInstanceDraftPrompts,
   clearInstanceSessionSelection,
@@ -105,17 +105,13 @@ it("waits for a saved Info selection's parent without claiming user-selection au
     assert.equal(selectedSessionId, activeSessionId, "view stores and session actions share one selection signal")
     assert.equal(selectedSessionId().get(instanceId), "info")
     assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
-    const intent = captureSessionSurfaceIntent({ instanceId, sessionId: "info" })
+    const intent = beginGesture({ instanceId, sessionId: "info" })
     assert.equal(intent.current(), true)
     parent.resolve(apiSession("parent"))
     await hydration
-    assert.equal(activeSessionId().get(instanceId), "info")
-    assert.equal(selectedSessionId().get(instanceId), "info")
-    assert.equal(intent.current(), true, "passive restoration yields to foreground activation")
-    intent.release()
     assert.equal(activeSessionId().get(instanceId), "parent")
     assert.equal(selectedSessionId().get(instanceId), "parent")
-    assert.equal(intent.current(), false)
+    assert.equal(intent.current(), true, "passive restoration applies immediately and preserves the gesture generation")
     assert.equal(getSessionDraftPrompt(instanceId, "parent"), "saved draft")
     assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
   } finally {

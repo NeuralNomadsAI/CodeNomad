@@ -2,8 +2,7 @@ import { createSignal } from "solid-js"
 import { serverApi } from "../lib/api-client"
 import type { PreviewSession } from "../../../server/src/api-types"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
-import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, invalidateSessionSurfaceIntent, sessionSurfaceGesture } from "./session-surface"
-import { activeSessionId } from "./session-selection-state"
+import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
 import { adoptLegacyTabPreview, getTabViewState, updateTabViewState, type RestorableTabPreview } from "./tab-view-state"
 import { parseLegacySessionPreviews } from "./tab-view-state-codec"
 import { isInstanceOccurrenceOpen, onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
@@ -20,25 +19,23 @@ const DEFAULT_PREVIEW_URL = "http://localhost:3000"
 const [sessionPreviews, setSessionPreviews] = createSignal<Map<string, SessionPreviewRecord>>(new Map())
 const restorePromises = new Map<string, Promise<SessionPreviewRecord | null>>()
 // Only pending requests need a fence. Object identity prevents ABA after cleanup.
-type PreviewOperation = ReturnType<typeof captureSessionSurfaceIntent>
+type PreviewOperation = SurfaceGesture
 const operations = new Map<string, PreviewOperation>()
 
 function cancelOperation(storageKey: string) {
-  operations.get(storageKey)?.release()
   operations.delete(storageKey)
   restorePromises.delete(storageKey)
 }
 function beginOperation(storageKey: string, sessionId: string, instanceId: string, intent?: PreviewOperation, passive = false): PreviewOperation {
-  const operation: PreviewOperation = intent ?? (passive ? {
-    current: () => operations.get(storageKey) === operation && isInstanceOccurrenceOpen(instanceId),
-    release: () => {},
-  } : captureSessionSurfaceIntent({ sessionId, instanceId }))
+  const gesture = passive ? undefined : intent ?? beginGesture({ sessionId, instanceId })
+  const operation: PreviewOperation = {
+    current: () => operations.get(storageKey) === operation && isInstanceOccurrenceOpen(instanceId) && (gesture?.current() ?? true),
+  }
   cancelOperation(storageKey)
   operations.set(storageKey, operation)
   return operation
 }
-function finishOperation(storageKey: string, operation: PreviewOperation, release = true) {
-  if (release) operation.release()
+function finishOperation(storageKey: string, operation: PreviewOperation) {
   if (operations.get(storageKey) === operation) operations.delete(storageKey)
 }
 export const getPendingPreviewOperationCount = () => operations.size
@@ -101,10 +98,10 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
       history: new BrowserHistoryJournal(existing?.history ?? parseBrowserHistory(saved?.history, saved?.targetUrl ?? preview.targetUrl)).visitUrl(preview.targetUrl) }
     setSessionPreviews(previous => new Map(previous).set(storageKey, withLiveMode(record)))
     storePreview(sessionId, instanceId, { ...record, mode: "preview" })
-    activateSessionSurface({ sessionId, instanceId }, { kind: "web", sessionId }, operationVersion)
+    applySurface({ sessionId, instanceId }, { kind: "web", sessionId }, operationVersion)
     if (existing) void serverApi.deletePreview(existing.token).catch(() => undefined)
     return record
-  } finally { finishOperation(storageKey, operationVersion, !intent) }
+  } finally { finishOperation(storageKey, operationVersion) }
 }
 
 function restoreSessionPreview(sessionId: string, instanceId: string): Promise<SessionPreviewRecord | null> {
@@ -140,20 +137,16 @@ function showSessionPreview(storageKey: string, intent?: PreviewOperation) {
   if (intent && !intent.current()) return
   const current = sessionPreviews().get(storageKey)
   if (!current) return
-  sessionSurfaceGesture(current, admitted => {
-    cancelOperation(storageKey)
-    activateSessionSurface(current, { kind: "web", sessionId: current.sessionId }, admitted)
-  }, intent)
+  cancelOperation(storageKey)
+  applySurface(current, { kind: "web", sessionId: current.sessionId }, intent)
 }
 
 function showSessionChat(storageKey: string) {
   // A reader/chat gesture wins over an earlier browser open or restore.
   const [instanceId, sessionId] = JSON.parse(storageKey) as [string, string]
   const ctx = { instanceId, sessionId }
-  sessionSurfaceGesture(ctx, intent => {
-    cancelOperation(storageKey)
-    activateSessionSurface(ctx, { kind: "conversation" }, intent)
-  })
+  cancelOperation(storageKey)
+  applySurface(ctx, { kind: "conversation" })
 }
 
 function showSessionChatFor(sessionId: string, instanceId: string) {
@@ -164,22 +157,14 @@ function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
   const current = sessionPreviews().get(storageKey)
   const target = historyUrl(targetUrl)
   if (!current || !target) return
-  if (isForegroundPreview(current) && target !== current.targetUrl) invalidateSessionSurfaceIntent(current.instanceId)
   setSessionPreviews(previous => new Map(previous).set(storageKey, withLiveMode({ ...current, targetUrl: target })))
   // History capture persists the committed URL and cursor together.
-}
-
-function isForegroundPreview(preview: SessionPreviewRecord): boolean {
-  const surface = getSessionSurface({ instanceId: preview.instanceId, sessionId: activeSessionId().get(preview.instanceId) ?? null })
-  return surface.kind === "web" && surface.sessionId === preview.sessionId
 }
 
 export function updateSessionPreviewHistory(storageKey: string, history: BrowserHistory) {
   const current = sessionPreviews().get(storageKey)
   const targetUrl = historyUrl(history.urls[history.index])
   if (!current || !targetUrl) return
-  if (isForegroundPreview(current) && (current.history.index !== history.index || current.history.urls.length !== history.urls.length
-    || current.history.urls.some((url, index) => url !== history.urls[index]))) invalidateSessionSurfaceIntent(current.instanceId)
   const next = withLiveMode({ ...current, targetUrl, history: parseBrowserHistory(history, targetUrl) })
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))
   storePreview(current.sessionId, current.instanceId, next)

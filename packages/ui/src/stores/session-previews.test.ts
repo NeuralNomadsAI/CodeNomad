@@ -6,7 +6,7 @@ import { serverApi } from "../lib/api-client"
 import { getTabViewState, seedTabViewState } from "./tab-view-state"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getPendingPreviewOperationCount } from "./session-previews"
-import { captureSessionSurfaceIntent } from "./session-surface"
+import { applySurface, beginGesture, getSessionSurface } from "./session-surface"
 import { setActiveSessionId } from "./session-selection-state"
 
 function registerOccurrence(id: string) {
@@ -21,7 +21,7 @@ before(() => {
 })
 
 describe("session preview persistence", () => {
-  it("changed browser locations and same-URL history entries supersede activation, unchanged history samples preserve it", async () => {
+  it("passive locations and same-URL history entries apply immediately without cancelling gesture adoption", async () => {
     const create = serverApi.createPreview, remove = serverApi.deletePreview, id = "web-intent"
     registerOccurrence(id)
     serverApi.createPreview = async ({ sessionId, url }) => ({ sessionId, token: "intent", targetUrl: url }) as any
@@ -30,15 +30,18 @@ describe("session preview persistence", () => {
       const preview = await openSessionPreview("same", "https://example.com/a", id)
       setActiveSessionId(previous => new Map(previous).set(id, "same"))
       const ctx = { instanceId: id, sessionId: "same" }
-      const unchanged = captureSessionSurfaceIntent(ctx)
+      const unchanged = beginGesture(ctx)
       updateSessionPreviewLocation(preview.storageKey, preview.targetUrl)
       updateSessionPreviewHistory(preview.storageKey, preview.history)
       assert.equal(unchanged.current(), true)
       updateSessionPreviewLocation(preview.storageKey, "https://example.com/b")
-      assert.equal(unchanged.current(), false)
-      const sameUrl = captureSessionSurfaceIntent(ctx)
+      assert.equal(unchanged.current(), true)
+      const sameUrl = beginGesture(ctx)
       updateSessionPreviewHistory(preview.storageKey, { urls: [preview.targetUrl, preview.targetUrl], index: 1 })
-      assert.equal(sameUrl.current(), false, "same URL entries still represent newer navigation")
+      assert.equal(sameUrl.current(), true)
+      assert.deepEqual(getSessionPreview("same", id)?.history, { urls: [preview.targetUrl, preview.targetUrl], index: 1 })
+      applySurface(ctx, { kind: "mission", target: { kind: "overview", missionId: "next" } }, sameUrl)
+      assert.equal(getSessionSurface(ctx).kind, "mission")
     } finally { closeOccurrence(id); serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
   it("hidden session location and history updates preserve the displayed session's activation intent", async () => {
@@ -51,7 +54,7 @@ describe("session preview persistence", () => {
       const b = await openSessionPreview("b", "https://example.com/b", id)
       setActiveSessionId(previous => new Map(previous).set(id, "b"))
       assert.equal(getSessionPreview("a", id)?.mode, "preview", "saved mode also remains preview for the hidden session")
-      const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: "b" })
+      const intent = beginGesture({ instanceId: id, sessionId: "b" })
       updateSessionPreviewLocation(a.storageKey, "https://example.com/redirect")
       assert.equal(intent.current(), true)
       assert.equal(getSessionPreview("a", id)?.targetUrl, "https://example.com/redirect")
@@ -61,10 +64,10 @@ describe("session preview persistence", () => {
       assert.deepEqual(getSessionPreview("a", id)?.history, history)
       assert.deepEqual(getTabViewState(id).previews?.a.history, history)
       updateSessionPreviewLocation(b.storageKey, "https://example.com/foreground")
-      assert.equal(intent.current(), false)
-      const next = captureSessionSurfaceIntent({ instanceId: id, sessionId: "b" })
+      assert.equal(intent.current(), true)
+      const next = beginGesture({ instanceId: id, sessionId: "b" })
       updateSessionPreviewHistory(b.storageKey, { urls: [b.targetUrl, b.targetUrl], index: 1 })
-      assert.equal(next.current(), false)
+      assert.equal(next.current(), true)
     } finally { closeOccurrence(id); serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
   it("retains only pending request fences across 1000 occurrence lifetimes", async () => {

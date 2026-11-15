@@ -1,6 +1,6 @@
 import { Component, For, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { focusInterruption } from "../stores/interruption-navigation"
-import { captureSessionSurfaceIntent } from "../stores/session-surface"
+import { beginGesture } from "../stores/session-surface"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { observeListEnd } from "../lib/list-end-observer"
 import { preserveListFocus } from "../lib/preserve-list-focus"
@@ -355,8 +355,7 @@ const SessionList: Component<SessionListProps> = (props) => {
  
   const handleDeleteSession = async (sessionId: string) => {
     if (isSessionDeleting(sessionId)) return
-    const intent = captureSessionSurfaceIntent({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
-    try {
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
     const confirmed = await showConfirmDialog(
       t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
       {
@@ -411,7 +410,6 @@ const SessionList: Component<SessionListProps> = (props) => {
       log.error(`Failed to delete session ${sessionId}:`, error)
       showToastNotification({ category: "sessions", message: t("sessionList.delete.error"), variant: "error" })
     }
-    } finally { intent.release() }
   }
 
   const openRenameDialog = (sessionId: string) => {
@@ -531,8 +529,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const handleBulkDelete = async () => {
     const selected = Array.from(selectedSessionIds())
     if (selected.length === 0) return
-    const intent = captureSessionSurfaceIntent({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
-    try {
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
     const confirmed = await showConfirmDialog(
       t("sessionList.bulkDelete.confirmMessage", { count: selected.length }),
       {
@@ -596,7 +593,6 @@ const SessionList: Component<SessionListProps> = (props) => {
         variant: "error",
       })
     }
-    } finally { intent.release() }
   }
 
   const SessionRow: Component<{

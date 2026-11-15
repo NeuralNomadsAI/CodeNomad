@@ -64,8 +64,6 @@ import {
   sessionInfoByInstance,
 } from "./session-state"
 import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
-import { reconcileSessionSurface } from "./session-surface"
-import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
@@ -127,10 +125,6 @@ interface MessagePageRequest {
 const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
 const deleteSessionAuthorities = new Map<string, object>()
-const deletedSelectionIds = new Map<string, Set<string>>()
-onInstanceLifecycleAuthority(event => {
-  if (event.type !== "opened") deletedSelectionIds.delete(event.instanceId)
-})
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
 const MESSAGE_CURSOR_SEEK_LIMIT = 1000
@@ -1380,26 +1374,12 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
     return next
   })
 
-  // Only deletions of the currently selected pair need foreground reconciliation.
-  // Keep both identities under one key, bounded even during a long-held intent.
   const parent = activeParentSessionId().get(instanceId), active = activeSessionId().get(instanceId)
-  const deleted = deletedSelectionIds.get(instanceId) ?? new Set<string>()
-  for (const id of deleted) if (id !== parent && id !== active) deleted.delete(id)
-  if (sessionId === parent || sessionId === active) deleted.add(sessionId)
-  if (!deleted.size) { deletedSelectionIds.delete(instanceId); return }
-  deletedSelectionIds.set(instanceId, deleted)
-  reconcileSessionSurface(instanceId, "session-deletion", () => {
-    deletedSelectionIds.delete(instanceId)
-    const selectedParentId = activeParentSessionId().get(instanceId)
-    const selectedSessionId = activeSessionId().get(instanceId)
-    const inventory = sessions().get(instanceId)
-    if (selectedParentId && deleted.has(selectedParentId) && !inventory?.has(selectedParentId)) {
-      clearActiveParentSession(instanceId)
-    } else if (selectedSessionId && deleted.has(selectedSessionId) && !inventory?.has(selectedSessionId)) {
-      if (selectedParentId && inventory?.has(selectedParentId)) setActiveSession(instanceId, selectedParentId)
-      else clearActiveSession(instanceId)
-    }
-  })
+  if (sessionId === parent) clearActiveParentSession(instanceId)
+  else if (sessionId === active) {
+    if (parent && sessions().get(instanceId)?.has(parent)) setActiveSession(instanceId, parent)
+    else clearActiveSession(instanceId)
+  }
 }
 
 function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
