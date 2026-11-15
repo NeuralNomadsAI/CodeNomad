@@ -29,17 +29,27 @@ export class ServerFlagReader {
     if (signature !== this.signature) {
       // Read after stat: a write in between yields newer content under the older signature,
       // which the next call's stat replaces.
-      this.server = readServerOwner(this.filePath, stat)
-      this.signature = signature
+      const server = readServerOwner(this.filePath, stat)
+      // A failed read (a transient lock, for example) reads as false and is retried on the
+      // next call instead of being cached under this signature.
+      this.server = server ?? {}
+      this.signature = server ? signature : null
     }
     return this.server[key] === true
   }
 }
 
-function readServerOwner(filePath: string, stat: fs.BigIntStats): Record<string, unknown> {
+/** The document's server owner, `{}` when the file is unusable, or null when reading failed. */
+function readServerOwner(filePath: string, stat: fs.BigIntStats): Record<string, unknown> | null {
   if (!stat.isFile() || stat.size > BigInt(MAX_CONFIG_BYTES)) return {}
+  let text: string
   try {
-    const doc: unknown = parseYaml(fs.readFileSync(filePath, "utf-8"))
+    text = fs.readFileSync(filePath, "utf-8")
+  } catch {
+    return null
+  }
+  try {
+    const doc: unknown = parseYaml(text)
     return isPlainObject(doc) && isPlainObject(doc.server) ? doc.server : {}
   } catch {
     return {}
