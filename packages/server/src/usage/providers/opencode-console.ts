@@ -1,9 +1,11 @@
 import type { OpenCodeConsoleUsage, ProviderUsageUnavailableReason } from "../../api-types-provider-usage"
+import type { ProviderUsageWindow } from "../../api-types"
 import { BoundedResponseError, fetchBoundedJson } from "../bounded-fetch"
 import { openCodeConsoleCredential } from "../native-credentials"
 import { ProviderHttpError } from "../shared"
 import type { AuthFile, ProviderResult, UsageProvider } from "../types"
 import { isOpenCodeFreeModel } from "../opencode-free-estimate"
+import { parseOpenCodeConsoleBalance } from "../opencode-go-quota"
 
 const BASE = "https://opencode.ai/console"
 const PAGE_SIZE = 50
@@ -83,7 +85,7 @@ async function readModels(range: "24h" | "30d", read: (path: string) => Promise<
   return models
 }
 
-/** Console's 24h range begins at UTC midnight. Failure stays unknown, never zero. */
+/** Sum the Console's free-model counts. Failure stays unknown, never zero. */
 export async function readOpenCodeConsoleFreeRequests(auth: AuthFile, signal: AbortSignal): Promise<number> {
   const credential = openCodeConsoleCredential(auth)
   if ("reason" in credential) throw new Error("Console credential unavailable")
@@ -93,6 +95,44 @@ export async function readOpenCodeConsoleFreeRequests(auth: AuthFile, signal: Ab
   // The model's native provider can be an upstream vendor, rather than opencode.
   return models.filter(row => isOpenCodeFreeModel("opencode", row.model))
     .reduce((sum, row) => integer(sum + row.requests), 0)
+}
+
+/**
+ * The optional Console credit balance. Every failure (including 401: the usage
+ * reads already authenticate the same credential) only omits it.
+ */
+async function readOpenCodeConsoleCredits(auth: AuthFile, signal: AbortSignal): Promise<ProviderUsageWindow | undefined> {
+  const credential = openCodeConsoleCredential(auth)
+  if ("reason" in credential) return undefined
+  try {
+    return parseOpenCodeConsoleBalance(await fetchBoundedJson(`${BASE}/api/billing/status`, credential.headers,
+      AbortSignal.any([signal, AbortSignal.timeout(3000)])))
+  } catch {
+    return undefined
+  }
+}
+
+const BALANCE_GRACE_MS = 250
+
+/**
+ * Starts the optional balance read beside the usage reads. `settle` is awaited
+ * once those reads are complete: it waits at most a short grace (or until
+ * cancellation) and then omits the balance, so the optional read never spends
+ * the caller's remaining budget or changes the reading's outcome.
+ */
+export function startOpenCodeConsoleCredits(auth: AuthFile, signal: AbortSignal) {
+  const credits = readOpenCodeConsoleCredits(auth, signal)
+  return {
+    settle: () => new Promise<ProviderUsageWindow | undefined>(resolve => {
+      const done = (value: ProviderUsageWindow | undefined) => {
+        clearTimeout(timer); signal.removeEventListener("abort", omit); resolve(value)
+      }
+      const omit = () => done(undefined)
+      const timer = setTimeout(omit, BALANCE_GRACE_MS)
+      signal.addEventListener("abort", omit, { once: true })
+      void credits.then(done)
+    }),
+  }
 }
 
 // Only stable codes survive; never retain upstream bodies or messages.
@@ -114,14 +154,19 @@ export const openCodeConsole: UsageProvider = {
     if ("reason" in credential) return { ...base, configured: credential.configured, unavailableReason: credential.reason }
     const bounded = context?.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000)
     const read = (path: string) => fetchBoundedJson(`${BASE}/api/${path}`, credential.headers, bounded)
+    const credits = startOpenCodeConsoleCredits(auth, bounded)
     try {
       const requests = {} as OpenCodeConsoleUsage["requests"]
       for (const range of ["24h", "7d", "30d"] as const) {
         requests[range] = parseOpenCodeConsoleSummary(await read(`usage/summary?range=${range}`)).requests
       }
       const models = await readModels("30d", read)
+      const windows: NonNullable<ProviderResult["usage"]>["windows"] = {}
       bounded.throwIfAborted()
-      return { ...base, ok: true, usage: { windows: {}, console: {
+      const balance = await credits.settle()
+      if (balance) windows.credits_balance = balance
+      bounded.throwIfAborted()
+      return { ...base, ok: true, usage: { windows, console: {
         requests, models, budgets: { status: "unavailable", items: [] },
       } } }
     } catch (error) {

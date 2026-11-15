@@ -6,7 +6,6 @@ import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { clearProviderUsageCache } from "../../usage/service"
 import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
 import { googleOAuthClients } from "../../usage/google-credential"
-import { createOpenCodeFreeExhaustion } from "../../usage/opencode-free-exhaustion"
 import { createOpenCodeFreeUsage } from "../../usage/opencode-free-usage"
 
 const fakeClients = {
@@ -61,7 +60,7 @@ function harness(methodID = "gemini-cli") {
     getSessionEnvironment: async () => ({}), getServiceWslDistro: () => undefined,
     getHostPathForServicePath: async () => undefined,
   }
-  registerUsageRoutes(app, { workspaceManager: manager, freeUsage: createOpenCodeFreeUsage(createOpenCodeFreeExhaustion()) })
+  registerUsageRoutes(app, { workspaceManager: manager, freeUsage: createOpenCodeFreeUsage() })
   const fetchUpstream = async (input: RequestInfo | URL, init?: RequestInit) => {
     state.outbound.push({ url: String(input), init })
     assert.equal(init?.method, "POST")
