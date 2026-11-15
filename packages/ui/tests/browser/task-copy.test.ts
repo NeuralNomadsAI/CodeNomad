@@ -106,6 +106,14 @@ test("a background subagent's header stays running until the child session settl
   await continued.waitFor()
   assert.equal(await parent.getAttribute("data-status"), "running")
   assert.equal(await continued.getAttribute("data-status"), "running")
+  // The running display never drives the settled-session tool pull: the parts
+  // stay settled, so no further parent-session message reads may happen.
+  const parentReads = () => page.evaluate(() => (window as any).fixture.snapshot().requests.filter((request: any) => request.sessionID === "parent").length)
+  const readsWhileRunning = await parentReads()
+  for (let index = 0; index < 30; index++) {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  }
+  assert.equal(await parentReads(), readsWhileRunning)
   // The newest round's report settles the whole range together.
   await page.evaluate(() => (window as any).fixture.report("error", "Child failed"))
   await page.waitForFunction(() => {
