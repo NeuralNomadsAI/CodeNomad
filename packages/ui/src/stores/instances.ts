@@ -1312,13 +1312,15 @@ function waitForWorkspaceLoadChange(
  * event connection; null before one arrives or after a reconnect may have
  * missed some. A discard deletes the record before unregistering its folder,
  * while Keep unregisters first: a deleted record whose folder is still
- * registered was discarded, in whichever window. The registry outranks the
- * instance's mark, which a workspace-list response older than Keep can restore.
+ * registered was discarded, in whichever window. Without that list nothing is
+ * a discard: the instance's `temporary` mark can be stale (a list response
+ * older than Keep, a Keep missed while disconnected), and keeping a deleted
+ * folder's drafts is harmless while dropping a kept project's is not.
  */
 let temporaryRegistry: Set<string> | null = null
 
-function isTemporaryNow(instance: Instance): boolean {
-  return temporaryRegistry ? temporaryRegistry.has(normalizeWorkspacePath(instance.folder)) : instance.temporary === true
+function isRegisteredTemporary(instance: Instance): boolean {
+  return temporaryRegistry?.has(normalizeWorkspacePath(instance.folder)) === true
 }
 
 serverEvents.onOpen(() => {
@@ -1398,7 +1400,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       // dying subtree and broke the whole window. Skip a re-created workspace.
       const stop = Symbol(event.workspaceId)
       pendingWorkspaceStops.set(event.workspaceId, stop)
-      const discarded = event.reason === "deleted" && instance !== undefined && isTemporaryNow(instance)
+      const discarded = event.reason === "deleted" && instance !== undefined && isRegisteredTemporary(instance)
       queueMicrotask(() => {
         if (pendingWorkspaceStops.get(event.workspaceId) !== stop) return
         pendingWorkspaceStops.delete(event.workspaceId)

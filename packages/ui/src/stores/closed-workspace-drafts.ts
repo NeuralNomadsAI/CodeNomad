@@ -12,15 +12,18 @@ import { getAuthoritativeDraftSessionIdsForInstance, getSessionDraftPromptsForIn
 /**
  * Unsent drafts and attachments of project tabs removed from this window,
  * kept for the page lifetime so reopening the project gives them back.
- * `cleared` lists sessions a later-closed tab emptied by typing, clearing or
- * sending: they supersede older drafts of the same project.
  */
-type ClosedWorkspaceDrafts = Pick<RestorableWorkspaceTabState, "drafts" | "attachments"> & { cleared: string[] }
+type ClosedWorkspaceDrafts = Pick<RestorableWorkspaceTabState, "drafts" | "attachments">
 
 export const MAX_CLOSED_WORKSPACE_DRAFTS = 16
 
 const log = getLogger("session")
 const vault = new Map<string, ClosedWorkspaceDrafts>()
+/**
+ * Entries taken by a reopened instance whose restore has not finished. They are
+ * the only older drafts that can come back to the vault, so a later close
+ * supersedes its sessions in them directly.
+ */
 const claims = new Map<string, { key: string; entry: ClosedWorkspaceDrafts }>()
 
 /** Project identity: the backend (one per window today) and the normalized folder. */
@@ -28,37 +31,29 @@ export function closedWorkspaceDraftKey(folder: string, backendId = ""): string 
   return `${backendId}\n${normalizeWorkspacePath(folder)}`
 }
 
-const contentSessions = (entry: Pick<ClosedWorkspaceDrafts, "drafts" | "attachments">) =>
+const contentSessions = (entry: ClosedWorkspaceDrafts) =>
   new Set([...Object.keys(entry.drafts), ...Object.keys(entry.attachments)])
 
 function pick(entry: ClosedWorkspaceDrafts, keep: (sessionId: string) => boolean): ClosedWorkspaceDrafts {
   const filter = <T>(record: Record<string, T>) =>
     Object.fromEntries(Object.entries(record).filter(([sessionId]) => keep(sessionId)))
-  return { drafts: filter(entry.drafts), attachments: filter(entry.attachments), cleared: entry.cleared.filter(keep) }
+  return { drafts: filter(entry.drafts), attachments: filter(entry.attachments) }
 }
 
-/** A session present in `top`, cleared included, replaces that session's text and attachments in `base`. */
-function merge(base: ClosedWorkspaceDrafts, top: ClosedWorkspaceDrafts): ClosedWorkspaceDrafts {
-  const replaced = new Set([...contentSessions(top), ...top.cleared])
-  const kept = pick(base, (sessionId) => !replaced.has(sessionId))
-  return {
-    drafts: { ...kept.drafts, ...top.drafts },
-    attachments: { ...kept.attachments, ...top.attachments },
-    cleared: [...kept.cleared, ...top.cleared],
-  }
+/** `top` wins for its sessions and `replaced`: their text and attachments move together. */
+function merge(base: ClosedWorkspaceDrafts, top: ClosedWorkspaceDrafts, replaced: ReadonlySet<string>): ClosedWorkspaceDrafts {
+  const kept = pick(base, (sessionId) => !replaced.has(sessionId) && !contentSessions(top).has(sessionId))
+  return { drafts: { ...kept.drafts, ...top.drafts }, attachments: { ...kept.attachments, ...top.attachments } }
 }
 
-const isClaimed = (key: string) => [...claims.values()].some((claim) => claim.key === key)
-
-function stash(key: string, entry: ClosedWorkspaceDrafts, position: "newer" | "older"): void {
-  const existing = vault.get(key)
-  const merged = !existing ? entry : position === "newer" ? merge(existing, entry) : merge(entry, existing)
+function stash(key: string, merged: ClosedWorkspaceDrafts): void {
   vault.delete(key)
-  // Clear marks only matter against older drafts: a pending restore may still give some back.
-  if (contentSessions(merged).size === 0 && (merged.cleared.length === 0 || !isClaimed(key))) return
+  if (contentSessions(merged).size === 0) return
   vault.set(key, merged)
   while (vault.size > MAX_CLOSED_WORKSPACE_DRAFTS) vault.delete(vault.keys().next().value!)
 }
+
+const empty: ClosedWorkspaceDrafts = { drafts: {}, attachments: {} }
 
 /** Sessions the user typed in, cleared or sent from in this instance. */
 const touchedSessions = (instanceId: string) => new Set([
@@ -68,10 +63,8 @@ const touchedSessions = (instanceId: string) => new Set([
 
 function captureInstanceDrafts(instanceId: string): ClosedWorkspaceDrafts {
   const drafts = getSessionDraftPromptsForInstance(instanceId)
-  const normalized = normalizeRestorableAttachmentRecord(getSessionAttachmentsForInstance(instanceId), drafts)
+  return normalizeRestorableAttachmentRecord(getSessionAttachmentsForInstance(instanceId), drafts)
     ?? { drafts, attachments: {} }
-  const content = contentSessions(normalized)
-  return { ...normalized, cleared: [...touchedSessions(instanceId)].filter((sessionId) => !content.has(sessionId)) }
 }
 
 /** Sessions of `entry` this instance shows nothing for and the user has not touched. */
@@ -82,18 +75,18 @@ function emptySessionsOf(instanceId: string, entry: ClosedWorkspaceDrafts): Clos
   return pick(entry, (sessionId) => !drafts[sessionId] && !attachments[sessionId]?.length && !touched.has(sessionId))
 }
 
-/** Drops an entry left with clear marks only once no restore of its project is pending. */
-function prune(key: string): void {
-  const entry = vault.get(key)
-  if (entry && contentSessions(entry).size === 0 && !isClaimed(key)) vault.delete(key)
+/** Returns what a restore could not apply underneath the project's newer drafts. */
+function requeue(key: string, older: ClosedWorkspaceDrafts): void {
+  stash(key, merge(older, vault.get(key) ?? empty, new Set()))
 }
 
 /**
  * Called while an instance is removed, before its drafts are cleared. `keep`
  * hands its drafts over: the later close wins per session, clears and sends
- * included, and whatever an unfinished restore into it had not applied goes
- * back underneath. `skip` keeps nothing of this instance; `discard` also
- * purges the project's whole entry, because its folder is deleted.
+ * included, over the vault and over every pending restore of the project, and
+ * whatever an unfinished restore into it had not applied goes back underneath.
+ * `skip` keeps nothing of this instance; `discard` also purges the project's
+ * whole entry, because its folder is deleted.
  */
 export function retainClosedWorkspaceDrafts(
   instanceId: string,
@@ -102,18 +95,20 @@ export function retainClosedWorkspaceDrafts(
 ): void {
   const key = closedWorkspaceDraftKey(folder)
   const claim = claims.get(instanceId)
+  claims.delete(instanceId)
   if (mode !== "keep") {
-    claims.delete(instanceId)
     if (mode === "discard") vault.delete(key)
     return
   }
   const remaining = claim ? emptySessionsOf(instanceId, claim.entry) : null
-  // Both land while the claim still counts as pending, so clear marks of
-  // tabs closed meanwhile survive to remove the older drafts they supersede.
-  stash(key, captureInstanceDrafts(instanceId), "newer")
-  if (remaining) stash(key, remaining, "older")
-  claims.delete(instanceId)
-  prune(key)
+  const captured = captureInstanceDrafts(instanceId)
+  // Sessions emptied by typing, clearing or sending supersede older drafts too.
+  const superseded = new Set([...contentSessions(captured), ...touchedSessions(instanceId)])
+  for (const pending of claims.values()) {
+    if (pending.key === key) pending.entry = pick(pending.entry, (sessionId) => !superseded.has(sessionId))
+  }
+  stash(key, merge(vault.get(key) ?? empty, captured, superseded))
+  if (remaining) requeue(key, remaining)
 }
 
 /**
@@ -135,9 +130,10 @@ export function restoreClosedWorkspaceDrafts(
   const claim = { key, entry }
   claims.set(instanceId, claim)
   const isCurrent = () => claims.get(instanceId) === claim
+  // Reads `claim.entry`: closes of sibling tabs may supersede sessions meanwhile.
   const hydrate = () => hydrateWorkspacePromptState(
     instanceId,
-    emptySessionsOf(instanceId, entry),
+    emptySessionsOf(instanceId, claim.entry),
     new Set(getSessions(instanceId).map(({ id }) => id)),
     NO_SESSION_DRAFT_SESSION_ID,
   )
@@ -146,7 +142,7 @@ export function restoreClosedWorkspaceDrafts(
     await sessionsReady()
     if (!isCurrent()) return
     await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
-      Object.keys(entry.drafts), Object.keys(entry.attachments),
+      Object.keys(claim.entry.drafts), Object.keys(claim.entry.attachments),
     ]), undefined, isCurrent)
     if (!isCurrent()) return
     hydrate()
@@ -156,7 +152,7 @@ export function restoreClosedWorkspaceDrafts(
     log.warn("Failed to restore drafts of a closed project", { instanceId, error })
     hydrate()
     claims.delete(instanceId)
-    stash(key, emptySessionsOf(instanceId, entry), "older")
+    requeue(key, emptySessionsOf(instanceId, claim.entry))
   })
 }
 

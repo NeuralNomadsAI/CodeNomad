@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { afterEach, describe, it } from "node:test"
 
+import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverEvents } from "../lib/server-events.ts"
 import { createTextAttachment } from "../types/attachment.ts"
@@ -37,7 +38,7 @@ function open(id: string, folder: string, existing: string[] = [], read?: (sessi
   addInstance({ id, folder, port: 0, pid: 0, proxyPath: "", status: "ready", client, ...(temporary ? { temporary } : {}) })
 }
 
-/** The server's temporary registry broadcast. Tests before the first call cover an unknown registry. */
+/** The server's temporary registry broadcast; without one on the connection nothing is a discard. */
 const registry = (folders: string[]) =>
   (serverEvents as any).dispatch({ type: "workspace.temporaryChanged", folders })
 
@@ -98,7 +99,9 @@ describe("closed project drafts", () => {
   })
 
   it("keeps nothing for a temporary folder discarded from any window or a restoration-owned instance", async () => {
-    // No local discard request: another window discarded the shared record.
+    // No local discard request: another window discarded the shared record,
+    // whose folder the server unregisters only after deleting the record.
+    registry(["/temporary/one"])
     open("discarded", "/temporary/one", [], undefined, true)
     setSessionDraftPrompt("discarded", NO_SESSION, "discarded draft")
     await stopped("discarded", "deleted")
@@ -272,7 +275,49 @@ describe("closed project drafts", () => {
     assert.equal(getSessionDraftPrompt("pending-reopened", "shared"), "")
   })
 
-  // The tests below set the registry; earlier ones run with it unknown.
+  it("lets a clear mark outlive a reopening that completes while an older restore is pending", async () => {
+    open("outlive-first", "/outlive", ["sent", "rewritten"])
+    setSessionDraftPrompt("outlive-first", "sent", "old text, sent later")
+    setSessionDraftPrompt("outlive-first", "rewritten", "old text, rewritten later")
+    close("outlive-first")
+
+    const never = deferred<unknown>()
+    open("outlive-pending", "/outlive", [], () => never.promise)
+    open("outlive-sibling", "/outlive", ["sent", "rewritten"])
+    setSessionDraftPrompt("outlive-sibling", "sent", "old text, sent later")
+    clearSessionDraftPrompt("outlive-sibling", "sent")
+    setSessionDraftPrompt("outlive-sibling", "rewritten", "newer text")
+    close("outlive-sibling")
+    // This reopening takes the sibling's drafts and finishes before the pending one.
+    open("outlive-consumer", "/outlive", ["sent", "rewritten"])
+    await settle()
+    assert.equal(getSessionDraftPrompt("outlive-consumer", "rewritten"), "newer text")
+    close("outlive-pending")
+
+    open("outlive-reopened", "/outlive", ["sent", "rewritten"])
+    await settle()
+    assert.equal(getSessionDraftPrompt("outlive-reopened", "sent"), "")
+    assert.equal(getSessionDraftPrompt("outlive-reopened", "rewritten"), "", "the newer text lives in the open consumer")
+  })
+
+  it("never treats a removal as a discard without the current connection's temporary-folder list", async () => {
+    const folder = "/temporary/reconnected"
+    registry([folder])
+    open("reconnected", folder, [], undefined, true)
+    setSessionDraftPrompt("reconnected", NO_SESSION, "kept while disconnected")
+    // Another window kept the folder while this one was disconnected; the reconnect resets the list.
+    const fetchWorkspaces = serverApi.fetchWorkspaces
+    serverApi.fetchWorkspaces = async () => { throw new Error("offline") }
+    try {
+      for (const handler of (serverEvents as any).openHandlers) handler()
+      await settle()
+    } finally { serverApi.fetchWorkspaces = fetchWorkspaces }
+    await stopped("reconnected", "deleted")
+
+    open("reconnected-again", folder)
+    assert.equal(getSessionDraftPrompt("reconnected-again", NO_SESSION), "kept while disconnected")
+  })
+
   it("keeps drafts of a kept temporary workspace even when a stale refresh restored its mark", async () => {
     open("stale-kept", "/temporary/stale", [], undefined, true)
     setSessionDraftPrompt("stale-kept", NO_SESSION, "kept despite a stale refresh")
@@ -293,9 +338,7 @@ describe("closed project drafts", () => {
     addAttachment("purge-first", "kept", createTextAttachment("pasted text", "pasted #1 (2 lines)", "paste-1.txt"))
     await stopped("purge-first", "stopped")
 
-    const read = deferred<unknown>()
-    open("purge-second", folder, [], () => read.promise, true)
-    read.reject(new Error("proxy unavailable"))
+    open("purge-second", folder, [], () => Promise.reject(new Error("proxy unavailable")), true)
     await settle()
     await stopped("purge-second", "deleted")
 
