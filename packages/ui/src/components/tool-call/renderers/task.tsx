@@ -428,6 +428,7 @@ export const taskRenderer: ToolRenderer = {
     }
     const childSourceActive = () => childToolKeys().length > 0 || childTranscriptIncomplete()
     const stepsTruncated = () => resolveTaskStepTruncation(childSourceActive(), childStepsOverflow(), legacySummary().truncated)
+    const stepCount = () => stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length
 
     const childTaskCopy = useTaskStepCopy({
       childSessionId,
@@ -491,7 +492,7 @@ export const taskRenderer: ToolRenderer = {
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>
               <span class="tool-call-io-actions">
                 <span class="tool-call-task-section-meta">
-                  {t("toolCall.task.steps.count", { count: stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length })}
+                  {t(stepCount() === 1 ? "toolCall.task.steps.count.one" : "toolCall.task.steps.count.other", { count: stepCount() })}
                 </span>
                 <Show when={childTranscriptIncomplete()}>
                   <button type="button" class="tool-call-header-icon-button tool-call-io-copy" disabled={childTaskCopy.pending()} onClick={() => void childTaskCopy.copy().catch(() => {})} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>

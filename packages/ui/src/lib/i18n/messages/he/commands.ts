@@ -91,7 +91,8 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "פלטי כלים: {toolCount}; מקטעי חשיבה: {reasoningCount}. הטקסט הסופי יישמר.",
   "commands.removeSessionTechnicalParts.confirm.label": "הסר",
   "commands.removeSessionTechnicalParts.failed.title": "ההסרה נכשלה",
-  "commands.removeSessionTechnicalParts.failed.message": "ניקוי {count} תשובות נכשל.",
+  "commands.removeSessionTechnicalParts.failed.message.one": "ניקוי תשובה {count} נכשל.",
+  "commands.removeSessionTechnicalParts.failed.message.other": "ניקוי {count} תשובות נכשל.",
 
   "commands.undoLastMessage.label": "בטל הודעה אחרונה",
   "commands.undoLastMessage.description": "בטל את ההודעה האחרונה",

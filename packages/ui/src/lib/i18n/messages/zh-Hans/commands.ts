@@ -91,7 +91,8 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "工具输出：{toolCount}；推理块：{reasoningCount}。最终回复文本将保留。",
   "commands.removeSessionTechnicalParts.confirm.label": "删除",
   "commands.removeSessionTechnicalParts.failed.title": "删除失败",
-  "commands.removeSessionTechnicalParts.failed.message": "无法清理 {count} 个回复。",
+  "commands.removeSessionTechnicalParts.failed.message.one": "无法清理 {count} 个回复。",
+  "commands.removeSessionTechnicalParts.failed.message.other": "无法清理 {count} 个回复。",
 
   "commands.undoLastMessage.label": "撤销上一条消息",
   "commands.undoLastMessage.description": "回退上一条消息",

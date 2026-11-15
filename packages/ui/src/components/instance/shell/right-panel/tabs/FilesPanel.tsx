@@ -103,7 +103,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
         <button aria-pressed={props.mode === "history"} onClick={() => props.onModeChange("history")}>{props.t("filesPanel.commits")}</button>
       </div>
       <Show when={props.gitAvailable && props.mode === "changes" && props.git.gitStatusEntries()}>
-        <span class="git-panel-count">{props.t("gitPanel.files", { count: props.git.gitStatusEntries()?.length ?? 0 })}</span>
+        <span class="git-panel-count">{props.t(props.git.gitStatusEntries()?.length === 1 ? "gitPanel.files.one" : "gitPanel.files.other", { count: props.git.gitStatusEntries()?.length ?? 0 })}</span>
       </Show>
     </div>
     <Show when={error()}><div role="alert" class="p-3 text-error text-xs">{error()}</div></Show>
@@ -139,7 +139,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
       <Show when={props.history.selected()}>
         <button class="git-panel-back" onClick={backToCommits}><ArrowLeft size={14} />{props.t("filesPanel.commits")}</button>
         <Show when={props.history.details()}>{details => <>
-          <div class="git-commit-summary"><code>{details().id.slice(0, 8)}</code><p>{details().message}</p><span>{props.t("gitPanel.files", { count: details().files.length })}</span></div>
+          <div class="git-commit-summary"><code>{details().id.slice(0, 8)}</code><p>{details().message}</p><span>{props.t(details().files.length === 1 ? "gitPanel.files.one" : "gitPanel.files.other", { count: details().files.length })}</span></div>
           <div class="git-commit-files">
            <For each={details().files}>{file => {
              const target = () => ({ path: file.path, commit: details().id, subject: details().message.split("\n")[0] })

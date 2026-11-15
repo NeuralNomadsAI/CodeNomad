@@ -91,7 +91,8 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "Tool-Ausgaben: {toolCount}; Denkblöcke: {reasoningCount}. Der finale Text bleibt erhalten.",
   "commands.removeSessionTechnicalParts.confirm.label": "Entfernen",
   "commands.removeSessionTechnicalParts.failed.title": "Entfernen fehlgeschlagen",
-  "commands.removeSessionTechnicalParts.failed.message": "{count} Antworten konnten nicht bereinigt werden.",
+  "commands.removeSessionTechnicalParts.failed.message.one": "{count} Antwort konnte nicht bereinigt werden.",
+  "commands.removeSessionTechnicalParts.failed.message.other": "{count} Antworten konnten nicht bereinigt werden.",
 
   "commands.undoLastMessage.label": "Letzte Nachricht rückgängig machen",
   "commands.undoLastMessage.description": "Die letzte Nachricht rückgängig machen",

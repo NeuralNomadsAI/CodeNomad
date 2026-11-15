@@ -314,6 +314,7 @@ test("device files use native selection and arrive as ordered bytes in the promp
     ]
     await (await chooseDevice(page)).setFiles(files)
     await page.waitForFunction(() => (window as any).fixture.attachments().length === 3)
+    assert.equal(await page.locator(".prompt-overlay-muted").textContent(), "• 3 files attached")
     assert.deepEqual(
       await page.evaluate(() => (window as any).fixture.attachments().map((item: any) => item.filename)),
       files.map(file => file.name),
@@ -328,6 +329,7 @@ test("device files use native selection and arrive as ordered bytes in the promp
     // Resetting the input permits selecting the same file again.
     await (await chooseDevice(page)).setFiles(files[0])
     await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.equal(await page.locator(".prompt-overlay-muted").textContent(), "• 1 file attached")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

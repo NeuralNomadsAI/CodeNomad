@@ -91,7 +91,8 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "उपकरण आउटपुट: {toolCount}; तर्क ब्लक: {reasoningCount}। अन्तिम जवाफ सुरक्षित रहनेछ।",
   "commands.removeSessionTechnicalParts.confirm.label": "हटाउनुहोस्",
   "commands.removeSessionTechnicalParts.failed.title": "हटाउन असफल",
-  "commands.removeSessionTechnicalParts.failed.message": "{count} जवाफ सफा गर्न सकिएन।",
+  "commands.removeSessionTechnicalParts.failed.message.one": "{count} जवाफ सफा गर्न सकिएन।",
+  "commands.removeSessionTechnicalParts.failed.message.other": "{count} जवाफ सफा गर्न सकिएन।",
 
   "commands.undoLastMessage.label": "अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)",
   "commands.undoLastMessage.description": "अन्तिम सन्देश उल्टाउनुहोस्",

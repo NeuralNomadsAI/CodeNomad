@@ -46,6 +46,37 @@ async function clickModifiedDiffLine(page: Page) {
   await page.locator(".git-diff-view .editor.modified .view-line").filter({ hasText: 'title: "Git"' }).click()
 }
 
+test("Changes and Commits count zero, one and multiple files with the matching form", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  try {
+    await page.goto(url)
+    await page.getByRole("treeitem", { name: "package.json", exact: true }).waitFor()
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      const status = serverApi.fetchWorktreeGitStatus, commit = serverApi.fetchGitCommit
+      ;(window as any).fileCount = 0
+      serverApi.fetchWorktreeGitStatus = async (...args: Parameters<typeof status>) =>
+        (await status(...args)).slice(0, (window as any).fileCount)
+      serverApi.fetchGitCommit = async (...args: Parameters<typeof commit>) => {
+        const result = await commit(...args)
+        return { ...result, files: result.files.slice(0, (window as any).fileCount) }
+      }
+    })
+    for (const count of [0, 1, 2]) {
+      await page.evaluate(count => { (window as any).fileCount = count }, count)
+      await page.getByRole("button", { name: "Changements", exact: true }).click()
+      await page.locator(".git-panel-context").getByRole("button", { name: "Actualiser", exact: true }).click()
+      const expected = count === 1 ? "1 fichier modifié" : `${count} fichiers modifiés`
+      await page.waitForFunction(expected => document.querySelector(".git-panel-count")?.textContent === expected, expected)
+      await page.getByRole("button", { name: "Commits", exact: true }).click()
+      await page.locator(".git-history-row").nth(count).click()
+      await page.waitForFunction(expected => document.querySelector(".git-commit-summary > span")?.textContent === expected, expected)
+      await page.locator(".git-panel-back").click()
+    }
+  } finally { await page.close() }
+})
+
 test("large Changes inventories keep the reader controls responsive", async () => {
   const page = await browser.newPage({ viewport: { width: 2000, height: 1120 } })
   try {
