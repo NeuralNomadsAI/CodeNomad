@@ -557,6 +557,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     messageItems: Map<string, ContentDisplayItem>
     toolItems: Map<string, ToolDisplayItem>
     messageBlocks: Map<string, CachedBlockEntry>
+    releasedToolBodies: Set<string>
   }
   const [blockRef, setBlockRef] = createSignal<HTMLDivElement>()
   const [systemDisclosureRevision, setSystemDisclosureRevision] = createSignal(0)
