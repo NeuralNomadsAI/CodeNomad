@@ -113,6 +113,11 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={mounted()}
       isActive={activeInstance() && selectedSession() === parentId} />
   </main>
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+/** The parent continues the same child with a second call, as the native transcript stores it. */
+const continuationMessage = (created: number) => ({ id: `msg_continue${created}`, type: "assistant", agent: "build", model, time: { created, completed: created },
+  content: [{ id: "continued-task", type: "tool", name: "subagent", time: { created, completed: created },
+    state: { status: "completed", input: { agent: "explore", description: "Continue child" },
+      metadata: { sessionID: childId, status: "running" }, content: [{ type: "text", text: "The subagent is working in the background (sessionID: child)." }] } }] })
 ;(window as any).fixture = {
   probeOlder: () => loadOlderMessageWindow(instanceId, childId),
   /** One later idle period's report, delivered as the native event stream does. */
@@ -127,11 +132,13 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={mounted()}
   /** The parent continues the same child with a second call, then gets that call's report. */
   continueChild: async (body: string) => {
     const created = 10 + history[parentId].length
-    history[parentId].push({ id: `msg_continue${created}`, type: "assistant", agent: "build", model, time: { created, completed: created },
-      content: [{ id: "continued-task", type: "tool", name: "subagent", time: { created, completed: created },
-        state: { status: "completed", input: { agent: "explore", description: "Continue child" },
-          metadata: { sessionID: childId, status: "running" }, content: [{ type: "text", text: "The subagent is working in the background (sessionID: child)." }] } }] })
+    history[parentId].push(continuationMessage(created))
     history[parentId].push(subagentReport(created + 1, "completed", body))
+    await loadMessages(instanceId, parentId, { force: true })
+  },
+  /** The parent continues the same child with a second call whose round has not reported yet. */
+  continueChildQuiet: async () => {
+    history[parentId].push(continuationMessage(10 + history[parentId].length))
     await loadMessages(instanceId, parentId, { force: true })
   },
   hold: () => { held = true },

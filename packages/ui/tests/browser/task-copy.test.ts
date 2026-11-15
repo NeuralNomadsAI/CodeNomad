@@ -90,6 +90,31 @@ test("a background subagent card shows the child's latest report instead of its 
   assert.equal(await output.getAttribute("data-subagent-report"), "completed")
 }, "background"))
 
+test("a background subagent's header stays running until the child session settles, across continuations", { timeout: 45_000 }, async () => withPage(async page => {
+  const headerStatus = (part: string) => page.locator(`.tool-call[data-part-id="${part}"] > .tool-call-header .tool-call-header-status`)
+  const parent = headerStatus("parent-task")
+  await parent.waitFor()
+  // The launch acknowledgement never completes the card: the child session still owns the work.
+  assert.equal(await parent.getAttribute("data-status"), "running")
+  assert.equal(await parent.getAttribute("aria-label"), "Running")
+  // The child's first termination is what marks the card completed.
+  await page.evaluate(() => (window as any).fixture.report("completed", "Final answer: 42"))
+  await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .tool-call-header-status')?.getAttribute("data-status") === "completed")
+  // Continuing the same child returns the whole range of its cards to running.
+  await page.evaluate(() => (window as any).fixture.continueChildQuiet())
+  const continued = headerStatus("continued-task")
+  await continued.waitFor()
+  assert.equal(await parent.getAttribute("data-status"), "running")
+  assert.equal(await continued.getAttribute("data-status"), "running")
+  // The newest round's report settles the whole range together.
+  await page.evaluate(() => (window as any).fixture.report("error", "Child failed"))
+  await page.waitForFunction(() => {
+    const parent = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .tool-call-header-status')
+    const continued = document.querySelector('.tool-call[data-part-id="continued-task"] > .tool-call-header .tool-call-header-status')
+    return parent?.getAttribute("data-status") === "error" && continued?.getAttribute("data-status") === "error"
+  })
+}, "background"))
+
 test("a call continued before its first report shares the next report instead of running forever", { timeout: 45_000 }, async () => withPage(async page => {
   const first = page.locator('.tool-call[data-part-id="parent-task"] section[data-subagent-report]')
   await first.waitFor()
