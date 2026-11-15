@@ -24,6 +24,8 @@ export async function startRemoteSurface(t: TestContext, options: {
   skipAuth?: boolean
   bindHost?: string
   allowedOrigins?: string[]
+  /** Settings service in place of the stub, such as one that reads the host's SideCar opt-in. */
+  settings?: unknown
   configureApp?: (app: ReturnType<typeof createHttpServer>["instance"]) => void
   openTunnel?: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
   /** Real panel extension routes over this store, with `workspaceManager` in place of the stub. */
@@ -81,7 +83,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     protocol: "http",
     workspaceManager: (options.panelExtensions?.workspaceManager ?? stub) as never,
     panelExtensions: options.panelExtensions?.store,
-    settings: stub,
+    settings: (options.settings ?? stub) as never,
     fileSystemBrowser: stub,
     eventBus: stub,
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,

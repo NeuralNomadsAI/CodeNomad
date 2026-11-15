@@ -83,7 +83,8 @@ describe("SettingsService config persistence", () => {
   it("normalizes and persists a document patch once", () => {
     let writes = 0
     const service = serviceWithStore({
-      get: () => ({ server: { logLevel: "info" } }),
+      reloadAuthoritative: () => ({ server: { logLevel: "info" } }),
+      get: () => assert.fail("a write starts from the authoritative document, never the cache"),
       replace: (value: unknown) => {
         writes += 1
         return value
@@ -99,6 +100,7 @@ describe("SettingsService config persistence", () => {
   it("normalizes and persists a server-owner patch once", () => {
     let writes = 0
     const service = serviceWithStore({
+      reloadAuthoritative: () => ({}),
       getOwner: () => ({ logLevel: "info", opencodeBinary: "opencode", sidecars: [] }),
       replaceOwner: (_owner: string, value: unknown) => {
         writes += 1
@@ -114,6 +116,7 @@ describe("SettingsService config persistence", () => {
 
   it("keeps only known update feeds", () => {
     const owner = (updateFeed: unknown) => serviceWithStore({
+      reloadAuthoritative: () => ({}),
       getOwner: () => ({}),
       replaceOwner: (_owner: string, value: unknown) => value,
     }).mergePatchOwner("config", "server", { updateFeed })
@@ -126,8 +129,9 @@ describe("SettingsService config persistence", () => {
   it("does not report a persisted patch as failed when an event listener throws", () => {
     let warnings = 0
     const service = serviceWithStore({
+      reloadAuthoritative: () => ({}),
       getOwner: () => ({}),
-      mergePatchOwner: (_owner: string, patch: unknown) => patch,
+      replaceOwner: (_owner: string, value: unknown) => value,
     })
     Object.assign(service as any, {
       eventBus: { publish: () => { throw new Error("listener failed") } },

@@ -71,7 +71,7 @@ Electron と Windows Tauri では、モバイルテンプレートは、所有�
 
 SideCar はサンドボックス化されたプレビューではなく、CodeNomad の信頼された拡張です。そのページは CodeNomad 自身のオリジンで動作するため、スクリプトはサインイン済みのアクセス権で CodeNomad を利用できます。コードを信頼できるサービスだけを登録してください。CodeNomad は自身のサインイン Cookie をサービスへ転送しませんが、サービス自身の Cookie は保持されます。
 
-SideCar のコンテンツ（`/sidecars/`）と WebSocket には、ホスト上のループバック接続が必要です。`/api/sidecars` による登録は、ペアリング済み端末と認証済みの LAN 直接接続クライアントで利用できます。有効なケイパビリティトークンがあれば、アクティブなプレビューのコンテンツ（`/previews/`）は LAN からの直接アクセスで利用できます。[リモートコントロール](remote-control.md#remote-surface)の Web プレビューは、有効な間、ケイパビリティトークンで利用できます。直接アクセスの要件は[アップグレード](remote-access.md#upgrading)を参照してください。
+SideCar のコンテンツ（`/sidecars/`）と WebSocket には、ホスト上のループバック接続が必要です。他の端末からも開くには、ホストで **設定 → SideCar** の **HTTPS で SideCar を開く** をオンにします。このサーバーの HTTPS アドレス、または TLS リバースプロキシなど `CODENOMAD_ALLOWED_ORIGINS` の HTTPS オリジンからサインインしたブラウザーが SideCar を開けるようになります。通常の HTTP、`localhost` のアドレス、リモートコントロールはホスト専用のままです。`/api/sidecars` による登録は、ペアリング済み端末と認証済みの LAN 直接接続クライアントで利用できます。有効なケイパビリティトークンがあれば、アクティブなプレビューのコンテンツ（`/previews/`）は LAN からの直接アクセスで利用できます。[リモートコントロール](remote-control.md#remote-surface)の Web プレビューは、有効な間、ケイパビリティトークンで利用できます。直接アクセスの要件は[アップグレード](remote-access.md#upgrading)を参照してください。
 
 ## OpenVSCode Server の例 {#openvscode}
 

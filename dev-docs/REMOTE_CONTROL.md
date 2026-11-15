@@ -57,10 +57,30 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   Direct password login, its page and logout remain available to LAN clients.
   `GET /api/remote-control/status` is available to authenticated clients and
   returns `manageable: false` for non-local peers. SideCar registration APIs remain
-  available to authenticated clients; content and WebSockets require loopback.
+  available to authenticated clients; content and WebSockets require loopback,
+  except under the host's SideCar opt-in below.
   Live preview capabilities retain their scoped admission. `/api/meta` reports
-  `localRequest` using that same transport authority; the UI hides password changes,
-  SideCar opening and remote-server management unless it is true.
+  `localRequest` using that same transport authority; the UI hides password changes
+  and remote-server management unless it is true. `/api/meta` also reports
+  `sidecarsAllowed` (local, or admitted by the opt-in); the UI shows SideCar opening
+  and the picker only when it or `localRequest` is true.
+- SideCar opt-in over direct HTTPS: the host setting `server.sidecarsOverDirectHttps`
+  (`config.yaml`, off unless `true`; **Settings → SideCars → Open SideCars over HTTPS**,
+  shown to local clients only) lifts the host-only gate for `/sidecars/` content and
+  SideCar WebSocket upgrades, and nothing else, for a direct-listener request from a
+  verified direct HTTPS origin (`server/sidecar-direct-https.ts`). The origin rule is
+  `remote-control/direct-https.ts`: the `https:` advertised local/remote URLs, reachable
+  addresses and `CODENOMAD_ALLOWED_ORIGINS` entries, never loopback or unspecified
+  hosts; mutations need their own `Origin`; GET/HEAD/OPTIONS use `Origin`, else the
+  `Referer` origin, else `https://` plus `Host`; ingress sockets never qualify. Plain-HTTP
+  LAN, loopback-alias and foreign or opaque origins stay refused. Authentication, the
+  direct source policy, SideCar cookie stripping and WebSocket Origin/Referer checks
+  still apply. Admission reads the setting from `config.yaml` as it is now
+  (`SettingsService.serverFlag`, `settings/server-flag-reader.ts`: re-parsed when its stat
+  signature changes; missing, unreadable or invalid reads as off), never the display cache,
+  so a host edit applies to the next request. The config routes refuse a change to this key
+  from non-local requests with 403 (`settings/host-only-settings.ts`), including deleting
+  the server owner, judged against the authoritative document each write starts from.
 - `gate.ts` runs before CORS, authentication and routing. It requires the exact
   tunnel `Host` and the public `Origin` on browser mutations, and strips forwarding
   headers. It accepts origin-form targets only (no absolute-form, leading `//`
@@ -135,7 +155,8 @@ Authentication and the host-only gate also apply with explicitly allowed origins
 `--dangerously-skip-auth` retains the origin and host-only gates.
 
 SideCar WebSocket upgrades apply this same Origin/Referer policy before opening
-an upstream connection, alongside their loopback transport and session checks.
+an upstream connection, alongside their loopback transport (or the host's direct
+HTTPS opt-in) and session checks.
 Native loopback upgrades may omit both source headers. Preview WebSockets use
 their scoped capability admission.
 
@@ -158,7 +179,13 @@ credentials follow their separate registry lifetime and revocation rules.
   peers, credentialed CORS, Origin/Referer checks and host-only routes.
   `server/__tests__/sidecar-proxy.test.ts` covers SideCar upgrade source checks,
   refusal before upstream contact, authenticated and skipped-auth exchanges,
-  native origin-less calls and logout revocation.
+  native origin-less calls and logout revocation, and the direct HTTPS opt-in for
+  content and upgrades. `remote-control/direct-https.test.ts` covers the verified
+  origin rule, the opt-in's `/api/meta` matrix, the other host-only paths and the
+  ingress; `routes/settings.test.ts` covers the host-only setting guard and config writes
+  that start from the file on disk. The SideCar and settings tests use the real settings
+  service and edit `config.yaml` as the host would, including revocation after the display
+  cache loaded the opt-in.
   `session-manager.test.ts` covers idle/absolute deadlines, configuration and
   revocation; `auth-responsiveness.test.ts` covers logout and password replacement
   through real auth routes alongside concurrent credential checks.

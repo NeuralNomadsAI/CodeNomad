@@ -135,6 +135,86 @@ for (const url of ["/api/storage/config", "/api/storage/config/server"]) {
   })
 }
 
+it("only host-local requests change the SideCar direct HTTPS opt-in, through either config route", async t => {
+  const root = mkdtempSync(path.join(tmpdir(), "codenomad-host-only-setting-"))
+  const logger = { child() { return this }, warn() {}, info() {} } as unknown as Logger
+  const location = resolveConfigLocation(root), app = Fastify()
+  t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
+  writeFileSync(location.configYamlPath, stringify({ server: { logLevel: "INFO" } }))
+  const settings = new RealSettingsService(location, undefined, logger)
+  registerSettingsRoutes(app, { settings, logger })
+  const stored = () => parse(readFileSync(location.configYamlPath, "utf8")).server?.sidecarsOverDirectHttps
+  const patch = (remoteAddress: string, url: string, payload: unknown) => app.inject({ method: "PATCH", url, remoteAddress, payload: payload as object })
+  const lan = "192.0.2.20"
+  const enable = [["/api/storage/config/server", { sidecarsOverDirectHttps: true }], ["/api/storage/config", { server: { sidecarsOverDirectHttps: true } }]] as const
+  for (const [url, payload] of enable) {
+    const refused = await patch(lan, url, payload)
+    assert.equal(refused.statusCode, 403, `${url}: ${refused.body}`)
+    assert.equal(stored(), undefined)
+  }
+  // Other server settings stay writable remotely, and writing the current value is no change.
+  assert.equal((await patch(lan, "/api/storage/config/server", { logLevel: "WARN", sidecarsOverDirectHttps: false })).statusCode, 200)
+  assert.equal((await patch("127.0.0.1", ...enable[0])).statusCode, 200)
+  assert.equal(stored(), true)
+  for (const [url, payload] of [["/api/storage/config/server", { sidecarsOverDirectHttps: false }], ["/api/storage/config/server", { sidecarsOverDirectHttps: null }],
+    ["/api/storage/config", { server: null }], ["/api/storage/config", { server: { sidecarsOverDirectHttps: "yes" } }]] as const) {
+    assert.equal((await patch(lan, url, payload)).statusCode, 403, `${url} ${JSON.stringify(payload)}`)
+    assert.equal(stored(), true)
+  }
+  assert.equal((await patch(lan, "/api/storage/config", { server: { logLevel: "ERROR" } })).statusCode, 200)
+  assert.deepEqual(parse(readFileSync(location.configYamlPath, "utf8")).server, { logLevel: "ERROR", sidecarsOverDirectHttps: true })
+  assert.equal((await patch("127.0.0.1", "/api/storage/config", { server: { sidecarsOverDirectHttps: false } })).statusCode, 200)
+  assert.equal(stored(), false)
+})
+
+it("config writes for any owner start from the file on disk, so a stale cached opt-in is never written back", async t => {
+  const root = mkdtempSync(path.join(tmpdir(), "codenomad-stale-config-"))
+  const logger = { child() { return this }, warn() {}, info() {} } as unknown as Logger
+  const location = resolveConfigLocation(root), app = Fastify()
+  t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
+  const settings = new RealSettingsService(location, undefined, logger)
+  registerSettingsRoutes(app, { settings, logger })
+  const lan = "192.0.2.20"
+  const onDisk = () => parse(readFileSync(location.configYamlPath, "utf8"))
+  const patch = (remoteAddress: string, url: string, payload: object) => app.inject({ method: "PATCH", url, remoteAddress, payload })
+  for (const [index, [url, payload]] of ([
+    ["/api/storage/config/ui", { theme: "dark" }],
+    ["/api/storage/config", { ui: { theme: "light" } }],
+    ["/api/storage/config/providerAccounts", { autoSelect: { openai: true } }],
+    ["/api/storage/config/server", { logLevel: "WARN" }],
+  ] as const).entries()) {
+    // The host turns the opt-in on through Settings (the display cache now holds `true`),
+    // then off by editing the file.
+    assert.equal((await patch("127.0.0.1", "/api/storage/config/server", { sidecarsOverDirectHttps: true })).statusCode, 200)
+    assert.equal(settings.getOwner("config", "server").sidecarsOverDirectHttps, true)
+    writeFileSync(location.configYamlPath, stringify({ server: { sidecarsOverDirectHttps: false }, external: { revision: index } }))
+    for (const remoteAddress of [lan, "127.0.0.1"]) {
+      const response = await patch(remoteAddress, url, payload)
+      assert.equal(response.statusCode, 200, `${remoteAddress} ${url}: ${response.body}`)
+      const saved = onDisk()
+      assert.equal(saved.server.sidecarsOverDirectHttps, false, `${remoteAddress} ${url} wrote the stale value back`)
+      assert.deepEqual(saved.external, { revision: index }, "the host's other edits survive")
+    }
+  }
+  // The guard judges the file too: a non-local request cannot turn the opt-in back on whatever the cache says.
+  assert.equal((await patch(lan, "/api/storage/config/server", { sidecarsOverDirectHttps: true })).statusCode, 403)
+  assert.equal(onDisk().server.sidecarsOverDirectHttps, false)
+  // Reading the document normalizes what is on disk now, never a stale cache: a raw read leaves
+  // a non-normalized document cached, then the host turns the opt-in off.
+  writeFileSync(location.configYamlPath, stringify({ server: { logLevel: "info", sidecarsOverDirectHttps: true } }))
+  assert.equal((await app.inject({ url: "/api/storage/config/ui" })).statusCode, 200)
+  writeFileSync(location.configYamlPath, stringify({ server: { logLevel: "info", sidecarsOverDirectHttps: false } }))
+  const read = await app.inject({ url: "/api/storage/config", remoteAddress: lan })
+  assert.equal(read.statusCode, 200)
+  assert.deepEqual(onDisk().server, { logLevel: "INFO", sidecarsOverDirectHttps: false })
+  // A document that cannot be read is never overwritten from the cache.
+  writeFileSync(location.configYamlPath, "server: [sidecarsOverDirectHttps: false\n")
+  for (const [url, payload] of [["/api/storage/config/ui", { theme: "dark" }], ["/api/storage/config", { ui: { theme: "dark" } }]] as const) {
+    assert.equal((await patch("127.0.0.1", url, payload)).statusCode, 503, url)
+    assert.equal(readFileSync(location.configYamlPath, "utf8"), "server: [sidecarsOverDirectHttps: false\n")
+  }
+})
+
 it("both explicit executable settings paths refresh the login start after save; unrelated settings and reads stay passive", async t => {
   const app = Fastify(), order: string[] = []
   t.after(() => app.close())

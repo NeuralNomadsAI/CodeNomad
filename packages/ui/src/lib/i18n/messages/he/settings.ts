@@ -735,6 +735,8 @@ export const settingsMessages = {
   "sidecars.form.prefixMode.strip": "הסר קידומת",
   "sidecars.form.prefixMode.preserve": "שמור קידומת",
   "sidecars.form.add": "הוסף SideCar",
+  "sidecars.directHttps.title": "פתיחת SideCars דרך HTTPS",
+  "sidecars.directHttps.info": "דפדפנים מחוברים בכתובות ה-HTTPS של שרת זה או ב-CODENOMAD_ALLOWED_ORIGINS יכולים לפתוח SideCars. HTTP רגיל ושליטה מרחוק נשארים במארח בלבד.",
   "sidecars.kind.port": "פורט",
   "sidecars.status.running": "רץ",
   "sidecars.status.stopped": "עצור",

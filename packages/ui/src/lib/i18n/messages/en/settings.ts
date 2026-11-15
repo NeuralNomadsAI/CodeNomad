@@ -737,6 +737,8 @@ export const settingsMessages = {
   "sidecars.form.prefixMode.strip": "Strip prefix",
   "sidecars.form.prefixMode.preserve": "Preserve prefix",
   "sidecars.form.add": "Add SideCar",
+  "sidecars.directHttps.title": "Open SideCars over HTTPS",
+  "sidecars.directHttps.info": "Signed-in browsers on this server's HTTPS addresses or CODENOMAD_ALLOWED_ORIGINS can open SideCars. Plain HTTP and Remote Control stay host-only.",
   "sidecars.kind.port": "Port",
   "sidecars.status.running": "Running",
   "sidecars.status.stopped": "Stopped",
