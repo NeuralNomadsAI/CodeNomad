@@ -1,7 +1,14 @@
 /* A Plugins row's version, an integration's state line and its menus' information line
    (components/plugin-activation-controls.tsx, integration-state-line.tsx, plugin-row-actions.tsx). */
+/* One line, bounded so any version string (a full 40-char git commit hash stays
+   visible in the row's title details) never crowds the plugin name out. */
 .plugin-control-version {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
