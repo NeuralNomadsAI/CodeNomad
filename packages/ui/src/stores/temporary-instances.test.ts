@@ -60,7 +60,7 @@ async function answer(value: string | null) {
   dialog?.resolveChoice?.(value)
 }
 function reset(...ids: string[]) {
-  for (const id of ids) { removeInstance(id, { authoritative: false, keepDrafts: false }); clearInstanceDraftPrompts(id) }
+  for (const id of ids) { removeInstance(id, { authoritative: false, drafts: "skip" }); clearInstanceDraftPrompts(id) }
   setSessions((previous) => {
     const next = new Map(previous)
     for (const id of ids) next.delete(id)
@@ -223,6 +223,8 @@ test("a discarded folder's drafts are not offered again, even after a refused di
     const discarding = closeTemporaryInstance("discard-drafted")
     await answer("discard")
     await discarding
+    // The server deletes the record before unregistering the folder.
+    temporaryChanged([folder])
     ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: "discard-drafted", reason: "deleted" })
     await new Promise((resolve) => setImmediate(resolve))
     assert.equal(instances().has("discard-drafted"), false)

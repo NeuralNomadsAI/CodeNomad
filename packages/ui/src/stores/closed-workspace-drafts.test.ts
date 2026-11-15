@@ -37,6 +37,10 @@ function open(id: string, folder: string, existing: string[] = [], read?: (sessi
   addInstance({ id, folder, port: 0, pid: 0, proxyPath: "", status: "ready", client, ...(temporary ? { temporary } : {}) })
 }
 
+/** The server's temporary registry broadcast. Tests before the first call cover an unknown registry. */
+const registry = (folders: string[]) =>
+  (serverEvents as any).dispatch({ type: "workspace.temporaryChanged", folders })
+
 /** The server's stop event, removing the instance like any window receives it. */
 async function stopped(id: string, reason: "deleted" | "stopped") {
   ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: id, reason })
@@ -44,7 +48,7 @@ async function stopped(id: string, reason: "deleted" | "stopped") {
   assert.equal(instances().has(id), false)
 }
 
-function close(id: string, options?: { authoritative?: boolean; keepDrafts?: boolean }) {
+function close(id: string, options?: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard" }) {
   if (messageStoreBus.getInstance(id)) messageStoreBus.unregisterInstance(id)
   removeInstance(id, options)
   setSessions((previous) => { const next = new Map(previous); next.delete(id); return next })
@@ -54,7 +58,7 @@ function close(id: string, options?: { authoritative?: boolean; keepDrafts?: boo
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 afterEach(() => {
-  for (const id of opened.splice(0)) close(id, { keepDrafts: false })
+  for (const id of opened.splice(0)) close(id, { drafts: "skip" })
   clearClosedWorkspaceDrafts()
 })
 
@@ -74,7 +78,7 @@ describe("closed project drafts", () => {
     assert.equal(getSessionDraftPrompt("second", "kept"), "kept draft")
     assert.equal(getSessionDraftPrompt("second", "deleted"), "", "a session that no longer exists gets nothing")
 
-    close("second", { keepDrafts: false })
+    close("second", { drafts: "skip" })
     open("third", "D:\\Work\\App", ["kept"])
     await settle()
     assert.equal(getSessionDraftPrompt("third", NO_SESSION), "", "a restored entry is consumed")
@@ -100,7 +104,7 @@ describe("closed project drafts", () => {
     await stopped("discarded", "deleted")
     open("restore-owned", "/temporary/two")
     setSessionDraftPrompt("restore-owned", NO_SESSION, "seeded draft")
-    close("restore-owned", { authoritative: false, keepDrafts: false })
+    close("restore-owned", { authoritative: false, drafts: "skip" })
 
     open("discarded-again", "/temporary/one")
     open("restore-owned-again", "/temporary/two")
@@ -248,5 +252,56 @@ describe("closed project drafts", () => {
     await settle()
     assert.equal(getSessionDraftPrompt("early-third", "kept"), "not yet restored")
     assert.equal(getSessionDraftPrompt("early-third", NO_SESSION), "", "a draft cleared in the reopened tab stays cleared")
+  })
+
+  it("keeps a sibling's clear when the last pending restore of the project closes", async () => {
+    open("pending-first", "/pending", ["shared"])
+    setSessionDraftPrompt("pending-first", "shared", "sent from the sibling")
+    close("pending-first")
+
+    const never = deferred<unknown>()
+    open("pending-restoring", "/pending", [], () => never.promise)
+    open("pending-sibling", "/pending", ["shared"])
+    setSessionDraftPrompt("pending-sibling", "shared", "sent from the sibling")
+    clearSessionDraftPrompt("pending-sibling", "shared")
+    close("pending-sibling")
+    close("pending-restoring")
+
+    open("pending-reopened", "/pending", ["shared"])
+    await settle()
+    assert.equal(getSessionDraftPrompt("pending-reopened", "shared"), "")
+  })
+
+  // The tests below set the registry; earlier ones run with it unknown.
+  it("keeps drafts of a kept temporary workspace even when a stale refresh restored its mark", async () => {
+    open("stale-kept", "/temporary/stale", [], undefined, true)
+    setSessionDraftPrompt("stale-kept", NO_SESSION, "kept despite a stale refresh")
+    registry([])
+    // A workspace-list response requested before Keep lands after temporaryChanged.
+    updateInstance("stale-kept", { temporary: true })
+    await stopped("stale-kept", "deleted")
+
+    open("stale-kept-again", "/temporary/stale")
+    assert.equal(getSessionDraftPrompt("stale-kept-again", NO_SESSION), "kept despite a stale refresh")
+  })
+
+  it("purges every draft and attachment a discarded temporary folder still had in the vault", async () => {
+    const folder = "/temporary/purged"
+    registry([folder])
+    open("purge-first", folder, ["kept"], undefined, true)
+    setSessionDraftPrompt("purge-first", "kept", "kept [pasted #1]")
+    addAttachment("purge-first", "kept", createTextAttachment("pasted text", "pasted #1 (2 lines)", "paste-1.txt"))
+    await stopped("purge-first", "stopped")
+
+    const read = deferred<unknown>()
+    open("purge-second", folder, [], () => read.promise, true)
+    read.reject(new Error("proxy unavailable"))
+    await settle()
+    await stopped("purge-second", "deleted")
+
+    open("purge-third", folder, ["kept"])
+    await settle()
+    assert.equal(getSessionDraftPrompt("purge-third", "kept"), "")
+    assert.deepEqual(getAttachments("purge-third", "kept"), [])
   })
 })

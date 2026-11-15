@@ -82,19 +82,38 @@ function emptySessionsOf(instanceId: string, entry: ClosedWorkspaceDrafts): Clos
   return pick(entry, (sessionId) => !drafts[sessionId] && !attachments[sessionId]?.length && !touched.has(sessionId))
 }
 
+/** Drops an entry left with clear marks only once no restore of its project is pending. */
+function prune(key: string): void {
+  const entry = vault.get(key)
+  if (entry && contentSessions(entry).size === 0 && !isClaimed(key)) vault.delete(key)
+}
+
 /**
- * Called while an instance is removed, before its drafts are cleared. The
- * later close wins per session, clears and sends included. Whatever an
- * unfinished restore into the removed instance had not applied goes back
- * underneath.
+ * Called while an instance is removed, before its drafts are cleared. `keep`
+ * hands its drafts over: the later close wins per session, clears and sends
+ * included, and whatever an unfinished restore into it had not applied goes
+ * back underneath. `skip` keeps nothing of this instance; `discard` also
+ * purges the project's whole entry, because its folder is deleted.
  */
-export function retainClosedWorkspaceDrafts(instanceId: string, folder: string, keep = true): void {
+export function retainClosedWorkspaceDrafts(
+  instanceId: string,
+  folder: string,
+  mode: "keep" | "skip" | "discard" = "keep",
+): void {
+  const key = closedWorkspaceDraftKey(folder)
   const claim = claims.get(instanceId)
-  claims.delete(instanceId)
-  if (!keep) return
+  if (mode !== "keep") {
+    claims.delete(instanceId)
+    if (mode === "discard") vault.delete(key)
+    return
+  }
   const remaining = claim ? emptySessionsOf(instanceId, claim.entry) : null
-  stash(closedWorkspaceDraftKey(folder), captureInstanceDrafts(instanceId), "newer")
-  if (claim && remaining) stash(claim.key, remaining, "older")
+  // Both land while the claim still counts as pending, so clear marks of
+  // tabs closed meanwhile survive to remove the older drafts they supersede.
+  stash(key, captureInstanceDrafts(instanceId), "newer")
+  if (remaining) stash(key, remaining, "older")
+  claims.delete(instanceId)
+  prune(key)
 }
 
 /**
