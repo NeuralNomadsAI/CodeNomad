@@ -73,4 +73,4 @@ TLS terminates in the CodeNomad backend. The relay forwards ciphertext and canno
 
 ## Administrator policy {#administrator-policy}
 
-An administrator can turn Remote Control off for everyone on a computer: set the environment variable `CODENOMAD_REMOTE_CONTROL=disabled` machine-wide, then restart CodeNomad. The backend never connects a tunnel, refuses **Start Remote Control** and pairing links and does not reconnect at launch; Settings shows **Disabled by administrator**. Devices paired earlier cannot connect and stay listed so you can revoke them. Any other value prevents the backend from starting.
+An administrator can turn Remote Control off for everyone on a computer: set the environment variable `CODENOMAD_REMOTE_CONTROL=disabled` machine-wide, then restart CodeNomad. The backend never connects a tunnel, refuses **Start Remote Control** and pairing links and does not reconnect at launch; Settings shows **Disabled by administrator**. Devices paired earlier cannot connect and stay listed so you can revoke them. Unset or empty means no policy; any other value, including spaces only, prevents the backend from starting.
