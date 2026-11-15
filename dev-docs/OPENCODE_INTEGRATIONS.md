@@ -269,26 +269,31 @@ display and native actions; source mutations keep their writable document/revisi
 - Global/Project switches in the accent colour of Yolo and the settings switches (`ACCENT_SWITCH_SX`,
   `var(--accent-primary)`): `PluginActivationSwitch`'s `integration` flag replaces the green variant that plain
   plugin and MCP rows keep. A native integration's Project switch is locked to Global;
-- the name tooltip's first line reads **Integration: <plugin ID>** where a plain plugin's reads **Plugin: <ID>**;
-- for a loaded native integration, a chain button (`IntegrationLinkButton`, `components/integration-row-indicators.tsx`)
-  for the displayed conversation, framed like the row's menu button: linked and pressed (`aria-pressed`, the shared
-  `.icon-toggle` active state) with **Attached to: <label>**, broken with **No conversation attached**, dimmed with
-  **Attachment unknown** when the integration cannot tell. Its accessible name and keyboard-openable tooltip give the
-  state and the action (`integrationChainAction`): attached, it detaches; otherwise it reads the offers
-  (`GET …/hosts`) and attaches the only compatible one or opens a menu of their labels (`integrationAttachChoice`),
-  then sends one `POST …/attach`. Without a conversation of this Location or an open document it stays focusable
-  with `aria-disabled` and its tooltip says why. A click is the user's explicit choice: no confirmation;
-- a warning icon only when the application part is `absent`, `outdated` or `incompatible`
-  (`lib/integration-row-state.ts`).
+- the name's native `title` (also the row's `aria-describedby` text) starts with **Integration: <plugin ID>** where a
+  plain plugin's starts with **Plugin: <ID>**;
+- under the first line, one state line (`IntegrationStateLineView`, `components/integration-state-line.tsx`) chosen by
+  `integrationStateLine` (`lib/integration-row-state.ts`): the most important state only, truncated on one line with
+  its full text in its `title`. `info` states are muted text, `action` states an accent button (`--accent-primary`),
+  `warning` states `--status-warning`. A native integration, by priority: part `absent` → **Install in <app>** and
+  `outdated` → **Update <app>** (the existing installation confirmation; muted text without a fresh installable
+  status), `incompatible` → warning, attached → chain icon and document name (click detaches; title **Detach the
+  conversation**), application closed → **<app> closed**, no offer → **<app>: no open document**, no conversation
+  of this Location → **No conversation displayed**, one compatible document → **Attach <document>**, several or not
+  read yet → **Attach…** (the document choice menu). Unloaded integrations show **Not loaded**, **Failed to load**,
+  **Non-conforming**, **Not supported here** or **No answer**; editor MCP integrations **Server detected**/**Server not
+  found**, API integrations **Connected**/**Disconnected**. Runtime-only failed rows show the same unloaded states.
 
 The row's menu (`components/plugin-row-actions.tsx`) is labelled by the connection state (open document count,
-application closed, unsupported machine, or the other families' server/connection state) and lists **Install in
-application…**/**Update application…** for a fresh `host.action`, **Detach the conversation** for an `attached`
-binding, then the ordinary package check/update, removal per scope and refresh. A native integration also attaches a
-conversation itself at its first use; both paths coexist.
+application closed, unsupported machine, or the other families' server/connection state) and lists **Documentation**
+(the catalog's reviewed page), **Install in application…**/**Update application…** for a fresh `host.action` or
+**Reinstall in application…** otherwise, then the ordinary package check/update, removal per scope and refresh. A
+native integration also attaches a conversation itself at its first use; both paths coexist.
 
 `createIntegrationBindingsStore` (`stores/integration-bindings-store.ts`) shares reads for the exact instance,
 Location, displayed session and native integration of each shown row (`components/integration-row-binding.ts`).
+The row also reads the open documents (`GET …/hosts`) while it is shown with at least one offer, again after every
+integration epoch change, to name them on the state line; attaching reads them afresh, attaches the shown document
+when it is still the only compatible one (`integrationAttachChoice`) and otherwise opens the choice.
 Binding reads carry only the session selector and receive only the projected state/label. The store uses the
 shared secondary HTTP budget. Relevant integration/plugin/configuration events (`status_changed`, `hosts_changed`)
 and exact-session updates, moves or deletions revoke authority immediately and coalesce reads over 300 ms, with one
@@ -303,7 +308,8 @@ invalidations/reconnect revoke its cancellable hosts read and document choices. 
 target and offer; dispatch rechecks that intent, and only its own read may clear its busy state.
 
 `components/integration-host-installation.ts` owns the application part's trusted shared confirmation for a fresh
-active native integration reporting `host.action: "install" | "update"`: application name, integration package
+active native integration: `host.action` (`install`, `update`) or `reinstall` without one, the application open or
+closed: application name, integration package
 version and the OpenCode-machine warning, with Cancel initially focused. The captured instance, Location,
 session-navigation identity, action, version and integration epoch fence consent. Navigation, reconnects and
 relevant native invalidations cancel pending confirmation; dispatch rechecks the captured identity. An admitted
@@ -381,12 +387,13 @@ Commands:
 - `packages/ui/tests/browser/integration-plugin-row.test.ts` (fixture `fixtures/integration-plugin-row.tsx`, HTTP
   model `integration-plugin-row-model.ts`) renders the real right panel: one row per integration with its name,
   version, accent switches equal to the Yolo accent and tooltip kind; the chain button across `hosts_changed`/`status_changed`,
-  conversation changes and `unknown`; the version right after the name; the chain button attaching the only open
-  document, detaching, unavailable without a document or a conversation, choosing between several documents and
-  reporting a `busy` outcome; the attention icon per host state; the menu's connection line, guarded
+  conversation changes and `unknown`; the version right after the name and the state line under it; every state's
+  text, tone and colour in light and dark (captures with `CODENOMAD_INTEGRATION_SCREENSHOTS`), truncation with the full
+  title; attaching the only open document, detaching, informing without a document or a conversation, choosing
+  between several documents and reporting a `busy` outcome; the menu's documentation and connection line, guarded
   application installation, one-click detach with a lost answer read again and never replayed, removal; French
   and Hebrew labels; and the catalog window's install by ID and consent revocation.
-  `packages/ui/src/lib/integration-row-state.test.ts` covers the link, attention, connection, chain action and offer
+  `packages/ui/src/lib/integration-row-state.test.ts` covers the link, connection, state line priorities and offer
   choice derivations.
 - `node --import tsx scripts/test-integrations-attachments-native.mjs <absolute-cli> [pilot-checkout] [blender-executable]`:
   A supported OpenCode runtime (at or above the minimum) with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
