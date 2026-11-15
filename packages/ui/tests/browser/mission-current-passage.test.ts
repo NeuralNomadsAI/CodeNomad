@@ -284,7 +284,6 @@ for (const first of [false, true]) test(`passive ${first ? "first-passage" : "no
     const f = await setupReaderFollow(page, !first)
     await selectMission(page, "Native scheduled review"); await eye(page).click()
     await page.locator(".mission-reader").getByText(first ? "Saved native instructions" : "Native passage instructions", { exact: true }).waitFor()
-    const before = await readerTarget(page)
     web = await holdBrowser(page)
     if (first) f.startNative()
     else { f.settleNative(); passage = f.hold("msn_native") }
@@ -295,7 +294,12 @@ for (const first of [false, true]) test(`passive ${first ? "first-passage" : "no
       await page.locator(".mission-tree").waitFor({ state: "detached" })
     }
     await paint(page)
-    assert.deepEqual(await readerTarget(page), before)
+    assert.deepEqual(await readerTarget(page), first
+      ? { missionId: f.passages.msn_native.id, kind: "overview", recurrence: {
+        instanceId: "fixture", projectID: "project", scheduleID: "msn_native", passageID: f.passageID("msn_native"), owner: "scheduled",
+      } }
+      : { kind: "recurrence", missionId: "msn_native", instanceId: "fixture", projectID: "project", scheduleOwner: "scheduled" },
+      "passive source reconciliation updates the exact reader immediately")
     if (passage) { passage.release.resolve(); await passage.settled.promise; await paint(page) }
     web.release(); assert.equal(await web.finish(), "opened")
     assert.equal(await readerTarget(page), undefined)
@@ -303,14 +307,13 @@ for (const first of [false, true]) test(`passive ${first ? "first-passage" : "no
   } finally { passage?.release.resolve(); web?.release(); await page.close() }
 })
 
-test("Mission deletion's reader cleanup yields to a newer held browser open", async () => {
+test("Mission deletion clears its reader immediately and preserves a newer held browser open", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 950 } }), deletion = deferred()
   let web: Awaited<ReturnType<typeof holdBrowser>> | undefined
   try {
     const f = await setupReaderFollow(page)
     await selectMission(page, "One-time review"); await eye(page).click()
     await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
-    const before = await readerTarget(page)
     await page.route("**/missions/msn_one", async route => {
       if (route.request().method() !== "DELETE") return route.fallback()
       await deletion.promise; await route.fulfill({ json: { deleted: true } })
@@ -325,7 +328,7 @@ test("Mission deletion's reader cleanup yields to a newer held browser open", as
       return !missionEditor(JSON.stringify(["fixture", "/fixture"]))
     })
     await paint(page)
-    assert.deepEqual(await readerTarget(page), before)
+    assert.equal(await readerTarget(page), undefined, "confirmed deletion releases its reader before browser creation resolves")
     web.release(); assert.equal(await web.finish(), "opened")
     assert.equal(await readerTarget(page), undefined)
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
