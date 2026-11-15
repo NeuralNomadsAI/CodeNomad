@@ -41,6 +41,8 @@ Lässt sich ein zugehöriger Worktree oder Unterhaltungsort nicht überprüfen, 
 
 ## OpenCode-Laufzeit und WSL {#opencode-runtime}
 
+Wählen Sie im Dialog für Startfehler **OpenCode-Einstellungen öffnen**, um Programmdatei und Version zu prüfen; wechseln Sie für eigene Umgebungswerte zu **Erweitert → Umgebungsvariablen**.
+
 1. Öffnen Sie **Einstellungen → OpenCode** und prüfen Sie die Karte **OpenCode-Version** (installierte Version und Status des laufenden Dienstes), dann die gewählte Programmdatei unter **OpenCode-Binärdatei**.
 2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.3.0**; empfohlene/qualifizierte Version: **2.3.0**.
 3. Weicht die installierte CLI vom laufenden Dienst ab, entscheiden Sie ausdrücklich über einen Neustart des gemeinsamen Dienstes.
