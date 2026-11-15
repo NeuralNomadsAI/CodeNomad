@@ -12,6 +12,8 @@ import type { SideCar } from "../../api-types"
 import { AuthManager } from "../../auth/manager"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../http-server"
+import { resolveConfigLocation } from "../../config/location"
+import { SettingsService } from "../../settings/service"
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -148,8 +150,8 @@ function webSocketUpgrade(port: number, pathname: string, headers: Record<string
 }
 
 async function startServer(options: UpstreamOptions & { cookieName?: string; prefixMode?: SideCar["prefixMode"]; skipAuth?: boolean; allowedOrigins?: string[]; devServerUrl?: string
-  /** The host's `sidecarsOverDirectHttps` setting, read on every request. */
-  directHttps?: { enabled: boolean } } = {}) {
+  /** A real settings service over this fixture's `config.yaml`, which tests edit as the host would. */
+  realSettings?: boolean } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-sidecar-proxy-"))
   const logger = pino({ level: "silent" })
   const authManager = new AuthManager({
@@ -180,9 +182,10 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     },
   }
   const stub = new Proxy({}, { get: () => () => undefined }) as never
-  const directHttps = options.directHttps
-  const settings = new Proxy({}, { get: (_target, key) => key === "getOwner" && directHttps
-    ? () => ({ sidecarsOverDirectHttps: directHttps.enabled }) : () => undefined }) as never
+  const configYamlPath = resolveConfigLocation(path.join(directory, "settings")).configYamlPath
+  await fs.mkdir(path.dirname(configYamlPath), { recursive: true })
+  const realSettings = options.realSettings ? new SettingsService(resolveConfigLocation(path.dirname(configYamlPath)), undefined, logger) : undefined
+  const settings = (realSettings ?? stub) as never
   const previewManager = new PreviewManager()
   const preview = previewManager.create("fixture", `http://127.0.0.1:${port}`)
   const { instance: app } = createHttpServer({
@@ -211,6 +214,8 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     received,
     preview,
     cleanupDirectory: directory,
+    settings: realSettings,
+    configYamlPath,
   }
 }
 
@@ -260,12 +265,15 @@ const LAN_HTTP = "http://lan.example.test:9899"
 const LOOPBACK_HTTPS = "https://localhost:8443"
 const LAN_PEER = "192.0.2.20"
 
+/** The real settings service over a `config.yaml` that each test edits as the host would. */
 async function startDirectHttpsServer(enabled: boolean) {
-  const directHttps = { enabled }
-  const server = await startServer({ directHttps, allowedOrigins: [PUBLIC, LAN_HTTP, LOOPBACK_HTTPS] })
+  const server = await startServer({ realSettings: true, allowedOrigins: [PUBLIC, LAN_HTTP, LOOPBACK_HTTPS] })
   // A deterministic non-loopback transport peer for raw upgrades, as app.inject's remoteAddress for HTTP.
   server.app.server.prependListener("connection", socket => { Object.defineProperty(socket, "remoteAddress", { value: LAN_PEER }) })
-  return { ...server, directHttps }
+  const host = (content: string) => fs.writeFile(server.configYamlPath, content)
+  const setOptIn = (value: boolean) => host(`server:\n  logLevel: INFO\n  sidecarsOverDirectHttps: ${value}\n`)
+  await setOptIn(enabled)
+  return { ...server, host, setOptIn }
 }
 
 it("the host's opt-in admits SideCar content for authenticated verified direct HTTPS origins only", async () => {
@@ -279,7 +287,7 @@ it("the host's opt-in admits SideCar content for authenticated verified direct H
     assert.equal((await get({ origin: PUBLIC }, "POST")).statusCode, 404)
     assert.equal(server.received.length, 0)
 
-    server.directHttps.enabled = true
+    await server.setOptIn(true)
     for (const headers of verified) {
       const response = await get(headers)
       assert.equal(response.statusCode, 200, `${JSON.stringify(headers)}: ${response.body}`)
@@ -314,7 +322,7 @@ it("the host's opt-in admits SideCar WebSockets from verified direct HTTPS origi
     const upgrade = (headers: Record<string, string>) => webSocketUpgrade(server.port, "/sidecars/fixture/ws", headers, true)
     const credentials = { cookie: server.cookie }
     assert.equal((await upgrade({ ...credentials, host: PUBLIC_HOST, origin: PUBLIC })).status, 404, "off by default")
-    server.directHttps.enabled = true
+    await server.setOptIn(true)
     for (const host of [PUBLIC_HOST, `127.0.0.1:${server.port}`]) {
       const response = await upgrade({ ...credentials, host, origin: PUBLIC })
       assert.equal(response.status, 101, host)
@@ -327,6 +335,38 @@ it("the host's opt-in admits SideCar WebSockets from verified direct HTTPS origi
     assert.equal((await upgrade({ ...credentials, host: PUBLIC_HOST })).status, 403)
     assert.equal((await upgrade({ host: PUBLIC_HOST, origin: PUBLIC })).status, 401)
     assert.deepEqual(server.upgrades, ["/ws", "/ws"])
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+it("a host edit of config.yaml revokes the opt-in on the next request, even after the display cache loaded it", async () => {
+  const server = await startDirectHttpsServer(true)
+  try {
+    const content = () => server.app.inject({ url: "/sidecars/fixture/token", remoteAddress: LAN_PEER, headers: { host: PUBLIC_HOST, cookie: server.cookie } })
+    const upgrade = () => webSocketUpgrade(server.port, "/sidecars/fixture/ws", { cookie: server.cookie, host: PUBLIC_HOST, origin: PUBLIC }, true)
+    const admitted = async (expected: boolean, label: string) => {
+      assert.equal((await content()).statusCode, expected ? 200 : 404, `content: ${label}`)
+      assert.equal((await upgrade()).status, expected ? 101 : 404, `upgrade: ${label}`)
+    }
+    // The display cache holds `true` from here on, as any settings read would leave it.
+    assert.equal(server.settings!.getOwner("config", "server").sidecarsOverDirectHttps, true)
+    await admitted(true, "on")
+    await server.setOptIn(false)
+    assert.equal(server.settings!.getOwner("config", "server").sidecarsOverDirectHttps, true, "the display cache is stale by design")
+    await admitted(false, "host turned it off")
+    await server.setOptIn(true)
+    await admitted(true, "host turned it on again")
+    // Unreadable, invalid or missing documents read as off.
+    for (const [label, write] of [
+      ["invalid YAML", () => server.host("server: [sidecarsOverDirectHttps: true\n")],
+      ["non-object server owner", () => server.host("server: true\n")],
+      ["a directory in its place", async () => { await fs.rm(server.configYamlPath); await fs.mkdir(server.configYamlPath) }],
+      ["missing", () => fs.rm(server.configYamlPath, { recursive: true })],
+    ] as const) {
+      await write()
+      await admitted(false, label)
+    }
+    await server.setOptIn(true)
+    await admitted(true, "restored")
   } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
 })
 

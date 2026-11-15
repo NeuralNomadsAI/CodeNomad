@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
 import http from "node:http"
+import os from "node:os"
+import path from "node:path"
 import test from "node:test"
+import { resolveConfigLocation } from "../config/location"
+import { SettingsService } from "../settings/service"
 import { verifiedDirectHttpsOrigin, verifiedHttpsOrigins } from "./direct-https"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
 
@@ -34,15 +39,18 @@ test("the verified direct HTTPS origin set and request predicate", () => {
   assert.equal(verifiedDirectHttpsOrigin({ raw, method: "GET", headers: { host: PUBLIC_HOST } }, []), null)
 })
 
-/** The real application with the host's SideCar opt-in held in memory. */
+/** The real application and settings service; the host's opt-in lives in its `config.yaml`. */
 async function surface(t: test.TestContext, enabled: boolean) {
-  const state = { enabled }
-  const getOwner = (_kind: string, owner: string) => owner === "server" ? { sidecarsOverDirectHttps: state.enabled } : {}
-  const settings = new Proxy({}, { get: (_target, key) => key === "getOwner" ? getOwner : () => undefined })
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-direct-https-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const location = resolveConfigLocation(root)
+  const setOptIn = (value: boolean) => fs.writeFileSync(location.configYamlPath, `server:\n  sidecarsOverDirectHttps: ${value}\n`)
+  setOptIn(enabled)
+  const settings = new SettingsService(location, undefined, { child() { return this }, warn() {}, info() {} } as never)
   // The tunnel origin is listed too: Remote Control ingress must never qualify, even then.
   const f = await startRemoteSurface(t, { settings, allowedOrigins: [PUBLIC, LAN_HTTP, "https://localhost:8443", `https://${FAKE_TUNNEL_HOST}`] })
   const cookie = `${f.authManager.getCookieName()}=${f.authManager.createSession("codenomad").id}`
-  return { ...f, state, cookie }
+  return { ...f, setOptIn, cookie }
 }
 
 test("the opt-in opens no other host-only path to a verified direct HTTPS origin", async t => {
@@ -69,7 +77,7 @@ test("/api/meta reports sidecarsAllowed for local clients and opted-in verified 
   const refused: Record<string, string>[] = [{ host: "lan.example.test:9899" }, { host: PUBLIC_HOST, origin: LAN_HTTP }, { host: PUBLIC_HOST, referer: `${LAN_HTTP}/` },
     { host: "localhost:8443" }, { host: PUBLIC_HOST, origin: "https://foreign.test" }, { host: "127.0.0.1:9899" }]
   for (const enabled of [false, true]) {
-    f.state.enabled = enabled
+    f.setOptIn(enabled)
     const local = await meta("127.0.0.1", { host: "127.0.0.1:9899" })
     assert.deepEqual([local.localRequest, local.sidecarsAllowed], [true, true])
     for (const headers of verified) assert.equal((await meta(LAN_PEER, headers)).sidecarsAllowed, enabled, JSON.stringify(headers))

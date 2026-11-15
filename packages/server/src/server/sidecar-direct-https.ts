@@ -8,10 +8,13 @@ export const SIDECARS_OVER_DIRECT_HTTPS = "sidecarsOverDirectHttps"
 
 type AccessRequest = Pick<FastifyRequest, "raw" | "method" | "headers">
 
-/** Whether the host opted in; an unreadable configuration keeps SideCars host-only. */
-export function sidecarsOverDirectHttpsEnabled(settings: Pick<SettingsService, "getOwner">): boolean {
+/**
+ * Whether the host opted in, read from the configuration file as it is now (never the display
+ * cache): a host edit takes effect on the next request; an unreadable document keeps SideCars host-only.
+ */
+export function sidecarsOverDirectHttpsEnabled(settings: Pick<SettingsService, "serverFlag">): boolean {
   try {
-    return settings.getOwner("config", "server")?.[SIDECARS_OVER_DIRECT_HTTPS] === true
+    return settings.serverFlag(SIDECARS_OVER_DIRECT_HTTPS) === true
   } catch {
     return false
   }

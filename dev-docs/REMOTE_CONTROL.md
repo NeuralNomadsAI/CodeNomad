@@ -75,8 +75,12 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   `Referer` origin, else `https://` plus `Host`; ingress sockets never qualify. Plain-HTTP
   LAN, loopback-alias and foreign or opaque origins stay refused. Authentication, the
   direct source policy, SideCar cookie stripping and WebSocket Origin/Referer checks
-  still apply. The config routes refuse a change to this key from non-local requests
-  with 403 (`settings/host-only-settings.ts`), including deleting the server owner.
+  still apply. Admission reads the setting from `config.yaml` as it is now
+  (`SettingsService.serverFlag`, `settings/server-flag-reader.ts`: re-parsed when its stat
+  signature changes; missing, unreadable or invalid reads as off), never the display cache,
+  so a host edit applies to the next request. The config routes refuse a change to this key
+  from non-local requests with 403 (`settings/host-only-settings.ts`), including deleting
+  the server owner, judged against the authoritative document each write starts from.
 - `gate.ts` runs before CORS, authentication and routing. It requires the exact
   tunnel `Host` and the public `Origin` on browser mutations, and strips forwarding
   headers. It accepts origin-form targets only (no absolute-form, leading `//`
@@ -178,7 +182,10 @@ credentials follow their separate registry lifetime and revocation rules.
   native origin-less calls and logout revocation, and the direct HTTPS opt-in for
   content and upgrades. `remote-control/direct-https.test.ts` covers the verified
   origin rule, the opt-in's `/api/meta` matrix, the other host-only paths and the
-  ingress; `routes/settings.test.ts` covers the host-only setting guard.
+  ingress; `routes/settings.test.ts` covers the host-only setting guard and config writes
+  that start from the file on disk. The SideCar and settings tests use the real settings
+  service and edit `config.yaml` as the host would, including revocation after the display
+  cache loaded the opt-in.
   `session-manager.test.ts` covers idle/absolute deadlines, configuration and
   revocation; `auth-responsiveness.test.ts` covers logout and password replacement
   through real auth routes alongside concurrent credential checks.
