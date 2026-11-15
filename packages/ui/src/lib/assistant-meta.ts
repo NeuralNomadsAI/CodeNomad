@@ -56,3 +56,11 @@ export function assistantAgentMeta(instanceId: string, info?: MessageInfo): stri
   if (model) segments.push(model)
   return segments.join(" • ")
 }
+
+/** Keeps persisted model identity in tooltips even when display names coincide. */
+export function assistantAgentMetaTooltip(instanceId: string, info?: MessageInfo): string {
+  const meta = assistantAgentMeta(instanceId, info)
+  if (!info || info.role !== "assistant" || !info.modelID) return meta
+  const identity = info.providerID ? `${info.providerID}/${info.modelID}` : info.modelID
+  return meta.includes(identity) ? meta : [meta, identity].filter(Boolean).join("\n")
+}

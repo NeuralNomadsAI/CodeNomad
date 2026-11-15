@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type Page } from "playwright"
 import { REASONING_RENDER_CHARACTER_LIMIT } from "../../src/lib/message-render-cache"
 import { TEXT_REVEAL_CHARACTER_STEP } from "../../src/lib/render-text-window"
@@ -45,6 +46,50 @@ const assertKeptPlace = (at: { top: number }, now: { top: number; below: number 
   assert.ok(Math.abs(now.top - at.top) <= 2, `${context}: the reader stays at the reveal point (${at.top} -> ${now.top})`)
   assert.ok(now.below > 1_000, `${context}: the revealed text lies below the reader (${now.below}px)`)
 }
+
+test("reasoning tooltips retain provider identity when model names coincide", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
+  const events = await fixtureEventStream(url)
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await events.route(page)
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(async () => {
+      await (window as any).fixture.revealThinking()
+      ;(window as any).fixture.startReasoning()
+      ;(window as any).fixture.reasoningDelta("**Summary**\n\nReasoning body")
+    })
+    const titleElement = page.locator(`${cardSelector} .message-reasoning-title`)
+    await titleElement.waitFor()
+    for (const providerID of ["p1", "p2"]) {
+      await page.evaluate(async providerID => {
+        const statePath = "/src/stores/session-state.ts"
+        const busPath = "/src/stores/message-v2/bus.ts"
+        const state = await import(statePath)
+        const { messageStoreBus } = await import(busPath)
+        state.setProviders((previous: Map<string, unknown>) => new Map(previous).set("browser-instance",
+          ["p1", "p2"].map(id => ({ id, name: id, models: [{
+            id: "shared", name: "Shared Model", providerId: id,
+            limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 },
+          }] }))))
+        const store = messageStoreBus.getInstance("browser-instance")
+        store.setMessageInfo("msg_assistant", { ...store.getMessageInfo("msg_assistant"), providerID, modelID: "shared" })
+      }, providerID)
+      await page.waitForFunction(({ selector, identity }) =>
+        document.querySelector(selector)?.getAttribute("title")?.includes(identity),
+      { selector: `${cardSelector} .message-reasoning-title`, identity: `${providerID}/shared` })
+      const title = await titleElement.getAttribute("title")
+      assert.ok(title?.includes("Shared Model") && title.includes(`${providerID}/shared`))
+    }
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
+    await events.close()
+  }
+})
 
 test("long streaming reasoning keeps a growing reveal, renders revealed text coalesced and keeps it after completion", { timeout: 90_000 }, async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })

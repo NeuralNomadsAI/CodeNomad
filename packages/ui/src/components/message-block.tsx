@@ -48,7 +48,7 @@ import { createTextWindow, HiddenTextNotice } from "./hidden-text"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { accountSessionTranscript } from "../stores/session-transcript-memory"
 import { parseReasoningSummary } from "../lib/reasoning-summary"
-import { assistantAgentMeta } from "../lib/assistant-meta"
+import { assistantAgentMeta, assistantAgentMetaTooltip } from "../lib/assistant-meta"
 import { getFormQueue } from "../stores/forms"
 import { backgroundSession, deleteMessagePart, deleteTechnicalPartGroup } from "../stores/session-actions"
 import { showAlertDialog } from "../stores/alerts"
@@ -1367,6 +1367,7 @@ function ReasoningGroupCard(props: {
   const setExpanded = (value: boolean) => props.onExpandedChange ? props.onExpandedChange(value) : setLocalExpanded(value)
   const summaryParts = () => props.summaryParts ?? props.parts
   const agentMeta = () => assistantAgentMeta(props.instanceId, props.parts[0]?.messageInfo)
+  const agentMetaTooltip = () => assistantAgentMetaTooltip(props.instanceId, props.parts[0]?.messageInfo)
   /** The group header carries the meta itself, so its cards must not repeat it. */
   const headerShowsMeta = () => summaryParts().length > 1 && props.showHeader !== false && Boolean(props.showAgentMeta)
   const totalDuration = createMemo(() => summaryParts().reduce((total, item) => total + (item.durationMs ?? 0), 0))
@@ -1449,7 +1450,7 @@ function ReasoningGroupCard(props: {
             <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
             <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
             <Show when={headerShowsMeta() && agentMeta()}>
-              <span class="message-technical-group-meta message-technical-group-meta-agent" title={agentMeta()}>
+              <span class="message-technical-group-meta message-technical-group-meta-agent" title={agentMetaTooltip()}>
                 · {agentMeta()}
               </span>
             </Show>
@@ -1610,6 +1611,7 @@ function ReasoningCard(props: ReasoningCardProps) {
   })
 
   const agentMeta = () => assistantAgentMeta(props.instanceId, props.messageInfo)
+  const agentMetaTooltip = () => assistantAgentMetaTooltip(props.instanceId, props.messageInfo)
 
   const reasoningText = () => getReasoningText(props.part)
 
@@ -1624,7 +1626,7 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const reasoningMetaTooltip = () => {
     const parts: string[] = [thoughtDurationTitle()]
-    const meta = agentMeta()
+    const meta = agentMetaTooltip()
     if (meta) parts.push(meta)
     return parts.join("\n")
   }
@@ -1700,7 +1702,7 @@ function ReasoningCard(props: ReasoningCardProps) {
               running={props.status === "streaming" || props.status === "sending"}
             />
             <Show when={props.showAgentMeta && agentMeta()}>
-              <span class="message-reasoning-model" title={agentMeta()}>{agentMeta()}</span>
+              <span class="message-reasoning-model" title={agentMetaTooltip()}>{agentMeta()}</span>
             </Show>
           </span>
         </button>
