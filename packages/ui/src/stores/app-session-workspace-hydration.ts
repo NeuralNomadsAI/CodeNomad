@@ -52,8 +52,10 @@ export async function hydrateRestoredWorkspaceState(
   if (!isCurrentBinding()) return null
   let sessions = getSessions(instanceId)
   let selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  const hydrateSelection = () => hydrateActiveSessionSelection(instanceId, snapshot.activeParentSessionId ?? null,
+    snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null, () => !signal.aborted && isCurrentBinding())
   if (!hasAuthoritativeSessionSelection(instanceId)) {
-    hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
+    hydrateSelection()
   }
   hydrateWorkspacePromptState(
     instanceId,
@@ -85,6 +87,6 @@ export async function hydrateRestoredWorkspaceState(
     ? getSessionAncestorIdsFromMap(new Map(sessions.map((session) => [session.id, session])), selection.activeSessionId)
     : [])
   hydrateSessionExpansion(instanceId, expandedSessionIds)
-  if (!hasAuthoritativeSessionSelection(instanceId)) hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
+  if (!hasAuthoritativeSessionSelection(instanceId)) hydrateSelection()
   return unavailable
 }

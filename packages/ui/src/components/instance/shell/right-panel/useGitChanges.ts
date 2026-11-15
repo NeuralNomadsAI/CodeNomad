@@ -204,14 +204,18 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const preview = previous.preview
     const current = previous.surfaceIntent?.current() ?? true
     if (preview && current && getFilePreview(options.instanceId) === preview) {
-      const candidates = gitListItems().filter(item => item.path === preview.path)
-      const item = candidates.find(item => item.section === (preview.scope ?? "unstaged")) ?? candidates[0]
-      const target = item ? { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section } : undefined
-      if (!previous.surfaceIntent) reconcileFilePreview(options.instanceId, preview, target)
-      else if (target) {
+      const resolve = () => {
+        const candidates = gitListItems().filter(item => item.path === preview.path)
+        const item = candidates.find(item => item.section === (preview.scope ?? "unstaged")) ?? candidates[0]
+        return item ? { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section } : undefined
+      }
+      if (!previous.surfaceIntent) reconcileFilePreview(options.instanceId, preview, resolve)
+      else {
+        const target = resolve()
         // A fresh target also reloads unchanged content on explicit refresh.
-        openFilePreview(options.instanceId, target, previous.surfaceIntent)
-      } else closeFilePreview(options.instanceId, previous.surfaceIntent)
+        if (target) openFilePreview(options.instanceId, target, previous.surfaceIntent)
+        else closeFilePreview(options.instanceId, previous.surfaceIntent)
+      }
     }
     if (previous.version !== gitDiffRequestVersion) return
     const selected = resolveValidGitSelection(previous.selection)

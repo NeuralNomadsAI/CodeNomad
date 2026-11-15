@@ -10,6 +10,11 @@ import { missionProjectView, updateMissionProjectView } from "./mission-view-sta
 import { clearActiveParentSession, clearActiveSession, hydrateActiveSessionSelection, seedRestoredSessionSelection,
   setActiveParentSession, setActiveSession, setActiveSessionFromList, setSessions } from "./session-state"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
+import { activeParentSessionId, sessions } from "./session-state"
+import { removeSessionRuntimeState } from "./session-api"
+import { addInstance, removeInstance } from "./instances"
+import { captureState } from "../lib/hooks/use-app-session-capture"
+import { attachInstanceTabMembership, detachInstanceTabMembership } from "./app-tab-membership"
 
 const ctx = (instanceId: string) => ({ instanceId, sessionId: "same" })
 function activateSessionSurface(context: SurfaceContext, surface: CentralSurface) {
@@ -134,4 +139,44 @@ it("unrelated envelope updates preserve live Mission identities and an in-flight
   resolve(); await pending
   assert.equal(missionProjectView(id).reader?.itemId, "task-id")
   lifecycle(id, "removed")
+})
+
+for (const order of [["parent", "child"], ["child", "parent"]]) it(`deferred deletion reconciles the whole selection and persisted capture (${order.join(", ")})`, () => {
+  const id = `deleted-selection-${order.join("-")}`
+  addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client: null })
+  attachInstanceTabMembership(id)
+  const parent = { id: "parent", parentId: null } as any
+  const child = { id: "child", parentId: "parent" } as any
+  setSessions(previous => new Map(previous).set(id, new Map([["parent", parent], ["child", child]])))
+  setActiveParentSession(id, "parent")
+  setActiveSession(id, "child")
+  const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: "child" })
+  try {
+    for (const sessionId of order) removeSessionRuntimeState(id, sessionId)
+    assert.equal(activeParentSessionId().get(id), "parent")
+    assert.equal(activeSessionId().get(id), "child")
+    intent.release()
+    const captured = captureState(new Map()).state.tabs.find(tab => tab.kind === "workspace" && tab.folder === "/repo")
+    assert.ok(captured?.kind === "workspace")
+    assert.deepEqual([captured.activeParentSessionId, captured.activeSessionId], [undefined, undefined],
+      "the saved window must not retain a deleted parent or child")
+    assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], [undefined, undefined])
+    assert.equal(sessions().get(id), undefined)
+  } finally { intent.release(); detachInstanceTabMembership(id); removeInstance(id) }
+})
+
+it("deferred hydration resolves against the current inventory and binding", () => {
+  for (const invalidation of ["inventory", "binding"]) {
+    const id = `hydration-${invalidation}`
+    lifecycle(id, "opened")
+    setSessions(previous => new Map(previous).set(id, new Map([["parent", { id: "parent", parentId: null } as any]])))
+    let current = true
+    const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: null })
+    hydrateActiveSessionSelection(id, "parent", "parent", () => current)
+    if (invalidation === "inventory") setSessions(previous => { const next = new Map(previous); next.delete(id); return next })
+    else current = false
+    intent.release()
+    assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], [undefined, undefined])
+    lifecycle(id, "removed")
+  }
 })

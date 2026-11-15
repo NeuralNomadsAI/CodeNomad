@@ -75,3 +75,42 @@ test("passive browser resource restoration leaves a foreground intent current", 
     serverApi.createPreview = create; serverApi.deletePreview = remove
   }
 })
+
+test("deferred Mission reconciliation rechecks recovery and the latest passage", () => {
+  const instanceId = "passive-mission-recovery", ctx = { instanceId, sessionId: "same" }
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId, folder: "/repo", occurrence: 0 })
+  activateSessionSurface(ctx, { kind: "mission", target: reader })
+  let missing = true
+  const cleanup = captureSessionSurfaceIntent(ctx)
+  updateMissionProjectView(instanceId, () => missing ? { reader: undefined } : {})
+  missing = false
+  cleanup.release()
+  assert.equal(missionProjectView(instanceId).reader, reader)
+  let passage = { ...reader, missionId: "passage-a" }
+  const retarget = captureSessionSurfaceIntent(ctx)
+  retargetMissionReader(instanceId, reader, () => passage)
+  passage = { ...reader, missionId: "passage-b" }
+  retarget.release()
+  assert.equal(missionProjectView(instanceId).reader, passage)
+  publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: 0 })
+})
+
+test("file lifetime recovery is rechecked and status reconciliation cannot discard a pending close", () => {
+  const instanceId = "passive-file-recovery", ctx = { instanceId, sessionId: "same" }
+  const target = { sessionId: "same", path: "a", slug: "root", directory: "/repo" }
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId, folder: "/repo", occurrence: 0 })
+  activateSessionSurface(ctx, { kind: "file", target })
+  let missing = true
+  const recovery = captureSessionSurfaceIntent(ctx)
+  filePreviews.reconcileFilePreviewLifetime(instanceId, () => missing)
+  missing = false
+  recovery.release()
+  assert.equal(filePreviews.getFilePreview(instanceId), target)
+  const close = captureSessionSurfaceIntent(ctx)
+  filePreviews.reconcileFilePreviewLifetime(instanceId)
+  filePreviews.reconcileFilePreviewLifetime(instanceId, () => missing)
+  filePreviews.reconcileFilePreview(instanceId, target, () => ({ ...target, scope: "staged" }))
+  close.release()
+  assert.equal(filePreviews.getFilePreview(instanceId), null)
+  publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: 0 })
+})

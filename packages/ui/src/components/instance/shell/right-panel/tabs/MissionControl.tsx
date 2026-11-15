@@ -487,15 +487,20 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       untrack(() => updateView({ selectedTask: undefined }))
   })
   createEffect(() => {
-    const snapshot = currentPassage.snapshot(), reader = view().reader
-    if (!passageSchedule() || !snapshot || snapshot.scheduleID !== passageSchedule() || currentPassage.loading() || currentPassage.error() || !reader) return
-    const scheduleReader = reader.kind === "recurrence" && !reader.itemId && reader.missionId === snapshot.scheduleID
-      && reader.instanceId === props.instanceId && reader.projectID === projectID()
-      && Boolean(reader.scheduleOwner === "scheduled") === Boolean(selectedScheduled())
-    const passageReader = reader.recurrence?.scheduleID === snapshot.scheduleID && reader.recurrence.passageID !== snapshot.passageID
-    if (!(scheduleReader && snapshot.mission && snapshot.passageID) && !passageReader) return
-    untrack(() => retargetMissionReader(props.instanceId, reader, snapshot.mission && snapshot.passageID
-      ? readerTarget({ missionId: snapshot.mission.id, kind: "overview" }) : scheduleTarget(snapshot.scheduleID, Boolean(selectedScheduled()))))
+    const reader = view().reader
+    if (!reader) return
+    const resolve = () => {
+      const snapshot = currentPassage.snapshot()
+      if (!passageSchedule() || !snapshot || snapshot.scheduleID !== passageSchedule() || currentPassage.loading() || currentPassage.error()) return
+      const scheduleReader = reader.kind === "recurrence" && !reader.itemId && reader.missionId === snapshot.scheduleID
+        && reader.instanceId === props.instanceId && reader.projectID === projectID()
+        && Boolean(reader.scheduleOwner === "scheduled") === Boolean(selectedScheduled())
+      const passageReader = reader.recurrence?.scheduleID === snapshot.scheduleID && reader.recurrence.passageID !== snapshot.passageID
+      if (!(scheduleReader && snapshot.mission && snapshot.passageID) && !passageReader) return
+      return snapshot.mission && snapshot.passageID ? readerTarget({ missionId: snapshot.mission.id, kind: "overview" })
+        : scheduleTarget(snapshot.scheduleID, Boolean(selectedScheduled()))
+    }
+    if (resolve()) untrack(() => retargetMissionReader(props.instanceId, reader, resolve))
   })
   // A schedule's current passage: its selected task takes the toolbar from the schedule's.
   const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
@@ -590,13 +595,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return scope() },
     get selectedRequests() { return selectedScheduled() ? currentRequests() : undefined },
     onPassage: setScheduledCurrent,
-    onNoPassage: id => {
+    onNoPassage: (id, stillNoPassage) => {
       if (selectedScheduled() !== id) return
       const reader = view().reader
       batch(() => {
         if (selectedTaskKey()) updateView({ selectedTask: undefined })
         if (reader?.recurrence?.scheduleID === id && reader.recurrence.owner === "scheduled")
-          retargetMissionReader(props.instanceId, reader, scheduleTarget(id, true))
+          retargetMissionReader(props.instanceId, reader, () => selectedScheduled() === id && stillNoPassage() ? scheduleTarget(id, true) : undefined)
       })
     },
     get tracking() { return selectedScheduled() ? tracking() : undefined },

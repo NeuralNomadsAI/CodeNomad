@@ -44,9 +44,10 @@ function settle(instanceId: string): void {
 }
 
 /** File lifetime/status reconciliation changes only the still-matching runtime target. */
-export function reconcileFileSurface(instanceId: string, previous: FilePreviewTarget, target?: FilePreviewTarget): void {
-  reconcileSessionSurface(instanceId, "file-reader", () => {
+export function reconcileFileSurface(instanceId: string, previous: FilePreviewTarget, update?: FilePreviewTarget | (() => FilePreviewTarget | undefined), key = "file-reader"): void {
+  reconcileSessionSurface(instanceId, key, () => {
     if (files().get(instanceId) !== previous) return
+    const target = typeof update === "function" ? update() : update
     setFiles(current => {
       const next = new Map(current)
       if (target) next.set(instanceId, target)

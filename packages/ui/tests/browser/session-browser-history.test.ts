@@ -132,7 +132,7 @@ test("a duplicate's diff, session selection, Info and Back/Forward preserve its 
   } finally { await page.close() }
 })
 
-for (const inventory of ["missing", "unavailable"]) test(`real shell: ${inventory} Mission inventory cannot supersede a held browser gesture`, { timeout: 90_000 }, async () => {
+for (const inventory of ["missing", "unavailable", "recovered"]) test(`real shell: ${inventory} Mission inventory cannot supersede a held browser gesture`, { timeout: 90_000 }, async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -147,25 +147,38 @@ for (const inventory of ["missing", "unavailable"]) test(`real shell: ${inventor
     await page.route("**/api/workspaces/*/missions**", missionPanelRoute(async route => {
       const req = route.request(), path = new URL(req.url()).pathname
       if (path.endsWith("/content")) return route.fulfill({ json: missionContentFixture(req.url(), req.method(), maps) })
-      if (path.endsWith("/missions")) return route.fulfill({ json: refreshed && inventory === "unavailable"
+      if (path.endsWith("/missions")) return route.fulfill({ json: refreshed && inventory !== "missing"
         ? { available: false, reason: "plugin-unavailable", missions: [] }
         : { available: true, projectID: "fixture", missions: panelMissions(refreshed ? [] : maps), generatedAt: refreshed ? 2 : 1, discardedEvents: 0 } })
       return route.fulfill({ json: {} })
     }))
     await page.evaluate(() => (window as any).fixture.readMission("header-windows", "overview"))
     await page.locator(".mission-reader").getByText("Retained reader", { exact: true }).waitFor()
-    await page.evaluate(url => {
+    await page.evaluate(({ url, inventory }) => {
       const f = (window as any).fixture
-      f.delayPreview(url)
+      f.delayPreview(url, inventory === "recovered")
       ;(window as any).previewAttempt = f.openPreview("session", url).then(() => "opened", (error: Error) => error.name + ": " + error.message)
-    }, `${base}/page/mission-race`)
+    }, { url: `${base}/page/mission-race`, inventory })
     await page.waitForFunction(() => (window as any).fixture.isPreviewDelayed())
     refreshed = true
-    await page.evaluate(cold => (window as any).fixture.refreshMissions(cold), inventory === "unavailable")
-    assert.equal(await page.evaluate(() => (window as any).fixture.missionStatus()), inventory === "unavailable" ? "unavailable" : "ready")
+    await page.evaluate(cold => (window as any).fixture.refreshMissions(cold), inventory !== "missing")
+    assert.equal(await page.evaluate(() => (window as any).fixture.missionStatus()), inventory !== "missing" ? "unavailable" : "ready")
     assert.equal(await page.evaluate(() => (window as any).fixture.presentation("header-windows").mission.reader?.missionId), "mission-a",
       "passive cleanup waits for the admitted browser gesture")
+    if (inventory === "recovered") {
+      refreshed = false
+      await page.evaluate(() => (window as any).fixture.refreshMissions(true))
+      assert.equal(await page.evaluate(() => (window as any).fixture.missionStatus()), "ready")
+    }
     await page.evaluate(() => (window as any).fixture.releasePreview())
+    if (inventory === "recovered") {
+      assert.match(await page.evaluate(() => (window as any).previewAttempt), /Error:/)
+      assert.equal(await page.evaluate(() => (window as any).fixture.presentation("header-windows").mission.reader?.missionId), "mission-a",
+        "a recovered inventory cancels the deferred cleanup before the browser fails")
+      await page.locator(".mission-reader").getByText("Retained reader", { exact: true }).waitFor()
+      assert.deepEqual(errors, [])
+      return
+    }
     assert.equal(await page.evaluate(() => (window as any).previewAttempt), "opened")
     await page.locator('[data-session-id="session"] .window-shell').waitFor({ state: "visible" })
     assert.equal(await page.evaluate(() => (window as any).fixture.presentation("header-windows").mission.reader), undefined)

@@ -69,7 +69,7 @@ function captureRuntimeState(
   const seenInterruptions = captureSeenInterruptions(instanceId, sessions)
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
-function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
+export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
   const tabs = appTabs()
   const nextOccurrence = new Map<string, number>()
   const occurrenceByInstance = new Map<string, number>()

@@ -64,6 +64,7 @@ import {
   sessionInfoByInstance,
 } from "./session-state"
 import { settleAbandonedSessionListRestoration } from "./session-list-restoration"
+import { reconcileSessionSurface } from "./session-surface"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
@@ -1374,17 +1375,17 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
     return next
   })
 
-  const selectedParentId = activeParentSessionId().get(instanceId)
-  const selectedSessionId = activeSessionId().get(instanceId)
-  if (selectedParentId === sessionId) {
-    clearActiveParentSession(instanceId)
-  } else if (selectedSessionId === sessionId) {
-    if (selectedParentId && sessions().get(instanceId)?.has(selectedParentId)) {
-      setActiveSession(instanceId, selectedParentId)
-    } else {
-      clearActiveSession(instanceId)
+  reconcileSessionSurface(instanceId, "session-deletion", () => {
+    const selectedParentId = activeParentSessionId().get(instanceId)
+    const selectedSessionId = activeSessionId().get(instanceId)
+    const inventory = sessions().get(instanceId)
+    if (selectedParentId && !inventory?.has(selectedParentId)) {
+      clearActiveParentSession(instanceId)
+    } else if (selectedSessionId && selectedSessionId !== "info" && !inventory?.has(selectedSessionId)) {
+      if (selectedParentId) setActiveSession(instanceId, selectedParentId)
+      else clearActiveSession(instanceId)
     }
-  }
+  })
 }
 
 function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {

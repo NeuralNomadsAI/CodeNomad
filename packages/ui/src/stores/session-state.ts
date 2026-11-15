@@ -35,6 +35,7 @@ import {
 export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
+import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -785,12 +786,14 @@ function hydrateActiveSessionSelection(
   instanceId: string,
   parentSessionId: string | null,
   sessionId: string | null,
+  isCurrent: () => boolean = () => true,
 ): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
   applySessionSelection(instanceId, () => batch(() => {
-    if (hasAuthoritativeSessionSelection(instanceId)) return
-    writeActiveParentSession(instanceId, parentSessionId)
-    writeActiveSession(instanceId, sessionId)
+    if (hasAuthoritativeSessionSelection(instanceId) || !isCurrent()) return
+    const selection = resolveRestoredSessionSelection(getSessions(instanceId), parentSessionId, sessionId)
+    writeActiveParentSession(instanceId, selection?.parentSessionId ?? null)
+    writeActiveSession(instanceId, sessionId === "info" && !parentSessionId ? "info" : selection?.activeSessionId ?? null)
   }))
 }
 
@@ -800,8 +803,11 @@ function seedRestoredSessionSelection(instanceId: string, parentSessionId: strin
   if (hasAuthoritativeSessionSelection(instanceId)) return
   applySessionSelection(instanceId, () => batch(() => {
     if (hasAuthoritativeSessionSelection(instanceId)) return
-    writeActiveParentSession(instanceId, parentSessionId)
-    writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+    const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+    const parent = parentSessionId && !deleted.has(parentSessionId) ? parentSessionId : null
+    const active = parentSessionId && !parent || sessionId && deleted.has(sessionId) ? parent : sessionId
+    writeActiveParentSession(instanceId, parent)
+    writeSessionSelection(setActiveSessionId, instanceId, active)
   }))
 }
 

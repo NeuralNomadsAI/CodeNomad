@@ -29,7 +29,8 @@ export function closeFilePreview(instanceId: string, intent?: SessionSurfaceInte
     sessionSurfaceGesture(ctx, admitted => activateSessionSurface(ctx, { kind: "conversation" }, admitted), intent)
   }
 }
-export function reconcileFilePreviewLifetime(instanceId: string) {
+export function reconcileFilePreviewLifetime(instanceId: string, shouldClose?: () => boolean) {
   const target = getFilePreview(instanceId)
-  if (target) reconcileFileSurface(instanceId, target)
+  if (target) reconcileFileSurface(instanceId, target, () => !shouldClose || shouldClose() ? undefined : target,
+    shouldClose ? "file-worktree" : "file-lifetime")
 }

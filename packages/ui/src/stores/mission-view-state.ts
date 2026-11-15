@@ -41,14 +41,16 @@ function key(value: string): string {
 export function missionProjectView(instanceId: string): ProjectView {
   return getTabViewState(instanceId).missions ?? emptyView
 }
-export function updateMissionProjectView(instanceId: string, patch: Partial<ProjectView>): void {
+export function updateMissionProjectView(instanceId: string, update: Partial<ProjectView> | (() => Partial<ProjectView>)): void {
+  const patch = typeof update === "function" ? update() : update
   if ("reader" in patch) {
     const previous = missionProjectView(instanceId).reader, { reader, ...data } = patch
     updateMissionProjectView(instanceId, data)
     if (previous === reader) return
     reconcileSessionSurface(instanceId, "mission-reader", () => {
       if (missionProjectView(instanceId).reader !== previous) return
-      writeMissionProjectView(instanceId, { reader })
+      const current = typeof update === "function" ? update() : patch
+      if ("reader" in current) writeMissionProjectView(instanceId, { reader: current.reader })
     })
     return
   }
@@ -73,9 +75,11 @@ function writeMissionProjectView(instanceId: string, patch: Partial<ProjectView>
   updateTabViewState(instanceId, { missions: value })
 }
 /** Retarget an already displayed reader under the caller's foreground/reconciliation fence. */
-export function retargetMissionReader(instanceId: string, previous: MissionReaderTarget, target: MissionReaderTarget, intent?: SessionSurfaceIntent): void {
+export function retargetMissionReader(instanceId: string, previous: MissionReaderTarget, target: MissionReaderTarget | (() => MissionReaderTarget | undefined), intent?: SessionSurfaceIntent): void {
   const apply = () => {
-    if (missionProjectView(instanceId).reader === previous) writeMissionProjectView(instanceId, { reader: target })
+    if (missionProjectView(instanceId).reader !== previous) return
+    const next = typeof target === "function" ? target() : target
+    if (next) writeMissionProjectView(instanceId, { reader: next })
   }
   if (intent) { if (intent.current()) apply() }
   else reconcileSessionSurface(instanceId, "mission-reader", apply)

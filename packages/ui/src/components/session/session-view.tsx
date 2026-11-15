@@ -117,9 +117,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   createEffect(() => {
     const target = missionReader()
     if (!target || target.kind === "recurrence" || target.kind === "playbook" || target.recurrence) return
-    const state = missionStore.state(props.instanceId)
-    if ((state.status === "ready" || state.status === "unavailable") && !state.summaries.some(row => row.id === target.missionId))
-      updateMissionProjectView(props.instanceId, { reader: undefined })
+    updateMissionProjectView(props.instanceId, () => {
+      const state = missionStore.state(props.instanceId)
+      return (state.status === "ready" || state.status === "unavailable") && !state.summaries.some(row => row.id === target.missionId)
+        ? { reader: undefined } : {}
+    })
   })
   const filePreview = createMemo(() => {
     const current = surface()
