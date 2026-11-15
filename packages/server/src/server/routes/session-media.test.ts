@@ -5,6 +5,7 @@ import { mediaDigest } from "../../opencode/session-media"
 import { registerSessionMediaRoutes } from "./session-media"
 import { OpenCodeSharedService } from "../../workspaces/opencode-service"
 import { rememberRuntime } from "../../opencode/compatibility/runtime"
+import { MINIMUM_OPENCODE_VERSION } from "../../opencode/runtime-support"
 
 const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==", "base64")
 const uri = `data:image/png;base64,${bytes.toString("base64")}`
@@ -25,7 +26,7 @@ async function fixture() {
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}` }
-  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService()
   await service.endpoint({ kind: "lifecycle", identity: "media-route", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })
   const occurrence = new AbortController()

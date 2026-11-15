@@ -21,6 +21,10 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
+Positive shared-service test fixtures declare `MINIMUM_OPENCODE_VERSION` when
+serving the pinned client contract. Version-refusal scenarios supply their
+explicit incompatible identity.
+
 Minimum and recommended runtime **2.3.0** (`runtime-support.ts`), with **2.3.0**
 client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
 qualifies only the 2.3 subagent contract: every subagent call returns at once

@@ -13,6 +13,7 @@ import pino from "pino"
 import { OpenCode } from "@opencode/client"
 import { deferToolMedia, INLINE_MEDIA_LIMIT, mediaDigest } from "../../opencode/session-media"
 import { MESSAGE_LIMIT, parseSessionMediaPath } from "../../opencode/session-media-contract"
+import { MINIMUM_OPENCODE_VERSION } from "../../opencode/runtime-support"
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void, reject!: (error: unknown) => void
@@ -111,7 +112,7 @@ test("media ownership retains real manager, physical worktrees and connection cu
       await app.listen({ host: "127.0.0.1", port: 0 })
       const endpoint = { url: `http://127.0.0.1:${(app.server.address() as { port: number }).port}`,
         auth: { type: "basic" as const, username: label, password: "fixture" } }
-      rememberRuntime(endpoint, { version: "2.2.3", pid: label === "A" ? 1 : 2, discovery: "info" })
+      rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: label === "A" ? 1 : 2, discovery: "info" })
       return endpoint
     }
     const a = await host("A"), b = await host("B")
