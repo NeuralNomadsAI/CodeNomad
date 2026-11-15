@@ -96,8 +96,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "Отменить последнее сообщение",
   "commands.undoLastMessage.description": "Откатить последнее сообщение",
   "commands.undoLastMessage.keywords": "откат, отмена",
-  "commands.undoLastMessage.none.title": "Нечего отменять",
-  "commands.undoLastMessage.none.message": "Нечего отменять",
   "commands.undoLastMessage.failed.title": "Не удалось отменить",
   "commands.undoLastMessage.failed.message": "Не удалось откатить сообщение",
   "commands.redoLastMessage.label": "Повторить последнее сообщение",

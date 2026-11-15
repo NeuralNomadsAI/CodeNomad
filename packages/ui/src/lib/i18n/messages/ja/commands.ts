@@ -96,8 +96,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "直前のメッセージを取り消す",
   "commands.undoLastMessage.description": "直前のメッセージへ戻す",
   "commands.undoLastMessage.keywords": "取り消し, 戻す, revert, undo",
-  "commands.undoLastMessage.none.title": "取り消せる操作がありません",
-  "commands.undoLastMessage.none.message": "取り消すものがありません",
   "commands.undoLastMessage.failed.title": "取り消しに失敗",
   "commands.undoLastMessage.failed.message": "メッセージを戻せませんでした",
   "commands.redoLastMessage.label": "最後のメッセージをやり直す",

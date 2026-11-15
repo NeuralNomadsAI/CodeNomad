@@ -96,8 +96,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "撤销上一条消息",
   "commands.undoLastMessage.description": "回退上一条消息",
   "commands.undoLastMessage.keywords": "revert, undo, 回退, 撤销",
-  "commands.undoLastMessage.none.title": "没有可撤销的操作",
-  "commands.undoLastMessage.none.message": "没有可撤销的内容",
   "commands.undoLastMessage.failed.title": "撤销失败",
   "commands.undoLastMessage.failed.message": "回退消息失败",
   "commands.redoLastMessage.label": "重做上一条消息",

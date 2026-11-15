@@ -96,8 +96,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "בטל הודעה אחרונה",
   "commands.undoLastMessage.description": "בטל את ההודעה האחרונה",
   "commands.undoLastMessage.keywords": "חזרה, ביטול",
-  "commands.undoLastMessage.none.title": "אין פעולות לביטול",
-  "commands.undoLastMessage.none.message": "אין מה לבטל",
   "commands.undoLastMessage.failed.title": "הביטול נכשל",
   "commands.undoLastMessage.failed.message": "ביטול ההודעה נכשל",
   "commands.redoLastMessage.label": "ביצוע מחדש של ההודעה האחרונה",

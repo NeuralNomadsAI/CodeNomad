@@ -96,8 +96,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "Undo Last Message",
   "commands.undoLastMessage.description": "Revert the last message",
   "commands.undoLastMessage.keywords": "revert, undo",
-  "commands.undoLastMessage.none.title": "No actions to undo",
-  "commands.undoLastMessage.none.message": "Nothing to undo",
   "commands.undoLastMessage.failed.title": "Undo failed",
   "commands.undoLastMessage.failed.message": "Failed to revert message",
   "commands.redoLastMessage.label": "Redo Last Message",
