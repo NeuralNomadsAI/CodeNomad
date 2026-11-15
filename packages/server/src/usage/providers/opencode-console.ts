@@ -97,15 +97,18 @@ export async function readOpenCodeConsoleFreeRequests(auth: AuthFile, signal: Ab
     .reduce((sum, row) => integer(sum + row.requests), 0)
 }
 
-export async function readOpenCodeConsoleCredits(auth: AuthFile, signal: AbortSignal): Promise<ProviderUsageWindow | undefined> {
+/**
+ * The optional Console credit balance. Every failure (including 401: the usage
+ * reads already authenticate the same credential) only omits it.
+ */
+async function readOpenCodeConsoleCredits(auth: AuthFile, signal: AbortSignal): Promise<ProviderUsageWindow | undefined> {
   const credential = openCodeConsoleCredential(auth)
   if ("reason" in credential) return undefined
   try {
     return parseOpenCodeConsoleBalance(await fetchBoundedJson(`${BASE}/api/billing/status`, credential.headers,
       AbortSignal.any([signal, AbortSignal.timeout(3000)])))
-  } catch (error) {
-    signal.throwIfAborted()
-    if (error instanceof ProviderHttpError && error.status === 401) throw error
+  } catch {
+    return undefined
   }
 }
 
@@ -115,18 +118,19 @@ const BALANCE_GRACE_MS = 250
  * Starts the optional balance read beside the usage reads. `settle` is awaited
  * once those reads are complete: it waits at most a short grace (or until
  * cancellation) and then omits the balance, so the optional read never spends
- * the caller's remaining budget. A 401 still rejects.
+ * the caller's remaining budget or changes the reading's outcome.
  */
 export function startOpenCodeConsoleCredits(auth: AuthFile, signal: AbortSignal) {
   const credits = readOpenCodeConsoleCredits(auth, signal)
-  credits.catch(() => {})
   return {
-    settle: () => new Promise<ProviderUsageWindow | undefined>((resolve, reject) => {
-      const done = () => { clearTimeout(timer); signal.removeEventListener("abort", omit) }
-      const omit = () => { done(); resolve(undefined) }
+    settle: () => new Promise<ProviderUsageWindow | undefined>(resolve => {
+      const done = (value: ProviderUsageWindow | undefined) => {
+        clearTimeout(timer); signal.removeEventListener("abort", omit); resolve(value)
+      }
+      const omit = () => done(undefined)
       const timer = setTimeout(omit, BALANCE_GRACE_MS)
       signal.addEventListener("abort", omit, { once: true })
-      credits.then(value => { done(); resolve(value) }, error => { done(); reject(error) })
+      void credits.then(done)
     }),
   }
 }

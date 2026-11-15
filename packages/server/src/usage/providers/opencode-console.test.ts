@@ -119,6 +119,23 @@ test("completed usage reads return within the caller's remaining budget while th
   assert.equal(result.usage?.windows.credits_balance, undefined)
 })
 
+for (const delay of [0, 450]) {
+  test(`a billing 401 ${delay ? "after the grace" : "at once"} only omits the balance`, async t => {
+    t.mock.method(globalThis, "fetch", async (input: unknown) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith("/billing/status")) {
+        await new Promise(resolve => setTimeout(resolve, delay))
+        return new Response("secret-upstream", { status: 401 })
+      }
+      return Response.json(url.pathname.endsWith("summary") ? summary() : page())
+    })
+    const result = await openCodeConsole.fetchQuota(key)
+    assert.equal(result.ok, true, result.unavailableReason)
+    assert.equal(result.usage?.windows.credits_balance, undefined)
+    assert.equal(JSON.stringify(result).includes("secret"), false)
+  })
+}
+
 test("API key uses only Authorization; missing/invalid OAuth and third-party credentials send nothing", async t => {
   let calls = 0
   t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {

@@ -281,8 +281,10 @@ CodeNomad shows the Console's own ranges without computing window boundaries.
 The UI labels them **24 hours**, **7 days** and **30 days**,
 formats counters in the selected app locale and lists **Requests by model · 30 days**
 with both model and provider identities. An optional `billing/status` read
-(three-second bound; failures other than 401 omit it) supplies
-`windows.credits_balance`, shown with the credit-balance preference.
+supplies `windows.credits_balance`, shown with the credit-balance preference.
+It starts beside the usage reads (three-second bound); once they complete it is
+awaited for at most 250 ms. Any failure, 401 included, or a late answer only
+omits the balance and never changes the reading's outcome.
 OpenCode Go uses its own quota reader.
 Decimal-string counters, token totals and micro-cent costs must fit safe
 nonnegative integers, including cumulative sums; 100,000,000 micro-cents is USD 1.
