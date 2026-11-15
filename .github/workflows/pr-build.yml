@@ -512,6 +512,7 @@ jobs:
           packages/ui/src/stores/session-deletion-reconciliation.test.ts
           packages/ui/src/components/instance/shell/right-panel/useGitChanges.test.ts
           packages/ui/src/stores/tab-view-state.test.ts
+          packages/ui/src/stores/mission-view-state-migration.test.ts
           packages/ui/src/lib/browser-history.test.ts
           packages/ui/src/lib/keyboard-offset.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts

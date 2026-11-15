@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 import { MAX_LAYOUT_VALUE_LENGTH, readClientLayoutValue, writeClientLayoutValue, removeClientLayoutValue } from "./client-state"
 import { getTabViewState, updateTabViewState, type RestorableTabMissionView } from "./tab-view-state"
 import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
+import { compactMissionKey as key } from "./tab-view-state-migration"
 
 export interface MissionReaderTarget {
   /** For `playbook`, the playbook id, read without any Mission. */
@@ -26,17 +27,6 @@ type ProjectView = RestorableTabMissionView
 export const MAX_EXPANDED = 30
 const emptyView: ProjectView = {}
 
-// Compact stable keys keep a mission's toggled sections within the native layout
-// entry budget. Store identities/preferences only, never report contents.
-function key(value: string): string {
-  let a = 2166136261, b = 5381
-  for (let i = 0; i < value.length; i++) {
-    a = Math.imul(a ^ value.charCodeAt(i), 16777619)
-    b = Math.imul(b, 33) ^ value.charCodeAt(i)
-  }
-  return btoa(String.fromCharCode(a >>> 24, (a >>> 16) & 255, (a >>> 8) & 255, a & 255,
-    b >>> 24, (b >>> 16) & 255, (b >>> 8) & 255, b & 255)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "")
-}
 /** Presentation belongs to the tab occurrence; completion acknowledgements below belong to the project. */
 export function missionProjectView(instanceId: string): ProjectView {
   return getTabViewState(instanceId).missions ?? emptyView
@@ -63,7 +53,12 @@ export function retargetMissionReader(instanceId: string, previous: MissionReade
   updateMissionProjectView(instanceId, { reader: target })
 }
 export function missionDisclosureOpen(instanceId: string, missionId: string, id: string, defaultOpen = true): boolean {
-  return missionProjectView(instanceId).disclosures?.[key(JSON.stringify([missionId, id]))] ?? defaultOpen
+  const current = missionProjectView(instanceId).disclosures?.[key(JSON.stringify([missionId, id]))]
+  if (current !== undefined) return current
+  const section = key(id)
+  const legacy = (readClientLayoutValue(`mission-disclosures-${key(missionId)}`) ?? "").split(",")
+    .reverse().find(value => value.slice(1) === section && /^[+-][a-zA-Z0-9_-]{11}$/.test(value))
+  return legacy === undefined ? defaultOpen : legacy[0] === "+"
 }
 export function setMissionDisclosureOpen(instanceId: string, missionId: string, id: string, open: boolean): void {
   const disclosures = { ...missionProjectView(instanceId).disclosures }, section = key(JSON.stringify([missionId, id]))

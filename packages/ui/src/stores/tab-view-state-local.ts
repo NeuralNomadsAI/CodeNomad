@@ -1,7 +1,8 @@
-import { clientStateIsPrimary, readClientLayoutValue, writeClientLayoutValue } from "./client-state"
+import { clientStateIsPrimary, readClientLayoutValue, removeClientLayoutValue, writeClientLayoutValue } from "./client-state"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { LEGACY_SESSION_PREVIEWS_KEY, MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, parseLegacySessionPreviews,
   type RestorableTabViewState } from "./tab-view-state-codec"
+import { readLegacyMissionView } from "./tab-view-state-migration"
 
 const KEY = "opencode-session-tab-views-v1"
 const scopes = new Map<string, string>()
@@ -27,7 +28,15 @@ export function bindLocalTabView(instanceId: string, folder: string) {
   const occurrence = [...scopes.values()].filter(key => JSON.parse(key)[0] === path).length
   const key = scopes.get(instanceId) ?? JSON.stringify([path, occurrence])
   scopes.set(instanceId, key)
-  return clientStateIsPrimary() ? undefined : read()[key]
+  if (clientStateIsPrimary()) return
+  const current = read()[key]
+  if (occurrence !== 0) return current
+  const legacy = readLegacyMissionView(folder, readClientLayoutValue)
+  if (!legacy) return current
+  const view = current ?? legacy.view
+  if (saveLocalTabView(instanceId, view) && readClientLayoutValue(legacy.key) === legacy.source)
+    removeClientLayoutValue(legacy.key)
+  return view
 }
 
 export function saveLocalTabView(instanceId: string, view?: RestorableTabViewState) {

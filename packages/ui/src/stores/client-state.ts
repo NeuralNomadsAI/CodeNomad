@@ -32,7 +32,7 @@ let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
-let previewMigration: { source: string; remaining: string } | undefined
+const layoutMigrations = new Map<string, { source: string; remaining: string | null }>()
 const transactionLayoutWrites = new Set<string>()
 function useLocalStorage<T>(fallback: T, operation: (storage: Storage) => T): T {
   try {
@@ -125,13 +125,14 @@ function enqueuePendingSave(): Promise<void> {
       lastSaveError = undefined
       // Retire the legacy entries only after a snapshot carrying descriptor views
       // is durably accepted. Changed concurrent legacy writes retain their authority.
-      if (previewMigration && normalizedSnapshot.session?.tabs.some(tab => tab.kind === "workspace" && tab.viewState)) {
-        const migration = previewMigration
-        previewMigration = undefined
-        if (layout[LEGACY_SESSION_PREVIEWS_KEY] === migration.source) {
-          const concurrent = readLegacyLayoutValue(LEGACY_SESSION_PREVIEWS_KEY)
-          writeClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY,
-            concurrent !== null && concurrent !== migration.source ? concurrent : migration.remaining)
+      if (layoutMigrations.size && normalizedSnapshot.session?.tabs.some(tab => tab.kind === "workspace" && tab.viewState)) {
+        const migrations = [...layoutMigrations]
+        layoutMigrations.clear()
+        for (const [key, migration] of migrations) if (layout[key] === migration.source) {
+          const concurrent = readLegacyLayoutValue(key)
+          const remaining = concurrent !== null && concurrent !== migration.source ? concurrent : migration.remaining
+          if (remaining === null) removeClientLayoutValue(key)
+          else writeClientLayoutValue(key, remaining)
         }
       }
     } catch (error) {
@@ -333,7 +334,7 @@ export function initializeClientState(): Promise<void> {
       lastSaveError = undefined
       writeBlock = false
       transactionLayoutWrites.clear()
-      previewMigration = undefined
+      layoutMigrations.clear()
       initialized = true
       if (!loaded.isPrimary || !loaded.restoreEnabled) return
       let snapshot: ClientSnapshotV1 | null
@@ -358,9 +359,10 @@ export function initializeClientState(): Promise<void> {
       if (!writeBlock) {
         const migratedLayout = migrateLegacyLayoutValues()
         const source = layout[LEGACY_SESSION_PREVIEWS_KEY]
-        const migration = migrateLegacyTabPreviews(loadedRestorableSession(), source ?? null)
-        if (migration && source !== undefined) {
-          previewMigration = { source, remaining: migration.remaining }
+        const migration = migrateLegacyTabPreviews(loadedRestorableSession(), source ?? null, readClientLayoutValue)
+        if (migration) {
+          if (source !== undefined) layoutMigrations.set(LEGACY_SESSION_PREVIEWS_KEY, { source, remaining: migration.remaining })
+          for (const { key, source } of migration.missions) layoutMigrations.set(key, { source, remaining: null })
           setLoadedRestorableSession(migration.state)
         }
         if (migratedLayout || migration) scheduleSave()
