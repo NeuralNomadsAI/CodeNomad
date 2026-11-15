@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import cors from "@fastify/cors"
 import type { ServerMeta } from "../api-types"
-import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { isDirectHttpsDeviceRequest, isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
 import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { routedPath } from "./routed-path"
 
@@ -48,7 +48,8 @@ export function registerDirectOriginPolicy(app: FastifyInstance, options: {
   isPreview(request: FastifyRequest): boolean
 }) {
   const allows = (request: OriginRequest, origin: string): boolean => {
-    if (isRemoteRequest(request)) return origin === `https://${options.publicHost()}`
+    // Direct HTTPS devices keep the direct listener's origins, without loopback or development aliases.
+    if (isRemoteRequest(request) && !isDirectHttpsDeviceRequest(request)) return origin === `https://${options.publicHost()}`
     const candidates = [options.meta.localUrl, options.meta.remoteUrl,
       ...(options.meta.addresses ?? []).map(address => address.remoteUrl), ...(options.allowedOrigins ?? [])]
     // The listening socket supplies its own port even before startup metadata is published.

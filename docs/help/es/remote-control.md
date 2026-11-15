@@ -9,9 +9,23 @@ Control remoto permite a un navegador o cliente de escritorio emparejado usar tu
 3. En **Conectar otro dispositivo**, escanea el código QR o elige **Copiar enlace** y abre ese enlace de un solo uso en el dispositivo previsto.
 4. Conserva los datos del sitio del navegador emparejado. Vuelve a abrir la dirección del túnel para reconectar mientras el backend esté en ejecución.
 
-El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo como una credencial: cualquiera que lo consuma puede convertirse en un dispositivo emparejado. El código está en el fragmento de la URL, no en la cadena de consulta. **Crear nuevo enlace de emparejamiento** invalida inmediatamente el enlace anterior sin usar. Detener, apagar el backend y los fallos del túnel cancelan los enlaces de emparejamiento pendientes.
+El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo como una credencial: cualquiera que lo consuma puede convertirse en un dispositivo emparejado. El código está en el fragmento de la URL, no en la cadena de consulta. **Crear nuevo enlace de emparejamiento** invalida inmediatamente el enlace anterior sin usar. Apagar el backend cancela el enlace de emparejamiento pendiente; detener y los fallos del túnel cancelan un enlace del túnel.
 
 Para emparejar otro CodeNomad de escritorio, elige **Conectar servidor CodeNomad** en su página de inicio, pega el enlace en **URL del servidor** y elige **Conectar**. Un enlace de emparejamiento abre su ventana incluso desde **Guardar**, porque abrirlo consume el código. Solo se guarda el origen del túnel como marcador; el código no se conserva. La verificación TLS permanece activada para enlaces de emparejamiento.
+
+## Emparejar por HTTPS directo {#direct-https}
+
+Cuando el túnel está bloqueado pero el backend es accesible por HTTPS de confianza, por ejemplo tras un proxy inverso con un certificado real, los dispositivos pueden emparejarse en esa dirección. Se admiten las direcciones HTTPS propias de este backend y los orígenes HTTPS de `CODENOMAD_ALLOWED_ORIGINS` (consulta [Actualizar](remote-access.md#upgrading)); los nombres de bucle local y HTTP sin cifrar nunca emparejan. No hace falta iniciar el control remoto.
+
+1. En el equipo anfitrión, abre **Configuración → Acceso remoto → Control remoto**.
+2. En **Emparejamiento HTTPS directo**, elige la **Dirección HTTPS** si hay varias y luego **Crear enlace de emparejamiento HTTPS**.
+3. Abre el enlace en el dispositivo, como un enlace del túnel.
+
+El enlace sigue las mismas reglas de cinco minutos y un solo uso, y reemplaza cualquier enlace sin usar; los códigos erróneos repetidos se limitan. Un proxy inverso debe terminar TLS de confianza, pasar las cabeceras `Host` y `Origin` originales y llegar al backend por bucle local o una red protegida.
+
+Ese dispositivo se conecta solo por su dirección HTTPS, nunca por el túnel, y **Dispositivos emparejados** muestra esa dirección bajo su nombre. Detener el control remoto no cancela el enlace ni desconecta estos dispositivos; **Revocar**, 30 días sin uso, el límite de 32 dispositivos o quitar la dirección de la configuración terminan su acceso. Un navegador que presenta una credencial de dispositivo revocada o caducada en esa dirección no puede recurrir a la contraseña del servidor: vuelve a emparejarlo o borra los datos del sitio para iniciar sesión con la contraseña.
+
+Estos dispositivos tienen la misma [superficie](#remote-surface) que los del túnel y nunca obtienen privilegios de bucle local, ni siquiera a través de un proxy en el anfitrión.
 
 ## Gestionar dispositivos emparejados {#paired-devices}
 
@@ -41,7 +55,7 @@ La recuperación conserva la página abierta y los borradores; no repite una acc
 | --- | --- |
 | Iniciar control remoto | Conecta este backend y recuerda la elección para inicios futuros. |
 | Cerrar el navegador remoto | No detiene el backend anfitrión ni revoca el dispositivo. |
-| Detener control remoto | Desconecta el acceso y borra la reanudación automática al iniciar; conserva los registros de dispositivos. |
+| Detener control remoto | Desconecta el acceso por el túnel y borra la reanudación automática al iniciar; conserva los registros de dispositivos. |
 | Apagado del backend / se cierra la última ventana de escritorio y la aplicación termina | Control remoto queda sin conexión. El servicio compartido de OpenCode puede seguir ejecutándose, pero no puede servir esta interfaz mediante un backend detenido. |
 | Iniciar después de dejar Control remoto activado | Reconecta en segundo plano sin emitir un enlace de emparejamiento nuevo. Las instalaciones donde nunca se inició no se activan solas. |
 | Reanudación fallida o error fatal del túnel | La elección recordada permanece y el anfitrión muestra el error; el icono de actualizar de la tarjeta de Control remoto vuelve a leer su estado. **Iniciar control remoto** reintenta ahora; **Detener control remoto** borra la elección. Si no, un inicio posterior reintenta. |

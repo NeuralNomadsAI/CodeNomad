@@ -54,7 +54,7 @@ Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils so
 
 ## Mise à niveau {#upgrading}
 
-Reconnectez-vous après la mise à niveau. Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification.
+Reconnectez-vous après la mise à niveau. Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification. Ses origines HTTPS permettent aussi à l’hôte d’appairer des appareils sans le tunnel ; voir [Appairer en HTTPS direct](remote-control.md#direct-https).
 
 Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), gestion des serveurs enregistrés (`/api/remote-servers/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
 

@@ -8,7 +8,7 @@ Ana bilgisayarda çalışmayı sürdürmek için telefon veya tabletin tarayıc�
 2. Eşleştirme QR kodunu mobil cihazınızla tarayın ve bağlantıyı kullanmaya devam etmek istediğiniz tarayıcıda açın.
 3. Alternatif olarak, [doğrudan erişim](remote-access.md)'yi yapılandırın, ana bilgisayarın ulaşılabilir güvenilir HTTPS URL'sini açın ve sunucu parolasıyla oturum açın.
 
-Uzaktan Kontrol, cihaz eşleştirmeyi gerektirir; doğrudan bağlantılar yönlendirme, ulaşılabilir bir dinleyici ve kimlik doğrulama gerektirir. İş istasyonunuza ulaşmak için telefonda `localhost`'yi kullanmayın. Site verilerini kaybetmek veya tarayıcı profillerini değiştirmek, yeniden oturum açmayı veya eşleştirmeyi gerektirebilir; bkz. [Uzaktan Kontrol](remote-control.md).
+Uzaktan Kontrol, cihaz eşleştirmeyi gerektirir; doğrudan bağlantılar yönlendirme, ulaşılabilir bir dinleyici ve kimlik doğrulama gerektirir. İş istasyonunuza ulaşmak için telefonda `localhost`'yi kullanmayın. Site verilerini kaybetmek veya tarayıcı profillerini değiştirmek, yeniden oturum açmayı veya eşleştirmeyi gerektirebilir; bkz. [Uzaktan Kontrol](remote-control.md). Tünel engelliyse bunun yerine güvenilir bir HTTPS adresinde eşleştirin; bkz. [Doğrudan HTTPS ile eşleştirin](remote-control.md#direct-https).
 
 ## PWA kurun {#install-pwa}
 

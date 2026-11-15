@@ -840,6 +840,8 @@ export interface RemoteControlStatus {
   pairedDevices: number
   lastConnectedAt?: string
   error?: string
+  /** Verified direct HTTPS origins where the host can pair devices without the tunnel; host only. */
+  directOrigins?: string[]
 }
 
 export interface RemoteControlPairing {
@@ -852,6 +854,8 @@ export interface RemoteControlDevice {
   name: string
   createdAt: string
   lastSeenAt: string
+  /** Verified direct HTTPS origin the device paired on; absent for Remote Control tunnel devices. */
+  origin?: string
 }
 
 export interface RemoteControlStartResponse {

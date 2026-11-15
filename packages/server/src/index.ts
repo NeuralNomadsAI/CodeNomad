@@ -9,6 +9,7 @@ import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
 import { parseAllowedOrigins } from "./server/direct-origin"
+import { verifiedHttpsOrigins } from "./remote-control/direct-https"
 import { sessionTimeoutMs } from "./auth/session-manager"
 import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
@@ -503,7 +504,9 @@ async function main() {
   // Decrypted Remote Control requests enter the same application as local ones.
   let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
   let remoteControlPreviewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
+  const allowedOrigins = parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS)
   const remoteControlManager = new RemoteControlManager({
+    directHttpsOrigins: () => verifiedHttpsOrigins(serverMeta, allowedOrigins),
     registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
     lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
     router: () => remoteControlRouter,
@@ -543,7 +546,7 @@ async function main() {
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
-    allowedOrigins: parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS),
+    allowedOrigins,
     memoryStore,
     workspaceManager,
     settings,
