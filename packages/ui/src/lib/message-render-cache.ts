@@ -6,6 +6,9 @@ export interface MessageRenderCache {
   messageItems: Map<string, MessageCacheItem>
   toolItems: Map<string, MessageCacheItem>
   messageBlocks: Map<string, unknown>
+  /** Tool bodies (`${messageId}\u0000${partId}`) whose deferred mount already
+   * released once: a remount renders them at once instead of re-deferring. */
+  releasedToolBodies: Set<string>
 }
 
 const renderCaches = new Map<string, MessageRenderCache>()
@@ -45,7 +48,7 @@ export function getSessionMessageRenderCache(instanceId: string, sessionId: stri
   const key = makeSessionCacheKey(instanceId, sessionId)
   let cache = renderCaches.get(key)
   if (!cache) {
-    cache = { messageItems: new Map(), toolItems: new Map(), messageBlocks: new Map() }
+    cache = { messageItems: new Map(), toolItems: new Map(), messageBlocks: new Map(), releasedToolBodies: new Set() }
     renderCaches.set(key, cache)
   }
   return cache
@@ -72,5 +75,9 @@ export function purgeMessageRenderCache(cache: MessageRenderCache, messageIds: r
   }
   for (const [key, item] of cache.toolItems) {
     if (removed.has(item.messageId)) cache.toolItems.delete(key)
+  }
+  for (const key of cache.releasedToolBodies) {
+    const separator = key.indexOf("\u0000")
+    if (separator > 0 && removed.has(key.slice(0, separator))) cache.releasedToolBodies.delete(key)
   }
 }

@@ -596,6 +596,7 @@ jobs:
           packages/ui/src/stores/opencode-data-idle.test.ts
           packages/ui/src/stores/opencode-projection-frame.test.ts
           packages/ui/src/stores/opencode-data-settlement.test.ts
+          packages/ui/src/stores/opencode-data-round-boundary.test.ts
           packages/ui/src/stores/opencode-data-reconnect.test.ts
           packages/ui/src/stores/opencode-data-trailing-read.test.ts
           packages/ui/src/stores/opencode-data-read-merge.test.ts
