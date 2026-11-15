@@ -97,6 +97,7 @@ import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, isHostOnlyPath, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
 import { registerDirectOriginPolicy } from "./direct-origin"
+import { createSideCarDirectHttpsAccess, isSideCarContentPath, sidecarsOverDirectHttpsEnabled } from "./sidecar-direct-https"
 import { framesNoBody } from "./bodiless-request"
 import { addProxiedHttpMethods } from "./proxied-http-methods"
 import { ROUTER_OPTIONS, routedPath } from "./routed-path"
@@ -245,11 +246,16 @@ export function createHttpServer(deps: HttpServerDeps) {
     if (!token) return false
     try { return Boolean(deps.previewManager.get(decodeURIComponent(token))) } catch { return false }
   }
+  // The host's opt-in exception to host-only SideCars; authentication and the source policy still apply.
+  const sidecarOverDirectHttps = createSideCarDirectHttpsAccess({
+    meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, enabled: () => sidecarsOverDirectHttpsEnabled(deps.settings),
+  })
   app.addHook("onRequest", (request, reply, done) => {
     if (isLocalRequest(request) || isRemoteRequest(request)) return done()
     const pathname = routedPath(request.raw.url ?? "/")
     if (pathname === null) return reply.header("connection", "close").code(400).send({ error: "Invalid request path" })
-    if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)) {
+    if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)
+      && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
       return reply.header("connection", "close").code(404).send({ error: "Not found" })
     }
     done()
@@ -383,7 +389,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   const remotePreviewsAllowed = () => deps.remoteControlManager.previewsAllowed()
-  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed })
+  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed, sidecarsOverDirectHttps: sidecarOverDirectHttps })
   registerEventRoutes(app, {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,
@@ -439,6 +445,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     authManager: deps.authManager,
     logger: proxyLogger,
     allowsSource: request => allowsDirectSource({ raw: request, headers: request.headers }),
+    overDirectHttps: request => sidecarOverDirectHttps({ raw: request, method: request.method ?? "GET", headers: request.headers }),
   })
   const previewUpgrade = setupPreviewWebSocketProxy(app, {
     previewManager: deps.previewManager,
@@ -552,6 +559,8 @@ interface SideCarProxyDeps {
 
 interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
   allowsSource(request: import("http").IncomingMessage): boolean
+  /** The host's opt-in for non-local upgrades from a verified direct HTTPS origin. */
+  overDirectHttps(request: import("http").IncomingMessage): boolean
 }
 
 interface PreviewProxyDeps {
@@ -672,7 +681,7 @@ function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocket
     if (!parsed) {
       return
     }
-    if (!isLocalRequest({ raw: request })) {
+    if (!isLocalRequest({ raw: request }) && !deps.overDirectHttps(request)) {
       rejectUpgrade(socket as Socket, 404, "Not Found")
       return
     }

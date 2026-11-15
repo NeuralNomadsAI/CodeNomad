@@ -19,7 +19,7 @@ import { renameProject } from "../stores/project-names"
 import { LocaleSelector } from "./locale-selector"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
-import { getServerMeta, localRequest } from "../lib/server-meta"
+import { getServerMeta, localRequest, sidecarsAllowed } from "../lib/server-meta"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
@@ -786,7 +786,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </button>
                   </Show>
 
-                  <Show when={localRequest()}><button
+                  <Show when={sidecarsAllowed()}><button
                     type="button"
                     onClick={() => props.onOpenSidecar?.()}
                     class="button-primary w-full flex items-center justify-center text-sm"

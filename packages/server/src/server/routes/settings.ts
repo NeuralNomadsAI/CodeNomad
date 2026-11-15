@@ -8,6 +8,8 @@ import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-co
 import { resolveDefaultInstallation } from "../../opencode-update/shared-installation"
 import { applyConditionalMissionPreferences, MissionPreferenceConflictError } from "../../settings/mission-preference-condition"
 import { SettingsReadError } from "../../settings/yaml-doc-store"
+import { assertHostOnlyServerPatch, HostOnlySettingError } from "../../settings/host-only-settings"
+import { isLocalRequest } from "../../remote-control/request-origin"
 
 interface RouteDeps {
   settings: SettingsService
@@ -70,8 +72,9 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         if (body && typeof body === "object" && "server" in body) {
           const bodyObj = { ...(body as Record<string, unknown>) }
           const serverPatch = bodyObj.server
+          const currentServer = deps.settings.getRawConfigOwner("server")
+          assertHostOnlyServerPatch(isLocalRequest(request), currentServer, serverPatch)
           if (serverPatch && typeof serverPatch === "object") {
-            const currentServer = deps.settings.getRawConfigOwner("server")
             bodyObj.server = enforceSpeechCredentialPairing(serverPatch, currentServer)
           }
           body = bodyObj
@@ -82,7 +85,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         && "opencodeBinary" in body.server) await refreshLoginStart(deps)
       return sanitizeConfigDoc(saved)
     } catch (error) {
-      reply.code(400)
+      reply.code(error instanceof HostOnlySettingError ? 403 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
     }
   })
@@ -113,6 +116,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         const currentOwner = request.params.owner === "server"
           ? deps.settings.getRawConfigOwner("server")
           : undefined
+        if (request.params.owner === "server") assertHostOnlyServerPatch(isLocalRequest(request), currentOwner, request.body ?? {})
         const processed = request.params.owner === "server"
           ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
           : request.body ?? {}
@@ -122,7 +126,8 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         await refreshLoginStart(deps)
       return sanitizeConfigOwner(request.params.owner, saved)
     } catch (error) {
-      reply.code(error instanceof MissionPreferenceConflictError ? 409 : error instanceof SettingsReadError ? 503 : 400)
+      reply.code(error instanceof MissionPreferenceConflictError ? 409 : error instanceof SettingsReadError ? 503
+        : error instanceof HostOnlySettingError ? 403 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
     }
   })

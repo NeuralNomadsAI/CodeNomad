@@ -3,6 +3,7 @@ import { Globe, Loader2, Plus, Trash2 } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
 import { ensureSidecarsLoaded, sidecars, sidecarsLoading } from "../../stores/sidecars"
+import { SideCarsDirectHttpsCard } from "./sidecars-direct-https-card"
 
 function deriveSidecarId(value: string): string {
   return value
@@ -196,6 +197,8 @@ export const SideCarsSettingsSection: Component = () => {
           </Show>
         </div>
       </div>
+
+      <SideCarsDirectHttpsCard />
     </div>
   )
 }

@@ -735,6 +735,8 @@ export const settingsMessages = {
   "sidecars.form.prefixMode.strip": "移除前缀",
   "sidecars.form.prefixMode.preserve": "保留前缀",
   "sidecars.form.add": "添加 SideCar",
+  "sidecars.directHttps.title": "通过 HTTPS 打开 SideCars",
+  "sidecars.directHttps.info": "在此服务器的 HTTPS 地址或 CODENOMAD_ALLOWED_ORIGINS 中已登录的浏览器可以打开 SideCars。普通 HTTP 和远程控制仍仅限主机使用。",
   "sidecars.kind.port": "端口",
   "sidecars.status.running": "运行中",
   "sidecars.status.stopped": "已停止",

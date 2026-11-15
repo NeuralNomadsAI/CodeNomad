@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { For, Show, createEffect, createMemo, onMount, type Component } from "solid-js"
 import { Globe, Square } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { getServerMeta, localRequest } from "../lib/server-meta"
+import { getServerMeta, sidecarsAllowed } from "../lib/server-meta"
 import { ensureSidecarsLoaded, sidecars, sidecarsLoading } from "../stores/sidecars"
 
 interface SideCarPickerDialogProps {
@@ -17,13 +17,13 @@ export const SideCarPickerDialog: Component<SideCarPickerDialogProps> = (props) 
   const orderedSidecars = createMemo(() => Array.from(sidecars().values()).sort((a, b) => a.name.localeCompare(b.name)))
 
   createEffect(() => {
-    if (props.open && localRequest()) {
+    if (props.open && sidecarsAllowed()) {
       void ensureSidecarsLoaded()
     }
   })
 
   return (
-    <Dialog open={props.open && localRequest()} onOpenChange={(open) => !open && props.onClose()}>
+    <Dialog open={props.open && sidecarsAllowed()} onOpenChange={(open) => !open && props.onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">

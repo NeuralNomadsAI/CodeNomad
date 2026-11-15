@@ -135,6 +135,38 @@ for (const url of ["/api/storage/config", "/api/storage/config/server"]) {
   })
 }
 
+it("only host-local requests change the SideCar direct HTTPS opt-in, through either config route", async t => {
+  const root = mkdtempSync(path.join(tmpdir(), "codenomad-host-only-setting-"))
+  const logger = { child() { return this }, warn() {}, info() {} } as unknown as Logger
+  const location = resolveConfigLocation(root), app = Fastify()
+  t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
+  writeFileSync(location.configYamlPath, stringify({ server: { logLevel: "INFO" } }))
+  const settings = new RealSettingsService(location, undefined, logger)
+  registerSettingsRoutes(app, { settings, logger })
+  const stored = () => parse(readFileSync(location.configYamlPath, "utf8")).server?.sidecarsOverDirectHttps
+  const patch = (remoteAddress: string, url: string, payload: unknown) => app.inject({ method: "PATCH", url, remoteAddress, payload: payload as object })
+  const lan = "192.0.2.20"
+  const enable = [["/api/storage/config/server", { sidecarsOverDirectHttps: true }], ["/api/storage/config", { server: { sidecarsOverDirectHttps: true } }]] as const
+  for (const [url, payload] of enable) {
+    const refused = await patch(lan, url, payload)
+    assert.equal(refused.statusCode, 403, `${url}: ${refused.body}`)
+    assert.equal(stored(), undefined)
+  }
+  // Other server settings stay writable remotely, and writing the current value is no change.
+  assert.equal((await patch(lan, "/api/storage/config/server", { logLevel: "WARN", sidecarsOverDirectHttps: false })).statusCode, 200)
+  assert.equal((await patch("127.0.0.1", ...enable[0])).statusCode, 200)
+  assert.equal(stored(), true)
+  for (const [url, payload] of [["/api/storage/config/server", { sidecarsOverDirectHttps: false }], ["/api/storage/config/server", { sidecarsOverDirectHttps: null }],
+    ["/api/storage/config", { server: null }], ["/api/storage/config", { server: { sidecarsOverDirectHttps: "yes" } }]] as const) {
+    assert.equal((await patch(lan, url, payload)).statusCode, 403, `${url} ${JSON.stringify(payload)}`)
+    assert.equal(stored(), true)
+  }
+  assert.equal((await patch(lan, "/api/storage/config", { server: { logLevel: "ERROR" } })).statusCode, 200)
+  assert.deepEqual(parse(readFileSync(location.configYamlPath, "utf8")).server, { logLevel: "ERROR", sidecarsOverDirectHttps: true })
+  assert.equal((await patch("127.0.0.1", "/api/storage/config", { server: { sidecarsOverDirectHttps: false } })).statusCode, 200)
+  assert.equal(stored(), false)
+})
+
 it("both explicit executable settings paths refresh the login start after save; unrelated settings and reads stay passive", async t => {
   const app = Fastify(), order: string[] = []
   t.after(() => app.close())
