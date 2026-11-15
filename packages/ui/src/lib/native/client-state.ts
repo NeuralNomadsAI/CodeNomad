@@ -11,6 +11,8 @@ export type NativeClientStateLoadResult = {
   restoreEnabled: boolean
   snapshot: unknown | null
   partitionProtocolVersion?: 1
+  /** A browser tab's sessionStorage state: its layout values stay in shared localStorage. */
+  webSession?: true
 }
 export type NativeClientStatePartitionCommit = {
   protocolVersion: 1
@@ -63,7 +65,7 @@ export async function loadNativeClientState(): Promise<NativeClientStateLoadResu
   const web = loadWebSessionClientState()
   if (!web) return SECONDARY_CLIENT_STATE
   webSessionOwned = true
-  return { isPrimary: true, ...web }
+  return { isPrimary: true, ...web, webSession: true }
 }
 // A plain browser tab persists in its own sessionStorage (`web-session-client-state.ts`).
 const persistClientState = (web: () => boolean, native: () => Promise<boolean>): Promise<boolean> =>
