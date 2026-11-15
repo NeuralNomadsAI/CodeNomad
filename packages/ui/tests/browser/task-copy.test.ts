@@ -97,6 +97,36 @@ test("a background subagent's header stays running until the child session settl
   // The launch acknowledgement never completes the card: the child session still owns the work.
   assert.equal(await parent.getAttribute("data-status"), "running")
   assert.equal(await parent.getAttribute("aria-label"), "Running")
+  // The live timer counts from the delegation start, ticks, and survives re-entering the session.
+  const duration = page.locator('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')
+  await duration.waitFor()
+  assert.equal(await duration.getAttribute("data-live"), "true")
+  const durationSeconds = () => page.evaluate(() => {
+    const text = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')?.textContent ?? ""
+    const match = /^(\d+)m (\d+)s$/.exec(text)
+    return match ? Number(match[1]) * 60 + Number(match[2]) : NaN
+  })
+  const beforeLeave = await durationSeconds()
+  assert.ok(Number.isFinite(beforeLeave) && beforeLeave >= 60, `the duration counts from the delegation start (${beforeLeave}s)`)
+  await page.waitForFunction(start => {
+    const text = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')?.textContent ?? ""
+    const match = /^(\d+)m (\d+)s$/.exec(text)
+    return Boolean(match && Number(match[1]) * 60 + Number(match[2]) > start)
+  }, beforeLeave, { timeout: 5_000 })
+  await page.evaluate(() => (window as any).fixture.selectSession("other"))
+  for (let index = 0; index < 5; index++) {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  }
+  await page.evaluate(() => (window as any).fixture.selectSession("parent"))
+  await parent.waitFor()
+  assert.equal(await parent.getAttribute("data-status"), "running", "re-entering keeps the running state")
+  const afterReturn = await durationSeconds()
+  assert.ok(Number.isFinite(afterReturn) && afterReturn >= beforeLeave, `the timer resumes from the delegation start, not from remount (${afterReturn}s >= ${beforeLeave}s)`)
+  await page.waitForFunction(start => {
+    const text = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')?.textContent ?? ""
+    const match = /^(\d+)m (\d+)s$/.exec(text)
+    return Boolean(match && Number(match[1]) * 60 + Number(match[2]) > start)
+  }, afterReturn, { timeout: 5_000 })
   // The child's first termination is what marks the card completed.
   await page.evaluate(() => (window as any).fixture.report("completed", "Final answer: 42"))
   await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .tool-call-header-status')?.getAttribute("data-status") === "completed")

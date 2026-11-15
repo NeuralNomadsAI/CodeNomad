@@ -649,8 +649,10 @@ export default function ToolCall(props: ToolCallProps) {
   const headerStatus = createMemo(() => renderer().getHeaderStatus?.(headerRendererContext) ?? null)
   const displayStatus = (): ToolState["status"] | "" => headerStatus()?.status ?? toolState()?.status ?? ""
   const displayEndedAt = () => {
+    // An override owns the end fully: its part already completed at the launch
+    // acknowledgement, and that instant must never freeze the live duration.
     const override = headerStatus()
-    if (override?.endedAt) return override.endedAt
+    if (override) return override.endedAt
     const partStatus = toolState()?.status
     return partStatus === "completed" || partStatus === "error" ? getPartEndedAt(toolCallMemo() as any) : undefined
   }
