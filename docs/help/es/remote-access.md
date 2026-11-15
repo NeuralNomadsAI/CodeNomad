@@ -54,7 +54,7 @@ No supongas que el puerto es 9898 o 9899: los puertos omitidos pueden cambiar si
 
 ## Actualizar {#upgrading}
 
-Vuelve a iniciar sesión después de actualizar. Para un alias de nombre de host, un proxy inverso o una interfaz alojada por separado, configura `CODENOMAD_ALLOWED_ORIGINS` en el backend con los orígenes de confianza de la interfaz (esquema, nombre de host y puerto). Los clientes nativos de la LAN deben enviar una cabecera `Origin` permitida en las solicitudes de modificación.
+Vuelve a iniciar sesión después de actualizar. Para un alias de nombre de host, un proxy inverso o una interfaz alojada por separado, configura `CODENOMAD_ALLOWED_ORIGINS` en el backend con los orígenes de confianza de la interfaz (esquema, nombre de host y puerto). Los clientes nativos de la LAN deben enviar una cabecera `Origin` permitida en las solicitudes de modificación. Sus orígenes HTTPS también permiten al anfitrión emparejar dispositivos sin el túnel; consulta [Emparejar por HTTPS directo](remote-control.md#direct-https).
 
 Usa una conexión loopback para las operaciones reservadas al anfitrión: contenido de SideCar (`/sidecars/`) y WebSockets, gestión de Control remoto (`/api/remote-control/`), puente de plugins (`/api/opencode-plugin/`), proxies remotos (`/api/remote-proxy/`), gestión de servidores guardados (`/api/remote-servers/`), cambios de contraseña e inicialización por token. Estas operaciones requieren loopback incluso con una sesión autenticada mediante acceso directo por LAN. El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido.
 

@@ -59,7 +59,7 @@ CodeNomad control APIs live under `/api/*`. Important routes include:
 - `/api/events` and `/api/client-connections/pong`
 - `/api/storage`, `/api/settings`, `/api/filesystem`, `/api/speech`
 - `/api/opencode-plugin/automation`, authenticated by a per-process loopback token and restricted to CodeNomad-owned locations
-- `/api/remote-control/*`, managed from the host only; `POST /api/remote-control/pair` and `/remote-pair` answer only through Remote Control ([REMOTE_CONTROL.md](REMOTE_CONTROL.md))
+- `/api/remote-control/*`, managed from the host only; `POST /api/remote-control/pair` and `/remote-pair` answer only through Remote Control and verified direct HTTPS origins ([REMOTE_CONTROL.md](REMOTE_CONTROL.md#direct-https-devices))
 
 Authentication and Remote Control admission judge `routedPath()` (`server/routed-path.ts`), the path Fastify's router matches (`/%61pi/x` routes as `/api/x`), and refuse targets it would reinterpret. Never base an access decision on the raw request target.
 
@@ -141,7 +141,7 @@ One active authentication observation belongs to that captured client/principal,
 | Local relay and browse/connect/forget | `guardLocalBackendCaller`: local non-ingress socket plus exact loopback self Origin; same-origin GET/HEAD may instead carry a loopback self Referer and `Sec-Fetch-Site: same-origin`. Trusted same-origin SideCars share this authority. |
 | Saved remote client | Backend-shared authority captured at admission; exact saved origin and confirmed TLS policy; credentials in `remote-server-credentials.json` beside the config with mode 0600. Each client owns an AbortController; request cancellation composes with it through uploads and streamed response bodies. |
 | Profile changes and removal | Synchronous `storage.stateChanged` reconciliation revokes the generation, closes changed/removed clients and pending connections, deletes credentials, and fences queued dispatch and pending authentication before persistence. Forget revokes every listener; backend shutdown closes their shared owner. |
-| Remote device | The remote gate authenticates the private device credential on each request, admits the reviewed method/path catalog, marks device scope on both listeners, and retains sockets for revocation, eviction, Stop and shutdown. Browser pairing judges ingress-socket membership; browser Origin admission retains its own policy. |
+| Remote device | The remote gate authenticates the private device credential on each request, admits the reviewed method/path catalog, marks device scope on both listeners, and retains sockets for revocation, eviction, Stop and shutdown. Browser pairing judges ingress-socket membership or a verified direct HTTPS origin; browser Origin admission retains its own policy. |
 | Response publication | Selected safe response headers, private-cookie removal, `no-store`, sandbox CSP and `nosniff`; decoded transfer lengths follow decoded bytes. Local caller disconnect closes the upstream transfer. |
 
 The UI boundary registry below classifies relay construction and URL resolution as retained-client operations; existing A/P callers supply the same cancellation signals through this transport. A sent mutation can settle remotely while its revoked caller loses publication authority.

@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify"
 import fs from "fs"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
-import { isRemoteRequest } from "../../remote-control/request-origin"
+import { isRefusedDeviceRequest, isRemoteRequest } from "../../remote-control/request-origin"
 
 interface RouteDeps {
   authManager: AuthManager
@@ -91,7 +91,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     const session = deps.authManager.getSessionFromRequest(request)
     if (!session) {
       // Remote Control devices recover by pairing again; password login is host-only.
-      reply.send(isRemoteRequest(request) ? { authenticated: false, pairingRequired: true } : { authenticated: false })
+      reply.send(isRemoteRequest(request) || isRefusedDeviceRequest(request) ? { authenticated: false, pairingRequired: true } : { authenticated: false })
       return
     }
     reply.send({ authenticated: true, ...deps.authManager.getStatus() })

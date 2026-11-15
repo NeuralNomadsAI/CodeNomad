@@ -9,6 +9,7 @@ import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../../server/http-server"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
 import { RemoteDeviceRegistry } from "../devices"
+import { verifiedHttpsOrigins } from "../direct-https"
 import { RemoteControlManager } from "../manager"
 
 export const FAKE_TUNNEL_HOST = "codenomad-test.device.tunnel.test"
@@ -52,7 +53,9 @@ export async function startRemoteSurface(t: TestContext, options: {
   let app: ReturnType<typeof createHttpServer>["instance"] | undefined
   let previewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
   const previewManager = new PreviewManager()
+  const serverMeta = { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] }
   const manager = new RemoteControlManager({
+    directHttpsOrigins: () => verifiedHttpsOrigins(serverMeta, options.allowedOrigins),
     registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json"), options.now),
     router: () => (app ? (request, response) => app!.routing(request, response) : null),
     previewUpgrade: () => previewUpgrade,
@@ -87,7 +90,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     fileSystemBrowser: options.browse ? { browse: () => ({ entries: [{ name: "app", path: "/srv/app", type: "directory" }],
       metadata: { scope: "unrestricted", pathKind: "absolute", currentPath: "/srv", rootPath: "/", homePath: "/srv", displayPath: "/srv" } }) } as never : stub,
     eventBus: stub,
-    serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
+    serverMeta: serverMeta as never,
     instanceStore: stub,
     speechService: stub,
     sidecarManager: stub,

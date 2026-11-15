@@ -9,9 +9,23 @@ Fernsteuerung ermöglicht einem gekoppelten Browser- oder Desktop-Client die Nut
 3. Scannen Sie unter **Weiteres Gerät verbinden** den QR-Code oder wählen Sie **Link kopieren** und öffnen Sie diesen Einmallink auf dem vorgesehenen Gerät.
 4. Behalten Sie die Websitedaten des gekoppelten Browsers. Öffnen Sie die Tunneladresse erneut zur Wiederverbindung, solange das Backend läuft.
 
-Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn als Zugangsdaten: Wer ihn einlöst, kann ein gekoppeltes Gerät werden. Der Code steht im URL-Fragment, nicht in der Abfragezeichenfolge. **Neuen Kopplungslink erstellen** macht den vorherigen ungenutzten Link sofort ungültig. Stop, Backend-Ende und Tunnelfehler stornieren offene Kopplungslinks.
+Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn als Zugangsdaten: Wer ihn einlöst, kann ein gekoppeltes Gerät werden. Der Code steht im URL-Fragment, nicht in der Abfragezeichenfolge. **Neuen Kopplungslink erstellen** macht den vorherigen ungenutzten Link sofort ungültig. Das Backend-Ende storniert den offenen Kopplungslink; Stop und Tunnelfehler stornieren einen Tunnel-Link.
 
 Um einen weiteren CodeNomad-Desktop zu koppeln, wählen Sie auf dessen Startseite **CodeNomad-Server verbinden**, fügen den Link in **Server-URL** ein und wählen **Verbinden**. Ein Kopplungslink öffnet sein Fenster auch über **Speichern**, weil das Öffnen den Code einlöst. Nur die Tunnel-Origin wird als Lesezeichen gespeichert; der Code bleibt nicht erhalten. TLS-Prüfung bleibt für Kopplungslinks aktiviert.
+
+## Über direktes HTTPS koppeln {#direct-https}
+
+Wenn der Tunnel blockiert ist, das Backend aber über vertrauenswürdiges HTTPS erreichbar ist, etwa über einen Reverse-Proxy mit echtem Zertifikat, können Geräte stattdessen über diese Adresse koppeln. Zulässig sind die eigenen HTTPS-Adressen dieses Backends und die HTTPS-Origins in `CODENOMAD_ALLOWED_ORIGINS` (siehe [Aktualisieren](remote-access.md#upgrading)); Loopback-Namen und einfaches HTTP koppeln nie. Die Fernsteuerung muss nicht gestartet sein.
+
+1. Öffnen Sie auf dem Host **Einstellungen → Remote-Zugriff → Fernsteuerung**.
+2. Wählen Sie unter **Direkte HTTPS-Kopplung** bei mehreren Einträgen die **HTTPS-Adresse** und dann **HTTPS-Kopplungslink erstellen**.
+3. Öffnen Sie den Link auf dem Gerät wie einen Tunnel-Link.
+
+Für den Link gelten dieselben Regeln (fünf Minuten, einmalig); er ersetzt jeden ungenutzten Link, und wiederholte falsche Codes werden gedrosselt. Ein Reverse-Proxy muss vertrauenswürdiges TLS terminieren, die ursprünglichen Header `Host` und `Origin` weitergeben und das Backend über Loopback oder ein geschütztes Netz erreichen.
+
+Ein solches Gerät verbindet sich nur über seine HTTPS-Adresse, nie über den Tunnel, und **Gekoppelte Geräte** zeigt diese Adresse unter seinem Namen. Das Beenden der Fernsteuerung storniert den Link nicht und trennt diese Geräte nicht; **Widerrufen**, 30 Tage ohne Nutzung, das Limit von 32 Geräten oder das Entfernen der Adresse aus der Konfiguration beenden ihren Zugriff. Ein Browser mit widerrufenen oder abgelaufenen Gerätezugangsdaten für diese Adresse kann nicht auf das Serverpasswort ausweichen: Koppeln Sie erneut oder löschen Sie die Websitedaten, um sich mit dem Passwort anzumelden.
+
+Diese Geräte haben dieselbe [Oberfläche](#remote-surface) wie Tunnel-Geräte und erhalten nie Loopback-Rechte, auch nicht über einen Proxy auf dem Host.
 
 ## Gekoppelte Geräte verwalten {#paired-devices}
 
@@ -41,7 +55,7 @@ Die Wiederherstellung bewahrt die geöffnete Seite und Entwürfe; sie wiederholt
 | --- | --- |
 | Fernsteuerung starten | Verbindet dieses Backend und merkt die Auswahl für künftige Starts. |
 | Remote-Browser schließen | Stoppt weder Host-Backend noch widerruft es das Gerät. |
-| Fernsteuerung beenden | Trennt den Zugriff und löscht automatisches Fortsetzen beim Start; behält Gerätedatensätze. |
+| Fernsteuerung beenden | Trennt den Tunnelzugriff und löscht automatisches Fortsetzen beim Start; behält Gerätedatensätze. |
 | Backend-Ende / letztes Desktop-Fenster schließt und App endet | Fernsteuerung geht offline. OpenCodes gemeinsamer Dienst kann weiterlaufen, kann diese Oberfläche aber nicht durch ein gestopptes Backend bereitstellen. |
 | Start nach aktiviert gelassener Fernsteuerung | Verbindet im Hintergrund ohne neuen Kopplungslink. Niemals gestartete Installationen aktivieren sich nicht selbst. |
 | Fehlgeschlagenes Fortsetzen oder schwerer Tunnelfehler | Gemerkte Auswahl bleibt und der Host zeigt den Fehler; das Aktualisieren-Symbol der Fernsteuerungskarte liest ihren Zustand erneut. **Fernsteuerung starten** versucht es sofort erneut; **Fernsteuerung beenden** löscht die Auswahl. Andernfalls versucht es ein späterer Start erneut. |

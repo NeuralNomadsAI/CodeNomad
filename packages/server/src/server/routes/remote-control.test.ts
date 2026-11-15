@@ -11,6 +11,8 @@ function manager() {
     createPairing: () => { throw new Error("Remote Control is not connected") },
     devices: () => [],
     revokeDevice: () => false,
+    directHttpsOrigins: () => [],
+    createDirectPairing: () => { throw new Error("This origin cannot pair devices") },
   } as unknown as RemoteControlManager
 }
 

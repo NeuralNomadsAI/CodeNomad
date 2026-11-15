@@ -54,7 +54,7 @@ Setzen Sie Port 9898 oder 9899 nicht voraus: Nicht angegebene Ports können bei 
 
 ## Aktualisieren {#upgrading}
 
-Melden Sie sich nach der Aktualisierung erneut an. Setzen Sie für einen Hostnamen-Alias, Reverse-Proxy oder eine separat gehostete Oberfläche `CODENOMAD_ALLOWED_ORIGINS` im Backend auf die vertrauenswürdigen Origins der Oberfläche (Schema, Hostname und Port). Native LAN-Clients müssen bei schreibenden Anfragen einen erlaubten `Origin`-Header mitsenden.
+Melden Sie sich nach der Aktualisierung erneut an. Setzen Sie für einen Hostnamen-Alias, Reverse-Proxy oder eine separat gehostete Oberfläche `CODENOMAD_ALLOWED_ORIGINS` im Backend auf die vertrauenswürdigen Origins der Oberfläche (Schema, Hostname und Port). Native LAN-Clients müssen bei schreibenden Anfragen einen erlaubten `Origin`-Header mitsenden. Seine HTTPS-Origins erlauben dem Host außerdem, Geräte ohne Tunnel zu koppeln; siehe [Über direktes HTTPS koppeln](remote-control.md#direct-https).
 
 Verwenden Sie eine Loopback-Verbindung für dem Host vorbehaltene Vorgänge: SideCar-Inhalte (`/sidecars/`) und WebSockets, Fernsteuerungsverwaltung (`/api/remote-control/`), Plugin-Brücke (`/api/opencode-plugin/`), Remote-Proxys (`/api/remote-proxy/`), Verwaltung gespeicherter Server (`/api/remote-servers/`), Passwortänderungen und Token-Ersteinrichtung. Diese Vorgänge erfordern auch bei angemeldetem direktem LAN-Zugriff Loopback. Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar.
 

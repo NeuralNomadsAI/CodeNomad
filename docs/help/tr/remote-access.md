@@ -54,7 +54,7 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 ## Yükseltme {#upgrading}
 
-Yükseltmeden sonra yeniden oturum açın. Ana bilgisayar adı takma adı, ters proxy veya ayrı barındırılan arayüz için arka uçta `CODENOMAD_ALLOWED_ORIGINS` değerini arayüzün güvenilir origin adreslerine (şema, ana bilgisayar adı ve port) ayarlayın. Yerel LAN istemcileri, değişiklik isteklerinde izin verilen bir `Origin` başlığı göndermelidir.
+Yükseltmeden sonra yeniden oturum açın. Ana bilgisayar adı takma adı, ters proxy veya ayrı barındırılan arayüz için arka uçta `CODENOMAD_ALLOWED_ORIGINS` değerini arayüzün güvenilir origin adreslerine (şema, ana bilgisayar adı ve port) ayarlayın. Yerel LAN istemcileri, değişiklik isteklerinde izin verilen bir `Origin` başlığı göndermelidir. HTTPS origin adresleri, ana bilgisayarın cihazları tünel olmadan eşleştirmesine de olanak tanır; bkz. [Doğrudan HTTPS ile eşleştirin](remote-control.md#direct-https).
 
 Ana bilgisayara özel işlemler için loopback bağlantısı kullanın: SideCar içeriği (`/sidecars/`) ve WebSocket'ler, Uzaktan Kontrol yönetimi (`/api/remote-control/`), eklenti köprüsü (`/api/opencode-plugin/`), uzak proxy'ler (`/api/remote-proxy/`), kayıtlı sunucu yönetimi (`/api/remote-servers/`), parola değişikliği ve belirteçle ilk kurulum. Doğrudan LAN erişimiyle oturum açıldığında da bu işlemler loopback gerektirir. Etkin önizleme içeriği (`/previews/`), geçerli bir yetenek belirteciyle doğrudan LAN erişiminde kullanılabilir.
 

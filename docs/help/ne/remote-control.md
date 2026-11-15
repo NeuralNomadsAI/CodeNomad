@@ -9,9 +9,23 @@ Remote Control ले paired browser वा desktop client लाई inbound net
 3. **अर्को उपकरण जडान गर्नुहोस्** मा QR scan वा **लिंक प्रतिलिपि गर्नुहोस्** रोजेर त्यो one-use link अभिप्रेत device मा खोल्नुहोस्।
 4. paired browser को site data राख्नुहोस्। backend चल्दा reconnect गर्न tunnel address फेरि खोल्नुहोस्।
 
-link **पाँच मिनेट** मान्य हुन्छ र **एकपटक** सफल हुन्छ। credential झैं लिनुहोस्: प्रयोग गर्ने जोकोही paired device बन्न सक्छ। code URL fragment मा हुन्छ, query string मा होइन। **नयाँ जोडी लिंक बनाउनुहोस्** ले अघिल्लो unused link तुरुन्त अमान्य गर्छ। Stop, backend shutdown र tunnel failure ले बाँकी pairing link रद्द गर्छन्।
+link **पाँच मिनेट** मान्य हुन्छ र **एकपटक** सफल हुन्छ। credential झैं लिनुहोस्: प्रयोग गर्ने जोकोही paired device बन्न सक्छ। code URL fragment मा हुन्छ, query string मा होइन। **नयाँ जोडी लिंक बनाउनुहोस्** ले अघिल्लो unused link तुरुन्त अमान्य गर्छ। backend shutdown ले बाँकी pairing link रद्द गर्छ; Stop र tunnel failure ले tunnel link रद्द गर्छन्।
 
 अर्को desktop CodeNomad pair गर्न त्यसको गृह पृष्ठमा **CodeNomad सर्भर जडान गर्नुहोस्** रोजी **सर्भर URL** मा link paste गरेर **जडान गर्नुहोस्** रोज्नुहोस्। pairing link **बचत गर्नुहोस्** बाट पनि आफ्नो विन्डो खोल्छ, किनकि खोल्दा नै code खपत हुन्छ। bookmark मा tunnel origin मात्र बचत हुन्छ; code रहँदैन। pairing link मा TLS verification enabled रहन्छ।
+
+## direct HTTPS मार्फत pair गर्नुहोस् {#direct-https}
+
+tunnel block भएको तर backend विश्वसनीय HTTPS मार्फत पुग्न सकिने अवस्थामा, जस्तै वास्तविक certificate भएको reverse proxy पछाडि, device हरू त्यो ठेगानामा pair गर्न सक्छन्। योग्य ठेगानाहरू यस backend का आफ्नै HTTPS ठेगाना र `CODENOMAD_ALLOWED_ORIGINS` मा भएका HTTPS origin हुन् ([स्तरोन्नति](remote-access.md#upgrading) हेर्नुहोस्); loopback नाम र plain HTTP कहिल्यै pair हुँदैनन्। रिमोट कन्ट्रोल सुरु गर्नु पर्दैन।
+
+1. host मा **सेटिङहरू → रिमोट पहुँच → रिमोट कन्ट्रोल** खोल्नुहोस्।
+2. **प्रत्यक्ष HTTPS जोडी** अन्तर्गत, धेरै भए **HTTPS ठेगाना** छान्नुहोस्, अनि **HTTPS जोडी लिंक बनाउनुहोस्** छान्नुहोस्।
+3. tunnel link जस्तै device मा link खोल्नुहोस्।
+
+link मा उही पाँच मिनेट र एकपटक प्रयोगका नियम लागू हुन्छन् र यसले unused link प्रतिस्थापन गर्छ; बारम्बार गलत code rate-limit हुन्छन्। reverse proxy ले विश्वसनीय TLS terminate गर्नुपर्छ, मूल `Host` र `Origin` header पठाउनुपर्छ, र loopback वा सुरक्षित network मार्फत backend पुग्नुपर्छ।
+
+यस्तो device आफ्नो HTTPS ठेगानाबाट मात्र जोडिन्छ, tunnel बाट कहिल्यै होइन, र **जोडिएका उपकरणहरू** ले उसको नामतल त्यो ठेगाना देखाउँछ। रिमोट कन्ट्रोल रोक्दा link रद्द हुँदैन र यी device disconnect हुँदैनन्; **हटाउनुहोस्**, 30 दिन प्रयोग नहुनु, 32-device सीमा वा configuration बाट ठेगाना हटाउँदा तिनको पहुँच अन्त्य हुन्छ। त्यो ठेगानामा revoke वा expire भएको device credential पठाउने browser server password मा फर्कन सक्दैन: फेरि pair गर्नुहोस्, वा password ले sign in गर्न site data मेटाउनुहोस्।
+
+यी device को [surface](#remote-surface) tunnel device जस्तै हो र host मा रहेको proxy मार्फत पनि loopback privilege कहिल्यै पाउँदैनन्।
 
 ## paired device व्यवस्थापन {#paired-devices}
 
@@ -41,7 +55,7 @@ recovery ले खुला पृष्ठ र मस्यौदा जोग
 | --- | --- |
 | Remote Control सुरु | यस backend लाई जोड्छ र भावी launch का लागि चयन सम्झिन्छ। |
 | remote browser बन्द | host backend रोक्दैन वा device revoke गर्दैन। |
-| Remote Control रोक्ने | पहुँच disconnect र automatic launch-resume हटाउँछ; device record राख्छ। |
+| Remote Control रोक्ने | tunnel पहुँच disconnect र automatic launch-resume हटाउँछ; device record राख्छ। |
 | backend shutdown / अन्तिम desktop window बन्द भई app quit | Remote Control offline हुन्छ। shared OpenCode सेवा चलिरहन सक्छ, तर रोकिएको backend बाट यो UI दिन सक्दैन। |
 | Remote Control started छोडेपछि launch | नयाँ pairing link नदिई background मा reconnect हुन्छ। कहिल्यै start नगरिएका installation आफैं enabled हुँदैनन्। |
 | resume असफल वा fatal tunnel error | सम्झिएको चयन रहन्छ र host ले त्रुटि देखाउँछ; Remote Control card को refresh icon ले यसको अवस्था फेरि पढ्छ। **रिमोट कन्ट्रोल सुरु गर्नुहोस्** ले अहिले नै retry गर्छ; **रिमोट कन्ट्रोल रोक्नुहोस्** ले चयन हटाउँछ। अन्यथा पछिको launch ले retry गर्छ। |

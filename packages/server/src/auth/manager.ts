@@ -5,7 +5,7 @@ import { AuthStore } from "./auth-store"
 import { TokenManager } from "./token-manager"
 import { SessionManager } from "./session-manager"
 import { parseCookies } from "./http-auth"
-import { isLocalRequest, isRemoteRequest, remoteDeviceOf } from "../remote-control/request-origin"
+import { isLocalRequest, isRefusedDeviceRequest, isRemoteRequest, remoteDeviceOf } from "../remote-control/request-origin"
 
 export const BOOTSTRAP_TOKEN_STDOUT_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:" as const
 export const DEFAULT_AUTH_USERNAME = "codenomad" as const
@@ -119,7 +119,7 @@ export class AuthManager {
     // Device scope applies on both listeners, even when local auth is skipped.
     const deviceId = remoteDeviceOf(request)
     if (deviceId) return { username: this.init.username, sessionId: `remote-device:${deviceId}` }
-    if (isRemoteRequest(request)) return null
+    if (isRemoteRequest(request) || isRefusedDeviceRequest(request)) return null
     return this.getSessionFromHeaders(request.headers)
   }
 

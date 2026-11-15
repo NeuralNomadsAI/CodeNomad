@@ -9,9 +9,23 @@ Uzaktan Kontrol, eşleştirilmiş bir tarayıcının veya masaüstü istemcisini
 3. **Başka bir cihaz bağla** altında, QR kodunu tarayın veya **Bağlantıyı kopyala** öğesini seçin, ardından amaçlanan cihazda o tek kullanımlık bağlantıyı açın.
 4. Eşleştirilen tarayıcının site verilerini saklayın. Arka uç çalışırken yeniden bağlanmak için tünel adresini yeniden açın.
 
-Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Durdurma, arka uç kapatma ve tünel arızası, bekleyen eşleştirme bağlantılarını iptal eder.
+Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Arka uç kapatma bekleyen eşleştirme bağlantısını iptal eder; durdurma ve tünel arızası bir tünel bağlantısını iptal eder.
 
 Başka masaüstü CodeNomad istemcisini eşleştirmek için onun ana sayfasında **CodeNomad Sunucusuna Bağlan** öğesini seçin, bağlantıyı **Sunucu URL'si** alanına yapıştırıp **Bağlan** eylemini seçin. Eşleştirme bağlantısı **Kaydet** ile bile penceresini açar, çünkü bağlantıyı açmak kodu tüketir. Yer imi yalnızca tünelin origin adresini saklar; kod saklanmaz. Eşleştirme bağlantılarında TLS doğrulaması etkin kalır.
+
+## Doğrudan HTTPS ile eşleştirin {#direct-https}
+
+Tünel engellendiğinde ama arka uca güvenilir HTTPS ile ulaşılabildiğinde, örneğin gerçek sertifikalı bir ters proxy üzerinden, cihazlar bu adreste eşleştirilebilir. Uygun adresler bu arka ucun kendi HTTPS adresleri ve `CODENOMAD_ALLOWED_ORIGINS` içindeki HTTPS origin adresleridir (bkz. [Yükseltme](remote-access.md#upgrading)); geri döngü adları ve düz HTTP asla eşleştirmez. Uzaktan Kontrolün başlatılması gerekmez.
+
+1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesini açın.
+2. **Doğrudan HTTPS eşleştirme** altında, birden fazlaysa **HTTPS adresi** seçin, ardından **HTTPS eşleştirme bağlantısı oluştur** öğesini seçin.
+3. Bağlantıyı, tünel bağlantısında olduğu gibi cihazda açın.
+
+Bağlantı aynı beş dakika ve tek kullanım kurallarına uyar ve kullanılmayan bağlantının yerini alır; tekrarlanan yanlış kodlar sınırlandırılır. Ters proxy güvenilir TLS'yi sonlandırmalı, özgün `Host` ve `Origin` başlıklarını iletmeli ve arka uca geri döngü veya korumalı bir ağ üzerinden ulaşmalıdır.
+
+Böyle bir cihaz yalnızca HTTPS adresi üzerinden bağlanır, asla tünel üzerinden bağlanmaz; **Eşleştirilmiş cihazlar** bu adresi adının altında gösterir. Uzaktan Kontrolü durdurmak bağlantıyı iptal etmez ve bu cihazların bağlantısını kesmez; **İptal et**, 30 gün kullanılmama, 32 cihaz sınırı veya adresin yapılandırmadan kaldırılması erişimlerini sonlandırır. Bu adreste iptal edilmiş veya süresi dolmuş bir cihaz kimlik bilgisi sunan tarayıcı sunucu parolasına geri dönemez: yeniden eşleştirin veya parolayla oturum açmak için site verilerini temizleyin.
+
+Bu cihazlar tünel cihazlarıyla aynı [yüzeye](#remote-surface) sahiptir ve ana bilgisayardaki bir proxy üzerinden bile geri döngü ayrıcalıkları kazanmaz.
 
 ## Eşleştirilmiş cihazları yönetin {#paired-devices}
 
@@ -41,7 +55,7 @@ Kurtarma, açık sayfayı ve taslakları korur; başarısız bir eylemi tekrarla
 | --- | --- |
 | Uzaktan Kontrolü başlat | Bu arka ucu bağlar ve sonraki başlatmalar için seçimi hatırlar. |
 | Uzak tarayıcıyı kapatın | Ana bilgisayar arka ucunu durdurmaz veya cihazı iptal etmez. |
-| Uzaktan Kontrolü durdur | Erişimi keser ve başlangıçta otomatik sürdürme tercihini temizler; cihaz kayıtlarını korur. |
+| Uzaktan Kontrolü durdur | Tünel erişimini keser ve başlangıçta otomatik sürdürme tercihini temizler; cihaz kayıtlarını korur. |
 | Arka uç kapatma / son masaüstü penceresi kapatılır ve uygulama sonlandırılır | Uzaktan Kontrol çevrimdışı oluyor. OpenCode'un paylaşılan hizmeti çalışmaya devam edebilir ancak bu kullanıcı arayüzüne durdurulmuş bir arka uç aracılığıyla hizmet veremez. |
 | Uzaktan Kontrol başlatıldıktan sonra başlat | Yeni bir eşleştirme bağlantısı vermeden arka planda yeniden bağlanır. Hiç başlatılmayan kurulumlar kendilerini etkinleştirmez. |
 | Başlangıçta sürdürmenin başarısız olması veya kritik tünel hatası | Hatırlanan tercih korunur ve ana bilgisayar hatayı gösterir; Uzaktan Kontrol kartının yenileme simgesi durumu yeniden okur. **Uzaktan Kontrolü başlat** hemen yeniden dener; **Uzaktan Kontrolü durdur** tercihi temizler. Aksi halde sonraki başlatma yeniden dener. |

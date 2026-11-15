@@ -2,6 +2,8 @@
 
 Remote Control reaches CodeNomad from another device without an inbound port.
 It is separate from direct `--host` access; neither falls back to the other.
+Its device registry also pairs browsers on verified direct HTTPS origins
+([Direct HTTPS devices](#direct-https-devices)).
 
 ```text
 browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SDK in the backend (TLS ends here)
@@ -85,7 +87,10 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   `pairingRequired`. The recovery dialog then explains how to pair again
   instead of offering password login, keeping the page and its drafts.
   Pairing from another tab restores it on the next check.
-- `devices.ts` issues one five-minute, single-use pairing code. The link carries
+- `devices.ts` issues one five-minute, single-use pairing code at a time, bound
+  to one channel: the tunnel, or one verified direct HTTPS origin. A code
+  redeems only on its channel, and the device it creates authenticates only
+  there. Stop and tunnel failure cancel only a tunnel code. The link carries
   it in the fragment, never in the query or a log. It stores SHA-256 hashes of
   device credentials and expires devices after 30 days without use.
   `__Host-codenomad_device` is `Secure; HttpOnly; SameSite=Lax`. Revocation,
@@ -130,7 +135,7 @@ Direct opted-in status reads join the same client/principal flight across caller
 
 An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mutate through the ingress or direct listener while carrying no browser context: Origin, Referer, Fetch Metadata, client hints and preflight headers, including empty ones, exclude this admission. Browser requests continue to require the public Origin. Device scope applies on both listeners, with host-only paths and nested backend relays denied. Invalid explicit device credentials never fall back to password sessions or skipped authentication. Revocation, eviction, Stop, shutdown and tunnel failure destroy admitted device sockets on both listeners. Profile removal or retargeting similarly aborts local uploads/SSE and deletes its private identity; pending connection results check their captured owner before saving.
 
-`gate.ts` maintains the closed `SERVER_DEVICE_ROUTES` catalog of method/path pairs for the relay's existing backend API contracts. Additions require review of the caller and remote route together; unknown paths and unlisted methods return 404. Direct requests using the explicit device protocol stay within this catalog even when they carry browser headers. Browser pairing (`/remote-pair`, `/api/remote-control/pair`) and server pairing judge the physical ingress socket before device attachment; their route handlers also require ingress membership.
+`gate.ts` maintains the closed `SERVER_DEVICE_ROUTES` catalog of method/path pairs for the relay's existing backend API contracts. Additions require review of the caller and remote route together; unknown paths and unlisted methods return 404. Direct requests using the explicit device protocol stay within this catalog even when they carry browser headers, and never reach browser pairing. Server pairing judges the physical ingress socket before device attachment, and its route handler also requires ingress membership. Browser pairing (`/remote-pair`, `/api/remote-control/pair`) requires ingress membership or a [verified direct HTTPS origin](#direct-https-devices).
 
 | Reviewed device-route family | Admission surface |
 |---|---|
@@ -140,7 +145,18 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 | Agent memory | The local UI relay requires its current proof for POST `/api/memory` and GET/PUT `/api/memory/settings`; direct transport retains authentication and project-directory ownership. Remote Control ingress keeps this family host-only. |
 | Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
 
-Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership.
+Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership or a verified direct HTTPS origin.
+
+## Direct HTTPS devices
+
+Where the tunnel is blocked but a direct HTTPS deployment exists (a TLS-terminating reverse proxy with a real certificate, or the backend's own HTTPS listener), browsers pair and authenticate as devices on that origin. Plain-HTTP and loopback pages stay password-only.
+
+- **Verified direct HTTPS origins** (`remote-control/direct-https.ts` `verifiedHttpsOrigins()`) are the `https:` origins the direct listener already trusts for mutations: the advertised `localUrl`, `remoteUrl` and reachable addresses, plus `CODENOMAD_ALLOWED_ORIGINS`. Loopback (`localhost`, `*.localhost`, `127/8`, `[::1]`, mapped IPv4 loopback) and unspecified hosts never qualify, nor do the UI development origin and same-origin loopback aliases. Removing an origin from the configuration ends its devices' authority at the next request.
+- `verifiedDirectHttpsOrigin()` is the only request predicate. It never accepts an ingress socket. Unsafe methods need their own `Origin`; safe methods use `Origin`, else the `Referer` origin, else the targeted `Host` as `https`, because same-origin navigations and fetches send neither header. Opaque (`null`), empty, `http:` and unlisted values give null. The listener's transport is deliberately ignored: behind a TLS-terminating proxy the request reaches a plain-HTTP socket, so the configured public origin, which the proxy forwards in `Host`/`Origin`, is the evidence. Browsers send the `Secure`, host-only `__Host-` cookie only over TLS to the host that received it, and pairing sets it only in response to a verified origin. The proxy must forward the public `Host` and `Origin` and reach the backend over loopback or a protected hop.
+- `gate.ts` `gateDirectHttpsDevice()` judges a direct request carrying the device cookie only on a verified origin; elsewhere the cookie is ignored and password rules apply unchanged. Pairing paths and `/previews/<token>/…` capability paths pass through untouched. A valid device of that origin (`registry.authenticate(token, origin)`) is attached with `attachRemoteDevice()`, so `isRemoteRequest()`, `isLocalRequest()` and the auth manager treat it like an ingress device: no loopback privileges, even through a proxy on loopback; ingress host-only paths and the memory family return 404; forwarding headers are stripped. `isDirectHttpsDeviceRequest()` marks it separately; the direct origin policy uses it to keep the direct listener's CORS origins instead of the tunnel origin. An invalid, revoked, expired or other-channel credential marks the request refused (`isRefusedDeviceRequest()`): the auth manager returns no session, so it never falls back to a password session or skipped authentication; `/api/auth/status` reports `pairingRequired`, the static bundle stays public, HTML navigations redirect to `/remote-pair` and everything else gets 401.
+- The host creates a link with `POST /api/remote-control/pairings` and body `{ "origin": "https://…" }` (host-only; 409 for an unverified origin). `GET /api/remote-control/status` lists `directOrigins` for local requests only, and Remote Access settings offer **Direct HTTPS pairing** in the Remote Control card, with a native select when several origins exist; the tunnel need not run. The direct exchange requires its own verified `Origin`, redeems only that origin's code, counts failures in the backend-wide bucket shared with server pairing (a valid code is checked first) and sets the same `__Host-codenomad_device` cookie. The direct listener's host-only hook admits `/api/remote-control/pair` only on a verified origin. The pairing page refuses to post a code from a non-`https:` page.
+- Direct devices are independent of the tunnel: Stop, tunnel failure and resume neither cancel their codes nor close their sockets (`directDeviceSockets` in `manager.ts`). Revocation, eviction at the device limit and shutdown destroy them. `isDeviceAuthorized()` accepts a direct device while its origin remains verified, so Missions human-answer and recurrence proofs keep working. The inventory exposes `origin` for direct devices; Settings labels each device with its HTTPS origin or Remote Control.
+- `verifiedDirectHttpsOrigin()` and the explicit server-device protocol stay separate: `X-CodeNomad-Server-Request: 1` keeps its tunnel-bound admission and catalog, and a tunnel device's credential is refused on direct HTTPS origins as a direct device's is on the ingress.
 
 ### Isolated remote preview capabilities
 
@@ -223,6 +239,14 @@ credentials follow their separate registry lifetime and revocation rules.
   host-only paths including encoded ones, loopback privileges, spoofed headers,
   upgrades, web previews and their switch, revocation of a live stream, skipped
   local auth and tunnel failure.
+- `remote-control/direct-https.test.ts` drives the real application as a reverse
+  proxy would, from loopback and LAN peers with the tunnel stopped: the origin
+  set and predicate, host-only issuance, origin-bound single-use pairing and its
+  cookie, channel separation from the tunnel, device scope without loopback
+  privileges, refusal on `http:`, loopback, opaque, foreign and missing origins,
+  no password or skipped-auth fallback, the shared failure bucket, loss of an
+  unverified origin, and revocation and eviction closing streams that Stop and
+  tunnel failure leave open.
 - `direct-listener.test.ts` exercises the real application with LAN and loopback
   peers, credentialed CORS, Origin/Referer checks and host-only routes.
   `server/__tests__/sidecar-proxy.test.ts` covers SideCar upgrade source checks,
@@ -245,5 +269,5 @@ credentials follow their separate registry lifetime and revocation rules.
 
 ## Agent conventions
 
-- Remote Access settings put Remote Control first. Direct/LAN access (listening mode, server password, reachable addresses) sits in one collapsed disclosure that opens by itself while the server listens beyond localhost. Its texts refer to direct connections only, because Remote Control pairs devices and needs neither a password nor an open port. It uses the shared `.settings-disclosure` (`styles/components/settings-disclosure.css`).
+- Remote Access settings put Remote Control first. Direct/LAN access (listening mode, server password, reachable addresses) sits in one collapsed disclosure that opens by itself while the server listens beyond localhost. Its texts refer to password-based direct connections only, because Remote Control pairs devices and needs neither a password nor an open port. Device pairing on direct HTTPS origins lives in the Remote Control card with the pairing link and device inventory. It uses the shared `.settings-disclosure` (`styles/components/settings-disclosure.css`).
 - The tunnel runtime (`build:remote-tunnel`) keeps its own backend-side Effect runtime, separate from OpenCode's native plugin graph. Ingress sockets are remote by membership: grant local privileges only through `isLocalRequest()`/`isLoopbackRequest()`, never peer addresses or headers. The resume lease lives in `owner-lease.ts`; never auto-start an installation that was not started. Run the Validation tests above when changing the transport.

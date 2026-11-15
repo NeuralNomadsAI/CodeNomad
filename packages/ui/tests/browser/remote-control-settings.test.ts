@@ -94,6 +94,33 @@ test("a pairing link survives a reconnect and disappears once Remote Control sto
   } finally { await page.close() }
 })
 
+test("the host creates a direct HTTPS link with the tunnel off, and devices show how they connect", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.goto(`${url}?scenario=direct`)
+    await page.getByText("Remote Control is off", { exact: true }).waitFor()
+    await page.getByText("Direct HTTPS pairing", { exact: true }).waitFor()
+    await page.getByLabel("HTTPS address", { exact: true }).selectOption("https://ui.example.test:8443")
+    await page.getByRole("button", { name: "Create HTTPS pairing link" }).click()
+    const link = page.getByText("https://ui.example.test:8443/remote-pair#fixture-code", { exact: true })
+    await link.waitFor()
+    assert.deepEqual(await page.evaluate(() => (window as unknown as { pairingOrigins: unknown[] }).pairingOrigins), ["https://ui.example.test:8443"])
+    // A direct link does not depend on the tunnel, so a refresh while it is off keeps it.
+    await page.getByRole("button", { name: "Refresh" }).click()
+    await page.waitForTimeout(200)
+    assert.equal(await link.isVisible(), true)
+    await page.getByText("HTTPS · https://code.example.test", { exact: true }).waitFor()
+    assert.equal(await page.getByText("Remote Control", { exact: true }).count(), 2, "card title and the tunnel device's label")
+
+    await page.goto(`${url}?scenario=remote`)
+    await page.getByText("Ready for remote connections", { exact: true }).waitFor()
+    assert.equal(await page.getByText("Direct HTTPS pairing", { exact: true }).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a resuming tunnel updates by itself until it can create pairing links", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {

@@ -54,7 +54,7 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 ## 升级 {#upgrading}
 
-升级后请重新登录。使用主机名别名、反向代理或单独托管的界面时，请在后端设置 `CODENOMAD_ALLOWED_ORIGINS`，列出可信的界面来源（协议、主机名和端口）。局域网原生客户端必须在修改请求中提供允许的 `Origin` 请求头。
+升级后请重新登录。使用主机名别名、反向代理或单独托管的界面时，请在后端设置 `CODENOMAD_ALLOWED_ORIGINS`，列出可信的界面来源（协议、主机名和端口）。局域网原生客户端必须在修改请求中提供允许的 `Origin` 请求头。其 HTTPS 来源还允许主机在没有隧道的情况下配对设备；参阅[通过直接 HTTPS 配对](remote-control.md#direct-https)。
 
 仅限主机的操作需要回环连接：SideCar 内容（`/sidecars/`）及 WebSocket、远程控制管理（`/api/remote-control/`）、插件桥接（`/api/opencode-plugin/`）、远程代理（`/api/remote-proxy/`）、已保存服务器管理（`/api/remote-servers/`）、密码更改和令牌初始化。即使通过局域网直接访问并已登录，这些操作也要求回环连接。持有有效能力令牌时，活动预览内容（`/previews/`）可通过局域网直接访问。
 
