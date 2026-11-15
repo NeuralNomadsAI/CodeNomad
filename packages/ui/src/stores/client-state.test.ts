@@ -272,31 +272,82 @@ describe("flush behavior", () => {
   })
 })
 describe("secondary hosts", () => {
-  for (const host of ["electron secondary", "plain web"] as const) {
+  for (const host of ["electron secondary", "plain web without sessionStorage"] as const) {
     it(`${host}: keeps layout local without restoring or writing snapshots`, async () => {
       const storage = new MemoryStorage(); storage.setItem(layoutKey, "360")
+      const web = host === "plain web without sessionStorage"
       let saves = 0
-      if (host === "plain web") {
+      if (web) {
         storage.setItem("codenomad-client-snapshot-v1", JSON.stringify(snapshot("private")))
         storage.setItem("codenomad-client-restore-enabled-v1", "false")
       } else storage.removeItem(layoutKey)
-      const state = await boot(host === "plain web" ? undefined : {
+      const state = await boot(web ? undefined : {
         loadClientState: async () => loadResult(snapshot("docs", { [layoutKey]: "380" }), false),
         saveClientState: async () => { saves += 1; return false },
       }, storage)
       assert.equal(state.clientStateIsPrimary(), false)
       assert.equal(state.loadedRestorableSession(), null)
-      assert.equal(state.readClientLayoutValue(layoutKey), host === "plain web" ? "360" : null)
+      assert.equal(state.readClientLayoutValue(layoutKey), web ? "360" : null)
       state.writeClientLayoutValue(layoutKey, "420"); state.updateRestorableSession(session("other"))
       await state.flushClientState()
       assert.equal(storage.getItem(layoutKey), "420")
       assert.equal(saves, 0)
-      if (host === "plain web") {
+      if (web) {
         assert.equal(storage.getItem("codenomad-client-snapshot-v1"), null)
         assert.equal(storage.getItem("codenomad-client-restore-enabled-v1"), null)
       }
     })
   }
+})
+
+describe("plain web tab session", () => {
+  const SNAPSHOT_KEY = "codenomad.client-state.v1"
+  const bootWeb = async (tab: MemoryStorage, storage = new MemoryStorage()) => {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: storage, sessionStorage: tab } })
+    const state = await import(`./client-state.ts?test=${moduleId++}`) as ClientState
+    await state.initializeClientState()
+    return state
+  }
+  it("restores the tab's own snapshot after a reload and saves changes back to sessionStorage only", async () => {
+    const tab = new MemoryStorage(), storage = new MemoryStorage()
+    tab.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot("saved")))
+    const state = await bootWeb(tab, storage)
+    assert.equal(state.clientStateIsPrimary(), true)
+    assert.equal(state.restorePreviousStateEnabled(), true)
+    assert.deepEqual(state.loadedRestorableSession(), session("saved"))
+    state.updateRestorableSession(session("next"))
+    await state.flushClientState()
+    assert.deepEqual(JSON.parse(tab.getItem(SNAPSHOT_KEY)!).session, session("next"))
+    const reloaded = await bootWeb(tab, storage)
+    assert.deepEqual(reloaded.loadedRestorableSession(), session("next"))
+    assert.equal(storage.getItem("codenomad-client-snapshot-v1"), null)
+  })
+  it("starts empty and remembers a disabled restore for the tab; clearing removes its snapshot", async () => {
+    const tab = new MemoryStorage()
+    const state = await bootWeb(tab)
+    assert.equal(state.loadedRestorableSession(), null)
+    state.updateRestorableSession(session("draft"))
+    await state.flushClientState()
+    await state.clearRestoredClientState()
+    assert.equal(tab.getItem(SNAPSHOT_KEY), null)
+    state.updateRestorableSession(session("again"))
+    await state.flushClientState()
+    await state.setRestorePreviousStateEnabled(false)
+    assert.equal(tab.getItem(SNAPSHOT_KEY), null)
+    const reloaded = await bootWeb(tab)
+    assert.equal(reloaded.restorePreviousStateEnabled(), false)
+    assert.equal(reloaded.loadedRestorableSession(), null)
+    await reloaded.setRestorePreviousStateEnabled(true)
+    assert.equal((await bootWeb(tab)).restorePreviousStateEnabled(), true)
+  })
+  it("a refused write (storage quota) stops snapshot writes for the page and reports the failure", async () => {
+    const tab = new MemoryStorage()
+    tab.setItem = () => { throw new Error("QuotaExceededError") }
+    const state = await bootWeb(tab)
+    state.updateRestorableSession(session("large"))
+    await assert.rejects(state.flushClientState(), /save was rejected/)
+    assert.equal(state.clientStateIsPrimary(), false)
+  })
 })
 
 describe("partitioned client state", () => {
