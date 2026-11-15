@@ -166,8 +166,10 @@ for (const stalled of ["credentials", "Console"] as const) {
       if (stalled === "credentials") {
         t.mock.method(connection.client.credential, "list", async () => { entered(); await gate; return [] })
       }
-      t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
-        calls++; entered()
+      t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
+        // The optional balance read runs beside the count; only usage reads count here.
+        if (!new URL(String(input)).pathname.endsWith("/billing/status")) calls++
+        entered()
         return new Promise<Response>((_resolve, reject) => {
           init!.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })
         })
@@ -444,7 +446,14 @@ for (const boundary of ["unchanged", "move", "reconnect", "evict"] as const) {
     const cleanup = new AbortController()
     let transportSignal: AbortSignal | undefined, entered!: () => void, calls = 0
     const started = new Promise<void>(resolve => { entered = resolve })
-    t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
+    t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
+      // The optional balance read runs beside the usage reads; it stays out of this count.
+      if (new URL(String(input)).pathname.endsWith("/billing/status")) {
+        const signal = AbortSignal.any([init!.signal!, cleanup.signal])
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })
+        })
+      }
       calls++
       transportSignal = init!.signal!
       if (boundary === "move") state.directory = "/foreign"
@@ -489,7 +498,11 @@ for (const status of [401, 403]) {
   test(`Console HTTP ${status} reason reaches the route without upstream secrets or Go fallback`, async t => {
     const { app, logs } = harness()
     let calls = 0
-    t.mock.method(globalThis, "fetch", async () => { calls++; return new Response("secret-upstream", { status }) })
+    t.mock.method(globalThis, "fetch", async (input: unknown) => {
+      // The optional balance read runs beside the first usage read; only usage reads count.
+      if (!String(input).endsWith("/billing/status")) calls++
+      return new Response("secret-upstream", { status })
+    })
     clearProviderUsageCache()
     try {
       const response = await app.inject(url.replace("/usage/openai", "/usage/opencode"))

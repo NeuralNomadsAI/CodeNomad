@@ -57,15 +57,17 @@ test("reader uses fixed bounded transport, mandatory summaries and sequential pa
   const urls: string[] = []
   let active = 0
   t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
-    assert.equal(++active, 1)
     const url = new URL(String(input)); urls.push(url.pathname + url.search)
     assert.equal(url.origin, "https://opencode.ai")
     assert.equal(init?.redirect, "error")
     assert.ok(init?.signal)
     assert.equal(new Headers(init?.headers).get("authorization"), "Bearer secret-access")
     assert.equal(new Headers(init?.headers).get("x-org-id"), "wrk_fixture")
-    active--
+    // The optional balance runs beside the usage reads, which stay strictly sequential.
     if (url.pathname.endsWith("/billing/status")) return Response.json({ availableMicroCents: "250000000" })
+    assert.equal(++active, 1)
+    await Promise.resolve()
+    active--
     return Response.json(url.pathname.endsWith("summary") ? summary("0") : page(Number(url.searchParams.get("page")), 51))
   })
   const result = await openCodeConsole.fetchQuota(oauth())
@@ -73,11 +75,32 @@ test("reader uses fixed bounded transport, mandatory summaries and sequential pa
   assert.deepEqual(result.usage?.console?.requests, { "24h": 0, "7d": 0, "30d": 0 })
   assert.equal(result.usage?.console?.models.length, 51)
   assert.deepEqual(result.usage?.console?.budgets, { status: "unavailable", items: [] })
-  assert.deepEqual(urls, ["/console/api/usage/summary?range=24h", "/console/api/usage/summary?range=7d",
-    "/console/api/usage/summary?range=30d", "/console/api/usage/models?range=30d&page=1&pageSize=50",
-    "/console/api/usage/models?range=30d&page=2&pageSize=50", "/console/api/billing/status"])
+  assert.deepEqual(urls.filter(url => url !== "/console/api/billing/status"), ["/console/api/usage/summary?range=24h",
+    "/console/api/usage/summary?range=7d", "/console/api/usage/summary?range=30d",
+    "/console/api/usage/models?range=30d&page=1&pageSize=50", "/console/api/usage/models?range=30d&page=2&pageSize=50"])
+  assert.equal(urls.filter(url => url === "/console/api/billing/status").length, 1)
   assert.deepEqual(result.usage?.windows.credits_balance?.balanceUSD, { remaining: 2.5 })
   assert.equal(JSON.stringify(result).includes("secret-"), false)
+})
+
+test("a stalled optional balance never fails usage reads finishing near the deadline", async t => {
+  const timeout = AbortSignal.timeout.bind(AbortSignal)
+  // Scaled deadlines: 15 s overall becomes 300 ms, the 3 s balance bound 100 ms.
+  t.mock.method(AbortSignal, "timeout", (ms: number) => timeout(ms === 15_000 ? 300 : ms === 3000 ? 100 : ms))
+  const started = Date.now()
+  t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith("/billing/status")) {
+      return new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort",
+        () => reject(new DOMException("aborted", "TimeoutError")), { once: true }))
+    }
+    // The usage reads finish at about 220 ms, after the balance's own bound.
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, started + 220 - Date.now())))
+    return Response.json(url.pathname.endsWith("summary") ? summary() : page())
+  })
+  const result = await openCodeConsole.fetchQuota(key)
+  assert.equal(result.ok, true, result.unavailableReason)
+  assert.equal(result.usage?.windows.credits_balance, undefined)
 })
 
 test("API key uses only Authorization; missing/invalid OAuth and third-party credentials send nothing", async t => {
@@ -110,7 +133,11 @@ test("API key uses only Authorization; missing/invalid OAuth and third-party cre
 for (const [status, reason] of [[401, "invalid-credential"], [403, "access-denied"], [500, "network-error"]] as const) {
   test(`HTTP ${status} is a redacted ${reason} without fallback`, async t => {
     let calls = 0
-    t.mock.method(globalThis, "fetch", async () => { calls++; return new Response("secret-upstream", { status }) })
+    t.mock.method(globalThis, "fetch", async (input: unknown) => {
+      // The optional balance read runs beside the first usage read; only usage reads count.
+      if (!String(input).endsWith("/billing/status")) calls++
+      return new Response("secret-upstream", { status })
+    })
     const result = await openCodeConsole.fetchQuota(oauth())
     assert.equal(result.unavailableReason, `opencode-console-${reason}`)
     assert.equal(result.usage, null)
@@ -138,6 +165,8 @@ for (const failure of ["unsafe", "oversize", "json", "bound", "changed", "sum", 
     const controller = new AbortController()
     let calls = 0
     t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
+      // Each failure applies to the usage reads; the optional balance stays neutral.
+      if (String(input).endsWith("/billing/status")) return Response.json({})
       calls++
       if (failure === "redirect") { assert.equal(init?.redirect, "error"); throw new TypeError("secret redirect") }
       if (failure === "network") throw new Error("secret network")

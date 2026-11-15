@@ -128,6 +128,10 @@ export const openCodeConsole: UsageProvider = {
     if ("reason" in credential) return { ...base, configured: credential.configured, unavailableReason: credential.reason }
     const bounded = context?.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000)
     const read = (path: string) => fetchBoundedJson(`${BASE}/api/${path}`, credential.headers, bounded)
+    // The optional balance runs beside the mandatory reads on its own short bound,
+    // so it never consumes their deadline.
+    const credits = readOpenCodeConsoleCredits(auth, bounded)
+    credits.catch(() => {})
     try {
       const requests = {} as OpenCodeConsoleUsage["requests"]
       for (const range of ["24h", "7d", "30d"] as const) {
@@ -135,7 +139,7 @@ export const openCodeConsole: UsageProvider = {
       }
       const models = await readModels("30d", read)
       const windows: NonNullable<ProviderResult["usage"]>["windows"] = {}
-      const balance = await readOpenCodeConsoleCredits(auth, bounded)
+      const balance = await credits
       if (balance) windows.credits_balance = balance
       bounded.throwIfAborted()
       return { ...base, ok: true, usage: { windows, console: {
