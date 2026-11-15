@@ -10,6 +10,7 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.listeningMode.label": "监听模式",
   "remoteAccess.sections.listeningMode.help": "通过监听所有接口允许直接连接，或让此服务器仅限 localhost。远程控制不需要此设置。",
   "remoteAccess.toggle.title": "允许其他 IP 连接",
+  "remoteAccess.toggle.locked": "监听地址由管理员设置 (CODENOMAD_LOCKED_HOST)。",
   "remoteAccess.toggle.caption.all": "绑定到 0.0.0.0",
   "remoteAccess.toggle.caption.local": "绑定到 127.0.0.1",
   "remoteAccess.toggle.note": "更改此项需要重启，并会暂时停止所有活动实例。服务器重启后再分享下方地址。",

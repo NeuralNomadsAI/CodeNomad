@@ -104,6 +104,8 @@ flag ले environment counterpart override गर्छन्। value-taking 
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; release offer का लागि query गरिने repository। |
 | `CODENOMAD_REMOTE_CONTROL_API` | unset: hosted OpenTunnel API। self-hosted relay deployment का लागि API origin सेट गर्नुहोस्। |
+| `CODENOMAD_REMOTE_CONTROL` | सेट नगरिएको: प्रयोगकर्ताले रिमोट कन्ट्रोल सुरु गर्न सक्छन्। `disabled`: प्रशासकद्वारा बन्द ([नीति](remote-control.md#administrator-policy)); अरू कुनै मानले सुरु हुन दिँदैन। |
+| `CODENOMAD_LOCKED_HOST` | सेट नगरिएको: `--host` लागू हुन्छ। ठेगाना: `--host`, `CLI_HOST` वा सुन्ने स्विच जे भए पनि सर्भर त्यहीँ सुन्छ ([नीति](remote-access.md#administrator-policy))। |
 | `NODE_EXTRA_CA_CERTS` | Node को ऐच्छिक additional CA file; missing OpenCode daemon सुरु गर्दा allowed startup environment सँग पठाइन्छ। चलिरहेको daemon बदल्दैन। |
 
 provider-specific usage credential [प्रदायक](providers.md) मा छन्। desktop data-profile चयन [डेस्कटप](desktop.md) मा छ, release feed ले नियन्त्रण गर्दैन।

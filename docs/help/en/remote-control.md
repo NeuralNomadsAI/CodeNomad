@@ -70,3 +70,7 @@ CodeNomad uses [OpenTunnel](https://github.com/anomalyco/opentunnel) and claims 
 TLS terminates in the CodeNomad backend. The relay forwards ciphertext and cannot read application contents, but can observe hostnames, connection timing and traffic sizes. The tunnel certificate/private key remain on the host. Protect the host's tunnel storage and CodeNomad configuration as credentials; an unguessable address is not authorization.
 
 `CODENOMAD_REMOTE_CONTROL_API` selects a self-hosted OpenTunnel API; unset uses the hosted service. This changes the tunnel deployment, not pairing requirements or the blocked surfaces. See [Security](security.md) for credential and diagnostic handling.
+
+## Administrator policy {#administrator-policy}
+
+An administrator can turn Remote Control off for everyone on a computer: set the environment variable `CODENOMAD_REMOTE_CONTROL=disabled` machine-wide, then restart CodeNomad. The backend never connects a tunnel, refuses **Start Remote Control** and pairing links and does not reconnect at launch; Settings shows **Disabled by administrator**. Devices paired earlier cannot connect and stay listed so you can revoke them. Any other value prevents the backend from starting.

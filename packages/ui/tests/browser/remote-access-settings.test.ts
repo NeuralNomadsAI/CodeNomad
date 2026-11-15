@@ -36,6 +36,27 @@ test("direct access stays collapsed behind Remote Control until the user opens i
   } finally { await page.close() }
 })
 
+test("an administrator-set listening address shows the mode but locks its switch", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
+  try {
+    await page.goto(`${url}?mode=all&locked=1`)
+    const toggle = page.getByRole("switch", { name: "Allow connections from other IPs" })
+    await toggle.waitFor()
+    assert.equal(await toggle.isChecked(), true)
+    assert.equal(await toggle.isDisabled(), true)
+    await page.getByRole("link", { name: /CODENOMAD_LOCKED_HOST/ }).waitFor()
+    await toggle.click({ force: true })
+    assert.equal(await page.getByRole("alertdialog").count(), 0, "no restart confirmation for a locked address")
+    assert.equal(await toggle.isChecked(), true)
+
+    await page.goto(`${url}?mode=all`)
+    const free = page.getByRole("switch", { name: "Allow connections from other IPs" })
+    await free.waitFor()
+    assert.equal(await free.isDisabled(), false)
+    assert.equal(await page.getByRole("link", { name: /CODENOMAD_LOCKED_HOST/ }).count(), 0)
+  } finally { await page.close() }
+})
+
 test("direct access opens by itself while the server listens beyond localhost", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {

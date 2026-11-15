@@ -52,6 +52,10 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 Setzen Sie Port 9898 oder 9899 nicht voraus: Nicht angegebene Ports können bei Belegung ausweichen. Ein expliziter von null verschiedener `--https-port` oder ein `--http-port` bei aktiviertem HTTP legt den Port fest und schlägt bei fehlgeschlagener Bindung fehl; `0` fordert eine OS-Zuweisung an. Die ausgegebenen **Local Connection URL** und **Remote Connection URL** sowie aktualisierte **Erreichbare Adressen** sind für diesen Lauf maßgeblich. Siehe die vollständige [Server-CLI-Referenz](server.md).
 
+## Administratorrichtlinie {#administrator-policy}
+
+Ein Administrator kann die Abhöradresse festlegen: Setzen Sie `CODENOMAD_LOCKED_HOST` systemweit auf die Adresse, die der Server verwenden muss, und starten Sie CodeNomad neu. Sie hat Vorrang vor `--host`, `CLI_HOST` und **Verbindungen von anderen IPs zulassen**, das das Ergebnis anzeigt, es aber nicht ändern kann. Verwenden Sie eine Intranetadresse, damit Kollegen den Server über das Firmennetz erreichen, oder `127.0.0.1`, um ihn auf diesem Computer zu halten. Damit jeder Zugriff im Firmennetz bleibt, setzen Sie zusätzlich `CODENOMAD_REMOTE_CONTROL=disabled` ([Fernsteuerung](remote-control.md#administrator-policy)).
+
 ## Aktualisieren {#upgrading}
 
 Melden Sie sich nach der Aktualisierung erneut an. Setzen Sie für einen Hostnamen-Alias, Reverse-Proxy oder eine separat gehostete Oberfläche `CODENOMAD_ALLOWED_ORIGINS` im Backend auf die vertrauenswürdigen Origins der Oberfläche (Schema, Hostname und Port). Native LAN-Clients müssen bei schreibenden Anfragen einen erlaubten `Origin`-Header mitsenden.

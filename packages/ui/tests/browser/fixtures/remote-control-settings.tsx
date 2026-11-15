@@ -12,6 +12,7 @@ import "../../../src/index.css"
 // ?scenario=resuming: reconnecting at launch, connected after a few status reads.
 // ?scenario=connected: running; tests move it with window.setRemoteState().
 // ?scenario=remote: the same, read by a paired device.
+// ?scenario=disabled: the administrator disabled Remote Control; a device paired before stays revocable.
 const scenario = new URLSearchParams(location.search).get("scenario")
 const base: RemoteControlStatus = { manageable: true, enabled: false, startsOnLaunch: false, previews: true, state: "stopped", pairedDevices: 1 }
 const connected: RemoteControlStatus = { ...base, enabled: true, startsOnLaunch: true, state: "connected", remoteUrl: "https://codenomad-fixture.tunnel.test" }
@@ -19,6 +20,7 @@ let status: RemoteControlStatus = scenario === "failed-resume" ? { ...base, star
   : scenario === "skipped" ? { ...base, startsOnLaunch: true }
   : scenario === "connected" ? connected
   : scenario === "remote" ? { ...connected, manageable: false }
+  : scenario === "disabled" ? { ...base, disabledByAdministrator: true }
   : { ...connected, state: "connecting" }
 let reads = 0
 const fixture = window as unknown as { statusReads: () => number; stops: number; previewChanges: boolean[]; setRemoteState: (state: "reconnecting" | "connected" | "stopped") => void }

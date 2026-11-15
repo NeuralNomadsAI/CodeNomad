@@ -29,7 +29,11 @@ interface ManagerOptions {
   openTunnel?: OpenTunnel
   /** Restricts resuming at launch to one backend per config directory. */
   lease?: RemoteControlOwnerLease
+  /** Administrator policy: no tunnel, pairing or launch resume; paired devices stay revocable. */
+  disabledByAdministrator?: boolean
 }
+
+export const REMOTE_CONTROL_DISABLED = "Remote Control is disabled by the administrator"
 
 export class RemoteControlManager {
   private readonly ingress: RemoteIngress
@@ -63,8 +67,9 @@ export class RemoteControlManager {
       : tunnelState ?? "connecting"
     return {
       manageable: true,
+      ...(this.options.disabledByAdministrator ? { disabledByAdministrator: true } : {}),
       enabled: this.enabled,
-      startsOnLaunch: this.options.registry.startsOnLaunch(),
+      startsOnLaunch: !this.options.disabledByAdministrator && this.options.registry.startsOnLaunch(),
       previews: this.options.registry.previewsAllowed(),
       state,
       ...(tunnel ? { remoteUrl: tunnel.url } : {}),
@@ -75,6 +80,7 @@ export class RemoteControlManager {
   }
 
   async start(): Promise<RemoteControlStartResponse> {
+    if (this.options.disabledByAdministrator) throw new Error(REMOTE_CONTROL_DISABLED)
     this.enabled = true
     this.error = undefined
     this.options.registry.setStartsOnLaunch(true)
@@ -86,6 +92,10 @@ export class RemoteControlManager {
 
   /** Reconnects at launch when the user left Remote Control on. Issues no pairing code. */
   async resume(): Promise<void> {
+    if (this.options.disabledByAdministrator) {
+      if (this.options.registry.startsOnLaunch()) this.options.logger.info(REMOTE_CONTROL_DISABLED + "; not resuming")
+      return
+    }
     if (this.enabled || !this.options.registry.startsOnLaunch()) return
     if (this.options.lease && !this.options.lease.tryAcquire()) {
       this.options.logger.info("Remote Control runs in another CodeNomad backend with this configuration; not resuming")

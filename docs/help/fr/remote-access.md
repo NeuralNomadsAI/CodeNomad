@@ -52,6 +52,10 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils sont occupés. Un `--https-port` explicite non nul, ou un `--http-port` avec HTTP activé, fixe le port et échoue si l’écoute est impossible ; `0` demande au système d’en attribuer un. Les **Local Connection URL** et **Remote Connection URL** affichées, et les **Adresses accessibles** actualisées, font autorité pour cette exécution. Voir la [référence CLI serveur](server.md) complète.
 
+## Politique de l’administrateur {#administrator-policy}
+
+Un administrateur peut fixer l’adresse d’écoute : définissez `CODENOMAD_LOCKED_HOST` pour tout le système avec l’adresse que le serveur doit utiliser, puis redémarrez CodeNomad. Elle l’emporte sur `--host`, `CLI_HOST` et **Autoriser les connexions depuis d'autres IP**, qui affiche le résultat sans pouvoir le changer. Utilisez une adresse intranet pour que vos collègues joignent le serveur par le réseau de l’entreprise, ou `127.0.0.1` pour le garder sur cet ordinateur. Pour que tout accès reste dans le réseau de l’entreprise, définissez aussi `CODENOMAD_REMOTE_CONTROL=disabled` ([contrôle à distance](remote-control.md#administrator-policy)).
+
 ## Mise à niveau {#upgrading}
 
 Reconnectez-vous après la mise à niveau. Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification.

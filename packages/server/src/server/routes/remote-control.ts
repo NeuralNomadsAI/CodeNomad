@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
-import type { RemoteControlManager } from "../../remote-control/manager"
+import { REMOTE_CONTROL_DISABLED, type RemoteControlManager } from "../../remote-control/manager"
 import { deviceCookie, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../../remote-control/gate"
 import { isLocalRequest, isRemoteRequest } from "../../remote-control/request-origin"
 
@@ -22,7 +22,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   })
 
   app.post("/api/remote-control/start", async (request, reply) => {
-    if (!requireLocalControl(request, reply)) return
+    if (!requireLocalControl(request, reply) || !requireAllowed(deps, reply)) return
     try {
       return await deps.manager.start()
     } catch (error) {
@@ -32,7 +32,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   })
 
   app.post("/api/remote-control/pairings", async (request, reply) => {
-    if (!requireLocalControl(request, reply)) return
+    if (!requireLocalControl(request, reply) || !requireAllowed(deps, reply)) return
     try {
       return deps.manager.createPairing()
     } catch (error) {
@@ -97,6 +97,12 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
     reply.header("Cache-Control", "no-store")
     return { device: paired.device }
   })
+}
+
+function requireAllowed(deps: RouteDeps, reply: FastifyReply): boolean {
+  if (!deps.manager.status().disabledByAdministrator) return true
+  reply.code(403).send({ error: REMOTE_CONTROL_DISABLED, code: "remote_control_disabled" })
+  return false
 }
 
 function requireLocalControl(request: FastifyRequest, reply: FastifyReply): boolean {

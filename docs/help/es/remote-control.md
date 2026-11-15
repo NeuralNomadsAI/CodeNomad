@@ -70,3 +70,7 @@ CodeNomad usa [OpenTunnel](https://github.com/anomalyco/opentunnel) y reserva un
 TLS termina en el backend de CodeNomad. El relé reenvía texto cifrado y no puede leer el contenido de la aplicación, pero puede observar nombres de host, tiempos de conexión y tamaños de tráfico. El certificado/clave privada del túnel permanece en el anfitrión. Protege el almacenamiento del túnel del anfitrión y la configuración de CodeNomad como credenciales; una dirección imposible de adivinar no es autorización.
 
 `CODENOMAD_REMOTE_CONTROL_API` selecciona una API de OpenTunnel autoalojada; sin definir se usa el servicio alojado. Esto cambia el despliegue del túnel, no los requisitos de emparejamiento ni las superficies bloqueadas. Consulta [Seguridad](security.md) para el tratamiento de credenciales y diagnósticos.
+
+## Política del administrador {#administrator-policy}
+
+Un administrador puede desactivar el control remoto para todos los usuarios de un equipo: define la variable de entorno `CODENOMAD_REMOTE_CONTROL=disabled` para todo el sistema y reinicia CodeNomad. El backend nunca conecta un túnel, rechaza **Iniciar control remoto** y los enlaces de emparejamiento y no se reconecta al iniciar; Ajustes muestra **Desactivado por el administrador**. Los dispositivos emparejados antes no pueden conectarse y siguen en la lista para que puedas revocarlos. Cualquier otro valor impide que el backend se inicie.

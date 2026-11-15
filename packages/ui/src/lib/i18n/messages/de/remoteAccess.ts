@@ -10,6 +10,7 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.listeningMode.label": "Abhörmodus (Listening mode)",
   "remoteAccess.sections.listeningMode.help": "Direkte Verbindungen erlauben, indem auf allen Schnittstellen gelauscht wird, oder diesen Server nur auf localhost belassen. Die Fernsteuerung benötigt dies nicht.",
   "remoteAccess.toggle.title": "Verbindungen von anderen IPs zulassen",
+  "remoteAccess.toggle.locked": "Die Abhöradresse wird von einem Administrator festgelegt (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "Bindung an 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Bindung an 127.0.0.1",
   "remoteAccess.toggle.note": "Das Ändern dieser Einstellung erfordert einen Neustart und stoppt vorübergehend alle aktiven Instanzen. Teilen Sie die unten stehenden Adressen nach dem Neustart des Servers.",

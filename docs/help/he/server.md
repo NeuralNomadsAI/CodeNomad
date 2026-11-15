@@ -104,6 +104,8 @@ HTTPS מעדיף את יציאה **9898** ו־HTTP את **9899**. ללא דרי�
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; המאגר שנשאל לגבי הצעות גרסאות. |
 | `CODENOMAD_REMOTE_CONTROL_API` | לא מוגדר: API של OpenTunnel המתארח בשירות. הגדירו מקור API לפריסת ממסר באירוח עצמי. |
+| `CODENOMAD_REMOTE_CONTROL` | לא מוגדר: משתמשים יכולים להפעיל שליטה מרחוק. `disabled`: כובתה על ידי מנהל מערכת ([מדיניות](remote-control.md#administrator-policy)); כל ערך אחר מונע הפעלה. |
+| `CODENOMAD_LOCKED_HOST` | לא מוגדר: `--host` חל. כתובת: השרת מאזין בה, ללא קשר ל־`--host`, ל־`CLI_HOST` או למתג ההאזנה ([מדיניות](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | קובץ CA נוסף אופציונלי של Node; מועבר עם סביבת ההפעלה המותרת כשמפעילים דמון OpenCode חסר. אינו משנה דמון שכבר פועל. |
 
 פרטי התחברות לשימוש אצל ספקים מכוסים ב־[ספקים](providers.md). בחירת פרופיל נתונים לשולחן העבודה מכוסה ב־[שולחן עבודה](desktop.md), ואינה נשלטת בידי ערוץ העדכונים.

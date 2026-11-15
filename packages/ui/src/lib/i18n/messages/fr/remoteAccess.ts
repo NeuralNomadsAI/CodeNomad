@@ -10,6 +10,7 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.listeningMode.label": "Mode d'écoute",
   "remoteAccess.sections.listeningMode.help": "Autorisez les connexions directes en écoutant sur toutes les interfaces, ou gardez ce serveur sur localhost uniquement. Le Contrôle à distance n’en a pas besoin.",
   "remoteAccess.toggle.title": "Autoriser les connexions depuis d'autres IP",
+  "remoteAccess.toggle.locked": "L’adresse d’écoute est fixée par un administrateur (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "Écoute sur 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Écoute sur 127.0.0.1",
   "remoteAccess.toggle.note": "Modifier ceci nécessite un redémarrage et stoppe temporairement toutes les instances actives. Partagez les adresses ci-dessous une fois le serveur redémarré.",

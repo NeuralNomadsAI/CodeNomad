@@ -11,6 +11,7 @@ import { getLogger } from "../../lib/logger"
 import { useI18n } from "../../lib/i18n"
 import { splitRemoteAddresses, type RemoteAddressGroups } from "../../lib/remote-access-addresses"
 import { SettingsSwitch } from "./settings-switch"
+import { SettingsInfoTip } from "./settings-info-tip"
 
 const log = getLogger("actions")
 
@@ -37,6 +38,8 @@ export const RemoteAccessSettingsSection: Component = () => {
   const addresses = createMemo<NetworkAddress[]>(() => meta()?.addresses ?? [])
   const currentMode = createMemo(() => meta()?.listeningMode ?? serverSettings().listeningMode)
   const allowExternalConnections = createMemo(() => currentMode() === "all")
+  // The administrator fixed the listening address; the switch shows it but cannot change it.
+  const listeningLocked = createMemo(() => meta()?.listeningLocked === true)
   const displayAddresses = createMemo<RemoteAddressGroups>(() => {
     const list = addresses()
     if (!allowExternalConnections()) return { recommended: null, hidden: [] }
@@ -81,7 +84,7 @@ export const RemoteAccessSettingsSection: Component = () => {
 
   const handleAllowConnectionsChange = async (checked: boolean) => {
     const targetMode: "local" | "all" = checked ? "all" : "local"
-    if (targetMode === currentMode() || applyingListeningMode()) return
+    if (targetMode === currentMode() || applyingListeningMode() || listeningLocked()) return
 
     const confirmed = await showConfirmDialog(t("remoteAccess.listeningMode.restartConfirm.message"), {
       title: checked
@@ -185,7 +188,10 @@ export const RemoteAccessSettingsSection: Component = () => {
 
           <div class="settings-toggle-row">
             <div>
-              <div class="settings-toggle-title">{t("remoteAccess.toggle.title")}</div>
+              <div class="settings-toggle-title">
+                {t("remoteAccess.toggle.title")}
+                <Show when={listeningLocked()}><SettingsInfoTip text={t("remoteAccess.toggle.locked")} help={{ page: "remote-access", anchor: "administrator-policy" }} /></Show>
+              </div>
               <div class="settings-toggle-caption">
                 {allowExternalConnections()
                   ? t("remoteAccess.toggle.caption.all")
@@ -195,7 +201,7 @@ export const RemoteAccessSettingsSection: Component = () => {
             <SettingsSwitch
               checked={allowExternalConnections()}
               label={t("remoteAccess.toggle.title")}
-              disabled={loading() || applyingListeningMode()}
+              disabled={loading() || applyingListeningMode() || listeningLocked()}
               onChange={(nextChecked) => void handleAllowConnectionsChange(nextChecked)}
             />
           </div>

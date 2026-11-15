@@ -10,6 +10,7 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.listeningMode.label": "Listening mode",
   "remoteAccess.sections.listeningMode.help": "Allow direct connections by listening on all interfaces, or keep this server on localhost only. Remote Control does not need this.",
   "remoteAccess.toggle.title": "Allow connections from other IPs",
+  "remoteAccess.toggle.locked": "The listening address is set by an administrator (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "Binding to 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Binding to 127.0.0.1",
   "remoteAccess.toggle.note": "Changing this requires a restart and temporarily stops all active instances. Share the addresses below once the server restarts.",

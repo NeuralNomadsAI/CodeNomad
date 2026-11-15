@@ -104,6 +104,8 @@ The public reference lists user-facing options; desktop hosts manage their own p
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; repository queried for release offers. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Unset: hosted OpenTunnel API. Set an API origin for a self-hosted relay deployment. |
+| `CODENOMAD_REMOTE_CONTROL` | Unset: users may start Remote Control. `disabled`: turned off by an administrator ([policy](remote-control.md#administrator-policy)); any other value refuses startup. |
+| `CODENOMAD_LOCKED_HOST` | Unset: `--host` applies. An address: the server listens there whatever `--host`, `CLI_HOST` or the listening switch request ([policy](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Node's optional additional CA file; passed with allowed startup environment when starting a missing OpenCode daemon. Does not change an already running daemon. |
 
 Provider-specific usage credentials are covered in [Providers](providers.md). Desktop data-profile selection is covered in [Desktop](desktop.md), not controlled by the release feed.

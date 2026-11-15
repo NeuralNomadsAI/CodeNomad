@@ -9,6 +9,7 @@ export const remoteAccessMessages = {
   "remoteAccess.sections.listeningMode.label": "Dinleme modu",
   "remoteAccess.sections.listeningMode.help": "Tüm arayüzlerde dinleyerek doğrudan bağlantılara izin verin veya bu sunucuyu yalnızca localhost'ta tutun. Uzaktan Kontrol bunu gerektirmez.",
   "remoteAccess.toggle.title": "Diğer IP'lerden bağlantılara izin ver",
+  "remoteAccess.toggle.locked": "Dinleme adresini bir yönetici belirler (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "0.0.0.0 üzerinde dinleniyor",
   "remoteAccess.toggle.caption.local": "127.0.0.1 üzerinde dinleniyor",
   "remoteAccess.toggle.note": "Bu ayarı değiştirmek yeniden başlatma gerektirir ve geçici olarak tüm etkin instance'ları durdurur. Sunucu yeniden başlatıldıktan sonra aşağıdaki adresleri paylaşın.",

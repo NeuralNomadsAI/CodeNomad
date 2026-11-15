@@ -104,6 +104,8 @@ HTTPS 首选端口 **9898**，HTTP 首选 **9899**。没有端口覆盖时，首
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`；查询发行版本的仓库。 |
 | `CODENOMAD_REMOTE_CONTROL_API` | 未设置：托管 OpenTunnel API。自托管中继部署时设置 API 来源。 |
+| `CODENOMAD_REMOTE_CONTROL` | 未设置：用户可以启动远程控制。`disabled`：已被管理员关闭（[策略](remote-control.md#administrator-policy)）；任何其他值都会阻止启动。 |
+| `CODENOMAD_LOCKED_HOST` | 未设置：使用 `--host`。一个地址：无论 `--host`、`CLI_HOST` 或监听开关如何设置，服务器都在该地址监听（[策略](remote-access.md#administrator-policy)）。 |
 | `NODE_EXTRA_CA_CERTS` | Node 可选额外 CA 文件；启动缺失的 OpenCode 守护进程时与允许的启动环境一起传递。不改变已运行守护进程。 |
 
 提供商专用用量凭据见[提供商](providers.md)。桌面数据配置文件选择见[桌面](desktop.md)，不受发布通道控制。

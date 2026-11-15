@@ -104,6 +104,8 @@ TauriやElectronの起動には[デスクトップの起動引数](desktop.md#de
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`。リリース提示の問い合わせ先リポジトリ。 |
 | `CODENOMAD_REMOTE_CONTROL_API` | 未設定ならホスト型 OpenTunnel API。セルフホストのリレー配備には API オリジンを指定。 |
+| `CODENOMAD_REMOTE_CONTROL` | 未設定: ユーザーはリモートコントロールを開始できます。`disabled`: 管理者により無効 ([ポリシー](remote-control.md#administrator-policy))。ほかの値では起動しません。 |
+| `CODENOMAD_LOCKED_HOST` | 未設定: `--host` が適用されます。アドレス: `--host`、`CLI_HOST`、待ち受けスイッチにかかわらず、サーバーはそこで待ち受けます ([ポリシー](remote-access.md#administrator-policy))。 |
 | `NODE_EXTRA_CA_CERTS` | Node の任意の追加 CA ファイル。OpenCode デーモンがないため起動する際、許可された起動環境とともに渡します。既に稼働中のデーモンは変更しません。 |
 
 プロバイダー固有の使用量認証情報は、[プロバイダー](providers.md)で説明しています。デスクトップのデータプロファイル選択は[デスクトップ](desktop.md)を参照してください。リリースフィードで制御するものではありません。
