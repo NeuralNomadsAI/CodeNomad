@@ -31,6 +31,6 @@ export function closeFilePreview(instanceId: string, intent?: SessionSurfaceInte
 }
 export function reconcileFilePreviewLifetime(instanceId: string, shouldClose?: () => boolean) {
   const target = getFilePreview(instanceId)
-  if (target) reconcileFileSurface(instanceId, target, () => !shouldClose || shouldClose() ? undefined : target,
+  if (target) reconcileFileSurface(instanceId, target, () => !shouldClose || shouldClose() ? undefined : getFilePreview(instanceId) ?? undefined,
     shouldClose ? "file-worktree" : "file-lifetime")
 }

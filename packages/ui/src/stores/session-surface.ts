@@ -12,7 +12,7 @@ export type CentralSurface =
   | { kind: "mission"; target: MissionReaderTarget }
 
 const conversation: CentralSurface = { kind: "conversation" }
-const [files, setFiles] = createSignal<ReadonlyMap<string, FilePreviewTarget>>(new Map())
+const [files, setFiles] = createSignal<ReadonlyMap<string, { target: FilePreviewTarget; lifetime: object }>>(new Map())
 const intents = new Map<string, object>()
 const reconciliations = new Map<string, Map<string, () => void>>()
 
@@ -44,13 +44,16 @@ function settle(instanceId: string): void {
 }
 
 /** File lifetime/status reconciliation changes only the still-matching runtime target. */
-export function reconcileFileSurface(instanceId: string, previous: FilePreviewTarget, update?: FilePreviewTarget | (() => FilePreviewTarget | undefined), key = "file-reader"): void {
+export function reconcileFileSurface(instanceId: string, previous: FilePreviewTarget, update?: FilePreviewTarget | (() => FilePreviewTarget | undefined), key: "file-reader" | "file-worktree" | "file-lifetime" = "file-reader"): void {
+  const lifetime = files().get(instanceId)?.lifetime
+  if (!lifetime) return
   reconcileSessionSurface(instanceId, key, () => {
-    if (files().get(instanceId) !== previous) return
+    const current = files().get(instanceId)
+    if (!current || (key === "file-reader" ? current.target !== previous : current.lifetime !== lifetime)) return
     const target = typeof update === "function" ? update() : update
     setFiles(current => {
       const next = new Map(current)
-      if (target) next.set(instanceId, target)
+      if (target) next.set(instanceId, { target, lifetime })
       else next.delete(instanceId)
       return next
     })
@@ -62,7 +65,7 @@ export function reconcileFileSurface(instanceId: string, previous: FilePreviewTa
 export function getSessionSurface({ instanceId, sessionId }: SurfaceContext): CentralSurface {
   const view = getTabViewState(instanceId)
   if (view.missions?.reader) return { kind: "mission", target: view.missions.reader }
-  const file = files().get(instanceId)
+  const file = files().get(instanceId)?.target
   if (file && (sessionId === null || file.sessionId === sessionId)) return { kind: "file", target: file }
   if (sessionId && view.previews?.[sessionId]?.mode === "preview") return { kind: "web", sessionId }
   return conversation
@@ -88,9 +91,10 @@ function writeSessionSurface(ctx: SurfaceContext, surface: CentralSurface): void
       ...(reader === view.missions?.reader ? {} : { missions: { ...view.missions, reader } }),
     })
     const target = surface.kind === "file" ? surface.target : undefined
-    if (files().get(ctx.instanceId) !== target) setFiles(previous => {
+    setFiles(previous => {
+      if (!target && !previous.has(ctx.instanceId)) return previous
       const next = new Map(previous)
-      if (target) next.set(ctx.instanceId, target)
+      if (target) next.set(ctx.instanceId, { target, lifetime: {} })
       else next.delete(ctx.instanceId)
       return next
     })

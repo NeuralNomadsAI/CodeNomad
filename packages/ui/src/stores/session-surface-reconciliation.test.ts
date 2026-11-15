@@ -95,8 +95,8 @@ test("deferred Mission reconciliation rechecks recovery and the latest passage",
   publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: 0 })
 })
 
-test("file lifetime recovery is rechecked and status reconciliation cannot discard a pending close", () => {
-  const instanceId = "passive-file-recovery", ctx = { instanceId, sessionId: "same" }
+for (const statusFirst of [false, true]) test(`file lifetime recovery is rechecked and status reconciliation cannot discard a pending close (status first: ${statusFirst})`, () => {
+  const instanceId = `passive-file-recovery-${statusFirst}`, ctx = { instanceId, sessionId: "same" }
   const target = { sessionId: "same", path: "a", slug: "root", directory: "/repo" }
   publishInstanceLifecycleAuthority({ type: "opened", instanceId, folder: "/repo", occurrence: 0 })
   activateSessionSurface(ctx, { kind: "file", target })
@@ -107,10 +107,30 @@ test("file lifetime recovery is rechecked and status reconciliation cannot disca
   recovery.release()
   assert.equal(filePreviews.getFilePreview(instanceId), target)
   const close = captureSessionSurfaceIntent(ctx)
+  if (statusFirst) filePreviews.reconcileFilePreview(instanceId, target, () => ({ ...target, scope: "staged" }))
   filePreviews.reconcileFilePreviewLifetime(instanceId)
   filePreviews.reconcileFilePreviewLifetime(instanceId, () => missing)
-  filePreviews.reconcileFilePreview(instanceId, target, () => ({ ...target, scope: "staged" }))
+  if (!statusFirst) filePreviews.reconcileFilePreview(instanceId, target, () => ({ ...target, scope: "staged" }))
   close.release()
   assert.equal(filePreviews.getFilePreview(instanceId), null)
+  publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: 0 })
+})
+
+test("file recovery preserves a newer passive status target and a repeated file gesture renews its lifetime", () => {
+  const instanceId = "file-lifetime-identity", ctx = { instanceId, sessionId: "same" }
+  const target = { sessionId: "same", path: "a", slug: "root", directory: "/repo" }
+  const updated = { ...target, scope: "staged" as const }
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId, folder: "/repo", occurrence: 0 })
+  activateSessionSurface(ctx, { kind: "file", target })
+  const recovery = captureSessionSurfaceIntent(ctx)
+  filePreviews.reconcileFilePreview(instanceId, target, () => updated)
+  filePreviews.reconcileFilePreviewLifetime(instanceId, () => false)
+  recovery.release()
+  assert.equal(filePreviews.getFilePreview(instanceId), updated)
+  const reopen = captureSessionSurfaceIntent(ctx)
+  filePreviews.reconcileFilePreviewLifetime(instanceId)
+  commitSurface(ctx, { kind: "file", target: updated }, reopen)
+  reopen.release()
+  assert.equal(filePreviews.getFilePreview(instanceId), updated)
   publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: 0 })
 })
