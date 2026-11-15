@@ -109,8 +109,9 @@ The UI excludes managed records from every ordinary plugin row, activation switc
 check/update action and source-removal path. A compact warning above the Plugins list exposes
 only managed plugins that are disabled, failed or loading-unconfirmed. Each warning row has
 an `InfoPopoverButton` with available native error/ref details. Only a disabled row offers
-**Re-enable**, through the existing activation mutation: append the positive exact ID, retain
-the negative rule and all unrelated configuration. Use the disabling rule's Global/Project
+**Re-enable**, through the existing activation mutation: it removes the exact disabling rule when that
+alone re-enables the plugin, otherwise it replaces it with the positive exact ID, keeping all unrelated
+configuration. Use the disabling rule's Global/Project
 scope when writable, otherwise the writable Project override. Native rules still determine
 precedence. Keep the warning until a fenced inventory refresh confirms an active runtime
 entry; a durable write alone leaves it visible. Native events and the existing Refresh action
@@ -125,8 +126,12 @@ Virtual origins remain visible in details when the native rule has no filesystem
 
 OpenCode applies plugin entries in configuration order. `-plugin.id` disables
 an ID, `plugin.id` later re-enables it, `*` matches all plugins, and `prefix.*`
-matches an ID prefix. Source declarations remain in place when an activation
-rule is added.
+matches an ID prefix. Every string without `-` is one ordered add operation: it selects plugins only
+when it matches a plugin ID already defined or loaded earlier in that order, or is `*`, `prefix.*` or
+`opencode.*`; otherwise OpenCode loads it as a package (an npm install for a bare name). A lone `plugin.id`
+whose package has not loaded yet is therefore fetched from the registry (`packages/core/src/config/plugin/source.ts`
+and `packages/core/src/plugin/supervisor.ts` in OpenCode). Source declarations remain in place when an
+activation rule is written.
 
 The native plugin API offers `plugin.list`/`plugin.check`/`plugin.update`, and the
 pinned client's `config.update` accepts only its declared preference fields, so
@@ -220,8 +225,13 @@ connection refuse with `stale` and require a fresh selection/confirmation.
 2. Resolve physical file destinations, including symlinked parent directories,
    and fail closed on malformed content, invalid plugin entries, circular links,
    or filesystem errors.
-3. Edit with `jsonc-parser`: append only the requested exact `id`/`-id` rule or
-   source spec string, or delete exactly one verified element. Comments, source
+3. Edit with `jsonc-parser`: append one source spec string, delete exactly one verified source element,
+   or write one activation. An activation deletes the target document's earlier exact `id`/`-id` rules for
+   that plugin, then appends the requested rule, or only deletes them, whichever first produces exactly the
+   snapshot appending the rule would produce: every control's effective state and displayed switches, and
+   every source. Otherwise it only appends. Entries the snapshot reads as source declarations (a package named
+   like its ID), broad selectors and other files are never deleted, and a placeholder or watcher-lag projection
+   (not no-op safe) keeps the plain append. Each deleted entry is re-verified in the read document. Comments, source
    objects, options, unknown keys, ordering, indentation, line endings, and a
    UTF-8 BOM are retained.
 4. Serialize in-process mutations and hold a per-target interprocess lock across
@@ -266,7 +276,7 @@ daemon are paired positionally and replayed after its normalized document. Raw
 enable the no-op shortcut. A no-op additionally requires the whole normalized
 prefix to match the raw target, followed only by concrete rules included in the
 projection. A raw deletion/replacement or an unprojected entry during watcher
-lag instead appends the requested exact rule.
+lag instead appends the requested exact rule without deleting earlier ones.
 
 The connection generation is rechecked after discovery, before file preparation,
 and again immediately before the atomic rename. Mutations also enter the active
@@ -321,8 +331,11 @@ guessed paths.
 - `CODENOMAD_TEST_WSL_PLUGIN_CONTROLS=Ubuntu` enables the real Linux-filesystem/UNC
   publication, recognition, tamper and link checks in `desktop-plugin-managed-wsl.test.ts`,
   alongside the native document suite in `plugin-control-document-wsl.test.ts`.
-- JSONC preservation, malformed input, optimistic conflict, and atomic replace:
-  `plugin-control-document.test.ts`
+- JSONC preservation, malformed input, optimistic conflict, atomic replace, and rule replacement with
+  re-verified deletions: `plugin-control-document.test.ts`
+- rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
+  selectors, rules in another scope, source declarations named like their ID, managed re-enable):
+  `plugin-controls.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index): `plugin-source-document.test.ts`
 - source add/remove ownership, scope availability, duplicates across scopes,

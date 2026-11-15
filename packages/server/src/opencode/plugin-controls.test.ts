@@ -191,10 +191,9 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.equal(globalResponse.changed, true)
     assert.equal(nextGlobalResponse.changed, true)
     assert.equal(projectResponse.changed, true)
+    // Re-enabling removes the disabling rule the first mutation wrote instead of appending another one.
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [
       { package: "@acme/reviewer", options: { strict: true } },
-      "-acme.reviewer",
-      "acme.reviewer",
     ])
     assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["-acme.reviewer"])
   })
@@ -233,6 +232,65 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.equal(response.rule, "acme.reviewer")
     assert.equal(response.snapshot.controls.find((entry) => entry.id === "acme.reviewer")?.effective, "enabled")
     assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["-acme.reviewer", "acme.reviewer"])
+  })
+
+  it("replaces the plugin's earlier exact rules instead of growing the file on each toggle", async () => {
+    const source = { package: "@neuralnomads/opencode-blender", options: {} }
+    const fixture = createFixture({
+      globalPlugins: [source, "-neuralnomads.blender", "neuralnomads.blender", "-neuralnomads.blender", "neuralnomads.blender", "ponytail"],
+      runtime: [activePlugin("neuralnomads.blender", "@neuralnomads/opencode-blender"), activePlugin("ponytail", "ponytail")],
+    })
+    const plugins = () => (parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins
+    const toggle = async (enabled: boolean) => {
+      const response = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "neuralnomads.blender", scope: "global", enabled })
+      fixture.setGlobalPlugins(plugins())
+      return response
+    }
+
+    const disabled = await toggle(false)
+    assert.deepEqual(plugins(), [source, "ponytail", "-neuralnomads.blender"])
+    assert.equal(disabled.snapshot.controls.find(entry => entry.id === "neuralnomads.blender")?.effective, "disabled")
+    const enabled = await toggle(true)
+    assert.deepEqual(plugins(), [source, "ponytail"], "re-enabling removes the disabling rule; no lone positive ID is left")
+    assert.notEqual(enabled.snapshot.controls.find(entry => entry.id === "neuralnomads.blender")?.effective, "disabled")
+    for (let round = 0; round < 3; round += 1) { await toggle(false); await toggle(true) }
+    assert.deepEqual(plugins(), [source, "ponytail"], "repeated toggles never grow the file")
+    assert.equal(fs.readFileSync(fixture.globalFile, "utf8").includes('"neuralnomads.blender"'), false)
+  })
+
+  it("keeps broad selectors and appends when removing alone would change the effective state", async () => {
+    const source = { package: "@acme/reviewer" }
+    const fixture = createFixture({ globalPlugins: [source, "-acme.*"], runtime: [activePlugin("acme.reviewer", "@acme/reviewer")] })
+    const plugins = () => (parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins
+    const enable = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true })
+    assert.deepEqual(plugins(), [source, "-acme.*", "acme.reviewer"], "a later exact rule is needed past the prefix rule")
+    assert.equal(enable.snapshot.controls.find(entry => entry.id === "acme.reviewer")?.effective, "enabled")
+    fixture.setGlobalPlugins(plugins())
+    const disable = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: false })
+    assert.deepEqual(plugins(), [source, "-acme.*"], "the prefix rule already disables it: the exact rule is only removed")
+    assert.equal(disable.snapshot.controls.find(entry => entry.id === "acme.reviewer")?.effective, "disabled")
+  })
+
+  it("edits only the target file, keeping the state another scope gives", async () => {
+    const fixture = createFixture({
+      globalPlugins: [{ package: "@acme/reviewer" }, "-acme.reviewer"],
+      projectPlugins: ["acme.reviewer", "-acme.reviewer", "acme.reviewer"],
+      runtime: [activePlugin("acme.reviewer", "@acme/reviewer")],
+    })
+    const response = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "project", enabled: false })
+    assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, [], "Global already disables it")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [{ package: "@acme/reviewer" }, "-acme.reviewer"])
+    const control = response.snapshot.controls.find(entry => entry.id === "acme.reviewer")!
+    assert.equal(control.effective, "disabled")
+    assert.equal(control.global, "disabled")
+  })
+
+  it("never removes a source declaration named like its plugin ID", async () => {
+    const fixture = createFixture({ globalPlugins: ["same.id", "-same.id"], runtime: [activePlugin("same.id", "same.id")] })
+    const response = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "same.id", scope: "global", enabled: true })
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["same.id"])
+    assert.deepEqual(response.snapshot.configured.sources.map(entry => entry.target), ["same.id"])
+    assert.notEqual(response.snapshot.controls.find(entry => entry.id === "same.id")?.effective, "disabled")
   })
 
   it("uses daemon-reported roots and host translation instead of process configuration", async () => {
@@ -807,6 +865,24 @@ describe("CodeNomad-managed plugin provenance and recovery", () => {
       else fixture.setProjectPlugins([rule, "codenomad.automation"])
       fixture.runtime.push({ id: "codenomad.automation", source: { type: "local", path: installed.plugin }, features: {}, state: { status: "active" } })
       assert.equal((await fixture.controls.read("workspace", fixture.location)).controls[0].runtime?.state.status, "active")
+    }
+  })
+})
+
+describe("CodeNomad-managed plugin re-enable with an exact disabling rule", () => {
+  it("removes the exact disabling rule instead of appending a positive ID", async () => {
+    for (const scope of ["global", "project"] as const) {
+      const fixture = createFixture({
+        globalPlugins: scope === "global" ? ["-codenomad.automation"] : [],
+        projectPlugins: scope === "project" ? ["-codenomad.automation"] : [],
+      })
+      await installManaged(fixture, "automation", "codenomad.automation")
+      const response = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "codenomad.automation", scope, enabled: true })
+      const control = response.snapshot.controls.find(entry => entry.id === "codenomad.automation")!
+      assert.equal(response.changed, true)
+      assert.equal(control.managedBy, "codenomad")
+      assert.notEqual(control.effective, "disabled")
+      assert.deepEqual((parse(fs.readFileSync(scope === "global" ? fixture.globalFile : fixture.projectFile, "utf8")) as any).plugins, [])
     }
   })
 })
