@@ -59,7 +59,7 @@ export async function resolveImagesConversation(instanceId: string, mode: "open"
  * hydration, so a conversation the user selected meanwhile stays selected.
  */
 export async function showImagesConversation(instanceId: string, result: Extract<ImagesConversationResponse, { status: "found" }>,
-   stillWanted: () => boolean = () => true, intent?: SessionSurfaceIntent): Promise<void> {
+  stillWanted: () => boolean = () => true, intent?: SessionSurfaceIntent): Promise<void> {
   await hydrateRestoredSessionChain(instanceId, [result.sessionID])
   if (result.created) prependSessionListId(instanceId, result.sessionID)
   if (!stillWanted() || intent && !intent.current()) return
@@ -71,8 +71,8 @@ export async function showImagesConversation(instanceId: string, result: Extract
 export async function openImagesConversation(instanceId: string, mode: "open" | "new"): Promise<ImagesConversationResponse> {
   const intent = captureSessionSurfaceIntent({ instanceId, sessionId: null })
   try {
-  const result = await resolveImagesConversation(instanceId, mode)
-  if (result.status === "found") await showImagesConversation(instanceId, result, intent.current, intent)
-  return result
+    const result = await resolveImagesConversation(instanceId, mode)
+    if (result.status === "found") await showImagesConversation(instanceId, result, intent.current, intent)
+    return result
   } finally { intent.release() }
 }

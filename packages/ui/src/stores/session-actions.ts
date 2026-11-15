@@ -67,7 +67,7 @@ const pendingNewSessions = new Map<string, Promise<Session | null>>()
  * Creates and activates a new session for a user-triggered entry point (sidebar
  * button, new-session hotkey, command palette). Failures — including a rejected
  * create request on a stalled network — surface as an alert instead of silence.
- * Returns the activated session, or null when creation failed.
+ * Returns the created session even when a newer gesture supersedes selection, or null when creation failed.
  */
 function startNewSession(instanceId: string, agent?: string): Promise<Session | null> {
   const pending = pendingNewSessions.get(instanceId)

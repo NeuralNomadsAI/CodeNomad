@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
-import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, type CentralSurface } from "./session-surface"
+import { activateSessionSurface as commitSurface, captureSessionSurfaceIntent, getSessionSurface, type CentralSurface, type SurfaceContext } from "./session-surface"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getTabViewState, seedTabViewState, updateTabViewState } from "./tab-view-state"
 import { getSessionPreview, openSessionPreview } from "./session-previews"
@@ -12,6 +12,11 @@ import { clearActiveParentSession, clearActiveSession, hydrateActiveSessionSelec
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 const ctx = (instanceId: string) => ({ instanceId, sessionId: "same" })
+function activateSessionSurface(context: SurfaceContext, surface: CentralSurface) {
+  const intent = captureSessionSurfaceIntent(context)
+  try { commitSurface(context, surface, intent) }
+  finally { intent.release() }
+}
 const lifecycle = (instanceId: string, type: "opened" | "removed" | "unavailable") =>
   publishInstanceLifecycleAuthority({ type, instanceId, folder: "/repo", occurrence: 0 })
 const surfaces: CentralSurface[] = [

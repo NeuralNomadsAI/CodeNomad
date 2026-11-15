@@ -1,5 +1,6 @@
 import { Component, For, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { focusInterruption } from "../stores/interruption-navigation"
+import { captureSessionSurfaceIntent } from "../stores/session-surface"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { observeListEnd } from "../lib/list-end-observer"
 import { preserveListFocus } from "../lib/preserve-list-focus"
@@ -1166,4 +1167,3 @@ const SessionList: Component<SessionListProps> = (props) => {
 }
 
 export default SessionList
-import { captureSessionSurfaceIntent } from "../stores/session-surface"

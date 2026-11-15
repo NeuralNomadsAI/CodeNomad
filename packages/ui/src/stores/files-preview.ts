@@ -1,4 +1,4 @@
-import { activateSessionSurface, getSessionSurface, reconcileFileSurface, type SessionSurfaceIntent } from "./session-surface"
+import { activateSessionSurface, getSessionSurface, reconcileFileSurface, sessionSurfaceGesture, type SessionSurfaceIntent } from "./session-surface"
 export { reconcileFileSurface as reconcileFilePreview } from "./session-surface"
 
 export interface FilePreviewTarget {
@@ -19,11 +19,15 @@ export const getFilePreview = (instanceId: string) => {
   return surface.kind === "file" ? surface.target : null
 }
 export function openFilePreview(instanceId: string, target: FilePreviewTarget, intent?: SessionSurfaceIntent) {
-  activateSessionSurface({ instanceId, sessionId: target.sessionId }, { kind: "file", target }, intent)
+  const ctx = { instanceId, sessionId: target.sessionId }
+  sessionSurfaceGesture(ctx, admitted => activateSessionSurface(ctx, { kind: "file", target }, admitted), intent)
 }
 export function closeFilePreview(instanceId: string, intent?: SessionSurfaceIntent) {
   const target = getFilePreview(instanceId)
-  if (target) activateSessionSurface({ instanceId, sessionId: target.sessionId }, { kind: "conversation" }, intent)
+  if (target) {
+    const ctx = { instanceId, sessionId: target.sessionId }
+    sessionSurfaceGesture(ctx, admitted => activateSessionSurface(ctx, { kind: "conversation" }, admitted), intent)
+  }
 }
 export function reconcileFilePreviewLifetime(instanceId: string) {
   const target = getFilePreview(instanceId)

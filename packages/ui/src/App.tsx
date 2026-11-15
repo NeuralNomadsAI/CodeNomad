@@ -69,7 +69,7 @@ import {
   getSessions,
   getSessionRoot,
   activeSessionId,
-  clearActiveParentSession,
+  clearSelectedSession,
   fetchSessions,
   loadMessages,
   setActiveSessionFromList,
@@ -79,7 +79,6 @@ import {
 } from "./stores/sessions"
 import { openSessionPreview } from "./stores/session-previews"
 import { captureSessionSurfaceIntent } from "./stores/session-surface"
-import { clearSelectedSession } from "./stores/session-state"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface } from "./session-surface"
+import { activateSessionSurface as commitSurface, captureSessionSurfaceIntent, getSessionSurface, type CentralSurface, type SurfaceContext } from "./session-surface"
 import { forgetMissionView, missionProjectView, retargetMissionReader, updateMissionProjectView } from "./mission-view-state"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
@@ -10,6 +10,11 @@ import { serverApi } from "../lib/api-client"
 import * as filePreviews from "./files-preview"
 
 const reader = { missionId: "mission", kind: "overview" as const }
+function activateSessionSurface(ctx: SurfaceContext, surface: CentralSurface) {
+  const intent = captureSessionSurfaceIntent(ctx)
+  try { commitSurface(ctx, surface, intent) }
+  finally { intent.release() }
+}
 const passive = {
   "Mission inventory cleanup": (id: string) => updateMissionProjectView(id, { reader: undefined }),
   "Mission removal": (id: string) => forgetMissionView(id, "mission"),
@@ -42,7 +47,7 @@ test("passive file lifetime cleanup settles without changing a newer browser sur
   filePreviews.reconcileFilePreviewLifetime(instanceId)
   assert.equal(intent.current(), true)
   assert.equal(getSessionSurface(ctx).kind, "file")
-  activateSessionSurface(ctx, { kind: "web", sessionId: "same" }, intent)
+  commitSurface(ctx, { kind: "web", sessionId: "same" }, intent)
   intent.release()
   assert.equal(getSessionSurface(ctx).kind, "web")
   publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: 0 })

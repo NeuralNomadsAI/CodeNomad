@@ -68,8 +68,8 @@ export function getSessionSurface({ instanceId, sessionId }: SurfaceContext): Ce
 }
 
 /** Every explicit central-view gesture supersedes pending activation in this occurrence. */
-export function activateSessionSurface(ctx: SurfaceContext, surface: CentralSurface, intent?: SessionSurfaceIntent): void {
-  sessionSurfaceGesture(ctx, () => writeSessionSurface(ctx, surface), intent)
+export function activateSessionSurface(ctx: SurfaceContext, surface: CentralSurface, intent: SessionSurfaceIntent): void {
+  if (intent.current()) writeSessionSurface(ctx, surface)
 }
 
 function writeSessionSurface(ctx: SurfaceContext, surface: CentralSurface): void {

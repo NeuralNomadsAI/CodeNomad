@@ -11,7 +11,7 @@ import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-da
 import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
-import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, type SessionSurfaceIntent } from "../../../../../stores/session-surface"
+import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, sessionSurfaceGesture, type SessionSurfaceIntent } from "../../../../../stores/session-surface"
 import { MAX_EXPANDED, forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, retargetMissionReader, updateMissionProjectView, navigateMissionProjectView,
   type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { markMissionTasksSeen, missionTaskUnseen, seedMissionTasksSeen } from "../../../../../stores/mission-task-seen"
@@ -331,7 +331,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const read = async (target: MissionReaderTarget) => {
     if (isReading(target)) {
       intent++
-      activateSessionSurface({ instanceId: props.instanceId, sessionId: props.activeSessionId() ?? null }, { kind: "conversation" })
+      const ctx = { instanceId: props.instanceId, sessionId: props.activeSessionId() ?? null }
+      sessionSurfaceGesture(ctx, intent => activateSessionSurface(ctx, { kind: "conversation" }, intent))
       return
     }
     const origin = navigationOrigin()

@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import { serverApi } from "../lib/api-client"
 import type { PreviewSession } from "../../../server/src/api-types"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
-import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, invalidateSessionSurfaceIntent } from "./session-surface"
+import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface, invalidateSessionSurfaceIntent, sessionSurfaceGesture } from "./session-surface"
 import { activeSessionId } from "./session-selection-state"
 import { adoptLegacyTabPreview, getTabViewState, updateTabViewState, type RestorableTabPreview } from "./tab-view-state"
 import { parseLegacySessionPreviews } from "./tab-view-state-codec"
@@ -29,11 +29,11 @@ function cancelOperation(storageKey: string) {
   restorePromises.delete(storageKey)
 }
 function beginOperation(storageKey: string, sessionId: string, instanceId: string, intent?: PreviewOperation, passive = false): PreviewOperation {
-  cancelOperation(storageKey)
   const operation: PreviewOperation = intent ?? (passive ? {
     current: () => operations.get(storageKey) === operation && isInstanceOccurrenceOpen(instanceId),
     release: () => {},
   } : captureSessionSurfaceIntent({ sessionId, instanceId }))
+  cancelOperation(storageKey)
   operations.set(storageKey, operation)
   return operation
 }
@@ -140,15 +140,20 @@ function showSessionPreview(storageKey: string, intent?: PreviewOperation) {
   if (intent && !intent.current()) return
   const current = sessionPreviews().get(storageKey)
   if (!current) return
-  cancelOperation(storageKey)
-  activateSessionSurface(current, { kind: "web", sessionId: current.sessionId }, intent)
+  sessionSurfaceGesture(current, admitted => {
+    cancelOperation(storageKey)
+    activateSessionSurface(current, { kind: "web", sessionId: current.sessionId }, admitted)
+  }, intent)
 }
 
 function showSessionChat(storageKey: string) {
   // A reader/chat gesture wins over an earlier browser open or restore.
-  cancelOperation(storageKey)
   const [instanceId, sessionId] = JSON.parse(storageKey) as [string, string]
-  activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" })
+  const ctx = { instanceId, sessionId }
+  sessionSurfaceGesture(ctx, intent => {
+    cancelOperation(storageKey)
+    activateSessionSurface(ctx, { kind: "conversation" }, intent)
+  })
 }
 
 function showSessionChatFor(sessionId: string, instanceId: string) {

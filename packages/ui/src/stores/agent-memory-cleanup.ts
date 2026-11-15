@@ -21,24 +21,24 @@ export function runMemoryCleanup(request: MemoryCleanupRequest): Promise<void> {
 async function launchMemoryCleanup(request: MemoryCleanupRequest): Promise<void> {
   const intent = captureSessionSurfaceIntent({ instanceId: request.workspaceId, sessionId: null })
   try {
-  const instance = instances().get(request.workspaceId)
-  const client = instance?.client, folder = instance?.folder
-  const assertCurrent = () => {
-    const current = instances().get(request.workspaceId)
-    if (!client || current?.status !== "ready" || current.client !== client || current.folder !== folder) throw new Error("Cleanup project unavailable")
-  }
-  assertCurrent()
-  // Fresh checks before the sole non-idempotent creation; the proxy authorizes the captured directory.
-  const settings = await agentMemoryApi.settings()
-  if (!settings.enabled) throw new Error("Memory disabled")
-  const result = await agentMemoryApi.list(request.scope, { workspaceId: request.workspaceId, directory: request.directory })
-  if (!result.cleanupDirectory || !result.cleanupWritable || !result.entries.some(entry => !entry.flagged)) throw new Error("Memory empty or unavailable")
-  assertCurrent()
-  const session = await createSession(request.workspaceId, undefined, { directory: request.directory })
-  assertCurrent()
-  if (session.location?.directory !== result.cleanupDirectory) throw new Error("Cleanup location changed")
-  if (intent.current()) selectInstanceTab(request.workspaceId)
-  setActiveParentSession(request.workspaceId, session.id, intent)
-  await sendMessage(request.workspaceId, session.id, memoryCleanupPrompt(request.scope))
+    const instance = instances().get(request.workspaceId)
+    const client = instance?.client, folder = instance?.folder
+    const assertCurrent = () => {
+      const current = instances().get(request.workspaceId)
+      if (!client || current?.status !== "ready" || current.client !== client || current.folder !== folder) throw new Error("Cleanup project unavailable")
+    }
+    assertCurrent()
+    // Fresh checks before the sole non-idempotent creation; the proxy authorizes the captured directory.
+    const settings = await agentMemoryApi.settings()
+    if (!settings.enabled) throw new Error("Memory disabled")
+    const result = await agentMemoryApi.list(request.scope, { workspaceId: request.workspaceId, directory: request.directory })
+    if (!result.cleanupDirectory || !result.cleanupWritable || !result.entries.some(entry => !entry.flagged)) throw new Error("Memory empty or unavailable")
+    assertCurrent()
+    const session = await createSession(request.workspaceId, undefined, { directory: request.directory })
+    assertCurrent()
+    if (session.location?.directory !== result.cleanupDirectory) throw new Error("Cleanup location changed")
+    if (intent.current()) selectInstanceTab(request.workspaceId)
+    setActiveParentSession(request.workspaceId, session.id, intent)
+    await sendMessage(request.workspaceId, session.id, memoryCleanupPrompt(request.scope))
   } finally { intent.release() }
 }

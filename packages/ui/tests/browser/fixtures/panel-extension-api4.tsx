@@ -10,6 +10,8 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverEvents } from "../../../src/lib/server-events"
 import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { activeSessionId, clearActiveParentSession, sessions, setActiveParentSession, setProviders } from "../../../src/stores/session-state"
+import { clearSelectedSession } from "../../../src/stores/session-state"
+import { captureSessionSurfaceIntent } from "../../../src/stores/session-surface"
 import { getAttachments } from "../../../src/stores/attachments"
 import { fetchAgents, fetchSessions, hydrateRestoredSessionChain } from "../../../src/stores/session-api"
 import { updateSessionAgent } from "../../../src/stores/session-actions"
@@ -99,8 +101,12 @@ const frameMessages: unknown[] = []
 window.addEventListener("message", event => { if (event.data?.fixtureAnswer) frameMessages.push(event.data.fixtureAnswer) })
 ;(window as any).fixture = {
   frameMessages: () => frameMessages.splice(0),
-  show: async (id: string) => { await hydrateRestoredSessionChain(instanceId, [id]); setActiveParentSession(instanceId, id) },
-  clear: () => clearActiveParentSession(instanceId),
+  show: async (id: string) => {
+    const intent = captureSessionSurfaceIntent({ instanceId, sessionId: id })
+    try { await hydrateRestoredSessionChain(instanceId, [id]); setActiveParentSession(instanceId, id, intent) }
+    finally { intent.release() }
+  },
+  clear: () => clearSelectedSession(instanceId),
   holdHydration: (id: string) => { held = id },
   hydrationWaiting: () => waiting.length,
   releaseHydration: () => { held = undefined; for (const resolve of waiting.splice(0)) resolve() },
