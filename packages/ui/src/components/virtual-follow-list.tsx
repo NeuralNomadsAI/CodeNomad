@@ -79,6 +79,8 @@ type ScrollWriteOp =
 interface BottomPin {
   reason: ScrollReason
   frames: number
+  /** A settled pin's hand-over to follow leaves the hold alone until content grows again. */
+  exemptHold?: true
   settle?: {
     /** The owner's intent token; absent for list-owned settlements. */
     token?: string | number
@@ -486,7 +488,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     // An explicit pin's own target is the bottom; following defers to restoration and suspension.
     if (!settle && !canPinFollowBottom()) return endBottomPin("interrupted")
     // The long-reply hold decides before the write that would carry its target past its line.
-    if (!settle && maybeEscapeForHoldTrigger()) return
+    if (!settle && !pin.exemptHold && maybeEscapeForHoldTrigger()) return
     writeBottom(pin.reason)
     pin.frames -= 1
     if (settle) {
@@ -506,7 +508,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   /** An explicit pin that ends by itself leaves following re-pinning while layout settles. */
   function handBottomToFollow(pin: BottomPin, settlement: VirtualBottomSettlement) {
     const resolve = pin.settle?.resolve
-    bottomPin = { reason: pin.reason, frames: FOLLOW_BOTTOM_PIN_FRAMES }
+    // The reader just asked for this bottom; the hand-over does not re-engage
+    // the hold (which would drop follow the frame it settles). The next
+    // content growth re-evaluates it.
+    bottomPin = { reason: pin.reason, frames: FOLLOW_BOTTOM_PIN_FRAMES, exemptHold: true }
     scheduleBottomPin()
     resolve?.(settlement)
   }
@@ -773,7 +778,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function flushContentRendered() {
     pendingContentRenderedFrame = null
     if (restartAnchorRestore) restartAnchorRestore()
-    else if (!bottomPin?.settle && !maybeEscapeForHoldTrigger()) {
+    else if (!bottomPin?.settle && !bottomPin?.exemptHold && !maybeEscapeForHoldTrigger()) {
       dispatchFollowEvent({ type: "content-grew", canPinToBottom: autoScroll() && !externalSuspendAutoPinToBottom() })
     }
     scrollObservation.observeNow()

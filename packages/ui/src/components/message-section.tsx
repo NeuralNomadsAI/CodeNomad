@@ -1109,7 +1109,11 @@ export default function MessageSection(props: MessageSectionProps) {
     // First without a page to load is a local jump; other requests that load
     // nothing leave every navigation, including a loading restore, untouched.
     const localFirst = direction === "oldest" && (!load || !props.hasMoreMessages)
-    if (!load && !localFirst) return
+    // The latest window already shows the live stream, so returning to its
+    // bottom is a local jump: an authoritative reload races every live event
+    // and its bounded retries can give up, leaving the request without effect.
+    const localLatest = direction === "latest" && isLatestWindow(store().getMessageWindow(props.sessionId))
+    if (!load && !localFirst && !localLatest) return
     if (direction === "older" && !props.hasMoreMessages) return
     if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
     // Before the restore, keep the position a page commit would replace (a
@@ -1121,6 +1125,17 @@ export default function MessageSection(props: MessageSectionProps) {
     claimSearchReveal()
     if (localFirst || !load) {
       after(api)
+      return
+    }
+    if (localLatest) {
+      // A local latest jump positions like the paged one below, minus the
+      // authoritative reload a streaming tail would outpace: settle the bottom
+      // (holding it past the long-reply hold), then hand it back to follow.
+      after(api)
+      void api.settleAtBottom().then((settlement) => {
+        api.setAutoScroll(settlement !== "cancelled")
+        api.notifyContentRendered()
+      })
       return
     }
     const sessionId = props.sessionId
