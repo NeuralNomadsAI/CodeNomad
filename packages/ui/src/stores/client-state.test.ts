@@ -340,13 +340,22 @@ describe("plain web tab session", () => {
     await reloaded.setRestorePreviousStateEnabled(true)
     assert.equal((await bootWeb(tab)).restorePreviousStateEnabled(), true)
   })
-  it("a refused write (storage quota) stops snapshot writes for the page and reports the failure", async () => {
-    const tab = new MemoryStorage()
-    tab.setItem = () => { throw new Error("QuotaExceededError") }
+  it("a refused write (storage quota) fails that save only; Clear and later saves still work", async () => {
+    const tab = new MemoryStorage(), setItem = tab.setItem.bind(tab)
+    tab.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot("stale")))
+    let full = true
+    tab.setItem = (key, value) => { if (full) throw new Error("QuotaExceededError"); setItem(key, value) }
     const state = await bootWeb(tab)
     state.updateRestorableSession(session("large"))
-    await assert.rejects(state.flushClientState(), /save was rejected/)
-    assert.equal(state.clientStateIsPrimary(), false)
+    await assert.rejects(state.flushClientState(), /refused the client snapshot/)
+    assert.equal(state.clientStateIsPrimary(), true)
+    await state.clearRestoredClientState()
+    assert.equal(tab.getItem(SNAPSHOT_KEY), null)
+    full = false
+    await state.setRestorePreviousStateEnabled(true)
+    state.updateRestorableSession(session("small"))
+    await state.flushClientState()
+    assert.deepEqual(JSON.parse(tab.getItem(SNAPSHOT_KEY)!).session, session("small"))
   })
 })
 

@@ -6,6 +6,8 @@ import { normalizeOutlineIndexes, outlineBudget, type OutlineBudget, type Persis
 
 export interface RestorableWorkspaceTabState {
   kind: "workspace"; folder: string; occurrence?: number; projectName?: string; binaryPath?: string
+  /** The backend workspace record it showed; preferred over `occurrence` while that record exists. */
+  workspaceId?: string
   activeParentSessionId?: string; activeSessionId?: string
   drafts: Record<string, string>; attachments: Record<string, RestorableAttachment[]>
   scrollSnapshots: Record<string, ScrollSnapshot>; unseenIdleSince: Record<string, number>
@@ -202,8 +204,10 @@ function normalizeWorkspaceTab(
   }
   const projectName = value.projectName === undefined ? undefined : takeString(value.projectName, MAX_PATH, budget)
   const binaryPath = value.binaryPath === undefined ? undefined : takeString(value.binaryPath, MAX_PATH, budget)
+  const workspaceId = value.workspaceId === undefined ? undefined : takeString(value.workspaceId, MAX_ID, budget)
   if (projectName !== undefined) result.projectName = projectName
   if (binaryPath !== undefined) result.binaryPath = binaryPath
+  if (workspaceId) result.workspaceId = workspaceId
   if (identity.activeParentSessionId !== undefined) result.activeParentSessionId = identity.activeParentSessionId
   if (identity.activeSessionId !== undefined) result.activeSessionId = identity.activeSessionId
   return result

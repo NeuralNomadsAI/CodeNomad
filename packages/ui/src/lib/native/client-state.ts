@@ -67,13 +67,18 @@ export async function loadNativeClientState(): Promise<NativeClientStateLoadResu
 }
 // A plain browser tab persists in its own sessionStorage (`web-session-client-state.ts`).
 const persistClientState = (web: () => boolean, native: () => Promise<boolean>): Promise<boolean> =>
-  webSessionOwned ? Promise.resolve(web()) : native()
+  webSessionOwned ? new Promise<boolean>(resolve => resolve(web())) : native()
 async function mutateNativeClientState(electronOperation: (api: ElectronAPI) => Promise<boolean> | undefined, command: string, args: Record<string, unknown> = {}): Promise<boolean> {
   if (!nativeAccessClaimed) return false
   return await dispatchNative((api) => api && electronOperation(api), command, args) ?? false
 }
 export const saveNativeClientState = (snapshot: unknown): Promise<boolean> => persistClientState(
-  () => saveWebSessionClientState(snapshot),
+  // A refused browser write (quota) fails this save only: the tab keeps owning
+  // its state, so later saves retry and Clear/disable stay available.
+  () => {
+    if (!saveWebSessionClientState(snapshot)) throw new Error("Browser session storage refused the client snapshot")
+    return true
+  },
   () => mutateNativeClientState((api) => api.saveClientState?.(accessToken, snapshot), "client_state_save", { snapshot }))
 export const commitNativeClientStatePartitions = (payload: NativeClientStatePartitionCommit): Promise<boolean> =>
   mutateNativeClientState((api) => api.commitClientStatePartitions?.(accessToken, payload), "client_state_commit_partitions", { payload })
