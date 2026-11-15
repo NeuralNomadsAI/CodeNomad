@@ -50,12 +50,6 @@ button {
   color: var(--text-primary, #1a1a1a);
 }
 
-.loading-status {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--text-muted, #666666);
-}
-
 .loading-card {
   margin-top: 12px;
   width: 100%;
@@ -82,17 +76,6 @@ button {
   border: 2px solid color-mix(in srgb, var(--text-primary, #1a1a1a) 14%, transparent);
   border-top-color: var(--accent-primary, #0066ff);
   animation: spin 0.9s linear infinite;
-}
-
-.phrase-controls {
-  margin-top: 12px;
-  font-size: 0.9rem;
-  color: var(--text-muted, #666666);
-}
-
-.phrase-controls button {
-  color: var(--accent-primary, #0066ff);
-  cursor: pointer;
 }
 
 .loading-error {
@@ -139,10 +122,6 @@ button {
     color: var(--text-primary, #f4f6fb);
   }
 
-  :root:not([data-theme="light"]) .loading-status {
-    color: var(--text-muted, #aeb3c4);
-  }
-
   :root:not([data-theme="light"]) .loading-card {
     background: rgba(13, 16, 24, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -152,10 +131,6 @@ button {
   :root:not([data-theme="light"]) .spinner {
     border: 2px solid rgba(255, 255, 255, 0.18);
     border-top-color: var(--accent-primary, #6ce3ff);
-  }
-
-  :root:not([data-theme="light"]) .phrase-controls {
-    color: var(--text-muted, #8f96a9);
   }
 
   :root:not([data-theme="light"]) .loading-error {
