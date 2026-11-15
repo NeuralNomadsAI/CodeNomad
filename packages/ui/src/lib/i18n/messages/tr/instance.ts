@@ -89,7 +89,6 @@ export const instanceMessages = {
   "instanceWelcome.empty.title": "Önceki Session Yok",
   "instanceWelcome.empty.description": "Başlamak için aşağıda yeni bir session oluşturun",
   "instanceWelcome.loading.title": "Workspace başlatılıyor",
-  "instanceWelcome.loading.description": "Bu workspace için OpenCode başlatılıyor...",
   "instanceWelcome.resume.title": "Session'a Devam Et",
   "instanceWelcome.resume.subtitle.one": "{count} session mevcut",
   "instanceWelcome.resume.subtitle.other": "{count} session mevcut",

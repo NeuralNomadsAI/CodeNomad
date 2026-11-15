@@ -97,7 +97,6 @@ export const instanceMessages = {
   "instanceWelcome.empty.title": "没有历史会话",
   "instanceWelcome.empty.description": "在下方创建新会话以开始使用",
   "instanceWelcome.loading.title": "正在启动工作区",
-  "instanceWelcome.loading.description": "正在为此工作区启动 OpenCode...",
   "instanceWelcome.resume.title": "继续会话",
   "instanceWelcome.resume.subtitle.one": "{count} 个会话可用",
   "instanceWelcome.resume.subtitle.other": "{count} 个会话可用",

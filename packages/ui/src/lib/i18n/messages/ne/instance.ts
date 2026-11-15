@@ -97,7 +97,6 @@ export const instanceMessages = {
   "instanceWelcome.empty.title": "कुनै अघिल्लो सत्रहरू छैनन्",
   "instanceWelcome.empty.description": "सुरु गर्न तल नयाँ सत्र सिर्जना गर्नुहोस्",
   "instanceWelcome.loading.title": "कार्यस्थान सुरु गर्दै",
-  "instanceWelcome.loading.description": "यस कार्यस्थानको लागि OpenCode सुरु गर्दै...",
   "instanceWelcome.resume.title": "सत्र पुन: सुरु गर्नुहोस्",
   "instanceWelcome.resume.subtitle.one": "{count} सत्र उपलब्ध छ",
   "instanceWelcome.resume.subtitle.other": "{count} सत्रहरू उपलब्ध छन्",
