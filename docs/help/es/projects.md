@@ -32,7 +32,7 @@ Un clic normal sigue abriendo la página de inicio completa. El lanzador es un a
 | Cerrar pestaña | Retira la conexión de proyecto de CodeNomad de esa pestaña; otra pestaña abierta por separado en la misma carpeta no se ve afectada | No elimina archivos del proyecto ni el historial nativo, no detiene sesiones ni descarga la Location de OpenCode |
 | Detener sesión | Ejecución de la conversación seleccionada | No cierra el proyecto ni elimina su historial |
 
-Si otra ventana muestra la misma conexión de proyecto, su pestaña también se cierra y esa ventana muestra una notificación. La ventana que inicia el cierre no muestra ninguna. El cierre es inmediato; si el backend no puede cerrar el proyecto, aparece un error y **Cambiar al proyecto abierto** en la página de inicio sigue llevando a él. No hay reintento automático. Los borradores sin enviar de la pestaña cerrada no se conservan en la restauración al iniciar.
+Si otra ventana muestra la misma conexión de proyecto, su pestaña también se cierra y esa ventana muestra una notificación. La ventana que inicia el cierre no muestra ninguna. El cierre es inmediato; si el backend no puede cerrar el proyecto, aparece un error y **Cambiar al proyecto abierto** en la página de inicio sigue llevando a él. No hay reintento automático. Los borradores y adjuntos sin enviar de la pestaña cerrada vuelven al reabrir la misma carpeta en esa ventana; la ventana los conserva para sus 16 últimos proyectos cerrados hasta que se recarga o se cierra. No forman parte de la restauración al iniciar.
 
 Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
 
@@ -45,7 +45,7 @@ Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto
 | Opción | Efecto | Recuperación |
 | --- | --- | --- |
 | Conservar | Cierra el proyecto en CodeNomad, conserva la carpeta y las conversaciones, retira su condición temporal y añade un proyecto reciente | Vuelve a abrirlo desde Carpetas recientes; la carpeta no se mueve |
-| Descartar | Elimina las conversaciones y los archivos del espacio de trabajo temporal | No se puede deshacer; guarda primero en otro lugar lo que necesites |
+| Descartar | Elimina las conversaciones, los archivos y los borradores sin enviar del espacio de trabajo temporal | No se puede deshacer; guarda primero en otro lugar lo que necesites |
 | Cancelar | Deja abierto el espacio de trabajo temporal | Continúa trabajando o decide más tarde |
 
 Una pestaña temporal sin usar, sin conversación, archivo ni borrador sin enviar, se descarta silenciosamente al cerrarla. Las pestañas temporales abiertas participan en la restauración normal al iniciar, pero la página de inicio no tiene una lista aparte para reabrir carpetas temporales cerradas.

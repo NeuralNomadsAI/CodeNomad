@@ -32,7 +32,7 @@ Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellst
 | Tab schließen | Entfernt die CodeNomad-Projektverbindung dieses Tabs; ein anderer, separat geöffneter Tab desselben Ordners bleibt unberührt | Löscht weder Projektdateien noch nativen Verlauf, stoppt keine Sitzungen und entlädt nicht die OpenCode-Location |
 | Sitzung stoppen | Ausführung der ausgewählten Unterhaltung | Schließt weder Projekt noch löscht es dessen Verlauf |
 
-Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab ebenfalls und dieses Fenster zeigt eine Benachrichtigung. Das auslösende Fenster zeigt keine. Das Schließen erfolgt sofort; kann das Backend das Projekt nicht schließen, erscheint ein Fehler, und **Zum offenen Projekt wechseln** auf der Startseite erreicht es weiterhin. Es gibt keine automatische Wiederholung. Ungesendete Entwürfe des geschlossenen Tabs werden nicht in die Startwiederherstellung übernommen.
+Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab ebenfalls und dieses Fenster zeigt eine Benachrichtigung. Das auslösende Fenster zeigt keine. Das Schließen erfolgt sofort; kann das Backend das Projekt nicht schließen, erscheint ein Fehler, und **Zum offenen Projekt wechseln** auf der Startseite erreicht es weiterhin. Es gibt keine automatische Wiederholung. Ungesendete Entwürfe und Anhänge des geschlossenen Tabs kehren zurück, wenn Sie denselben Ordner in diesem Fenster erneut öffnen; das Fenster behält sie für seine 16 zuletzt geschlossenen Projekte, bis es neu geladen oder geschlossen wird. Sie gehören nicht zur Startwiederherstellung.
 
 Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Projektverbindungen nicht; die normale Startwiederherstellung gilt weiterhin. Stoppen Sie relevante Ausführungen ausdrücklich, wenn Sie sicherstellen müssen, dass sie beendet sind. CodeNomad entlädt niemals native Locations; die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
 
@@ -45,7 +45,7 @@ Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Pro
 | Auswahl | Wirkung | Wiederherstellung |
 | --- | --- | --- |
 | Behalten | Schließt das Projekt in CodeNomad, behält Ordner und Unterhaltungen, entfernt den temporären Status und fügt ein zuletzt verwendetes Projekt hinzu | Über zuletzt verwendete Einträge erneut öffnen; der Ordner wird nicht verschoben |
-| Verwerfen | Löscht Unterhaltungen und Dateien des temporären Arbeitsbereichs | Nicht rückgängig zu machen; benötigte Inhalte vorher anderswo sichern |
+| Verwerfen | Löscht Unterhaltungen, Dateien und ungesendete Entwürfe des temporären Arbeitsbereichs | Nicht rückgängig zu machen; benötigte Inhalte vorher anderswo sichern |
 | Abbrechen | Lässt den temporären Arbeitsbereich geöffnet | Weiterarbeiten oder später entscheiden |
 
 Ein unberührter temporärer Tab ohne Unterhaltung, Datei oder ungesendeten Entwurf wird beim Schließen stillschweigend verworfen. Geöffnete temporäre Tabs nehmen an der normalen Startwiederherstellung teil, aber die Startseite hat keine separate Liste zum Fortsetzen geschlossener temporärer Ordner.

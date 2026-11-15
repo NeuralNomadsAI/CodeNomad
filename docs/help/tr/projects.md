@@ -32,7 +32,7 @@ Normal bir tıklama yine de tam ana sayfayı açar. Başlatıcı, yönetim yüze
 | Sekmeyi Kapat | O sekmenin CodeNomad proje bağlantısını kaldırır; aynı klasörde ayrı açılmış başka bir sekme etkilenmez | Proje dosyalarını veya yerel geçmişi silmez, oturumları durdurmaz veya OpenCode'un Location bağlamını kaldırmaz |
 | Oturumu durdur | Seçilen görüşmenin yürütülmesi | Projeyi kapatmaz veya geçmişini silmez |
 
-Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de kapanır ve o pencere bir bildirim gösterir. Kapatmayı başlatan pencere bildirim göstermez. Kapatma hemen gerçekleşir; arka uç projeyi kapatamazsa bir hata görünür ve ana sayfadaki **Açık projeye geç** yine projeye ulaşır. Otomatik yeniden deneme yoktur. Kapatılan sekmenin gönderilmemiş taslakları başlangıç geri yüklemesinde korunmaz.
+Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de kapanır ve o pencere bir bildirim gösterir. Kapatmayı başlatan pencere bildirim göstermez. Kapatma hemen gerçekleşir; arka uç projeyi kapatamazsa bir hata görünür ve ana sayfadaki **Açık projeye geç** yine projeye ulaşır. Otomatik yeniden deneme yoktur. Kapatılan sekmenin gönderilmemiş taslakları ve ekleri, aynı klasörü o pencerede yeniden açtığınızda geri gelir; pencere bunları yeniden yüklenene veya kapanana kadar en son kapatılan 16 proje için tutar. Başlangıç geri yüklemesine dahil değildir.
 
 Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını kapatmaz; normal başlangıç geri yüklemesi yine uygulanır. Yürütmenin bittiğini doğrulamak istiyorsanız ilgili çalıştırmaları açıkça durdurun. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz; paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
 
@@ -45,7 +45,7 @@ Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek 
 | Seçim | Etki | Kurtarma |
 | --- | --- | --- |
 | Sakla | Projeyi CodeNomad'de kapatır, klasörü ve konuşmaları korur, geçici durumunu kaldırır ve son kullanılan projelere ekler | Son kullanılanlardan yeniden açın; klasör taşınmaz |
-| At | Geçici çalışma alanının konuşmalarını ve dosyalarını siler | Geri alma yok; ihtiyaç duyulan her şeyi önce başka bir yere kaydedin |
+| At | Geçici çalışma alanının konuşmalarını, dosyalarını ve gönderilmemiş taslaklarını siler | Geri alma yok; ihtiyaç duyulan her şeyi önce başka bir yere kaydedin |
 | İptal | Geçici çalışma alanını açık bırakır | Çalışmaya devam edin veya daha sonra karar verin |
 
 Hiçbir konuşma, dosya veya gönderilmemiş taslak içermeyen, dokunulmamış bir geçici sekme, kapatıldığında sessizce atılır. Açık geçici sekmeler normal başlangıç geri yüklemesine katılır, ancak ana sayfada kapatılan geçici klasörlerin devam ettirilmesi için ayrı bir liste yoktur.

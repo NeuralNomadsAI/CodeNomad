@@ -32,7 +32,7 @@ const { alertDialogState } = await import("./alerts")
 const { activeAppTabId, appTabs, attachInstanceTab, selectInstanceTab } = await import("./app-tabs")
 const { addInstance, instances, removeInstance, updateInstance } = await import("./instances")
 const { closeTemporaryInstance, openTemporaryInstance } = await import("./temporary-instances")
-const { clearInstanceDraftPrompts, setSessionDraftPrompt, setSessions } = await import("./session-state")
+const { clearInstanceDraftPrompts, getSessionDraftPrompt, setSessionDraftPrompt, setSessions } = await import("./session-state")
 
 const folder = "D:\\CodeNomad\\temporary-workspaces\\20261009-120000-abcd"
 // Tabs with a conversation ask before closing; empty ones close silently.
@@ -60,7 +60,7 @@ async function answer(value: string | null) {
   dialog?.resolveChoice?.(value)
 }
 function reset(...ids: string[]) {
-  for (const id of ids) { removeInstance(id, { authoritative: false }); clearInstanceDraftPrompts(id) }
+  for (const id of ids) { removeInstance(id, { authoritative: false, keepDrafts: false }); clearInstanceDraftPrompts(id) }
   setSessions((previous) => {
     const next = new Map(previous)
     for (const id of ids) next.delete(id)
@@ -209,6 +209,26 @@ test("an unsent draft keeps the choice without asking the server first", async (
     assert.deepEqual(calls, [])
     assert.ok(tabOpen("drafted"))
   } finally { reset("drafted") }
+})
+
+test("a discarded folder's drafts are not offered again, even after a refused discard", async () => {
+  open("discard-drafted")
+  setSessionDraftPrompt("discard-drafted", "__no_session_draft__", "deleted with the folder")
+  discardError = new Error("temporary_running")
+  try {
+    const refused = closeTemporaryInstance("discard-drafted")
+    await answer("discard")
+    await refused
+    discardError = undefined
+    const discarding = closeTemporaryInstance("discard-drafted")
+    await answer("discard")
+    await discarding
+    ;(serverEvents as any).dispatch({ type: "workspace.stopped", workspaceId: "discard-drafted", reason: "deleted" })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(instances().has("discard-drafted"), false)
+    openEmpty("discard-reopened")
+    assert.equal(getSessionDraftPrompt("discard-reopened", "__no_session_draft__"), "")
+  } finally { reset("discard-drafted", "discard-reopened") }
 })
 
 for (const code of ["temporary_has_conversations", "temporary_not_empty", "temporary_open_elsewhere"]) {
