@@ -49,7 +49,7 @@ export function reconcileFileSurface(instanceId: string, previous: FilePreviewTa
   if (!lifetime) return
   reconcileSessionSurface(instanceId, key, () => {
     const current = files().get(instanceId)
-    if (!current || (key === "file-reader" ? current.target !== previous : current.lifetime !== lifetime)) return
+    if (!current || current.lifetime !== lifetime || (key === "file-reader" && current.target !== previous)) return
     const target = typeof update === "function" ? update() : update
     setFiles(current => {
       const next = new Map(current)

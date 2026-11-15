@@ -101,6 +101,10 @@ Explicit Git refresh, stage, unstage and commit capture the shared occurrence
 surface intent before awaiting and recheck it with the file target before
 reconciling the central reader. Passive filesystem refreshes defer central-reader
 reconciliation while a foreground action is pending; their status lists still update.
+At settlement, status reconciliation requires a loaded inventory from the same
+hook/worktree lifetime. Clearing the cache while Changes is inactive keeps the
+reader until a valid read can reconcile it. Status updates also match the reader's
+target and lifetime identity, preserving the authority of an explicit reopen.
 
 Switching project tabs unmounts heavy readers and transcripts. The live workspace
 file target retains its source/rendered choice and rendered Markdown position in

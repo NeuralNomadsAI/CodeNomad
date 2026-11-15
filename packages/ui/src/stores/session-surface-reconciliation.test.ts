@@ -134,3 +134,20 @@ test("file recovery preserves a newer passive status target and a repeated file 
   assert.equal(filePreviews.getFilePreview(instanceId), updated)
   publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: 0 })
 })
+
+test("deferred status cannot restore an old lifetime after reopening the identical file target", () => {
+  const instanceId = "file-status-renewal", ctx = { instanceId, sessionId: "same" }
+  const target = { sessionId: "same", path: "a", slug: "root", directory: "/repo" }
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId, folder: "/repo", occurrence: 0 })
+  filePreviews.openFilePreview(instanceId, target)
+  const held = captureSessionSurfaceIntent(ctx)
+  try {
+    filePreviews.reconcileFilePreview(instanceId, target, () => ({ ...target, scope: "staged" }))
+    filePreviews.reconcileFilePreviewLifetime(instanceId)
+    filePreviews.openFilePreview(instanceId, target)
+    assert.equal(filePreviews.getFilePreview(instanceId), target)
+  } finally {
+    held.release()
+    publishInstanceLifecycleAuthority({ type: "removed", instanceId, folder: "/repo", occurrence: 0 })
+  }
+})

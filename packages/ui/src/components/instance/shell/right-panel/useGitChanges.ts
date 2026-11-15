@@ -50,6 +50,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
   let statusController: AbortController | undefined
   let diffController: AbortController | undefined
   let lifecycle = 0
+  let worktreeLifetime = 0
   let disposed = false
   let commitOperation: object | null = null
   let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
@@ -204,7 +205,11 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const preview = previous.preview
     const current = previous.surfaceIntent?.current() ?? true
     if (preview && current && getFilePreview(options.instanceId) === preview) {
+      const lifetime = worktreeLifetime
       const resolve = () => {
+        // An unloaded cache carries no absence evidence; only this hook/worktree
+        // lifetime's loaded inventory may reconcile the reader at settlement.
+        if (disposed || lifetime !== worktreeLifetime || gitStatusInventory() === null) return preview
         const candidates = gitListItems().filter(item => item.path === preview.path)
         const item = candidates.find(item => item.section === (preview.scope ?? "unstaged")) ?? candidates[0]
         return item ? { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section } : undefined
@@ -497,6 +502,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   createEffect(on(options.worktreeSlug, () => {
+    worktreeLifetime += 1
     cancelGitReads()
     setGitStatusEntries(null)
     setGitStatusError(null)

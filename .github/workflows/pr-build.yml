@@ -509,6 +509,8 @@ jobs:
           packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
           packages/ui/src/stores/session-surface-reconciliation.test.ts
+          packages/ui/src/stores/session-deletion-reconciliation.test.ts
+          packages/ui/src/components/instance/shell/right-panel/useGitChanges.test.ts
           packages/ui/src/stores/tab-view-state.test.ts
           packages/ui/src/lib/browser-history.test.ts
           packages/ui/src/lib/keyboard-offset.test.ts

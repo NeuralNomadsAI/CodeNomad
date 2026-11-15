@@ -83,7 +83,7 @@ async function until(predicate: () => boolean) {
   }
   assert.ok(predicate(), "hook settled before timeout")
 }
-async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")], worktreeSlug = () => "root") {
+async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")], worktreeSlug = () => "root", isActive = () => true) {
   publishInstanceLifecycleAuthority({ type: "opened", instanceId: "test", folder: "/repo", occurrence: 0 })
   fixture.entries = entries
   fixture.requests = []
@@ -94,7 +94,7 @@ async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")], wo
   const git = createRoot(cleanup => {
     dispose = cleanup
     return useGitChanges({
-      instanceId: "test", isActive: () => true, t: key => key, rightPanelTab: () => "git-changes",
+      instanceId: "test", isActive, t: key => key, rightPanelTab: () => "git-changes",
       worktreeSlug, isPhoneLayout: () => false, promptInputApi: () => null,
       closeGitList: () => {}, externalDiff: true,
     })
@@ -467,4 +467,32 @@ test("passive refresh and commits reconcile an eye-opened file without selecting
     assert.equal(getFilePreview("test"), null)
     assert.equal(h.git.gitSelectedItemId(), "unstaged:a.ts")
   } finally { h.close() }
+})
+
+for (const clear of ["filesystem", "whitespace"] as const) test(`deferred status preserves a reader when ${clear} clears the inactive inventory`, async () => {
+  const [active, setActive] = createSignal(true)
+  setHideWhitespace(true)
+  const h = await setup([entry("a.ts")], () => "root", active)
+  try {
+    h.eye("unstaged:a.ts")
+    const intent = captureSessionSurfaceIntent({ instanceId: "test", sessionId: "session" })
+    try {
+      const target = getFilePreview("test")
+      const reads = fixture.statusOptions.length
+      invalidateFilesystemCaches("test")
+      await until(() => fixture.statusOptions.length > reads && !h.git.gitStatusLoading())
+      assert.equal(getFilePreview("test"), target)
+      setActive(false)
+      if (clear === "filesystem") invalidateFilesystemCaches("test")
+      else setHideWhitespace(false)
+      assert.equal(h.git.gitStatusEntries(), null)
+      intent.release()
+      assert.equal(getFilePreview("test"), target, "unloaded status is not authoritative absence")
+      // A valid later read still reconciles actual disappearance.
+      fixture.entries = []
+      setActive(true)
+      await until(() => !h.git.gitStatusLoading() && h.git.gitStatusEntries() !== null)
+      assert.equal(getFilePreview("test"), null)
+    } finally { intent.release() }
+  } finally { h.close(); setHideWhitespace(undefined) }
 })
