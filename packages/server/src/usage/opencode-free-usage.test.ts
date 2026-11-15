@@ -168,3 +168,20 @@ test("a read crossing midnight publishes the Console count and the credit balanc
     assert.deepEqual(result.windows.credits_balance?.balanceUSD, { remaining: 1.25 })
   } finally { usage.dispose() }
 })
+
+test("a stalled balance never holds back the free count beyond a short grace", async t => {
+  t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
+    if (new URL(String(input)).pathname.endsWith("/billing/status")) {
+      return new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort",
+        () => reject(new DOMException("aborted", "TimeoutError")), { once: true }))
+    }
+    return Response.json(page(70))
+  })
+  const f = fixture(), usage = createOpenCodeFreeUsage(), started = Date.now()
+  try {
+    const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
+    assert.equal(result.freeEstimate?.requests, 70)
+    assert.equal(result.windows.credits_balance, undefined)
+    assert.ok(Date.now() - started < 1500, "the three-second balance bound is not awaited")
+  } finally { usage.dispose() }
+})

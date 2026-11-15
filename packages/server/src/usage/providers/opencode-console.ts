@@ -109,6 +109,28 @@ export async function readOpenCodeConsoleCredits(auth: AuthFile, signal: AbortSi
   }
 }
 
+const BALANCE_GRACE_MS = 250
+
+/**
+ * Starts the optional balance read beside the usage reads. `settle` is awaited
+ * once those reads are complete: it waits at most a short grace (or until
+ * cancellation) and then omits the balance, so the optional read never spends
+ * the caller's remaining budget. A 401 still rejects.
+ */
+export function startOpenCodeConsoleCredits(auth: AuthFile, signal: AbortSignal) {
+  const credits = readOpenCodeConsoleCredits(auth, signal)
+  credits.catch(() => {})
+  return {
+    settle: () => new Promise<ProviderUsageWindow | undefined>((resolve, reject) => {
+      const done = () => { clearTimeout(timer); signal.removeEventListener("abort", omit) }
+      const omit = () => { done(); resolve(undefined) }
+      const timer = setTimeout(omit, BALANCE_GRACE_MS)
+      signal.addEventListener("abort", omit, { once: true })
+      credits.then(value => { done(); resolve(value) }, error => { done(); reject(error) })
+    }),
+  }
+}
+
 // Only stable codes survive; never retain upstream bodies or messages.
 export function openCodeConsoleError(error: unknown): ProviderUsageUnavailableReason {
   return error instanceof ProviderHttpError
@@ -128,10 +150,7 @@ export const openCodeConsole: UsageProvider = {
     if ("reason" in credential) return { ...base, configured: credential.configured, unavailableReason: credential.reason }
     const bounded = context?.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000)
     const read = (path: string) => fetchBoundedJson(`${BASE}/api/${path}`, credential.headers, bounded)
-    // The optional balance runs beside the mandatory reads on its own short bound,
-    // so it never consumes their deadline.
-    const credits = readOpenCodeConsoleCredits(auth, bounded)
-    credits.catch(() => {})
+    const credits = startOpenCodeConsoleCredits(auth, bounded)
     try {
       const requests = {} as OpenCodeConsoleUsage["requests"]
       for (const range of ["24h", "7d", "30d"] as const) {
@@ -139,7 +158,8 @@ export const openCodeConsole: UsageProvider = {
       }
       const models = await readModels("30d", read)
       const windows: NonNullable<ProviderResult["usage"]>["windows"] = {}
-      const balance = await credits
+      bounded.throwIfAborted()
+      const balance = await credits.settle()
       if (balance) windows.credits_balance = balance
       bounded.throwIfAborted()
       return { ...base, ok: true, usage: { windows, console: {

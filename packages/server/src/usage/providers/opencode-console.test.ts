@@ -103,6 +103,22 @@ test("a stalled optional balance never fails usage reads finishing near the dead
   assert.equal(result.usage?.windows.credits_balance, undefined)
 })
 
+test("completed usage reads return within the caller's remaining budget while the balance stalls", async t => {
+  const timeout = AbortSignal.timeout.bind(AbortSignal)
+  // The caller's budget (400 ms) ends before the balance's own bound (3 s, scaled to 1 s).
+  t.mock.method(AbortSignal, "timeout", (ms: number) => timeout(ms === 3000 ? 1000 : ms))
+  t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
+    if (new URL(String(input)).pathname.endsWith("/billing/status")) {
+      return new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort",
+        () => reject(new DOMException("aborted", "TimeoutError")), { once: true }))
+    }
+    return Response.json(new URL(String(input)).pathname.endsWith("summary") ? summary() : page())
+  })
+  const result = await openCodeConsole.fetchQuota(key, { signal: AbortSignal.timeout(400) } as never)
+  assert.equal(result.ok, true, result.unavailableReason)
+  assert.equal(result.usage?.windows.credits_balance, undefined)
+})
+
 test("API key uses only Authorization; missing/invalid OAuth and third-party credentials send nothing", async t => {
   let calls = 0
   t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {

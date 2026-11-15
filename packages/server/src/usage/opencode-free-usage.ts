@@ -3,7 +3,7 @@ import type { ProviderUsageResponse } from "../api-types"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import { openCodeConsoleCredential, readUsageCredentials } from "./native-credentials"
 import { OPENCODE_FREE_DAILY_REQUESTS } from "./opencode-free-estimate"
-import { openCodeConsoleError, readOpenCodeConsoleFreeRequests, readOpenCodeConsoleCredits } from "./providers/opencode-console"
+import { openCodeConsoleError, readOpenCodeConsoleFreeRequests, startOpenCodeConsoleCredits } from "./providers/opencode-console"
 import type { AuthEntry } from "./types"
 
 type Credits = ProviderUsageResponse["windows"][string]
@@ -30,12 +30,10 @@ export function createOpenCodeFreeUsage() {
     if (cache.size >= 32) cache.delete(cache.keys().next().value!)
     const expiry = entry.type === "oauth" && typeof entry.expires === "number" ? entry.expires : Infinity
     const bounded = AbortSignal.any([lifetime.signal, AbortSignal.timeout(15_000)])
-    // The optional balance runs beside the count on its own short bound.
-    const credits = readOpenCodeConsoleCredits(auth, bounded)
-    credits.catch(() => {})
+    const credits = startOpenCodeConsoleCredits(auth, bounded)
     const record = { expiresAt: Math.min(expiry, Date.now() + 60_000),
       read: readOpenCodeConsoleFreeRequests(auth, bounded)
-        .then(async requests => ({ requests, credits: await credits }))
+        .then(async requests => ({ requests, credits: await credits.settle() }))
         .catch(error => { if (cache.get(key) === record) cache.delete(key); throw error }) }
     cache.set(key, record)
     return { ...await record.read, configured: true }
