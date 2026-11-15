@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { chromium, type Browser } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
 // A round boundary replaces settled tool parts with the daemon's authoritative
 // page version (the SDK's end-of-round refresh reconciles live text with the
@@ -16,6 +17,7 @@ before(async () => {
   url = fixture.url
   closeFixture = fixture.close
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => {
   await browser?.close()
