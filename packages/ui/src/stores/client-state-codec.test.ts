@@ -45,7 +45,7 @@ describe("client state codec", () => {
       session: {
         activeTabIndex: 8,
         tabs: [workspace({
-          type: "instance", kind: undefined, folder: "C:/work/project", occurrence: 1, projectName: "Project",
+          type: "instance", kind: undefined, folder: "C:/work/project", occurrence: 1, projectName: "Project", workspaceId: "ws-1",
           drafts: { session1: "unfinished prompt" },
           scrollSnapshots: { session1: { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200, windowCursor: "older", newerCursors: [null, "newer"] } },
           unseenIdleSince: { session1: 1100, malformed: -1 },
@@ -61,6 +61,7 @@ describe("client state codec", () => {
     assert.equal(tab?.kind, "workspace")
     if (tab?.kind !== "workspace") return
     assert.equal(tab.occurrence, 1)
+    assert.equal(tab.workspaceId, "ws-1")
     assert.deepEqual({ ...tab.drafts }, { session1: "unfinished prompt" })
     assert.deepEqual({ ...tab.unseenIdleSince }, { session1: 1100 })
     assert.deepEqual({ ...tab.generationRecovery }, { session1: "working", session2: "interrupted" })

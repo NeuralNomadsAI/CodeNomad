@@ -3,12 +3,16 @@ import { listen } from "@tauri-apps/api/event"
 import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
 import { getLogger } from "../logger"
 import { isStartupStateCommand, type StartupStateCommand, type StartupStateSnapshot } from "./startup-state-command"
+import { clearWebSessionClientState, loadWebSessionClientState, saveWebSessionClientState,
+  setWebSessionRestoreEnabled } from "../web-session-client-state"
 const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
 export type NativeClientStateLoadResult = {
   isPrimary: boolean
   restoreEnabled: boolean
   snapshot: unknown | null
   partitionProtocolVersion?: 1
+  /** A browser tab's sessionStorage state: its layout values stay in shared localStorage. */
+  webSession?: true
 }
 export type NativeClientStatePartitionCommit = {
   protocolVersion: 1
@@ -24,6 +28,7 @@ const accessToken = (() => {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
 })()
 let nativeAccessClaimed = false
+let webSessionOwned = false
 const electronApi = () => (window as Window & { electronAPI?: ElectronAPI }).electronAPI
 function dispatchNative<T>(electronOperation: (api: ElectronAPI | undefined) => Promise<T> | undefined, command: string, args: Record<string, unknown> = {}): Promise<T> | undefined {
   if (isElectronHost()) return electronOperation(electronApi())
@@ -41,6 +46,7 @@ async function claimNativeClientStateAccess(): Promise<boolean> {
   return nativeAccessClaimed
 }
 export async function loadNativeClientState(): Promise<NativeClientStateLoadResult> {
+  webSessionOwned = false
   if (isElectronHost() || isTauriHost()) {
     if (!await claimNativeClientStateAccess()) return SECONDARY_CLIENT_STATE
     const loaded = await dispatchNative((api) => api?.loadClientState?.(accessToken), "client_state_load") ?? SECONDARY_CLIENT_STATE
@@ -56,24 +62,38 @@ export async function loadNativeClientState(): Promise<NativeClientStateLoadResu
   try {
     for (const key of LEGACY_WEB_KEYS) window.localStorage.removeItem(key)
   } catch {}
-  return SECONDARY_CLIENT_STATE
+  const web = loadWebSessionClientState()
+  if (!web) return SECONDARY_CLIENT_STATE
+  webSessionOwned = true
+  return { isPrimary: true, ...web, webSession: true }
 }
+// A plain browser tab persists in its own sessionStorage (`web-session-client-state.ts`).
+const persistClientState = (web: () => boolean, native: () => Promise<boolean>): Promise<boolean> =>
+  webSessionOwned ? new Promise<boolean>(resolve => resolve(web())) : native()
 async function mutateNativeClientState(electronOperation: (api: ElectronAPI) => Promise<boolean> | undefined, command: string, args: Record<string, unknown> = {}): Promise<boolean> {
   if (!nativeAccessClaimed) return false
   return await dispatchNative((api) => api && electronOperation(api), command, args) ?? false
 }
-export const saveNativeClientState = (snapshot: unknown): Promise<boolean> =>
-  mutateNativeClientState((api) => api.saveClientState?.(accessToken, snapshot), "client_state_save", { snapshot })
+export const saveNativeClientState = (snapshot: unknown): Promise<boolean> => persistClientState(
+  // A refused browser write (quota) fails this save only: the tab keeps owning
+  // its state, so later saves retry and Clear/disable stay available.
+  () => {
+    if (!saveWebSessionClientState(snapshot)) throw new Error("Browser session storage refused the client snapshot")
+    return true
+  },
+  () => mutateNativeClientState((api) => api.saveClientState?.(accessToken, snapshot), "client_state_save", { snapshot }))
 export const commitNativeClientStatePartitions = (payload: NativeClientStatePartitionCommit): Promise<boolean> =>
   mutateNativeClientState((api) => api.commitClientStatePartitions?.(accessToken, payload), "client_state_commit_partitions", { payload })
 export const loadNativeClientStatePartition = async (key: string): Promise<string | null> => {
   if (!nativeAccessClaimed) return null
   return await dispatchNative((api) => api?.loadClientStatePartition?.(accessToken, key), "client_state_load_partition", { key }) ?? null
 }
-export const setNativeRestoreEnabled = (enabled: boolean): Promise<boolean> =>
-  mutateNativeClientState((api) => api.setClientStateRestoreEnabled?.(accessToken, enabled), "client_state_set_restore_enabled", { enabled })
-export const clearNativeClientState = (): Promise<boolean> =>
-  mutateNativeClientState((api) => api.clearClientState?.(accessToken), "client_state_clear")
+export const setNativeRestoreEnabled = (enabled: boolean): Promise<boolean> => persistClientState(
+  () => setWebSessionRestoreEnabled(enabled),
+  () => mutateNativeClientState((api) => api.setClientStateRestoreEnabled?.(accessToken, enabled), "client_state_set_restore_enabled", { enabled }))
+export const clearNativeClientState = (): Promise<boolean> => persistClientState(
+  clearWebSessionClientState,
+  () => mutateNativeClientState((api) => api.clearClientState?.(accessToken), "client_state_clear"))
 function acknowledge(command: string, args: Record<string, unknown> = {}): Promise<void> {
   if (!isTauriHost() || !nativeAccessClaimed) return Promise.resolve()
   return invoke(command, { accessToken, ...args })

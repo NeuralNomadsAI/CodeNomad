@@ -30,6 +30,9 @@ let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
+// Browser tabs restore their session from sessionStorage while layout values keep
+// their shared localStorage entries, written and read immediately.
+let snapshotOwnsLayout = true
 const transactionLayoutWrites = new Set<string>()
 function useLocalStorage<T>(fallback: T, operation: (storage: Storage) => T): T {
   try {
@@ -166,7 +169,7 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
       if (loseOwnershipOnRejection) setClientStateIsPrimary(false)
       throw new Error(rejectedMessage)
     }
-    useLocalStorage(undefined, (storage) => {
+    if (snapshotOwnsLayout) useLocalStorage(undefined, (storage) => {
       for (const key of legacyLayoutKeys(storage)) storage.removeItem(key)
     })
     resetLoadedState()
@@ -205,7 +208,7 @@ export function updateRestorableSession(state: RestorableSessionState | null): v
 
 export function readClientLayoutValue(key: string): string | null {
   if (!isValidLayoutKey(key)) return null
-  if (!clientStateIsPrimary()) return readLegacyLayoutValue(key)
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return readLegacyLayoutValue(key)
   if (!restorePreviousStateEnabled() || writeBlock) return null
   if (hasLayoutKey(key)) return layout[key] ?? null
   const legacyValue = readLegacyLayoutValue(key)
@@ -217,7 +220,7 @@ export function readClientLayoutValue(key: string): string | null {
 
 export function writeClientLayoutValue(key: string, value: string): void {
   if (!isValidLayoutKey(key) || value.length > MAX_LAYOUT_VALUE_LENGTH) return
-  if (!clientStateIsPrimary()) return writeLegacyLayoutValue(key, value)
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return writeLegacyLayoutValue(key, value)
   if (writeBlock === "transaction") {
     if (!hasLayoutKey(key) && layoutIsFull()) return
     dirty ||= layout[key] !== value
@@ -235,7 +238,7 @@ export function writeClientLayoutValue(key: string, value: string): void {
 
 export function removeClientLayoutValue(key: string): void {
   if (!isValidLayoutKey(key)) return
-  if (!clientStateIsPrimary()) return removeLegacyLayoutValue(key)
+  if (!clientStateIsPrimary() || !snapshotOwnsLayout) return removeLegacyLayoutValue(key)
   if (writeBlock === "transaction") {
     dirty ||= hasLayoutKey(key)
     delete layout[key]
@@ -312,6 +315,7 @@ export function initializeClientState(): Promise<void> {
     try {
       const loaded = await loadNativeClientState()
       partitionProtocolVersion = loaded.partitionProtocolVersion
+      snapshotOwnsLayout = loaded.webSession !== true
       setClientStateIsPrimary(loaded.isPrimary)
       setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
       resetLoadedState(null, true)
@@ -339,8 +343,8 @@ export function initializeClientState(): Promise<void> {
         snapshot = decodeClientSnapshot(loaded.snapshot)
         writeBlock = loaded.snapshot !== null && snapshot === null ? "snapshot" : false
       }
-      resetLoadedState(snapshot, true)
-      if (!writeBlock && migrateLegacyLayoutValues()) scheduleSave()
+      resetLoadedState(snapshot && !snapshotOwnsLayout ? { ...snapshot, layout: {} } : snapshot, true)
+      if (!writeBlock && snapshotOwnsLayout && migrateLegacyLayoutValues()) scheduleSave()
     } catch (error) {
       initialized = true
       setClientStateIsPrimary(false)

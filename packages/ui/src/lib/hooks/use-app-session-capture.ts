@@ -87,7 +87,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
     const expanded = getPersistentExpandedSessionIds(id)
     const prioritySessionIds = [sessionId, "__no_session_draft__"].filter((value): value is string => Boolean(value))
     const result: RestorableWorkspaceTabState = {
-      kind: "workspace", folder: tab.instance.folder, occurrence: occurrenceByInstance.get(id) ?? 0,
+      kind: "workspace", folder: tab.instance.folder, occurrence: occurrenceByInstance.get(id) ?? 0, workspaceId: id,
       ...serializeDraftAttachments(
         getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id), prioritySessionIds,
       ),
