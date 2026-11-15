@@ -37,6 +37,7 @@ import { replaceRestoredAppTab } from "../../stores/app-tabs"
 import { onInstanceLifecycleAuthority, publishInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { generateUUID } from "../client-identity"
 import { detachInstanceTabMembership } from "../../stores/app-tab-membership"
+import { retainClosedWorkspaceSnapshot } from "../../stores/closed-workspace-drafts"
 const log = getLogger("actions")
 const INITIAL_LOAD_TIMEOUT_MS = 15_000
 const OPERATION_TIMEOUT_MS = 30_000
@@ -88,7 +89,7 @@ function reconcileRestoredWorkspaces({ snapshot, capture }: RestoreContext) {
     id: instance.id, folderPath: instance.folder, status: instance.status, backendId: instance.backendId,
   }))
   return reconcileWorkspaceTabs(snapshot.tabs.map(tab => tab.kind === "workspace"
-    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence, backendId: tab.backendId }
+    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence, backendId: tab.backendId, workspaceId: tab.workspaceId }
     : { kind: tab.kind }), live).map(match => {
       const bound = live.find(instance => instance.id === bindings[match.tabIndex]
         && instance.status !== "stopped" && instance.status !== "error")
@@ -167,8 +168,8 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
             else void closeWorkspace(id).catch(() => {})
           },
         })
-        if (remote && !reusableId) context.attemptedRemoteCreates.add(match.tabIndex)
-        const creation = reusableId || isWebHost() && !remote ? null : await create()
+        if (remote && !reusableId && !isWebHost()) context.attemptedRemoteCreates.add(match.tabIndex)
+        const creation = reusableId || isWebHost() ? null : await create()
         if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()
         finishCreateCommit?.()
         if (remote && !canCommitCreation()) return null
@@ -300,6 +301,7 @@ export function useAppSessionRestore(): void {
       remove() {
         const binding = capture.restoredTabIds()[index]
         const workspaceId = binding?.startsWith("instance:") ? binding.slice("instance:".length) : instanceId
+        retainClosedWorkspaceSnapshot(tab)
         removeRemoteRestoreTab(id)
         capture.removeRestoredTab(index)
         if (workspaceId && instances().has(workspaceId)) void closeWorkspace(workspaceId).catch(() => {})

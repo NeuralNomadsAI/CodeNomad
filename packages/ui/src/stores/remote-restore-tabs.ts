@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js"
 import type { RestorableWorkspaceTabState } from "./client-state"
+import { retainClosedWorkspaceSnapshot } from "./closed-workspace-drafts"
 
 export interface RemoteRestoreTab {
   id: string
@@ -13,7 +14,15 @@ export interface RemoteRestoreTab {
 const [remoteRestoreTabs, setRemoteRestoreTabs] = createSignal<RemoteRestoreTab[]>([])
 export { remoteRestoreTabs }
 export function addRemoteRestoreTab(tab: RemoteRestoreTab) {
-  setRemoteRestoreTabs(tabs => tabs.some(value => value.id === tab.id) ? tabs : [...tabs, tab])
+  const owned: RemoteRestoreTab = {
+    ...tab,
+    remove() {
+      if (!remoteRestoreTabs().includes(owned)) return
+      retainClosedWorkspaceSnapshot(tab.snapshot)
+      tab.remove()
+    },
+  }
+  setRemoteRestoreTabs(tabs => tabs.some(value => value.id === tab.id) ? tabs : [...tabs, owned])
 }
 export function removeRemoteRestoreTab(id: string) {
   setRemoteRestoreTabs(tabs => tabs.filter(tab => tab.id !== id))

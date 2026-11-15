@@ -7,14 +7,14 @@ import { sseManager } from "../../../src/lib/sse-manager"
 import "../../../src/stores/sessions"
 import { initializeClientState, loadedRestorableSession, setRestorePreviousStateEnabled } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
-import { activeAppTabId, appTabs, closeInstanceTab, ensureActiveAppTab, moveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
+import { activeAppTabId, appTabs, attachInstanceTab, closeInstanceTab, ensureActiveAppTab, moveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
 import { backendRegistry } from "../../../src/stores/remote-backends"
 import { backends } from "../../../src/lib/backend-client"
 import { ConfigProvider, preferences, preferencesForBackend } from "../../../src/stores/preferences"
 import { I18nProvider, preloadLocaleMessages } from "../../../src/lib/i18n"
 import { getSessionDraftPromptsForInstance } from "../../../src/stores/session-state"
-import { refreshWorkspaceList } from "../../../src/stores/instances"
+import { createInstance, refreshWorkspaceList } from "../../../src/stores/instances"
 import InstanceTabs from "../../../src/components/instance-tabs"
 import RemoteRestoreView from "../../../src/components/remote-restore-view"
 import AlertDialog from "../../../src/components/alert-dialog"
@@ -55,6 +55,10 @@ function Fixture() {
     drafts: tab.kind === "instance" ? getSessionDraftPromptsForInstance(tab.instance.id) : tab.kind === "remote-restore" ? tab.snapshot.drafts : {},
   })),
   active: activeAppTabId, close,
+  reopen: async (backendId: string) => {
+    const opened = await createInstance("/same", undefined, { backend: backends.get(backendId)! })
+    attachInstanceTab(opened.instanceId)
+  },
   disableAutoRestore: () => setRestorePreviousStateEnabled(false),
   notify: (id: string) => {
     ;(sseManager as any).handleEvent(id.slice("instance:".length), {

@@ -1,7 +1,7 @@
 import { backendScoped } from "../lib/backend-identity"
 import type { BackendId } from "../lib/backend-transport"
 
-export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; backendId?: BackendId }
+export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; backendId?: BackendId; workspaceId?: string }
 type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string; backendId?: BackendId }
 export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
@@ -41,13 +41,25 @@ export function reconcileWorkspaceTabs(
     liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
   }
   const nextOccurrences = new Map<string, number>()
-  const claimed = new Set<string>()
+  // A saved record that still exists for the same folder wins: occurrences shift
+  // when another client closes a sibling record of that folder.
+  const byId = new Map<number, string>()
+  for (const [tabIndex, tab] of tabs.entries()) {
+    if (tab.kind !== "workspace" || typeof tab.folderPath !== "string" || !tab.workspaceId) continue
+    const path = workspaceIdentity(tab.folderPath, tab.backendId)
+    if (liveByPath.get(path)?.some(workspace => workspace.id === tab.workspaceId) && ![...byId.values()].includes(tab.workspaceId)) {
+      byId.set(tabIndex, tab.workspaceId)
+    }
+  }
+  const claimed = new Set<string>(byId.values())
   return tabs.flatMap((tab, tabIndex) => {
     if (tab.kind !== "workspace" || typeof tab.folderPath !== "string") return []
     const path = workspaceIdentity(tab.folderPath, tab.backendId)
     const inferred = nextOccurrences.get(path) ?? 0
     const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0 ? Number(tab.occurrence) : inferred
     nextOccurrences.set(path, Math.max(inferred, occurrence) + 1)
+    const savedId = byId.get(tabIndex)
+    if (savedId) return [{ tabIndex, descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence, ...(tab.backendId ? { backendId: tab.backendId } : {}) }, existingWorkspaceId: savedId }]
     const workspace = liveByPath.get(path)?.[occurrence]
     const existingWorkspaceId = workspace && !claimed.has(workspace.id) ? workspace.id : null
     if (existingWorkspaceId) claimed.add(existingWorkspaceId)

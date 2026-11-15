@@ -9,6 +9,7 @@ import {
   PluginControlDocumentError,
   readPluginControlDocument,
   replacePluginControlDocument,
+  replacePluginControlRules,
 } from "./plugin-control-document"
 
 const temporaryDirectories = new Set<string>()
@@ -95,6 +96,38 @@ describe("plugin control JSONC document", () => {
     assert.equal(text.replaceAll("\r\n", "").includes("\n"), false)
     assert.match(text, /\r\n\t\t"-acme"/)
     assert.deepEqual((parse(text.slice(1)) as any).plugins, ["acme", "-acme"])
+  })
+
+  it("replaces earlier exact rules while keeping comments, other entries, BOM, CRLF and tabs", async () => {
+    const target = temporaryFile()
+    const original = `﻿{\r\n\t// kept comment\r\n\t"plugins": [\r\n\t\t{ "package": "@acme/reviewer", "options": { "a": 1 } },\r\n`
+      + `\t\t"-acme.reviewer", // first toggle\r\n\t\t"other",\r\n\t\t"acme.reviewer",\r\n\t],\r\n\t"theme": "dark",\r\n}\r\n`
+    fs.writeFileSync(target, original, "utf8")
+    const document = await readPluginControlDocument(target)
+
+    await replacePluginControlDocument(document, replacePluginControlRules(document, [1, 3], new Set(["acme.reviewer", "-acme.reviewer"]), "-acme.reviewer"))
+
+    const written = fs.readFileSync(target)
+    assert.deepEqual([...written.subarray(0, 3)], [0xef, 0xbb, 0xbf])
+    const text = written.toString("utf8")
+    assert.equal(text.replaceAll("\r\n", "").includes("\n"), false)
+    assert.match(text, /\/\/ kept comment/)
+    assert.match(text, /\r\n\t\t"-acme\.reviewer"/)
+    assert.deepEqual(parse(text.slice(1)), { plugins: [{ package: "@acme/reviewer", options: { a: 1 } }, "other", "-acme.reviewer"], theme: "dark" })
+
+    const removedOnly = await readPluginControlDocument(target)
+    assert.deepEqual((parse(replacePluginControlRules(removedOnly, [2], new Set(["-acme.reviewer"])).slice(1)) as any).plugins,
+      [{ package: "@acme/reviewer", options: { a: 1 } }, "other"])
+  })
+
+  it("refuses to remove an entry that is no longer the expected rule", async () => {
+    const target = temporaryFile()
+    fs.writeFileSync(target, `{ "plugins": ["other", { "package": "acme.reviewer" }] }\n`)
+    const document = await readPluginControlDocument(target)
+    for (const index of [0, 1, 5]) {
+      assert.throws(() => replacePluginControlRules(document, [index], new Set(["acme.reviewer", "-acme.reviewer"]), "-acme.reviewer"),
+        (error: unknown) => error instanceof PluginControlDocumentError && error.kind === "conflict")
+    }
   })
 
   it("never reads a configuration document beyond the 4 MiB limit", async () => {

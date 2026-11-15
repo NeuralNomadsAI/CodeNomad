@@ -644,6 +644,7 @@ jobs:
           packages/ui/src/stores/opencode-data-idle.test.ts
           packages/ui/src/stores/opencode-projection-frame.test.ts
           packages/ui/src/stores/opencode-data-settlement.test.ts
+          packages/ui/src/stores/opencode-data-round-boundary.test.ts
           packages/ui/src/stores/opencode-data-reconnect.test.ts
           packages/ui/src/stores/opencode-data-trailing-read.test.ts
           packages/ui/src/stores/opencode-data-read-merge.test.ts
@@ -691,6 +692,7 @@ jobs:
           packages/ui/src/stores/worktrees-delete.test.ts
           packages/ui/src/stores/project-names.test.ts
           packages/ui/src/stores/temporary-instances.test.ts
+          packages/ui/src/stores/closed-workspace-drafts.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"

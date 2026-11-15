@@ -34,7 +34,7 @@ Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, 
 | Fermer l’onglet | Retire la connexion de projet CodeNomad de cet onglet ; un autre onglet ouvert séparément sur le même dossier n’est pas affecté | Ne supprime ni les fichiers du projet ni l’historique natif, n’arrête pas les sessions et ne décharge pas la Location d’OpenCode |
 | Arrêter la session | Exécution de la conversation sélectionnée | Ne ferme pas le projet et ne supprime pas son historique |
 
-Si une autre fenêtre affiche la même connexion de projet, son onglet se ferme aussi et cette fenêtre affiche une notification. La fenêtre à l’origine de la fermeture n’en affiche pas. La fermeture est immédiate ; si le backend ne peut pas fermer le projet, une erreur apparaît et **Basculer vers le projet ouvert** sur l’accueil permet encore d’y accéder. Il n’y a pas de nouvel essai automatique. Les brouillons non envoyés de l’onglet fermé ne sont pas conservés par la restauration au démarrage.
+Si une autre fenêtre affiche la même connexion de projet, son onglet se ferme aussi et cette fenêtre affiche une notification. La fenêtre à l’origine de la fermeture n’en affiche pas. La fermeture est immédiate ; si le backend ne peut pas fermer le projet, une erreur apparaît et **Basculer vers le projet ouvert** sur l’accueil permet encore d’y accéder. Il n’y a pas de nouvel essai automatique. Les brouillons et pièces jointes non envoyés de l’onglet fermé reviennent quand vous rouvrez le même dossier dans cette fenêtre ; elle les garde pour ses 16 derniers projets fermés, jusqu’à son rechargement ou sa fermeture. Ils ne font pas partie de la restauration au démarrage.
 
 Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions de projet ; la restauration normale au démarrage s’applique toujours. Arrêtez explicitement les exécutions concernées si vous devez vérifier qu’elles sont terminées. CodeNomad ne décharge jamais les Locations natives ; la maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
 
@@ -59,7 +59,7 @@ Fermez les onglets de projet de ce serveur dans chaque fenêtre avant de le supp
 | Choix | Effet | Récupération |
 | --- | --- | --- |
 | Garder | Ferme le projet dans CodeNomad, conserve le dossier et les conversations, retire son statut temporaire et ajoute un projet récent | Rouvrir depuis les dossiers récents ; le dossier n’est pas déplacé |
-| Jeter | Supprime les conversations et fichiers de l’espace de travail temporaire | Aucune annulation ; enregistrez d’abord ailleurs ce dont vous avez besoin |
+| Jeter | Supprime les conversations, fichiers et brouillons non envoyés de l’espace de travail temporaire | Aucune annulation ; enregistrez d’abord ailleurs ce dont vous avez besoin |
 | Annuler | Laisse l’espace de travail temporaire ouvert | Continuer à travailler ou décider plus tard |
 
 Un onglet temporaire intact, sans conversation, fichier ni brouillon non envoyé, est supprimé discrètement à la fermeture. Les onglets temporaires ouverts participent à la restauration normale au démarrage, mais l’accueil n’a pas de liste séparée pour reprendre les dossiers temporaires fermés.

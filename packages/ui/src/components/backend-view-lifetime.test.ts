@@ -5,6 +5,7 @@ import ts from "typescript"
 import { createEffect, createMemo, createRoot, createSignal, on, onCleanup, untrack } from "solid-js"
 import { z } from "zod"
 import { BackgroundReadQueue } from "../lib/background-read-queue"
+import { integrationAttachChoice, integrationLink } from "../lib/integration-row-state"
 
 // Execute the real view functions, with imports supplied explicitly. No JSX or
 // application singleton is needed to test their asynchronous authority boundary.
@@ -138,11 +139,71 @@ test("integrations: old consent cannot admit an installation on a new attachment
   close()
 })
 
+test("integrations: reinstall stays confirmed for open and closed applications", async () => {
+  const backend = attachment(), titles: string[] = []
+  let installs = 0, close!: () => void
+  const [host, setHost] = createSignal({ state: "available" })
+  const { createIntegrationHostInstallation } = view("./integration-host-installation.ts", { ...solid,
+    captureBackendOperation: backend.capture, useI18n: () => ({ t: (key: string) => key }),
+    integrationEpoch: () => "epoch", integrations: { refreshDemanded: () => {} },
+    confirmIntegrationAction: async (_warning: string, options: { title: string }) => { titles.push(options.title); return true },
+    integrationAttachmentRequest: async () => { installs++; return { outcome: "unchanged" } },
+    showToastNotification: () => {}, HttpResponseError: Error, document: { activeElement: null }, HTMLElement: class {},
+  })
+  const installation = createRoot(dispose => { close = dispose; return createIntegrationHostInstallation({
+    instanceId: "i", directory: "/repo", entries: () => [
+      { id: "integration", family: "native", state: "ok", app: { name: "App" }, status: { version: "1", host: host() } },
+    ],
+  }) })
+  for (const state of ["available", "unknown"]) {
+    setHost({ state })
+    assert.equal(installation.action("integration"), "reinstall")
+    await installation.open("integration")
+  }
+  setHost({ state: "unsupported" })
+  assert.equal(installation.action("integration"), undefined)
+  await installation.open("integration")
+  assert.deepEqual(titles, ["integrations.installHost.reinstall", "integrations.installHost.reinstall"])
+  assert.equal(installs, 2)
+  close()
+})
+
+test("integrations: state-line document reads reacquire and fence late backend replies", async () => {
+  const backend = attachment(), reads: ReturnType<typeof deferred<any>>[] = []
+  let close!: () => void
+  const { createIntegrationRowBinding } = view("./integration-row-binding.ts", { ...solid,
+    captureBackendOperation: backend.capture,
+    backendEvents: { signalForInstance: () => backend.capture("i").signal },
+    integrationEpoch: () => "epoch", integrationLink, integrationAttachChoice,
+    integrationBindings: { demand: () => () => {}, state: () => ({ state: "none" }), busy: () => false },
+    useI18n: () => ({ t: (key: string) => key }), showToastNotification: () => {},
+    integrationAttachmentRequest: () => { const read = deferred<any>(); reads.push(read); return read.promise },
+  })
+  const row = createRoot(dispose => { close = dispose; return createIntegrationRowBinding({
+    instanceId: () => "i", directory: () => "/repo", sessionId: () => "ses_1", active: () => true,
+    integration: () => ({ id: "integration", family: "native", state: "ok", status: { host: { state: "available" }, connection: { offers: 1 } } }),
+  }) })
+  assert.equal(reads.length, 1)
+  backend.replace()
+  assert.equal(reads.length, 2)
+  const current = [{ offerID: "new", protocol: "ok", label: "Current" }]
+  reads[1].resolve({ offers: current }); await flush()
+  assert.deepEqual(row.offers(), current)
+  reads[0].resolve({ offers: [{ offerID: "old", protocol: "ok", label: "Old" }] }); await flush()
+  assert.deepEqual(row.offers(), current)
+  backend.replace()
+  assert.equal(row.offers(), undefined)
+  assert.equal(reads.length, 3)
+  close()
+  reads[2].resolve({ offers: current }); await flush()
+  assert.equal(row.offers(), undefined)
+})
+
 test("providers: an old quota response cannot publish or perform its coalesced follow-up", async () => {
   const backend = attachment(), response = deferred<any>(), published: unknown[] = []
   let reads = 0
   const { createProviderUsageState } = view("./session/provider-usage-state.ts", {})
-  const state = createProviderUsageState(() => { reads++; return response.promise }, (value: unknown) => published.push(value), Date.now, () => backend.capture("i"))
+  const state = createProviderUsageState(() => { reads++; return response.promise }, (value: unknown) => published.push(value), () => backend.capture("i"))
   state.select({ instanceId: "i", sessionId: "s", directory: "/repo", providerId: "p", modelId: "m" })
   const pending = state.refresh(); state.refresh()
   backend.revoke(); response.resolve({ account: "old" }); await pending

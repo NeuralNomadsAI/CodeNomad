@@ -23,10 +23,10 @@ import type { WorkspaceManager } from "../workspaces/manager"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import { locationRequestOptions } from "./compatibility/location"
 import {
-  appendPluginControlRule,
   hostPluginControlDocumentFileSystem,
   readPluginControlDocument,
   replacePluginControlDocument,
+  replacePluginControlRules,
   type PluginConfigEntry,
   type PluginControlDocument,
   type PluginControlDocumentFileSystem,
@@ -298,7 +298,25 @@ export class PluginControls {
         }
 
         const rule = request.enabled ? request.pluginId : `-${request.pluginId}`
-        const updated = appendPluginControlRule(document, rule)
+        const overlay = (plugins: readonly PluginConfigEntry[]) => controlsForDocuments(base, context, {
+          servicePath: target.path,
+          plugins,
+          scope: request.scope,
+        })
+        // The state appending the rule would produce is the contract; a smaller edit must reproduce it exactly.
+        const appended = overlay([...projection.plugins, rule])
+        const removable = projection.noOpSafe
+          ? replaceableRuleIndexes(document.plugins, projection.plugins, before, target.path, request.scope, request.pluginId, context.paths) : []
+        const kept = projection.plugins.filter((_, index) => !removable.includes(index))
+        // Prefer removing the earlier rules alone (re-enabling a plugin active without them), then replacing them.
+        let edit: { remove: number[]; rule?: string; snapshot: PluginControlsSnapshot } = { remove: [], rule, snapshot: appended }
+        if (removable.length > 0) {
+          for (const candidate of [{ remove: removable }, { remove: removable, rule }]) {
+            const snapshot = overlay(candidate.rule === undefined ? kept : [...kept, candidate.rule])
+            if (sameActivation(snapshot, appended)) { edit = { ...candidate, snapshot }; break }
+          }
+        }
+        const updated = replacePluginControlRules(document, edit.remove, new Set([request.pluginId, `-${request.pluginId}`]), edit.rule)
         try {
           await replacePluginControlDocument(document, updated, {
             beforeCommit: () => assertCurrentConnection(context.connection),
@@ -307,13 +325,9 @@ export class PluginControls {
           throw mapDocumentError(error)
         }
         target.exists = true
-        const snapshot = controlsForDocuments(base, context, {
-          servicePath: target.path,
-          plugins: [...projection.plugins, rule],
-          scope: request.scope,
-        })
-        this.options.logger.info({ workspaceId, scope: request.scope, pluginId: request.pluginId }, "Updated OpenCode plugin activation rule")
-        return { snapshot, rule, target: publicTarget(target), changed: true, reloadPending: true }
+        this.options.logger.info({ workspaceId, scope: request.scope, pluginId: request.pluginId, removed: edit.remove.length,
+          appended: edit.rule !== undefined }, "Updated OpenCode plugin activation rule")
+        return { snapshot: edit.snapshot, rule, target: publicTarget(target), changed: true, reloadPending: true }
       } finally {
         release()
       }
@@ -630,6 +644,44 @@ function mutationTargetPlugins(
   // Only a completely matched prefix followed by replayed concrete rules can
   // prove a durable no-op. Deletions/replacements during watcher lag cannot.
   return { plugins: [...normalized, ...pendingRules], noOpSafe: noOpSafe && normalizedIndex === normalized.length }
+}
+
+/**
+ * Entries of the target document that are exact `id`/`-id` activation rules for `pluginId`, safe to delete: the raw
+ * document must equal the daemon's projection entry by entry (callers also require a no-op-safe projection, so
+ * placeholders and watcher lag keep the plain append), and an entry the snapshot
+ * reads as a source declaration (a package named like its ID) is never a rule.
+ */
+function replaceableRuleIndexes(
+  rawPlugins: readonly PluginConfigEntry[],
+  projected: readonly PluginConfigEntry[],
+  snapshot: PluginControlsSnapshot,
+  servicePath: string,
+  scope: PluginControlScope,
+  pluginId: string,
+  paths: path.PlatformPath,
+): number[] {
+  if (rawPlugins.length !== projected.length) return []
+  if (rawPlugins.some((entry, index) => !pluginEntriesEqual(entry, projected[index]))) return []
+  const sources = new Set(snapshot.configured.sources
+    .filter(source => source.scope === scope && source.path && samePath(paths, source.path, servicePath))
+    .map(source => source.entryIndex))
+  return rawPlugins.flatMap((entry, index) =>
+    (entry === pluginId || entry === `-${pluginId}`) && projected[index] === entry && !sources.has(index) ? [index] : [])
+}
+
+/** What a user and OpenCode observe: every control's effective state, its displayed switches, and the sources. */
+function sameActivation(left: PluginControlsSnapshot, right: PluginControlsSnapshot): boolean {
+  const checked = (control: PluginActivationControl, scope: PluginControlScope): boolean => {
+    const state = control[scope]
+    if (state !== "default") return state === "enabled"
+    return scope === "project" ? checked(control, "global") : true
+  }
+  const view = (snapshot: PluginControlsSnapshot) => JSON.stringify([
+    snapshot.controls.map(control => [control.id, control.effective === "disabled" ? "disabled" : "enabled", control.managedBy ?? "", checked(control, "global"), checked(control, "project")]),
+    snapshot.configured.sources.map(source => [source.scope, source.path ?? "", source.target, source.pluginId ?? "", source.managedBy ?? ""]).sort(),
+  ])
+  return view(left) === view(right)
 }
 
 function pluginEntriesEqual(left: PluginConfigEntry, right: PluginConfigEntry | undefined): boolean {

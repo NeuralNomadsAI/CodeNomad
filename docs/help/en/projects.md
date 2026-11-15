@@ -34,7 +34,7 @@ A normal click still opens the full home page. The launcher is a shortcut, not t
 | Close Tab | Removes that tab's CodeNomad project connection; another tab opened separately on the same folder is unaffected | Does not delete project files or native history, stop sessions or unload OpenCode's Location |
 | Stop session | The selected conversation's execution | Does not close the project or delete its history |
 
-If another window displays the same project connection, its tab closes too and that window shows a notification. The initiating window shows none. Closing is immediate; if the backend cannot close the project, an error appears and **Switch to open project** on the home page still reaches it. There is no automatic retry. Unsent drafts from the closed tab are not retained in startup restoration.
+If another window displays the same project connection, its tab closes too and that window shows a notification. The initiating window shows none. Closing is immediate; if the backend cannot close the project, an error appears and **Switch to open project** on the home page still reaches it. There is no automatic retry. Unsent drafts and attachments of the closed tab return when you reopen the same folder in that window; the window keeps them for its 16 most recently closed projects until it reloads or closes. They are not part of startup restoration.
 
 Closing a whole window, quitting or reloading does not close its project connections; normal startup restoration still applies. Stop relevant runs explicitly if you need to verify execution ended. CodeNomad never unloads native Locations; shared-service maintenance is described in [OpenCode setup](opencode.md).
 
@@ -59,7 +59,7 @@ Close this server’s project tabs in every window before removing it or changin
 | Choice | Effect | Recovery |
 | --- | --- | --- |
 | Keep | Closes the project in CodeNomad, retains the folder and conversations, removes its temporary status and adds a recent project | Reopen from Recents; the folder is not moved |
-| Discard | Deletes the temporary workspace's conversations and files | No undo; save anything needed elsewhere first |
+| Discard | Deletes the temporary workspace's conversations, files and unsent drafts | No undo; save anything needed elsewhere first |
 | Cancel | Leaves the temporary workspace open | Continue working or decide later |
 
 An untouched temporary tab, with no conversation, file or unsent draft, is discarded quietly on close. Open temporary tabs participate in normal startup restoration, but the home page has no separate list for resuming closed temporary folders.

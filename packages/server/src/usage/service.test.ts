@@ -510,6 +510,6 @@ test("a cached Console success expires with its OAuth credential, without anothe
     assert.equal(expired.ok, false)
     assert.equal(expired.console, undefined)
     assert.equal(expired.unavailableReason, "opencode-console-invalid-credential")
-    assert.equal(calls, 4)
+    assert.equal(calls, 5, "one cached read: three summaries, the model page and the credit balance")
   } finally { clearProviderUsageCache() }
 })

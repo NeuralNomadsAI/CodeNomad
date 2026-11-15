@@ -9,6 +9,7 @@ import { useConfig } from "../stores/preferences"
 import { activeInterruption } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
+import { getSessionMessageRenderCache } from "../lib/message-render-cache"
 import type { PermissionRequest } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
@@ -645,23 +646,37 @@ export default function ToolCall(props: ToolCallProps) {
   // The header mounts immediately and a default-expanded settled body joins
   // over the next frames. User interaction, live and failed tools render at
   // once, and any user expansion state releases the wait for this instance.
+  // A remount (message-list growth on send, row recycling, switching back to
+  // a viewed session) must not re-defer a body that already released once:
+  // its render caches are warm, so mounting is cheap and re-deferring would
+  // only blank the body for a few frames. The release state lives in the
+  // session render cache, whose lifecycle bounds it to the session.
+  const toolBodyReleaseKey = () => `${props.messageId ?? "unknown-message"}\u0000${props.toolCall.id ?? props.toolCallId ?? ""}`
+  const releaseBodyMount = () => {
+    setBodyMountReleased(true)
+    if (props.instanceId && props.sessionId) {
+      getSessionMessageRenderCache(props.instanceId, props.sessionId).releasedToolBodies.add(toolBodyReleaseKey())
+    }
+  }
   const [bodyMountReleased, setBodyMountReleased] = createSignal(
     untrack(() => userExpanded() !== null || !defaultExpandedForTool()
-      || toolState()?.status === "running" || toolState()?.status === "error"),
+      || toolState()?.status === "running" || toolState()?.status === "error"
+      || (Boolean(props.instanceId && props.sessionId && props.messageId)
+        && getSessionMessageRenderCache(props.instanceId!, props.sessionId!).releasedToolBodies.has(toolBodyReleaseKey()))),
   )
   if (!bodyMountReleased()) {
     let bodyMountDisposed = false
     onCleanup(() => { bodyMountDisposed = true })
     scheduleFrameBatchedMount(() => {
-      if (!bodyMountDisposed) setBodyMountReleased(true)
+      if (!bodyMountDisposed) releaseBodyMount()
     })
   }
-  createEffect(on(userExpanded, () => { setBodyMountReleased(true) }, { defer: true }))
+  createEffect(on(userExpanded, () => { releaseBodyMount() }, { defer: true }))
   // A live or failed tool mounts its body at once even when the deferred
   // state began while it was still pending.
   createEffect(() => {
     const status = toolState()?.status
-    if (status === "running" || status === "error") setBodyMountReleased(true)
+    if (status === "running" || status === "error") releaseBodyMount()
   })
 
   const toolInput = createMemo(() => {

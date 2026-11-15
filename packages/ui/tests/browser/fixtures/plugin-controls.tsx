@@ -263,6 +263,12 @@ await updatePreferences({ locale: "en" })
     snapshot.controls.find((entry) => entry.id === failed.id)!.runtime = { ...failed, state: { ...failed.state, error } }
     return { id, source, error }
   },
+  gitHashVersion: () => {
+    const runtime = snapshot.runtime.find(entry => entry.id === active.id)
+    if (runtime && runtime.source.type === "package") {
+      runtime.source = { ...runtime.source, version: "22f0b463e7a5e579904dd6211a520321035526f7" }
+    }
+  },
   setNarrow: () => {
     const main = document.querySelector("main") as HTMLElement | null
     if (main) {

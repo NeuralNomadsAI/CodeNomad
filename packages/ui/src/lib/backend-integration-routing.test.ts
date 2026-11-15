@@ -57,6 +57,7 @@ function hostConsumer(id: string) {
   const messages: unknown[] = []
   const scope = { props: { instanceId: id, directory: "/repo dir" }, pending: () => pending,
     setPending: (value: boolean) => { pending = value }, eligible: () => ({ app: { name: "Fixture" }, displayName: "Fixture", status: { version: "1", host: { action: "install" } } }),
+    actionOf: (entry: any) => entry.status.host.action ?? "reinstall",
     identity: () => id, epoch: () => "epoch", signature: () => "signature", focusGeneration: 0,
     confirmation: undefined, target: undefined, pendingOwner: undefined, disposed: false, cancel() {},
     document: { activeElement: null }, HTMLElement: class {}, captureBackendOperation,
@@ -78,7 +79,7 @@ function attachmentConsumer(id: string) {
   let reading = false, choices: any[] | undefined
   const scope = { options: { active: () => true, integration: () => ({ id: "fixture", app: { name: "Fixture" } }) },
     target: () => bindingTarget, disposed: false, intent: undefined as any, epoch: () => "epoch",
-    chainAction: () => "attach", busy: () => reading || integrationBindings.busy(bindingTarget),
+    link: () => ({ state: "none" }), busy: () => reading || integrationBindings.busy(bindingTarget),
     setReading: (value: boolean) => { reading = value }, setChoices: (value: any[]) => { choices = value },
     captureBackendOperation, integrationAttachmentRequest, integrationBindings, integrationAttachChoice,
     OUTCOMES: new Set(["busy", "gone", "refused"]), fail: () => messages.push("error"),
@@ -245,6 +246,28 @@ test("row menu defers host confirmation only for its captured backend attachment
   assert.equal(opened, 0)
   run({ kind: "host" }); scope.afterClose!()
   assert.equal(opened, 1)
+})
+
+test("state-line attachment rereads the named document and asks again when it changed", async t => {
+  const owner = fixture(t, "integrationsNamedDocument"), id = "integrationsNamedDocument~w/1"
+  const row = attachmentConsumer(id)
+  await row.activate("offer_old")
+  assert.equal(owner.calls.length, 1, "a different sole document requires a fresh choice")
+  assert.equal(row.choices()?.[0]?.offerID, "offer_1")
+  row.choices()![0]!.attach(); await flush()
+  assert.equal(owner.calls.length, 2)
+  assert.deepEqual(JSON.parse(owner.calls[1]!.body as string), { sessionID: "ses_1", offerID: "offer_1" })
+  assert.deepEqual(row.messages, [])
+})
+
+test("row documentation stays usable without backend mutation authority", async () => {
+  const opened: string[] = []
+  const scope = { props: { docs: "https://example.com/reviewed" },
+    captureBackendOperation: () => { throw new Error("documentation needs no backend") },
+    openExternalUrl: (url: string) => { opened.push(url) } }
+  const run = consumer("../components/plugin-row-actions.tsx", "run", scope)
+  run({ kind: "docs" })
+  assert.deepEqual(opened, ["https://example.com/reviewed"])
 })
 
 test("binding mutation admission stays exclusive across generations until settlement even without a demanded read", async () => {

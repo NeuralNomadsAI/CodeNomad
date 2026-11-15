@@ -130,7 +130,6 @@ import { validatePromptAttachmentBudget } from "./prompt-attachment-budget"
 import { ProviderAccountsService, AccountSelectionFailed } from "../provider-accounts/service"
 import { registerProviderAccountsRoutes } from "./routes/provider-accounts"
 import { observeProviderQuotaFailures } from "../provider-accounts/quota-observer"
-import { createOpenCodeFreeExhaustion } from "../usage/opencode-free-exhaustion"
 import { createOpenCodeFreeUsage } from "../usage/opencode-free-usage"
 import { deferPendingDiscovery, grantPendingReconciliation, PENDING_DISCOVERY_DEFERRED, PENDING_RECONCILIATION_HEADER } from "../workspaces/pending-discovery"
 
@@ -388,10 +387,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
     withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined })
   const accounts = new ProviderAccountsService(deps.settings)
-  const freeExhaustion = createOpenCodeFreeExhaustion()
-  const freeUsage = createOpenCodeFreeUsage(freeExhaustion)
-  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts, freeExhaustion.observe)
-  app.addHook("onClose", async () => { stopQuotaObserver(); freeExhaustion.dispose(); freeUsage.dispose() })
+  const freeUsage = createOpenCodeFreeUsage()
+  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
+  app.addHook("onClose", async () => { stopQuotaObserver(); freeUsage.dispose() })
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, loginStart),

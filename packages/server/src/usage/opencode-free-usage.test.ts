@@ -6,12 +6,12 @@ import { createOpenCodeFreeUsage } from "./opencode-free-usage"
 const day = Date.UTC(2026, 10, 6)
 const signal = () => AbortSignal.timeout(3000)
 function fixture() {
-  const state = { key: "synthetic-one", exhausted: false }
+  const state = { key: "synthetic-one" }
   const connection = { client: {
     session: { stats: async () => { assert.fail("free quota must never read local stats") } },
     credential: { list: async () => [{ active: true, integrationID: "opencode", value: { type: "key", key: state.key } }] },
   } } as unknown as ServiceConnection
-  return { state, connection, exhaustion: { exhausted: () => state.exhausted } }
+  return { state, connection }
 }
 const row = (model: string, requests: number, index = 0) => ({ provider: `vendor-${index}`, model, totalRequests: String(requests),
   totalInputTokens: "0", totalOutputTokens: "0", totalCacheReadTokens: "0", totalCacheWrite5mTokens: "0",
@@ -20,7 +20,7 @@ const page = (requests: number) => ({ items: [row("big-pickle", requests)], page
 
 test("Console counts are authoritative, including zero and counts above 800", async t => {
   t.mock.method(Date, "now", () => day + 1000)
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
+  const f = fixture(), usage = createOpenCodeFreeUsage()
   let count = 0
   t.mock.method(globalThis, "fetch", async () => Response.json(page(count)))
   try {
@@ -28,23 +28,22 @@ test("Console counts are authoritative, including zero and counts above 800", as
       f.state.key = `synthetic-${count}`
       const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
       assert.equal(result.ok, true)
-      assert.deepEqual(result.freeEstimate, { requests: count, reference: 800, exhausted: false })
+      assert.deepEqual(result.freeEstimate, { requests: count, reference: 800 })
       assert.equal(result.windows.daily.valueLabel, `${count} / 800`)
       assert.equal(result.windows.daily.usedPercent, Math.min(100, count / 800 * 100))
-      f.state.exhausted = true
-      const marked = usage.refreshExhaustion(f.connection, result)
-      assert.equal(marked.freeEstimate?.requests, count)
-      assert.equal(marked.windows.daily.usedPercent, 100)
-      f.state.exhausted = false
+      assert.equal(result.windows.daily.resetAt, null)
     }
   } finally { usage.dispose() }
 })
 
-test("cache shares reads per credential/day, expires after 60 seconds and preserves Console zero at midnight", async t => {
+test("cache shares reads per credential, expires after 60 seconds and keeps Console counts across midnight", async t => {
   let now = day + 1000, count = 250, calls = 0
   t.mock.method(Date, "now", () => now)
-  t.mock.method(globalThis, "fetch", async () => { calls++; return Response.json(page(count)) })
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
+  t.mock.method(globalThis, "fetch", async (input: unknown) => {
+    if (new URL(String(input)).pathname.endsWith("/billing/status")) return Response.json({})
+    calls++; return Response.json(page(count))
+  })
+  const f = fixture(), usage = createOpenCodeFreeUsage()
   const read = () => usage.read(f.connection, "opencode", "big-pickle", signal())
   try {
     const [a, b] = await Promise.all([read(), read()])
@@ -64,7 +63,7 @@ test("cache shares reads per credential/day, expires after 60 seconds and preser
   } finally { usage.dispose() }
 })
 
-test("any failed Console page discards the full count and the gauge, even with exhaustion", async t => {
+test("any failed Console page discards the full count and the gauge", async t => {
   t.mock.method(Date, "now", () => day + 1000)
   for (const status of [401, 403, 500, 200]) {
     t.mock.method(globalThis, "fetch", async (input: unknown) => {
@@ -73,12 +72,11 @@ test("any failed Console page discards the full count and the gauge, even with e
       return Response.json({ items: Array.from({ length: 50 }, (_, i) => row(i === 0 ? "big-pickle" : `paid-${i}`, 100, i)),
         pageInfo: { page: 1, pageSize: 50, total: 51, pageCount: 2 } })
     })
-    const f = fixture(); f.state.exhausted = true
-    const usage = createOpenCodeFreeUsage(f.exhaustion)
+    const f = fixture()
+    const usage = createOpenCodeFreeUsage()
     try {
       const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
       assert.equal(result.freeEstimate?.requests, null)
-      assert.equal(result.freeEstimate?.exhausted, true)
       assert.equal(result.ok, false)
       assert.deepEqual(result.windows, {})
       assert.equal(result.unavailableReason, status === 401 ? "opencode-console-invalid-credential" : status === 403
@@ -92,7 +90,7 @@ test("missing or expired Console login never fetches or fabricates a count", asy
   t.mock.method(Date, "now", () => day + 1000)
   t.mock.method(globalThis, "fetch", async () => { assert.fail("Console must not be called") })
   for (const expired of [false, true]) {
-    const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
+    const f = fixture(), usage = createOpenCodeFreeUsage()
     t.mock.method(f.connection.client.credential, "list", async () => expired ? [{ active: true, integrationID: "opencode",
       value: { type: "oauth", access: "secret", expires: day, metadata: { server: "https://opencode.ai/console", orgID: "org_fixture" } } }] : [])
     try {
@@ -110,11 +108,12 @@ test("a caller's deadline reports unknown without cancelling another caller's sh
   t.mock.method(Date, "now", () => day + 1000)
   let entered!: () => void, release!: (response: Response) => void, calls = 0, transport: AbortSignal | undefined
   const started = new Promise<void>(resolve => { entered = resolve })
-  t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
+  t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
+    if (new URL(String(input)).pathname.endsWith("/billing/status")) return Response.json({})
     calls++; transport = init!.signal!; entered()
     return new Promise<Response>(resolve => { release = resolve })
   })
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion), deadline = new AbortController()
+  const f = fixture(), usage = createOpenCodeFreeUsage(), deadline = new AbortController()
   try {
     const first = usage.read(f.connection, "opencode", "big-pickle", signal(), deadline.signal)
     await started
@@ -136,6 +135,7 @@ test("sums only free models across sequential 24h pages", async t => {
   t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
     const url = new URL(String(input)), n = Number(url.searchParams.get("page"))
     assert.equal(url.origin, "https://opencode.ai")
+    if (url.pathname === "/console/api/billing/status") return Response.json({})
     assert.equal(url.pathname, "/console/api/usage/models")
     assert.equal(url.searchParams.get("range"), "24h")
     assert.equal(init?.redirect, "error")
@@ -144,23 +144,44 @@ test("sums only free models across sequential 24h pages", async t => {
       ? Array.from({ length: 50 }, (_, i) => row(i === 0 ? "big-pickle" : `paid-${i}`, 100, i))
       : [row("beam-free", 160), row("longcat-2.5-free", 40)], pageInfo: { page: n, pageSize: 50, total: 52, pageCount: 2 } })
   })
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
+  const f = fixture(), usage = createOpenCodeFreeUsage()
   try {
     assert.equal((await usage.read(f.connection, "opencode", "big-pickle", signal())).freeEstimate?.requests, 300)
     assert.deepEqual(pages, [1, 2])
   } finally { usage.dispose() }
 })
 
-test("cross-midnight reads discard yesterday's count before publication", async t => {
-  let now = day + 86_400_000 - 1
+test("a read crossing midnight publishes the Console count and the credit balance", async t => {
+  let now = day - 1
   t.mock.method(Date, "now", () => now)
-  const f = fixture(), usage = createOpenCodeFreeUsage(f.exhaustion)
-  t.mock.method(globalThis, "fetch", async () => { now++; return Response.json(page(250)) })
+  t.mock.method(globalThis, "fetch", async (input: unknown) => {
+    now++
+    return new URL(String(input)).pathname.endsWith("/billing/status")
+      ? Response.json({ availableMicroCents: 125_000_000 }) : Response.json(page(250))
+  })
+  const f = fixture(), usage = createOpenCodeFreeUsage()
   try {
     const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
-    assert.deepEqual(result.freeEstimate, { requests: null, reference: 800, exhausted: false })
-    assert.deepEqual(result.windows, {})
-    assert.equal(result.ok, false)
-    assert.equal((await usage.read(f.connection, "opencode", "big-pickle", signal())).freeEstimate?.requests, 250)
+    assert.deepEqual(result.freeEstimate, { requests: 250, reference: 800 })
+    assert.equal(result.ok, true)
+    assert.equal(result.windows.daily.valueLabel, "250 / 800")
+    assert.deepEqual(result.windows.credits_balance?.balanceUSD, { remaining: 1.25 })
+  } finally { usage.dispose() }
+})
+
+test("a stalled balance never holds back the free count beyond a short grace", async t => {
+  t.mock.method(globalThis, "fetch", async (input: unknown, init?: RequestInit) => {
+    if (new URL(String(input)).pathname.endsWith("/billing/status")) {
+      return new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort",
+        () => reject(new DOMException("aborted", "TimeoutError")), { once: true }))
+    }
+    return Response.json(page(70))
+  })
+  const f = fixture(), usage = createOpenCodeFreeUsage(), started = Date.now()
+  try {
+    const result = await usage.read(f.connection, "opencode", "big-pickle", signal())
+    assert.equal(result.freeEstimate?.requests, 70)
+    assert.equal(result.windows.credits_balance, undefined)
+    assert.ok(Date.now() - started < 1500, "the three-second balance bound is not awaited")
   } finally { usage.dispose() }
 })
