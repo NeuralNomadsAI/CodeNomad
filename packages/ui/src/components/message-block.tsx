@@ -14,7 +14,7 @@ import {
 } from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import { ensureSessionAncestorsExpanded, sessions, setActiveSessionFromList } from "../stores/sessions"
+import { ensureSessionAncestorsExpanded, sessions, selectSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
 import { useI18n, type I18nContextValue } from "../lib/i18n"
 import { withHotkey } from "../lib/hotkeys"
@@ -140,7 +140,7 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 function navigateToTaskSession(location: TaskSessionLocation) {
   selectInstanceTab(location.instanceId)
   ensureSessionAncestorsExpanded(location.instanceId, location.sessionId)
-  setActiveSessionFromList(location.instanceId, location.sessionId)
+  selectSessionFromList(location.instanceId, location.sessionId)
 }
 
 interface CachedBlockEntry {

@@ -1,5 +1,5 @@
 import { createEffect, createMemo, on, onCleanup, type Accessor } from "solid-js"
-import { closeFilePreview, getFilePreview } from "../../../stores/files-preview"
+import { reconcileFilePreviewLifetime as closeFilePreview, getFilePreview } from "../../../stores/files-preview"
 import { getDefaultWorktreeSlug, getWorktrees, getWorktreeSlugForSession } from "../../../stores/worktrees"
 
 export const sessionWorktreeSlug = (instanceId: string, sessionId: string | null) =>

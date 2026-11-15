@@ -6,7 +6,7 @@ import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { MissionReader } from "../mission-reader"
 import { updateMissionProjectView } from "../../stores/mission-view-state"
-import { getSessionSurface } from "../../stores/session-surface"
+import { captureSessionSurfaceIntent, getSessionSurface } from "../../stores/session-surface"
 import { missionStore } from "../../stores/missions"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
@@ -587,6 +587,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
 
     const parentTitle = (session()?.title ?? "").trim() || t("sessionList.session.untitled")
+    const intent = captureSessionSurfaceIntent({ instanceId: props.instanceId, sessionId: props.sessionId })
 
     try {
       const forkedSession = await forkSession(props.instanceId, props.sessionId, { afterMessageId: messageId })
@@ -596,7 +597,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       })
 
       ensureSessionAncestorsExpanded(props.instanceId, forkedSession.id)
-      setActiveSessionFromList(props.instanceId, forkedSession.id)
+      setActiveSessionFromList(props.instanceId, forkedSession.id, intent)
 
       await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
     } catch (error) {
@@ -605,7 +606,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         title: t("sessionView.alerts.forkFailed.title"),
         variant: "error",
       })
-    }
+    } finally { intent.release() }
   }
   return (
     <Show

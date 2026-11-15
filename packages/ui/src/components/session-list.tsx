@@ -354,7 +354,8 @@ const SessionList: Component<SessionListProps> = (props) => {
  
   const handleDeleteSession = async (sessionId: string) => {
     if (isSessionDeleting(sessionId)) return
-
+    const intent = captureSessionSurfaceIntent({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
+    try {
     const confirmed = await showConfirmDialog(
       t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
       {
@@ -403,12 +404,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     try {
       await deleteSession(props.instanceId, sessionId)
       if (fallbackSessionId) {
-        setActiveSessionFromList(props.instanceId, fallbackSessionId)
+        setActiveSessionFromList(props.instanceId, fallbackSessionId, intent)
       }
     } catch (error) {
       log.error(`Failed to delete session ${sessionId}:`, error)
       showToastNotification({ category: "sessions", message: t("sessionList.delete.error"), variant: "error" })
     }
+    } finally { intent.release() }
   }
 
   const openRenameDialog = (sessionId: string) => {
@@ -528,7 +530,8 @@ const SessionList: Component<SessionListProps> = (props) => {
   const handleBulkDelete = async () => {
     const selected = Array.from(selectedSessionIds())
     if (selected.length === 0) return
-
+    const intent = captureSessionSurfaceIntent({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
+    try {
     const confirmed = await showConfirmDialog(
       t("sessionList.bulkDelete.confirmMessage", { count: selected.length }),
       {
@@ -583,7 +586,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     setSelectedSessionIds(new Set<string>())
 
     if (fallbackSessionId) {
-      setActiveSessionFromList(props.instanceId, fallbackSessionId)
+      setActiveSessionFromList(props.instanceId, fallbackSessionId, intent)
     }
 
     if (failed > 0) {
@@ -592,6 +595,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         variant: "error",
       })
     }
+    } finally { intent.release() }
   }
 
   const SessionRow: Component<{
@@ -1162,3 +1166,4 @@ const SessionList: Component<SessionListProps> = (props) => {
 }
 
 export default SessionList
+import { captureSessionSurfaceIntent } from "../stores/session-surface"

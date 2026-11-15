@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import { MAX_LAYOUT_VALUE_LENGTH, readClientLayoutValue, writeClientLayoutValue, removeClientLayoutValue } from "./client-state"
 import { getTabViewState, updateTabViewState, type RestorableTabMissionView } from "./tab-view-state"
-import { activateSessionSurface, hasPendingSessionSurfaceIntent } from "./session-surface"
+import { activateSessionSurface, reconcileSessionSurface, sessionSurfaceGesture, type SessionSurfaceIntent } from "./session-surface"
 
 export interface MissionReaderTarget {
   /** For `playbook`, the playbook id, read without any Mission. */
@@ -42,20 +42,43 @@ export function missionProjectView(instanceId: string): ProjectView {
   return getTabViewState(instanceId).missions ?? emptyView
 }
 export function updateMissionProjectView(instanceId: string, patch: Partial<ProjectView>): void {
+  if ("reader" in patch) {
+    const previous = missionProjectView(instanceId).reader, { reader, ...data } = patch
+    updateMissionProjectView(instanceId, data)
+    if (previous === reader) return
+    reconcileSessionSurface(instanceId, "mission-reader", () => {
+      if (missionProjectView(instanceId).reader !== previous) return
+      writeMissionProjectView(instanceId, { reader })
+    })
+    return
+  }
+  writeMissionProjectView(instanceId, patch)
+}
+
+/** Explicit reader/selection gesture; async callers pass their original admitted intent. */
+export function navigateMissionProjectView(instanceId: string, patch: Partial<ProjectView>, intent?: SessionSurfaceIntent): void {
+  sessionSurfaceGesture({ instanceId, sessionId: null }, admitted => {
+    writeMissionProjectView(instanceId, patch)
+    if ("reader" in patch) activateSessionSurface({ instanceId, sessionId: null },
+      patch.reader ? { kind: "mission", target: patch.reader } : { kind: "conversation" }, admitted)
+  }, intent)
+}
+
+function writeMissionProjectView(instanceId: string, patch: Partial<ProjectView>): void {
   const previous = missionProjectView(instanceId)
   const value = { ...previous, ...patch }
   if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
     && previous.selectedScheduled === value.selectedScheduled && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded
     && previous.disclosures === value.disclosures) return
   updateTabViewState(instanceId, { missions: value })
-  if ("reader" in patch && previous.reader !== value.reader) activateSessionSurface({ instanceId, sessionId: null },
-    value.reader ? { kind: "mission", target: value.reader } : { kind: "conversation" })
 }
 /** Retarget an already displayed reader under the caller's foreground/reconciliation fence. */
-export function retargetMissionReader(instanceId: string, previous: MissionReaderTarget, target: MissionReaderTarget): void {
-  const view = missionProjectView(instanceId)
-  if (view.reader !== previous) return
-  updateTabViewState(instanceId, { missions: { ...view, reader: target } })
+export function retargetMissionReader(instanceId: string, previous: MissionReaderTarget, target: MissionReaderTarget, intent?: SessionSurfaceIntent): void {
+  const apply = () => {
+    if (missionProjectView(instanceId).reader === previous) writeMissionProjectView(instanceId, { reader: target })
+  }
+  if (intent) { if (intent.current()) apply() }
+  else reconcileSessionSurface(instanceId, "mission-reader", apply)
 }
 export function missionDisclosureOpen(instanceId: string, missionId: string, id: string, defaultOpen = true): boolean {
   return missionProjectView(instanceId).disclosures?.[key(JSON.stringify([missionId, id]))] ?? defaultOpen
@@ -179,7 +202,7 @@ export function forgetMissionView(instanceId: string, missionId: string): void {
   updateMissionProjectView(instanceId, {
     selected: view.selected === missionId ? undefined : view.selected,
     selectedTask: view.selectedTask?.missionId === missionId ? undefined : view.selectedTask,
-    reader: view.reader?.missionId === missionId && !hasPendingSessionSurfaceIntent(instanceId) ? undefined : view.reader,
+    reader: view.reader?.missionId === missionId ? undefined : view.reader,
   })
 }
 

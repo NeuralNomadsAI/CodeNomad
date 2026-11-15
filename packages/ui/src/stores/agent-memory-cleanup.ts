@@ -5,6 +5,7 @@ import { createSession } from "./session-api"
 import { sendMessage } from "./session-actions"
 import { setActiveParentSession } from "./session-state"
 import { selectInstanceTab } from "./app-tabs"
+import { captureSessionSurfaceIntent } from "./session-surface"
 
 // Retain admitted IDs for this renderer lifetime, including uncertain failures.
 const attempts = new Map<string, Promise<void>>()
@@ -18,6 +19,8 @@ export function runMemoryCleanup(request: MemoryCleanupRequest): Promise<void> {
 }
 
 async function launchMemoryCleanup(request: MemoryCleanupRequest): Promise<void> {
+  const intent = captureSessionSurfaceIntent({ instanceId: request.workspaceId, sessionId: null })
+  try {
   const instance = instances().get(request.workspaceId)
   const client = instance?.client, folder = instance?.folder
   const assertCurrent = () => {
@@ -34,7 +37,8 @@ async function launchMemoryCleanup(request: MemoryCleanupRequest): Promise<void>
   const session = await createSession(request.workspaceId, undefined, { directory: request.directory })
   assertCurrent()
   if (session.location?.directory !== result.cleanupDirectory) throw new Error("Cleanup location changed")
-  selectInstanceTab(request.workspaceId)
-  setActiveParentSession(request.workspaceId, session.id)
+  if (intent.current()) selectInstanceTab(request.workspaceId)
+  setActiveParentSession(request.workspaceId, session.id, intent)
   await sendMessage(request.workspaceId, session.id, memoryCleanupPrompt(request.scope))
+  } finally { intent.release() }
 }

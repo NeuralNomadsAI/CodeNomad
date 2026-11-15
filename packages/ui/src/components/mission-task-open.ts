@@ -1,5 +1,5 @@
 import type { MissionPanelMap } from "../../../server/src/api-types"
-import { missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
+import { missionProjectView, navigateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
 import { missionStore } from "../stores/missions"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -24,10 +24,10 @@ export async function openMissionTask(instanceId: string, scope: string, mission
      || getOpenCodeInstanceGeneration(instanceId) !== generation) return
    // The reader shows the selection: the task it opens becomes the panel's selection too.
    markMissionTasksSeen(JSON.stringify([scope, owner.projectID]), owner.id, [task])
-  updateMissionProjectView(instanceId, { reader: { missionId: owner.id, kind: "task", itemId: task.id, recurrence },
+   navigateMissionProjectView(instanceId, { reader: { missionId: owner.id, kind: "task", itemId: task.id, recurrence },
      selectedTask: { missionId: owner.id, taskId: task.id }, ...(recurrence
        ? recurrence.owner === "scheduled" ? { selectedScheduled: recurrence.scheduleID, selectedRecurrence: undefined, selected: undefined }
          : { selectedRecurrence: recurrence.scheduleID, selectedScheduled: undefined, selected: undefined }
-        : { selected: owner.id, selectedScheduled: undefined, selectedRecurrence: undefined }) })
+         : { selected: owner.id, selectedScheduled: undefined, selectedRecurrence: undefined }) }, intent)
   } finally { intent.release() }
 }

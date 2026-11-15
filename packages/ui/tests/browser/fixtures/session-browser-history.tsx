@@ -16,6 +16,7 @@ import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/sh
 import { sseManager } from "../../../src/lib/sse-manager"
 import { sessions, activeSessionId } from "../../../src/stores/session-state"
 import { captureSessionSurfaceIntent } from "../../../src/stores/session-surface"
+import { startNewSession } from "../../../src/stores/session-actions"
 
 // The production shell, session switching, preview store and native guests run
 // unchanged. Only server responses and the native registration IPC are fixtures.
@@ -63,7 +64,25 @@ const shell = (window as any).fixture
 shell.addSession("second")
 let eventTime = 1000
 let surfaceIntent: ReturnType<typeof captureSessionSurfaceIntent>
+let releaseNewSession: (() => void) | undefined
 Object.assign(shell, {
+  delayNewSession: () => {
+    instances().get(ids[0])!.client!.session.create = (() => new Promise(resolve => {
+      releaseNewSession = () => {
+        shell.addSession("created")
+        resolve(sessions().get(ids[0])!.get("created"))
+      }
+    })) as any
+  },
+  startNewSession: () => startNewSession(ids[0]),
+  newSessionPending: () => Boolean(releaseNewSession),
+  releaseNewSession: () => releaseNewSession?.(),
+  hasSession: (id: string) => sessions().get(ids[0])?.has(id),
+  refreshMissions: (cold = false) => {
+    if (cold) missionStore.clear(ids[0])
+    return missionStore.refresh(ids[0])
+  },
+  missionStatus: () => missionStore.state(ids[0]).status,
   captureSurfaceIntent: () => { surfaceIntent = captureSessionSurfaceIntent({ instanceId: ids[0], sessionId: "session" }) },
   surfaceIntentCurrent: () => surfaceIntent.current(),
   native: nativeFixture,

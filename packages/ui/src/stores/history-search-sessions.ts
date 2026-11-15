@@ -124,8 +124,8 @@ export async function openHistoryMatchSession(instanceId: string, sessionId: str
     // A destination left on its browser preview would hide the transcript.
     batch(() => {
       if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
-      setActiveSessionFromList(instanceId, sessionId)
-      activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" })
+      setActiveSessionFromList(instanceId, sessionId, intent)
+      activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" }, intent)
     })
     return true
   } finally { intent.release() }

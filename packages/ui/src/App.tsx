@@ -79,6 +79,7 @@ import {
 } from "./stores/sessions"
 import { openSessionPreview } from "./stores/session-previews"
 import { captureSessionSurfaceIntent } from "./stores/session-surface"
+import { clearSelectedSession } from "./stores/session-state"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -288,13 +289,13 @@ const App: Component = () => {
         const instance = owner
         const stillOwned = () => !disposed && findOwners().some(candidate => candidate.id === instance.id)
         await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned(), intent)
-        if (!stillOwned()) {
+        if (!stillOwned() || !intent.current()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }
         setShowFolderSelection(false)
         selectInstanceTab(instance.id)
-        setActiveSessionFromList(instance.id, sessionID)
+        setActiveSessionFromList(instance.id, sessionID, intent)
       } catch (error) {
         await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
           log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
@@ -611,7 +612,7 @@ const App: Component = () => {
     const parentSession = getSessionRoot(instanceId, sessionId)
     if (!parentSession) return
 
-    clearActiveParentSession(instanceId)
+    clearSelectedSession(instanceId)
 
     try {
       await fetchSessions(instanceId, { reset: true })

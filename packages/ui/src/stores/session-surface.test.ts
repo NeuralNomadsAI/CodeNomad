@@ -7,6 +7,9 @@ import { getSessionPreview, openSessionPreview } from "./session-previews"
 import { serverApi } from "../lib/api-client"
 import { openMissionTask } from "../components/mission-task-open"
 import { missionProjectView, updateMissionProjectView } from "./mission-view-state"
+import { clearActiveParentSession, clearActiveSession, hydrateActiveSessionSelection, seedRestoredSessionSelection,
+  setActiveParentSession, setActiveSession, setActiveSessionFromList, setSessions } from "./session-state"
+import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 const ctx = (instanceId: string) => ({ instanceId, sessionId: "same" })
 const lifecycle = (instanceId: string, type: "opened" | "removed" | "unavailable") =>
@@ -74,6 +77,7 @@ it("unavailability and removal invalidate only their own activation, retaining u
 
 it("schedule and playbook readers activate without a fabricated conversation", () => {
   const context = { instanceId: "no-conversation", sessionId: null }
+  lifecycle(context.instanceId, "opened")
   for (const target of [
     { kind: "recurrence" as const, missionId: "schedule", instanceId: context.instanceId, projectID: "project" },
     { kind: "playbook" as const, missionId: "debug" },
@@ -83,6 +87,28 @@ it("schedule and playbook readers activate without a fabricated conversation", (
     assert.deepEqual(getSessionSurface(context), { kind: "mission", target })
   }
   lifecycle(context.instanceId, "removed")
+})
+
+for (const [name, reconcile] of Object.entries({
+  conversation: (id: string) => setActiveSession(id, "next"),
+  parent: (id: string) => setActiveParentSession(id, "next"),
+  list: (id: string) => setActiveSessionFromList(id, "next"),
+  clearParent: clearActiveParentSession,
+  clearConversation: clearActiveSession,
+  hydrate: (id: string) => hydrateActiveSessionSelection(id, "next", "next"),
+  seed: (id: string) => seedRestoredSessionSelection(id, "next", "next"),
+})) it(`passive ${name} selection yields to an admitted surface gesture`, () => {
+  const id = `passive-selection-${name}`
+  lifecycle(id, "opened")
+  setSessions(previous => new Map(previous).set(id, new Map([["next", { id: "next", parentId: null } as any]])))
+  setActiveSessionId(previous => new Map(previous).set(id, "same"))
+  const intent = captureSessionSurfaceIntent(ctx(id))
+  reconcile(id)
+  assert.equal(intent.current(), true)
+  assert.equal(activeSessionId().get(id), "same")
+  intent.release()
+  assert.equal(activeSessionId().get(id), name.startsWith("clear") ? undefined : "next")
+  lifecycle(id, "removed")
 })
 
 it("unrelated envelope updates preserve live Mission identities and an in-flight task open", async () => {

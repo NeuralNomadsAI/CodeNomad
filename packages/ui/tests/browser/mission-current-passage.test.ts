@@ -570,7 +570,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         const row = await inlineMissionEntry(probe, "Daily commit review")
         await row.locator('.mission-row-flag[data-mark="permission"]').waitFor({ timeout: 30_000 })
         await row.click()
-        await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
+        await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).navigateMissionProjectView("fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
         release(); hold = undefined
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)

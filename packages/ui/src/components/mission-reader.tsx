@@ -3,7 +3,7 @@ import { ArrowUpRight, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { missionStore as projectMissionStore } from "../stores/missions"
 import { MissionPanelScope, scopedMissionStore } from "./mission-panel-scope"
-import { missionProjectView, updateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
+import { missionProjectView, navigateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
 import { activateSessionSurface, captureSessionSurfaceIntent, getSessionSurface } from "../stores/session-surface"
 import { Markdown } from "./markdown"
 import { copyToClipboard } from "../lib/clipboard"
@@ -333,8 +333,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       if (!admitted()) return
       if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
       batch(() => {
-        setActiveSessionFromList(instanceId, sessionId)
-        activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" })
+        setActiveSessionFromList(instanceId, sessionId, surfaceIntent)
+        activateSessionSurface({ instanceId, sessionId }, { kind: "conversation" }, surfaceIntent)
       })
     } finally { surfaceIntent.release() }
   }
@@ -496,7 +496,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <Show when={recurrence()} fallback={<p>{t("missions.control.reader.missing")}</p>}>{schedule =>
           <MissionRecurrenceReader instanceId={props.instanceId} scope={props.scope} projectID={recurrenceState.snapshot()!.projectID}
             schedule={schedule()} passageID={target()?.itemId}
-            onSelect={passageID => updateMissionProjectView(props.instanceId, { reader: { ...target()!, itemId: passageID } })} />}</Show>
+            onSelect={passageID => navigateMissionProjectView(props.instanceId, { reader: { ...target()!, itemId: passageID } })} />}</Show>
       </Show>
       <Show when={target()?.kind === "overview" && missionBriefed(mission())}>
         <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(mission()!.briefing!.createdAt).toLocaleString(locale())}</p>

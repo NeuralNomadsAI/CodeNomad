@@ -28,14 +28,17 @@ function cancelOperation(storageKey: string) {
   operations.delete(storageKey)
   restorePromises.delete(storageKey)
 }
-function beginOperation(storageKey: string, sessionId: string, instanceId: string, intent?: PreviewOperation): PreviewOperation {
+function beginOperation(storageKey: string, sessionId: string, instanceId: string, intent?: PreviewOperation, passive = false): PreviewOperation {
   cancelOperation(storageKey)
-  const operation = intent ?? captureSessionSurfaceIntent({ sessionId, instanceId })
+  const operation: PreviewOperation = intent ?? (passive ? {
+    current: () => operations.get(storageKey) === operation && isInstanceOccurrenceOpen(instanceId),
+    release: () => {},
+  } : captureSessionSurfaceIntent({ sessionId, instanceId }))
   operations.set(storageKey, operation)
   return operation
 }
-function finishOperation(storageKey: string, operation: PreviewOperation) {
-  operation.release()
+function finishOperation(storageKey: string, operation: PreviewOperation, release = true) {
+  if (release) operation.release()
   if (operations.get(storageKey) === operation) operations.delete(storageKey)
 }
 export const getPendingPreviewOperationCount = () => operations.size
@@ -98,10 +101,10 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
       history: new BrowserHistoryJournal(existing?.history ?? parseBrowserHistory(saved?.history, saved?.targetUrl ?? preview.targetUrl)).visitUrl(preview.targetUrl) }
     setSessionPreviews(previous => new Map(previous).set(storageKey, withLiveMode(record)))
     storePreview(sessionId, instanceId, { ...record, mode: "preview" })
-    activateSessionSurface({ sessionId, instanceId }, { kind: "web", sessionId })
+    activateSessionSurface({ sessionId, instanceId }, { kind: "web", sessionId }, operationVersion)
     if (existing) void serverApi.deletePreview(existing.token).catch(() => undefined)
     return record
-  } finally { finishOperation(storageKey, operationVersion) }
+  } finally { finishOperation(storageKey, operationVersion, !intent) }
 }
 
 function restoreSessionPreview(sessionId: string, instanceId: string): Promise<SessionPreviewRecord | null> {
@@ -114,7 +117,8 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   if (!stored) return Promise.resolve(null)
   const pending = operations.get(storageKey)?.current() ? restorePromises.get(storageKey) : undefined
   if (pending) return pending
-  const operationVersion = beginOperation(storageKey, sessionId, instanceId)
+  if (operations.get(storageKey)?.current()) return Promise.resolve(null)
+  const operationVersion = beginOperation(storageKey, sessionId, instanceId, undefined, true)
   const restore = createPreview(sessionId, stored.targetUrl, instanceId, storageKey, operationVersion).then(preview => {
     if (operations.get(storageKey) !== operationVersion || !operationVersion.current()) {
       void serverApi.deletePreview(preview.token).catch(() => undefined)
@@ -132,11 +136,12 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   return restore
 }
 
-function showSessionPreview(storageKey: string) {
+function showSessionPreview(storageKey: string, intent?: PreviewOperation) {
+  if (intent && !intent.current()) return
   const current = sessionPreviews().get(storageKey)
   if (!current) return
   cancelOperation(storageKey)
-  activateSessionSurface(current, { kind: "web", sessionId: current.sessionId })
+  activateSessionSurface(current, { kind: "web", sessionId: current.sessionId }, intent)
 }
 
 function showSessionChat(storageKey: string) {

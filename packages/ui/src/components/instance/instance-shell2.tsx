@@ -63,7 +63,8 @@ import {
   showSessionChat,
   showSessionPreview,
 } from "../../stores/session-previews"
-import { clearActiveParentSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { captureSessionSurfaceIntent } from "../../stores/session-surface"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -461,10 +462,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
+    const intent = captureSessionSurfaceIntent({ instanceId: props.instance.id, sessionId })
     try {
       const restored = await restoreSessionPreview(sessionId, props.instance.id)
-      if (restored) showSessionPreview(restored.storageKey)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id)
+      if (!intent.current()) return
+      if (restored) showSessionPreview(restored.storageKey, intent)
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id, undefined, intent)
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return
       if (props.isActiveInstance === false || activeSessionIdForInstance() !== sessionId) return
@@ -473,7 +476,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
-    }
+    } finally { intent.release() }
   }
 
   function handlePreviewButtonClick() {
@@ -988,7 +991,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   function createAndActivateDraftSession() {
     if (draftSessionCreation) return draftSessionCreation
+    const intent = captureSessionSurfaceIntent({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() ?? null })
     const creation = (async () => {
+      try {
       const agent = draftAgent()
       const model = draftModel()
       if (agent && model.providerId && model.modelId) {
@@ -998,11 +1003,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       if (model.providerId && model.modelId) {
         await updateSessionModel(props.instance.id, session.id, model)
       }
-      if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
+      if (intent.current() && (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches)) {
         setFocusConversationSessionId(session.id)
       }
-      setActiveParentSession(props.instance.id, session.id)
+      setActiveParentSession(props.instance.id, session.id, intent)
       return session
+      } finally { intent.release() }
     })()
     draftSessionCreation = creation
     void creation.finally(() => {
@@ -1054,7 +1060,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (sessionIds.length > 0) {
       handleSessionSelect(sessionIds[0])
     } else {
-      clearActiveParentSession(props.instance.id)
+      clearSelectedSession(props.instance.id)
     }
   }
 

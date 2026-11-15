@@ -17,6 +17,7 @@ import { getFormQueue } from "../../../src/stores/forms"
 import { focusInterruption } from "../../../src/stores/interruption-navigation"
 import { addInstance, addPendingForm, addPermissionToQueue, instances, setActiveInstanceId } from "../../../src/stores/instances"
 import { setSessions, setActiveSession, setActiveParentSession, clearActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
+import { clearSelectedSession, selectActiveParentSession, selectActiveSession } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
 import "../../../src/index.css"
@@ -156,7 +157,7 @@ bootStage("preferences-after")
     fixtureSessions.set(sid, { ...current, location: { directory } })
     setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
   },
-  selectSession: (sid: string | null) => { if (sid === null) clearActiveParentSession(id); else { setActiveParentSession(id, sid); setActiveSession(id, sid) } },
+  selectSession: (sid: string | null) => { if (sid === null) clearSelectedSession(id); else selectActiveParentSession(id, sid) },
   selectedSession: () => activeSessionId().get(id) ?? null,
   focusRequest: (sid?: string, requestId?: string) => focusInterruption(id, sid, requestId),
   nativeQuestion: (sid = sessionId, formId = `question-${sid}`, long = false) => emit("form.created", {
@@ -178,8 +179,8 @@ bootStage("preferences-after")
   menuInstance: setMenuInstance,
   setPreferences: updatePreferences,
   executions: () => executions,
-  showInfo: () => setActiveSession(id, "info"),
-  showSession: () => setActiveSession(id, sessionId),
+  showInfo: () => selectActiveSession(id, "info"),
+  showSession: () => selectActiveSession(id, sessionId),
   setContext: (used: number, available: number) => setSessionInfoByInstance(previous => new Map(previous).set(id,
     new Map([[sessionId, { actualUsageTokens: used, contextAvailableTokens: available } as any]]))),
   setLocale: (locale: "en" | "he") => updatePreferences({ locale }),

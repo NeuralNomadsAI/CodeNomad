@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { before, describe, it } from "node:test"
 import { parseStoredSessionPreviews, openSessionPreview, restoreSessionPreview, showSessionChatFor, showSessionPreview, getSessionPreview, closeSessionPreview, updateSessionPreviewHistory, updateSessionPreviewLocation, updateSessionPreviewViewport, getPreviewSessionIds } from "./session-previews"
-import { missionProjectView, updateMissionProjectView } from "./mission-view-state"
+import { missionProjectView, navigateMissionProjectView } from "./mission-view-state"
 import { serverApi } from "../lib/api-client"
 import { getTabViewState, seedTabViewState } from "./tab-view-state"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
@@ -276,7 +276,7 @@ describe("session preview persistence", () => {
       const reader = { missionId: "mission", kind: "overview" as const }
       const { storageKey } = await openSessionPreview("session", "https://example.com", "surface")
       showSessionChatFor("session", "surface")
-      updateMissionProjectView("surface", { reader })
+      navigateMissionProjectView("surface", { reader })
       assert.equal(getSessionPreview("session", "surface")?.mode, "chat")
       showSessionPreview(storageKey)
       assert.equal(missionProjectView("surface").reader, undefined)
@@ -294,7 +294,7 @@ describe("session preview persistence", () => {
       const pending = openSessionPreview("session", "https://example.com", "race")
       showSessionChatFor("session", "race")
       const reader = { missionId: "mission", kind: "overview" as const }
-      updateMissionProjectView("race", { reader })
+      navigateMissionProjectView("race", { reader })
       resolve({ token: "stale", targetUrl: "https://example.com" })
       await assert.rejects(pending, /superseded/)
       assert.deepEqual(deleted, ["stale"])

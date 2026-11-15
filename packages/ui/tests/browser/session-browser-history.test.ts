@@ -132,6 +132,73 @@ test("a duplicate's diff, session selection, Info and Back/Forward preserve its 
   } finally { await page.close() }
 })
 
+for (const inventory of ["missing", "unavailable"]) test(`real shell: ${inventory} Mission inventory cannot supersede a held browser gesture`, { timeout: 90_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const maps: MissionMap[] = [{
+    version: 1, id: "mission-a", projectID: "fixture", projectCanonical: "/repo", objective: "Retained reader", title: "Mission A",
+    template: "custom", coordinatorSessionId: "session", status: "active", runState: "running",
+    actors: [], tasks: [], frontier: [], claims: [], history: [], historyTruncated: false, revision: 1, createdAt: 1, updatedAt: 1, reports: [],
+  }]
+  let refreshed = false
+  try {
+    await prepare(page, "web")
+    await page.route("**/api/workspaces/*/missions**", missionPanelRoute(async route => {
+      const req = route.request(), path = new URL(req.url()).pathname
+      if (path.endsWith("/content")) return route.fulfill({ json: missionContentFixture(req.url(), req.method(), maps) })
+      if (path.endsWith("/missions")) return route.fulfill({ json: refreshed && inventory === "unavailable"
+        ? { available: false, reason: "plugin-unavailable", missions: [] }
+        : { available: true, projectID: "fixture", missions: panelMissions(refreshed ? [] : maps), generatedAt: refreshed ? 2 : 1, discardedEvents: 0 } })
+      return route.fulfill({ json: {} })
+    }))
+    await page.evaluate(() => (window as any).fixture.readMission("header-windows", "overview"))
+    await page.locator(".mission-reader").getByText("Retained reader", { exact: true }).waitFor()
+    await page.evaluate(url => {
+      const f = (window as any).fixture
+      f.delayPreview(url)
+      ;(window as any).previewAttempt = f.openPreview("session", url).then(() => "opened", (error: Error) => error.name + ": " + error.message)
+    }, `${base}/page/mission-race`)
+    await page.waitForFunction(() => (window as any).fixture.isPreviewDelayed())
+    refreshed = true
+    await page.evaluate(cold => (window as any).fixture.refreshMissions(cold), inventory === "unavailable")
+    assert.equal(await page.evaluate(() => (window as any).fixture.missionStatus()), inventory === "unavailable" ? "unavailable" : "ready")
+    assert.equal(await page.evaluate(() => (window as any).fixture.presentation("header-windows").mission.reader?.missionId), "mission-a",
+      "passive cleanup waits for the admitted browser gesture")
+    await page.evaluate(() => (window as any).fixture.releasePreview())
+    assert.equal(await page.evaluate(() => (window as any).previewAttempt), "opened")
+    await page.locator('[data-session-id="session"] .window-shell').waitFor({ state: "visible" })
+    assert.equal(await page.evaluate(() => (window as any).fixture.presentation("header-windows").mission.reader), undefined)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("real shell: creating a session preserves a newer held browser gesture and the created conversation", { timeout: 90_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await prepare(page, "web")
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      f.delayNewSession()
+      ;(window as any).creationAttempt = f.startNewSession()
+    })
+    await page.waitForFunction(() => (window as any).fixture.newSessionPending())
+    await page.evaluate(url => {
+      const f = (window as any).fixture
+      f.delayPreview(url)
+      ;(window as any).previewAttempt = f.openPreview("session", url).then(() => "opened", (error: Error) => error.name + ": " + error.message)
+    }, `${base}/page/new-session-race`)
+    await page.waitForFunction(() => (window as any).fixture.isPreviewDelayed())
+    await page.evaluate(() => (window as any).fixture.releaseNewSession())
+    assert.equal(await page.evaluate(async () => (await (window as any).creationAttempt)?.id), "created")
+    assert.equal(await page.evaluate(() => (window as any).fixture.hasSession("created")), true)
+    assert.equal(await page.evaluate(() => (window as any).fixture.selection("header-windows")), "session")
+    await page.evaluate(() => (window as any).fixture.releasePreview())
+    assert.equal(await page.evaluate(() => (window as any).previewAttempt), "opened")
+    await page.locator('[data-session-id="session"] .window-shell').waitFor({ state: "visible" })
+  } finally { await page.close() }
+})
+
 for (const host of ["web", "tauri", "electron"]) test(`${host}: browser gestures supersede pending surface activation before committing`, { timeout: 120_000 }, async () => {
   const native = host === "electron" ? await launchHistoryElectron() : undefined
   const page = native?.page ?? await browser.newPage({ viewport: { width: 1400, height: 900 } })

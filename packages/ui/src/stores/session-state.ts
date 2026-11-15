@@ -1,5 +1,5 @@
 import { batch, createSignal } from "solid-js"
-import { invalidateSessionSurfaceIntent } from "./session-surface"
+import { reconcileSessionSurface, sessionSurfaceGesture, type SessionSurfaceIntent } from "./session-surface"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
@@ -704,8 +704,6 @@ function writeSessionSelection(
   instanceId: string,
   sessionId: string | null,
 ): void {
-  if (setter === setActiveSessionId && activeSessionId().get(instanceId) !== (sessionId ?? undefined))
-    invalidateSessionSurfaceIntent(instanceId)
   // A coalesced transcript page admitted under the previous selection lands
   // before the gates move; nothing pending may cross a selection change.
   flushTranscriptProjections()
@@ -731,26 +729,56 @@ function writeActiveParentSession(instanceId: string, parentSessionId: string | 
   writeSessionSelection(setActiveParentSessionId, instanceId, parentSessionId)
 }
 
-function setActiveSession(instanceId: string, sessionId: string): void {
-  markSessionSelectionAuthoritative(instanceId)
-  writeActiveSession(instanceId, sessionId)
+function applySessionSelection(instanceId: string, apply: () => void, intent?: SessionSurfaceIntent): void {
+  if (intent) { if (intent.current()) apply() }
+  else {
+    const previous = activeSessionId().get(instanceId), parent = activeParentSessionId().get(instanceId)
+    reconcileSessionSurface(instanceId, "session-selection", () => {
+      if (activeSessionId().get(instanceId) === previous && activeParentSessionId().get(instanceId) === parent) apply()
+    })
+  }
 }
 
-function setActiveParentSession(instanceId: string, parentSessionId: string): void {
-  markSessionSelectionAuthoritative(instanceId)
-  writeActiveParentSession(instanceId, parentSessionId)
-  writeActiveSession(instanceId, parentSessionId)
+function setActiveSession(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
+  applySessionSelection(instanceId, () => {
+    markSessionSelectionAuthoritative(instanceId)
+    writeActiveSession(instanceId, sessionId)
+  }, intent)
 }
 
-function clearActiveParentSession(instanceId: string): void {
-  markSessionSelectionAuthoritative(instanceId)
-  writeActiveParentSession(instanceId, null)
-  writeActiveSession(instanceId, null)
+function setActiveParentSession(instanceId: string, parentSessionId: string, intent?: SessionSurfaceIntent): void {
+  applySessionSelection(instanceId, () => batch(() => {
+    markSessionSelectionAuthoritative(instanceId)
+    writeActiveParentSession(instanceId, parentSessionId)
+    writeActiveSession(instanceId, parentSessionId)
+  }), intent)
+}
+
+export function selectActiveSession(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
+  sessionSurfaceGesture({ instanceId, sessionId }, admitted => setActiveSession(instanceId, sessionId, admitted), intent)
+}
+
+export function selectActiveParentSession(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
+  sessionSurfaceGesture({ instanceId, sessionId }, admitted => setActiveParentSession(instanceId, sessionId, admitted), intent)
+}
+
+function clearActiveParentSession(instanceId: string, intent?: SessionSurfaceIntent): void {
+  applySessionSelection(instanceId, () => batch(() => {
+    markSessionSelectionAuthoritative(instanceId)
+    writeActiveParentSession(instanceId, null)
+    writeActiveSession(instanceId, null)
+  }), intent)
+}
+
+export function clearSelectedSession(instanceId: string): void {
+  sessionSurfaceGesture({ instanceId, sessionId: null }, intent => clearActiveParentSession(instanceId, intent))
 }
 
 function clearActiveSession(instanceId: string): void {
-  markSessionSelectionAuthoritative(instanceId)
-  writeActiveSession(instanceId, null)
+  applySessionSelection(instanceId, () => {
+    markSessionSelectionAuthoritative(instanceId)
+    writeActiveSession(instanceId, null)
+  })
 }
 
 function hydrateActiveSessionSelection(
@@ -759,20 +787,22 @@ function hydrateActiveSessionSelection(
   sessionId: string | null,
 ): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
-  batch(() => {
+  applySessionSelection(instanceId, () => batch(() => {
+    if (hasAuthoritativeSessionSelection(instanceId)) return
     writeActiveParentSession(instanceId, parentSessionId)
     writeActiveSession(instanceId, sessionId)
-  })
+  }))
 }
 
 // Restore selection identity before HTTP hydration, without starting any
 // session-scoped effects until the native session has actually been resolved.
 function seedRestoredSessionSelection(instanceId: string, parentSessionId: string | null, sessionId: string | null): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
-  batch(() => {
+  applySessionSelection(instanceId, () => batch(() => {
+    if (hasAuthoritativeSessionSelection(instanceId)) return
     writeActiveParentSession(instanceId, parentSessionId)
     writeSessionSelection(setActiveSessionId, instanceId, sessionId)
-  })
+  }))
 }
 
 function clearInstanceSessionSelection(instanceId: string): void {
@@ -1020,16 +1050,22 @@ function getVisibleSessionIds(instanceId: string): string[] {
   return collectVisibleSessionIds(threads, expanded)
 }
 
-function setActiveSessionFromList(instanceId: string, sessionId: string): void {
-  const session = sessions().get(instanceId)?.get(sessionId)
-  if (!session) return
-  const root = getSessionRoot(instanceId, sessionId) ?? session
-  ensureSessionAncestorsExpanded(instanceId, sessionId)
+function setActiveSessionFromList(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
+  applySessionSelection(instanceId, () => {
+    const session = sessions().get(instanceId)?.get(sessionId)
+    if (!session) return
+    const root = getSessionRoot(instanceId, sessionId) ?? session
+    ensureSessionAncestorsExpanded(instanceId, sessionId)
+    batch(() => {
+      markSessionSelectionAuthoritative(instanceId)
+      writeActiveParentSession(instanceId, root.id)
+      writeActiveSession(instanceId, session.id)
+    })
+  }, intent)
+}
 
-  batch(() => {
-    setActiveParentSession(instanceId, root.id)
-    if (session.id !== root.id) setActiveSession(instanceId, session.id)
-  })
+export function selectSessionFromList(instanceId: string, sessionId: string, intent?: SessionSurfaceIntent): void {
+  sessionSurfaceGesture({ instanceId, sessionId }, admitted => setActiveSessionFromList(instanceId, sessionId, admitted), intent)
 }
 
 function isSessionMessagesLoading(instanceId: string, sessionId: string): boolean {

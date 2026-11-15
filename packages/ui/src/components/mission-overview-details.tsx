@@ -2,7 +2,7 @@ import { For, Show, createMemo } from "solid-js"
 import type { MissionPanelMap, MissionPanelReport } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { useMissionPanelStore } from "./mission-panel-scope"
-import { updateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
+import { navigateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
 import { MissionCleanupPanel } from "./mission-cleanup"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { missionReportIsPrevious, missionReports } from "./mission-progress-model"
@@ -24,7 +24,7 @@ export function MissionOverviewDetails(props: {
   const [reportsOpen, setReportsOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:reports")
   const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:technical")
   const open = (kind: MissionReaderTarget["kind"], itemId: string) =>
-    updateMissionProjectView(props.instanceId, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
+    navigateMissionProjectView(props.instanceId, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
   const history = () => [...(props.mission.history ?? [])].reverse()
   const reports = createMemo(() => missionReports(props.mission))
   // A compact map holds its rows' reports: the rest belong to tasks it does not hold.

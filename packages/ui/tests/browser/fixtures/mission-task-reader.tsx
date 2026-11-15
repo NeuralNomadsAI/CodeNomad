@@ -5,11 +5,11 @@ import { MissionTaskTree } from "../../../src/components/mission-task-tree"
 import { missionTaskConversation } from "../../../src/components/mission-task-navigation"
 import type { MissionTask } from "../../../../server/src/api-types"
 import { initializeClientState } from "../../../src/stores/client-state"
-import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
+import { missionProjectView, navigateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { missionStore } from "../../../src/stores/missions"
 import { openSessionPreview } from "../../../src/stores/session-previews"
 import { addInstance, updateInstance } from "../../../src/stores/instances"
-import { activeSessionId, seedRestoredSessionSelection, setSessions, sessions } from "../../../src/stores/session-state"
+import { activeSessionId, seedRestoredSessionSelection, selectActiveSession, setSessions, sessions } from "../../../src/stores/session-state"
 import { sseManager } from "../../../src/lib/sse-manager"
 import type { V2Event } from "@opencode/client"
 import { applyOpenCodeDataEvent } from "../../../src/stores/opencode-data"
@@ -35,16 +35,16 @@ seedRestoredSessionSelection(instanceId, null, "coordinator")
 function Fixture() {
   const [mounted, mount] = createSignal(true)
   const mission = () => missionStore.state(instanceId).missions[0]
-  const show = (itemId: string) => updateMissionProjectView(instanceId, { reader: { missionId: "mission", kind: "task", itemId } })
+  const show = (itemId: string) => navigateMissionProjectView(instanceId, { reader: { missionId: "mission", kind: "task", itemId } })
   // As in the panel, a row selects its task, and an open reader follows the selection.
   const selected = (task: MissionTask) => { const key = missionProjectView(instanceId).selectedTask; return key?.missionId === "mission" && key.taskId === task.id }
-  const select = (task: MissionTask) => updateMissionProjectView(instanceId, { selectedTask: { missionId: "mission", taskId: task.id },
+  const select = (task: MissionTask) => navigateMissionProjectView(instanceId, { selectedTask: { missionId: "mission", taskId: task.id },
     ...(missionProjectView(instanceId).reader ? { reader: { missionId: "mission", kind: "task" as const, itemId: task.id } } : {}) })
   ;(window as any).taskReader = {
     show, refresh: () => missionStore.refresh(instanceId),
     mount,
     openPreview: () => openSessionPreview("coordinator", "https://example.com", instanceId),
-    conversation: (id: string) => seedRestoredSessionSelection(instanceId, null, id),
+    conversation: (id: string) => selectActiveSession(instanceId, id),
     reconnect: () => applyOpenCodeDataEvent(instanceId, scope, { id: "reconnected", type: "server.connected", created: 2, data: {} } as V2Event),
     directory: (folder: string) => updateInstance(instanceId, { folder }),
     removeActor: () => setSessions(previous => new Map(previous).set(instanceId, new Map([["coordinator", session("coordinator")]]))),

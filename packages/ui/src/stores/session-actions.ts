@@ -27,6 +27,8 @@ import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { syncSessionInstructions } from "./session-instructions"
 import { serializeSessionAction } from "./session-action-queue"
+import { captureSessionSurfaceIntent } from "./session-surface"
+import { activeSessionId } from "./session-selection-state"
 
 const log = getLogger("actions")
 const technicalPartUpdates = new Map<string, Promise<void>>()
@@ -70,10 +72,11 @@ const pendingNewSessions = new Map<string, Promise<Session | null>>()
 function startNewSession(instanceId: string, agent?: string): Promise<Session | null> {
   const pending = pendingNewSessions.get(instanceId)
   if (pending) return pending
+  const intent = captureSessionSurfaceIntent({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null })
   const attempt = (async () => {
     try {
       const session = await createSession(instanceId, agent)
-      setActiveParentSession(instanceId, session.id)
+      setActiveParentSession(instanceId, session.id, intent)
       return session
     } catch (error) {
       log.error("Failed to create session:", error)
@@ -82,7 +85,7 @@ function startNewSession(instanceId: string, agent?: string): Promise<Session | 
         variant: "error",
       })
       return null
-    }
+    } finally { intent.release() }
   })().finally(() => {
     if (pendingNewSessions.get(instanceId) === attempt) pendingNewSessions.delete(instanceId)
   })

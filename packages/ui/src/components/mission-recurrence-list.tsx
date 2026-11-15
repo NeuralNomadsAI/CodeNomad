@@ -6,7 +6,7 @@ import { MissionActionBar } from "./mission-action-bar"
 import { missionMarkStateKey, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
-import { markScheduleSuccessSeen, missionProjectView, scheduleSuccessSeen, seedScheduleSuccessSeen, updateMissionProjectView } from "../stores/mission-view-state"
+import { markScheduleSuccessSeen, missionProjectView, scheduleSuccessSeen, seedScheduleSuccessSeen, navigateMissionProjectView } from "../stores/mission-view-state"
 import { activeSessionId } from "../stores/sessions"
 import { instances } from "../stores/instances"
 import { missionPassageRequests } from "./mission-passage-requests"
@@ -252,7 +252,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   }
   const read = (id: string, passageID?: string) => {
     const wasReading = reading(id, passageID)
-    updateMissionProjectView(props.instanceId, { reader: wasReading ? undefined : { kind: "recurrence", missionId: id,
+    navigateMissionProjectView(props.instanceId, { reader: wasReading ? undefined : { kind: "recurrence", missionId: id,
       instanceId: props.instanceId, projectID: props.projectID, ...(passageID ? { itemId: passageID } : {}) } })
     if (!wasReading) props.onRead?.()
   }

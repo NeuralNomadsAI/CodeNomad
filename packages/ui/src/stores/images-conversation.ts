@@ -8,6 +8,7 @@ import { locationAuthorityKey } from "./request-locations"
 import { fetchAgents, getActiveCatalogLocation, hydrateRestoredSessionChain } from "./session-api"
 import { getDefaultModel } from "./session-models"
 import { agentCatalogLocations, agents, prependSessionListId, setActiveParentSession } from "./session-state"
+import { captureSessionSurfaceIntent, type SessionSurfaceIntent } from "./session-surface"
 
 export const DESIGN_AGENT_ID = "design"
 const COMPANION_KEY = "codenomad.companion"
@@ -58,17 +59,20 @@ export async function resolveImagesConversation(instanceId: string, mode: "open"
  * hydration, so a conversation the user selected meanwhile stays selected.
  */
 export async function showImagesConversation(instanceId: string, result: Extract<ImagesConversationResponse, { status: "found" }>,
-  stillWanted: () => boolean = () => true): Promise<void> {
+   stillWanted: () => boolean = () => true, intent?: SessionSurfaceIntent): Promise<void> {
   await hydrateRestoredSessionChain(instanceId, [result.sessionID])
   if (result.created) prependSessionListId(instanceId, result.sessionID)
-  if (!stillWanted()) return
-  setActiveParentSession(instanceId, result.sessionID)
-  requestComposerFocus(instanceId, result.sessionID)
+  if (!stillWanted() || intent && !intent.current()) return
+  setActiveParentSession(instanceId, result.sessionID, intent)
+  if (intent?.current()) requestComposerFocus(instanceId, result.sessionID)
 }
 
 /** `resolveImagesConversation`, then `showImagesConversation` when found. */
 export async function openImagesConversation(instanceId: string, mode: "open" | "new"): Promise<ImagesConversationResponse> {
+  const intent = captureSessionSurfaceIntent({ instanceId, sessionId: null })
+  try {
   const result = await resolveImagesConversation(instanceId, mode)
-  if (result.status === "found") await showImagesConversation(instanceId, result)
+  if (result.status === "found") await showImagesConversation(instanceId, result, intent.current, intent)
   return result
+  } finally { intent.release() }
 }

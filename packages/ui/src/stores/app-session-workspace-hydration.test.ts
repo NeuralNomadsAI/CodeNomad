@@ -109,9 +109,13 @@ it("waits for a saved Info selection's parent without claiming user-selection au
     assert.equal(intent.current(), true)
     parent.resolve(apiSession("parent"))
     await hydration
+    assert.equal(activeSessionId().get(instanceId), "info")
+    assert.equal(selectedSessionId().get(instanceId), "info")
+    assert.equal(intent.current(), true, "passive restoration yields to foreground activation")
+    intent.release()
     assert.equal(activeSessionId().get(instanceId), "parent")
     assert.equal(selectedSessionId().get(instanceId), "parent")
-    assert.equal(intent.current(), false, "restored selection changes still fence foreground activation")
+    assert.equal(intent.current(), false)
     assert.equal(getSessionDraftPrompt(instanceId, "parent"), "saved draft")
     assert.equal(hasAuthoritativeSessionSelection(instanceId), false)
   } finally {
