@@ -29,11 +29,16 @@ interface ManagerOptions {
   openTunnel?: OpenTunnel
   /** Restricts resuming at launch to one backend per config directory. */
   lease?: RemoteControlOwnerLease
+  /** Verified direct HTTPS origins (`direct-https.ts`) that pair and admit browser devices. */
+  directHttpsOrigins?: () => readonly string[]
 }
 
 export class RemoteControlManager {
   private readonly ingress: RemoteIngress
+  // Sockets of tunnel-authorized devices, including server devices on the direct listener.
   private readonly deviceSockets = new Map<Socket, Set<string>>()
+  // Sockets of browser devices admitted on a verified direct HTTPS origin: independent of the tunnel.
+  private readonly directDeviceSockets = new Map<Socket, Set<string>>()
   private tunnel: RemoteTunnel | null = null
   private starting: Promise<RemoteTunnel> | null = null
   // Incremented by every stop, so a start still provisioning cannot outlive it.
@@ -72,7 +77,12 @@ export class RemoteControlManager {
       pairedDevices: this.options.registry.list().length,
       ...(this.lastConnectedAt ? { lastConnectedAt: this.lastConnectedAt } : {}),
       ...(this.error ? { error: this.error } : {}),
+      ...(this.directHttpsOrigins().length ? { directOrigins: this.directHttpsOrigins() } : {}),
     }
+  }
+
+  directHttpsOrigins(): string[] {
+    return [...(this.options.directHttpsOrigins?.() ?? [])]
   }
 
   async start(): Promise<RemoteControlStartResponse> {
@@ -121,13 +131,31 @@ export class RemoteControlManager {
     return { device: paired.device, token: paired.token }
   }
 
+  /** A code for one verified direct HTTPS origin; the tunnel need not run. */
+  createDirectPairing(origin: string): RemoteControlPairing {
+    if (!this.directHttpsOrigins().includes(origin)) throw new Error("This origin cannot pair devices")
+    return pairingFromCode(origin, this.options.registry.createPairing(origin))
+  }
+
+  exchangeDirectPairing(code: string, origin: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
+    if (!this.directHttpsOrigins().includes(origin)) return null
+    const paired = this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent), origin)
+    if (!paired) return null
+    if (paired.evictedId) this.disconnectDevice(paired.evictedId)
+    return { device: paired.device, token: paired.token }
+  }
+
   devices(): RemoteControlDevice[] {
     return this.options.registry.list()
   }
 
-  /** A paired device remains a live principal only while Remote Control is connected and it is not revoked or expired. */
+  /**
+   * A paired device remains a live principal only while it is not revoked or expired and
+   * its channel is available: the connected tunnel, or its still-verified direct HTTPS origin.
+   */
   isDeviceAuthorized(id: string): boolean {
     return this.enabled && this.tunnel !== null && this.options.registry.isPaired(id)
+      || this.directHttpsOrigins().some((origin) => this.options.registry.isPaired(id, origin))
   }
 
   revokeDevice(id: string): boolean {
@@ -152,22 +180,19 @@ export class RemoteControlManager {
     return {
       publicHost: () => (this.enabled ? this.tunnel?.hostname ?? null : null),
       authenticate: (token) => this.enabled && this.tunnel ? this.options.registry.authenticate(token) : null,
-      assignDevice: (socket, deviceId) => {
-        let devices = this.deviceSockets.get(socket)
-        if (!devices) {
-          devices = new Set()
-          this.deviceSockets.set(socket, devices)
-          socket.once("close", () => this.deviceSockets.delete(socket))
-        }
-        devices.add(deviceId)
-      },
+      assignDevice: (socket, deviceId) => trackSocket(this.deviceSockets, socket, deviceId),
       servesPreview: (token) => this.options.registry.previewsAllowed() && this.options.hasPreview?.(token) === true,
+      directHttpsOrigins: () => this.directHttpsOrigins(),
+      authenticateDirect: (token, origin) => this.directHttpsOrigins().includes(origin) ? this.options.registry.authenticate(token, origin) : null,
+      assignDirectDevice: (socket, deviceId) => trackSocket(this.directDeviceSockets, socket, deviceId),
     }
   }
 
   shutdown(): Promise<void> {
     this.enabled = false
     this.generation += 1
+    for (const socket of this.directDeviceSockets.keys()) socket.destroy()
+    this.directDeviceSockets.clear()
     return this.release()
   }
 
@@ -238,8 +263,10 @@ export class RemoteControlManager {
   }
 
   private disconnectDevice(id: string): void {
-    for (const [socket, devices] of this.deviceSockets) {
-      if (devices.has(id)) socket.destroy()
+    for (const sockets of [this.deviceSockets, this.directDeviceSockets]) {
+      for (const [socket, devices] of sockets) {
+        if (devices.has(id)) socket.destroy()
+      }
     }
   }
 
@@ -251,4 +278,14 @@ export class RemoteControlManager {
   private pairingFor(tunnel: RemoteTunnel): RemoteControlPairing {
     return pairingFromCode(tunnel.url, this.options.registry.createPairing())
   }
+}
+
+function trackSocket(sockets: Map<Socket, Set<string>>, socket: Socket, deviceId: string): void {
+  let devices = sockets.get(socket)
+  if (!devices) {
+    devices = new Set()
+    sockets.set(socket, devices)
+    socket.once("close", () => sockets.delete(socket))
+  }
+  devices.add(deviceId)
 }

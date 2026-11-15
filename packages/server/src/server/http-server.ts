@@ -102,6 +102,7 @@ import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/serv
 import { gateRemoteRequest, isHostOnlyPath, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
 import { registerDirectOriginPolicy } from "./direct-origin"
+import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
 import { framesNoBody } from "./bodiless-request"
 import { addProxiedHttpMethods } from "./proxied-http-methods"
 import { ROUTER_OPTIONS, routedPath } from "./routed-path"
@@ -264,7 +265,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     if (isLocalRequest(request) || isRemoteRequest(request)) return done()
     const pathname = routedPath(request.raw.url ?? "/")
     if (pathname === null) return reply.header("connection", "close").code(400).send({ error: "Invalid request path" })
-    if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)) {
+    // Browser pairing also answers on verified direct HTTPS origins; its route rechecks the origin.
+    const directPairing = pathname === PAIR_EXCHANGE_PATH && verifiedDirectHttpsOrigin(request, remoteGate?.directHttpsOrigins?.() ?? []) !== null
+    if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request) && !directPairing) {
       return reply.header("connection", "close").code(404).send({ error: "Not found" })
     }
     done()
@@ -294,7 +297,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       return
     }
 
-    // Pairing routes answer only through the Remote Control ingress.
+    // Pairing routes answer through the Remote Control ingress and verified direct HTTPS origins.
     const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH, SERVER_PAIR_PATH])
     const publicPagePaths = new Set(["/login", PAIR_PAGE_PATH])
     if (deps.authManager.isTokenBootstrapEnabled()) {

@@ -54,7 +54,7 @@ Do not assume port 9898 or 9899: omitted ports can fall back when busy. An expli
 
 ## Upgrading {#upgrading}
 
-Sign in again after upgrading. For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations.
+Sign in again after upgrading. For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations. Its HTTPS origins also let the host pair devices without the tunnel; see [Pair over direct HTTPS](remote-control.md#direct-https).
 
 Use a loopback connection for host-only operations: SideCar content (`/sidecars/`) and WebSockets, Remote Control management (`/api/remote-control/`), the plugin bridge (`/api/opencode-plugin/`), remote proxies (`/api/remote-proxy/`), saved-server management (`/api/remote-servers/`), password changes and token bootstrap. These require loopback even when signed in through direct LAN access. Live preview content (`/previews/`) is available over direct LAN access with a valid capability token.
 

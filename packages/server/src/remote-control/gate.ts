@@ -5,7 +5,8 @@ import { parseCookies, wantsHtml } from "../auth/http-auth"
 import type { RemoteControlDevice } from "../api-types"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { routedPath } from "../server/routed-path"
-import { attachRemoteDevice, isRemoteSocket } from "./request-origin"
+import { verifiedDirectHttpsOrigin } from "./direct-https"
+import { attachRemoteDevice, isRemoteSocket, markDirectDeviceRequest } from "./request-origin"
 import { hasBrowserRequestContext, SERVER_PAIR_PATH, validServerPairRequest } from "./server-pairing"
 
 export const DEVICE_COOKIE_NAME = "__Host-codenomad_device"
@@ -100,6 +101,11 @@ export interface RemoteGateDeps {
   assignDevice(socket: Socket, deviceId: string): void
   /** Whether Remote Control serves this live web preview: the host allows previews and the token exists. */
   servesPreview(token: string): boolean
+  /** Verified direct HTTPS origins (`direct-https.ts`); browser devices are refused elsewhere on the direct listener. */
+  directHttpsOrigins?(): readonly string[]
+  /** A browser device paired on this verified direct HTTPS origin, independent of the tunnel. */
+  authenticateDirect?(token: string | undefined, origin: string): RemoteControlDevice | null
+  assignDirectDevice?(socket: Socket, deviceId: string): void
 }
 
 /**
@@ -116,7 +122,7 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
     return true
   }
   const explicitServer = request.headers["x-codenomad-server-request"] === "1"
-  if (!ingress && !explicitServer) return false
+  if (!ingress && !explicitServer) return gateDirectHttpsDevice(request, reply, cookies[DEVICE_COOKIE_NAME], deps)
 
   const host = deps.publicHost()
   if (!host || (ingress && request.headers.host !== host)) {
@@ -184,6 +190,40 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
   if (method === "GET" && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
   else reject(reply, 401, "This device is not paired")
   return true
+}
+
+/**
+ * Browser device credentials on the direct listener: judged only on a verified direct
+ * HTTPS origin, in the ingress device scope. Without a device cookie, and on any other
+ * origin, the request keeps the direct listener's password rules untouched.
+ */
+function gateDirectHttpsDevice(request: FastifyRequest, reply: FastifyReply, token: string | undefined, deps: RemoteGateDeps): boolean {
+  if (!token || !deps?.authenticateDirect || !deps.directHttpsOrigins) return false
+  const origin = verifiedDirectHttpsOrigin(request, deps.directHttpsOrigins())
+  if (!origin) return false
+  const pathname = routedPath(request.raw.url ?? "/")
+  // Pairing replaces the credential; preview capabilities keep their scoped admission.
+  if (pathname === null || pathname === PAIR_PAGE_PATH || pathname === PAIR_EXCHANGE_PATH || /^\/previews\/[^/]+(?:\/|$)/.test(pathname)) return false
+
+  const method = request.method.toUpperCase()
+  const device = deps.authenticateDirect(token, origin)
+  if (!device) {
+    // An invalid device credential never falls back to a password session.
+    markDirectDeviceRequest(request, false)
+    if (pathname === "/api/auth/status" || ((method === "GET" || method === "HEAD") && isStaticBundlePath(pathname))) return false
+    if (method === "GET" && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
+    else reject(reply, 401, "This device is not paired")
+    return true
+  }
+  if ((isHostOnlyPath(pathname, method) || pathname === "/api/memory" || pathname.startsWith("/api/memory/")) && !PUBLIC_PATHS.has(pathname)) {
+    reject(reply, 404, "Not found")
+    return true
+  }
+  for (const name of SPOOFABLE_HEADERS) delete request.headers[name]
+  attachRemoteDevice(request, device.id)
+  markDirectDeviceRequest(request, true)
+  deps.assignDirectDevice?.(request.raw.socket, device.id)
+  return false
 }
 
 /**

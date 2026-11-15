@@ -463,8 +463,9 @@ export function createServerApi(ctx: BackendHttp) {
     stopRemoteControl(): Promise<RemoteControlStatus> {
       return request<RemoteControlStatus>("/api/remote-control", { method: "DELETE" })
     },
-    createRemoteControlPairing(): Promise<RemoteControlPairing> {
-      return request<RemoteControlPairing>("/api/remote-control/pairings", { method: "POST" })
+    /** A tunnel link, or with `origin` a link for that verified direct HTTPS origin. */
+    createRemoteControlPairing(origin?: string): Promise<RemoteControlPairing> {
+      return request<RemoteControlPairing>("/api/remote-control/pairings", origin ? { method: "POST", body: JSON.stringify({ origin }) } : { method: "POST" })
     },
     setRemoteControlPreviews(enabled: boolean): Promise<RemoteControlStatus> {
       return request<RemoteControlStatus>("/api/remote-control/previews", { method: "PUT", body: JSON.stringify({ enabled }) })

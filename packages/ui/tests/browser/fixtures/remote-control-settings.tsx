@@ -19,12 +19,15 @@ let status: RemoteControlStatus = scenario === "failed-resume" ? { ...base, star
   : scenario === "skipped" ? { ...base, startsOnLaunch: true }
   : scenario === "connected" ? connected
   : scenario === "remote" ? { ...connected, manageable: false }
+  // ?scenario=direct: the tunnel is off; two verified direct HTTPS origins can pair.
+  : scenario === "direct" ? { ...base, directOrigins: ["https://code.example.test", "https://ui.example.test:8443"] }
   : { ...connected, state: "connecting" }
 let reads = 0
-const fixture = window as unknown as { statusReads: () => number; stops: number; previewChanges: boolean[]; setRemoteState: (state: "reconnecting" | "connected" | "stopped") => void }
+const fixture = window as unknown as { statusReads: () => number; stops: number; previewChanges: boolean[]; pairingOrigins: Array<string | undefined>; setRemoteState: (state: "reconnecting" | "connected" | "stopped") => void }
 fixture.statusReads = () => reads
 fixture.stops = 0
 fixture.previewChanges = []
+fixture.pairingOrigins = []
 fixture.setRemoteState = (state) => {
   status = state === "stopped" ? { ...base, startsOnLaunch: true, state: "error", error: "tunnel stopped" } : { ...connected, state }
 }
@@ -35,12 +38,16 @@ serverApi.fetchRemoteControlStatus = async () => {
   return status
 }
 serverApi.fetchRemoteControlDevices = async () => ({
-  devices: [{ id: "8e5f0a8e-4a8c-4f43-9a4c-6d1f6b0d7c11", name: "Android · Firefox", createdAt: "2026-10-12T12:39:58.214Z", lastSeenAt: "2026-10-12T12:43:14.286Z" }],
+  devices: [{ id: "8e5f0a8e-4a8c-4f43-9a4c-6d1f6b0d7c11", name: "Android · Firefox", createdAt: "2026-10-12T12:39:58.214Z", lastSeenAt: "2026-10-12T12:43:14.286Z" },
+    ...(scenario === "direct" ? [{ id: "1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d", name: "iPhone · Safari", createdAt: "2026-10-12T12:39:58.214Z", lastSeenAt: "2026-10-12T12:43:14.286Z", origin: "https://code.example.test" }] : [])],
 })
-serverApi.createRemoteControlPairing = async () => ({
-  url: "https://codenomad-fixture.tunnel.test/remote-pair#fixture-code",
-  expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
-})
+serverApi.createRemoteControlPairing = async (origin) => {
+  fixture.pairingOrigins.push(origin)
+  return {
+    url: `${origin ?? "https://codenomad-fixture.tunnel.test"}/remote-pair#fixture-code`,
+    expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+  }
+}
 serverApi.setRemoteControlPreviews = async (enabled) => {
   fixture.previewChanges.push(enabled)
   status = { ...status, previews: enabled }

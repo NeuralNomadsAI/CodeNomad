@@ -130,6 +130,27 @@ test("devices expire after a period without use, and use extends it", (t) => {
   assert.deepEqual(registry.list(), [])
 })
 
+test("codes and devices belong to one channel, survive restarts and Stop cancels only the tunnel code", (t) => {
+  const { open } = fixture(t)
+  const registry = open()
+  const origin = "https://code.example.test"
+  const tunnelCode = registry.createPairing().code
+  assert.equal(registry.exchange(tunnelCode, "Wrong channel", origin), null, "a mismatched channel never consumes the code")
+  const directCode = registry.createPairing(origin).code
+  assert.equal(registry.exchange(tunnelCode, "Replaced"), null, "one code at a time")
+  registry.cancelPairing()
+  assert.equal(registry.exchange(directCode, "Tunnel"), null)
+  const paired = registry.exchange(directCode, "Phone", origin)!
+  assert.equal(paired.device.origin, origin)
+  const restarted = open()
+  assert.equal(restarted.authenticate(paired.token), null)
+  assert.equal(restarted.authenticate(paired.token, "https://other.example.test"), null)
+  assert.equal(restarted.authenticate(paired.token, origin)?.origin, origin)
+  assert.equal(restarted.isPaired(paired.device.id), false)
+  assert.equal(restarted.isPaired(paired.device.id, origin), true)
+  assert.deepEqual(restarted.list().map(device => device.origin), [origin])
+})
+
 test("an unreadable registry file starts fresh instead of failing", (t) => {
   const { file, open } = fixture(t)
   fs.writeFileSync(file, "{ not json")
