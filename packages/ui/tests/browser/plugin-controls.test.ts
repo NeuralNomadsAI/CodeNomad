@@ -176,6 +176,37 @@ test("failed packages without IDs remain actionable and reconcile into loaded pl
   } finally { await page.close() }
 })
 
+test("a full-length git commit version stays bounded and keeps the plugin name visible", async () => {
+  const page = await browser.newPage({ viewport: { width: 520, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => { (window as any).fixture.gitHashVersion(); (window as any).fixture.show() })
+    await page.locator('[data-plugin-id="acme.reviewer"]').waitFor()
+    const geometry = await page.evaluate(() => {
+      const row = document.querySelector('[data-plugin-id="acme.reviewer"]')!
+      const name = row.querySelector<HTMLElement>(".plugin-control-name")!
+      const version = row.querySelector<HTMLElement>(".plugin-control-version")!
+      return {
+        nameWidth: name.getBoundingClientRect().width,
+        versionWidth: version.getBoundingClientRect().width,
+        versionClipped: version.scrollWidth > version.clientWidth,
+        versionText: version.textContent,
+      }
+    })
+    assert.equal(geometry.versionText, "22f0b463e7a5e579904dd6211a520321035526f7", "the daemon's full version stays in the DOM")
+    assert.ok(geometry.versionClipped, `the long version is visually clipped`)
+    assert.ok(geometry.versionWidth < 180, `the version chip stays bounded (${geometry.versionWidth}px)`)
+    assert.ok(geometry.nameWidth > 40, `the plugin name keeps visible width (${geometry.nameWidth}px)`)
+    const title = await page.locator('[data-plugin-id="acme.reviewer"] .plugin-control-name').getAttribute("title") ?? ""
+    assert.match(title, /22f0b463e7a5e579904dd6211a520321035526f7/,
+      "the full version remains reachable in the row's title details")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("V2 plugin controls disable Project when it resolves to the Global document", async () => {
   const page = await browser.newPage({ viewport: { width: 520, height: 900 }, locale: "en-US" })
   const errors: string[] = []
