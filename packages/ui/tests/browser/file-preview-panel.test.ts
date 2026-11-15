@@ -165,8 +165,8 @@ test("a deferred status refresh keeps the diff when switching to Workspace and i
       return window.filePreviewPanel.gitReads().status
     })
     await page.waitForFunction(status => window.filePreviewPanel.gitReads().status > status, status)
-    // Let the real status transport and its deferred reconciliation finish.
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    // The status transport has settled when the real refresh control is enabled.
+    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>(".git-panel .files-header-icon-button")?.disabled === false)
     await page.getByRole("button", { name: "Workspace", exact: true }).click()
     await eye(page).waitFor()
     await page.evaluate(() => {
