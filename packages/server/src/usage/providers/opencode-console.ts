@@ -1,9 +1,11 @@
 import type { OpenCodeConsoleUsage, ProviderUsageUnavailableReason } from "../../api-types-provider-usage"
+import type { ProviderUsageWindow } from "../../api-types"
 import { BoundedResponseError, fetchBoundedJson } from "../bounded-fetch"
 import { openCodeConsoleCredential } from "../native-credentials"
 import { ProviderHttpError } from "../shared"
 import type { AuthFile, ProviderResult, UsageProvider } from "../types"
 import { isOpenCodeFreeModel } from "../opencode-free-estimate"
+import { parseOpenCodeConsoleBalance } from "../opencode-go-quota"
 
 const BASE = "https://opencode.ai/console"
 const PAGE_SIZE = 50
@@ -83,7 +85,7 @@ async function readModels(range: "24h" | "30d", read: (path: string) => Promise<
   return models
 }
 
-/** Console's 24h range begins at UTC midnight. Failure stays unknown, never zero. */
+/** Sum the Console's free-model counts. Failure stays unknown, never zero. */
 export async function readOpenCodeConsoleFreeRequests(auth: AuthFile, signal: AbortSignal): Promise<number> {
   const credential = openCodeConsoleCredential(auth)
   if ("reason" in credential) throw new Error("Console credential unavailable")
@@ -93,6 +95,18 @@ export async function readOpenCodeConsoleFreeRequests(auth: AuthFile, signal: Ab
   // The model's native provider can be an upstream vendor, rather than opencode.
   return models.filter(row => isOpenCodeFreeModel("opencode", row.model))
     .reduce((sum, row) => integer(sum + row.requests), 0)
+}
+
+export async function readOpenCodeConsoleCredits(auth: AuthFile, signal: AbortSignal): Promise<ProviderUsageWindow | undefined> {
+  const credential = openCodeConsoleCredential(auth)
+  if ("reason" in credential) return undefined
+  try {
+    return parseOpenCodeConsoleBalance(await fetchBoundedJson(`${BASE}/api/billing/status`, credential.headers,
+      AbortSignal.any([signal, AbortSignal.timeout(3000)])))
+  } catch (error) {
+    signal.throwIfAborted()
+    if (error instanceof ProviderHttpError && error.status === 401) throw error
+  }
 }
 
 // Only stable codes survive; never retain upstream bodies or messages.
@@ -120,8 +134,11 @@ export const openCodeConsole: UsageProvider = {
         requests[range] = parseOpenCodeConsoleSummary(await read(`usage/summary?range=${range}`)).requests
       }
       const models = await readModels("30d", read)
+      const windows: NonNullable<ProviderResult["usage"]>["windows"] = {}
+      const balance = await readOpenCodeConsoleCredits(auth, bounded)
+      if (balance) windows.credits_balance = balance
       bounded.throwIfAborted()
-      return { ...base, ok: true, usage: { windows: {}, console: {
+      return { ...base, ok: true, usage: { windows, console: {
         requests, models, budgets: { status: "unavailable", items: [] },
       } } }
     } catch (error) {

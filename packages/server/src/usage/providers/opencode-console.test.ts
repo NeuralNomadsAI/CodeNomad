@@ -65,6 +65,7 @@ test("reader uses fixed bounded transport, mandatory summaries and sequential pa
     assert.equal(new Headers(init?.headers).get("authorization"), "Bearer secret-access")
     assert.equal(new Headers(init?.headers).get("x-org-id"), "wrk_fixture")
     active--
+    if (url.pathname.endsWith("/billing/status")) return Response.json({ availableMicroCents: "250000000" })
     return Response.json(url.pathname.endsWith("summary") ? summary("0") : page(Number(url.searchParams.get("page")), 51))
   })
   const result = await openCodeConsole.fetchQuota(oauth())
@@ -74,7 +75,8 @@ test("reader uses fixed bounded transport, mandatory summaries and sequential pa
   assert.deepEqual(result.usage?.console?.budgets, { status: "unavailable", items: [] })
   assert.deepEqual(urls, ["/console/api/usage/summary?range=24h", "/console/api/usage/summary?range=7d",
     "/console/api/usage/summary?range=30d", "/console/api/usage/models?range=30d&page=1&pageSize=50",
-    "/console/api/usage/models?range=30d&page=2&pageSize=50"])
+    "/console/api/usage/models?range=30d&page=2&pageSize=50", "/console/api/billing/status"])
+  assert.deepEqual(result.usage?.windows.credits_balance?.balanceUSD, { remaining: 2.5 })
   assert.equal(JSON.stringify(result).includes("secret-"), false)
 })
 
@@ -87,7 +89,7 @@ test("API key uses only Authorization; missing/invalid OAuth and third-party cre
     return Response.json(String(input).includes("summary") ? summary() : page())
   })
   assert.equal((await openCodeConsole.fetchQuota(key)).ok, true)
-  assert.equal(calls, 4)
+  assert.equal(calls, 5, "three summaries, the model page and the credit balance")
   for (const [auth, reason, configured] of [
     [{}, "missing-credential", false],
     [oauth({ expires: 1 }), "invalid-credential", true],
@@ -102,7 +104,7 @@ test("API key uses only Authorization; missing/invalid OAuth and third-party cre
     assert.equal(result.unavailableReason, `opencode-console-${reason}`)
     assert.equal(result.configured, configured)
   }
-  assert.equal(calls, 4)
+  assert.equal(calls, 5, "rejected credentials add no request")
 })
 
 for (const [status, reason] of [[401, "invalid-credential"], [403, "access-denied"], [500, "network-error"]] as const) {
@@ -182,6 +184,7 @@ test("the permitted 1,000-row boundary reads exactly 20 sequential pages", async
     calls++
     const url = new URL(String(input))
     if (url.pathname.endsWith("summary")) return Response.json(summary())
+    if (url.pathname.endsWith("/billing/status")) return Response.json({})
     const number = Number(url.searchParams.get("page"))
     assert.equal(number, expectedPage++)
     return Response.json(page(number, 1000))
@@ -189,6 +192,6 @@ test("the permitted 1,000-row boundary reads exactly 20 sequential pages", async
   const result = await openCodeConsole.fetchQuota(key)
   assert.equal(result.ok, true)
   assert.equal(result.usage?.console?.models.length, 1000)
-  assert.equal(calls, 23)
+  assert.equal(calls, 24)
   assert.equal(expectedPage, 21)
 })

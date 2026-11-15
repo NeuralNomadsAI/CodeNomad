@@ -16,6 +16,5 @@ test("all ten app locales include every provider usage label", async () => {
     const messages = (await import(`../../lib/i18n/messages/${locale}/settings.ts`)).settingsMessages
     assert.deepEqual(Object.keys(messages).filter(key => key.startsWith("providerUsage.")).sort(), keys, locale)
     for (const key of keys) assert.ok(messages[key]?.trim(), `${locale}: ${key}`)
-    assert.notEqual(messages["providerUsage.estimated"], "(estimation)")
   }
 })

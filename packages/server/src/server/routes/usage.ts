@@ -116,7 +116,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             }
             signal.throwIfAborted()
             connection.assertCurrent()
-            return free ? freeUsage.refreshExhaustion(connection, usage) : usage
+            return usage
           }
           if (provider?.id === "opencode-console") consoleTimeout = publicationSignal => publish({
             requestedProviderId: params.data.providerId, providerId: provider.id, providerName: provider.name, modelId,

@@ -17,5 +17,4 @@ export interface OpenCodeConsoleUsage {
 export interface OpenCodeFreeEstimate {
   requests: number | null
   reference: number
-  exhausted: boolean
 }

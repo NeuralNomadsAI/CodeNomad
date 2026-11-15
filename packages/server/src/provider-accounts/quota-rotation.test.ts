@@ -12,7 +12,6 @@ import { createSelectionAdapters } from "./adapters"
 import { quotaMarkTtl } from "./quota-marks"
 import { observeProviderQuotaFailures, quotaFailure } from "./quota-observer"
 import { definiteRejection, ProviderAccountsService } from "./service"
-import { createOpenCodeFreeExhaustion } from "../usage/opencode-free-exhaustion"
 
 const usage = (used: number): ProviderUsage => ({ windows: { "5h": { usedPercent: used, remainingPercent: 100 - used, windowSeconds: 18_000, resetAt: Date.now() + 3_600_000 } } })
 const goKey = (id: string, active = false): CredentialEntry => ({ id, integrationID: "opencode-go", label: id, active, value: { type: "key", key: `secret-${id}` } })
@@ -68,14 +67,13 @@ async function goFixture(options: { integrationID?: string; providerID?: string;
     },
   }), 50)
   const bus = new EventBus()
-  const exhaustion = createOpenCodeFreeExhaustion()
-  const stop = observeProviderQuotaFailures(bus, service, exhaustion.observe)
+  const stop = observeProviderQuotaFailures(bus, service)
   const emit = (event: Record<string, unknown>) => {
     nativeEventConnections.set(event, connection)
     bus.publish({ type: "instance.event", instanceId: "w", event } as never)
   }
   const activations = () => state.calls.filter(call => call.endsWith("/activate")).length
-  return { state, service, connection, emit, activations, integrationID, exhaustion,
+  return { state, service, connection, emit, activations, integrationID,
     send: () => service.beforeSend(connection, "ses_go", AbortSignal.timeout(3000), async directory => directory === "/project"),
     mark: (failedAt = Date.now(), limitName = "5 hour", watermark?: number) => service.markQuotaFailure(connection,
       { sessionID: "ses_go", failedAt, limitName, ...(watermark === undefined ? {} : { watermark }) }, AbortSignal.timeout(3000)),
@@ -102,12 +100,10 @@ test("Go rotates from an exhausted account to an unknown-but-unmarked candidate"
   } finally { await f.close() }
 })
 
-test("free display marks with auto selection disabled and no credentials, without marking or activating accounts", async () => {
+test("free-model quota failures with auto selection disabled and no credentials never mark or activate accounts", async () => {
   const f = await goFixture({ integrationID: "opencode", providerID: "opencode", entries: [] })
   try {
     const now = Date.now()
-    // Reused event IDs and two close failures exercise the independent free path
-    // before the rotation observer's global/event and per-session time dedupe.
     f.emit({ id: "same", type: "session.step.started", created: now - 2, data: {
       sessionID: "ses_go", assistantMessageID: "paid", model: { providerID: "opencode", id: "paid" } } })
     f.emit({ id: "paid-failure", type: "session.step.failed", created: now - 1, data: {
@@ -116,7 +112,6 @@ test("free display marks with auto selection disabled and no credentials, withou
       sessionID: "ses_go", assistantMessageID: "free", model: { providerID: "opencode", id: "big-pickle" } } })
     f.emit({ id: "same", type: "session.step.failed", created: now, data: {
       sessionID: "ses_go", assistantMessageID: "free", error: { type: "provider.quota" } } })
-    assert.equal(f.exhaustion.exhausted(f.connection), true)
     assert.equal(await f.mark(), false, "disabled policy cannot mark accounts")
     await f.send()
     assert.ok(f.state.calls.every(call => call.startsWith("GET /api/session/") || call.startsWith("GET /api/provider/")),
