@@ -13,6 +13,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "सुन्ने ठेगाना प्रशासकले तोकेको छ (CODENOMAD_LOCKED_HOST)।",
   "remoteAccess.toggle.caption.all": "0.0.0.0 मा बाइन्ड गर्दै",
   "remoteAccess.toggle.caption.local": "127.0.0.1 मा बाइन्ड गर्दै",
+  "remoteAccess.toggle.caption.locked": "{host} मा बाँधिएको",
   "remoteAccess.toggle.note": "यसलाई परिवर्तन गर्दा रिस्टार्ट आवश्यक पर्छ र अस्थायी रूपमा सबै सक्रिय उदाहरणहरू रोकिन्छ। सर्भर रिस्टार्ट भएपछि तलका ठेगानाहरू साझा गर्नुहोस्।",
   "remoteAccess.listeningMode.restartConfirm.message": "लिस्निङ मोड लागू गर्न रिस्टार्ट गर्ने? यसले चलिरहेका सबै उदाहरणहरू रोक्नेछ।",
   "remoteAccess.listeningMode.restartConfirm.title.all": "अन्य उपकरणहरूको लागि खोल्नुहोस्",

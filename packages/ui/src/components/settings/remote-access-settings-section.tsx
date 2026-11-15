@@ -193,9 +193,11 @@ export const RemoteAccessSettingsSection: Component = () => {
                 <Show when={listeningLocked()}><SettingsInfoTip text={t("remoteAccess.toggle.locked")} help={{ page: "remote-access", anchor: "administrator-policy" }} /></Show>
               </div>
               <div class="settings-toggle-caption">
-                {allowExternalConnections()
-                  ? t("remoteAccess.toggle.caption.all")
-                  : t("remoteAccess.toggle.caption.local")}
+                {listeningLocked() && meta()?.host
+                  ? t("remoteAccess.toggle.caption.locked", { host: meta()!.host })
+                  : allowExternalConnections()
+                    ? t("remoteAccess.toggle.caption.all")
+                    : t("remoteAccess.toggle.caption.local")}
               </div>
             </div>
             <SettingsSwitch

@@ -35,6 +35,12 @@ it("an administrator-locked host wins over --host and CLI_HOST and is validated 
   assert.equal(parseCliOptions(["--https", "true", "--host", "127.0.0.1"]).host, "10.20.0.7")
   process.env.CODENOMAD_LOCKED_HOST = "fe80::1%eth0"
   assert.throws(() => parseCliOptions(["--https", "true"]), /CODENOMAD_LOCKED_HOST/)
+  // A whitespace-only address never falls back to --host.
+  process.env.CODENOMAD_LOCKED_HOST = " \t "
+  assert.throws(() => parseCliOptions(["--https", "true", "--host", "0.0.0.0"]), /CODENOMAD_LOCKED_HOST must be an address/)
+  process.env.CODENOMAD_LOCKED_HOST = ""
+  assert.deepEqual([parseCliOptions(["--https", "true", "--host", "0.0.0.0"])].map(({ host, hostLocked }) => ({ host, hostLocked })),
+    [{ host: "0.0.0.0", hostLocked: false }], "exactly empty means no policy")
 })
 
 it("CODENOMAD_REMOTE_CONTROL accepts only disabled, and any other value refuses startup", () => {
@@ -43,7 +49,9 @@ it("CODENOMAD_REMOTE_CONTROL accepts only disabled, and any other value refuses 
     process.env.CODENOMAD_REMOTE_CONTROL = value
     assert.equal(parseCliOptions(["--https", "true"]).remoteControlDisabled, true)
   }
-  for (const value of ["off", "false", "disable", "enabled"]) {
+  process.env.CODENOMAD_REMOTE_CONTROL = ""
+  assert.equal(parseCliOptions(["--https", "true"]).remoteControlDisabled, false, "exactly empty means no policy")
+  for (const value of ["off", "false", "disable", "enabled", " ", " \t "]) {
     process.env.CODENOMAD_REMOTE_CONTROL = value
     assert.throws(() => parseCliOptions(["--https", "true"]), (error: unknown) =>
       error instanceof InvalidArgumentError && /CODENOMAD_REMOTE_CONTROL accepts only "disabled"/.test(error.message))

@@ -6,11 +6,11 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { serverApi } from "../../../src/lib/api-client"
 import "../../../src/index.css"
 
-// ?mode=all models a server already listening beyond localhost; ?locked=1 an administrator-set address.
+// ?mode=all models a server already listening beyond localhost; ?locked=1 an administrator-set address (?host=).
 const params = new URLSearchParams(location.search)
 const listeningMode = params.get("mode") === "all" ? "all" : "local"
 serverApi.fetchServerMeta = async () => ({
-  localUrl: "http://127.0.0.1:9899", eventsUrl: "/api/events", host: listeningMode === "all" ? "0.0.0.0" : "127.0.0.1",
+  localUrl: "http://127.0.0.1:9899", eventsUrl: "/api/events", host: params.get("host") ?? (listeningMode === "all" ? "0.0.0.0" : "127.0.0.1"),
   listeningMode, localPort: 9899, hostLabel: "fixture", workspaceRoot: "/fixture", addresses: [],
   ...(params.get("locked") === "1" ? { listeningLocked: true } : {}),
 }) as any

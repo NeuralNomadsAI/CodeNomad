@@ -13,6 +13,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "待ち受けアドレスは管理者が設定しています (CODENOMAD_LOCKED_HOST)。",
   "remoteAccess.toggle.caption.all": "0.0.0.0 にバインド",
   "remoteAccess.toggle.caption.local": "127.0.0.1 にバインド",
+  "remoteAccess.toggle.caption.locked": "{host} で待ち受け",
   "remoteAccess.toggle.note": "変更には再起動が必要で、すべての稼働中インスタンスが一時的に停止します。サーバー再起動後に以下のアドレスを共有してください。",
   "remoteAccess.listeningMode.restartConfirm.message": "リッスンモードを適用するため再起動しますか？実行中のインスタンスはすべて停止します。",
   "remoteAccess.listeningMode.restartConfirm.title.all": "他のデバイスに公開",

@@ -13,6 +13,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "The listening address is set by an administrator (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "Binding to 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Binding to 127.0.0.1",
+  "remoteAccess.toggle.caption.locked": "Binding to {host}",
   "remoteAccess.toggle.note": "Changing this requires a restart and temporarily stops all active instances. Share the addresses below once the server restarts.",
   "remoteAccess.listeningMode.restartConfirm.message": "Restart to apply listening mode? This will stop all running instances.",
   "remoteAccess.listeningMode.restartConfirm.title.all": "Open to other devices",

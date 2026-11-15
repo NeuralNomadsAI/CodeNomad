@@ -13,6 +13,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "监听地址由管理员设置 (CODENOMAD_LOCKED_HOST)。",
   "remoteAccess.toggle.caption.all": "绑定到 0.0.0.0",
   "remoteAccess.toggle.caption.local": "绑定到 127.0.0.1",
+  "remoteAccess.toggle.caption.locked": "绑定到 {host}",
   "remoteAccess.toggle.note": "更改此项需要重启，并会暂时停止所有活动实例。服务器重启后再分享下方地址。",
   "remoteAccess.listeningMode.restartConfirm.message": "重启以应用监听模式？这将停止所有正在运行的实例。",
   "remoteAccess.listeningMode.restartConfirm.title.all": "对其他设备开放",

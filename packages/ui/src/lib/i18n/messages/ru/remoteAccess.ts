@@ -13,6 +13,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "Адрес прослушивания задан администратором (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "Привязка к 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Привязка к 127.0.0.1",
+  "remoteAccess.toggle.caption.locked": "Привязка к {host}",
   "remoteAccess.toggle.note": "Изменение требует перезапуска и временно остановит все активные экземпляры. Поделитесь адресами ниже после перезапуска сервера.",
   "remoteAccess.listeningMode.restartConfirm.message": "Перезапустить, чтобы применить режим прослушивания? Это остановит все запущенные экземпляры.",
   "remoteAccess.listeningMode.restartConfirm.title.all": "Открыть для других устройств",

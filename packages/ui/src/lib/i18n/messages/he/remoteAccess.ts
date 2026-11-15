@@ -13,6 +13,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "כתובת ההאזנה נקבעת על ידי מנהל המערכת (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "מקושר ל-0.0.0.0",
   "remoteAccess.toggle.caption.local": "מקושר ל-127.0.0.1",
+  "remoteAccess.toggle.caption.locked": "מאזין בכתובת {host}",
   "remoteAccess.toggle.note": "שינוי זה דורש הפעלה מחדש ועוצר זמנית את כל המופעים הפעילים. שתף את הכתובות למטה לאחר שהשרת יופעל מחדש.",
   "remoteAccess.listeningMode.restartConfirm.message": "להפעיל מחדש כדי להחיל מצב האזנה? פעולה זו תעצור את כל המופעים הפעילים.",
   "remoteAccess.listeningMode.restartConfirm.title.all": "פתוח למכשירים אחרים",

@@ -18,10 +18,14 @@ export class NetworkPolicyError extends Error {
 }
 
 export function readNetworkPolicy(env: NodeJS.ProcessEnv = process.env): NetworkPolicy {
-  const remoteControl = env.CODENOMAD_REMOTE_CONTROL?.trim().toLowerCase() ?? ""
-  if (remoteControl !== "" && remoteControl !== "disabled") {
+  // Only an unset or exactly empty variable means "no policy"; anything else, whitespace included, must be valid.
+  const remoteControl = env.CODENOMAD_REMOTE_CONTROL ?? ""
+  if (remoteControl !== "" && remoteControl.trim().toLowerCase() !== "disabled") {
     throw new NetworkPolicyError("CODENOMAD_REMOTE_CONTROL accepts only \"disabled\"")
   }
-  const lockedHost = env.CODENOMAD_LOCKED_HOST?.trim()
-  return { remoteControlDisabled: remoteControl === "disabled", ...(lockedHost ? { lockedHost } : {}) }
+  const lockedHost = env.CODENOMAD_LOCKED_HOST ?? ""
+  if (lockedHost !== "" && lockedHost.trim() === "") {
+    throw new NetworkPolicyError("CODENOMAD_LOCKED_HOST must be an address")
+  }
+  return { remoteControlDisabled: remoteControl !== "", ...(lockedHost ? { lockedHost: lockedHost.trim() } : {}) }
 }

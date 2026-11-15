@@ -39,11 +39,14 @@ test("direct access stays collapsed behind Remote Control until the user opens i
 test("an administrator-set listening address shows the mode but locks its switch", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {
-    await page.goto(`${url}?mode=all&locked=1`)
+    await page.goto(`${url}?mode=all&locked=1&host=10.20.0.7`)
     const toggle = page.getByRole("switch", { name: "Allow connections from other IPs" })
     await toggle.waitFor()
     assert.equal(await toggle.isChecked(), true)
     assert.equal(await toggle.isDisabled(), true)
+    // The caption names the administrator's actual address, not a generic wildcard.
+    await page.getByText("Binding to 10.20.0.7", { exact: true }).waitFor()
+    assert.equal(await page.getByText("Binding to 0.0.0.0", { exact: true }).count(), 0)
     await page.getByRole("link", { name: /CODENOMAD_LOCKED_HOST/ }).waitFor()
     await toggle.click({ force: true })
     assert.equal(await page.getByRole("alertdialog").count(), 0, "no restart confirmation for a locked address")

@@ -13,6 +13,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "Un administrador fija la dirección de escucha (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "Vinculado a 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Vinculado a 127.0.0.1",
+  "remoteAccess.toggle.caption.locked": "Vinculado a {host}",
   "remoteAccess.toggle.note": "Cambiar esto requiere reiniciar y detiene temporalmente todas las instancias activas. Comparte las direcciones de abajo una vez que el servidor se reinicie.",
   "remoteAccess.listeningMode.restartConfirm.message": "¿Reiniciar para aplicar el modo de escucha? Esto detendrá todas las instancias en ejecución.",
   "remoteAccess.listeningMode.restartConfirm.title.all": "Abrir a otros dispositivos",

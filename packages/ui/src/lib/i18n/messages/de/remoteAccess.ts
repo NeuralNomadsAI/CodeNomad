@@ -13,6 +13,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "Die Abhöradresse wird von einem Administrator festgelegt (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "Bindung an 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Bindung an 127.0.0.1",
+  "remoteAccess.toggle.caption.locked": "Bindung an {host}",
   "remoteAccess.toggle.note": "Das Ändern dieser Einstellung erfordert einen Neustart und stoppt vorübergehend alle aktiven Instanzen. Teilen Sie die unten stehenden Adressen nach dem Neustart des Servers.",
   "remoteAccess.listeningMode.restartConfirm.message": "Neustart zum Übernehmen des Abhörmodus? Dies stoppt alle laufenden Instanzen.",
   "remoteAccess.listeningMode.restartConfirm.title.all": "Für andere Geräte öffnen",

@@ -12,6 +12,7 @@ export const remoteAccessMessages = {
   "remoteAccess.toggle.locked": "Dinleme adresini bir yönetici belirler (CODENOMAD_LOCKED_HOST).",
   "remoteAccess.toggle.caption.all": "0.0.0.0 üzerinde dinleniyor",
   "remoteAccess.toggle.caption.local": "127.0.0.1 üzerinde dinleniyor",
+  "remoteAccess.toggle.caption.locked": "{host} adresine bağlanıyor",
   "remoteAccess.toggle.note": "Bu ayarı değiştirmek yeniden başlatma gerektirir ve geçici olarak tüm etkin instance'ları durdurur. Sunucu yeniden başlatıldıktan sonra aşağıdaki adresleri paylaşın.",
   "remoteAccess.listeningMode.restartConfirm.message": "Dinleme modunu uygulamak için yeniden başlatılsın mı? Bu, çalışan tüm instance'ları durdurur.",
   "remoteAccess.listeningMode.restartConfirm.title.all": "Diğer cihazlara aç",

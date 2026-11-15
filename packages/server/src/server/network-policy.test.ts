@@ -55,9 +55,13 @@ test("an administrator policy locks the listening address and disables Remote Co
   assert.equal(await server.exited, 0, server.output())
 })
 
-test("an unknown Remote Control policy value refuses startup", { timeout: 90_000 }, async t => {
-  const server = await launch(t, { CODENOMAD_REMOTE_CONTROL: "off" }, ["--https", "false", "--http", "true", "--http-port", "0"])
-  assert.notEqual(await server.exited, 0)
-  assert.match(server.output(), /CODENOMAD_REMOTE_CONTROL accepts only "disabled"/)
-  assert.doesNotMatch(server.output(), /Local Connection URL/)
-})
+for (const [name, value, message] of [["CODENOMAD_REMOTE_CONTROL", "off", /CODENOMAD_REMOTE_CONTROL accepts only "disabled"/],
+  ["CODENOMAD_REMOTE_CONTROL", " \t ", /CODENOMAD_REMOTE_CONTROL accepts only "disabled"/],
+  ["CODENOMAD_LOCKED_HOST", " ", /CODENOMAD_LOCKED_HOST must be an address/]] as const) {
+  test(`${name}=${JSON.stringify(value)} refuses startup`, { timeout: 90_000 }, async t => {
+    const server = await launch(t, { [name]: value }, ["--https", "false", "--http", "true", "--http-port", "0"])
+    assert.notEqual(await server.exited, 0)
+    assert.match(server.output(), message)
+    assert.doesNotMatch(server.output(), /Local Connection URL/)
+  })
+}
