@@ -7,6 +7,8 @@ export const remoteControlMessages = {
   "remoteControl.state.connected": "已准备好远程连接",
   "remoteControl.state.reconnecting": "正在重新连接…",
   "remoteControl.state.error": "中继连接失败",
+  "remoteControl.state.disabled": "已被管理员禁用",
+  "remoteControl.disabled.info": "管理员已在此计算机上关闭远程控制 (CODENOMAD_REMOTE_CONTROL=disabled)。已配对的设备无法连接；你仍可撤销它们。",
   "remoteControl.status.localOnly": "CodeNomad 目前仅可在此设备上使用。",
   "remoteControl.status.hostOnly": "请在 CodeNomad 主机上管理远程控制。",
   "remoteControl.start": "启动远程控制",

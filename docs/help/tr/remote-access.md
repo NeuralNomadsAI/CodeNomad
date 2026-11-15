@@ -52,6 +52,10 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 9898 veya 9899 portunu varsaymayın: belirtilmeyen portlar doluyken başka port kullanılabilir. Açıkça verilen sıfır olmayan `--https-port` veya HTTP etkinken `--http-port` portu sabitler ve bağlanamazsa başarısız olur; `0` işletim sisteminden port atamasını ister. Yazdırılan **Local Connection URL** ve **Remote Connection URL** ile yenilenen **Erişilebilir adresler** o çalıştırma için yetkili bilgidir. Tam [sunucu CLI başvurusuna](server.md) bakın.
 
+## Yönetici ilkesi {#administrator-policy}
+
+Bir yönetici dinleme adresini sabitleyebilir: `CODENOMAD_LOCKED_HOST` değişkenini sistem genelinde sunucunun kullanması gereken adrese ayarlayın ve CodeNomad'ı yeniden başlatın. Bu adres `--host`, `CLI_HOST` ve **Diğer IP'lerden bağlantılara izin ver** üzerinde önceliklidir; anahtar sonucu gösterir ama değiştiremez. Çalışma arkadaşlarınızın sunucuya şirket ağı üzerinden ulaşması için bir intranet adresi, bu bilgisayarda tutmak için `127.0.0.1` kullanın. Tüm erişimin şirket ağı içinde kalması için ayrıca `CODENOMAD_REMOTE_CONTROL=disabled` ayarlayın ([Uzaktan Kontrol](remote-control.md#administrator-policy)).
+
 ## Yükseltme {#upgrading}
 
 Yükseltmeden sonra yeniden oturum açın. Ana bilgisayar adı takma adı, ters proxy veya ayrı barındırılan arayüz için arka uçta `CODENOMAD_ALLOWED_ORIGINS` değerini arayüzün güvenilir origin adreslerine (şema, ana bilgisayar adı ve port) ayarlayın. Yerel LAN istemcileri, değişiklik isteklerinde izin verilen bir `Origin` başlığı göndermelidir.

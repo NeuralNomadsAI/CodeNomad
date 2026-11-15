@@ -70,3 +70,7 @@ CodeNomad [OpenTunnel](https://github.com/anomalyco/opentunnel) kullanır ve mak
 TLS, CodeNomad arka ucunda sonlanır. Röle şifreli metni iletir ve uygulama içeriğini okuyamaz ancak ana bilgisayar adlarını, bağlantı zamanlamasını ve trafik boyutlarını gözlemleyebilir. Tünel sertifikası/özel anahtar ana bilgisayarda kalır. Ana bilgisayarın tünel depolamasını ve CodeNomad yapılandırmasını kimlik bilgileri olarak koruyun; Tahmin edilemeyen bir adres yetkilendirme değildir.
 
 `CODENOMAD_REMOTE_CONTROL_API`, kendi barındırdığınız OpenTunnel API hizmetini seçer; tanımsızsa barındırılan hizmet kullanılır. Bu, eşleştirme gereksinimlerini veya engelli yüzeyleri değil, tünel kurulumunu değiştirir. Kimlik bilgileri ve tanılama işlemleri için [Güvenlik](security.md) sayfasına bakın.
+
+## Yönetici ilkesi {#administrator-policy}
+
+Bir yönetici, bir bilgisayardaki tüm kullanıcılar için Uzaktan Kontrol'ü kapatabilir: `CODENOMAD_REMOTE_CONTROL=disabled` ortam değişkenini sistem genelinde ayarlayın ve CodeNomad'ı yeniden başlatın. Arka uç hiçbir zaman tünel bağlamaz, **Uzaktan Kontrolü başlat** ve eşleştirme bağlantılarını reddeder ve açılışta yeniden bağlanmaz; ayarlarda **Yönetici tarafından devre dışı** görünür. Daha önce eşleştirilmiş cihazlar bağlanamaz ve iptal edebilmeniz için listede kalır. Ayarlanmamış veya boş değer ilke uygulamaz; yalnızca boşluk dahil başka herhangi bir değer arka ucun başlamasını engeller.

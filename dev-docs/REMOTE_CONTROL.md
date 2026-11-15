@@ -39,6 +39,23 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 - Keep OpenTunnel's per-route PROXY protocol off: the ingress expects plain
   HTTP.
 
+## Administrator policy
+
+`server/network-policy.ts` reads two variables from the environment the backend
+inherits, so machine-wide values reach every desktop launch and the UI cannot
+override them. An unknown value refuses startup.
+
+- `CODENOMAD_REMOTE_CONTROL=disabled`: the manager opens no tunnel, skips the
+  launch resume (keeping the registry's choice), refuses Start and pairing links
+  (`403`, `code: "remote_control_disabled"`) and authorizes no device. Its status
+  carries `disabledByAdministrator`; Settings shows that state, hides Start,
+  pairing and previews, and keeps paired devices listed for revocation.
+- `CODENOMAD_LOCKED_HOST=<address>`: the listening address, validated like
+  `--host`, wins over `--host`, `CLI_HOST` and the desktop listening switch (the
+  hosts still pass their own `--host`). `ServerMeta.listeningLocked` disables the
+  switch in Remote Access settings. An intranet address keeps direct access for
+  colleagues; `127.0.0.1` keeps it on this machine.
+
 ## Admission
 
 `server/src/remote-control/`:

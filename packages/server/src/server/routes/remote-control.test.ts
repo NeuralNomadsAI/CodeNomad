@@ -31,6 +31,22 @@ test("pairing links require a connected tunnel", async () => {
   await app.close()
 })
 
+test("an administrator policy refuses Start and pairing links with a stable code", async () => {
+  const app = Fastify()
+  let started = 0
+  const disabled = { ...manager(), status: () => ({ ...manager().status(), disabledByAdministrator: true }),
+    start: async () => { started += 1 } } as unknown as RemoteControlManager
+  registerRemoteControlRoutes(app, { manager: disabled })
+  for (const url of ["/api/remote-control/start", "/api/remote-control/pairings"]) {
+    const response = await app.inject({ method: "POST", url })
+    assert.equal(response.statusCode, 403, url)
+    assert.deepEqual(response.json(), { error: "Remote Control is disabled by the administrator", code: "remote_control_disabled" })
+  }
+  assert.equal(started, 0)
+  assert.equal((await app.inject({ method: "GET", url: "/api/remote-control/status" })).json().disabledByAdministrator, true)
+  await app.close()
+})
+
 test("pairing routes do not answer on local listeners", async () => {
   const app = Fastify()
   registerRemoteControlRoutes(app, { manager: manager() })
