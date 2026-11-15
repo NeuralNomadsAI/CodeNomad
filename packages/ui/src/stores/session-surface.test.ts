@@ -180,3 +180,35 @@ it("deferred hydration resolves against the current inventory and binding", () =
     lifecycle(id, "removed")
   }
 })
+
+it("deletion reconciliation preserves an unrelated unavailable selection and a recovered runtime", () => {
+  const id = "deletion-selection-fences"
+  lifecycle(id, "opened")
+  setActiveParentSession(id, "unavailable")
+  setActiveSession(id, "unavailable-child")
+  const unrelated = captureSessionSurfaceIntent({ instanceId: id, sessionId: "unavailable-child" })
+  removeSessionRuntimeState(id, "unrelated")
+  unrelated.release()
+  assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], ["unavailable", "unavailable-child"])
+  const recovery = captureSessionSurfaceIntent({ instanceId: id, sessionId: "unavailable-child" })
+  removeSessionRuntimeState(id, "unavailable-child", false)
+  setSessions(previous => new Map(previous).set(id, new Map([["unavailable-child", { id: "unavailable-child" } as any]])))
+  recovery.release()
+  assert.equal(activeSessionId().get(id), "unavailable-child")
+  lifecycle(id, "removed")
+})
+
+for (const removed of ["parent", "child"]) it(`deferred restoration seeds honor the ${removed} deletion tombstone`, () => {
+  const id = `seed-deletion-${removed}`
+  lifecycle(id, "opened")
+  setSessions(previous => new Map(previous).set(id, new Map([
+    ["parent", { id: "parent", parentId: null } as any], ["child", { id: "child", parentId: "parent" } as any],
+  ])))
+  const intent = captureSessionSurfaceIntent({ instanceId: id, sessionId: null })
+  seedRestoredSessionSelection(id, "parent", "child")
+  removeSessionRuntimeState(id, removed)
+  intent.release()
+  const expected = removed === "parent" ? undefined : "parent"
+  assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], [expected, expected])
+  lifecycle(id, "removed")
+})

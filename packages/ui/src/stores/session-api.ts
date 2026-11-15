@@ -1375,14 +1375,14 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
     return next
   })
 
-  reconcileSessionSurface(instanceId, "session-deletion", () => {
+  reconcileSessionSurface(instanceId, `session-deletion:${sessionId}`, () => {
     const selectedParentId = activeParentSessionId().get(instanceId)
     const selectedSessionId = activeSessionId().get(instanceId)
     const inventory = sessions().get(instanceId)
-    if (selectedParentId && !inventory?.has(selectedParentId)) {
+    if (selectedParentId === sessionId && !inventory?.has(sessionId)) {
       clearActiveParentSession(instanceId)
-    } else if (selectedSessionId && selectedSessionId !== "info" && !inventory?.has(selectedSessionId)) {
-      if (selectedParentId) setActiveSession(instanceId, selectedParentId)
+    } else if (selectedSessionId === sessionId && !inventory?.has(sessionId)) {
+      if (selectedParentId && inventory?.has(selectedParentId)) setActiveSession(instanceId, selectedParentId)
       else clearActiveSession(instanceId)
     }
   })
