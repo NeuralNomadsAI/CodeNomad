@@ -511,7 +511,7 @@ test("a native refresh straddling header and task revisions keeps the selected d
     await f.page.route("**/missions/panel-page", async route => {
       const input = route.request().postDataJSON()
       if (input.missionID === id && input.header && ++headers === 2) { entered(); await gate }
-      if (input.missionID === id && input.source === "tasks" && skew) {
+      if (input.source === "tasks" && input.task.missionID === id && skew) {
         skew = false; await f.finish(id, "during-skew", 11000)
       }
       return route.fallback()
@@ -523,7 +523,12 @@ test("a native refresh straddling header and task revisions keeps the selected d
       ;(window as any).stopSkewObservation = () => observer.disconnect()
       for (let index = 0; index < 3; index++) (window as any).missionFixture.refresh()
     })
-    await retry
+    let timeout!: ReturnType<typeof setTimeout>
+    try {
+      await Promise.race([retry, new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Missing skew retry: ${JSON.stringify({ headers, requests: f.requests.slice(-12) })}`)), 20000)
+      })])
+    } finally { clearTimeout(timeout) }
     assert.equal(await f.page.evaluate(() => (window as any).missionFixture.snapshot().status), "ready")
     assert.equal(await f.page.evaluate(() => (window as any).missionFixture.snapshot().missions[0].revision), before)
     assert.equal(await f.page.locator(".mission-detail").evaluate((current, old) => current === old, node), true)
