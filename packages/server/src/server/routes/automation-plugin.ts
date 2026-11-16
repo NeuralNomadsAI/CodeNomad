@@ -186,7 +186,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (!deps.nativeParent.available && body.purpose !== "mission" && !preferenceProbe) {
         return reply.code(404).send({ error: "Browser automation is unavailable in this host" })
       }
-      return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true } : {}) } })
+      return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true, missionPreparationStart: true } : {}) } })
     }
     if (body.mode === "browser-probe") {
       try {

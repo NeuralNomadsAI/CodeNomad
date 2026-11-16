@@ -39,6 +39,8 @@ import { inspectionContent, type MissionInspectContent } from "../missions/inspe
 import { InterruptReceipts } from "../missions/interrupt-receipts"
 import { missionBriefingToolSchema, parseMissionBriefingRequest } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
+import { automaticStartSchema } from "../missions/automatic-start"
+import type { PreparationResult } from "../missions/preparation-result"
 import { MISSION_TITLE_MAX, parseMissionTitle } from "../missions/mission-title"
 import { MISSION_LIST_MAX_INCLUDE } from "../missions/mission-summary"
 import { createMissionWriterRetirement } from "./missions/writer-retirement"
@@ -285,7 +287,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           missionID: requiredText(value.missionID, "missionID", 100), requestID: requiredText(value.requestID, "requestID", 128),
           action: value.action as "start" | "pause" | "stop", expectedRevision: Number(value.expectedRevision),
           ...(value.graceful === true ? { graceful: true as const } : {}),
-        }))
+        }, value.automaticStart === undefined ? undefined : automaticStartSchema.parse(value.automaticStart)))
       },
       cleanupTarget: async input => {
         assertActive()
@@ -513,18 +515,30 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "prepare",
-        description: "Prepare a separate paused one-time mission with a NEW coordinator conversation; the calling conversation stays unchanged. Available to an owned ordinary root outside a mission and active one-time coordinators; descendants, task actors and scheduled passages are refused. inspect with start instead attaches THIS conversation as coordinator. Supply an objective, optional title and notes, a template, profiles and task mode. Keep exactly one owning CodeNomad backend available. Read selection for saved requested profiles, taskMode and explicit/preference/opencode-default origins; inspection includes that saved selection when creation metadata exists. The user starts it with Play; the author has read-only access. Reuse the same requestID and original inputs to retry; saved choices stay frozen if preferences change. Find it with mission.inspect({ list: true }) and read it with mission.inspect({ missionID }).",
+        description: "Prepare a separate one-time mission with a NEW coordinator conversation; this conversation stays unchanged. Owned ordinary roots and active one-time coordinators only; descendants, actors and scheduled passages are refused. inspect with start attaches THIS conversation instead. startOnCreation defaults false (prepared); set true only when the user explicitly requested automatic first Play. Only a fresh creation acknowledgement may continue through guarded lifecycle admission. Recovered creation never starts or resends Play. Results separate prepared, activated (first Play acknowledged), refused and uncertain; uncertainty retains native operation and mission IDs. Keep exactly one owning CodeNomad backend available. Read selection for frozen requested profiles/taskMode and their origins. Reuse the original tool requestID and inputs, including startOnCreation; never substitute a returned native request ID. The author has read-only access: inspect({ list: true }) or inspect({ missionID }).",
         input: prepareSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
           assertActive()
           const selected = await route(tool.sessionID, "prepare", input)
-          await tool.progress({ status: "Preparing a paused mission" })
+          await tool.progress({ status: "Preparing a separate mission" })
           selected.current()
-          const { mission } = await executeMissionBusiness(selected, control => control.prepare(tool.sessionID, parsePrepareInput(input)))
-          return textResult({ disposition: "prepared", missionID: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }),
+          let result: PreparationResult
+          try {
+            result = (await executeMissionBusiness(selected, control => control.prepare(tool.sessionID, parsePrepareInput(input)))).preparation
+          } catch (error) {
+            if (!(error instanceof MissionControlError)) throw error
+            if ("preparation" in error) result = error.preparation as PreparationResult
+            else if (error.code === "prepare-uncertain") throw error
+            else result = { outcome: "refused", phase: "creation", code: error.code }
+          }
+          if (result.target?.kind !== "one-time") return textResult(result)
+          const mission = result.target.mission
+          return textResult({ ...result, target: { kind: "one-time", mission: {
+            missionID: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }),
             status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }), revision: mission.revision,
-            ...(mission.creationDefaults ? { selection: missionCreationSelection(mission) } : {}) })
+            ...(mission.creationDefaults ? { selection: missionCreationSelection(mission) } : {}),
+          } } })
         },
       })
     })
@@ -641,6 +655,7 @@ const prepareSchema = {
     template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
     profiles: { ...missionProfilesSchema, description: MISSION_PROFILES_DESCRIPTION },
     taskMode: { ...missionTaskModeSchema, description: "Explicit policy wins; omission inherits Missions preferences (type exception, then global), then native." },
+    startOnCreation: { type: "boolean", description: "Default false. True only for the user's explicit automatic first-Play request; recovered creation leaves Play explicit." },
   },
   required: ["requestID", "objective", "template"],
   additionalProperties: false,
@@ -653,6 +668,7 @@ export function parseInterruptInput(input: unknown): { missionID?: string; taskK
 
 export function parsePrepareInput(input: unknown): MissionPrepareRequest {
   const value = object(input)
+  if (value.startOnCreation !== undefined && typeof value.startOnCreation !== "boolean") throw new Error("startOnCreation must be boolean")
   const template = requiredText(value.template, "template", 40)
   if (!isTemplate(template)) throw new Error("template is unsupported")
   return {
@@ -661,6 +677,7 @@ export function parsePrepareInput(input: unknown): MissionPrepareRequest {
     ...(value.title === undefined ? {} : { title: missionTitle(value.title) }),
     ...(value.notes === undefined ? {} : { notes: optionalBodyText(value.notes, "notes", 20_000) }),
     template,
+    ...(value.startOnCreation === undefined ? {} : { startOnCreation: value.startOnCreation as boolean }),
     ...(value.taskMode === undefined ? {} : { taskMode: parseMissionTaskMode(value.taskMode) }),
     ...(value.profiles === undefined ? {} : { profiles: parseMissionProfiles(value.profiles) }),
   }
@@ -877,8 +894,10 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
   const template = requiredText(value.template, "template", 40)
   if (!isTemplate(template)) throw new Error("template is unsupported")
   if (value.prepared !== undefined && typeof value.prepared !== "boolean") throw new Error("prepared must be boolean")
+  if (value.startOnCreation !== undefined && typeof value.startOnCreation !== "boolean") throw new Error("startOnCreation must be boolean")
   return {
     ...(value.prepared === undefined ? {} : { prepared: value.prepared as boolean }),
+    ...(value.startOnCreation === undefined ? {} : { startOnCreation: value.startOnCreation as boolean }),
     requestID: requiredText(value.requestID, "requestID", 128),
     ...(value.title === undefined ? {} : { title: missionTitle(value.title) }),
     objective: requiredText(value.objective, "objective", 20_000),

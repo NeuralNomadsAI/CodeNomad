@@ -307,6 +307,7 @@ interface MissionEventBase {
 }
 
 export interface MissionCreatedEvent extends MissionEventBase {
+  startOnCreation?: boolean
   creationDefaults?: import("./creation-defaults").MissionCreationMetadata
   type: "mission.created"
   projectCanonical: string

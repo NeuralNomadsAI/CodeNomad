@@ -5,9 +5,10 @@ import { missionCoordinatorSessionID, isMissionCoordinatorSession } from "./sess
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { missionCalendarOwnerSchema } from "./mission-calendar-owner-state"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
-import { missionCreationDefaultsSchema } from "./creation-defaults"
+import { missionCreationDefaultsSchema, missionCreationChoicesSchema, missionCreationTemplateSchema } from "./creation-defaults"
 import { missionGithubKinds } from "./mission-github-condition"
 import { coordinatorBaselineSchema } from "./mission-coordinator-baseline"
+import { automaticMissionStartID } from "./preparation-result"
 import {
   documentCounter, documentID, documentTimestamp, nativeDocumentID, missionConfigurationSchema,
   missionLaunchLimit, missionLaunchModel, missionSlotEndsAt, requiresMissionCalendar, MISSION_DOCUMENT_MAX_BYTES,
@@ -106,7 +107,13 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
   checks: z.object({ count: documentCounter, since: documentTimestamp }).strict().nullable().optional(),
   lastSuccessfulPassageID: documentID.nullable().default(null), everCreatedTask: z.boolean(),
   blocked: z.enum(["failed", "ended-without-report", "unknown"]).nullable(),
-  creation: z.object({ requestID, digest }).strict().optional(),
+  creation: z.object({ requestID, digest,
+    author: z.object({ coordinatorSessionID: nativeDocumentID, missionID: documentID.optional() }).strict().optional(),
+    input: missionCreationChoicesSchema.extend({ objective: z.string().min(1).max(20_000), title: z.string().min(1).max(60).optional(),
+      notes: z.string().max(20_000).optional(), template: missionCreationTemplateSchema, startOnCreation: z.boolean() }).strict().optional(),
+    creationDefaults: missionCreationDefaultsSchema.optional(),
+    automaticStart: z.object({ requestID, attempted: z.boolean() }).strict().optional(),
+  }).strict().optional(),
   oneTime: oneTime.nullable(), scheduleActivation: missionScheduleActivationSchema.nullable(),
   dormantJournal: z.object({ revision: documentCounter.positive(), deleted: z.boolean() }).strict().nullable().optional(),
   preparation: z.object({ requestID, expectedRevision: documentCounter, expectedJournalRevision: documentCounter.positive(),
@@ -134,6 +141,12 @@ export type MissionSourceCheckpoint = z.infer<typeof checkpoint>
 export function parseMissionDocument(input: unknown, identity: Pick<MissionDocument, "id" | "projectID" | "projectCanonical">): MissionDocument {
   const doc = document.parse(JSON.parse(canonicalAuthority(input, MISSION_DOCUMENT_MAX_BYTES)))
   const fail = () => { throw new Error("Invalid Mission document identity or progress") }
+  const creation = doc.creation
+  if (creation && (Boolean(creation.author) !== Boolean(creation.input)
+    || creation.creationDefaults && !creation.author
+    || creation.automaticStart && (!creation.author || creation.input?.startOnCreation !== true
+      || creation.automaticStart.requestID !== automaticMissionStartID(creation.requestID))
+    || creation.author && doc.oneTime && (creation.requestID !== doc.oneTime.creationRequestID || creation.digest !== doc.oneTime.creationDigest))) fail()
   const model = missionLaunchModel(doc.configuration.launch)
   const once = model.schedules.find(item => item.kind === "now" || item.kind === "at" || item.kind === "in") as Extract<MissionLaunchSchedule, { kind: "now" | "at" | "in" }> | undefined
   if (doc.id !== identity.id || doc.projectID !== identity.projectID || doc.projectCanonical !== identity.projectCanonical

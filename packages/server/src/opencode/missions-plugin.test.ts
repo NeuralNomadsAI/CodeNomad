@@ -129,15 +129,15 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   assert.match(description("briefing"), /requestID "auto:<revision>" matching basedOnRevision; for an explicit UI request use its exact requestID/)
   const inspect = tools.find((tool) => tool.name === "inspect")!
   assert.match(description("inspect"), /attaching THIS root conversation as coordinator/)
-  assert.match(description("prepare"), /NEW coordinator conversation; the calling conversation stays unchanged/)
-  assert.match(description("prepare"), /owned ordinary root outside a mission and active one-time coordinators/)
-  assert.match(description("prepare"), /descendants, task actors and scheduled passages are refused/)
+  assert.match(description("prepare"), /NEW coordinator conversation; this conversation stays unchanged/)
+  assert.match(description("prepare"), /Owned ordinary roots and active one-time coordinators/)
+  assert.match(description("prepare"), /descendants, actors and scheduled passages are refused/)
   assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)
   const validateInspect = new Ajv().compile((inspect as any).input)
   const validatePrepare = new Ajv().compile((tools.find(tool => tool.name === "prepare") as any).input)
   for (const field of ["autoStart", "startOnCreation", "launch", "schedule", "recurrence"]) {
     assert.equal(validateInspect({ start: { objective: "Brief", template: "custom", [field]: true } }), false)
-    assert.equal(validatePrepare({ requestID: "reserved", objective: "Brief", template: "custom", [field]: true }), false)
+    assert.equal(validatePrepare({ requestID: "reserved", objective: "Brief", template: "custom", [field]: true }), field === "startOnCreation")
   }
   const beforeInvalid = structuredClone([...values])
   await assert.rejects(inspect.execute({ missionID: "msn_existing", start: { objective: "Invalid", template: "custom" } }, {
@@ -164,8 +164,9 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   // Without a backend route the hand-off and stop actions are neither offered nor performed natively.
   assert.deepEqual([event.tools.mission_interrupt, event.tools.mission_prepare], [undefined, undefined])
   assert.doesNotMatch(event.system[0]?.text ?? "", /mission\.interrupt|mission\.prepare/)
-  await assert.rejects(tools.find(tool => tool.name === "prepare")!.execute({ requestID: "pilot", objective: "Pilot", template: "custom" }, {
-    sessionID: "ses_coordinator", messageID: "msg_p", id: "call_p", progress: async () => {} }), /unavailable here/)
+  assert.deepEqual(JSON.parse((await tools.find(tool => tool.name === "prepare")!.execute({ requestID: "pilot", objective: "Pilot", template: "custom" }, {
+    sessionID: "ses_coordinator", messageID: "msg_p", id: "call_p", progress: async () => {} })).content),
+    { outcome: "refused", phase: "creation", code: "prepare-unavailable" })
   assert.deepEqual(JSON.parse((await inspect.execute({ list: true }, { sessionID: "ses_coordinator", messageID: "msg_l", id: "call_l",
     progress: async () => {} })).content).missions.map((entry: { relation: string }) => entry.relation), ["member"])
   const call = (id: string) => ({ sessionID: "ses_coordinator", messageID: `msg_${id}`, id: `call_${id}`, progress: async () => {} })
@@ -333,17 +334,17 @@ test("inspect start and prepare return frozen profiles, task mode and origins wi
     assert.deepEqual(started.selection.origins, { coordinator: "explicit", roles: { specialist: "preference" }, taskMode: "preference" })
     const request = { requestID: "pilot", objective: "Pilot", template: "custom" as const }
     const prepared = await call("prepare", request)
-    assert.deepEqual(prepared.selection, resolveMissionCreationDefaults({ ...request, preferences }))
-    assert.deepEqual(Object.keys(prepared).sort(), ["disposition", "missionID", "status", "runState", "revision", "selection"].sort())
-    assert.deepEqual([prepared.disposition, prepared.runState, prepared.selection.profiles.coordinator], ["prepared", "prepared", { agent: "lead" }])
+    assert.deepEqual(prepared.target.mission.selection, resolveMissionCreationDefaults({ ...request, preferences }))
+    assert.deepEqual(Object.keys(prepared).sort(), ["outcome", "acknowledgement", "target"].sort())
+    assert.deepEqual([prepared.outcome, prepared.target.mission.runState, prepared.target.mission.selection.profiles.coordinator], ["prepared", "prepared", { agent: "lead" }])
     const bytes = structuredClone([...values])
     preferences = { invalid: true }
     assert.deepEqual(await call("inspect", { start }, "start"), started)
-    assert.deepEqual(await call("prepare", request), prepared)
+    assert.deepEqual(await call("prepare", request), { ...prepared, acknowledgement: "recovered" })
     assert.equal(reads, 2)
     assert.equal(preparations, 1)
     assert.deepEqual([...values], bytes)
-    assert.deepEqual((await call("inspect", { missionID: prepared.missionID })).selection, prepared.selection)
+    assert.deepEqual((await call("inspect", { missionID: prepared.target.mission.missionID })).selection, prepared.target.mission.selection)
     assert.equal(reads, 2, "ordinary reads retain stored provenance")
   } finally { await cleanup() }
 })
@@ -408,7 +409,7 @@ for (const workspaceID of [undefined, "workspace-1"]) {
       assert.equal(stored.oneTime?.firstPlay, null)
       assert.deepEqual(JSON.parse(canonicalAuthority(stored)).oneTime.location, location)
       const beforeReplay = structuredClone([...values])
-      assert.deepEqual(await create!(input, context), first)
+      assert.deepEqual(await create!(input, context), { ...first, acknowledgement: "recovered" })
       assert.deepEqual([...values], beforeReplay)
       assert.equal(sessions.size, 1)
       assert.deepEqual(nativeMutations, { create: 1, prompt: 0, synthetic: 0 })

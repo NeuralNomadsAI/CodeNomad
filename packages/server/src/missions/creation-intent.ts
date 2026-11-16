@@ -9,18 +9,20 @@ import type { MissionEvent, MissionJsonValue } from "./model"
 import { MISSION_TITLE_MAX } from "./mission-title"
 import { missionRecoveryControlError } from "./recovery-error"
 
-type Request = MissionStartInput & { title?: string }
+type Request = MissionStartInput & { startOnCreation?: boolean }
 const requestSchema = missionCreationChoicesSchema.extend({ objective: z.string().min(1).max(20_000),
   title: z.string().min(1).max(MISSION_TITLE_MAX).optional(), notes: z.string().max(20_000).optional(),
-  template: missionCreationTemplateSchema }).strict()
+  template: missionCreationTemplateSchema, startOnCreation: z.boolean().optional() }).strict()
 const intentSchema = z.object({ version: z.literal(1), request: requestSchema, defaults: z.unknown(),
   createdAt: z.number().finite().nonnegative() }).strict()
 export const MISSION_CREATION_INTENT_RETENTION_MS = 24 * 60 * 60 * 1_000
 export const MISSION_CREATION_INTENT_LIMIT = 128
 const sameRequest = (left: Request, right: Request) => left.objective === right.objective && left.title === right.title
-  && left.notes === right.notes && left.template === right.template && sameMissionCreationChoices(left, right)
+  && left.notes === right.notes && left.template === right.template && Boolean(left.startOnCreation) === Boolean(right.startOnCreation)
+  && sameMissionCreationChoices(left, right)
 const originalRequest = (input: Request, defaults: MissionCreationMetadata): Request => ({
   objective: input.objective, template: input.template, ...(input.title === undefined ? {} : { title: input.title }),
+  ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
   ...(input.notes === undefined ? {} : { notes: input.notes }), ...missionCreationChoices(defaults.request),
 })
 

@@ -140,7 +140,7 @@ test("inspect start recovers frozen preferences from its document before a missi
   assert.equal(f.reads, 1, "even invalid current preferences are unread on recovery")
   const ajv = new Ajv({ allErrors: true })
   const validate = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.create.output)
-  assert.ok(validate({ mission: result.mission }), JSON.stringify(validate.errors))
+  assert.ok(validate({ mission: result.mission, acknowledgement: "recovered" }), JSON.stringify(validate.errors))
   const document = await f.documents.read(result.mission!.id)
   assert.ok(document && !("deletedAt" in document))
   assert.equal("creationDefaults" in result.mission!, false, "inspection exposes only the documented selection")

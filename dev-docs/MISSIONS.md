@@ -128,9 +128,11 @@ owned ordinary roots outside a mission also have `mission.prepare`.
   task along `reuseFromTaskKey`/`parentTaskKey` chains, or its actor. The coordinator, other tasks and the plan are
   untouched, under the worktree-deletion fence; `complete: false` is reported
   honestly, and an empty result notes that only canonical assignments are visible.
-- `mission.prepare` creates a paused one-time hand-off through the same
+- `mission.prepare` creates a one-time hand-off through the same
   `prepareMissionCreation` pipeline, holds and fences as the editor, at the
-  author's Location. The user starts it with Play. The trusted `preparedBy`
+  author's Location. `startOnCreation` defaults false; the user then starts it with
+  Play. An explicitly requested `true` may continue only its fresh creation
+  acknowledgement through the ordinary guarded lifecycle operation. The trusted `preparedBy`
   (`{ coordinatorSessionId, missionId? }`) gives its author read-only
   visibility (`inspect({ missionID })`, `inspect({ list: true })`). The stable
   `coordinatorSessionId` field names the author session, including an ordinary root;
@@ -164,9 +166,10 @@ of them in `replacesTaskKey`.
 ## Mission profile selection and creation recovery
 
 `mission.inspect({ start })` attaches the calling root conversation as the
-coordinator of a paused mission. `mission.prepare` creates a separate paused
+coordinator of a paused mission for human Play. `mission.prepare` creates a separate
 mission with a new coordinator conversation, preserving the calling conversation.
-The human presses Play in either case. `missionID` selects an existing mission;
+Its `startOnCreation?: boolean` defaults false; true requires the user's explicit
+automatic first-Play request. `missionID` selects an existing mission;
 combining it with `start` is refused before routing, preference discovery or creation.
 Both creation inputs accept an optional trimmed, single-line title of 1–60
 characters and preserve notes verbatim, including empty and whitespace-only notes.
@@ -264,8 +267,33 @@ A live backend's preferences stay protected by this refusal.
 resolution can use the no-owner fallback. Fully explicit choices make no preference
 request; preparation still requires its owning backend. Before sending creation
 provenance, preparation requires the backend's positive `missionCreationDefaults`
-capability. Missing support returns the update-required refusal before dispatch
+and `missionPreparationStart` capabilities. Preparation also requires the native
+document's positive `automaticStart` capability before creation dispatch.
+Missing backend support returns the update-required refusal before dispatch
 and releases only newly reserved choices; previous uncertain outcomes remain retained.
+
+Preparation results separate `outcome: prepared | activated | refused | uncertain`
+and a `target: { kind: "one-time", mission }`, retained after a start refusal or
+uncertain start. Confirmed outcomes carry `acknowledgement: fresh | recovered`;
+`activated` confirms the original first Play. Refusals name their phase and code;
+uncertainty retains the original request and Mission identities. Tool targets expose
+compact state and saved selection; `inspect` reads the complete map.
+The returned uncertain `requestID` identifies the native creation or first-Play
+operation; retries keep the original tool inputs, never substitute that derived ID.
+
+Native creation decides the acknowledgement: an existing event/document, including
+a document whose journal publication completes in this invocation, is recovered.
+Only `startOnCreation: true` plus a fresh acknowledgement may continue. The immutable
+`creation` binding retains the author, normalized original inputs and creation
+defaults. Its single `automaticStart: { requestID, attempted }` slot uses a
+creation-derived lifecycle identity. The ordinary lifecycle RPC consumes it by exact
+document CAS before first-Play intent or effects, retaining the native operation and
+message identities in `oneTime.firstPlay`. Concurrent human controls keep their exact
+journal/document revision guards. An attempted slot stays consumed after any failure.
+Recovered creation with an unattempted slot stays prepared; an attempted slot reports
+only the original first-Play acknowledgement or uncertainty. Never send another Play
+from prepare replay, receipt reads, inspection, listing, reconnect or restart.
+Pause, Resume, Stop and recurrence controls remain human actions.
 
 For active coordinators the requestID is scoped to the coordinator and mission;
 ordinary authors use a distinct stable `outside-mission` domain scoped to their session.

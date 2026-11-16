@@ -253,7 +253,7 @@ test("Mission preference and preparation claims remain available without browser
     const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
       headers: { "x-codenomad-automation-token": "secret" }, payload: { mode: "browser-claim", sessionID: "owned", purpose } })
     assert.equal(response.statusCode, 200, purpose)
-    assert.deepEqual(response.json(), { result: { available: true, missionCreationDefaults: true } })
+    assert.deepEqual(response.json(), { result: { available: true, missionCreationDefaults: true, missionPreparationStart: true } })
   }
   const browser = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
     headers: { "x-codenomad-automation-token": "secret" }, payload: { mode: "browser-claim", sessionID: "owned" } })

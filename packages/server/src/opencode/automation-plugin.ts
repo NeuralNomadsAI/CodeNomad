@@ -614,9 +614,10 @@ async function probeBrowserBridges(
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
         const response = await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)
-        const result = response.body.result as { available?: unknown; missionCreationDefaults?: unknown } | undefined
+        const result = response.body.result as { available?: unknown; missionCreationDefaults?: unknown; missionPreparationStart?: unknown } | undefined
         if (response.status === 200 && (!strict || result?.available === true)) {
-          if (purpose === "mission-prepare" && result?.missionCreationDefaults !== true) throw missionRecoveryControlError("mission-preferences-update-required")
+          if (purpose === "mission-prepare" && (result?.missionCreationDefaults !== true || result.missionPreparationStart !== true))
+            throw missionRecoveryControlError("mission-preferences-update-required")
           return registration
         }
         if (strict && response.status === 404 && response.body.code === undefined) throw missionRecoveryControlError("mission-preferences-update-required")
@@ -678,7 +679,7 @@ export async function readMissionConfigurations(sessionID: string): Promise<unkn
 export async function sendMissionInput(sessionID: string,
   kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
   let targets: DiscoveredBridgeRegistration[]
-  const requiresDefaults = kind === "prepare" && Boolean(input && typeof input === "object" && "creationDefaults" in input && input.creationDefaults !== undefined)
+  const requiresDefaults = kind === "prepare"
   try {
     // A backend without native browsers can still claim the session for dispatch.
     targets = await probeBrowserBridges(await registrations({ strict: requiresDefaults }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS,

@@ -141,6 +141,7 @@ export interface MissionInspection {
 }
 
 export interface MissionCreateInput extends MissionStartInput {
+  startOnCreation?: boolean
   /** Original agent request and frozen preference provenance, supplied by the owning backend. */
   creationDefaults?: MissionCreationMetadata
   prepared?: boolean
@@ -203,8 +204,9 @@ export interface MissionInputTransport {
   interruptTask?(coordinatorID: string, input: { missionID: string; taskKey: string }): Promise<unknown>
 }
 
-/** An owned author's paused hand-off mission: what the Mission editor submits, never Play. */
+/** An owned author's separate mission; automatic first Play is an explicit creation choice. */
 export interface MissionPrepareRequest {
+  startOnCreation?: boolean
   /** Trusted resolved creation metadata, carried only through the backend transport. */
   creationDefaults?: MissionCreationMetadata
   requestID: string

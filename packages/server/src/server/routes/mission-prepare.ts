@@ -13,6 +13,8 @@ import { hasMissionPreparationHold, MissionCreationHoldError } from "./mission-c
 import { missionCreationTemplateSchema, parseMissionCreationDefaults } from "../../missions/creation-defaults"
 import { missionRecoveryControlError as refusal, missionRecoveryRejection } from "../../missions/recovery-error"
 import { missionPreparationSource } from "../../missions/coordinator-actions"
+import { automaticMissionStartID, recoveredPreparation, type PreparationResult } from "../../missions/preparation-result"
+import { prepareMissionMapMutation } from "./mission-map-mutation"
 
 const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   missionID: z.string().min(1).max(100).optional(), requestID: z.string().min(1).max(128),
@@ -20,14 +22,15 @@ const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   notes: z.string().max(20_000).optional(), template: missionCreationTemplateSchema,
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
   creationDefaults: z.unknown().optional(),
+  startOnCreation: z.boolean().optional(),
 }).strict() }).strict()
 
 type Manager = MissionCreationPipelineManager & Pick<WorkspaceManager, "list">
 
-/** An owned ordinary root or active coordinator's paused hand-off, at its own
- * Location, using the editor's creation pipeline, fences and holds. Never Play. */
+/** Fresh creation alone may continue the explicit first-Play intention.
+ * Native lifecycle consumes it durably before any effect. */
 export async function prepareCoordinatorMission(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown,
-  signal: AbortSignal): Promise<{ mission: MissionMap }> {
+  signal: AbortSignal): Promise<PreparationResult> {
   const { input } = commandSchema.parse(command)
   let creation: Awaited<ReturnType<typeof prepareMissionCreation>> | undefined
   try {
@@ -51,11 +54,12 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
     }
     creation = await prepareMissionCreation({ manager, fence, workspaceID: workspace.id, signal,
       expectedProjectID: coordinator.projectID, preparedBy: { ...(source ? { missionID: source.id } : {}), coordinatorSessionID: coordinatorID },
+      startOnCreation: input.startOnCreation === true,
       ...(input.creationDefaults === undefined ? {} : { creationDefaults: parseMissionCreationDefaults(input.template, input.creationDefaults) }),
       request: { requestId: input.requestID, objective: input.objective, template: input.template, directory: coordinator.location.directory,
         ...(input.title === undefined ? {} : { title: input.title }), ...(input.notes === undefined ? {} : { notes: input.notes }),
         ...(input.profiles === undefined ? {} : { profiles: input.profiles }), ...(input.taskMode === undefined ? {} : { taskMode: input.taskMode }) } })
-    return await creation.execute(async () => {
+    const created = await creation.execute(async () => {
       const fresh = await connection.client.session.get({ sessionID: coordinatorID }, { signal })
       const freshSnapshot = await connection.client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, {
         location: { directory: coordinator.location.directory }, ...locationRequestOptions(coordinator.location), signal,
@@ -63,8 +67,32 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
       if (fresh.id !== coordinatorID || !sameLocation(fresh.location, coordinator.location)
         || missionPreparationSource(freshSnapshot, fresh)?.id !== source?.id) throw refusal("prepare-refused")
       connection.assertCurrent()
-      return () => { signal.throwIfAborted(); connection.assertCurrent() }
-    })
+       return () => { signal.throwIfAborted(); connection.assertCurrent() }
+     })
+    const target = { kind: "one-time" as const, mission: created.mission }
+    if (created.acknowledgement === "recovered") return recoveredPreparation(created.mission)
+    if (!input.startOnCreation) return { outcome: "prepared", acknowledgement: "fresh", target }
+    const requestID = automaticMissionStartID(input.requestID)
+    try {
+      const document = created.mission.document
+      if (!document || document.firstPlay || document.automaticStart?.requestID !== requestID || document.automaticStart.attempted)
+        throw new Error("Original creation start evidence unavailable")
+      const mutation = await prepareMissionMapMutation({ manager, fence, workspaceID: workspace.id,
+        directory: coordinator.location.directory, signal })
+      const result = await mutation.run(async (rpc, options) => rpc.lifecycle({ missionID: created.mission.id,
+        requestID, action: "start", expectedRevision: created.mission.revision,
+        automaticStart: { creationRequestID: input.requestID, authorSessionID: coordinatorID,
+          expectedDocumentRevision: document.revision },
+      }, options)) as { mission: MissionMap }
+      if (result.mission?.id !== created.mission.id || result.mission.document?.firstPlay?.requestID !== requestID
+        || result.mission.document.firstPlay.admittedAt === null) throw new Error("Automatic start acknowledgement unavailable")
+      return { outcome: "activated", acknowledgement: "fresh", target: { kind: "one-time", mission: result.mission } }
+    } catch (error) {
+      const code = readMissionMutationError(error)?.code
+      if (code && ["revision-conflict", "control-conflict", "prepare-refused"].includes(code))
+        return { outcome: "refused", phase: "start", code, target }
+      return { outcome: "uncertain", phase: "start", requestID, missionID: created.mission.id, target }
+    }
   } catch (error) {
     if (creation && isMissionCreateNoEffectError(error, input.requestID, creation.missionID))
       throw refusal("prepare-no-effect")

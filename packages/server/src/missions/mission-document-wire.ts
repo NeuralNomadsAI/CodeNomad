@@ -46,6 +46,7 @@ export const missionScheduleActivationWire = { type: "object", properties: { req
 }, required: ["requestID", "expectedRevision", "authority", "state", "targets"], additionalProperties: false } as const
 
 export const missionDocumentSummaryWire = { type: "object", properties: { revision: counter, configurationGeneration: counter, timeGeneration: counter,
+  automaticStart: { type: "object", properties: { requestID: text, attempted: { type: "boolean" } }, required: ["requestID", "attempted"], additionalProperties: false },
   state: { type: "string", enum: ["paused", "running", "stopped", "finished"] }, firstPlayedAt: nullableTime, launchedCount: counter,
   everCreatedTask: { type: "boolean" }, dormant: { const: true }, launch: missionLaunchPolicyWire,
   firstPlay: { type: ["object", "null"], properties: { requestID: text, expectedRevision: counter, operationID: text, messageID: text,

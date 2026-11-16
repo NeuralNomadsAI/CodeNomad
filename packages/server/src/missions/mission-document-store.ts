@@ -102,6 +102,12 @@ export class NativeMissionDocumentStore {
           || next.textEdit && canonicalAuthority(original.textEdit) !== canonicalAuthority(next.textEdit))
           throw new Error("Original Mission passage text intent is immutable")
       }
+      const { automaticStart: originalStart, ...originalCreation } = previous.creation ?? {}
+      const { automaticStart: nextStart, ...nextCreation } = doc.creation ?? {}
+      if (canonicalAuthority(originalCreation) !== canonicalAuthority(nextCreation)
+        || originalStart?.requestID !== nextStart?.requestID
+        || originalStart?.attempted && !nextStart?.attempted)
+        throw new Error("Original Mission creation is immutable")
       if (previous.oneTime && doc.oneTime?.coordinatorSessionID !== previous.oneTime.coordinatorSessionID
         && !(previous.preparation?.pending && doc.preparation?.pending === false
           && doc.oneTime?.coordinatorSessionID === previous.preparation.coordinatorSessionID))
@@ -112,7 +118,6 @@ export class NativeMissionDocumentStore {
             && !previous.dormantJournal.deleted && doc.dormantJournal.deleted && doc.deletion))
         throw new Error("Mission journal ownership requires its original preparation or deletion")
       if (doc.id !== previous.id || doc.projectID !== previous.projectID || doc.projectCanonical !== previous.projectCanonical
-        || canonicalAuthority(doc.creation ?? null) !== canonicalAuthority(previous.creation ?? null)
         || doc.createdAt !== previous.createdAt || previous.firstPlayedAt !== null && doc.firstPlayedAt !== previous.firstPlayedAt
         || doc.launchedCount < previous.launchedCount || doc.settledCount < previous.settledCount || doc.successfulCount < previous.successfulCount
          || doc.successfulCount === previous.successfulCount && doc.lastSuccessfulPassageID !== previous.lastSuccessfulPassageID

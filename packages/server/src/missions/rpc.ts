@@ -1,6 +1,7 @@
 import { executionSchema } from "./execution"
 import { missionProfilesSchema } from "./playbook-profiles"
 import { missionCreationDefaultsWire } from "./creation-defaults"
+import { automaticStartWire } from "./automatic-start"
 import { missionTaskModeSchema } from "./task-execution-mode"
 import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
@@ -264,7 +265,7 @@ const creationInput = {
     template: { type: "string", enum: ["custom", "wayfinder", "debug", "delivery", "compare"] },
     coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
     watchedConversationIDs: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } },
-    expectedCoordinatorLocation: location, prepared: { type: "boolean" },
+    expectedCoordinatorLocation: location, prepared: { type: "boolean" }, startOnCreation: { type: "boolean" },
     preparedBy: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
       coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 } },
       required: ["coordinatorSessionID"], additionalProperties: false },
@@ -295,7 +296,7 @@ export const CODENOMAD_MISSIONS_RPC = {
     ...missionScheduleRpcMethods,
     documentCapabilities: {
       input: { type: "object", properties: {}, additionalProperties: false },
-      output: { type: "object", properties: { version: { type: "integer", const: 1 } }, required: ["version"], additionalProperties: false },
+      output: { type: "object", properties: { version: { type: "integer", const: 1 }, automaticStart: { const: true } }, required: ["version"], additionalProperties: false },
     },
     documentActivation: {
       input: { type: "object", properties: { missionID: { type: "string", minLength: 3, maxLength: 100 }, requestID,
@@ -390,7 +391,8 @@ export const CODENOMAD_MISSIONS_RPC = {
       output: { type: "object", properties: { mission, admitted: { type: "boolean", const: true } }, required: ["mission", "admitted"], additionalProperties: false },
       errors: missionMutationErrors,
     },
-    lifecycle: { input: lifecycleInputSchema, output: mutationMissionResult, errors: missionMutationErrors },
+    lifecycle: { input: { ...lifecycleInputSchema, properties: { ...lifecycleInputSchema.properties, automaticStart: automaticStartWire } },
+      output: mutationMissionResult, errors: missionMutationErrors },
     cleanupTarget: {
       input: {
         type: "object", properties: {
@@ -467,7 +469,8 @@ export const CODENOMAD_MISSIONS_RPC = {
     create: {
       errors: missionMutationErrors,
       input: creationInput,
-      output: mutationMissionResult,
+      output: { ...mutationMissionResult, properties: { ...mutationMissionResult.properties,
+        acknowledgement: { type: "string", enum: ["fresh", "recovered"] } }, required: ["mission", "acknowledgement"] },
     },
     creationReceipt: {
       input: creationInput,

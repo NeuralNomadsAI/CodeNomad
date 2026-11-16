@@ -51,6 +51,8 @@ import { decisionQuestionTag, fieldDecisionTag } from "./decision-question-tag"
 import { claimsDecisionMaker } from "./decision-artifact"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
+import { consumeAutomaticStart, type AutomaticStart } from "./automatic-start"
+import { recoveredPreparation, preparationResult, type PreparationResult } from "./preparation-result"
 import { missionIsRunning, missionPausedInstruction, type MissionLifecycleInput } from "./lifecycle-model"
 import { normalizeTaskDeclaration, taskContractReferenceSchema, validateTaskActorChoice, validateTaskAdmissionGraph, validateMissionTaskMode, type TaskContractReference } from "./task-declaration"
 import { compareModelError, freezeCompareProfiles, parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
@@ -415,7 +417,7 @@ export class MissionControl {
     })
   }
 
-  create(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
+  create(input: MissionCreateInput): Promise<{ mission: MissionMap; acknowledgement: "fresh" | "recovered" }> {
     const request = structuredClone(input)
     return this.mutate(() => this.createCurrent(request))
   }
@@ -500,7 +502,7 @@ export class MissionControl {
         && (saved.taskMode ?? "native") === parseMissionTaskMode(input.taskMode)
   }
 
-  private async createCurrent(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
+  private async createCurrent(input: MissionCreateInput): Promise<{ mission: MissionMap; acknowledgement: "fresh" | "recovered" }> {
     input = structuredClone(input)
     if (input.watchedConversationIDs !== undefined) {
       const ids = nativeDocumentID.array().max(32).refine(ids => new Set(ids).size === ids.length).safeParse(input.watchedConversationIDs)
@@ -534,6 +536,7 @@ export class MissionControl {
         || (existingEvent.taskMode ?? "native") !== input.taskMode
         || !isDeepStrictEqual(existingEvent.preparedBy, input.preparedBy)
         || !isDeepStrictEqual(existingEvent.creationDefaults, input.creationDefaults)
+        || Boolean(existingEvent.startOnCreation) !== Boolean(input.startOnCreation)
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
         // Healthy original creation evidence rejects the changed request before
         // coordinator lookup/creation, profile writes or journal publication.
@@ -545,7 +548,7 @@ export class MissionControl {
       }
       if (this.options.documents && existing.document) await requireMissionOneTimeDocument(this.options.documents, existing.id, existing.coordinatorSessionId, input)
       if (existingEvent.creationDefaults) await this.creationIntents.settled(missionID)
-      return { mission: existing }
+      return { mission: existing, acknowledgement: "recovered" }
     }
     // Read after the creation event: a purge records the deletion before removing it.
     await this.assertNotPurged(missionID)
@@ -563,9 +566,10 @@ export class MissionControl {
       throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
 
     const reservedAt = this.timestamp(snapshot)
-    const document = this.options.documents ? await prepareMissionOneTimeDocument(this.options.documents, this.options.project,
+    const documentReceipt = this.options.documents ? await prepareMissionOneTimeDocument(this.options.documents, this.options.project,
       missionID, input, input.coordinatorSessionID ?? missionCoordinatorSessionID(missionID, reservedAt), reservedAt,
       () => { this.assertActive(); return true }) : undefined
+    const document = documentReceipt?.value
     let coordinator: NativeMissionSession
     if (input.coordinatorSessionID) {
       coordinator = suppliedCoordinator!
@@ -618,13 +622,14 @@ export class MissionControl {
       requestID: input.requestID,
       ...(input.prepared === undefined ? {} : { prepared: input.prepared }),
       ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),
+      ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
       coordinator: { sessionID: coordinator.id, title: coordinator.title ?? "Mission coordinator", location: coordinator.location },
       createdAt,
     })
     snapshot = await this.snapshot()
     await this.emitChanged(missionID, snapshot)
     if (input.creationDefaults) await this.creationIntents.settled(missionID)
-    return { mission: this.requireMission(snapshot, missionID) }
+    return { mission: this.requireMission(snapshot, missionID), acknowledgement: documentReceipt?.acknowledgement ?? "fresh" }
   }
 
   update(input: MissionUpdateInput): Promise<{ mission: MissionMap }> {
@@ -646,8 +651,16 @@ export class MissionControl {
     })
   }
 
-  lifecycle(input: MissionLifecycleInput): Promise<{ mission: MissionMap }> {
+  lifecycle(input: MissionLifecycleInput, automaticStart?: AutomaticStart): Promise<{ mission: MissionMap }> {
     return this.mutate(async () => {
+      if (automaticStart) {
+        const snapshot = await this.snapshot()
+        const mission = this.requireRequestedMission(snapshot, input.missionID)
+        const author = await this.ownedRootSession(automaticStart.authorSessionID)
+        const source = missionPreparationSource(snapshot, author)
+        await consumeAutomaticStart(this.options.documents, mission, input, automaticStart,
+          { directory: author.location.directory, sourceMissionID: source?.id }, () => { this.assertActive(); return true })
+      }
       let documents: MissionDocumentAccess | undefined
       if (this.options.documents) {
         const mission = this.requireRequestedMission(await this.snapshot(), input.missionID)
@@ -1158,13 +1171,12 @@ export class MissionControl {
     }).sort((left, right) => right.createdAt - left.createdAt)
   }
 
-  /** A paused one-time hand-off through the backend's UI creation pipeline and fences.
-   * Never Play: the human starts it. The caller may read it later, never control it. */
-  prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap }> {
+  /** Separate creation through the editor's pipeline; recovered replies only observe. */
+  prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap; preparation: PreparationResult }> {
     return this.prepareCurrent(sessionID, structuredClone(input))
   }
 
-  private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap }> {
+  private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap; preparation: PreparationResult }> {
     const caller = await this.ownedRootSession(sessionID)
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
@@ -1177,19 +1189,23 @@ export class MissionControl {
       : `outside-mission\0${sessionID}\0${input.requestID}`, 24)}`
     // A retry after a lost or uncertain reply finds the saved creation instead of asking the backend again.
     const missionID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`
+    const uncertain = () => Object.assign(missionRecoveryControlError("prepare-uncertain"), {
+      preparation: { outcome: "uncertain", phase: "creation", requestID, missionID } satisfies PreparationResult,
+    })
     const created = await this.journal.event(missionID, this.eventID(missionID, "created"))
     if (created) {
       const sameChoices = created.type === "mission.created" && this.sameCreationChoices(created, input)
       if (created.type !== "mission.created" || created.prepared !== true || created.objective !== input.objective
         || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
         || !sameChoices
+        || Boolean(created.startOnCreation) !== Boolean(input.startOnCreation)
         || created.preparedBy?.missionID !== source?.id || created.preparedBy?.coordinatorSessionID !== sessionID) {
         throw missionRecoveryControlError("prepare-conflict")
       }
       const saved = (await this.snapshot()).missions.find(mission => mission.id === missionID)
       if (!saved) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
       if (created.creationDefaults) await this.creationIntents.settled(missionID)
-      return { mission: saved }
+      return { mission: saved, preparation: recoveredPreparation(saved) }
     }
     await this.assertNotPurged(missionID)
     let retained = await this.creationIntents.read(missionID, input,
@@ -1233,14 +1249,20 @@ export class MissionControl {
           await this.creationIntents.settled(missionID)
           throw error
         }
-        throw missionRecoveryControlError("prepare-uncertain")
+        throw uncertain()
       }
-      const returnedID = (result as { mission?: { id?: unknown } } | undefined)?.mission?.id
+      // Journal-only composition retains the native receipt's acknowledgement.
+      const returned = result && typeof result === "object" && "mission" in result
+        ? { outcome: "prepared" as const, acknowledgement: (result as { mission: unknown; acknowledgement?: unknown }).acknowledgement,
+          target: { kind: "one-time" as const, mission: (result as { mission: MissionMap }).mission } }
+        : result as PreparationResult
+      const returnedID = returned?.target?.kind === "one-time" ? returned.target.mission.id : undefined
       const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
       if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source?.id) {
-        throw missionRecoveryControlError("prepare-uncertain")
+        throw uncertain()
       }
-      return { mission }
+      try { return { mission, preparation: preparationResult(returned, mission, requestID) } }
+      catch { throw uncertain() }
     })
   }
 

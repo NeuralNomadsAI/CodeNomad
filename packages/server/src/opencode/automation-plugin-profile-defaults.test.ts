@@ -106,7 +106,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
     const body = JSON.parse(String(options.body))
     const token = new Headers(options.headers).get("x-codenomad-automation-token")
-    if (token !== registration.token) return new Response(JSON.stringify({ result: { available: true } }), { status: 200 })
+    if (token !== registration.token) return new Response(JSON.stringify({ result: { available: true, missionCreationDefaults: true, missionPreparationStart: true } }), { status: 200 })
     if (body.mode === "browser-claim") {
       if (probeFailure === "network") throw new Error("secret network error")
       if (probeFailure === "refused") throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("refused"), { code: "ECONNREFUSED" }) })
@@ -188,8 +188,8 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   assert.equal(explicitCreated.selection.origins.coordinator, "explicit")
   assert.equal(explicitCreated.selection.origins.taskMode, "explicit")
   assert.equal((await handlers.snapshot()).missions.find((mission: any) => mission.id === explicitCreated.mission.id).creationDefaults.preferences, "unavailable")
-  await assert.rejects(tools.get("prepare").execute({ requestID: "no-backend", objective: "Handoff", template: "custom" }, toolContext),
-    (error: unknown) => error instanceof MissionControlError && error.code === "prepare-refused")
+  assert.deepEqual(JSON.parse((await tools.get("prepare").execute({ requestID: "no-backend", objective: "Handoff", template: "custom" }, toolContext)).content),
+    { outcome: "refused", phase: "creation", code: "prepare-refused" })
   assert.equal((await handlers.snapshot()).missions.length, 2, "backend-less hand-offs remain unavailable")
   assert.equal([...values.keys()].some(key => key.includes("/creation-intents/")), false)
 
@@ -295,19 +295,20 @@ test("prepare never dispatches creation provenance to either legacy backend path
     for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
     await rm(root, { recursive: true, force: true })
   })
-  let mode: "old-desktop" | "old-host" | "current" = "old-desktop", posts = 0
+  let mode: "old-desktop" | "old-host" | "old-preparation" | "current" = "old-desktop", posts = 0
   t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
     const body = JSON.parse(String(options.body))
     if (body.mode === "browser-claim") {
       assert.equal(body.purpose, "mission-prepare")
       return mode === "old-host" ? new Response(JSON.stringify({ error: "Browser automation is unavailable in this host" }), { status: 404 })
-        : new Response(JSON.stringify({ result: { available: true, ...(mode === "current" ? { missionCreationDefaults: true } : {}) } }))
+        : new Response(JSON.stringify({ result: { available: true, ...(mode === "old-preparation" ? { missionCreationDefaults: true } : {}),
+          ...(mode === "current" ? { missionCreationDefaults: true, missionPreparationStart: true } : {}) } }))
     }
     posts++
     return new Response(JSON.stringify({ result: { admitted: true } }))
   })
-  for (mode of ["old-desktop", "old-host"] as const) {
-    await assert.rejects(sendMissionInput("ses_prepare", "prepare", { creationDefaults: {} }),
+  for (mode of ["old-desktop", "old-host", "old-preparation"] as const) {
+    await assert.rejects(sendMissionInput("ses_prepare", "prepare", { creationDefaults: {}, startOnCreation: true }),
       (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-update-required")
     assert.equal(posts, 0, "no old strict prepare schema can observe the unknown field")
   }
