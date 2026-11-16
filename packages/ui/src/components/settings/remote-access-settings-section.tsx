@@ -170,7 +170,6 @@ export const RemoteAccessSettingsSection: Component = () => {
               <Shield class="settings-card-heading-icon" />
               <div>
                 <h3 class="settings-card-title">{t("remoteAccess.sections.listeningMode.label")}</h3>
-                <p class="settings-card-subtitle">{t("remoteAccess.sections.listeningMode.help")}</p>
               </div>
             </div>
             <div class="settings-toolbar-inline">
@@ -192,13 +191,9 @@ export const RemoteAccessSettingsSection: Component = () => {
                 {t("remoteAccess.toggle.title")}
                 <Show when={listeningLocked()}><SettingsInfoTip text={t("remoteAccess.toggle.locked")} help={{ page: "remote-access", anchor: "administrator-policy" }} /></Show>
               </div>
-              <div class="settings-toggle-caption">
-                {listeningLocked() && meta()?.host
-                  ? t("remoteAccess.toggle.caption.locked", { host: meta()!.host })
-                  : allowExternalConnections()
-                    ? t("remoteAccess.toggle.caption.all")
-                    : t("remoteAccess.toggle.caption.local")}
-              </div>
+              <Show when={listeningLocked() && meta()?.host}>
+                <div class="settings-toggle-caption">{t("remoteAccess.toggle.caption.locked", { host: meta()!.host })}</div>
+              </Show>
             </div>
             <SettingsSwitch
               checked={allowExternalConnections()}
@@ -208,7 +203,6 @@ export const RemoteAccessSettingsSection: Component = () => {
             />
           </div>
 
-          <p class="settings-inline-note">{t("remoteAccess.toggle.note")}</p>
         </div>
 
         <div class="settings-card">
@@ -296,7 +290,6 @@ export const RemoteAccessSettingsSection: Component = () => {
               <Wifi class="settings-card-heading-icon" />
               <div>
                 <h3 class="settings-card-title">{t("remoteAccess.sections.addresses.label")}</h3>
-                <p class="settings-card-subtitle">{t("remoteAccess.sections.addresses.help")}</p>
               </div>
             </div>
           </div>

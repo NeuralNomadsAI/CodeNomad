@@ -29,12 +29,10 @@ binding ले firewall नियम, port forwarding, DNS वा VPN बना�
 
 | Launch/mode | HTTP bind | HTTPS bind |
 | --- | --- | --- |
-| Standalone, HTTPS मात्र (default) | निजी loopback listener मात्र (तल हेर्नुहोस्) | `--host` |
+| Standalone, HTTPS मात्र (default) | निजी loopback listener मात्र | `--host` |
 | Standalone, HTTP मात्र | LAN/wildcard ठेगानासमेत **`--host`** | सक्षम छैन |
 | Standalone, दुवै listener | `127.0.0.1`, `--host` जे भए पनि | `--host` |
 | नेटिभ desktop backend | host-internal listener समेत HTTP `127.0.0.1` मै रहन्छ | HTTPS enabled हुँदा `--host` |
-
-हरेक backend ले Missions जस्ता CodeNomad कै bundled OpenCode plugin का लागि `127.0.0.1` मा HTTP listener पनि राख्छ। HTTP माग नगरिएको भए, वा मागिएको HTTP listener `127.0.0.1` वा `0.0.0.0` बाहेक अर्को ठेगानामा bind भएको भए, backend ले अनियमित `127.0.0.1` port मा निजी HTTP listener थप्छ। यो कहिल्यै छापिँदैन वा जडान ठेगानाका रूपमा दिइँदैन, अरू मेसिनबाट पहुँचयोग्य हुँदैन, र उही प्रमाणीकृत application सेवा दिन्छ।
 
 ठोस LAN ठेगानाले loopback connection स्वीकार नगर्न सक्छ। `0.0.0.0` सबै IPv4 interface हुन्; `::` dual-stack wildcard listener हो। browser मा wildcard होइन वास्तविक पहुँचयोग्य ठेगाना प्रयोग गर्नुहोस्। `--host` मा IPv6 zone identifier समर्थित छैनन्।
 
@@ -89,7 +87,7 @@ HTTPS enabled र key/certificate pair नदिँदा CodeNomad ले confi
 2. certificate generate/recheck गर्न backend restart गर्नुहोस्।
 3. trusted माध्यमबाट host/CA प्रमाणित गरी हरेक अभिप्रेत client/browser trust store मा **CA certificate मात्र** import गर्नुहोस्। वैकल्पिक रूपमा public trusted certificate वा TLS reverse proxy प्रयोग गर्नुहोस्।
 
-generated server certificate 30 दिन चल्छ। expiry को तीन दिनभित्र, आवश्यक SAN छुट्दा, certificate जाँच असफल हुँदा वा private-key फाइल हराउँदा startup ले renew गर्छ। generated CA 365 दिन चल्छ र expiry, certificate जाँच असफल वा private-key फाइल हराउँदा बदलिन्छ; बदल्दा server certificate पनि फेरि जारी हुन्छ। विद्यमान भ्रष्ट, अपठनीय वा नमिलेका private key स्वतः मर्मत हुँदैनन्। client ले replacement CA trust गर्नुपर्छ। निरन्तर in-process renewal छैन: दीर्घकालीन deployment मा expiry अघि सचेत restart मिलाउनुहोस्।
+generated server certificate 30 दिन चल्छ। expiry को तीन दिनभित्र, आवश्यक SAN छुट्दा, certificate जाँच असफल हुँदा वा private-key फाइल हराउँदा startup ले renew गर्छ। generated CA 365 दिन चल्छ र expiry, certificate जाँच असफल वा private-key फाइल हराउँदा बदलिन्छ; बदल्दा server certificate पनि फेरि जारी हुन्छ। client ले replacement CA trust गर्नुपर्छ। निरन्तर in-process renewal छैन: दीर्घकालीन deployment मा expiry अघि सचेत restart मिलाउनुहोस्।
 
 certificate चेतावनी आए रोकिएर hostname, SAN, trust store र expiry जाँच्नुहोस्। verification अक्षम वा चेतावनी क्लिक गरेर जानुलाई deployment प्रक्रिया नबनाउनुहोस्। [PWA स्थापना र microphone पहुँच](mobile.md) जस्ता remote browser सुविधालाई पनि trusted HTTPS चाहिन्छ।
 
@@ -109,8 +107,8 @@ SSH बाट मात्र पहुँच हुने गन्तव्य
 
 सुरक्षित सर्भर फेरि खोल्न गृह पृष्ठको **सर्भरहरू** ट्याबमा त्यसलाई चयन गर्नुहोस्। bookmark यो CodeNomad कन्फिगरेसनका हुन्, remote server का project होइनन्। URL बचतले server सुरु वा access प्रदान गर्दैन। **बचत गरिएको सर्भर हटाउनुहोस्** ले bookmark हटाउँछ, remote कुराकानी, backend वा credential होइन।
 
-सुरक्षित सर्भर command line बाट सिधै खोल्न, सर्भरको सुरक्षित नाम वा यसको `https://` URL सहित desktop app लाई `--connect-server <name>` (वा `--connect-server=<name>`) सँग सुरु गर्नुहोस्। CodeNomad ले remote window मात्र खोल्छ, **जडान गर्नुहोस्** जस्तै उही जाँच र sign in सहित; CodeNomad पहिले नै चलिरहेको छ भने, नयाँ window को सट्टा यसको हालको window ले त्यसलाई खोल्छ। कुनै सुरक्षित सर्भरसँग नमिल्ने URL यसको host नाममा बचत हुन्छ। सुरु गर्दा दिइने मानमा credential कहिल्यै हुँदैन: user नाम, password वा pairing code भएको URL अस्वीकार हुन्छ। नाम अज्ञात भए, URL अमान्य भए वा जडान असफल भए, CodeNomad सामान्य रूपमा सुरु हुन्छ र त्रुटि देखाउँछ। स्व-हस्ताक्षरित सर्भरका लागि स्थानीय प्रमाणपत्र स्थापना जस्ता पुष्टि जडानलाई चाहिँदा पनि, CodeNomad सामान्य रूपमा सुरु हुन्छ र त्यहीँ सोध्छ। Windows मा, सुरु गर्ने argument मा `|` भए Tauri build सुरु हुँदैन; बरु सर्भरको URL प्रयोग गर्नुहोस्, वा सर्भरको नाम बदल्नुहोस्।
+सुरक्षित सर्भर command line बाट सिधै खोल्न, सर्भरको सुरक्षित नाम वा यसको `https://` URL सहित desktop app लाई `--connect-server <name>` (वा `--connect-server=<name>`) सँग सुरु गर्नुहोस्। CodeNomad ले remote window मात्र खोल्छ, **जडान गर्नुहोस्** जस्तै उही जाँच र sign in सहित; CodeNomad पहिले नै चलिरहेको छ भने, नयाँ window को सट्टा यसको हालको window ले त्यसलाई खोल्छ। कुनै सुरक्षित सर्भरसँग नमिल्ने URL यसको host नाममा बचत हुन्छ। सुरु गर्दा दिइने मानमा credential कहिल्यै हुँदैन: user नाम, password वा pairing code भएको URL अस्वीकार हुन्छ। Windows मा, सुरु गर्ने argument मा `|` भए Tauri build सुरु हुँदैन; बरु सर्भरको URL प्रयोग गर्नुहोस्, वा सर्भरको नाम बदल्नुहोस्।
 
-रिमोट विन्डोले यो कम्प्युटरमा फर्कने बाटो सधैँ छोड्छ। रिमोट विन्डोहरू खुला रहँदा अन्तिम स्थानीय विन्डो बन्द गर्दा त्यसका ट्याबहरू रहन्छन्: रिमोट विन्डोमा **सञ्झ्याल → नयाँ विन्डो**, वा CodeNomad फेरि सुरु गर्दा त्यो फेरि खुल्छ। सर्भर लोड गर्न नसकिँदा त्यसको विन्डोले त्यो देखाउँछ र **फेरि प्रयास गर्नुहोस्**, **स्थानीय विन्डो खोल्नुहोस्** र **विन्डो बन्द गर्नुहोस्** दिन्छ; Tauri संस्करणमा पृष्ठको रिलोड बटन र **सञ्झ्याल → नयाँ विन्डो** प्रयोग गर्नुहोस्।
+रिमोट विन्डोहरू खुला रहँदा अन्तिम स्थानीय विन्डो बन्द गर्दा त्यसका ट्याबहरू रहन्छन्: रिमोट विन्डोमा **सञ्झ्याल → नयाँ विन्डो**, वा CodeNomad फेरि सुरु गर्दा त्यो फेरि खुल्छ।
 
 Remote Control मा **सर्भर URL** मा नयाँ pairing link paste गर्नुहोस्। bookmark ले tunnel origin मात्र राख्छ, one-use code कहिल्यै होइन; device-cookie हराएपछि पुनःpair गर्न [Remote Control](remote-control.md) हेर्नुहोस्।

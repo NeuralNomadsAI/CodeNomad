@@ -6,7 +6,8 @@ import { createAgentAttachment, createFileAttachment, createSkillAttachment, typ
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { MissionReader } from "../mission-reader"
-import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
+import { updateMissionProjectView } from "../../stores/mission-view-state"
+import { beginGesture, getSessionSurface } from "../../stores/session-surface"
 import { missionStore } from "../../stores/missions"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
@@ -15,6 +16,7 @@ import PromptContextControls from "../prompt-input/PromptContextControls"
 import { observeTimelineRailBoundary } from "./timeline-rail-boundary"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceReady } from "../../stores/instances"
+import { parseInstanceKey, projectScope } from "../../lib/backend-identity"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, loadMessageAnchor, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen, createDocumentAttention } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
@@ -28,7 +30,7 @@ import { useConfig } from "../../stores/preferences"
 import { getSessionPreview } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
 import { FilesPreviewView } from "../files-preview-view"
-import { getFilePreview, closeFilePreview } from "../../stores/files-preview"
+import { closeFilePreview } from "../../stores/files-preview"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
@@ -52,8 +54,6 @@ interface SessionViewProps {
   activeSessions: Map<string, Session>
   instanceId: string
   instanceFolder: string
-  /** The project's view-state scope (Missions, previews); its folder when omitted. */
-  scope?: string
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
   focusConversationOnActivate?: boolean
@@ -107,32 +107,27 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
-  const projectViewScope = () => props.scope ?? props.instanceFolder
-  const preview = createMemo(() => getSessionPreview(props.sessionId, projectViewScope()))
-  const missionReader = () => props.isActive ? missionProjectView(projectViewScope()).reader : undefined
+  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceId))
+  const surface = createMemo(() => getSessionSurface({ instanceId: props.instanceId, sessionId: props.sessionId }))
+  const missionReader = () => {
+    const current = surface()
+    return props.isActive && current.kind === "mission" ? current.target : undefined
+  }
   const readingMission = () => Boolean(missionReader())
   // A layout-restored reader for a one-time Mission the loaded map no longer
   // contains has nothing to show: release the central surface to the transcript.
   createEffect(() => {
     const target = missionReader()
     if (!target || target.kind === "recurrence" || target.kind === "playbook" || target.recurrence) return
-    const state = missionStore.state(props.instanceId)
-    if ((state.status === "ready" || state.status === "unavailable") && !state.summaries.some(row => row.id === target.missionId))
-      updateMissionProjectView(projectViewScope(), { reader: undefined })
+    if (missionStore.mapMissing(props.instanceId, target.missionId))
+      updateMissionProjectView(props.instanceId, { reader: undefined })
   })
   const filePreview = createMemo(() => {
-    const target = getFilePreview(props.instanceId)
-    return target?.sessionId === props.sessionId ? target : null
+    const current = surface()
+    return current.kind === "file" ? current.target : null
   })
-  createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
-  const centralPreview = () => props.isActive !== false && preview()?.mode === "preview" && !filePreview() && !readingMission()
-  // The latest explicit reader selection owns the central surface. Opening one
-  // must not leave the other mounted invisibly above it; editor drafts live in
-  // their own store and the composer stays outside both readers.
-  createEffect(on(filePreview, target => {
-    if (target && props.isActive) updateMissionProjectView(projectViewScope(), { reader: undefined })
-  }, { defer: true }))
-  createEffect(on(readingMission, reading => { if (reading) closeFilePreview(props.instanceId) }))
+  // A restored web choice has metadata only until explicit opening allocates its guest.
+  const centralPreview = () => props.isActive !== false && surface().kind === "web" && Boolean(preview())
 
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null
@@ -618,6 +613,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
 
     const parentTitle = (session()?.title ?? "").trim() || t("sessionList.session.untitled")
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.sessionId })
 
     try {
       const forkedSession = await forkSession(props.instanceId, props.sessionId, { afterMessageId: messageId })
@@ -628,7 +624,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       })
 
       ensureSessionAncestorsExpanded(props.instanceId, forkedSession.id)
-      setActiveSessionFromList(props.instanceId, forkedSession.id)
+      setActiveSessionFromList(props.instanceId, forkedSession.id, intent)
 
       await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
     } catch (error) {
@@ -664,7 +660,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           style={{ visibility: readingMission() ? "hidden" : undefined }}>
         <Show when={filePreview()} fallback={
         <Show
-          when={preview()?.mode !== "preview" || readingMission()}
+          when={!centralPreview()}
         >
             <MessageSection
               timelineMount={timelineMount()}
@@ -704,7 +700,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
         </div>
         <Show when={readingMission()}>
-          <MissionReader instanceId={props.instanceId} scope={projectViewScope()} />
+          <MissionReader instanceId={props.instanceId}
+            scope={projectScope({ folder: props.instanceFolder, backendId: parseInstanceKey(props.instanceId).backendId })} />
         </Show>
         </div>
 

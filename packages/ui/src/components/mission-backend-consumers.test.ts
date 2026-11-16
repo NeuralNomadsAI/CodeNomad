@@ -275,6 +275,7 @@ test("current passage content dispatches remotely and fences detached prose", as
   const read = deferred(), env = fixture({ fetchMissionCurrentContent: () => read.promise }), instance = { folder: "/repo", client: {} }
   let publications = 0, dispose!: () => void
   const effect = production("./mission-passage-section.tsx", "createEffect", { ...env,
+    attempt: () => 0,
     props: { instanceId: id, source: { projectID: "p", missionID: "m" }, page: 0, onPageCount: () => { publications++ } },
     instances: () => new Map([[id, instance]]), getOpenCodeInstanceGeneration: () => 1,
     cache: new Map(), setValue: () => {}, setError: () => {},

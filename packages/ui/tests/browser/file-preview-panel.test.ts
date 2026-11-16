@@ -152,6 +152,33 @@ test("a window too narrow for the docked panel keeps the reader, and so does wid
   } finally { await page.close() }
 })
 
+test("a passive status refresh preserves a pending gesture and the diff across an unloaded Workspace inventory", async () => {
+  const { page, errors } = await setup({ width: 1600, height: 950 }, "?changes")
+  const diffReader = page.locator(".git-diff-view:not(.workspace-file-view)")
+  try {
+    await page.getByRole("button", { name: "File preview · src/app.ts", exact: true }).click()
+    await diffReader.locator(".view-line").filter({ hasText: "export const line0 = 0" }).first().waitFor()
+    await diffReader.evaluate(element => { element.dataset.mounted = "first" })
+    const status = await page.evaluate(() => {
+      window.filePreviewPanel.hold()
+      window.filePreviewPanel.invalidate()
+      return window.filePreviewPanel.gitReads().status
+    })
+    await page.waitForFunction(status => window.filePreviewPanel.gitReads().status > status, status)
+    // The status transport has settled when the real refresh control is enabled.
+    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>(".git-panel .files-header-icon-button")?.disabled === false)
+    await page.getByRole("button", { name: "Workspace", exact: true }).click()
+    await eye(page).waitFor()
+    await page.evaluate(() => {
+      window.filePreviewPanel.invalidate()
+    })
+    assert.equal(await page.evaluate(() => window.filePreviewPanel.current()), true)
+    assert.equal(await page.evaluate(() => window.filePreviewPanel.target()), "src/app.ts")
+    assert.equal(await diffReader.getAttribute("data-mounted"), "first")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a reader opened from the floating panel survives its dismissal", async () => {
   const { page, errors } = await setup({ width: 700, height: 900 })
   try {

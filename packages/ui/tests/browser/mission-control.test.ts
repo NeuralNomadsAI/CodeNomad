@@ -112,6 +112,45 @@ async function closeMissionSettings(page: Page) {
   await settingsShell(page).waitFor({ state: "detached" })
 }
 const settingsFits = (page: Page) => page.locator(".settings-screen-scroll").evaluate(element => element.scrollWidth <= element.clientWidth)
+
+for (const reason of ["plugin-unavailable", "plugin-failed", "host-unavailable", "workspace-unavailable"]) {
+  test(`unavailable Missions routes ${reason} to its useful settings action`, async () => {
+    const page = await browser.newPage({ locale: "en-US", viewport: { width: 1000, height: 850 } })
+    const mutations: string[] = [], errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    try {
+      await setup(page, "remote")
+      await page.route("https://raw.githubusercontent.com/**", route => route.fulfill({ status: 503, body: "" }))
+      await page.route("**/api/meta", route => route.fulfill({ json: {
+        localUrl: "http://127.0.0.1:9899", host: "127.0.0.1", listeningMode: "local", localPort: 9899,
+        workspaceRoot: "/fixture", addresses: [], serverVersion: "1.1.0", ui: { version: "1.1.0", source: "bundled" },
+      } }))
+      await page.route("**/api/workspaces/fixture/missions**", route => {
+        if (route.request().method() !== "GET" && !route.request().url().endsWith("/panel-page")) mutations.push(route.request().url())
+        return route.fulfill({ json: { available: false, reason, missions: [] } })
+      })
+      await page.goto(url)
+      await fixtureCall(page, "connectCatalog")
+      const state = page.locator(".mission-control-state")
+      await state.getByText("Mission Control is unavailable", { exact: true }).waitFor()
+      if (reason === "workspace-unavailable") {
+        assert.equal(await state.getByRole("button").count(), 0)
+      } else {
+        const host = reason === "host-unavailable"
+        await state.getByRole("button", { name: host ? "Server diagnostics" : "OpenCode settings", exact: true }).click()
+        const shell = settingsShell(page)
+        await shell.waitFor()
+        assert.equal(await shell.locator('.settings-nav-button[aria-current="page"]').innerText(), host ? "Info" : "OpenCode")
+        if (host) {
+          await page.waitForFunction(() => document.activeElement?.id === "server-diagnostics")
+          await shell.locator("#server-diagnostics").getByRole("button", { name: "Copy to clipboard", exact: true }).waitFor()
+        } else await shell.locator(".opencode-setup-panel").waitFor()
+      }
+      assert.deepEqual(mutations, [], "opening settings never reloads OpenCode or starts a Mission")
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
 /** Plan changes, reports, cleanup history and identifiers are folded at the
  * bottom of the central overview reader; the panel keeps none of them. */
 async function openOverviewFold(page: Page, label: string) {
@@ -347,7 +386,7 @@ test("Delegation depth is one labelled menu, read only on demand: Inherit then 1
     }
     await page.setViewportSize({ width: 1100, height: 850 })
     await menu.selectOption("4")
-    await controls.getByRole("status").filter({ hasText: "Configuration saved. OpenCode was not reloaded." }).waitFor({ state: "attached" })
+    await controls.getByRole("status").filter({ hasText: "Depth saved." }).waitFor({ state: "attached" })
     assert.deepEqual(mutations[0].body, { location: { directory: "fixture" }, depth: 4, expectation: "original-file" })
     await waitForDepthInfo(page, "OpenCode effective depth: 4")
     await waitForDepthReady(page)
@@ -387,12 +426,13 @@ test("a depth write acknowledged after leaving Settings is accepted and reread o
     await waitForDepthInfo(page, "OpenCode effective depth: 1")
     await waitForDepthReady(page)
     await menu.selectOption("2"); await started
+    assert.equal(await page.locator(".mission-depth [role=status]").textContent(), "Saving subagent depth…")
     await closeMissionSettings(page)
     release()
     await until(() => depth === 2)
     await openMissionSettings(page)
     await waitForDepthInfo(page, "OpenCode effective depth: 2")
-    assert.equal(await page.getByText("Save not confirmed. Your choice is kept; refresh before another change. No automatic retry.", { exact: true }).count(), 0)
+    assert.equal(await page.getByText("Refresh project depth to check whether the change was saved.", { exact: true }).count(), 0)
     await waitForDepthReady(page)
     assert.equal(writes, 1); assert.equal(reads, 2, "the acknowledged write is reread once the section is visible again")
   } finally { release(); await page.close() }
@@ -476,7 +516,7 @@ test("the depth editor states the nesting rule and whether General subagents can
       await waitForDepthInfo(page, `OpenCode effective depth: ${effective}`)
     }
     await waitForDepthInfo(page, "OpenCode effective depth: 1")
-    assert.ok((await depthInfo(page)).includes("Setting a project depth also lets subagents launch their own subagents in this project, up to that depth; at 1, OpenCode's own limit still stops nesting. This project rule takes precedence over General's restrictions from other config files."))
+    assert.ok((await depthInfo(page)).includes("Setting a project depth lets General subagents nest up to that limit, overriding their subagent restrictions from other configuration files. Depth 1 still blocks nesting."))
     assert.equal(await note(), "At this depth, OpenCode's own depth limit stops nesting.")
     await save("3", 3)
     assert.equal(await note(), "General subagents can launch their own subagents here, so they nest up to this depth.")
@@ -486,16 +526,16 @@ test("the depth editor states the nesting rule and whether General subagents can
     assert.equal(await note(), "General subagents cannot launch subagents here, so they do not nest.")
     await save("6", 6)
     assert.equal(await note(), "General subagents cannot launch other General subagents here; launching other agents depends on their permissions.")
-    assert.equal(await controls.getByText("Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.", { exact: true }).count(), 0, "the rule was written")
+    assert.equal(await controls.getByText("Only depth was saved. Allow General to launch subagents in the project configuration.", { exact: true }).count(), 0, "the rule was written")
     await save("7", 7)
-    assert.equal(await controls.getByRole("alert").filter({ hasText: "Only the depth was saved" }).innerText(), "Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.")
+    assert.equal(await controls.getByRole("alert").filter({ hasText: "Only depth was saved" }).innerText(), "Only depth was saved. Allow General to launch subagents in the project configuration.")
     await save("", 5)
     assert.equal(await note(), "General subagents cannot launch subagents here, so they do not nest.")
     await save("1", 1)
     assert.equal(await note(), "At this depth, OpenCode's own depth limit stops nesting.",
       "General may launch subagents, but a depth of 1 still stops nesting")
     assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, 6, 7, null, 1], "only depth writes")
-    assert.equal(await controls.getByText("Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.", { exact: true }).count(), 0, "no warning without the depth-only save")
+    assert.equal(await controls.getByText("Only depth was saved. Allow General to launch subagents in the project configuration.", { exact: true }).count(), 0, "no warning without the depth-only save")
   } finally { await page.close() }
 })
 
@@ -553,7 +593,7 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
     await waitForDepthReady(form)
     await menu.selectOption("3")
     await writing.promise
-    await controls.getByRole("status").filter({ hasText: "Saving…" }).waitFor({ state: "attached" })
+    await controls.getByRole("status").filter({ hasText: "Saving subagent depth…" }).waitFor({ state: "attached" })
     assert.equal(await locked(), true, "a write locks the menu too")
     assert.equal(await menu.evaluate(element => (element as HTMLSelectElement).disabled), false, "and keeps it focusable")
     // Choices made during the write (a native closed select's arrow keys fire one change
@@ -647,7 +687,7 @@ test("visible clean depth revalidates after config and connection changes while 
     assert.equal(reads, 3)
     await waitForDepthReady(page)
     await menu.selectOption("2")
-    await page.getByText("Save not confirmed. Your choice is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
+    await page.getByText("Refresh project depth to check whether the change was saved.", { exact: true }).waitFor()
     depth = 5; await invalidate(true); await invalidate(); await page.waitForTimeout(150)
     assert.equal(await menu.inputValue(), "2", "the unconfirmed choice is kept")
     assert.equal(reads, 3, "its file expectation is not rebased"); assert.equal(writes, 1, "unknown admission is not retried or silently refreshed")
@@ -771,7 +811,7 @@ test("depth uncertainty stays at its original Location through pending navigatio
     assert.equal(await menu.inputValue(), "9", "the new Location cannot inherit the old pending choice")
     release()
     await fixtureCall(page, "directory", "fixture")
-    await page.getByText("Save not confirmed. Your choice is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
+    await page.getByText("Refresh project depth to check whether the change was saved.", { exact: true }).waitFor()
     await closeMissionSettings(page)
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
     await openMissionSettings(page)
@@ -1318,7 +1358,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     // its form appears only for the failed deletion, offering nothing but its retry.
     await waitForMissionDeleteSessions(page, true)
     await clickMissionAction(page, "Delete selected mission…", "New mission objective")
-    await page.getByRole("alert").getByText("Deletion could not be completed. Retry to finish the remaining cleanup.").waitFor()
+    await page.getByRole("alert").getByText("Retry to finish the remaining cleanup.").waitFor()
     assert.equal(deletions.length, 1)
     assert.equal(await page.locator("form.mission-editor").getByRole("checkbox").count(), 0)
     await fixtureCall(page, "refresh")

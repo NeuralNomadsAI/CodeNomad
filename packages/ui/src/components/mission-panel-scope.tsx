@@ -7,7 +7,7 @@ export const MissionPanelScope = scope.Provider
 export function scopedMissionStore(source: () => typeof missionStore): typeof missionStore {
   return new Proxy(missionStore, { get: (_target, key) => Reflect.get(source(), key) })
 }
-/** The panel's project view scope (its per-window selection and seen state). */
+/** The panel's project acknowledgement scope within this window. */
 const viewScope = createContext<() => string>()
 export const MissionViewScope = viewScope.Provider
 export function useMissionViewScope(): (() => string) | undefined { return useContext(viewScope) }

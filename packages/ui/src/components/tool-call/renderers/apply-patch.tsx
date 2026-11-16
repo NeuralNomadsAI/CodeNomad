@@ -41,7 +41,7 @@ function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string; t
 export const applyPatchRenderer: ToolRenderer = {
   tools: ["apply_patch"],
   getSearchText: getApplyPatchToolSearchText,
-  getAction: ({ t }) => t("toolCall.applyPatch.action.preparing"),
+  getAction: ({ t }) => t("toolCall.renderer.action.preparingPatch"),
   getTitle({ toolState, t }) {
     const state = toolState()
     if (!state) return undefined

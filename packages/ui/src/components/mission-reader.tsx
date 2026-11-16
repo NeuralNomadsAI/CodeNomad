@@ -3,8 +3,8 @@ import { ArrowUpRight, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { missionStore as projectMissionStore } from "../stores/missions"
 import { MissionPanelScope, scopedMissionStore } from "./mission-panel-scope"
-import { missionProjectView, updateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
-import { getSessionPreview, showSessionChatFor } from "../stores/session-previews"
+import { missionProjectView, navigateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
+import { applySurface, beginGesture } from "../stores/session-surface"
 import { Markdown } from "./markdown"
 import { copyToClipboard } from "../lib/clipboard"
 import { MissionTaskReader } from "./mission-task-reader"
@@ -13,7 +13,7 @@ import { MissionReportNotification } from "./mission-native-execution"
 import { createMissionViewFence } from "../lib/mission-view-fence"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { instances } from "../stores/instances"
-import { activeSessionId, activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../stores/sessions"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { sessionListRestored } from "../stores/session-list-restoration"
 import { missionIncludesSession } from "./mission-attention-model"
@@ -46,6 +46,7 @@ import { missionBodyPresent, missionOwnBody } from "../lib/mission-bodies"
 import type { MissionPanelMap, MissionReport } from "../../../server/src/api-types"
 import { MissionPanelPaging } from "./mission-panel-paging"
 import { createDocumentAttention } from "./session/session-idle-attention"
+import { createMissionDisclosure } from "./mission-disclosure"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -154,7 +155,8 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
 
 export function MissionReader(props: { instanceId: string; scope: string }) {
   const { t, locale } = useI18n()
-  const target = () => missionProjectView(props.scope).reader
+  const target = () => missionProjectView(props.instanceId).reader
+  const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => target()?.missionId ?? "", () => `report:${target()?.itemId}:technical`)
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? projectMissionStore.state(props.instanceId).projectID
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
     directory: () => instances().get(props.instanceId)?.folder ?? "", scheduleID: () => target()?.recurrence?.scheduleID,
@@ -192,7 +194,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const recurrence = () => target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
     ? recurrenceState.snapshot()?.schedules.find(schedule => schedule.id === target()?.missionId) : undefined
   const scheduledState = useMissionSchedules({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
-    directory: () => props.scope, refresh: () => 0, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"
+    directory: () => instances().get(props.instanceId)?.folder ?? "", refresh: () => 0, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"
       && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID(), selected: () => target()?.missionId })
   const scheduled = () => target()?.scheduleOwner === "scheduled" && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
     ? scheduledState.rows().find(row => row.id === target()?.missionId) : undefined
@@ -303,7 +305,6 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const captureNavigation = createMissionViewFence(() => JSON.stringify([
     props.instanceId, props.scope, target(), instances().get(props.instanceId)?.folder,
     instances().get(props.instanceId)?.metadata?.project?.id, missionStore.state(props.instanceId).projectID,
-    activeSessionId().get(props.instanceId), activeParentSessionId().get(props.instanceId), getSessionPreview(activeSessionId().get(props.instanceId) ?? "", props.scope),
   ]), () => Boolean(target()))
   let navigationIntent = 0
   const taskConversation = () => {
@@ -318,34 +319,34 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const openActor = async (sessionId: string) => {
     const operation = captureBackendOperation(props.instanceId)
     const current = captureNavigation(), intent = ++navigationIntent
-    const instanceId = props.instanceId, scope = props.scope
-    const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
-    const authorized = () => {
-      const value = mission()
-      const currentTask = task()
-      if (!value || target()?.kind !== "task" || !currentTask) return false
-      const family = activity()?.missions.find(item => item.missionId === value.id)?.family
-      return missionTaskConversation(value, currentTask, family, missionDerivedTaskSession(props.instanceId, value, currentTask.key),
-        [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) === sessionId
-        && (value.coordinatorSessionId === sessionId || missionIncludesSession([...value.actors, ...missionStore.observedActors(instanceId, value.id)], sessionId, family)
-          || missionDerivedSessionIncludes(props.instanceId, value, sessionId))
-    }
-    const admitted = () => operation.current() && current() && intent === navigationIntent && authorized()
-      && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
-      && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
-    if (!admitted()) return
-    setNavigationError(false)
-    // Native session.get resolves the owned location; the catalog reads only
-    // agents/models/commands. Hydrate this ID and its parents, never list all sessions.
-    try { await hydrateRestoredSessionChain(instanceId, [sessionId], undefined, admitted) }
-    catch { if (admitted()) setNavigationError(true); return }
-    if (!admitted()) return
-    if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
-    batch(() => {
-      setActiveSessionFromList(instanceId, sessionId)
-      showSessionChatFor(sessionId, scope)
-      updateMissionProjectView(scope, { reader: undefined })
-    })
+    const instanceId = props.instanceId
+    const surfaceIntent = beginGesture({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null })
+      const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
+      const authorized = () => {
+        const value = mission()
+        const currentTask = task()
+        if (!value || target()?.kind !== "task" || !currentTask) return false
+        const family = activity()?.missions.find(item => item.missionId === value.id)?.family
+        return missionTaskConversation(value, currentTask, family, missionDerivedTaskSession(props.instanceId, value, currentTask.key),
+          [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) === sessionId
+          && (value.coordinatorSessionId === sessionId || missionIncludesSession([...value.actors, ...missionStore.observedActors(instanceId, value.id)], sessionId, family)
+            || missionDerivedSessionIncludes(props.instanceId, value, sessionId))
+      }
+      const admitted = () => operation.current() && surfaceIntent.current() && current() && intent === navigationIntent && authorized()
+        && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
+        && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
+      if (!admitted()) return
+      setNavigationError(false)
+      // Native session.get resolves the owned location; the catalog reads only
+      // agents/models/commands. Hydrate this ID and its parents, never list all sessions.
+      try { await hydrateRestoredSessionChain(instanceId, [sessionId], operation.signal, admitted) }
+      catch { if (admitted()) setNavigationError(true); return }
+      if (!admitted()) return
+      if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }
+      batch(() => {
+        setActiveSessionFromList(instanceId, sessionId, surfaceIntent)
+        applySurface({ instanceId, sessionId }, { kind: "conversation" }, surfaceIntent)
+      })
   }
   // Compact project and current-passage readers resolve their exact body descriptors.
   const oneTime = () => Boolean(target()) && (!target()!.recurrence || Boolean(mission()?.panelPassage)) && target()!.kind !== "recurrence" && target()!.kind !== "playbook"
@@ -474,7 +475,10 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     closeButton?.focus()
   })
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
-  const close = () => { showSessionChatFor(activeSessionId().get(props.instanceId) ?? "", props.scope); updateMissionProjectView(props.scope, { reader: undefined }) }
+  const close = () => {
+    const ctx = { instanceId: props.instanceId, sessionId: activeSessionId().get(props.instanceId) ?? null }
+    applySurface(ctx, { kind: "conversation" })
+  }
    return <MissionPanelScope value={panel}><section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">
@@ -505,7 +509,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <Show when={recurrence()} fallback={<p>{t("missions.control.reader.missing")}</p>}>{schedule =>
           <MissionRecurrenceReader instanceId={props.instanceId} scope={props.scope} projectID={recurrenceState.snapshot()!.projectID}
             schedule={schedule()} passageID={target()?.itemId}
-            onSelect={passageID => updateMissionProjectView(props.scope, { reader: { ...target()!, itemId: passageID } })} />}</Show>
+            onSelect={passageID => navigateMissionProjectView(props.instanceId, { reader: { ...target()!, itemId: passageID } })} />}</Show>
       </Show>
       <Show when={target()?.kind === "overview" && missionBriefed(mission())}>
         <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(mission()!.briefing!.createdAt).toLocaleString(locale())}</p>
@@ -554,7 +558,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <MissionComparisonReport artifact={reportBodies.artifact.value()} profiles={mission()?.profiles} identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />
         <Show when={mission()}>{map => <MissionDecisionReport mission={map()} report={value()} artifact={reportBodies.artifact.value()}
           identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />}</Show>
-        <details class="mission-report-technical"><summary>{t("missions.control.task.details")}</summary>
+        <details class="mission-report-technical" open={technicalOpen()} onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
           <MissionReportNotification report={value()} />
           <Show when={missionReportHas(mission(), value(), "artifact")}><MissionReaderSection label="missions.control.artifact" raw
             text={reportBodies.artifact.settled() ? JSON.stringify(reportBodies.artifact.value(), null, 2) : ""} read={reportBodies.artifact.read()}

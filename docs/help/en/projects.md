@@ -12,9 +12,11 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
 
-Cloning writes a repository to the destination. **Remove the destination folder first if it already exists.** is destructive: enable it only when everything already there can be deleted. Use a fresh destination if unsure. A failed clone is not a reason to delete an existing project; inspect the reported destination and error before retrying.
+Cloning writes a repository to the destination. **Remove the destination folder first if it already exists.** is destructive: enable it only when everything already there can be deleted. Use a fresh destination if unsure.
 
 Recent entries are shortcuts. **Rename workspace** changes its displayed name; **Remove from recent** removes the shortcut, not its files or conversations. Clicking an already-open recent project opens a new tab; its **Open** button (**Switch to open project**) selects the existing tab instead.
+
+Open the same folder twice and select the same conversation in both tabs to keep chat in one and a web preview, file or Mission report in the other. Each tab keeps its own view, conversation scroll position, right-panel selection and Files mode; messages, execution and project data stay shared.
 
 ## Use the new-instance launcher {#new-instance-launcher}
 
@@ -34,21 +36,19 @@ A normal click still opens the full home page. The launcher is a shortcut, not t
 | Close Tab | Removes that tab's CodeNomad project connection; another tab opened separately on the same folder is unaffected | Does not delete project files or native history, stop sessions or unload OpenCode's Location |
 | Stop session | The selected conversation's execution | Does not close the project or delete its history |
 
-If another window displays the same project connection, its tab closes too and that window shows a notification. The initiating window shows none. Closing is immediate; if the backend cannot close the project, an error appears and **Switch to open project** on the home page still reaches it. There is no automatic retry. Unsent drafts and attachments of the closed tab return when you reopen the same folder in that window; the window keeps them for its 16 most recently closed projects until it reloads or closes. They are not part of startup restoration.
+If another window displays the same project connection, its tab closes too and that window shows a notification. Unsent drafts and attachments of the closed tab return when you reopen the same folder in that window; the window keeps them for its 16 most recently closed projects until it reloads or closes. They are not part of startup restoration.
 
 Closing a whole window, quitting or reloading does not close its project connections; normal startup restoration still applies. Stop relevant runs explicitly if you need to verify execution ended. CodeNomad never unloads native Locations; shared-service maintenance is described in [OpenCode setup](opencode.md).
 
+With startup restoration enabled, each remaining tab restores its own panel choices, Mission selection/reader and saved browser URL/history. Saved browser pages load on explicit reopening. Closing one occurrence removes only its saved view; reopening the folder creates a new occurrence.
+
 ## Restore remote tabs {#restore-remote-tabs}
 
-**Retry** also recovers still-open waiting tabs when automatic startup restoration is disabled. Separate tabs for the same folder keep their own drafts.
+With multi-backend enabled, saved remote projects retain tab order, selection and per-tab drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh **Pairing link**. Other servers remain usable.
 
-A notification opens the existing waiting tab; use **Retry** to reconnect.
+**Retry** also recovers waiting tabs when automatic startup restoration is off. Notifications select the existing waiting tab. Check an unconfirmed conversation action's outcome before sending it again.
 
-If Settings still targets this server, reopen **Settings** from another project before removing the server or changing its address.
-
-With multi-backend enabled, saved remote projects return in their tab order with their drafts and selection. An unavailable server keeps a waiting tab: use **Retry** when it returns, or **Connect** with its username/password or a fresh **Pairing link**. Other servers remain usable. Recovery reads state; send any unconfirmed conversation action yourself only after checking its outcome.
-
-Close this server’s project tabs in every window before removing it or changing its address. An unreachable inventory keeps that change blocked until it can be checked.
+Before removing a server or changing its address, close its project tabs in every window and reopen **Settings** from another project if it still targets that server. An unreachable project inventory blocks the change until checked.
 
 ## Temporary workspaces {#temporary-workspaces}
 
@@ -72,7 +72,7 @@ Discard refuses while a conversation is running or the folder is open in another
 2. Select an existing discovered worktree, or choose **+ Create worktree**.
 3. For creation, enter **Name** and choose **Create and use worktree**.
 
-CodeNomad discovers worktrees through OpenCode and verifies that they belong to the opened repository. When the project is a folder inside a repository, only worktrees that contain that folder are listed. Creating a worktree from such a folder requires Git to track it. A new branch name starts at the selected checkout's HEAD. An existing branch name uses that branch's current revision; Git can refuse a branch already checked out elsewhere. Worktrees use the default `.codenomad/worktrees` location. Uncommitted changes remain in the original checkout; creation does not copy them into the new worktree.
+When the project is a folder inside a repository, only worktrees that contain that folder are listed. Creating a worktree from such a folder requires Git to track it. A new branch name starts at the selected checkout's HEAD. An existing branch name uses that branch's current revision; Git can refuse a branch already checked out elsewhere. Worktrees use the default `.codenomad/worktrees` location. Uncommitted changes remain in the original checkout; creation does not copy them into the new worktree.
 
 The composer selector moves the parent conversation and its recursive descendants as a verified family. A subsession cannot independently change this selector. Active sessions block the operation: let the family finish or stop its execution first. Wait for a move to settle before requesting another; on error, inspect the refreshed conversation/worktree state before retrying.
 
@@ -86,7 +86,7 @@ By contrast, **Worktree to browse** in [Files](files.md) changes only which chec
 
 Deletion removes the worktree's local folder. Git's main checkout is not a removable target. CodeNomad moves affected conversation families back to the root checkout and verifies their placement before removing the worktree; active sessions can block removal. Deletion is not an archive or a backup of uncommitted files.
 
-If Git refuses modified/untracked files, preserve or clean those files before retrying. Force deletion explicitly discards them. For a locked directory, close terminals, editors, watchers and background processes using it. For a missing record, refresh worktrees and inspect the path before trying again. The error dialog offers **Copy sanitized** when sharing diagnostics; review even sanitized text first.
+If Git refuses modified/untracked files, preserve or clean those files before retrying. Force deletion explicitly discards them. For a locked directory, close terminals, editors, watchers and background processes using it. The error dialog offers **Copy sanitized** when sharing diagnostics; review even sanitized text first.
 
 ## Initialize Git or work without it {#initialize-git}
 
@@ -94,6 +94,6 @@ If Git refuses modified/untracked files, preserve or clean those files before re
 2. Choose **Initialize Git**. It acts immediately, without an extra confirmation.
 3. Wait for project metadata and conversations to refresh; use **Refresh** if Git was initialized outside CodeNomad.
 
-Initialization creates the repository in the explicitly opened folder, not its parent. It does not make a commit. On failure, inspect the message and refresh before retrying: an uncertain reply is not automatically replayed.
+Initialization creates the repository in the explicitly opened folder, not its parent. It does not make a commit.
 
 If the backend cannot run Git, conversations and bounded file browsing remain available for the explicitly opened folder in directory-only mode. Worktree operations and Git initialization require Git on that backend. See [installation](install.md) and [Files](files.md).

@@ -164,6 +164,63 @@ test("assigns initially empty commands, persists, clears and resets them with li
   } finally { await context.close() }
 })
 
+test("Undo and Redo follow available targets while the palette stays open", async () => {
+  const { context, page, errors } = await open()
+  try {
+    await page.evaluate(() => (window as any).fixture.setRevert(false))
+    await page.getByRole("button", { name: "Palette", exact: true }).click()
+    const undo = page.getByRole("button", { name: /^Undo Last Message/ })
+    const redo = page.getByRole("button", { name: /^Redo Last Message/ })
+    assert.equal(await undo.isDisabled(), true, "empty conversation has no undo target")
+    assert.equal(await redo.isDisabled(), true)
+    await page.evaluate(async () => {
+      await (window as any).commandFixture.run("undo")
+      await (window as any).commandFixture.run("redo")
+    })
+    assert.equal(await page.evaluate(() => (window as any).commandFixture.alert()), null, "stale invocations are silent")
+    assert.equal(await page.evaluate(() => (window as any).fixture.redos()), 0)
+    await page.evaluate(() => (window as any).fixture.setMessages([
+      { id: "msg_01", role: "assistant", created: 1 },
+      { id: "msg_02", role: "user" },
+    ]))
+    assert.equal(await undo.isDisabled(), true, "assistant and incomplete user records are not targets")
+    await page.evaluate(() => (window as any).fixture.setMessages([
+      { id: "msg_01", role: "user", created: 1 },
+      { id: "msg_02", role: "user", created: 2 },
+    ]))
+    assert.equal(await undo.isDisabled(), false, "loaded user messages enable undo reactively")
+    await page.evaluate(() => (window as any).fixture.setHasClient(false))
+    assert.equal(await undo.isDisabled(), true)
+    assert.equal(await redo.isDisabled(), true)
+    await page.evaluate(() => (window as any).fixture.setHasClient(true))
+    await page.evaluate(() => (window as any).fixture.setStoreRevert("msg_02"))
+    assert.equal(await undo.isDisabled(), false, "the preceding user message remains undoable")
+    assert.equal(await redo.isDisabled(), false)
+    await page.evaluate(() => (window as any).fixture.setStoreRevert("msg_01"))
+    assert.equal(await undo.isDisabled(), true, "reverting the first user message exhausts undo")
+    assert.equal(await redo.isDisabled(), false)
+    for (const sessionId of [null, "info", "missing"]) {
+      await page.evaluate(id => (window as any).fixture.setSessionId(id), sessionId)
+      assert.equal(await undo.isDisabled(), true)
+      assert.equal(await redo.isDisabled(), true)
+    }
+    await page.evaluate(() => {
+      ;(window as any).fixture.setSessionId("session")
+      ;(window as any).fixture.setHasInstance(false)
+    })
+    assert.equal(await undo.isDisabled(), true)
+    assert.equal(await redo.isDisabled(), true)
+    await page.evaluate(() => {
+      ;(window as any).fixture.setHasInstance(true)
+      ;(window as any).fixture.setStoreRevert()
+    })
+    assert.equal(await redo.isDisabled(), true, "clearing the staged undo removes the redo target")
+    await page.evaluate(() => (window as any).commandFixture.executeMenuCommand("redo"))
+    assert.equal(await page.evaluate(() => (window as any).fixture.redos()), 0)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
 test("dispatches real palette actions with their disabled state, session context and modal guards", async () => {
   const { context, page, errors } = await open()
   try {

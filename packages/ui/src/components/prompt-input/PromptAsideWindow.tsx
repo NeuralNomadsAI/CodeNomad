@@ -28,7 +28,7 @@ export default function PromptAsideWindow(props: {
 
   return (
     <DismissibleWindow id={props.id} open={aside.open()} onClose={aside.close}
-      title={t("promptInput.btw.title")} description={t("promptInput.btw.description")}
+      title={t("promptInput.btw.title")}
       class="session-aside-window" initialFocus={() => aside.pending() ? closeButton : input}
       returnFocus={props.returnFocus}>
       <div class="window-header">
@@ -36,7 +36,6 @@ export default function PromptAsideWindow(props: {
         <WindowCloseButton ref={element => { closeButton = element }} label={t("promptInput.btw.close")} onClose={aside.close} />
       </div>
       <div class="window-body">
-        <p class="session-aside-description">{t("promptInput.btw.description")}</p>
         <form onSubmit={event => { event.preventDefault(); void aside.ask() }}>
           <label class="session-aside-label" for={`${props.id}-question`}>{t("promptInput.btw.question")}</label>
           <textarea ref={input} id={`${props.id}-question`} class="session-aside-question" rows={3}

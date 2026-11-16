@@ -26,7 +26,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "CodeNomad Discord",
 
   "folderSelection.empty.title": "אין תיקיות אחרונות",
-  "folderSelection.empty.description": "עיין בתיקייה כדי להתחיל",
 
   "folderSelection.recent.title": "תיקיות אחרונות",
   "folderSelection.recent.subtitle.one": "{count} תיקייה זמינה",
@@ -58,7 +57,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.destination.title": "בחר יעד לשכפול",
   "folderSelection.clone.destination.description": "בחר את התיקייה שתכיל את השכפול; תיקיית המאגר תיווצר בתוכה.",
   "folderSelection.clone.dialog.title": "שכפול מאגר Git",
-  "folderSelection.clone.dialog.description": "שכפל מאגר Git לתיקייה מקומית ולאחר מכן פתח אותה כסביבת עבודה.",
   "folderSelection.clone.dialog.repositoryUrl": "כתובת המאגר",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "תיקיית יעד",
@@ -80,10 +78,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "עיון",
 
   "folderSelection.loading.title": "מפעיל מופע...",
-  "folderSelection.loading.subtitle": "המתן בזמן שאנו מכינים את סביבת העבודה שלך.",
 
   "folderSelection.drop.title": "שחרר תיקייה כדי לפתוח אותה",
-  "folderSelection.drop.subtitle": "התחל מופע חדש בתיקייה שנשחררה.",
   "folderSelection.drop.invalidTitle": "לא ניתן לפתוח את הפריט שנשחרר",
   "folderSelection.drop.invalidMessage": "שחרר תיקייה כדי להתחיל מופע חדש.",
 
@@ -96,7 +92,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "פתח שרת CodeNomad מרוחק שמור בחלון חדש",
   "folderSelection.servers.count": "{count} שרתים",
   "folderSelection.servers.empty.title": "אין שרתים שמורים",
-  "folderSelection.servers.empty.description": "הוסף שרת מרוחק כדי להתחבר אליו במהירות מהמכשיר הזה",
   "folderSelection.servers.connectTitle": "התחבר לשרת",
   "folderSelection.servers.connectSubtitle": "שמור שרת CodeNomad מרוחק ופתח אותו בחלון חדש",
   "folderSelection.servers.connectButton": "התחבר לשרת",
@@ -104,7 +99,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "TLS בחתימה עצמית",
   "folderSelection.servers.errorTitle": "החיבור המרוחק נכשל",
   "folderSelection.servers.dialog.title": "התחבר לשרת",
-  "folderSelection.servers.dialog.description": "הוסף שרת CodeNomad מרוחק ופתח אותו מיד אם תרצה.",
   "folderSelection.servers.dialog.name": "שם השרת",
   "folderSelection.servers.dialog.namePlaceholder": "שרת ייצור",
   "folderSelection.servers.dialog.url": "כתובת השרת",

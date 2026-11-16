@@ -2,8 +2,8 @@
 
 ## Status and safety boundary
 
-A native local plugin entry registers `preview` and `prune` without forking
-OpenCode. Unsupported or absent plugins produce a localized failure, never a
+A native local plugin entry registers `preview` and `prune`.
+Unsupported or absent plugins produce a localized failure, never a
 legacy API fallback or optimistic deletion. Version labels never gate it; see
 [the audited boundary](SESSION_PRUNING_SAFETY.md).
 
@@ -254,8 +254,8 @@ in whichever form the runtime stores it (with `experimental.media_blob`, a blob 
 whose ref and blob the prune releases), the Images conversation (one creation for
 concurrent opens from two clients, a newer marked child, deletion, another location,
 restart) and gallery membership on that stored tool file. Unit tests cover rollback
-and client projection/read races; the gallery tests replay their proof mutations on
-copies of two Images transcripts in the OpenCode 2.2.3 format, with and without media blobs
+and client projection/read races; the gallery tests replay proof mutations on
+Images transcripts with and without media blobs
 (`assets-gallery-fixture.json`).
 `scripts/test-design-companion-native.mjs` drives an Images conversation end to end with a
 scripted chat model and a fake image model on the shipped bundle: two series of read images

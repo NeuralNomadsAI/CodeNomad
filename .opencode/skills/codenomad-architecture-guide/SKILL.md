@@ -72,11 +72,8 @@ author code into the primary renderer, expose generic RPC or grant native comman
 
 | Avoid | Use |
 |---|---|
-| `@opencode-ai/sdk` or other published-example clients | Installed `@opencode/client` declarations and generated routes |
-| One `opencode serve` per workspace | One externally owned global daemon through the official CLI lifecycle |
 | Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
 | General server plugin or background-process extension points | Native OpenCode APIs; narrow reviewed automation/browser-preview, Missions and session-pruning integrations |
-| OpenCode APIs for stage/commit/Yolo policy | CodeNomad routes and managers |
 | Hardcoded UI strings | `t()` / `tGlobal()` and every locale |
 
 ## References

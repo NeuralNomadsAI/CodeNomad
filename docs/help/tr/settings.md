@@ -8,7 +8,7 @@ Deneysel çoklu arka uç etkin olduğunda Tercihler, proje ayarları, sağlayıc
 2. Bir bölüm seçin. Yerel Electron ve Tauri pencereleri bir yerel Tercihler penceresini açar veya odaklar; tarayıcı ve uzak görünümler yerleşik ayarlar ekranını kullanır.
 3. Ayrılmadan önce ayarın kapsamını ve herhangi bir **Kaydet** eylemini kontrol edin.
 
-Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses, özel palet renkleri ve Yapılandırma Dosyaları açık bir **Kaydet** eylemini korur. Kaydetmenin başarısız olması değişikliğin uygulandığını doğrulamaz; yeniden denemeden önce ilgili bölümü yeniden açın veya yenileyin. Kısa açıklama için ayar başlığının yanındaki **i** simgesinin üzerine gelin veya odaklanın. Yardım bağlantısı varsa tıklamak, Enter'a basmak veya dokunmak ilgili bölümü arayüz dilinde sistem tarayıcısında ya da ayrı bir sekmede açar. Yalnızca ipucu içeren simgeler dokunulduğunda açıklamayı gösterir. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
+Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses, özel palet renkleri ve Yapılandırma Dosyaları açık bir **Kaydet** eylemini korur. Kısa açıklama için ayar başlığının yanındaki **i** simgesinin üzerine gelin veya odaklanın. Yardım bağlantısı varsa tıklamak, Enter'a basmak veya dokunmak ilgili bölümü arayüz dilinde sistem tarayıcısında ya da ayrı bir sekmede açar. Yalnızca ipucu içeren simgeler dokunulduğunda açıklamayı gösterir. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
 
 | Durum | Neyi yönetir |
 | --- | --- |
@@ -17,9 +17,9 @@ Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçi
 | Genel/Proje OpenCode ayarları | Görüntülenen kapsamda yerel eklenti/yapılandırma değişiklikleri. Proje kontrolleri etkin bir proje/Location gerektirir. |
 | Masaüstü veri profili | Yerel pencereler, yapılandırma dosyasından ve paylaşılan OpenCode hizmetinden bağımsız olarak geri yükleme durumu ve tarayıcı depolaması. Bkz. [Masaüstü pencereleri ve veriler](desktop.md). |
 
-**İstatistikler**, yalnızca açılan klasörü değil, bağlı OpenCode hizmetinin tamamını (tüm projeler, bağımsız klonlar ve alt oturumlar) son 7, 30, 90 veya 365 gün için kapsar. Açık bir proje gerektirir ve sağlayıcı faturalarını veya abonelik haklarını değil, OpenCode'un kaydettiği token ve maliyetleri gösterir; yenileme sırasında daha önce kaydedilmiş toplamlar görünebilir. Plan kotaları **Kullanım** Durum bölümüne aittir.
+Seçilen sağ panel sekmesi ve Dosyalar modu her proje sekmesi için ayrı kaydedilir. Son açık seçimleriniz yeni sekmelerin varsayılanlarını belirler; panel boyutları, sekme sırası, özelleştirme ve görünüm ortak düzen ve tercihler olarak kalır.
 
-Görüntü tercihlerinin değiştirilmesi OpenCode'u yeniden başlatmaz veya bir istemi yeniden oynatmaz. Yerel yapılandırma, hizmet bakımı ve kimlik bilgilerinin ayrı etkileri vardır: bkz. [OpenCode kurulumu](opencode.md), [Sağlayıcılar](providers.md) ve [Entegrasyonlar](integrations.md).
+**İstatistikler**, yalnızca açılan klasörü değil, bağlı OpenCode hizmetinin tamamını (tüm projeler, bağımsız klonlar ve alt oturumlar) son 7, 30, 90 veya 365 gün için kapsar. Açık bir proje gerektirir ve sağlayıcı faturalarını veya abonelik haklarını değil, OpenCode'un kaydettiği token ve maliyetleri gösterir; yenileme sırasında daha önce kaydedilmiş toplamlar görünebilir. Plan kotaları **Kullanım** Durum bölümüne aittir.
 
 ## Dil ve görünüm {#language-appearance}
 
@@ -34,37 +34,33 @@ Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen pal
 
 ## Bilgisayarı uyanık tutma {#keep-computer-awake}
 
-**Ayarlar → Genel** bölümündeki **CodeNomad çalışırken bilgisayarı uyanık tut** seçeneği varsayılan olarak kapalıdır. Hiçbir oturum çalışmasa bile yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önlemek için açın; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar. Başlığın yanındaki **i**, bu davranışı açıklar. Seçenek yalnızca masaüstü uygulamasının yerel pencerelerinde ve Tercihler penceresinde görünür; tarayıcı ve uzak görünümlerde gizlidir.
+**Ayarlar → Genel** bölümündeki **CodeNomad çalışırken bilgisayarı uyanık tut** seçeneği varsayılan olarak kapalıdır. Hiçbir oturum çalışmasa bile yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önlemek için açın; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar. Seçenek yalnızca masaüstü uygulamasının yerel pencerelerinde ve Tercihler penceresinde görünür; tarayıcı ve uzak görünümlerde gizlidir.
 
 ## Kalıcı ajan belleği {#agent-memory}
 
-Bellek arızasında gönderim devam eder. CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir. İddiaları güncel dosya ve komutlarla doğrulamaya devam edin.
+CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir.
 
 **Tercihler → Genel → Bellek** yolunu açın (tarayıcıda **Ayarlar → Genel**). Bellek varsayılan olarak kapalıdır. Ajanın yararlı bilgileri ve tercihleri konuşmalar arasında saklaması için etkinleştirin. Anahtar bağlı CodeNomad yapılandırması için geçerlidir; kapatmak kayıtları ve geçmişlerini korur. Kapalıyken ajanlar bellek aracı almaz; değişiklik yeniden başlatmadan, birkaç saniye içinde devam eden konuşmalara da uygulanır.
 
 - **Hakkınızda**: bu yapılandırmayı kullanan projeler arasında paylaşılan en fazla 60 kayıt.
-- **Proje**: en fazla 200 kayıt. Bu arayüz Tercihler’de seçilen projeyi, gömülü Ayarlar ise ana pencerenin etkin projesini kullanır. Ajanın `codenomad_memory` aracı ve oturum talimatları o oturumun klasörünü kullanır. Sunucu depoyu normalleştirilmiş Git uzak adresiyle, bu yoksa yerel depo yoluyla tanımlar; worktree’ler bu belleği paylaşır. Bu kapsamı seçmek için bir proje açın.
-
-Alt oturumlar dahil her oturum kayıt kurallarını ve sınırlı bir başlık ve tür listesini alır (talimat bloğu en fazla yaklaşık 8.000 karakterdir). Ajana işlem yapmadan önce ilgili kayıtları `codenomad_memory` ile okuması, iddiaları güncel dosya ve komutlarla doğrulaması ve kaydettiklerini belirtmesi söylenir. Boş bellek de kayıt kurallarını alır. Okunamayan kapsamlar kullanılamaz olarak dışarıda bırakılır. OpenCode isteğe bağlı oturum talimatı yeteneğine sahip değilse entegrasyon sessizce devre dışı kalır ve seçiminizi korur.
+- **Proje**: en fazla 200 kayıt. Bu arayüz Tercihler’de seçilen projeyi, gömülü Ayarlar ise ana pencerenin etkin projesini kullanır. Sunucu depoyu normalleştirilmiş Git uzak adresiyle, bu yoksa yerel depo yoluyla tanımlar; worktree’ler bu belleği paylaşır. Bu kapsamı seçmek için bir proje açın.
 
 1. Kapsamı ve kaydı seçin. **Yeni** ve **Değiştirildi**, bu tarayıcı veya masaüstü görünümünde kapsamın son başarılı incelemesinden sonraki değişiklikleri gösterir; geçerli ziyaret boyunca görünür kalırlar.
 2. **Başlık**, **Tür** (**Bilgi**, **Tercih** veya **Referans**) ve **Metin** alanlarını düzenleyip **Kaydet** seçeneğini kullanın. Başlık 60, metin 2.000 karakterle sınırlıdır. **İptal** kayıtlı içeriği geri getirir. Kayıt başka yerde değiştiyse **Yeniden yükle** ile inceleyip sonra kaydedin.
 3. Kaldırmak için kaydın işlem menüsünü açıp **Unut** işlemini onaylayın. Kayıt etkin bellekten çıkar; yerel Git eski metin dahil geçmişi korur. Unutmak ajanın kullanımını sonlandırır, güvenli veri silme değildir.
 4. Bellek doluysa yeniden denemeden önce kayıtları birleştirin veya unutun. Eşleşen başlıklar ya da büyük ölçüde örtüşen metinler mevcut bir kaydı değiştirir; Git önceki metni saklar.
 
-**İnceleme gerekli**, korumaları aşabilecek veya kimlik bilgilerini açığa çıkarabilecek şüpheli talimatları işaretler. Bu kayıtlar burada düzenlenebilir, sınıra dahil edilir ve ajanın başlık listesinden ve okumalarından çıkarılır. Her okumada kontrol edilirler; içeriği düzeltip kaydedin veya **Unut** seçeneğini kullanın. Hatalı biçimli veya okunamayan bellek boş liste yerine hata gösterir; yeniden denemeden önce nedeni giderin.
+**İnceleme gerekli**, korumaları aşabilecek veya kimlik bilgilerini açığa çıkarabilecek şüpheli talimatları işaretler. Bu kayıtlar burada düzenlenebilir, sınıra dahil edilir ve ajanın başlık listesinden ve okumalarından çıkarılır. Her okumada kontrol edilirler; içeriği düzeltip kaydedin veya **Unut** seçeneğini kullanın.
 
-**Düzenle**, onaydan sonra seçilen kapsamı doğrulayıp birleştirmek için Tercihler’de gösterilen projede yeni bir konuşma açar. Doğrulanamayan kayıtları ve dış referansları korur ve değişiklikleri bildirir. Açık bir proje ve en az bir işaretlenmemiş kaydı bulunan etkin, okunabilir ve yazılabilir bellek gerektirir. Başlatma doğrulanamazsa yeniden denemeden önce projenin konuşmalarını kontrol edin.
+**Düzenle**, onaydan sonra seçilen kapsamı doğrulayıp birleştirmek için Tercihler’de gösterilen projede yeni bir konuşma açar. Doğrulanamayan kayıtları ve dış referansları korur ve değişiklikleri bildirir. Açık bir proje ve en az bir işaretlenmemiş kaydı bulunan etkin, okunabilir ve yazılabilir bellek gerektirir.
 
-Belleği ajan yönetir. Zaten `.claude/…/MEMORY.md` gibi başka bir yerde bellek tutuyorsa ona bir **Referans** kaydeder; dış bellek dosyaları kendi yönetimlerinde kalır. CodeNomad yapılandırma klasöründeki `memory/global/` veya `memory/projects/<id>/` altında kayıt başına bir Markdown dosyası saklar; her kaydetme veya silme yerel Git commit’i oluşturur. Depolama yalnızca yereldir, uzak eşitleme yapılmaz. Yapılandırma ve profil sınırları için [Masaüstü pencereleri ve verileri](desktop.md) bölümüne bakın.
+Belleği ajan yönetir. Zaten `.claude/…/MEMORY.md` gibi başka bir yerde bellek tutuyorsa ona bir **Referans** kaydeder; dış bellek dosyaları kendi yönetimlerinde kalır. Depolama yalnızca yereldir, uzak eşitleme yapılmaz. Yapılandırma ve profil sınırları için [Masaüstü pencereleri ve verileri](desktop.md) bölümüne bakın.
 
 ## Paneller ve Durum bölümleri {#panels-status}
 
 **Durum** varsayılan olarak ilk sıradadır; kaydedilmiş sekme sırası önceliklidir. Sekme kullanılabilir kalır. **Sağ paneli özelleştir** içindeki oku, bölümlerin kendisini gizlemeden bölüm onay kutularının listesini daraltır veya genişletir.
 
-**Tokenlar** mesajlarla aynı metrik etiketlerini kullanır. Daraltıldığında girdi, çıktı ve maliyet başlık satırında kalır; genişletildiğinde düşünme de aynı satıra eklenir ve etiketler gerektiğinde alt satırlara geçer. Alt oturumları içeren toplamlar aşağıda gösterilir.
-
-Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyin. İşaretçi kenarın dışına çıksa bile sürükleme boyunca tutamaç vurgulanır ve işaretçi yakalama korunur. Bitirmek için bırakın.
+Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyin.
 
 1. Panelleri göstermek/gizlemek için dış başlık köşelerindeki **Sol panel** ve **Sağ panel** kontrollerini veya **Görünüm** menüsündeki karşılıklarını kullanın.
 2. Sağ panelde **Sağ paneli özelleştir** öğesini açın. Yerleşik sekmeleri ve Durum bölümlerini seçmek için onay kutularını kullanın; en az bir Durum bölümü görünür durumda kalır. Birkaçını tek seferde ayarlamak için bu onay kutularının üzerinde sürükleyin.
@@ -92,20 +88,19 @@ Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, 
 Başka bir CodeNomad sunucusundaki proje sekmesinin bildirimleri sunucu adını içerir. **Sohbeti görüntüle** tam olarak o projeyi ve konuşmayı açar; sunucuyu ayırmak bildirimlerini temizler. Görseller ve Web araması ayarları, genel varsayılanlar dahil projenin sunucusuna aittir.
 
 1. **Bildirimler** öğesini açın. Her bildirim türü için nerede görüneceğini işaretleyin: **Ekranda** (geçici bir baloncuk), **Geçmiş** (sekme çubuğundaki, macOS masaüstü uygulamasında başlık çubuğundaki zilin bildirim geçmişinde saklanır) ve **Sistem** (işletim sistemi bildirimi). Birkaçını tek seferde ayarlamak için bir kutu satırı veya sütunu üzerinde sürükleyin.
-2. Bir **Sistem** kutusunu işaretlemek gerekirse izin ister. **Sistem bildirimleri** altında, izin eksikken **İste** yeniden izin ister.
+2. Bir **Sistem** kutusunu işaretlemek gerekirse izin ister. **Sistem bildirimleri** altında, izin eksikken **İzin iste** yeniden izin ister.
 3. Bu pencere odaktayken de sistem bildirimlerini almak için **Uygulama odaktayken bildir** seçeneğini etkinleştirin. Aksi halde pencere ekranda açık kalsa bile odakta olmadığında bildirimler görünür.
 
 Varsayılan olarak **Bir oturum yanıtınızı bekliyor** ve **Bir oturum tamamlandı** yalnızca Sistem'e gider; böylece geçici oturum durumları Geçmiş'te birikmez. Bunlar alt ajanları değil ana oturumları ilgilendirir ve sizin durdurduğunuz bir oturum duyurulmaz. Hatalar, tablo ne gösterirse göstersin her zaman ekranda ve Geçmiş'te görünür; kısa ilerleme mesajları ise yalnızca ekranda kalır.
 
 Tarayıcı/İşletim Sistemi izni cihaza ve uygulama kaynağına aittir; kaydedilmiş bir tercih bir reddi geçersiz kılamaz. Engellenirse tarayıcı veya işletim sistemi ayarlarında bildirimleri etkinleştirin ve ardından buraya geri dönün. Desteklenmeyen ortamlarda Sistem sütunu devre dışı kalır.
 
-Yalnızca Geçmiş'e yönlendirilen bildirimleri sayan zil/okunmamış geçmiş sayısı, tarayıcı favicon noktasını ve yerel uygulama rozetini yönlendirir. Yerel rozetler canlı ana pencereleri bir araya getirir; bunlar çalışan oturumların sayısı veya bir işletim sistemi bildiriminin iletildiğinin kanıtı değildir. PWA başlatıcı rozetleri bu özellik tarafından sağlanmaz.
+Yalnızca Geçmiş'e yönlendirilen bildirimleri sayan zil/okunmamış geçmiş sayısı, tarayıcı favicon noktasını ve yerel uygulama rozetini yönlendirir.
 
 ## Gelişmiş seçenekler {#advanced}
 
 1. **Gelişmiş** öğesini açın.
 2. Yalnızca ihtiyacınız olan seçenekleri işaretleyin veya işaretini kaldırın; her değişiklik CodeNomad tercihleri aracılığıyla kaydedilir. Oturum yürütme ortamını değiştirmek için sondaki katlanmış **Ortam Değişkenleri** grubunu genişletin.
-3. Paylaşılan hizmeti spekülatif olarak yeniden başlatmak yerine ortaya çıkan görünümü veya sonraki gönderimi kontrol edin.
 
 | Seçenek | Etki ve dikkat |
 | --- | --- |

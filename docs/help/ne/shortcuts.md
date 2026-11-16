@@ -6,7 +6,7 @@
 2. कार्य नाम लेख्नुहोस्। प्यालेटमा application कार्य र हालको Location का custom command छन्; उपलब्धता सक्रिय दृश्यमा निर्भर हुन्छ।
 3. हालको UI भाषामा बाह्य browser सन्दर्भमा यो गाइड खोल्न **मद्दत खोल्नुहोस्** चलाउनुहोस्। नेटिभ **मद्दत → CodeNomad मद्दत** ले उही गाइड खोल्छ। **CodeNomad लाई आर्थिक सहयोग गर्नुहोस्** (नेटिभ **मद्दत → CodeNomad लाई आर्थिक सहयोग गर्नुहोस्**) ले त्यसै गरी [CodeNomad लाई आर्थिक सहयोग गर्नुहोस्](sponsor.md) पृष्ठ खोल्छ।
 
-मद्दतले एप दृश्य र मस्यौदा छुँदैन। खोल्न असफल भए सोझै [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) जानुहोस्। command खोजिनुमा shortcut अनुकूलन गर्न मिल्छ भन्ने होइन: shortcut manager ले 75 renderer कार्यको निश्चित catalogue समेट्छ, सबै palette वा native-menu कार्य होइन। यसमा **सत्र संक्षिप्त गर्नुहोस्**, **अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)** वा **मद्दत खोल्नुहोस्** जस्ता **कुनै सर्टकट छैन** बाट सुरु हुने palette command पनि छन्; project-folder, terminal र editor कार्य स्थानीय डेस्कटप विन्डोमा मात्र चल्छन्।
+मद्दतले एप दृश्य र मस्यौदा छुँदैन। command खोजिनुमा shortcut अनुकूलन गर्न मिल्छ भन्ने होइन: shortcut manager ले 75 renderer कार्यको निश्चित catalogue समेट्छ, सबै palette वा native-menu कार्य होइन। यसमा **सत्र संक्षिप्त गर्नुहोस्**, **अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)** वा **मद्दत खोल्नुहोस्** जस्ता **कुनै सर्टकट छैन** बाट सुरु हुने palette command पनि छन्; project-folder, terminal र editor कार्य स्थानीय डेस्कटप विन्डोमा मात्र चल्छन्।
 
 ## record, अक्षम र reset {#customize}
 
@@ -16,8 +16,6 @@
 4. conflict भएका हरेक row को चेतावनी समाधान गर्नुहोस्; conflict बताइन्छन्, चुपचाप अक्षम हुँदैनन्।
 
 binding CodeNomad UI configuration मा बचत हुन्छन् र साझा गर्ने क्लाइन्टलाई असर गर्छन्। OpenCode CLI/TUI binding वा native menu accelerator सम्पादन गर्दैनन्। recording ले app renderer shortcut रोक्छ, तर OS वा native menu रोक्न सक्दैन। **रद्द गर्नुहोस्**, focus गुम्दा, खण्ड बन्द गर्दा वा विन्डो छोड्दा recording सकिन्छ। एक्ला modifier र IME composition बेवास्ता हुन्छन्; साधारण Tab/Shift+Tab ले focus सार्छ।
-
-save असफल भए पुरानो shortcut उपलब्ध राख्नुहोस् र देखाइएको binding जाँचेर पुनःप्रयास गर्नुहोस्। आकस्मिक assignment का लागि Reset सुरक्षित पुनःप्राप्ति हो।
 
 ## Renderer default {#renderer-defaults}
 
@@ -74,4 +72,4 @@ Enter-to-submit अक्षम कन्फिगरेसनमा **इनप
 
 अङ्क पङ्क्ति र square-bracket shortcut ले AZERTY/QWERTZ समेत recording, execution र conflict जाँचमा भौतिक key स्थान प्रयोग गर्छन्। अन्य key ले logical मान प्रयोग गर्छन्। प्रयोग गर्ने किबोर्डमै record गरेर देखिएको नतिजा जाँच्नुहोस्।
 
-IME composition मा पाठ प्रवेश प्राथमिक हुन्छ। prompt history र Escape कार्य पनि focus, picker/shell अवस्था र हालको कार्यमा निर्भर छन्; हरेक ArrowUp वा Escape सर्तरहित global कार्य हो नमान्नुहोस्। डेस्कटपमा पठाउँदा focus कुराकानीमा सर्छ, त्यसैले arrow, paging key र Space ले यसलाई scroll गर्छन्; कुनै अक्षर टाइप गर्दा त्यही अक्षरसहित कम्पोजरमा फर्किन्छ, र **इनपुटमा फोकस गर्नुहोस्** ले prompt history प्रयोग गर्नुअघि त्यहाँ फर्काउँछ। command palette, खोज, नयाँ सत्र, जानकारी र कम्पोजर selector जस्ता नियन्त्रणका tooltip ले हालको shortcut देखाउँछन्; shortcut manager सँगै तिनले स्थायी keyboard-help strip नथपी assignment देखाउँछन्।
+IME composition मा पाठ प्रवेश प्राथमिक हुन्छ। prompt history र Escape कार्य पनि focus, picker/shell अवस्था र हालको कार्यमा निर्भर छन्; हरेक ArrowUp वा Escape सर्तरहित global कार्य हो नमान्नुहोस्। डेस्कटपमा पठाउँदा focus कुराकानीमा सर्छ, त्यसैले arrow, paging key र Space ले यसलाई scroll गर्छन्; कुनै अक्षर टाइप गर्दा त्यही अक्षरसहित कम्पोजरमा फर्किन्छ, र **इनपुटमा फोकस गर्नुहोस्** ले prompt history प्रयोग गर्नुअघि त्यहाँ फर्काउँछ।

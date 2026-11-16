@@ -29,7 +29,6 @@ function palette(
   return {
     id, appearance, editable: false,
     labelKey: `settings.appearance.palette.${family}`,
-    descriptionKey: `settings.appearance.palette.${family}.description`,
     colors: { ...(appearance === "dark" ? DARK_IDENTITY_COLORS : LIGHT_IDENTITY_COLORS), ...colors },
   }
 }

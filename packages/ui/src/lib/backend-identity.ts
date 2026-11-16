@@ -40,7 +40,7 @@ export function parseInstanceKey(key: string): { backendId: BackendId; workspace
   return { backendId: LOCAL_BACKEND_ID, workspaceId: key }
 }
 
-/** One project of one backend: the key of its per-project view state (Missions, previews). */
+/** One project of one backend: completion acknowledgements and legacy layout keys. */
 export function projectScope(project: { folder: string; backendId?: BackendId }): string {
   return backendScoped(project.backendId, project.folder)
 }

@@ -4,7 +4,7 @@ import type { MissionProfiles } from "../../../server/src/missions/playbook-prof
 import { sameExecution, type MissionExecution } from "../../../server/src/missions/execution"
 import { changeMissionProfile, setMissionProfileRole } from "./mission-profile-controls-data"
 import { useI18n } from "../lib/i18n"
-import { globalMissionTaskMode, normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionDefaultScope, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
+import { encodeMissionDefaults, globalMissionTaskMode, normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionDefaultScope, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
 import { useConfig, preferencesOf } from "../stores/preferences"
 import { backendEvents } from "../lib/backend-events"
 import { MissionProfileControls } from "./mission-profile-controls"
@@ -16,6 +16,7 @@ import { MissionModelLibrary } from "./mission-model-library"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { canonicalJson } from "../stores/client-state-partition-json"
 
 /** The next document, or undefined when the stored value this edit was made from has changed. */
 type DefaultsEdit = (defaults: MissionProfileDefault[]) => MissionProfileDefault[] | undefined
@@ -79,16 +80,21 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     const previous = state.writeSignal === operation.signal ? state.writes : Promise.resolve()
     state.writeSignal = operation.signal
     state.writes = previous.then(async () => {
+      let next: MissionProfileDefault[] | undefined
       try {
         operation.signal.throwIfAborted()
-        const next = edit(normalizeMissionDefaults(target.preferences().missionProfileDefaults))
+        next = edit(normalizeMissionDefaults(target.preferences().missionProfileDefaults))
         if (!next) throw new Error("Mission defaults changed since this edit")
         await target.saveMissionDefaults(next, target.missionPreferenceSnapshot("missionProfileDefaults"), repair)
       } catch (error) {
         if (!operation.current()) return
         // Show what is actually stored (read-only). Later edits recheck what they were made from.
         if (!(error instanceof ConfigOwnerReconciliationPendingError)) setFailed(true)
-        await target.reloadMissionPreferences().catch(() => {})
+        try {
+          await target.reloadMissionPreferences()
+          if (operation.current()) setFailed(!next || !target.missionDefaultsValid()
+            || canonicalJson(target.preferences().missionProfileDefaults) !== canonicalJson(encodeMissionDefaults(next)))
+        } catch {}
       } finally { setQueued(edits => edits.filter(queued => queued !== edit)) }
     })
   }
@@ -125,7 +131,8 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     commit(() => [], true); refocus(() => scopeSelect)
   }
   return <div class="mission-preferences">
-    <header><h4 title={t("missions.defaults.hint")}>{t("missions.defaults.title")}</h4></header>
+    <header><div class="flex items-center gap-2"><h4>{t("missions.defaults.title")}</h4>
+      <SettingsInfoTip text={t("missions.defaults.hint")} help={{ page: "missions", anchor: "agents-models" }} /></div></header>
     <Show when={!config.isUiConfigLoaded() && !writing()}>
       <p role={config.uiConfigLoadFailed() ? "alert" : "status"}>{t(config.uiConfigLoadFailed() ? "missions.defaults.unavailable" : "missions.defaults.loading")}</p>
       <Show when={config.uiConfigLoadFailed()}><div class="mission-preferences-actions">
@@ -139,7 +146,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
         <button type="button" class="window-action" aria-label={t("missions.defaults.reload")} disabled={!props.active() || reloading()} onClick={() => void reload()}>{t("missions.preferences.reload")}</button>
       </div>
     </Show>
-    <label class="mission-preferences-scope"><span>{t("missions.defaults.scope")}<SettingsInfoTip text={t("missions.defaults.priority")} /></span>
+    <label class="mission-preferences-scope"><span>{t("missions.defaults.scope")}</span>
       <select ref={scopeSelect} aria-label={t("missions.defaults.scope")} value={template()} disabled={disabled()}
       onChange={event => setTemplate(event.currentTarget.value as MissionDefaultScope)}>
       <option value="all">{t("missions.defaults.allPlaybooks")}</option>

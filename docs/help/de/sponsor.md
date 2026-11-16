@@ -1,7 +1,5 @@
 # CodeNomad unterstützen
 
-CodeNomad ist frei und quelloffen und wird von Freiwilligen gepflegt. Sponsoring finanziert die Zeit, die Fehlerbehebungen, Releases und Verbesserungen erfordern.
-
 ## Warum CodeNomad sponsern {#why}
 
 CodeNomad steht unter der [MIT-Lizenz](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) und ist kostenlos herunterzuladen und zu nutzen. Pascal André und Shantur Rathore pflegen es in ihrer Freizeit, mit Beiträgen aus der Community. OpenCode wird unabhängig aktualisiert, daher braucht CodeNomad schon für die Kompatibilität regelmäßige Arbeit, noch vor jeder neuen Funktion.
@@ -12,8 +10,6 @@ CodeNomad steht unter der [MIT-Lizenz](https://github.com/NeuralNomadsAI/CodeNom
 - **Releases**: die Apps für Windows, macOS und Linux bauen, testen und veröffentlichen.
 - **Sprachen**: die Oberfläche und diese Hilfe in zehn Sprachen aktuell halten.
 - **Neue Funktionen**, etwa die Arbeit hinter [Missionen](missions.md), [Fernsteuerung](remote-control.md) und der [Verlaufssuche](history.md).
-
-Langfristiges Ziel ist, dass die Entwicklung von CodeNomad von den Menschen und Unternehmen finanziert wird, die es nutzen.
 
 ## Finanzierungsgrundsätze {#policy}
 

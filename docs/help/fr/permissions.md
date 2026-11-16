@@ -15,8 +15,6 @@ Les questions, Forms et demandes d’autorisation natives se traitent dans le do
 | Autre conversation | Commence par un aperçu compact ; développez explicitement pour répondre sans quitter la conversation actuelle |
 | Demande de projet / de service | Un Form peut ne pas avoir de conversation propriétaire ; aucun lien de conversation inventé n’est affiché |
 
-Les arrivées ne remplacent pas la demande en cours d’édition et ne vous font pas naviguer ailleurs. La sélection reste sur la même demande pendant les actualisations de file ; les flèches ne bouclent pas aux extrémités. Après règlement, la demande d’une autre conversation sans rapport reste compacte jusqu’à son ouverture.
-
 **Replier les demandes** masque le corps ; cela ne refuse, n’annule et ne répond à rien. Un éditeur développé réduit temporairement la zone de saisie à sa hauteur minimale sans changer sa taille enregistrée ni son brouillon. Son contenu défile indépendamment des actions de réponse fixes.
 
 ## Répondre aux questions et Forms {#answer-questions-forms}
@@ -25,7 +23,7 @@ Les arrivées ne remplacent pas la demande en cours d’édition et ne vous font
 2. Lorsqu’un champ de choix autorise les réponses personnalisées, un champ de texte supplémentaire s’affiche : saisissez-y votre propre réponse à la place d’un choix proposé (ou ajoutez des valeurs personnalisées pour un champ à choix multiples). Répondez à chaque question obligatoire.
 3. Choisissez **Envoyer** ; n’utilisez **Annuler** pour une question ou un Form que si vous souhaitez cette annulation native.
 
-Les réponses partielles et brouillons de refus survivent aux actualisations de file et à la navigation entre conversations dans le client actif. Ce ne sont ni une décision soumise ni une garantie de récupération après effacement des données du client. Une réponse échouée reste modifiable ; inspectez la demande en attente avant de réessayer. CodeNomad ne rejoue pas automatiquement une réponse.
+Les réponses partielles et brouillons de refus survivent aux actualisations de file et à la navigation entre conversations dans le client actif. Ce ne sont ni une décision soumise ni une garantie de récupération après effacement des données du client.
 
 Certains Forms proposent **Ouvrir le formulaire externe** pour un parcours navigateur. Suivez les instructions puis revenez à son statut, sans considérer une page ouverte comme une réponse réussie. Les Forms arbitraires de fournisseur/d’authentification ne sont pas nécessairement des éléments de conversation.
 
@@ -45,7 +43,7 @@ Les outils de question natifs terminés montrent dans l’historique la question
 
 L’approbation peut déclencher immédiatement l’exécution d’un outil. Ce n’est pas une simulation. Les limites de diff/lecture et les contrôles d’identité de source peuvent empêcher une approbation si le contenu demandé ne peut pas être validé ; actualisez et examinez la demande réelle plutôt que d’approuver par supposition une autre opération.
 
-Si un autre client règle une demande, elle peut disparaître ici. Un délai dépassé ou une réponse échouée ne prouve pas si le service natif a accepté la décision : laissez la réconciliation des demandes actualiser le dock avant de faire un autre choix délibéré. Une réponse ambiguë n’est jamais affichée comme une décision confirmée inventée.
+Si un autre client règle une demande, elle peut disparaître ici. Un délai dépassé ou une réponse échouée ne prouve pas si le service natif a accepté la décision : laissez la réconciliation des demandes actualiser le dock avant de faire un autre choix délibéré.
 
 ## Lire les reçus d’autorisation {#permission-receipts}
 
@@ -73,6 +71,5 @@ Désactiver Yolo ne révoque pas une décision déjà acceptée et n’annule pa
 
 1. Vérifiez l’indicateur de connexion et reconnectez-vous au même backend/projet.
 2. Laissez la récupération réconcilier les demandes natives en attente ; les demandes connues et brouillons restent conservés si la couverture est incomplète.
-3. Si l’avertissement **récupération incomplète des questions et permissions** apparaît, il indique le projet, la cause, les dossiers et les sessions concernés. Corrigez cette cause (par exemple un worktree supprimé, ou une session qui travaille hors de ce projet) ; le passage de récupération suivant réessaie automatiquement. Chaque avertissement n'apparaît qu'une fois par projet, même après une reconnexion ou un rechargement de la page. Si **Des questions en attente peuvent manquer** apparaît à la place, CodeNomad n'a pas pu joindre son plugin dans OpenCode : les nouvelles demandes s'affichent toujours, et redémarrer CodeNomad peut corriger le problème ; le journal du serveur en indique la cause.
 
-La récupération ne charge pas tous les worktrees inactifs pour énumérer les demandes. Une réponse incomplète n’est pas une file vide faisant autorité, et l’avertissement n’autorise pas à répéter un prompt, une réponse ou une approbation. Recharger la configuration peut annuler des Forms/autorisations natifs ; ne l’utilisez pas comme bouton d’actualisation habituel des demandes. Voir [Dépannage](troubleshooting.md) et [Configuration d’OpenCode](opencode.md).
+Une réponse incomplète n’est pas une file vide faisant autorité, et l’avertissement n’autorise pas à répéter un prompt, une réponse ou une approbation. Recharger la configuration peut annuler des Forms/autorisations natifs ; ne l’utilisez pas comme bouton d’actualisation habituel des demandes. Voir [Dépannage](troubleshooting.md) et [Configuration d’OpenCode](opencode.md).

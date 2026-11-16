@@ -42,6 +42,6 @@ Yalnızca bu sayfadan veya [resmî sürümlerden](https://github.com/NeuralNomad
 
 ## Geliştirmeyi destekleyin {#support-development}
 
-CodeNomad ücretsizdir ve gönüllüler tarafından boş zamanlarında sürdürülür. Size veya ekibinize faydalıysa sponsorluk, bakımının sürmesine ve yeni OpenCode sürümleriyle uyumlu kalmasına yardımcı olur. [CodeNomad'i destekleyin](sponsor.md) sayfası sponsorluğun neleri finanse ettiğini açıklar.
+[CodeNomad'i destekleyin](sponsor.md) sayfası sponsorluğun neleri finanse ettiğini açıklar.
 
 {{funding}}

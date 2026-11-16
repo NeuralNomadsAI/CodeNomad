@@ -99,7 +99,9 @@ test("certified rejection while hidden releases only its owned intent; reactivat
       if (calls.length === 1) { submitted(); await held; current = { ...current, revision: 2 }; return route.fulfill({ status: 409, json: { code: "revision-conflict" } }) }
       current = { ...current, revision: 3, runState: "paused" }; return route.fulfill({ json: { mission: current } })
     })
-    await open(page); await pause(page).click(); await sent; await call(page, "activate", false)
+    await open(page); await pause(page).click(); await sent
+    assert.equal(await page.locator(".mission-action-feedback [role=status]").textContent(), "Pausing mission…")
+    await call(page, "activate", false)
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response; await tick(page)
     const readsWhileHidden = reads - before
@@ -128,6 +130,7 @@ test("uncertain row remount and native reconnect invalidations retain exact orig
       return route.fulfill({ status: 409, json: {} })
     })
     await open(page); await pause(page).click(); await settle(page)
+    assert.equal(await page.locator(".mission-action-feedback [role=alert]").textContent(), "Action not yet confirmed. Check status before retrying.")
     await remount(page); await settle(page)
     assert.equal(await retryCount(page), 1); assert.equal(await pause(page).count(), 0); assert.equal(await check(page).isEnabled(), true)
     const refreshed = waitForMissionPanelRefresh(page)
@@ -247,6 +250,8 @@ test("window capacity fails closed without eviction; exact release enables admis
     })
     assert.deepEqual(count, { filled: 63, available: false, overflow: false })
     await select(page, "two"); assert.equal(await pause(page).isDisabled(), true)
+    assert.equal(await page.locator(".mission-action-feedback [role=alert]").textContent(), "Too many unconfirmed actions. Check their status.")
+    assert.equal(calls.length, 1, "capacity feedback sends nothing and preserves the first intent")
     assert.equal(await retryOffered(page), true); assert.equal(await missionRefresh(page).isEnabled(), true)
     await retry(page); await settle(page); assert.deepEqual(calls[1], calls[0])
     await page.evaluate(async () => {

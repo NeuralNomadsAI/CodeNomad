@@ -12,8 +12,6 @@ The action prefills the CodeNomad and OpenCode versions (including the running O
 
 If you need more diagnostics, **Copy to clipboard** or **Download .txt** produces a separate report. That fuller report can contain local paths and network addresses: review and redact it before attaching it. A screenshot or log excerpt can still contain secrets even when the automatic diagnostic report excludes authentication secrets.
 
-If the GitHub form has incompatible fields, CodeNomad opens a plain issue with the same report information. A temporary failure reading the form does not prevent opening it. You can always use [the issue list](https://github.com/NeuralNomadsAI/CodeNomad/issues) manually.
-
 ## Community and releases {#community}
 
 | Resource | Use |
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Development changes affect the development host, not an independently running OpenCode daemon's installed version. Native packaging needs the appropriate target tools; prefer builds on the target OS.
+Native packaging needs the appropriate target tools; prefer builds on the target OS.
 
 ### Build and validate {#build-and-validate}
 

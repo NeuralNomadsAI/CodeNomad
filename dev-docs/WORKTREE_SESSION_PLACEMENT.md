@@ -70,8 +70,7 @@ References: [Git worktree](https://git-scm.com/docs/git-worktree) and
 
 ## Shared model, explicit user choice
 
-OpenCode's native session location is both an execution context and the source of
-truth for CodeNomad's session projection. The concepts are related, but distinct:
+Use the native session location for execution context and session projection:
 
 | Concept | Meaning |
 | --- | --- |
@@ -140,9 +139,8 @@ context hook:
 
 > When you create a worktree outside the current working directory and intend to use it as your primary working directory, consider using `execute` to call `tools.opencode.session_move` and make the worktree the session's working directory.
 
-This is core runtime behavior for every client. CodeNomad complements
-it with its creation convention, explicit user intent and the distinction between
-a one-off working-directory override and moving the conversation's execution context.
+This runtime guidance applies to every client; CodeNomad qualifies it with the
+creation and user-authorized placement rules above.
 
 `packages/ui/src/stores/session-instructions.ts` supplies the named native entry
 `codenomad.session-placement`. It explicitly distinguishes working elsewhere from

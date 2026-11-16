@@ -34,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "Сначала откройте проект.",
 
   "commands.closeInstance.label": "Закрыть вкладку",
-  "commands.closeInstance.description": "Закрыть текущую верхнеуровневую вкладку",
   "commands.closeInstance.keywords": "остановить, выйти, закрыть, вкладка",
 
   "commands.nextInstance.label": "Следующая вкладка",
-  "commands.nextInstance.description": "Переключиться на следующую верхнеуровневую вкладку",
   "commands.nextInstance.keywords": "переключить, навигация, вкладка",
 
   "commands.previousInstance.label": "Предыдущая вкладка",
-  "commands.previousInstance.description": "Переключиться на предыдущую верхнеуровневую вкладку",
   "commands.previousInstance.keywords": "переключить, навигация, вкладка",
 
   "commands.newSession.label": "Новая сессия",
@@ -62,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "информация, логи, консоль, вывод",
 
   "commands.nextSession.label": "Следующая сессия",
-  "commands.nextSession.description": "Переключиться на следующую вкладку сессии",
   "commands.nextSession.keywords": "переключить, навигация",
 
   "commands.previousSession.label": "Предыдущая сессия",
-  "commands.previousSession.description": "Переключиться на предыдущую вкладку сессии",
   "commands.previousSession.keywords": "переключить, навигация",
 
   "commands.previousUserMessage.label": "Предыдущее сообщение пользователя",
-  "commands.previousUserMessage.description": "Перейти к предыдущему сообщению, которое вы отправили в этом разговоре",
   "commands.previousUserMessage.keywords": "перейти, навигация, запрос, сообщение пользователя",
   "commands.nextUserMessage.label": "Следующее сообщение пользователя",
-  "commands.nextUserMessage.description": "Перейти к следующему сообщению, которое вы отправили в этом разговоре",
   "commands.nextUserMessage.keywords": "перейти, навигация, запрос, сообщение пользователя",
 
   "commands.compactSession.label": "Компактировать сессию",
@@ -91,13 +84,12 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "Выводы инструментов: {toolCount}; блоки рассуждений: {reasoningCount}. Итоговый текст будет сохранён.",
   "commands.removeSessionTechnicalParts.confirm.label": "Удалить",
   "commands.removeSessionTechnicalParts.failed.title": "Ошибка удаления",
-  "commands.removeSessionTechnicalParts.failed.message": "Не удалось очистить ответов: {count}.",
+  "commands.removeSessionTechnicalParts.failed.message.one": "Не удалось очистить {count} ответ.",
+  "commands.removeSessionTechnicalParts.failed.message.other": "Не удалось очистить ответов: {count}.",
 
   "commands.undoLastMessage.label": "Отменить последнее сообщение",
   "commands.undoLastMessage.description": "Откатить последнее сообщение",
   "commands.undoLastMessage.keywords": "откат, отмена",
-  "commands.undoLastMessage.none.title": "Нечего отменять",
-  "commands.undoLastMessage.none.message": "Нечего отменять",
   "commands.undoLastMessage.failed.title": "Не удалось отменить",
   "commands.undoLastMessage.failed.message": "Не удалось откатить сообщение",
   "commands.redoLastMessage.label": "Повторить последнее сообщение",
@@ -107,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "Не удалось отменить подготовленный откат",
 
   "commands.openModelSelector.label": "Открыть выбор модели",
-  "commands.openModelSelector.description": "Выбрать другую модель",
   "commands.openModelSelector.keywords": "модель, llm, ai",
 
   "commands.selectModelVariant.label": "Выбрать вариант модели",
@@ -115,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "вариант, thinking, reasoning, интенсивность",
 
   "commands.openAgentSelector.label": "Открыть выбор агента",
-  "commands.openAgentSelector.description": "Выбрать другого агента",
   "commands.openAgentSelector.keywords": "агент, режим",
 
   "commands.clearInput.label": "Очистить ввод",
-  "commands.clearInput.description": "Очистить поле prompt",
   "commands.clearInput.keywords": "очистить, сброс",
 
   "commands.thinkingBlocks.label.show": "Показать размышления",

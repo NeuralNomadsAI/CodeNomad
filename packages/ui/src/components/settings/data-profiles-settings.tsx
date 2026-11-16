@@ -340,7 +340,6 @@ export const DataProfilesSettings: Component = () => {
               >
                 {t(`${key}.restart`, { name: displayName(next() ?? "") })}
               </button>
-              <span class="settings-help-text">{t(`${key}.restartHint`)}</span>
             </div>
           </Show>
         </details>

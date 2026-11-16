@@ -910,8 +910,12 @@ test("Clear and selector shortcuts drive the shown composer, in a conversation a
       assert.equal(await send.isEnabled(), false)
       assert.equal(await composer.evaluate(element => element === document.activeElement), true)
       await page.keyboard.press("Control+Shift+A")
-      await page.waitForFunction(() => document.activeElement?.hasAttribute("data-agent-selector"))
-      await page.keyboard.press("Escape")
+       // The hidden combobox input owns focus only until the popup opens.
+       const agentSearch = page.locator('.selector-search-input[placeholder="Select agent..."]:visible')
+       await agentSearch.waitFor()
+       await page.waitForFunction(() => document.activeElement?.matches('.selector-search-input[placeholder="Select agent..."]'))
+       await page.keyboard.press("Escape")
+       await agentSearch.waitFor({ state: "hidden" })
       await page.evaluate(() => (window as any).fixture.selectSession(null))
     }
   } finally { await page.close() }

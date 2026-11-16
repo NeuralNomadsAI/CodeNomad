@@ -58,7 +58,7 @@ async function setup(page: Page, preferences: "accept" | "reject", initial: Reco
   await page.evaluate(async () => {
     const instances = "/src/stores/instances.ts", view = "/src/stores/mission-view-state.ts"
     ;(await import(instances)).setActiveInstanceId("fixture")
-    ;(await import(view)).updateMissionProjectView("/fixture", { selected: "msn_done" })
+    ;(await import(view)).updateMissionProjectView("fixture", { selected: "msn_done" })
   })
   return { errors, writes, missionWrites }
 }
@@ -93,7 +93,7 @@ test("a native rejection is reported instead of opening embedded Settings", asyn
   const fixture = await setup(page, "reject")
   try {
     await page.locator(".mission-control-header").getByRole("button", { name: "Preferences", exact: true }).click()
-    await page.getByText("Preferences could not open in their window.", { exact: false }).waitFor()
+    await page.getByText("Could not open Preferences.", { exact: false }).waitFor()
     assert.equal((await calls(page)).length, 1, "never retried")
     assert.equal(await settingsOpen(page), false)
     assert.deepEqual(fixture.errors, [])

@@ -21,7 +21,7 @@ import { getMessageWindowPageKey } from "../../message-history-pagination"
 import { useTaskStepCopy } from "./task-copy"
 import { getCanonicalToolName } from "../tool-presentation"
 import { describeTaskTitle, readSubagentName } from "./task-title"
-import { cachedSubagentDeliveries, indexSubagentDeliveries, isBackgroundSubagentLaunch, latestReportForLaunch, subagentCallTime, type SubagentReport } from "./subagent-report"
+import { cachedSubagentDeliveries, indexSubagentDeliveries, isBackgroundSubagentLaunch, latestChildState, latestReportForLaunch, subagentCallTime, type SubagentReport } from "./subagent-report"
 
 const TASK_MESSAGE_SCAN_LIMIT = 10_000
 
@@ -44,12 +44,13 @@ function extractSessionIdFromTaskState(state?: ToolState): string {
   return typeof directId === "string" ? directId : ""
 }
 
-/** A background launch's latest report in the parent session; null for foreground calls. */
-function readBackgroundReport(context: Pick<import("../types").ToolRendererContext, "instanceId" | "sessionId" | "toolCall" | "toolState">): SubagentReport | null | undefined {
+/** The inputs every subagent delivery read needs; undefined for foreground calls. */
+type SubagentDeliveryContext = Pick<import("../types").ToolRendererContext, "instanceId" | "sessionId" | "toolCall" | "toolState">
+
+/** The parent session's delivery index, this call's child id and execution start. */
+function readDeliveriesContext(context: SubagentDeliveryContext) {
   const state = context.toolState()
   if (!isBackgroundSubagentLaunch(state)) return undefined
-  const childId = extractSessionIdFromTaskState(state)
-  if (!childId) return null
   const store = messageStoreBus.getOrCreate(context.instanceId)
   // Track the parent session's revision only; the index is shared by its cards.
   const revision = store.getSessionRevision(context.sessionId)
@@ -57,10 +58,28 @@ function readBackgroundReport(context: Pick<import("../types").ToolRendererConte
   const index = untrack(() => cachedSubagentDeliveries(messageIds, revision, () => indexSubagentDeliveries(messageIds, store.getMessage)))
   const call = context.toolCall()
   const launchedAt = subagentCallTime(call, untrack(() => call.messageID ? store.getMessage(call.messageID)?.createdAt : undefined) ?? 0)
-  return latestReportForLaunch(index.get(childId), launchedAt, (messageId, partId) => {
+  const readText = (messageId: string, partId: string) => {
     const text = (store.getMessage(messageId)?.parts[partId]?.data as { text?: unknown } | undefined)?.text
     return typeof text === "string" ? text : undefined
-  })
+  }
+  return { childId: extractSessionIdFromTaskState(state), index, launchedAt, readText }
+}
+
+/** A background launch's latest report in the parent session; null for foreground calls. */
+function readBackgroundReport(context: SubagentDeliveryContext): SubagentReport | null | undefined {
+  const deliveries = readDeliveriesContext(context)
+  if (!deliveries) return undefined
+  if (!deliveries.childId) return null
+  return latestReportForLaunch(deliveries.index.get(deliveries.childId), deliveries.launchedAt, deliveries.readText)
+}
+
+/** The child session's state across its whole range, shared by every card that continued it. */
+function readChildSessionStatus(context: SubagentDeliveryContext): { status: ToolState["status"]; endedAt?: number } | undefined {
+  const deliveries = readDeliveriesContext(context)
+  if (!deliveries) return undefined
+  const child = deliveries.childId ? latestChildState(deliveries.index.get(deliveries.childId), deliveries.readText) : null
+  if (!child || child.state === "running") return { status: "running" }
+  return { status: child.state === "completed" ? "completed" : "error", endedAt: child.createdAt }
 }
 
 function splitToolKey(key: string): { messageId: string; partId: string } | null {
@@ -192,6 +211,7 @@ export const taskRenderer: ToolRenderer = {
   tools: ["task"],
   getSearchText: getTaskToolSearchText,
   getAction: ({ t }) => t("toolCall.task.action.delegating"),
+  getHeaderStatus: readChildSessionStatus,
   getOutputChrome(context) {
     const report = readBackgroundReport(context)
     const output = report === undefined ? getTaskOutputCopyText(context.toolState()) : report?.body || null
@@ -435,6 +455,7 @@ export const taskRenderer: ToolRenderer = {
     }
     const childSourceActive = () => childToolKeys().length > 0 || childTranscriptIncomplete()
     const stepsTruncated = () => resolveTaskStepTruncation(childSourceActive(), childStepsOverflow(), legacySummary().truncated)
+    const stepCount = () => stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length
 
     const childTaskCopy = useTaskStepCopy({
       captureOperation: signal => captureBackendOperation(instanceId, signal),
@@ -499,7 +520,7 @@ export const taskRenderer: ToolRenderer = {
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>
               <span class="tool-call-io-actions">
                 <span class="tool-call-task-section-meta">
-                  {t("toolCall.task.steps.count", { count: stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length })}
+                  {t(stepCount() === 1 ? "toolCall.task.steps.count.one" : "toolCall.task.steps.count.other", { count: stepCount() })}
                 </span>
                 <Show when={childTranscriptIncomplete()}>
                   <button type="button" class="tool-call-header-icon-button tool-call-io-copy" disabled={childTaskCopy.pending()} onClick={() => void childTaskCopy.copy().catch(() => {})} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>

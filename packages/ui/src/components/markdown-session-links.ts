@@ -1,23 +1,22 @@
 import { tGlobal } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
-import { projectScope } from "../lib/backend-identity"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { showAlertDialog } from "../stores/alerts"
-import { instances } from "../stores/instances"
+import { activeInstanceId, instances } from "../stores/instances"
 import { openFilePreview } from "../stores/files-preview"
 import { getWorktreeForDirectory } from "../stores/worktrees"
-import { openSessionPreview, getSessionPreview, showSessionChat } from "../stores/session-previews"
-import { sessions } from "../stores/session-state"
+import { openSessionPreview } from "../stores/session-previews"
+import { activeSessionId, sessions } from "../stores/session-state"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 
 // A loopback link click opens the session preview on the instance owning
 // the session; failures surface through the shared alert dialog.
 const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
-  const instance = instances().get(instanceId)
-  if (!instance) return
   const operation = captureBackendOperation(instanceId)
-  void openSessionPreview(sessionId, url, projectScope(instance), instanceId).catch((error) => {
+  void openSessionPreview(sessionId, url, instanceId).catch((error) => {
     if (!operation.current()) return
+    if (error instanceof Error && error.name === "AbortError") return
+    if (activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== sessionId) return
     showAlertDialog(tGlobal("sessionPreview.open.title"), {
       title: tGlobal("sessionPreview.open.title"),
       detail: error instanceof Error ? error.message : String(error),
@@ -86,9 +85,6 @@ export function routeSessionLink(instanceId: string, sessionId: string, href: st
   }
   const resolution = resolveSessionProjectLink(instanceId, sessionId, href)
   if (resolution) {
-    // A browser preview owning the central surface steps aside for the reader.
-    const preview = getSessionPreview(sessionId, projectScope(instance))
-    if (preview) showSessionChat(preview.storageKey)
     openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution })
     return true
   }

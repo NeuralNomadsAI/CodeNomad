@@ -1,6 +1,6 @@
 export const missionCreateMessages = {
   "missions.create.objective": "מטרה",
-  "missions.create.objectivePlaceholder": "תארו את התוצאה הרצויה. במשימה יומית, ההוראות האלה חלות על כל הרצה.",
+  "missions.create.objectivePlaceholder": "תארו את התוצאה הרצויה.",
   "missions.create.title": "כותרת",
   "missions.create.options": "אפשרויות",
   "missions.create.agents": "סוכנים ומודלים",

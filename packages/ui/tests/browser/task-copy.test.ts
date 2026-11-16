@@ -48,14 +48,14 @@ test("short native child boundary cursor does not invent render overflow", { tim
   const sections = tool.locator('.tool-call-task-sections').first()
   const steps = sections.locator(':scope > section').filter({ has: page.locator('.tool-call-task-section-title', { hasText: /^Steps$/ }) })
   await steps.waitFor()
-  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "1 steps")
+  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "1 step")
   assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 0)
   assert.match(await sections.textContent() ?? "", /Validated result:.*484/)
   const state = await page.evaluate(() => (window as any).fixture.snapshot())
   assert.equal(state.requests.filter((request: any) => request.sessionID === "child").length, 1)
   // The cursor is merely a boundary token: a bounded older read is empty.
   await page.evaluate(() => (window as any).fixture.probeOlder())
-  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "1 steps")
+  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "1 step")
   assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 0)
   assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).requests.filter((request: any) => request.sessionID === "child").length, 2)
 }, "short"))
@@ -88,6 +88,83 @@ test("a background subagent card shows the child's latest report instead of its 
   await page.evaluate(() => (window as any).fixture.report("error", "Child failed"))
   await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="continued-task"] section[data-subagent-report]')?.getAttribute("data-subagent-report") === "error")
   assert.equal(await output.getAttribute("data-subagent-report"), "completed")
+}, "background"))
+
+test("a background subagent's header stays running until the child session settles, across continuations", { timeout: 45_000 }, async () => withPage(async page => {
+  const headerStatus = (part: string) => page.locator(`.tool-call[data-part-id="${part}"] > .tool-call-header .tool-call-header-status`)
+  const parent = headerStatus("parent-task")
+  await parent.waitFor()
+  // The launch acknowledgement never completes the card: the child session still owns the work.
+  assert.equal(await parent.getAttribute("data-status"), "running")
+  assert.equal(await parent.getAttribute("aria-label"), "Running")
+  // The live timer counts from the delegation start, ticks, and survives re-entering the session.
+  const duration = page.locator('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')
+  await duration.waitFor()
+  assert.equal(await duration.getAttribute("data-live"), "true")
+  const durationSeconds = () => page.evaluate(() => {
+    const text = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')?.textContent ?? ""
+    const match = /^(\d+)m (\d+)s$/.exec(text)
+    return match ? Number(match[1]) * 60 + Number(match[2]) : NaN
+  })
+  const beforeLeave = await durationSeconds()
+  assert.ok(Number.isFinite(beforeLeave) && beforeLeave >= 60, `the duration counts from the delegation start (${beforeLeave}s)`)
+  await page.waitForFunction(start => {
+    const text = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')?.textContent ?? ""
+    const match = /^(\d+)m (\d+)s$/.exec(text)
+    return Boolean(match && Number(match[1]) * 60 + Number(match[2]) > start)
+  }, beforeLeave, { timeout: 5_000 })
+  await page.evaluate(() => (window as any).fixture.selectSession("other"))
+  for (let index = 0; index < 5; index++) {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  }
+  await page.evaluate(() => (window as any).fixture.selectSession("parent"))
+  await parent.waitFor()
+  assert.equal(await parent.getAttribute("data-status"), "running", "re-entering keeps the running state")
+  const afterReturn = await durationSeconds()
+  assert.ok(Number.isFinite(afterReturn) && afterReturn >= beforeLeave, `the timer resumes from the delegation start, not from remount (${afterReturn}s >= ${beforeLeave}s)`)
+  await page.waitForFunction(start => {
+    const text = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')?.textContent ?? ""
+    const match = /^(\d+)m (\d+)s$/.exec(text)
+    return Boolean(match && Number(match[1]) * 60 + Number(match[2]) > start)
+  }, afterReturn, { timeout: 5_000 })
+  // A full browser restart resumes the same accumulated timer: the delegation instant and
+  // the reports are daemon-persisted message data, rebuilt by the cold store's page read.
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await page.waitForFunction(() => Boolean((window as any).fixture))
+  await parent.waitFor()
+  assert.equal(await parent.getAttribute("data-status"), "running", "a cold start still shows the child running")
+  assert.equal(await duration.getAttribute("data-live"), "true")
+  const afterReload = await durationSeconds()
+  assert.ok(Number.isFinite(afterReload) && afterReload >= beforeLeave, `the restart resumes the persisted delegation instant (${afterReload}s >= ${beforeLeave}s)`)
+  await page.waitForFunction(start => {
+    const text = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')?.textContent ?? ""
+    const match = /^(\d+)m (\d+)s$/.exec(text)
+    return Boolean(match && Number(match[1]) * 60 + Number(match[2]) > start)
+  }, afterReload, { timeout: 5_000 })
+  // The child's first termination is what marks the card completed.
+  await page.evaluate(() => (window as any).fixture.report("completed", "Final answer: 42"))
+  await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .tool-call-header-status')?.getAttribute("data-status") === "completed")
+  // Continuing the same child returns the whole range of its cards to running.
+  await page.evaluate(() => (window as any).fixture.continueChildQuiet())
+  const continued = headerStatus("continued-task")
+  await continued.waitFor()
+  assert.equal(await parent.getAttribute("data-status"), "running")
+  assert.equal(await continued.getAttribute("data-status"), "running")
+  // The running display never drives the settled-session tool pull: the parts
+  // stay settled, so no further parent-session message reads may happen.
+  const parentReads = () => page.evaluate(() => (window as any).fixture.snapshot().requests.filter((request: any) => request.sessionID === "parent").length)
+  const readsWhileRunning = await parentReads()
+  for (let index = 0; index < 30; index++) {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  }
+  assert.equal(await parentReads(), readsWhileRunning)
+  // The newest round's report settles the whole range together.
+  await page.evaluate(() => (window as any).fixture.report("error", "Child failed"))
+  await page.waitForFunction(() => {
+    const parent = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .tool-call-header-status')
+    const continued = document.querySelector('.tool-call[data-part-id="continued-task"] > .tool-call-header .tool-call-header-status')
+    return parent?.getAttribute("data-status") === "error" && continued?.getAttribute("data-status") === "error"
+  })
 }, "background"))
 
 test("a call continued before its first report shares the next report instead of running forever", { timeout: 45_000 }, async () => withPage(async page => {

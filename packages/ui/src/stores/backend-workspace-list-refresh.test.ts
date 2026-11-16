@@ -8,7 +8,6 @@ import { onInstanceLifecycleAuthority, type InstanceLifecycleAuthorityEvent } fr
 import { addInstance, getExistingInstanceForFolder, instances, refreshWorkspaceList, removeInstance, updateInstance } from "./instances.ts"
 import { captureState } from "../lib/hooks/use-app-session-capture.ts"
 import { renameProject } from "./project-names"
-import { projectScope } from "../lib/backend-identity"
 import { missionProjectView, updateMissionProjectView } from "./mission-view-state"
 import { closeSessionPreview, getSessionPreview, openSessionPreview, showSessionChatFor } from "./session-previews"
 import { serverApi } from "../lib/api-client"
@@ -109,7 +108,19 @@ describe("workspace lists of two backends", () => {
       token: String(++token), sessionId, targetUrl: url, proxyUrl: "/previews/fixture", createdAt: "",
     }))
     t.mock.method(serverApi, "deletePreview", async () => {})
-    const local = projectScope({ folder: "/view-repo" }), lab = projectScope({ folder: "/view-repo", backendId: "lab" })
+    const backend = createBackendClient({ id: "lab", baseUrl: "https://lab.invalid", fetcher: async () => Response.json({}) })
+    ;(backends as Map<string, BackendClient>).set("lab", backend)
+    const detach = backendEvents.attach("lab", backend.events)
+    t.after(() => { detach(); backend.events.dispose(); (backends as Map<string, BackendClient>).delete("lab") })
+    t.mock.method(backend.api, "createPreviewCapability", async ({ sessionId, url }: { sessionId: string; url: string }) => ({
+      token: String(++token), sessionId, targetUrl: url, proxyUrl: "/previews/fixture", createdAt: "",
+      capability: "fixture", contentUrl: "http://fixture.preview.localhost:8080",
+    }))
+    t.mock.method(backend.api, "deletePreviewCapability", async () => {})
+    const local = "w-view-local", lab = "lab~w-view"
+    addInstance({ ...instance(local), folder: "/view-repo" })
+    addInstance({ ...instance(lab, "lab"), folder: "/view-repo" })
+    t.after(() => { removeInstance(local, { authoritative: false }); removeInstance(lab, { authoritative: false }) })
     updateMissionProjectView(local, { selected: "local-mission" })
     updateMissionProjectView(lab, { selected: "lab-mission" })
     const first = await openSessionPreview("same-session", "https://local.example/", local)
@@ -121,6 +132,10 @@ describe("workspace lists of two backends", () => {
       showSessionChatFor("same-session", lab)
       assert.equal(getSessionPreview("same-session", local)?.mode, "preview")
       assert.equal(getSessionPreview("same-session", lab)?.mode, "chat")
+      detach()
+      assert.equal(getSessionPreview("same-session", lab), null)
+      assert.equal(getSessionPreview("same-session", local)?.mode, "preview")
+      assert.equal(missionProjectView(lab).selected, "lab-mission")
     } finally {
       await closeSessionPreview(first.storageKey)
       await closeSessionPreview(second.storageKey)

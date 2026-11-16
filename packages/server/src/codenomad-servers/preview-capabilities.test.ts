@@ -20,6 +20,7 @@ import { RemoteIngress } from "../remote-control/ingress"
 import { startRemoteSurface } from "../remote-control/test-support/surface"
 import type { openSshForward } from "./ssh"
 import { resolveHttpsOptions } from "../server/tls"
+import { proxyDestination, ProxyDestinationDenied } from "../server/proxy-destination"
 
 const TOKEN = "11111111-1111-4111-8111-111111111111"
 const logger = pino({ level: "silent" })
@@ -216,6 +217,18 @@ test("isolated origins reserve every path and keep identical remote paths/tokens
     headers: { origin: f.origin, [AUTHORITY]: f.proofs.a! },
   })).status, 404)
   assert.equal(f.a.requests.length, before)
+})
+
+test("isolated content listeners refuse ordinary proxy dials including unspecified targets", async t => {
+  const f = await fixture(t)
+  const cap = await f.create()
+  const port = Number(new URL(cap.contentUrl).port)
+  for (const address of ["127.0.0.1", "::ffff:127.0.0.1", "0.0.0.0", "::", "::ffff:0.0.0.0"]) {
+    await assert.rejects(proxyDestination(address, port), ProxyDestinationDenied)
+  }
+  assert.equal((await send(cap.contentUrl)).status, 200, "the owning capability retains its private transport")
+  await f.app.close()
+  await proxyDestination("127.0.0.1", port)
 })
 
 test("HTTP navigation and WebSocket echo use only the captured content destination, without cookies", async t => {

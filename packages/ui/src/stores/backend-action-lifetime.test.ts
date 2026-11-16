@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import ts from "typescript"
 import { BackendEvents } from "../lib/backend-events.ts"
+import { createSignal } from "solid-js"
 
 // Execute production module ASTs with bounded I/O dependencies. No application,
 // SDK connection, UI mount or replacement action implementation runs here.
@@ -205,7 +206,7 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
   // Drop only the fire-and-forget `void`, so the test can await the real callback.
   const awaitable = ts.factory.updateArrowFunction(callback, callback.modifiers, callback.typeParameters, callback.parameters,
     callback.type, callback.equalsGreaterThanToken, callback.body.expression)
-  const selected = ts.factory.updateSourceFile(source, [statement("navigationOrigin"), statement("openActor"),
+  const selected = ts.factory.updateSourceFile(source, [statement("navigationOrigin"), statement("openActor"), statement("onOpenActor"),
     ts.factory.createVariableStatement(undefined, ts.factory.createVariableDeclarationList([
       ts.factory.createVariableDeclaration("openScheduledConversation", undefined, undefined, awaitable),
     ], ts.NodeFlags.Const))])
@@ -217,8 +218,14 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
     const owner = lifetime(), hydration = deferred<void>(), client = {}, errors: boolean[] = []
     let navigations = 0, reveals = 0, accepted: (() => boolean) | undefined, signal: AbortSignal | undefined
     const mission = { id: "mission", coordinatorSessionId: "session", actors: [] }
+    const lifecycle = production("./instance-lifecycle-authority.ts", {})
+    const surfaces = production("./session-surface.ts", {
+      ...lifecycle, createSignal, getTabViewState: () => ({ version: 1 }), updateTabViewState: () => { navigations++ },
+    })
+    lifecycle.publishInstanceLifecycleAuthority({ type: "opened", instanceId: "workspace", folder: "/repo", occurrence: 0 })
     const bindings = {
-      ...owner, props: { instanceId: "workspace", onRevealConversation: () => { reveals++ } },
+      ...owner, beginGesture: surfaces.beginGesture, applySurface: surfaces.applySurface,
+      props: { instanceId: "workspace", activeSessionId: () => "session", onRevealConversation: () => { reveals++ } },
       intent: 0, conversationEpoch: 0, scope: () => "unchanged-view", captureView: () => () => true,
       passageSchedule: () => undefined, currentPassage: { snapshot: () => undefined }, selectedScheduled: () => "schedule",
       mission: () => mission, missions: () => [mission], includesSession: () => true, scheduled: { ownsSession: () => true },
@@ -232,8 +239,8 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
         if (outcome === "cancel") throw new DOMException("Hydration cancelled", "AbortError")
       },
     }
-    const actions = new Function(...Object.keys(bindings), `${code}\nreturn { openActor, openScheduledConversation }`)(...Object.values(bindings))
-    const pending = route === "actor" ? actions.openActor("session") : actions.openScheduledConversation("session")
+    const actions = new Function(...Object.keys(bindings), `${code}\nreturn { onOpenActor, openScheduledConversation }`)(...Object.values(bindings))
+    const pending = route === "actor" ? actions.onOpenActor("session") : actions.openScheduledConversation("session")
     assert.ok(accepted?.(), `${route}: unchanged view admits hydration`)
     assert.ok(signal && !signal.aborted, `${route}: attachment signal reaches native hydration reads`)
     owner.replace()
@@ -244,6 +251,7 @@ test("MissionControl actor and scheduled navigation reject late hydration on an 
     assert.equal(errors.includes(true), false, `${route}/${outcome}: no late error publication`)
     assert.equal(navigations, 0, `${route}/${outcome}: no late selection, chat or reader mutation`)
     assert.equal(reveals, 0, `${route}/${outcome}: no drawer reveal`)
+    lifecycle.publishInstanceLifecycleAuthority({ type: "removed", instanceId: "workspace", folder: "/repo", occurrence: 0 })
     owner.close()
   }
 })

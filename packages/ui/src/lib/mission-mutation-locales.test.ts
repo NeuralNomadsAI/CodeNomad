@@ -17,7 +17,8 @@ test("all ten registered locale bundles own truthful creation classification key
     he: heMessages, ja: jaMessages, ne: neMessages, ru: ruMessages, tr: trMessages, "zh-Hans": zhHansMessages }
   const keys = ["missions.control.creation.uncertain", "missions.control.creation.uncertainOther", "missions.control.creation.scopeConflict", "missions.control.creation.capacity",
     "missions.control.creation.unavailable", "missions.control.creation.worktreeDeleting",
-    "missions.control.mutation.requestConflict", "missions.control.mutation.forbidden"]
+     "missions.control.mutation.requestConflict", "missions.control.mutation.forbidden",
+     "missions.cleanup.error.revisionConflict", "missions.cleanup.error.requestConflict", "missions.cleanup.error.controlPending"]
   assert.equal(Object.keys(bundles).length, 10)
   for (const [locale, messages] of Object.entries(bundles)) for (const key of keys) {
     assert.ok(messages[key]?.length, `${locale} owns ${key}`)

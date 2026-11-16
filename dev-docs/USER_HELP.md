@@ -288,8 +288,7 @@ the API; locally, omit `--release` or pass the fixture. It lists every release p
 (`per_page=100`, at most 10 pages, 20-second timeout per request, no redirects) and
 follows a `Link` `rel="next"` only to `https://api.github.com` release listings of
 this repository. `selectRelease(releases, downloads)` is pure. Only non-draft,
-non-prerelease `vMAJOR.MINOR.PATCH` tags are candidates (early builds such as
-`v0.2.8-dev` were published without the prerelease flag). It rejects malformed
+non-prerelease `vMAJOR.MINOR.PATCH` tags are candidates. It rejects malformed
 entries or assets, a candidate's invalid `published_at`, duplicate candidate tags
 and duplicate asset names, orders candidates by `published_at` and picks the
 newest where each `downloads.json` asset is exactly one
@@ -303,9 +302,8 @@ before the resolver exits successfully. It reads release metadata only; never ad
 binary downloads to it.
 
 Tests run the resolver offline against trimmed recordings of the real listing,
-`scripts/fixtures/help-release-api-page1.json` (newer dev prereleases around `v1.0.0`)
-and `help-release-api-page2.json` (older stable releases whose asset names predate
-`downloads.json`, and `v0.2.8-dev`), with an injected fake `fetch`; the recorded `v1.0.0` must resolve
+`scripts/fixtures/help-release-api-page1.json` and `help-release-api-page2.json`,
+with an injected fake `fetch`; the recorded `v1.0.0` must resolve
 exactly to `scripts/fixtures/help-release.json`. A workflow test parses
 `help-pages.yml` and checks the trigger, gate, permissions, token scope, concurrency
 and pull-request path.

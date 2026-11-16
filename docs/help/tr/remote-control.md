@@ -37,7 +37,7 @@ Deneysel çoklu arka uç ayarlarında eşleştirme bağlantısını **Ayarlar �
 
 İptal, cihazın mevcut HTTP/SSE bağlantılarını ve gelecekteki erişimini sonlandırır. Yeniden erişim için yeni bağlantıyla eşleştirin. Cihazın süresi **30 gün kullanılmadığında** dolar. **32 cihaz sınırında**, yeni eşleştirme en uzun süredir görülmeyen cihazın yerini alır ve bağlantılarını kapatır.
 
-Arka uç, ham cihaz kimlik bilgilerini değil, kimlik bilgisi karmalarını kendi yapılandırma tabanı altında `remote-control-devices.json`'de saklar. İstemci, ana bilgisayar kapsamlı `Secure`, `HttpOnly`, `SameSite=Lax` cihaz çerezine sahiptir. Tarayıcının ömrü, sunucunun 30 günlük hareketsizlik sınırından daha uzun olabilir; kayıt defteri yetkili kalır. Site verilerini temizlemek, tarayıcı profillerini değiştirmek veya özel taramayı kullanmak yeniden eşleştirme gerektirebilir.
+Site verilerini temizlemek, tarayıcı profillerini değiştirmek veya özel taramayı kullanmak yeniden eşleştirme gerektirebilir.
 
 Doğrudan erişim parolasını değiştirmek cihazları **iptal etmez**. **Uzaktan Kontrolü durdur** tünelin bağlantısını keser ancak eşleştirilmiş cihaz listesini korur; yetkiyi kaldırmak için **İptal et** eylemini kullanın.
 
@@ -58,7 +58,6 @@ Kurtarma, açık sayfayı ve taslakları korur; başarısız bir eylemi tekrarla
 | Uzaktan Kontrolü durdur | Tünel erişimini keser ve başlangıçta otomatik sürdürme tercihini temizler; cihaz kayıtlarını korur. |
 | Arka uç kapatma / son masaüstü penceresi kapatılır ve uygulama sonlandırılır | Uzaktan Kontrol çevrimdışı oluyor. OpenCode'un paylaşılan hizmeti çalışmaya devam edebilir ancak bu kullanıcı arayüzüne durdurulmuş bir arka uç aracılığıyla hizmet veremez. |
 | Uzaktan Kontrol başlatıldıktan sonra başlat | Yeni bir eşleştirme bağlantısı vermeden arka planda yeniden bağlanır. Hiç başlatılmayan kurulumlar kendilerini etkinleştirmez. |
-| Başlangıçta sürdürmenin başarısız olması veya kritik tünel hatası | Hatırlanan tercih korunur ve ana bilgisayar hatayı gösterir; Uzaktan Kontrol kartının yenileme simgesi durumu yeniden okur. **Uzaktan Kontrolü başlat** hemen yeniden dener; **Uzaktan Kontrolü durdur** tercihi temizler. Aksi halde sonraki başlatma yeniden dener. |
 
 Başlangıçta otomatik sürdürme yapılandırma dizini başına tek arka uçla sınırlıdır. Ek tünel kapasitesi için aynı yapılandırmayla birbiriyle yarışan ana bilgisayar süreçleri başlatmayın. Masaüstünden çıktıktan sonra erişilebilir kalması gereken ana bilgisayar için ayrıca yönetilen [bağımsız sunucu](server.md) kurun; Uzaktan Kontrol bağımsız bir daemon değildir.
 
@@ -81,7 +80,7 @@ Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`
 
 ## Aktarma ve gizlilik {#relay-privacy}
 
-CodeNomad [OpenTunnel](https://github.com/anomalyco/opentunnel) kullanır ve makinenin ortak varsayılan tünel kimliğinde rastgele bir rota alır. Durdurmak, diğer uygulamaların kullandığı ortak kimliği değil, CodeNomad köprüsünü serbest bırakır.
+CodeNomad [OpenTunnel](https://github.com/anomalyco/opentunnel) kullanır ve makinenin ortak varsayılan tünel kimliğinde rastgele bir rota alır.
 
 TLS, CodeNomad arka ucunda sonlanır. Röle şifreli metni iletir ve uygulama içeriğini okuyamaz ancak ana bilgisayar adlarını, bağlantı zamanlamasını ve trafik boyutlarını gözlemleyebilir. Tünel sertifikası/özel anahtar ana bilgisayarda kalır. Ana bilgisayarın tünel depolamasını ve CodeNomad yapılandırmasını kimlik bilgileri olarak koruyun; Tahmin edilemeyen bir adres yetkilendirme değildir.
 

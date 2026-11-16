@@ -64,7 +64,7 @@ Usa cuentas del sistema operativo, contenedores/máquinas virtuales y configurac
 
 ## Mantener privados credenciales y diagnósticos {#privacy}
 
-OpenCode es propietario de las conexiones de proveedores y de su almacenamiento global de conversaciones. CodeNomad lee en el servidor metadatos de conexión y credenciales seleccionadas para integraciones compatibles de uso; las API del navegador no devuelven secretos de proveedores. La renovación de inicios de sesión OAuth externos corresponde a su propietario; CodeNomad no intercambia esos tokens de actualización. Consulta [Proveedores](providers.md).
+OpenCode es propietario de las conexiones de proveedores y de su almacenamiento global de conversaciones. CodeNomad lee en el servidor metadatos de conexión y credenciales seleccionadas para integraciones compatibles de uso; las API del navegador no devuelven secretos de proveedores. Consulta [Proveedores](providers.md).
 
 | Material | Tratamiento |
 | --- | --- |

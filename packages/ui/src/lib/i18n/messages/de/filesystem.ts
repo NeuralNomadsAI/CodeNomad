@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "Durchsuchen Sie Ordner unter dem konfigurierten Arbeitsbereich-Root.",
   "directoryBrowser.close": "Schließen",
   "directoryBrowser.currentFolder": "Ordner auswählen oder Pfad eingeben",
   "directoryBrowser.currentFolder.inputAriaLabel": "Ordnerpfad",

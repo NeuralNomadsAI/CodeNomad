@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "कन्फिगर गरिएको कार्यस्थान मूल (workspace root) अन्तर्गत फोल्डरहरू ब्राउज गर्नुहोस्।",
   "directoryBrowser.close": "बन्द गर्नुहोस्",
   "directoryBrowser.currentFolder": "फोल्डर चयन गर्नुहोस् वा मार्ग प्रविष्ट गर्नुहोस्",
   "directoryBrowser.currentFolder.inputAriaLabel": "फोल्डर मार्ग",

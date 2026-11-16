@@ -185,7 +185,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
       <button type="button" class="window-action mission-icon-action" aria-label={t("missions.depth.refresh")} title={t("missions.depth.refresh")} disabled={!props.active() || busy() || !props.directory} onClick={() => void read(true)}><RefreshCw aria-hidden="true" /></button>
     </div></Show>
     {/* A confirmation, a write and its result are announced, not shown: the row stays one line. */}
-    <Show when={["confirming", "saving"].includes(state().phase)}><p role="status" class="sr-only">{t("missions.control.mutation.pending")}</p></Show>
+    <Show when={state().phase === "saving"}><p role="status" class="sr-only">{t("missions.depth.saving")}</p></Show>
     <Show when={state().saved}><p role="status" class="sr-only">{t("missions.depth.saved")}</p></Show>
     <Show when={state().snapshot && !state().snapshot?.capability}><p role="status">{t("missions.depth.unsupported")}</p></Show>
     <Show when={state().error}><p role="alert">{t("missions.depth.error")}</p></Show>

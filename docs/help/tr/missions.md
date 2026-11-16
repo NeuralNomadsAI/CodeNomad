@@ -2,6 +2,8 @@
 
 Bir Görev; hedefi, koordinatör konuşmasını, işleri ve sonuçlarını birlikte tutar. Sağ panelde **Görevler** bölümünü açın.
 
+Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir eklenti için hizmet kurtarmayı açar. Sunucunun yerel Görevler köprüsü kullanılamıyorsa **Sunucu tanılaması**, Ayarlar → Bilgi bölümündeki tanılama raporunu açar.
+
 ## Görev oluşturma {#create}
 
 Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak için HTTPS tercih edin.
@@ -26,9 +28,11 @@ Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullan
 
 **Görev oturumları**, koordinatör altında yerel alt ajanları veya bağımsız oturumları seçer. İkisi de OpenCode izinlerine ve iç içe geçme sınırlarına tabidir.
 
-**Alt ajan derinliği**, projenin tüm OpenCode konuşmalarını etkiler. **Devral** veya 1–10 seçimi hemen kaydedilir. Etkin derinlik ve izinler gözlenen yapılandırmaya bağlıdır. Başarısız veya doğrulanmamış kayıt, uyarısını ve açık yenileme işlemini korur.
+**Alt ajan derinliği**, projenin tüm OpenCode konuşmalarını etkiler. **Devral** veya 1–10 seçimi hemen kaydedilir. Etkin derinlik ve izinler gözlenen yapılandırmaya bağlıdır.
 
-Proje derinliği kaydetmek, alt ajanların bu derinlikte kendi işlerini devretmesine de izin verir ve desteklenen diğer dosya General kısıtlamalarından öncelikli olur. Uyumsuz proje kuralında uyarı kalır. **Devral** eklenen kuralı kaldırır. Kaydetmek OpenCode'u yeniden yüklemez ve çalışan konuşmaları değiştirmez.
+Alt ajan derinliği bilgileri etkin kaynağı **OpenCode yapılandırma dosyası:** altında gösterir.
+
+Proje derinliği kaydetmek, alt ajanların bu derinlikte kendi işlerini devretmesine de izin verir ve desteklenen diğer dosya General kısıtlamalarından öncelikli olur. **Devral** eklenen kuralı kaldırır. Kaydetmek OpenCode'u yeniden yüklemez ve çalışan konuşmaları değiştirmez.
 
 ### Ajanlar ve modeller {#agents-models}
 
@@ -44,35 +48,33 @@ Takvim tabanlı zamanlama, koordinatör ve rehberin her rolü için açık bir a
 
 **Otomatik başlat**, Zamanlama dışındadır ve varsayılan olarak kapalıdır. Kapalıyken görev duraklatılmış oluşturulur ve daha sonra ▶ ile başlatılır. Açıkken oluşturma doğrulanınca olağan kontroller ve otomatik zamanlama hazırlığıyla başlatma istenir.
 
-Oluşturma onayı kaybolursa makbuzu okumak otomatik başlatmaz. Doğrulanmamış asıl isteği koruyun; yeniden oluşturmadan önce listeyi ve konuşmayı kontrol edin.
-
 ## Zamanlama {#daily-schedules}
 
 ### Ölçütler {#native-scheduling}
 
-Alt ajan derinliği bilgileri etkin kaynağı **OpenCode yapılandırma dosyası:** altında gösterir.
+**i** düğmesi [zamanlama yardımını](missions.md#native-scheduling) açar.
 
 İlk ölçüt **Bir kez, şimdi** olur. **Ölçüt ekle** bir tane daha ekler. Türünü seçin, × ile kaldırın, tutamacıyla sıralayın; odaklı tutamaçta Alt+Yukarı/Aşağı kullanabilirsiniz.
 
 Bir kez şimdi, N saatte bir, günlük, haftanın günleri, ayın günü ve cron seçenekleri vardır. Kayıtlı saat dilimi kullanılır; sistemden farklıysa dilim alanı görünür. Seçilen günün bulunmadığı ay atlanır. Bir kez şimdi, zamanı Başlat'ta alır; koşul bu tek fırsatı çalıştırmadan tüketebilir. OpenCode hizmeti ve yürütme makinesi kullanılabilir olmalıdır.
 
-Başlatma veya sürdürme sırasında zamanlama projenin OpenCode yapılandırmasında otomatik hazırlanır. Açık OFF korunur: sunulduğunda **Zamanlama ayarlarını aç** sorumlu dosyayı açar; **i** kaynak veya ortam ayrıntılarını gösterir. Tıklanan düğme yalnızca istek sırasında yükleniyor durumunu gösterir. Onaylanmamış sonuç doğrulanabilir; etkinleştirme kurtarıldıktan sonra başlatma açık bir işlem olarak kalır.
+Başlatma veya sürdürme sırasında zamanlama projenin OpenCode yapılandırmasında otomatik hazırlanır. Açık OFF korunur: sunulduğunda **Zamanlama ayarlarını aç** sorumlu dosyayı açar; **i** kaynak veya ortam ayrıntılarını gösterir.
 
 ### Olaylar ve birleşimler {#scheduling-conditions}
 
 **Depo etkinliği → Olay** seçin, ardından aynı karttaki isteğe bağlı filtreleri kullanın. Git commit’leri, otomatik algılanan GitHub, GitLab veya Gitea deposunun olaylarıyla aynı menüdedir. Algılama Contribute ile ortaktır: önce `upstream`, sonra `origin`. Üçü de yeni ve birleştirilmiş PR/MR ile yeni issue olaylarını ve `dependabot[bot]` dahil isteğe bağlı **Yazar** filtresini destekler. Olay seçimi depoyu sabitler; kayıtlı ölçütler hedeflerini korur.
 
-Kontroller OpenCode makinesindeki `gh`, `glab` veya `tea` kullanır, CodeNomad kapalıyken de çalışır; herkese açık depolar anonim okunabilir. Kendi sunucunuz için o sunucuya bağlı CLI gerekir. **github.com**, oturum açmış `gh` ile hesap bildirimleri ve Dependabot uyarıları da sunar; [bildirim](https://docs.github.com/en/rest/activity/notifications) veya [uyarı okuma](https://docs.github.com/en/rest/dependabot/alerts) erişimi gerekir. Okunma durumu korunur; düzeltilen veya kapatılan uyarılar da kapsanır. **GitHub deposu** boş kayıtlı bildirimler hesabı kapsar. İlk başlatma referansı belirler. Her kontrol on saniyede en fazla 50 kayıtlık dört sayfa okur; eksik erişim, API sınırı veya eksik pencere kaynağı kullanılamaz bırakır. Özetler geçiş girdisine eklenir ve başarıdan sonra tüketilir.
+Kontroller OpenCode makinesindeki `gh`, `glab` veya `tea` kullanır, CodeNomad kapalıyken de çalışır; herkese açık depolar anonim okunabilir. Kendi sunucunuz için o sunucuya bağlı CLI gerekir. **github.com**, oturum açmış `gh` ile hesap bildirimleri ve Dependabot uyarıları da sunar; [bildirim](https://docs.github.com/en/rest/activity/notifications) veya [uyarı okuma](https://docs.github.com/en/rest/dependabot/alerts) erişimi gerekir. Okunma durumu korunur; düzeltilen veya kapatılan uyarılar da kapsanır. **GitHub deposu** boş kayıtlı bildirimler hesabı kapsar. İlk başlatma referansı belirler.
 
-Olaylar; başka programın/Görevin başarısını, yerel commitleri, yeni mesajları veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Arama yokken kaydırdıkça devamı yüklenir; okuma başarısız olursa aynı yerde **Tekrar dene** görünür. Arama, aksanlı harfler dâhil büyük ve küçük harfleri ayırt etmez. Arama sırasında sayfada eşleşme olsa bile seçicide **Daha fazla kaynak yükle** ile devam edin. Yeni mesajlar için seçilen konuşma geçişe bağlam da sağlar. Ölçüt türünü değiştirmek kaynağını temizler. Düzenleme, kayıtlı konuşma bağlamını korur.
+Olaylar; başka programın/Görevin başarısını, yerel commitleri, yeni mesajları veya açık proje dosyalarını izler. Kaynağı ilgili ölçütün içinde seçin. Arama, aksanlı harfler dâhil büyük ve küçük harfleri ayırt etmez. Arama sırasında sayfada eşleşme olsa bile seçicide **Daha fazla kaynak yükle** ile devam edin. Yeni mesajlar için seçilen konuşma geçişe bağlam da sağlar. Ölçüt türünü değiştirmek kaynağını temizler. Düzenleme, kayıtlı konuşma bağlamını korur.
 
 **veya**, bitişik zamanları veya olayları birleştirir. **eğer**, zamanlardan sonraki olayları koşul yapar: son başarılı geçişten beri biri değişmiş olmalıdır. **aksi halde**, olaylardan sonraki zamanı yedek yapar: önceki yuvasından veya etkinleştirilmesinden beri üstteki ölçütler geçiş başlatmamışsa çalışır. Sonraki olaylar bu yedeği koşullandırır.
 
-Baştaki tetikleyiciler 15 dakikada bir kontrol edilir. İlk Başlat referansı kurar; başarı ilerletir, başarısızlık korur. Okunamayan kaynak açıklamayla engeller. Geçişler çakışmaz.
+Baştaki tetikleyiciler 15 dakikada bir kontrol edilir. İlk Başlat referansı kurar; başarı ilerletir, başarısızlık korur. Geçişler çakışmaz.
 
 ### Sayaçlar ve geçmiş {#scheduling-limits}
 
-**Koordinatör oturumu** her geçiş için varsayılan olarak **Yeni oturum** kullanır. Zamanlama veya olay varsa **Mevcut oturum** ile bu projenin aynı yürütme Location’ındaki kök konuşması seçilir. Her geçiş, konuşma geçmişini, başlığı ve izinleri koruyarak yapılandırılmış ajan ve modelle orada sürer. Görev kontrolleri mevcut işleri de etkiler. Her geçişin sonucu ve günlüğü geçmişte ayrı tutulur; seçilen konuşma kaybolursa müdahaleniz gerekir.
+**Koordinatör oturumu** her geçiş için varsayılan olarak **Yeni oturum** kullanır. Zamanlama veya olay varsa **Mevcut oturum** ile bu projenin aynı yürütme Location’ındaki kök konuşması seçilir. Her geçiş, konuşma geçmişini, başlığı ve izinleri koruyarak yapılandırılmış ajan ve modelle orada sürer. Görev kontrolleri mevcut işleri de etkiler. Her geçişin sonucu ve günlüğü geçmişte ayrı tutulur.
 
 Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı geçişleri ve geçmişi gösterir. Son 30 sonuç saklanır; toplam sayaçlar korunur. Kabul edilen **Şimdi çalıştır** sayılır. Gösterilemeyen kayıtlı kural, açıkça değiştirilene kadar korunur; düzenlemeden önce bitiş ve sınırları inceleyin.
 
@@ -86,7 +88,9 @@ Kendi kontrollerini ve saat dilimini korurlar. Hizmet yeniden başlayınca kesin
 
 Göz, merkezi özeti açar ve seçimi izler. Konuşmayı aç, ilgili koordinatöre veya işe gider. ⋯ menüsü uygun güncelleme, kesinti, yapılandırma ve düzenleme işlemlerini içerir.
 
-Liste sonuna yaklaşınca yeni kayıtlar ve işler otomatik yüklenir. İş sayfaları görünen satırlardan bağımsız önbellekte kalır. Okuma hatası son görünümü korur ve açık yeniden deneme sunar. Okumak iş başlatmaz; arka plan okumasını başlık gösterir.
+Seçim, genişletilmiş bölümler ve okuyucu her proje sekmesine aittir ve onunla birlikte geri yüklenir. Aynı projeye ait sekmeler farklı raporları okuyabilir veya birinde raporu, diğerinde konuşmayı, dosyayı ya da web önizlemesini tutabilir. Okuyucuyu açmak veya kapatmak yalnızca o sekmeyi değiştirir; Görev çalışmaları ve tamamlanan sonuçların okundu onayları pencere içinde ortak kalır.
+
+Liste sonuna yaklaşınca yeni kayıtlar ve işler otomatik yüklenir. İşler yüklenemezse devam etmek için **Tekrar dene** kullanın.
 
 ### Renkler ve durumlar {#status-colours}
 
@@ -94,7 +98,7 @@ Bayrak Görevin durumunu, şevron işlerinin dikkat durumunu gösterir; tekrarla
 
 Altında küçük, sabit ve nötr bir çizgi olan vurgu renkli simge **Zamanlanmış çalıştırma bekleniyor** demektir: sonraki uyanma doğrulanmıştır. Vurgu rengi palete bağlıdır. Çizgisiz vurgu simgesi hazırlığı veya başlamamış işi belirtir. İncelenmiş tamamlanmalar, durdurulmuş zamanlamalar ve **Durum doğrulanmadı** nötrdür; durum metnini okuyun.
 
-Seçim veya yeşil iş simgesine tıklama/süpürme sonuçları onaylar; şevron menüsünde **Okundu olarak işaretle** bulunur. **İncelenecek başarılı çalıştırma** için etkin pencerede tekrarlanan satırı açıkça seçin veya **Okundu olarak işaretle** ile tam o çalıştırmayı onaylayın. Zamanlama etkinse simge beklemeye, aksi durumda nötre döner. Geri yüklenen seçim ve zaten seçili satıra gelen yeni sonuçlar okunmamış kalır. İlk yüklemedeki geçmiş başarılar okunmuş sayılır. Geri çekilen işin geçmişi tutulur.
+Seçim veya yeşil iş simgesine tıklama/süpürme sonuçları onaylar; şevron menüsünde **Okundu olarak işaretle** bulunur. **İncelenecek başarılı çalıştırma** için etkin pencerede tekrarlanan satırı açıkça seçin veya **Okundu olarak işaretle** kullanın. Zamanlama etkinse simge beklemeye, aksi durumda nötre döner. Zaten seçili satıra gelen yeni sonuçlar okunmamış kalır. Geri çekilen işin geçmişi tutulur.
 
 ### Sorular ve kararlar {#questions}
 
@@ -102,13 +106,11 @@ Koordinatör yapabildiğini çözer; kalan karar, onay veya kimlik bilgilerini s
 
 ### İlerleme raporları {#briefings}
 
-Kilometre taşı raporları koordinatörün değerlendirmesidir. ⋯ üzerinden güncelleme isteyin ve özette okuyun. Teslim doğrulanmazsa önce konuşmayı inceleyin.
+Kilometre taşı raporları koordinatörün değerlendirmesidir. ⋯ üzerinden güncelleme isteyin ve özette okuyun.
 
 ## Bağlam ve sonuçlar {#context-flow}
 
-Kalıcı plan Hedefi, Notları, iş talimatlarını, bağımlılıkları ve sonuçları tutar. Koordinatör hedef, notlar ve rehberi alır; yerel işler üstlerinin atamasını, bağımsız işler ayrıca açık atamalarını alır. Yardımcılara bağlamı üstleri iletir. Kör hakem anonim karşılaştırma verisi alır.
-
-Yeni görev ve geçişlerin kendi planı vardır. Yararlı geçmiş sonuçları Hedef veya Notlara koyun. OpenCode model bağlamını sıkıştırırken kayıtlı geçmişi koruyabilir.
+Yeni görev ve geçişlerin kendi planı vardır. Yararlı geçmiş sonuçları Hedef veya Notlara koyun.
 
 ### Önceki konuşmaları arama {#context-search}
 
@@ -118,18 +120,18 @@ CodeNomad çalışırken ajanlar kayıtlı proje konuşmalarını arayabilir. Ö
 
 CodeNomad'ı kapatmak yerel işi durdurmaz. Etkin yerel programlar hizmet/makine kullanılabilirken çalışabilir; sağlıklı takvimler hizmet yeniden başlatılınca sürer. Açık duraklamalar, durdurmalar ve belirsiz sonuçlar engellerini korur. Mevcut günlük kayıtlar Devam gerektirir.
 
-Bazı koordinasyon ve kurtarma işlemleri CodeNomad sunucusunu gerektirir. Paneldeki bağlantı/eklenti hatasını izleyin.
+Bazı koordinasyon ve kurtarma işlemleri CodeNomad sunucusunu gerektirir.
 
 ## Duraklatma, durdurma ve doğrulanmamış işlemler {#controls-recovery}
 
 Tek seferlik Duraklat, yeni iş başlatmadan mevcut adımları bitirir; hemen kesme, doğrudan kesinti ister. Durdur kalıcıdır ve onay gerekir. Programı duraklatmak gelecekteki başlatmaları kapatır ve mevcut geçişin kesilmesini ister. Araç etkileri devam edebilir.
 
-Doğrulanmamış asıl isteği koruyun. Yerine başka işlem göndermek yerine durum kontrolü, makbuz yenileme veya sunulan yeniden denemeyi kullanın. Pasif yenileme yeniden göndermez. Onaydan sonra kontroller güncel görünümü bekleyebilir. Kurtarma önce yerel etkinlik ve bekleyen istekleri kontrol eder.
+Doğrulanmamış asıl isteği koruyun. Yerine başka işlem göndermek yerine durum kontrolü, makbuz yenileme veya sunulan yeniden denemeyi kullanın.
 
 ## Düzenleme, silme ve konuşma temizliği {#cleanup}
 
 İş konuşması temizliği tek seferlik Görevlerin seçeneğidir. Yerel programları silmek konuşmalarını korur.
 
-⋯ düzenleme aynı formu açar. İlk başlatmadan önce kilitsiz hazırlık alanları, sonra izin verilen talimat ve Notlar düzenlenebilir. Kilitli alanlar nedenini belirtir. Çakışmada güncel yapılandırmayı yükleyip önceki taslağı karşılaştırın.
+⋯ düzenleme aynı formu açar. İlk başlatmadan önce kilitsiz hazırlık alanları, sonra izin verilen talimat ve Notlar düzenlenebilir. Kilitli alanlar nedenini belirtir.
 
-Silmeden önce işi durdurun. Tek seferlik Görev doğrudan kaldırılır; doğrulanmamış silme asıl yeniden denemesini korur. Programı silmek önce gelecek başlatmaları kapatır. İş konuşmalarını silme tercihi yalnızca uygun konuşmaları etkiler; koordinatörler, yeniden kullanılan/paylaşılan veya sahipliği doğrulanamayan konuşmalar tutulur. Temizlik kalan işi ve açık yeniden denemeleri gösterir.
+Silmeden önce işi durdurun. Tek seferlik Görev doğrudan kaldırılır. Programı silmek önce gelecek başlatmaları kapatır. İş konuşmalarını silme tercihi yalnızca uygun konuşmaları etkiler; koordinatörler, yeniden kullanılan/paylaşılan veya sahipliği doğrulanamayan konuşmalar tutulur. Temizlik kalan işi ve açık yeniden denemeleri gösterir.

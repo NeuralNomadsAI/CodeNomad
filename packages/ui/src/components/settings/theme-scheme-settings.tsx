@@ -38,7 +38,6 @@ interface PaletteOption {
   id?: ColorSchemeId
   presetId?: string
   name: string
-  description: string
   appearance: "light" | "dark"
   colors: Readonly<ColorSchemeColors>
   originalColors: Readonly<ColorSchemeColors>
@@ -80,7 +79,6 @@ export const ThemeSchemeSettings: Component = () => {
         key: `builtin:${scheme.id}`,
         id: scheme.id,
         name: t(scheme.id === "custom" ? "settings.appearance.palette.saved" : scheme.labelKey),
-        description: t(scheme.descriptionKey),
         appearance: scheme.id === "custom"
             ? ((activeCustom ? colorScheme() : config.customColorSchemePreference()).appearance === "light" ? "light" : "dark")
           : scheme.appearance === "light" ? "light" : "dark",
@@ -92,7 +90,6 @@ export const ThemeSchemeSettings: Component = () => {
       key: `preset:${id}`,
       presetId: id,
       name: preset.name,
-      description: t("settings.appearance.colorScheme.description.custom"),
       appearance: preset.appearance,
       colors: preset.colors,
       originalColors: preset.colors,

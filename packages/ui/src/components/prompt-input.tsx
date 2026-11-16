@@ -992,7 +992,7 @@ export default function PromptInput(props: PromptInputProps) {
                     </span>
                   </Show>
                   <Show when={prompt().length === 0 && attachments().length > 0}>
-                    <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
+                    <span class="prompt-overlay-text prompt-overlay-muted">{t(attachments().length === 1 ? "promptInput.overlay.attachments.one" : "promptInput.overlay.attachments.other", { count: attachments().length })}</span>
                   </Show>
                   <Show when={mode() === "shell"}>
                     <span class="prompt-overlay-shell-active">{t("promptInput.overlay.shellModeActive")}</span>

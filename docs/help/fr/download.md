@@ -42,6 +42,6 @@ Téléchargez uniquement depuis cette page ou les [versions officielles](https:/
 
 ## Soutenir le développement {#support-development}
 
-CodeNomad est gratuit et maintenu par des bénévoles sur leur temps libre. S’il vous est utile, à vous ou à votre équipe, le parrainage aide à le maintenir et à le garder compatible avec les nouvelles versions d’OpenCode. La page [Soutenir CodeNomad](sponsor.md) explique ce que finance le parrainage.
+La page [Soutenir CodeNomad](sponsor.md) explique ce que finance le parrainage.
 
 {{funding}}
