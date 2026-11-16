@@ -51,18 +51,21 @@ function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, s
 /** Text-bearing parts without part identity: a stream only ever appends within
  * a fragment, and the native persists a fragment's text only when its
  * full-text ending commits — as the accumulated value or as the provider's
- * completed-item replacement, which may be shorter, prefixed or empty. A
- * fetched part holding no text on a row whose step is open on both sides is
- * therefore a fragment whose ending has not committed yet: older than the
- * deltas the live row already displays, and never authoritative. Any
- * committed final carries a value or the row's completion, and keeps full
- * page authority. */
+ * completed-item replacement, which may be shorter, prefixed or empty. Parts
+ * append in stream order and a following part's append commits after the
+ * fragment's ending, so a fetched part holding no text is older than the
+ * deltas the live row already displays only when it is the row's last fetched
+ * part on a step that is open on both sides: no later part or row completion
+ * can prove the ending committed. Committed finals — any value, anywhere but
+ * last, or beside the row's completion — keep full page authority. */
 function isUnpersistedOpenFragment(
   row: SessionMessageInfo,
   fetched: SessionMessageInfo,
   live: unknown,
   fetchedPart: unknown,
+  isLastFetchedPart: boolean,
 ): boolean {
+  if (!isLastFetchedPart) return false
   if ((row as unknown as { time?: { completed?: unknown } }).time?.completed !== undefined) return false
   if ((fetched as unknown as { time?: { completed?: unknown } }).time?.completed !== undefined) return false
   if (typeof live !== "string" || live === "") return false
@@ -85,12 +88,12 @@ function mergeOpenFragmentRow(row: SessionMessageInfo, fetched: SessionMessageIn
   })
   let cursor = 0
   let replaced = false
-  const mergedContent = fetchedContent.map((part) => {
+  const mergedContent = fetchedContent.map((part, index) => {
     const type = (part as { type?: unknown } | null)?.type
     if (type !== "text" && type !== "reasoning") return part
     const live = streamed[cursor]
     cursor += 1
-    if (live === undefined || !isUnpersistedOpenFragment(row, fetched, (live as { text?: unknown }).text, part)) return part
+    if (live === undefined || !isUnpersistedOpenFragment(row, fetched, (live as { text?: unknown }).text, part, index === fetchedContent.length - 1)) return part
     replaced = true
     return live
   })
