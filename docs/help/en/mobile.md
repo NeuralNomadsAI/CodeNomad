@@ -4,6 +4,8 @@ Use the browser UI on a phone or tablet to continue work on the backend host. In
 
 ## Connect from a phone or tablet {#connect}
 
+With multi-server enabled on the host, saved servers are available from Home and Settings → Servers. Project tabs on every backend, including the primary backend, restore their drafts and views after reload. An unavailable project keeps its tab: **Retry** reconnects to an existing record; **Open** explicitly opens a missing project.
+
 1. On the host, open **Settings → Remote Access → Remote Control**, then choose **Start Remote Control**.
 2. Scan the pairing QR code with your mobile device and open the link in the browser you intend to keep using.
 3. Alternatively, configure [direct access](remote-access.md), open the host's reachable trusted HTTPS URL, and sign in with its server password.

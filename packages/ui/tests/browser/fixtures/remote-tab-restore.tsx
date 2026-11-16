@@ -19,6 +19,7 @@ import InstanceTabs from "../../../src/components/instance-tabs"
 import RemoteRestoreView from "../../../src/components/remote-restore-view"
 import AlertDialog from "../../../src/components/alert-dialog"
 import { getServerMeta } from "../../../src/lib/server-meta"
+import { getTabViewState } from "../../../src/stores/tab-view-state"
 import "../../../src/index.css"
 
 await preferencesForBackend("local").ensureLoaded()
@@ -58,6 +59,7 @@ function Fixture() {
     drafts: tab.kind === "instance" ? getSessionDraftPromptsForInstance(tab.instance.id) : tab.kind === "remote-restore" ? tab.snapshot.drafts : {},
   })),
   active: activeAppTabId, close,
+  view: getTabViewState,
   reopen: async (backendId: string) => {
     const opened = await createInstance("/same", undefined, { backend: backends.get(backendId)! })
     attachInstanceTab(opened.instanceId)

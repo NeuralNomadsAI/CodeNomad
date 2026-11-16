@@ -11,7 +11,28 @@ async function fixturePage(run: (page: Page) => Promise<void>) {
   armFixtureNavigationBudget(browser)
   const page = await browser.newPage(), errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.addInitScript({ content: 'window.EventSource = class extends EventTarget { close() {} }' })
+  await page.addInitScript({ content: 'window.__name = value => value; window.EventSource = class extends EventTarget { close() {} }' })
+  await page.addInitScript(() => {
+    const w = window as any
+    w.systemNotifications = []
+    w.Notification = class extends EventTarget {
+      static permission = "granted"
+      static requestPermission = async () => "granted"
+      title: string
+      options: any
+      private handler: EventListener | null = null
+      constructor(title: string, options: any) {
+        super(); this.title = title; this.options = options; w.systemNotifications.push(this)
+      }
+      set onclick(handler: EventListener | null) {
+        if (this.handler) this.removeEventListener("click", this.handler)
+        this.handler = handler
+        if (handler) this.addEventListener("click", handler)
+      }
+      get onclick() { return this.handler }
+      close() {}
+    }
+  })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(fixture.url)
@@ -101,4 +122,65 @@ test("homonymous sessions on two servers have independent notices, exact navigat
   assert.equal(done.title, "Server A · A")
   assert.deepEqual(done.target, { backendId: "A", instanceId: "A~same", sessionId: "ses_homonym" })
   assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "B~same")
+}))
+
+test("web system notification clicks navigate to the qualified session and revoked attachment clicks stay fenced", async () => fixturePage(async page => {
+  await page.evaluate(async () => {
+    await (window as any).parity.systemRouting()
+    ;(window as any).parity.notify("A")
+    ;(window as any).parity.notify("B")
+  })
+  await page.waitForFunction(() => (window as any).systemNotifications.length === 2)
+  assert.deepEqual(await page.evaluate(() => (window as any).parity.history()), [], "System-only routing creates no history action")
+  for (const owner of ["A", "B"]) {
+    await page.evaluate(owner => {
+      const notice = (window as any).systemNotifications.find((item: any) => item.title === `Server ${owner} · ${owner}`)
+      notice.dispatchEvent(new Event("click"))
+    }, owner)
+    await page.waitForFunction(owner => (window as any).parity.selected().instance === `${owner}~same`, owner)
+    const selected = await page.evaluate(() => (window as any).parity.selected())
+    assert.equal(selected[`session${owner}`], "ses_homonym")
+  }
+  await page.evaluate(() => {
+    ;(window as any).parity.detach()
+    ;(window as any).parity.reattach()
+    const stale = (window as any).systemNotifications.find((item: any) => item.title === "Server A · A")
+    stale.dispatchEvent(new Event("click"))
+  })
+  // Drain asynchronous action imports before asserting the retained click cannot change selection.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+  assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "B~same")
+}))
+
+test("embedded Settings Missions reads the selected qualified project's worktree Location", async () => fixturePage(async page => {
+  for (const owner of ["A", "B"]) {
+    const before = await page.evaluate(() => (window as any).parity.calls.length)
+    await page.evaluate(owner => (window as any).parity.openMissions(owner), owner)
+    await page.waitForFunction(({ owner, before }) => (window as any).parity.calls.slice(before)
+      .some((call: any) => call.owner === owner && call.path === "/api/workspaces/same/subagent-depth"), { owner, before })
+    const reads = await page.evaluate(before => (window as any).parity.calls.slice(before)
+      .filter((call: any) => call.path.endsWith("/subagent-depth")), before)
+    assert.ok(reads.length > 0)
+    assert.ok(reads.every((call: any) => call.owner === owner && call.directory === `/${owner}/worktree`),
+      `Missions must use ${owner}'s selected Location, never its root folder or another backend: ${JSON.stringify(reads)}`)
+  }
+}))
+
+test("web clients manage and select saved servers through embedded Settings without a native bridge", async () => fixturePage(async page => {
+  await page.route("**/api/meta", route => route.fulfill({ json: {
+    localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false,
+  } }))
+  await page.evaluate(() => (window as any).parity.openServers())
+  const row = page.locator('[data-remote-server="A"]')
+  await row.waitFor()
+  assert.equal(await page.getByRole("button", { name: "Add server", exact: true }).first().isVisible(), true)
+  assert.equal(await page.getByRole("button", { name: "Edit server: Server A", exact: true }).count(), 1)
+  const id = await page.evaluate(async () => {
+    Object.defineProperty(crypto, "randomUUID", { value: undefined })
+    return (await (window as any).parity.addServer()).id
+  })
+  assert.match(id, /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i)
+  await row.getByRole("button", { name: "Open: Server A", exact: true }).click()
+  await page.waitForFunction(() => (window as any).parity.serverSelection()?.id === "A")
+  assert.equal(await page.evaluate(() => Boolean(window.electronAPI || (window as any).__TAURI_INTERNALS__)), false)
 }))

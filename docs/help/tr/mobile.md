@@ -4,6 +4,8 @@ Ana bilgisayarda çalışmayı sürdürmek için telefon veya tabletin tarayıc�
 
 ## Bir telefon veya tabletten bağlanın {#connect}
 
+Ana bilgisayarda çoklu sunucu etkinleştirildiğinde kayıtlı sunucular Ana sayfa ve Ayarlar → Sunucular üzerinden kullanılabilir. Birincil arka uç dahil her arka ucun proje sekmeleri, yeniden yüklemeden sonra taslakları ve görünümleri geri yükler. Kullanılamayan proje sekmesini korur: **Yeniden dene** mevcut kayda bağlanır; **Aç** eksik projeyi açıkça açar.
+
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesini açın, ardından **Uzaktan Kontrolü başlat** öğesini seçin.
 2. Eşleştirme QR kodunu mobil cihazınızla tarayın ve bağlantıyı kullanmaya devam etmek istediğiniz tarayıcıda açın.
 3. Alternatif olarak, [doğrudan erişim](remote-access.md)'yi yapılandırın, ana bilgisayarın ulaşılabilir güvenilir HTTPS URL'sini açın ve sunucu parolasıyla oturum açın.
