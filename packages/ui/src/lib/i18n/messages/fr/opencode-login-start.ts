@@ -1,5 +1,5 @@
 export const openCodeLoginStartMessages = {
-  "settings.loginStart.title": "Démarrer OpenCode au démarrage",
+  "settings.loginStart.title": "Lancer au démarrage",
   "settings.loginStart.info": "OpenCode démarre à l'ouverture de votre session utilisateur.",
   "settings.loginStart.unavailable": "Indisponible sur ce système.",
   "settings.loginStart.error.read": "Impossible de lire ce réglage.",

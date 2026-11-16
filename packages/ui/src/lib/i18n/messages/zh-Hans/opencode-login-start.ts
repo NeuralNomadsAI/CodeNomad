@@ -1,5 +1,5 @@
 export const openCodeLoginStartMessages = {
-  "settings.loginStart.title": "开机时启动 OpenCode",
+  "settings.loginStart.title": "开机时启动",
   "settings.loginStart.info": "OpenCode 会在你登录用户会话时启动。",
   "settings.loginStart.unavailable": "此系统不可用。",
   "settings.loginStart.error.read": "无法读取此设置。",

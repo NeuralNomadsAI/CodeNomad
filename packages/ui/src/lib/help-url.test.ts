@@ -54,6 +54,19 @@ test("every literal contextual destination exists with its section in all publis
   assert.ok(destinations >= 15, "contextual links are checked, including registry and field helpers")
 })
 
+test("startup labels stay concise and match the localized help", async () => {
+  for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
+    const { openCodeLoginStartMessages: messages } = await import(`./i18n/messages/${locale}/opencode-login-start.ts`)
+    const title = messages["settings.loginStart.title"] as string
+    assert.doesNotMatch(title, /OpenCode/, locale)
+    if (locale === "en") assert.equal(title, "Launch at startup")
+    if (locale === "fr") assert.equal(title, "Lancer au démarrage")
+    const article = await readFile(new URL(`../../../../docs/help/${locale}/opencode.md`, import.meta.url), "utf8")
+    assert.ok(article.includes(`## ${title} {#login-start}`), locale)
+    assert.ok(article.includes(`**${title}**`), locale)
+  }
+})
+
 test("every Missions scheduling explanation links to contextual help instead of the settings popover", async () => {
   const root = fileURLToPath(new URL("../../../..", import.meta.url))
   for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
