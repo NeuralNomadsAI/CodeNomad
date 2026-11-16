@@ -315,7 +315,7 @@ export function createMissionPanelInventory(input: {
     target.pending = operation; target.pendingSelector = signature; target.pendingCurrent = life.current
     return raceTaskRead(operation, life.signal).catch(error => { failed(error); changed(); throw error })
   }
-  async function readMap(instanceId: string, id: string, own: Entry, parent: MissionPanelReadScope): Promise<MissionPanelMap> {
+  async function readMap(instanceId: string, id: string, own: Entry, parent: MissionPanelReadScope): Promise<MissionPanelMap | undefined> {
     const ownLife = scope(instanceId, own, id, parent.deadline)
     const life = { ...ownLife, signal: AbortSignal.any([ownLife.signal!, parent.signal!]), current: () => ownLife.current() && parent.current() }
     const answer = await raceTaskRead(input.read(instanceId, { source: "mission", missionID: id, header: true }, life), life.signal)
@@ -333,11 +333,12 @@ export function createMissionPanelInventory(input: {
     } else if (header.tasks.page.total || header.tasks.reportPins.length) {
       const tasks = await input.tasks(instanceId, id, { offset: 0 }, { ...life, projectID: own.projectID!, signal: life.signal!, deadline: life.deadline! })
       if (!tasks.available || !("tasks" in tasks)) throw new MissionTaskPageReadError("unavailable")
-      if (tasks.revision !== header.root.revision) throw new MissionTaskPageReadError("changed")
+      if (tasks.revision !== header.root.revision) return
       map = { ...map, tasks: tasks.tasks, reports: tasks.reports, taskPage: header.tasks.page }
       if (header.tasks.pins.length || header.tasks.reportPins.length) {
         const pins = await input.tasks(instanceId, id, { ids: header.tasks.pins, reportIds: header.tasks.reportPins }, { ...life, projectID: own.projectID!, signal: life.signal!, deadline: life.deadline! })
-        if (!pins.available || !("tasks" in pins) || pins.revision !== header.root.revision) throw new MissionTaskPageReadError("changed")
+        if (!pins.available || !("tasks" in pins)) throw new MissionTaskPageReadError("unavailable")
+        if (pins.revision !== header.root.revision) return
         map = { ...map, tasks: [...map.tasks, ...pins.tasks], reports: [...new Map([...map.reports, ...pins.reports].map(report => [report.id, report])).values()] }
       }
     } else map.taskPage = header.tasks.page
@@ -417,12 +418,19 @@ export function createMissionPanelInventory(input: {
     if (initial && own.maps.get(id)?.epoch === own.epoch) return
     const job = { owner, trailing: false, promise: Promise.resolve() }
     const run = async () => {
+      let skewRetries = 1
       try {
         do {
           job.trailing = false
           try {
-            await readMap(instanceId, id, own, life)
+            const map = await readMap(instanceId, id, own, life)
             if (!life.current()) return
+            if (!map) {
+              // Separate successful reads can straddle an append. Keep the
+              // display and coalesce one retry; further churn waits for demand.
+              if (skewRetries-- > 0) job.trailing = true
+              continue
+            }
             own.missing.delete(id); own.headerErrors.delete(id)
           } catch (error) {
             if (!life.current()) return

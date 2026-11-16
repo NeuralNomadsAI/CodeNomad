@@ -461,6 +461,64 @@ test("an unrelated root revision rereads no expanded task windows or task transp
   store.clear("fixture")
 })
 
+for (const phase of ["window", "pins"] as const) for (const mode of ["transient", "persistent"] as const)
+test(`selected header ${phase} ${mode} revision skew coalesces one retry and recovers`, async () => {
+  const f = seeded(120, 80), id = "msn_119"
+  let skew = false, fail = false, headers = 0, calls = 0
+  const deadlines: number[] = []
+  const store = createMissionPanelInventory({ scope: () => `header-skew-${phase}`,
+    tasks: async (_instance, missionID, request, scope) => {
+      calls++; deadlines.push(scope.deadline)
+      if (fail && (phase === "window" ? request.offset === 0 : request.ids !== undefined)) throw new Error("Task transport failed")
+      if (skew && (phase === "window" ? request.offset === 0 : request.ids !== undefined)) {
+        const map = (await f.journal.missionView(id)).mission!
+        await f.control.update({ missionID: id, requestID: `skew-${calls}`, expectedRevision: map.revision, objective: `Revision ${calls}` })
+        if (mode === "transient") skew = false
+      }
+      return readMissionTaskPage(missionID, request, { ...scope, exchange: f.exchange })
+    },
+    read: (_instance, selector, scope) => {
+      if (selector.source === "marks" || selector.source === "activity") return Promise.reject(new Error("Native unknown"))
+      if (selector.source === "mission" && selector.header) headers++
+      return readMissionPanelWindow(selector, { ...scope, exchange: f.exchange, runTransfer: read => read() })
+    } })
+  try {
+    store.setDemand("fixture", true); store.want("fixture", "selection", id); await store.ensure("fixture")
+    const before = store.state("fixture").missions[0]
+    assert.ok(before)
+    // Force a new task source while existing recovery pins require a named read.
+    await f.journal.append({ version: 1, projectID: f.project.id, missionID: id, id: "evt_new_task", type: "task.created",
+      task: { id: "tsk_new", key: "task-new", title: "New task", brief: "Brief", role: "specialist", blockedBy: [],
+        executionMode: { kind: "native", parentTaskKey: null } }, createdAt: 9999 })
+    await f.journal.append({ version: 1, projectID: f.project.id, missionID: id, id: "evt_result", type: "task.reported",
+      report: { id: "rep_result", taskKey: "task-new", sessionId: "ses_119", delivery: "coordinator-readout", outcome: "completed",
+        summary: "Done", evidence: [], next: [], createdAt: 10000 }, createdAt: 10000 })
+    skew = true
+    const count = headers; deadlines.length = 0
+    await store.refresh("fixture", false)
+    assert.equal(store.state("fixture").status, "ready")
+    if (mode === "persistent") assert.deepEqual(store.state("fixture").missions[0], before, "mixed-revision maps never replace the last good display")
+    else assert.ok(store.state("fixture").missions[0].revision > before.revision, "the trailing read publishes a coherent snapshot")
+    assert.equal(headers - count, 2, "one bounded trailing retry, then wait for fresh demand")
+    assert.equal(new Set(deadlines).size, 1, "the retry retains its original logical deadline")
+    skew = false
+    await store.refresh("fixture", false)
+    assert.equal(store.state("fixture").status, "ready")
+    assert.ok(store.state("fixture").missions[0].revision > before.revision)
+    assert.equal(store.state("fixture").missions[0].taskPage?.reports, 1)
+    const recovered = store.state("fixture").missions[0], failedAt = headers
+    await f.journal.append({ version: 1, projectID: f.project.id, missionID: id, id: "evt_fail_task", type: "task.created",
+      task: { id: "tsk_failure", key: "task-failure", title: "Failure task", brief: "Brief", role: "specialist", blockedBy: [],
+        executionMode: { kind: "native", parentTaskKey: null } }, createdAt: 10001 })
+    fail = true; await store.refresh("fixture", false)
+    assert.equal(store.state("fixture").status, "error", "actual task read failures still surface")
+    assert.deepEqual(store.state("fixture").missions[0], recovered)
+    assert.equal(headers, failedAt + 1, "a transport failure never starts a skew retry")
+    fail = false; await store.refresh("fixture")
+    assert.equal(store.state("fixture").status, "ready")
+  } finally { store.clear("fixture") }
+})
+
 test("selected header assembly refuses oversized advertised data before hashing or allocation", async () => {
   const f = seeded(), map = (await f.journal.missionView("msn_0")).mission!, header = missionPanelHeader(map)
   Object.assign(header.root, { oversized: "x".repeat(1024 * 1024) })
