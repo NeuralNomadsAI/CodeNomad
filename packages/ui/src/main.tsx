@@ -8,7 +8,8 @@ import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { storage } from "./lib/storage"
 import { applyColorScheme, normalizeColorScheme } from "./lib/theme-scheme"
-import { isNativeApplicationWindow, isTauriHost, usesClientState } from "./lib/runtime-env"
+import { isNativeApplicationWindow, isTauriHost, isWebHost, usesClientState } from "./lib/runtime-env"
+import { webTabTitle } from "./lib/web-tab-title"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -23,6 +24,7 @@ const mount = root
 if (typeof document !== "undefined") {
   document.documentElement.dataset.runtimeHost = runtimeEnv.host
   document.documentElement.dataset.runtimePlatform = runtimeEnv.platform
+  if (isWebHost()) document.title = webTabTitle(window.location)
 }
 
 async function bootstrap() {
