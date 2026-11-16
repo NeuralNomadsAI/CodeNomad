@@ -104,7 +104,35 @@ test("schedule tools preserve the actual caller for roots, descendants, actors a
   assert.equal(calls.length, 5, "lost ACK returns the original identity without retry")
 })
 
-test("registers eight tools, typed snapshot RPC, and role context", async () => {
+test("project controls preserve each actual native caller and return the original identity after bridge ACK loss", async t => {
+  const tools = new Map<string, any>(), calls: any[] = [], registration = { dispose: async () => {} }
+  let loseACK = false
+  const cleanup = await setupMissionsBusiness({
+    tool: { transform: async (configure: any) => {
+      configure({ namespace() {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration
+    } }, session: { hook: async () => registration },
+  } as never, async () => assert.fail("The backend owns project admission"), undefined, undefined, async (sessionID, command) => {
+    calls.push({ sessionID, command })
+    if (loseACK) throw new Error("Lost bridge ACK")
+    return { read: true }
+  })
+  t.after(cleanup)
+  for (const sessionID of ["ses_root", "ses_descendant", "ses_actor", "ses_passage"]) {
+    for (const name of ["control", "configure", "delete"]) {
+      assert.deepEqual(JSON.parse((await tools.get(name).execute({ action: "read", missionID: "owned_mission" }, { sessionID })).content), { read: true })
+      assert.equal(calls.at(-1).sessionID, sessionID)
+      assert.equal(calls.at(-1).command.tool, name)
+    }
+  }
+  loseACK = true
+  const input = { action: "play", missionID: "owned_mission", requestID: "original", expectedRevision: 1 }
+  const before = calls.length
+  assert.deepEqual(JSON.parse((await tools.get("control").execute(input, { sessionID: "ses_actor" })).content),
+    { uncertain: true, missionID: input.missionID, requestID: input.requestID })
+  assert.equal(calls.length, before + 1)
+})
+
+test("registers project tools, typed snapshot RPC, and role context", async () => {
   const values = new Map<string, unknown>()
   const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
   let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
@@ -152,7 +180,7 @@ test("registers eight tools, typed snapshot RPC, and role context", async () => 
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "control", "configure", "delete"])
   const description = (name: string) => (tools.find((tool) => tool.name === name) as unknown as { description: string }).description
   for (const name of ["report", "briefing"]) {
     assert.match(description(name), /plain language in the user's language[:,] 3-5 short sentences, outcome first/)

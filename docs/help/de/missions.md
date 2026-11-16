@@ -26,6 +26,8 @@ Agenten können gespeicherte Konfigurationen lesen und Ihre gewählten Werte in 
 
 ### Ziel, Titel und Notizen {#mission-instructions}
 
+Bei einmaligen Missions können Agenten starten, fortsetzen, sanft pausieren, sofort unterbrechen, stoppen, bearbeiten, löschen, die Koordination nach einem Fehler fortsetzen, einen fehlenden Bericht oder einen Zwischenstand anfordern. Das gilt auch für Ihre Missions, mit denselben Zulassungs- und Revisionsprüfungen wie im Panel. Beim Löschen gilt Ihre Einstellung für verwaltete Sitzungen, sofern Sie nichts anderes angeben. Unbestätigte Aktionen und Bereinigungen behalten ihre ursprüngliche Identität; vor dem ausdrücklichen Fortsetzen einer bestätigten Teilaktion lesen Agenten den gespeicherten Status.
+
 **Ziel** beschreibt das gewünschte Ergebnis und seine Prüfung. **Titel** benennt den Baumeintrag; bei einer leeren Mission folgt er dem ersten Satz des Ziels, bis 60 Zeichen, und bleibt bearbeitbar. **Notizen** enthalten optional Kontext, Einschränkungen oder zusätzliche Anweisungen für die Agenten.
 
 ### Optionen und Playbook {#playbooks}

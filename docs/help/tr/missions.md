@@ -26,6 +26,8 @@ Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullan
 
 ### Hedef, Başlık ve Notlar {#mission-instructions}
 
+Tek seferlik Missions için ajanlar başlatabilir, sürdürebilir, mevcut adımdan sonra duraklatabilir, hemen kesebilir, durdurabilir, düzenleyebilir, silebilir, hata sonrası koordinasyonu sürdürebilir ve eksik rapor veya güncelleme isteyebilir. Sizin oluşturduğunuz Missions da panelle aynı kabul ve revizyon kontrollerine tabidir. Açıkça başka bir seçenek belirtilmedikçe silme işlemi, yönetilen oturumları silme tercihinizi kullanır. Onaylanmamış kontroller ve temizlik özgün kimliklerini korur; ajanlar, doğrulanmış kısmi bir işlemi açıkça sürdürmeden önce kayıtlı durumu okur.
+
 **Hedef**, istenen sonucu ve doğrulamasını anlatır. **Başlık**, ağaçtaki addır; boş görevde hedefin ilk cümlesinden en çok 60 karakter alır ve değiştirilebilir. **Notlar**, ajanlara iletilen isteğe bağlı bağlam, kısıtlar veya ek talimatlardır.
 
 ### Seçenekler ve rehber {#playbooks}

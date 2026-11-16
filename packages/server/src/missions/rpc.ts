@@ -1,4 +1,5 @@
 import { executionSchema } from "./execution"
+import { projectControlProofWire } from "./project-control-proof"
 import { missionProfilesSchema } from "./playbook-profiles"
 import { missionCreationDefaultsWire } from "./creation-defaults"
 import { automaticStartWire } from "./automatic-start"
@@ -296,6 +297,11 @@ const snapshotProperties = {
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
   methods: {
+    projectControl: {
+      input: projectControlProofWire,
+      output: { type: "object", properties: { json: { type: "string", maxLength: 100_000 } }, required: ["json"], additionalProperties: false },
+      errors: missionMutationErrors,
+    },
     ...missionScheduleRpcMethods,
     documentCapabilities: {
       input: { type: "object", properties: {}, additionalProperties: false },

@@ -194,6 +194,9 @@ export interface MissionReviseInput {
 }
 
 export interface MissionInputTransport {
+  projectControl?(sessionID: string, command: import("./project-control-tool").ProjectToolCommand): Promise<unknown>
+  verifyProjectControl?(proof: import("./project-control-proof").ProjectControlProof): Promise<unknown>
+  requestProjectUpdate?(proof: import("./project-control-proof").ProjectControlProof): Promise<unknown>
   schedule?(sessionID: string, input: import("./schedule-tool").ScheduleToolInput): Promise<unknown>
   readConfigurations?(sessionID: string): Promise<unknown>
   resolveCreationDefaults?(sessionID: string, input: MissionCreationChoices & { template: MissionTemplateId; coordinatorModel?: MissionExecution["model"] }): Promise<unknown>

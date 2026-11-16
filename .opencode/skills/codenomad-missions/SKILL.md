@@ -7,7 +7,7 @@ description: Coordinate bounded native tasks through the CodeNomad mission map, 
 
 Prefer ordinary native delegation for bounded work. Use a mission only when the user needs a durable shared task map, evidence gates, and explicit coordinator decisions.
 
-1. To attach THIS root conversation as coordinator, call `mission.inspect` with `start.objective` and one template: `custom`, `debug`, `wayfinder`, `delivery`, or `compare` (two required different model profiles: `model-a` and `model-b`; coordinator-written protocol, identical briefs, always a blind `comparator`, verdict only). For a separate mission, use `mission.prepare` from any owned project session: an ordinary root, coordinator, descendant, current or historical task actor, or scheduled passage. It creates a new coordinator by default; calendar-backed work may explicitly select an eligible idle root. The actual caller stays unchanged and retains read-only access to its preparation; native ancestry supplies source provenance. Keep exactly one owning backend available; ambiguous ownership is refused. Creation defaults to paused for human Play. Only `prepare` accepts `startOnCreation: true`, and only when the user explicitly requests automatic first Play. Never combine `missionID` and `start`. Both accept optional `title` (1–60 characters, single-line, trimmed) and verbatim `notes`, including empty notes.
+1. To attach THIS root conversation as coordinator, call `mission.inspect` with `start.objective` and one template: `custom`, `debug`, `wayfinder`, `delivery`, or `compare` (two required different model profiles: `model-a` and `model-b`; coordinator-written protocol, identical briefs, always a blind `comparator`, verdict only). For a separate mission, use `mission.prepare` from any owned project session: an ordinary root, coordinator, descendant, current or historical task actor, or scheduled passage. It creates a new coordinator by default; calendar-backed work may explicitly select an eligible idle root. The actual caller stays unchanged; native ancestry supplies source provenance. Keep exactly one owning backend available; ambiguous ownership is refused. Creation defaults to paused for explicit Play. Only `prepare` accepts `startOnCreation: true`, and only when the user explicitly requests automatic first Play. Never combine `missionID` and `start`. Both accept optional `title` (1–60 characters, single-line, trimmed) and verbatim `notes`, including empty notes.
 2. Read the returned playbook. The starting session is the coordinator and is the only session allowed to call `mission.delegate`.
 3. Give every task a stable lowercase `taskKey`. Declare its role, real `blockedBy` dependencies, and execution mode separately from execution. Follow the mission's persisted `taskMode`: `native` defaults new declarations to native execution; `independent` requires explicit `executionMode.kind: "independent"`, a concrete reason and explanation for every declaration, including additions through `mission.revise`. The user-selected policy may justify reason `playbook` with an explicit explanation. A blocked declaration waits undispatched and needs no completed prerequisite reports yet.
 4. In native task mode, prefer a fresh native child for independent work; reuse an exact specialist only when its context helps and continuation is eligible. Use an independent root only for a concrete `location`, `lifetime`, `existing-root`, or `playbook` reason and explanation. Native continuation names the exact live native `reuseFromTaskKey` with the same parent, never an arbitrary root or a guessed session. It selects context only; never add a `blockedBy` dependency just to reuse a session. Debugging resolvers require dependency-connected implementer and review evidence. Reuse admission requires an observed end/return of the exact current native execution and an idle bound session; never infer either from a report. Tasks stored without an execution mode keep root execution; never convert them.
@@ -49,6 +49,23 @@ is explicitly true. After uncertainty, use `read` with the original `requestID`;
 never resend or choose a replacement identity to evade the shared hold. Exact
 completed requests replay idempotently; changed inputs conflict. Keep exactly one
 owning CodeNomad backend available.
+
+`mission.control` controls any one-time project Mission from any owned conversation:
+`play`, `resume`, graceful `pause`, immediate `interrupt`, terminal `stop`,
+`recover-coordinator` (including failed Missions), `recover-report` with `taskKey`,
+and `request-update` with optional `language`. The last action asks for a briefing;
+the coordinator publishes with `mission.briefing`. `mission.interrupt` instead stops
+a retired task's native family. Mutations take a stable `requestID` and the fresh
+`expectedRevision`. Use `action: "read"` and the original `requestID` to observe an
+uncertain result without sending again.
+
+`mission.configure({ action: "save", ... })` accepts objective/notes OR the editor's
+complete `configuration`. Structural edits and immediate/calendar conversion share
+the editor's admission guards. `mission.delete({ action: "delete", ... })` uses the
+ordinary cleanup; omitted `deleteManagedSessions` freezes the owning profile's
+preference. Its `read` retains cleanup after deletion. Never replace an unknown
+request identity. Explicit `retry: true` keeps every original field and requires a
+positively read partial lifecycle, cleanup or structural-edit receipt.
 
 `schedule.capabilities` is a passive diagnostic, including explicit scheduling OFF.
 `activate` prepares settings using the original request/revision; `activation-read`

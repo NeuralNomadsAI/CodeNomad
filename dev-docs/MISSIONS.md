@@ -27,7 +27,8 @@ the execution journal retains its task, report and lifecycle contracts.
 | Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
 
 The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
-`mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare` and `mission.schedule`.
+`mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare`, `mission.schedule`,
+`mission.control`, `mission.configure` and `mission.delete`.
 The coordinator is the topology writer.
 Native RPC schemas use the decoder's portable primitives; strict server codecs
 validate principal exclusivity and identifier/digest formats before authentication
@@ -358,6 +359,49 @@ Before first scheduled dispatch, preparation reads document existence without a
 request selector; held and observation-only recovery reads the exact original receipt.
 Project controls use `mission.schedule` independently of preparation provenance.
 
+### Agent one-time controls
+
+Every owned project conversation can use `mission.control`, `mission.configure`
+and `mission.delete` on any project Mission, including human-created Missions.
+All mutations take a stable `requestID` and the owning read's `expectedRevision`.
+`control` maps Play/Resume to the existing Start operation, Pause to graceful
+Pause, Interrupt to immediate Pause and Stop to terminal Stop. Recovery targets
+the coordinator (including reopening a failed Mission) or one missing report by
+`taskKey`. Recovery deduplicates the mission/revision/target contract. Request
+update uses the shared fixed briefing text and ordinary native prompt admission,
+with `delivery: "steer"` and the coordinator's existing native profile.
+
+`configure.save` accepts objective/notes for the journal's recorded text edit, or
+the editor's complete `configuration` for the shared schedule configuration and
+immediate/calendar conversion admission. Its document guards apply before
+admission and between passages. `delete.delete` freezes `deleteManagedSessions`
+from the supplied option or the owning profile's `missionDeleteSessions` preference.
+Its ordinary cleanup preserves excluded native conversations.
+
+Each tool's `read` observes the Mission and optionally its exact `requestID`;
+deletion reads retain cleanup after the map disappears. Native project-tool
+intents and bounded receipts retain the original action, payload and revision.
+Text-edit replies project the request identity and payload digest; native storage
+retains the original text.
+Reads also recover the panel's existing lifecycle and deletion identities;
+an original native Start is returned as the canonical tool action `play`.
+Uncertain requests reserve their physical permit and block replacement agent
+identities. Exact completed replays return their saved receipt. Explicit
+`retry: true` requires a positively read partial original lifecycle/cleanup
+receipt; structural configuration uses its existing partial-receipt contract.
+Keep every original field unchanged, including Pause's graceful intent.
+Never resend from passive reads or replace an unknown request identity.
+Explicit Stop retains the panel's ability to supersede a positively saved partial
+lifecycle action at the current revision; reads preserve that original receipt
+with its superseded outcome.
+
+The private bridge discovers and revalidates the native caller and owning
+project, connection and physical checkout. It signs an agent-only principal,
+exact command, project, directory and issue time. The native controller asks the
+owning backend to verify its signature and fresh ownership before effects.
+Public HTTP keeps its human entry. The authenticated human-answer mark remains
+behind its separate human gate.
+
 ### Agent schedule controls
 
 `mission.schedule({ action: "list", after?, limit? })` reads a bounded project page
@@ -522,7 +566,7 @@ Native proof: `node scripts/test-missions-native-trajectory.mjs <CLI>`.
 Only the coordinator's final report finalizes a mission, even when every declared
 task is complete; empty plan history is omitted. A one-time mission finishes only as
 completed (`completedFinalOnly` on the plugin's `MissionControl`, the
-`COMPLETED_FINAL_ONLY` instruction), and only the human stops a mission: when
+`COMPLETED_FINAL_ONLY` instruction); lifecycle controls handle Stop. When
 nothing can proceed without the human, the coordinator asks through the native
 question tool and waits (§Human questions and decisions). Recurring passages, with
 their own control, finish completed or failed.
@@ -1586,6 +1630,8 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 `NATIVE_MISSION_OUTPUT` (default: a temporary folder).
 
 ## Agent conventions
+
+- Missions project tools admit every owned project conversation, including descendants and scheduled passages, and include human-created Missions. Keep coordinator-only topology and authenticated human-answer evidence at their existing domain boundaries.
 
 - Mission reader and conversation gestures advance the tab occurrence generation at admission. Async navigation adopts only while that generation is current. Passage retargeting, inventory cleanup and Mission absence reconciliation apply immediately against their current source and reader; pending gestures retain their authority.
 

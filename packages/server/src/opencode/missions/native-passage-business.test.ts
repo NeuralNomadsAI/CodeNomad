@@ -13,7 +13,7 @@ test("desktop registers passage mission tools independently of backend presence;
   const plugin = desktopPlugin([])
   const dispose = await plugin.setup(f.context as never)
   try {
-    assert.deepEqual([...f.tools.keys()], ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule"])
+    assert.deepEqual([...f.tools.keys()], ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "control", "configure", "delete"])
     await f.start()
     const child = "ses_native_child"
     f.sessions.set(child, { ...f.sessions.get(f.passage.coordinatorSessionID)!, id: child, parentID: f.passage.coordinatorSessionID })

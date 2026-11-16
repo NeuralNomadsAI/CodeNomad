@@ -26,6 +26,8 @@ Les agents peuvent lire les configurations enregistrées et copier les valeurs c
 
 ### Objectif, Titre et Notes {#mission-instructions}
 
+Pour les Missions ponctuelles, les agents peuvent démarrer, reprendre, mettre en pause douce, interrompre immédiatement, arrêter, modifier, supprimer, reprendre la coordination après échec, demander un rapport manquant ou un point. Cela inclut vos Missions, avec les mêmes contrôles d’admission et de révision que le panneau. La suppression suit votre préférence de suppression des sessions gérées, sauf choix explicite. Un contrôle ou nettoyage non confirmé conserve son identité ; les agents lisent son état enregistré avant de poursuivre explicitement une action partielle confirmée.
+
 - **Objectif** : le résultat souhaité et comment le vérifier.
 - **Titre** : le nom dans l’arbre. Pour une Mission vierge, il suit la première phrase de l’objectif, dans la limite de 60 caractères ; vous pouvez le modifier.
 - **Notes** : du contexte, des contraintes ou des consignes complémentaires pour les agents, facultatifs. Mettez-y ce qui est utile au travail, plutôt que des réglages d’interface.

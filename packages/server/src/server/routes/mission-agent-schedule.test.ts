@@ -20,6 +20,7 @@ import { registerMissionScheduled } from "./mission-scheduled"
 import { verifyRecurrenceRequest } from "./mission-recurrence-proof"
 import { scheduledMissionHold } from "./mission-scheduled-holds"
 import { scheduleToolInput } from "../../missions/schedule-tool"
+import { controlAgentMission } from "./mission-agent-control"
 import type { NativeScheduleActivationJournal } from "../../opencode/native-schedule-settings-activation"
 import { missionDocumentSummary } from "../../missions/mission-document-one-time"
 
@@ -166,8 +167,24 @@ async function fixture(t: test.TestContext, agentCreated = false) {
   const human = (input: object) => app.inject({ method: "POST", url: "/api/workspaces/owned/missions/owned_schedule/schedule", payload: input })
   const action = async (action: string, requestID = `agent_${action}`, extra = {}) => agent({
     missionID: created.id, action, requestID, expectedRevision: (await read()).revision, ...extra })
-  return { ...f, read, config, state, fence, agent, human, action, rpc, app }
+  const configure = (input: object) => controlAgentMission(deps as never, "ses_subagent",
+    { kind: "project-control", input: { tool: "configure", input } }, new AbortController().signal) as Promise<any>
+  return { ...f, read, config, state, fence, agent, human, action, rpc, app, configure }
 }
+
+for (const agentCreated of [false, true]) test(`project configure shares editor structural admission (${agentCreated ? "agent" : "human"} Mission)`, async t => {
+  const f = await fixture(t, agentCreated), before = await f.read()
+  const { roots: _roots, profileID: _profile, executionHost: _host, ...fields } = f.config
+  const input = { action: "save", missionID: before.id, requestID: "project-edit", expectedRevision: before.revision,
+    configuration: { ...fields, notes: "Future passage" } }
+  assert.equal((await f.configure(input)).status, 200)
+  assert.equal((await f.read()).configuration.notes, "Future passage")
+  const receipt = await f.configure({ action: "read", missionID: before.id, requestID: input.requestID })
+  assert.equal(receipt.schedule.pending, false)
+  assert.equal(receipt.uncertain, undefined, "a positive structural receipt owns this read")
+  assert.equal((await f.configure(input)).status, 200)
+  assert.equal((await f.configure({ ...input, configuration: { ...input.configuration, notes: "Conflict" } })).status, 409)
+})
 
 test("agent scheduling diagnostics and activation receipt reads are passive, explicit activation shares preparation", async t => {
   const f = await fixture(t)

@@ -26,6 +26,8 @@ Los agentes pueden leer las configuraciones guardadas y copiar los valores elegi
 
 ### Objetivo, Título y Notas {#mission-instructions}
 
+En las Missions puntuales, los agentes pueden iniciar, reanudar, pausar suavemente, interrumpir de inmediato, detener, editar, eliminar, recuperar la coordinación tras un fallo y pedir un informe pendiente o una actualización. Esto incluye las Missions que usted creó, con las mismas comprobaciones de admisión y revisión del panel. La eliminación sigue su preferencia para las sesiones administradas salvo indicación expresa. Las acciones y limpiezas sin confirmar conservan su identidad original; los agentes leen el estado guardado antes de continuar explícitamente una acción parcial confirmada.
+
 **Objetivo** describe el resultado y cómo comprobarlo. **Título** nombra la entrada; inicialmente sigue la primera frase del objetivo, hasta 60 caracteres, y es editable. **Notas** aporta contexto, restricciones o instrucciones adicionales opcionales para los agentes.
 
 ### Opciones y guion {#playbooks}

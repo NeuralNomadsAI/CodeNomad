@@ -52,6 +52,8 @@ import { NativeMissionDocumentStore } from "../missions/mission-document-store"
 import type { MissionBusinessControl } from "../missions/business-control"
 import { scheduleToolInput, scheduleToolWire } from "../missions/schedule-tool"
 import { parseProjectRead, projectReadWire } from "../missions/project-read-tool"
+import { projectMissionController, projectControlResult } from "../missions/project-control"
+import { projectControlInput, projectConfigureInput, projectDeleteInput, projectControlWire, projectConfigureWire, projectDeleteWire } from "../missions/project-control-tool"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -120,6 +122,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
       register(
         definition: typeof CODENOMAD_MISSIONS_RPC,
       handlers: {
+        projectControl(input: unknown, context: MutationContext): Promise<unknown>
         scheduleFlag(input: unknown): Promise<unknown>
         schedulePreparationRead(input: unknown): Promise<unknown>
         scheduleList(input: unknown): Promise<unknown>
@@ -235,7 +238,24 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
 
   try {
     await policy?.configure(control)
+    const projectController = projectMissionController({
+      projectID: context.location.project.id, directory: context.location.directory, storage: context.storage, control, current: assertActive,
+      verify: proof => {
+        if (!transport?.verifyProjectControl) throw new Error("Mission project control admission unavailable")
+        return transport.verifyProjectControl(proof)
+      },
+      update: proof => {
+        if (!transport?.requestProjectUpdate) throw new Error("Mission coordinator messaging unavailable")
+        return transport.requestProjectUpdate(proof)
+      },
+    })
     const handlers: Parameters<MissionsPluginContext["rpc"]["register"]>[1] = {
+      projectControl: async (input, context) => mutationResult(context, async () => {
+        const result = projectControlResult(await projectController(input))
+        const json = JSON.stringify(result)
+        if (json.length > 100_000) throw new Error("Mission project control result exceeds read capacity")
+        return { json }
+      }),
       scheduleFlag: async () => { throw new Error("Native Mission schedule flag graph unavailable") },
       schedulePreparationRead: async () => { throw new Error("Native Mission preparation graph unavailable") },
       scheduleList: async () => { throw new Error("Native Mission schedule graph unavailable") },
@@ -308,6 +328,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
+      projectControl: tracked(handlers.projectControl),
       scheduleFlag: tracked(handlers.scheduleFlag),
       schedulePreparationRead: tracked(handlers.schedulePreparationRead),
       scheduleList: tracked(handlers.scheduleList),
@@ -333,7 +354,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     if (business) registrations.push({ dispose: await setupMissionsBusiness(context, async sessionID => ({
       control, readSessionID: sessionID, current: assertActive,
       beforeTool: (name, input) => policy?.beforeTool(name, input, sessionID) ?? Promise.resolve(),
-    }), transport?.schedule) })
+    }), transport?.schedule, undefined, transport?.projectControl) })
     notificationOutbox = new MissionNotificationOutbox(
       `${context.location.project.id}\0${context.location.project.canonical}`,
       (isActive, after) => writer.run(() => control.retryPendingNotifications(isActive, after)),
@@ -368,7 +389,8 @@ const executeMissionBusiness = <T>(selected: MissionBusinessRoute, use: (control
 /** One set of native names. Selection is invocation-scoped, never model-provided storage. */
 export async function setupMissionsBusiness(context: MissionsPluginContext,
   select: (sessionID: string, name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown) => Promise<MissionBusinessRoute | undefined>,
-  schedule?: MissionInputTransport["schedule"], projectRead?: (sessionID: string, input: unknown) => Promise<unknown>): Promise<() => Promise<void>> {
+  schedule?: MissionInputTransport["schedule"], projectRead?: (sessionID: string, input: unknown) => Promise<unknown>,
+  projectControl?: MissionInputTransport["projectControl"]): Promise<() => Promise<void>> {
   let active = true
   const writer = createMissionWriterRetirement(), registrations: Registration[] = []
   const assertActive = () => { if (!active) throw new Error("CodeNomad Missions is no longer available") }
@@ -583,6 +605,27 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           }
         },
       })
+      for (const definition of [
+        { name: "control", schema: projectControlInput, wire: projectControlWire,
+          description: "Control any one-time Mission in the owned project, including human-created Missions, from any owned conversation. play/resume start prepared/paused work; pause is graceful (finish the current step), interrupt stops immediately, stop is terminal. recover-coordinator resumes coordination, including a failed Mission; recover-report takes taskKey and asks only for its missing report. request-update steers one fixed briefing request to the preserved coordinator profile; briefing publishes the response. Mutations take requestID and expectedRevision. read observes the Mission and an optional original requestID, including unconfirmed controls. On uncertainty read first, never resend or change identity. retry: true explicitly continues only a positively read partial lifecycle receipt, retaining its original action/revision (pause retains graceful). mission.interrupt instead stops a retired task's conversations." },
+        { name: "configure", schema: projectConfigureInput, wire: projectConfigureWire,
+          description: "Edit any project Mission. save takes stable requestID and expectedRevision, with objective/optional notes for recorded text edits OR the editor's complete configuration for structural edits and immediate/schedule conversion. Structural edits share the editor's pre-admission/between-passages guards. read observes an original requestID without resending. Keep uncertain identities unchanged; retry: true applies only to a positively confirmed partial structural edit." },
+        { name: "delete", schema: projectDeleteInput, wire: projectDeleteWire,
+          description: "Delete any one-time project Mission through ordinary guarded cleanup. delete takes stable requestID and expectedRevision. deleteManagedSessions defaults to the owning profile's missionDeleteSessions preference and is frozen for this request; only eligible managed specialist roots are removed, preserving coordinators, reused/shared/moved sessions and parents with children. read observes cleanup even after deletion. retry: true resumes only a positively read partial original deletion with the same identity, revision and option. Use mission.schedule for calendar deletion." },
+      ] as const) add({
+        name: definition.name, description: definition.description, input: definition.wire,
+        options: { namespace: "mission", codemode: false },
+        execute: async (raw, tool) => {
+          assertActive()
+          if (!projectControl) throw new Error("Mission project controls unavailable")
+          const input = definition.schema.parse(raw)
+          try { return textResult(await projectControl(tool.sessionID, { tool: definition.name, input } as Parameters<NonNullable<typeof projectControl>>[1])) }
+          catch (error) {
+            if (input.action === "read") throw error
+            return textResult({ uncertain: true, missionID: input.missionID, requestID: input.requestID })
+          }
+        },
+      })
     })
     registrations.push(tools)
 
@@ -629,11 +672,12 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
         try {
           const selected = await select(event.sessionID, "inspect", {})
           if (!selected) {
-            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare", "schedule"]) delete event.tools[`mission_${name}`]
+            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare", "schedule", "control", "configure", "delete"]) delete event.tools[`mission_${name}`]
             return
           }
           selected.current()
           if (!schedule) delete event.tools.mission_schedule
+          if (!projectControl) for (const name of ["control", "configure", "delete"]) delete event.tools[`mission_${name}`]
           const backendActions = await executeMissionBusiness(selected, async control => control.backendActions)
           if (!selected.preparationAvailable && !backendActions) delete event.tools.mission_prepare
           // One hinted membership read per turn: the instruction and the coordinator check share it.

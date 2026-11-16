@@ -88,6 +88,7 @@ export function recurrenceProofExpired(issuedAt: number, now = Date.now()): bool
 /** Redact signed principals and private bridge payloads while retaining native ses_ diagnostics. */
 export function isRecurrenceProofPayload(value: Record<string, unknown>): boolean {
   return value.mode === "recurrence-control-verify"
+    || "principal" in value && "proof" in value && "command" in value && "issuedAt" in value
     || (typeof value.sessionID === "string" || "principal" in value) && typeof value.scheduleID === "string"
       && typeof value.digest === "string" && "profileSource" in value && "issuedAt" in value
 }

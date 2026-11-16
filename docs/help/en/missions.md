@@ -18,6 +18,8 @@ Agents can read every Mission in the project, including yours, from any owned co
 
 Agents can also diagnose scheduling, prepare its settings while preserving explicit OFF, resume a confirmed partial edit with its original request, and create or control daily schedules.
 
+For one-time Missions, agents can start, resume, pause gracefully, interrupt immediately, stop, edit, delete, resume coordination after failure, request a missing report or ask for an update. This includes Missions you created, with the same admission and revision checks as the panel. Deletion follows your managed-session deletion preference unless explicitly overridden. Unconfirmed controls and cleanup keep their original identity; agents read the saved status before explicitly continuing a confirmed partial action.
+
 **Configuration** optionally loads a saved objective, notes, playbook, agents/models and task-session choices. Its name supplies the editable title. Check the filled fields before creating.
 
 Agents can read saved configurations and copy your chosen values into a separate Mission.

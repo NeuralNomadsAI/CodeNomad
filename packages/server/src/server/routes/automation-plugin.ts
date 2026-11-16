@@ -12,6 +12,7 @@ import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
 import { controlAgentMissionSchedule } from "./mission-agent-schedule"
+import { controlAgentMission, verifyAgentMissionControl } from "./mission-agent-control"
 import { readAgentMissionProject } from "./mission-agent-read"
 import type { ForgeWorkItems } from "../../forge/work-items"
 import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
@@ -127,7 +128,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.code(503).send({ error: failure.message, code: failure.code })
     }
     const notOwner = (error: string) => reply.code(404).send({ error, ...(preferenceProbe ? { code: "mission-not-owner" } : {}) })
-     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule"
+     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule" || commandKind === "project-control"
     const signal = body.mode === "mission-input"
       ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
 
@@ -170,7 +171,10 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal)
           : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal,
              { settings: deps.settings, bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation })
-            : commandKind === "project-read" ? await readAgentMissionProject(deps, body.sessionID, body.command, signal)
+             : commandKind === "project-read" ? await readAgentMissionProject(deps, body.sessionID, body.command, signal)
+             : commandKind === "project-control" ? await controlAgentMission(deps, body.sessionID, body.command, signal)
+             : commandKind === "project-control-verify" || commandKind === "project-update"
+               ? await verifyAgentMissionControl(deps, body.sessionID, body.command, signal)
             : commandKind === "schedule" ? await controlAgentMissionSchedule({
              workspaceManager: deps.workspaceManager, worktreeDeletionFence: fence, settings: deps.settings,
               bridgeToken: deps.bridgeToken, scheduleSettingsActivation: deps.scheduleSettingsActivation,
