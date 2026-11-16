@@ -743,6 +743,8 @@ export const settingsMessages = {
   "sidecars.form.prefixMode.strip": "Präfix entfernen",
   "sidecars.form.prefixMode.preserve": "Präfix beibehalten",
   "sidecars.form.add": "SideCar hinzufügen",
+  "sidecars.directHttps.title": "SideCars über HTTPS öffnen",
+  "sidecars.directHttps.info": "Angemeldete Browser auf den HTTPS-Adressen dieses Servers oder aus CODENOMAD_ALLOWED_ORIGINS können SideCars öffnen. Einfaches HTTP und Fernsteuerung bleiben dem Host vorbehalten.",
   "sidecars.kind.port": "Port",
   "sidecars.status.running": "Läuft",
   "sidecars.status.stopped": "Gestoppt",

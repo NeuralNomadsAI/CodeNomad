@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
-import type { RemoteControlManager } from "../../remote-control/manager"
+import { REMOTE_CONTROL_DISABLED, type RemoteControlManager } from "../../remote-control/manager"
 import { deviceCookie, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../../remote-control/gate"
 import { verifiedDirectHttpsOrigin } from "../../remote-control/direct-https"
 import { isLocalRequest, isRemoteRequest, isRemoteSocket } from "../../remote-control/request-origin"
@@ -54,7 +54,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   })
 
   app.post("/api/remote-control/start", async (request, reply) => {
-    if (!requireLocalControl(request, reply)) return
+    if (!requireLocalControl(request, reply) || !requireAllowed(deps, reply)) return
     try {
       return await deps.manager.start()
     } catch (error) {
@@ -64,7 +64,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   })
 
   app.post("/api/remote-control/pairings", { bodyLimit: 4096 }, async (request, reply) => {
-    if (!requireLocalControl(request, reply)) return
+    if (!requireLocalControl(request, reply) || !requireAllowed(deps, reply)) return
     // Without a body, a tunnel link; with an origin, a link for that verified direct HTTPS origin.
     const parsed = request.body === undefined || request.body === null ? null : PairingBody.safeParse(request.body)
     if (parsed && !parsed.success) {
@@ -141,6 +141,12 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
     reply.header("Cache-Control", "no-store")
     return { device: paired.device }
   })
+}
+
+function requireAllowed(deps: RouteDeps, reply: FastifyReply): boolean {
+  if (!deps.manager.status().disabledByAdministrator) return true
+  reply.code(403).send({ error: REMOTE_CONTROL_DISABLED, code: "remote_control_disabled" })
+  return false
 }
 
 function requireLocalControl(request: FastifyRequest, reply: FastifyReply): boolean {

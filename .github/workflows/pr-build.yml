@@ -598,6 +598,7 @@ jobs:
           packages/ui/src/components/prompt-input/backend-history.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
+          packages/ui/src/lib/assistant-meta.test.ts
           packages/ui/src/lib/sdk-manager.test.ts
           packages/ui/src/lib/tool-content.test.ts
           packages/ui/src/lib/background-read-queue.test.ts

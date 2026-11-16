@@ -830,6 +830,8 @@ export interface RemoteProxySessionCreateResponse {
 export interface RemoteControlStatus {
   /** False for requests arriving through Remote Control: only the host manages it. */
   manageable: boolean
+  /** The administrator disabled Remote Control (CODENOMAD_REMOTE_CONTROL=disabled): it never starts. */
+  disabledByAdministrator?: boolean
   enabled: boolean
   /** The user started Remote Control and has not stopped it: it reconnects at launch. */
   startsOnLaunch: boolean
@@ -965,6 +967,8 @@ export interface SupportMeta {
 export interface ServerMeta extends Partial<ServerContractMeta> {
   /** Whether this request has host-local privileges (loopback, outside Remote Control). */
   localRequest?: boolean
+  /** Whether this request may open SideCars: local, or a verified direct HTTPS origin the host opted in. */
+  sidecarsAllowed?: boolean
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
   /** URL direct remote clients should use (prefers HTTPS when enabled). */
@@ -975,6 +979,8 @@ export interface ServerMeta extends Partial<ServerContractMeta> {
   host: string
   /** Listening mode derived from host binding. */
   listeningMode: "local" | "all"
+  /** The administrator fixed the listening address (CODENOMAD_LOCKED_HOST); the UI cannot change it. */
+  listeningLocked?: boolean
   /** Actual local port in use after binding. */
   localPort: number
   /** Actual direct remote port in use after binding (when remoteUrl is set). */

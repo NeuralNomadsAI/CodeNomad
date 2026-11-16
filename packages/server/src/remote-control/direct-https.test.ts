@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
 import http from "node:http"
+import os from "node:os"
+import path from "node:path"
 import test from "node:test"
+import { resolveConfigLocation } from "../config/location"
+import { SettingsService } from "../settings/service"
 import { DEVICE_COOKIE_NAME } from "./gate"
 import { verifiedDirectHttpsOrigin, verifiedHttpsOrigins } from "./direct-https"
 import { SERVER_PAIR_PATH } from "./server-pairing"
@@ -16,16 +21,18 @@ const PROXY_PEERS = ["127.0.0.1", "192.0.2.20"]
 
 type Surface = Awaited<ReturnType<typeof startRemoteSurface>>
 
+function configureInjectedSockets(app: Surface["app"]) {
+  // Inject sockets lack destroy(); revocation closes them like real sockets.
+  app.addHook("onRequest", (request, _reply, done) => {
+    const socket = request.raw.socket as unknown as { destroy?: () => void; emit(event: string): void }
+    socket.destroy ??= () => socket.emit("close")
+    done()
+  })
+}
+
 async function surface(t: test.TestContext, options: Parameters<typeof startRemoteSurface>[1] = {}) {
   const allowedOrigins = [PUBLIC, LAN_HTTP, "https://localhost:8443"]
-  const f = await startRemoteSurface(t, { allowedOrigins, ...options, configureApp: app => {
-    // Inject sockets lack destroy(); revocation closes them like real sockets.
-    app.addHook("onRequest", (request, _reply, done) => {
-      const socket = request.raw.socket as unknown as { destroy?: () => void; emit(event: string): void }
-      socket.destroy ??= () => socket.emit("close")
-      done()
-    })
-  } })
+  const f = await startRemoteSurface(t, { allowedOrigins, ...options, configureApp: configureInjectedSockets })
   // Direct pairing and admission never need the tunnel.
   await f.manager.stop()
   const session = `${f.authManager.getCookieName()}=${f.authManager.createSession("codenomad").id}`
@@ -45,6 +52,7 @@ async function pairDirect(f: Surface, remoteAddress = "127.0.0.1") {
   const id = response.json().device.id as string
   return { cookie: setCookie.split(";")[0]!, setCookie, id, response }
 }
+const LAN_PEER = "192.0.2.20"
 
 test("the verified direct HTTPS origin set and request predicate", () => {
   assert.deepEqual(verifiedHttpsOrigins({ localUrl: "https://127.0.0.1:9898", remoteUrl: "https://192.0.2.10:9898",
@@ -287,3 +295,109 @@ for (const action of ["revoke", "evict"] as const) {
     assert.equal((await f.app.inject({ url: "/api/test/echo", headers: { host: PUBLIC_HOST, cookie } })).statusCode, 401)
   })
 }
+/** The real application and settings service; the host's opt-in lives in its `config.yaml`. */
+async function sidecarSurface(t: test.TestContext, enabled: boolean) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-direct-https-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const location = resolveConfigLocation(root)
+  const setOptIn = (value: boolean) => fs.writeFileSync(location.configYamlPath, `server:\n  sidecarsOverDirectHttps: ${value}\n`)
+  setOptIn(enabled)
+  const settings = new SettingsService(location, undefined, { child() { return this }, warn() {}, info() {} } as never)
+  // The tunnel origin is listed too: Remote Control ingress must never qualify, even then.
+  const f = await startRemoteSurface(t, { settings, configureApp: configureInjectedSockets,
+    allowedOrigins: [PUBLIC, LAN_HTTP, "https://localhost:8443", `https://${FAKE_TUNNEL_HOST}`] })
+  const cookie = `${f.authManager.getCookieName()}=${f.authManager.createSession("codenomad").id}`
+  return { ...f, setOptIn, cookie }
+}
+
+test("the opt-in opens no other host-only path to a verified direct HTTPS origin", async t => {
+  const f = await sidecarSurface(t, true)
+  for (const [method, url] of [["POST", "/api/auth/password"], ["POST", "/api/auth/token"], ["GET", "/auth/token"],
+    ["GET", "/api/remote-control/devices"], ["POST", "/api/remote-control/start"], ["PUT", "/api/remote-control/previews"],
+    ["POST", "/api/remote-proxy/sessions"], ["GET", "/api/remote-servers"], ["POST", "/api/opencode-plugin/automation"],
+    ["GET", "/api/backends/x/api/meta"], ["POST", "/api/backends/x/preview-capabilities"],
+    ["GET", "/previews/missing/"],
+    ["GET", "/sidecars"], ["GET", "/api/remote-%63ontrol/devices"]] as const) {
+    for (const headers of [{ host: PUBLIC_HOST, origin: PUBLIC }, { host: PUBLIC_HOST }]) {
+      const response = await f.app.inject({ method, url, remoteAddress: LAN_PEER, headers: { ...headers, cookie: f.cookie } })
+      assert.equal(response.statusCode, 404, `${method} ${url} ${JSON.stringify(headers)}: ${response.body}`)
+    }
+  }
+})
+
+test("SideCar opt-in retains direct HTTPS device scope and local previews without granting backend relay privileges", async t => {
+  const f = await sidecarSurface(t, true)
+  const { cookie } = await pairDirect(f)
+  for (const remoteAddress of PROXY_PEERS) {
+    const meta = await f.app.inject({ url: "/api/meta", remoteAddress, headers: { host: PUBLIC_HOST, cookie } })
+    assert.equal(meta.statusCode, 200, meta.body)
+    assert.equal(meta.json().localRequest, false)
+    assert.equal(meta.json().sidecarsAllowed, true)
+    const preview = await f.app.inject({ method: "POST", url: "/api/previews", remoteAddress,
+      headers: { host: PUBLIC_HOST, origin: PUBLIC, cookie }, payload: { sessionId: "device-local", url: "http://localhost:3000/" } })
+    assert.equal(preview.statusCode, 200, preview.body)
+    const token = preview.json().token as string
+    assert.equal(f.previewManager.get(token)?.sessionId, "device-local")
+    const removed = await f.app.inject({ method: "DELETE", url: `/api/previews/${token}`, remoteAddress,
+      headers: { host: PUBLIC_HOST, origin: PUBLIC, cookie } })
+    assert.equal(removed.statusCode, 204, removed.body)
+    for (const [method, url] of [["GET", "/api/backends/x/api/meta"], ["POST", "/api/backends/x/preview-capabilities"],
+      ["GET", "/api/backends/x/previews/remote-token/"], ["POST", "/api/backends/x/api/memory"],
+      ["POST", "/api/memory"], ["GET", "/api/memory/settings"],
+      ["POST", "/api/%62ackends/x/preview-capabilities"],
+      ["GET", "/api/%62ackends/x/api/meta"], ["POST", "/api/%6demory"]] as const) {
+      const response = await f.app.inject({ method, url, remoteAddress, headers: { host: PUBLIC_HOST, origin: PUBLIC, cookie } })
+      assert.equal(response.statusCode, 404, `${remoteAddress} ${method} ${url}: ${response.body}`)
+    }
+  }
+})
+
+test("/api/meta reports sidecarsAllowed for local clients and opted-in verified direct HTTPS origins only", async t => {
+  const f = await sidecarSurface(t, false)
+  const meta = async (remoteAddress: string, headers: Record<string, string>) => {
+    const response = await f.app.inject({ url: "/api/meta", remoteAddress, headers: { ...headers, cookie: f.cookie } })
+    assert.equal(response.statusCode, 200, response.body)
+    return response.json() as { localRequest: boolean; sidecarsAllowed: boolean }
+  }
+  const verified: Record<string, string>[] = [{ host: PUBLIC_HOST }, { host: "127.0.0.1:9899", referer: `${PUBLIC}/` }, { host: PUBLIC_HOST, origin: PUBLIC }]
+  const refused: Record<string, string>[] = [{ host: "lan.example.test:9899" }, { host: PUBLIC_HOST, origin: LAN_HTTP }, { host: PUBLIC_HOST, referer: `${LAN_HTTP}/` },
+    { host: "localhost:8443" }, { host: PUBLIC_HOST, origin: "https://foreign.test" }, { host: "127.0.0.1:9899" }]
+  for (const enabled of [false, true]) {
+    f.setOptIn(enabled)
+    const local = await meta("127.0.0.1", { host: "127.0.0.1:9899" })
+    assert.deepEqual([local.localRequest, local.sidecarsAllowed], [true, true])
+    for (const headers of verified) assert.equal((await meta(LAN_PEER, headers)).sidecarsAllowed, enabled, JSON.stringify(headers))
+    for (const headers of refused) assert.equal((await meta(LAN_PEER, headers)).sidecarsAllowed, false, JSON.stringify(headers))
+    for (const headers of [...verified, ...refused]) assert.equal((await meta(LAN_PEER, headers)).localRequest, false)
+  }
+  // Unauthenticated clients learn nothing.
+  assert.equal((await f.app.inject({ url: "/api/meta", remoteAddress: LAN_PEER, headers: { host: PUBLIC_HOST } })).statusCode, 401)
+})
+
+function ingress(target: string, pathname: string, cookie: string): Promise<{ status: number; body: string }> {
+  const [hostname, port] = target.split(":")
+  return new Promise((resolve, reject) => {
+    http.get({ hostname, port: Number(port), path: pathname, agent: false, headers: { host: FAKE_TUNNEL_HOST, cookie } }, response => {
+      let body = ""
+      response.setEncoding("utf8").on("data", chunk => { body += chunk }).on("end", () => resolve({ status: response.statusCode ?? 0, body }))
+    }).on("error", reject)
+  })
+}
+
+test("Remote Control ingress never gains SideCars through the opt-in, even with its origin listed", async t => {
+  const f = await sidecarSurface(t, true)
+  const paired = await new Promise<string>((resolve, reject) => {
+    const [hostname, port] = f.target().split(":")
+    const request = http.request({ hostname, port: Number(port), path: "/api/remote-control/pair", method: "POST", agent: false,
+      headers: { host: FAKE_TUNNEL_HOST, origin: `https://${FAKE_TUNNEL_HOST}`, "content-type": "application/json" } }, response => {
+      response.resume()
+      response.statusCode === 200 ? resolve(String(response.headers["set-cookie"]).split(";")[0]!) : reject(new Error(`pairing ${response.statusCode}`))
+    })
+    request.on("error", reject)
+    request.end(JSON.stringify({ code: f.code }))
+  })
+  assert.equal((await ingress(f.target(), "/sidecars/fixture/", paired)).status, 404)
+  const meta = await ingress(f.target(), "/api/meta", paired)
+  assert.equal(meta.status, 200, meta.body)
+  assert.equal(JSON.parse(meta.body).sidecarsAllowed, false)
+})

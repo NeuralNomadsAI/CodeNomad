@@ -7,6 +7,8 @@ export const remoteControlMessages = {
   "remoteControl.state.connected": "Bereit für Remote-Verbindungen",
   "remoteControl.state.reconnecting": "Verbindung wird wiederhergestellt…",
   "remoteControl.state.error": "Relay-Verbindung fehlgeschlagen",
+  "remoteControl.state.disabled": "Vom Administrator deaktiviert",
+  "remoteControl.disabled.info": "Ein Administrator hat die Fernsteuerung auf diesem Computer ausgeschaltet (CODENOMAD_REMOTE_CONTROL=disabled). Gekoppelte Geräte können sich nicht verbinden; Sie können sie weiterhin widerrufen.",
   "remoteControl.status.localOnly": "CodeNomad ist nur auf diesem Gerät verfügbar.",
   "remoteControl.status.hostOnly": "Verwalte Remote Control auf dem CodeNomad-Host.",
   "remoteControl.start": "Fernsteuerung starten",

@@ -742,6 +742,8 @@ export const settingsMessages = {
   "sidecars.form.prefixMode.strip": "プレフィックスを削除",
   "sidecars.form.prefixMode.preserve": "プレフィックスを保持",
   "sidecars.form.add": "SideCar を追加",
+  "sidecars.directHttps.title": "HTTPS で SideCar を開く",
+  "sidecars.directHttps.info": "このサーバーの HTTPS アドレスまたは CODENOMAD_ALLOWED_ORIGINS でサインインしたブラウザーは SideCar を開けます。通常の HTTP とリモートコントロールはホスト専用のままです。",
   "sidecars.kind.port": "ポート",
   "sidecars.status.running": "実行中",
   "sidecars.status.stopped": "停止中",

@@ -116,6 +116,27 @@ export class YamlDocStore {
 
   /** Fresh, read-only authority; the forgiving display cache is not a CAS base. */
   getAuthoritativeOwner(owner: string): SettingsDoc {
+    const doc = this.readAuthoritative()
+    if (Object.prototype.hasOwnProperty.call(doc, owner) && !isPlainObject(doc[owner])) throw new SettingsReadError()
+    // Publish a refreshed cache only after a successful, valid document read.
+    // The following synchronous owner merge therefore retains external fields.
+    this.cache = doc
+    this.loaded = true
+    return doc[owner] as SettingsDoc ?? {}
+  }
+
+  /**
+   * The document as it is on disk now, published as the cache: the base of a write, so a
+   * stale display cache is never written back. Unreadable or invalid documents throw.
+   */
+  reloadAuthoritative(): SettingsDoc {
+    const doc = this.readAuthoritative()
+    this.cache = doc
+    this.loaded = true
+    return doc
+  }
+
+  private readAuthoritative(): SettingsDoc {
     let content: string
     try {
       content = fs.readFileSync(this.filePath, "utf-8")
@@ -126,11 +147,7 @@ export class YamlDocStore {
         try {
           fs.lstatSync(this.filePath)
         } catch (statError: any) {
-          if (statError?.code === "ENOENT") {
-            this.cache = {}
-            this.loaded = true
-            return {}
-          }
+          if (statError?.code === "ENOENT") return {}
         }
       }
       throw new SettingsReadError()
@@ -143,12 +160,7 @@ export class YamlDocStore {
       throw new SettingsReadError()
     }
     if (!isPlainObject(doc)) throw new SettingsReadError()
-    if (Object.prototype.hasOwnProperty.call(doc, owner) && !isPlainObject(doc[owner])) throw new SettingsReadError()
-    // Publish a refreshed cache only after a successful, valid document read.
-    // The following synchronous owner merge therefore retains external fields.
-    this.cache = doc
-    this.loaded = true
-    return doc[owner] as SettingsDoc ?? {}
+    return doc
   }
 
   replaceOwner(owner: string, value: unknown): SettingsDoc {

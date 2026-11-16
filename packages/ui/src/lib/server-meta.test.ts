@@ -3,7 +3,7 @@ import { it } from "node:test"
 
 import type { ServerMeta } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
-import { createServerMetaCache, getServerMeta, localRequest } from "./server-meta"
+import { createServerMetaCache, getServerMeta, localRequest, sidecarsAllowed } from "./server-meta"
 
 it("allows a metadata retry after a failed request", async () => {
   const originalFetch = serverApi.fetchServerMeta
@@ -77,5 +77,28 @@ it("remote metadata never grants host authority; local metadata refresh owns it"
     local = false
     await getServerMeta(true)
     assert.equal(localRequest(), false)
+  } finally { serverApi.fetchServerMeta = original }
+})
+
+it("SideCar access follows only the host transport snapshot, independently of listening locks", async () => {
+  const original = serverApi.fetchServerMeta
+  const meta = await getServerMeta()
+  try {
+    serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: false, sidecarsAllowed: false, listeningLocked: true })
+    await getServerMeta(true)
+    assert.equal(sidecarsAllowed(), false)
+    const remote = createServerMetaCache({ fetchServerMeta: async () => ({ ...meta, localRequest: true, sidecarsAllowed: true }) })
+    await remote.getServerMeta()
+    assert.equal(sidecarsAllowed(), false, "another backend cannot authorize host SideCars")
+    serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: false, sidecarsAllowed: true, listeningLocked: true })
+    await getServerMeta(true)
+    assert.equal(sidecarsAllowed(), true)
+    assert.equal(localRequest(), false, "direct HTTPS opt-in grants no host administration")
+    serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: true, sidecarsAllowed: false, listeningLocked: true })
+    await getServerMeta(true)
+    assert.equal(sidecarsAllowed(), true, "host-local access remains available with the opt-in off")
+    serverApi.fetchServerMeta = async () => ({ ...meta, localRequest: false })
+    await getServerMeta(true)
+    assert.equal(sidecarsAllowed(), false, "missing flags revoke direct HTTPS access")
   } finally { serverApi.fetchServerMeta = original }
 })

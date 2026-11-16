@@ -7,6 +7,8 @@ export const remoteControlMessages = {
   "remoteControl.state.connected": "रिमोट जडानका लागि तयार",
   "remoteControl.state.reconnecting": "पुनः जडान हुँदैछ…",
   "remoteControl.state.error": "रिले जडान असफल भयो",
+  "remoteControl.state.disabled": "प्रशासकद्वारा निष्क्रिय",
+  "remoteControl.disabled.info": "प्रशासकले यो कम्प्युटरमा रिमोट कन्ट्रोल बन्द गरेको छ (CODENOMAD_REMOTE_CONTROL=disabled)। जोडिएका उपकरणहरू जडान हुन सक्दैनन्; तपाईं तिनलाई अझै रद्द गर्न सक्नुहुन्छ।",
   "remoteControl.status.localOnly": "CodeNomad यस उपकरणमा मात्र उपलब्ध छ।",
   "remoteControl.status.hostOnly": "Remote Control लाई CodeNomad होस्टबाट व्यवस्थापन गर्नुहोस्।",
   "remoteControl.start": "रिमोट कन्ट्रोल सुरु गर्नुहोस्",

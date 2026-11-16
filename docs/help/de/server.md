@@ -104,6 +104,8 @@ Die öffentliche Referenz listet benutzerseitige Optionen; Desktop-Hosts verwalt
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; Repository für Release-Angebote. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Nicht gesetzt: gehostete OpenTunnel-API. Für selbst gehostetes Relay eine API-Origin setzen. |
+| `CODENOMAD_REMOTE_CONTROL` | Nicht gesetzt: Benutzer können die Fernsteuerung starten. `disabled`: von einem Administrator ausgeschaltet ([Richtlinie](remote-control.md#administrator-policy)); nicht gesetzt oder leer bedeutet keine Richtlinie, jeder andere Wert (auch Leerzeichen) verhindert den Start. |
+| `CODENOMAD_LOCKED_HOST` | Nicht gesetzt oder leer: `--host` gilt; nur Leerzeichen verhindern den Start. Eine Adresse: Der Server lauscht dort, unabhängig von `--host`, `CLI_HOST` oder dem Abhörschalter ([Richtlinie](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Optionale zusätzliche CA-Datei von Node; wird mit zulässiger Startumgebung beim Start eines fehlenden OpenCode-Daemons übergeben. Ändert keinen bereits laufenden Daemon. |
 
 Anbieterspezifische Nutzungszugangsdaten behandelt [Anbieter](providers.md). Desktop-Datenprofilauswahl beschreibt [Desktop](desktop.md); der Release-Kanal steuert sie nicht.

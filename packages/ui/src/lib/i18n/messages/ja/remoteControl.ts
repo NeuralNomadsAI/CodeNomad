@@ -7,6 +7,8 @@ export const remoteControlMessages = {
   "remoteControl.state.connected": "リモート接続の準備ができました",
   "remoteControl.state.reconnecting": "再接続中…",
   "remoteControl.state.error": "リレーへの接続に失敗しました",
+  "remoteControl.state.disabled": "管理者により無効化",
+  "remoteControl.disabled.info": "管理者がこのコンピューターのリモートコントロールを無効にしました (CODENOMAD_REMOTE_CONTROL=disabled)。ペアリング済みデバイスは接続できませんが、取り消しは引き続き可能です。",
   "remoteControl.status.localOnly": "CodeNomad はこの端末でのみ利用できます。",
   "remoteControl.status.hostOnly": "Remote Control は CodeNomad ホストで管理してください。",
   "remoteControl.start": "リモートコントロールを開始",

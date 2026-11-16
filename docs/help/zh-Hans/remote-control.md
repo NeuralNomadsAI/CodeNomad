@@ -86,3 +86,7 @@ CodeNomad 使用 [OpenTunnel](https://github.com/anomalyco/opentunnel)，在机�
 TLS 在 CodeNomad 后端终止。中继转发密文，无法读取应用内容，但可观察主机名、连接时间和流量大小。隧道证书/私钥保留在主机上。请将主机隧道存储和 CodeNomad 配置作为凭据保护；难以猜测的地址不等于授权。
 
 `CODENOMAD_REMOTE_CONTROL_API` 选择自托管 OpenTunnel API；未设置则使用托管服务。这改变隧道部署，而非配对要求或被阻止的界面。凭据和诊断信息处理请参阅[安全](security.md)。
+
+## 管理员策略 {#administrator-policy}
+
+管理员可以为一台计算机上的所有用户关闭远程控制：在系统范围设置环境变量 `CODENOMAD_REMOTE_CONTROL=disabled`，然后重启 CodeNomad。后端将不会连接隧道，会拒绝 **启动远程控制** 和配对链接，启动时也不会重新连接；设置中显示 **已被管理员禁用**。之前配对的设备无法连接，并保留在列表中以便撤销。未设置或为空时不应用任何策略；任何其他值（包括仅含空格）都会阻止后端启动。

@@ -743,6 +743,8 @@ export const settingsMessages = {
   "sidecars.form.prefixMode.strip": "प्रिफिक्स हटाउनुहोस्",
   "sidecars.form.prefixMode.preserve": "प्रिफिक्स राख्नुहोस्",
   "sidecars.form.add": "SideCar थप्नुहोस्",
+  "sidecars.directHttps.title": "HTTPS मार्फत SideCars खोल्नुहोस्",
+  "sidecars.directHttps.info": "यो सर्भरका HTTPS ठेगाना वा CODENOMAD_ALLOWED_ORIGINS मा साइन इन गरिएका ब्राउजरहरूले SideCars खोल्न सक्छन्। सामान्य HTTP र रिमोट कन्ट्रोल होस्टमा मात्र सीमित रहन्छन्।",
   "sidecars.kind.port": "पोर्ट",
   "sidecars.status.running": "चलिरहेको छ",
   "sidecars.status.stopped": "रोकिएको छ",

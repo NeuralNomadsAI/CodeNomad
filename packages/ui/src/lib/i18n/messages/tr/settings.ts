@@ -725,6 +725,8 @@ export const settingsMessages = {
   "sidecars.form.prefixMode.strip": "Ön eki çıkar",
   "sidecars.form.prefixMode.preserve": "Ön eki koru",
   "sidecars.form.add": "SideCar ekle",
+  "sidecars.directHttps.title": "SideCars'ı HTTPS üzerinden aç",
+  "sidecars.directHttps.info": "Bu sunucunun HTTPS adreslerinde veya CODENOMAD_ALLOWED_ORIGINS içinde oturum açmış tarayıcılar SideCars açabilir. Düz HTTP ve Uzaktan Kontrol yalnızca ana makinede kalır.",
   "sidecars.kind.port": "Port",
   "sidecars.status.running": "Çalışıyor",
   "sidecars.status.stopped": "Durduruldu",

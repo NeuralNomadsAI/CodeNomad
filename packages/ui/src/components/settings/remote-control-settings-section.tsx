@@ -6,6 +6,7 @@ import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { getLogger } from "../../lib/logger"
 import { SettingsSwitch } from "./settings-switch"
+import { SettingsInfoTip } from "./settings-info-tip"
 
 const log = getLogger("actions")
 // Only while the tunnel is (re)connecting, e.g. when it resumes at launch.
@@ -35,7 +36,7 @@ export const RemoteControlSettingsSection: Component = () => {
     const next = await serverApi.fetchRemoteControlStatus()
     setStatus(next)
     // The server cancels a tunnel code when Remote Control turns off; a reconnect keeps it valid.
-    if (!next.enabled && !directPairing()) clearPairing()
+    if (next.disabledByAdministrator || (!next.enabled && !directPairing())) clearPairing()
     // Paired devices stay listed, and revocable, while Remote Control is off.
     setDevices(next.manageable ? (await serverApi.fetchRemoteControlDevices()).devices : [])
   }
@@ -53,6 +54,8 @@ export const RemoteControlSettingsSection: Component = () => {
   }
 
   const connecting = createMemo(() => status()?.state === "connecting" || status()?.state === "reconnecting")
+  // The administrator's policy: no Start or pairing; paired devices stay listed for revocation.
+  const disabled = createMemo(() => status()?.disabledByAdministrator === true)
   createEffect(() => {
     if (!connecting()) return
     const timer = setInterval(() => void load().catch(() => undefined), CONNECTING_POLL_MS)
@@ -191,10 +194,13 @@ export const RemoteControlSettingsSection: Component = () => {
           </div>
         </div>
 
-        <div class="remote-control-status" data-state={status()?.state ?? "stopped"}>
+        <div class="remote-control-status" data-state={disabled() ? "disabled" : status()?.state ?? "stopped"}>
           <span class="remote-control-status-dot" aria-hidden="true" />
           <div>
-            <strong>{t(`remoteControl.state.${status()?.state ?? "stopped"}`)}</strong>
+            <strong>
+              {t(disabled() ? "remoteControl.state.disabled" : `remoteControl.state.${status()?.state ?? "stopped"}`)}
+              <Show when={disabled()}><SettingsInfoTip text={t("remoteControl.disabled.info")} help={{ page: "remote-control", anchor: "administrator-policy" }} /></Show>
+            </strong>
             <p>
               {status()?.manageable === false
                 ? t("remoteControl.status.hostOnly")
@@ -203,7 +209,7 @@ export const RemoteControlSettingsSection: Component = () => {
           </div>
         </div>
 
-        <Show when={status()?.manageable !== false}>
+        <Show when={status()?.manageable !== false && !disabled()}>
           <div class="remote-control-actions">
             <Show
               when={status()?.enabled}
@@ -227,7 +233,7 @@ export const RemoteControlSettingsSection: Component = () => {
           </div>
         </Show>
 
-        <Show when={directOrigins().length > 0}>
+        <Show when={directOrigins().length > 0 && !disabled()}>
           <div class="settings-toggle-row">
             <div>
               <div class="settings-toggle-title">{t("remoteControl.direct.title")}</div>
@@ -250,7 +256,7 @@ export const RemoteControlSettingsSection: Component = () => {
           </div>
         </Show>
 
-        <Show when={status()?.manageable ? status() : null}>
+        <Show when={status()?.manageable && !disabled() ? status() : null}>
           {(current) => (
             <div class="settings-toggle-row">
               <div>
