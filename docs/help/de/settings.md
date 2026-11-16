@@ -34,6 +34,8 @@ Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNo
 
 ## Dauerhaftes Agentengedächtnis {#agent-memory}
 
+CodeNomad versucht, veraltete Speicheranweisungen der Sitzung zu entfernen; schlägt auch dies fehl, können die bisherigen Anweisungen bis zur nächsten erfolgreichen Aktualisierung erhalten bleiben.
+
 Öffnen Sie **Einstellungen → Allgemein → Gedächtnis** (im Browser ebenfalls unter **Einstellungen → Allgemein**). Das Gedächtnis ist standardmäßig ausgeschaltet. Aktivieren Sie es, damit der Agent nützliche Fakten und Vorlieben über Unterhaltungen hinweg behält. Der Schalter gilt für die verbundene CodeNomad-Konfiguration; Ausschalten erhält Einträge und Verlauf. Solange es ausgeschaltet ist, erhalten Agenten kein Gedächtniswerkzeug; das Umschalten gilt innerhalb weniger Sekunden auch für laufende Unterhaltungen, ohne Neustart.
 
 - **Über Sie**: bis zu 60 Einträge, gemeinsam für Projekte dieser Konfiguration.

@@ -34,6 +34,8 @@ In **Settings → General**, **Keep the computer awake while CodeNomad is runnin
 
 ## Persistent agent memory {#agent-memory}
 
+CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh.
+
 Open **Preferences → General → Memory** (or **Settings → General** in a browser). Memory is off by default. Enable it to let the agent keep useful facts and preferences across conversations. The switch applies to the connected CodeNomad configuration; disabling it retains saved entries and their history. While it is off, agents receive no memory tool; switching applies to running conversations within a few seconds, without restarting.
 
 - **About you**: up to 60 entries shared across projects using this configuration.

@@ -142,7 +142,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await captureMissionView(page, "interrupted-resume")
     schedule.interruptionReason = undefined
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
-    await page.getByText("Resume to check the current passage.").waitFor()
+    await page.getByText("Resume checks the running passage; it never sends it twice.").waitFor()
     await captureMissionView(page, "uncertain-passage")
     await clickMissionAction(page, STOP)
     const dialog = page.getByRole("dialog")
@@ -241,15 +241,15 @@ test("rows say Next, stuck passages explain their one action, history is plain a
       missionID: "msn_passage", conversationID: "ses_original" }
     schedule.lastError = { code: "settlement-failed", at: Date.UTC(2026, 9, 9, 8, 15) }
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
-    await detail.locator(".mission-schedule-notice").getByText("Passage start accepted; completion unconfirmed. Another passage is blocked.", { exact: true }).waitFor()
-    assert.equal(await detail.getByText("Resume to check the current passage.", { exact: true }).count(), 0)
+    await detail.locator(".mission-schedule-notice").getByText("This passage's start was accepted, but its end cannot be confirmed. Its original identity is preserved and another passage stays blocked.", { exact: true }).waitFor()
+    assert.equal(await detail.getByText("Resume checks the running passage; it never sends it twice.", { exact: true }).count(), 0)
     assert.equal(await missionToolbarAction(page, RUN_NOW).isEnabled(), false, "unknown terminal evidence never offers another passage")
     // Without a live observer the sentence names Resume; a native Check is never offered as a control.
     schedule.state = "paused"; schedule.nextDueAt = null; schedule.lastError = undefined
     schedule.pending = { passageID: "pas_stuck", status: "uncertain", trigger: "daily", reason: "not-observed" }
     schedule.actions = ["resume", "check", "stop"]
     await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
-    await page.getByText("Resume to check the current passage.", { exact: true }).waitFor()
+    await page.getByText("Resume checks the running passage; it never sends it twice.", { exact: true }).waitFor()
     assert.equal(await page.getByRole("button", { name: "Check the pending passage of Daily source review", exact: true }).count(), 0)
     await missionToolbarAction(page, RESUME).waitFor()
     assert.equal(await page.getByText(/last scheduled check failed/).count(), 0)

@@ -34,6 +34,8 @@ Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que C
 
 ## Mémoire persistante de l’agent {#agent-memory}
 
+CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie.
+
 Ouvrez **Préférences → Général → Mémoire** (ou **Paramètres → Général** dans un navigateur). La mémoire est désactivée par défaut. Activez-la pour que l’agent conserve les faits et préférences utiles entre les conversations. L’interrupteur s’applique à la configuration CodeNomad connectée ; sa désactivation conserve les entrées et leur historique. Tant qu'elle est désactivée, les agents ne reçoivent aucun outil de mémoire ; le changement s'applique aux conversations en cours en quelques secondes, sans redémarrage.
 
 - **À propos de vous** : jusqu’à 60 entrées partagées entre les projets de cette configuration.
