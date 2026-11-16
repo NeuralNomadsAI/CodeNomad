@@ -149,8 +149,7 @@ connections and Missions authority checks keep their blocking contracts. See
   port. A user's `opencode service set env` value overrides CodeNomad's
   missing-daemon start variable of the same name; per-send
   `session.environment` applies independently.
-- Plugin bundles externalize Effect and the plugin SDK because two Effect
-  runtimes cannot share one native fiber and host Schema APIs differ across
+- Plugin bundles externalize Effect and the plugin SDK; host Schema APIs differ across
   releases. Local plugin directories with a package name and `exports` resolve
   their entrypoints through that manifest (`session-pruning/package.test.ts`).
   Test hosts that spread the Promise plugin context must declare the
@@ -162,8 +161,7 @@ connections and Missions authority checks keep their blocking contracts. See
   `test-output-limit-native.mjs` (an output-length stop settles failed/idle with
   one user prompt) and `test-promise-tool-failure-native.mjs` (rejected Promise
   tools settle `error`; `permission.rejected` prevents the side effect).
-- Upstream #52922 (Bus routing before Location fanout) is open: keep the
-  discovery and event-relay mitigations.
+- Keep the discovery and event-relay mitigations for Bus routing before Location fanout.
 
 ### Replay contract
 

@@ -29,4 +29,4 @@ Ask only what the brief and the project leave open, 2 to 4 questions at most, ea
 
 ## Review
 
-Judge whether the title reads when the image is shown at a third of its width, whether the text is spelled correctly, whether the edges can be cropped safely, and whether the motif fits the project. Say which banner works best and what to fix.
+Check the title at one-third width, spelling, crop-safe edges and the motif's fit with the project. Recommend the best banner and what to fix.

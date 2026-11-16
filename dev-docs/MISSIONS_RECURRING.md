@@ -480,7 +480,6 @@ Creation stores a paused schedule, never starts work or arms a timer, and is nev
 resent; Play requests carry the then-current revision so CAS refuses a duplicate.
 New titles follow the 1–60 Mission title rule; stored schedules keep their
 120-character bound.
-Explicit user controls and native execution are separate responsibilities.
 
 ## Daily schedule document and revision
 
@@ -669,12 +668,6 @@ requests and outstanding background deliveries. Missing/pruned input, an
 uncorrelated terminal or a changed second observation keeps the same pending
 uncertain. Never infer a terminal from age, inactivity or a timeout; never send a
 second original prompt after admission has been recorded.
-
-Plugin-side mechanisms cover three native gaps:
-
-- Compare-and-swap: the revision guard above.
-- Family settlement: observation of the whole passage family and queues.
-- Form answerer identity: the backend UI-answer mark below.
 
 ## Daily scheduler and civil time
 
@@ -1049,6 +1042,6 @@ Scheduled admission, source baselines/changes, native adoption/cleanup, complete
 fan-in coverage, terminal-turn correlation and family quiescence belong to their
 own qualified adapters. Keep unknown data intact and qualification fixtures isolated.
 
-- Missions autonomy runs in the OpenCode service/plugin with both CodeNomad UI and intermediary backend closed. Never substitute a persistent CodeNomad backend or a window timer. Unified documents use the persisted native calendars and restart recovery above. Daily documents use one process-local native Job per running daily schedule, sleeping until min(nextDueAt, now + 1h), then rereading clock/document and admitting only the latest due civil day newer than lastDaily. A native session-execution terminal event (Bus `listen`, 3 s debounce) also wakes that Job so archives follow family quiescence promptly; the event is a wake hint, never settlement evidence. Pause/Stop cancel the daily Job; desired running without it is Interrupted until explicit Resume. Resume observes native continuation under the original identities. Every remaining claim and missing terminal correlation keeps pending uncertain; a correlated idle and full family/background-delivery quiescence are required for archive. Never infer interruption from claim age or inactivity, and never resend an admitted original prompt.
+- Never substitute a persistent CodeNomad backend or a window timer for OpenCode service/plugin autonomy. Apply the unified-calendar restart, daily Job and settlement contracts above.
 - Core: `missions/recurrence-{contract,clock,store,runner}.ts` (native side `opencode/missions/native-recurrence-*.ts`); omitting a profile variant is valid. Every rule in the sections above binds.
 - Root and schedule admission read the family identity with `readFamilyAuthorityIdentity` (`workspaces/family-authority-claim.ts`) only for a directory WorkspaceManager already authorized: registered linked worktrees share their Git common directory's identity, and a Git-free conversation has none, so it can never infer a family.

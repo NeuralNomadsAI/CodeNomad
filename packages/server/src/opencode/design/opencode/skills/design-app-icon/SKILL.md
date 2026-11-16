@@ -28,4 +28,4 @@ Ask only what the brief and the project leave open, 2 to 4 questions at most, ea
 
 ## Review
 
-Judge each image as it will appear at 16, 32 and 64 px: is the silhouette still recognisable, does the contrast hold, do the colours stay distinct? Say which image would survive best in a dock, a tab bar or a favicon, and what to simplify.
+Check each image's silhouette, contrast and colour separation at 16, 32 and 64 px. Recommend the best for a dock, tab bar or favicon and what to simplify.

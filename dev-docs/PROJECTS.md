@@ -1,7 +1,5 @@
 # Projects and tabs
 
-Closing project tabs, temporary workspaces, the new-instance launcher and the Git-unavailable degraded mode.
-
 ## Agent conventions
 
 - Host Git probes report `git_required` only for an absent executable (`ENOENT`). Timeouts, killed processes, unsuccessful exits and invalid version output yield `git_probe_unavailable` (503, retryable); the availability advisory propagates uncertainty to its best-effort caller rather than publishing installation guidance. The probe retains its five-second deadline and rechecks on demand.

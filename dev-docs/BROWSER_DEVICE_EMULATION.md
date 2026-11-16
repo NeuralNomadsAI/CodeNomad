@@ -30,8 +30,7 @@ while emulation is active so the overrides survive accessibility automation.
 Canonical profile data lives in `packages/ui/src/lib/native/browser-emulation.json`.
 Chromium adapters use the installed Chromium version for the simulated user agent.
 WebKit uses `Mozilla/5.0 (Mobile) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile Safari/605.1.15`.
-These generic profiles provide engine-specific layout references; mobile OS text
-settings, keyboard occlusion and browser/system bars are outside their scope.
+Profiles exclude mobile OS text settings, keyboard occlusion and browser/system bars.
 
 ## Native WebKit profile contract
 
@@ -40,9 +39,9 @@ optional fixed `presentation.viewport`; emulation commands carry the same option
 `viewport`. The native host reads primary-renderer page zoom and monitor scale on
 the UI thread. It fits the child into that physical canvas and finds integer native
 logical dimensions with a common zoom interval yielding the requested integer CSS
-width/height on both engines. Responsive uses the available CSS canvas. This keeps
-effective viewport dimensions stable across app zoom and monitor DPI, including
-clipped/narrow canvases. Pointer positions and wheel deltas scale through guest zoom.
+width/height on both engines, stable across app zoom, monitor DPI and clipped/narrow
+canvases. Responsive uses the available CSS canvas. Pointer positions and wheel
+deltas scale through guest zoom.
 
 Profile and canvas state belong to the registration. Replacement, unregister and
 primary-renderer cleanup clear them; other previews and the application renderer

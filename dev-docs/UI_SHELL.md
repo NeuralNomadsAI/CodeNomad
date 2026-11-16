@@ -1,7 +1,5 @@
 # Application shell
 
-Panel toggles, floating drawers, project/right-panel tabs, the session sidebar and native application menus.
-
 ## Agent conventions
 
 - View stores read the active conversation identity from `stores/session-selection-state.ts`. Session selection actions, catalog refresh and restoration authority remain in `stores/session-state.ts`; keep those UI-effect dependencies out of the view-state import graph.

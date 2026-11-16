@@ -4,7 +4,7 @@
 
 `packages/server/src/memory/contract.ts` owns the dependency-free shared data
 contract, exported to UI clients through `packages/server/src/api-types.ts`.
-`memory/model.ts` owns server-side validation and limits:
+`memory/model.ts` owns validation and limits:
 
 - Scopes: `global` (60 entries) and `project` (200 entries).
 - Types: `fact`, `preference`, `reference`.
@@ -417,27 +417,20 @@ after awaiting. The probe performs only a read.
 
 ## Native child-session admission
 
-Native instruction entries belong to their own session. The qualified
-integration point for native children is an awaited
-`ctx.session.hook("prompt", async event => …)` registered during plugin setup.
-The callback uses `event.sessionID`, awaits the server bridge's current
-preference, owned session location and readable titles, then awaits
-`ctx.session.instructions.entry.put` or `remove` for `codenomad.memory` before
-returning. Hooks run after Location plugin activation and before prompt inbox
-admission. Optional memory failures attempt named-entry cleanup and admit the
-prompt; independently registered native admission checks retain their own refusals.
+Native children use the instruction synchronization contract above through an
+awaited `ctx.session.hook("prompt", async event => …)` registered during plugin
+setup. Use `event.sessionID` and await `ctx.session.instructions.entry.put` or
+`remove` before returning. Hooks run after Location plugin activation and before
+prompt inbox admission.
 
-Register the hook together with the plugin's activation lifetime. Preserve other
-instruction keys. Resolve each child's own server-authorized location rather
-than copying a parent's project identity or title list. Missing instruction APIs
-use the silent optional-capability policy above. Native synthetic/control inputs
-have their own admission paths; integrations using them must synchronize their
-named entry at their corresponding owned boundary.
+Preserve other instruction keys. Resolve each child's own server-authorized
+location rather than copying a parent's project identity or title list. Native
+synthetic/control inputs have their own admission paths; integrations using them
+must synchronize their named entry at their corresponding owned boundary.
 
-The first model request includes the named entry in the assembled system
-instructions. On resumed sessions native instruction changes also reach the
-model as context-update notices at the next step boundary. Consumers follow
-these native update semantics.
+The first model request includes the named entry in system instructions.
+Resumed sessions receive instruction changes as context-update notices at the
+next step boundary.
 
 ## Validation
 
@@ -487,5 +480,4 @@ admits the prompt, preserving other instruction owners.
   validation contract remain authoritative for every mutation entry point.
 - A missing storage folder represents an empty scope. Unreadable or malformed
   scope data must remain explicitly unavailable.
-- Keep external memory as explicit `reference` entries. Never discover, read or
-  import other agents' memory files automatically.
+- Never discover, read or import other agents' memory files automatically.

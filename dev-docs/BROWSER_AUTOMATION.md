@@ -16,8 +16,6 @@ Browser previews are an ordinary desktop feature and must work in user projects 
 - `browser-probe` requires exactly one visible native preview registered to that session.
 - `browser-execute` validates the browser action and forwards `browser.probe` or `browser.execute` over the fenced native-parent request channel.
 
-The bridge is loopback-only, token-authenticated, bounded, and session-location gated.
-
 An active backend publishes an ephemeral registration with a per-process 256-bit
 token and removes it on graceful shutdown. All bridge discovery checks the
 filename's publishing PID before reading the file: PIDs outside 1–2³¹−1 and
@@ -32,7 +30,7 @@ ownership and retry rules are in the [creation recovery contract](MISSIONS.md#mi
 
 ## Desktop instrumentation
 
-At normal startup, native instrumentation prepares the current CodeNomad desktop process for agent feedback. It never launches or owns another CodeNomad process and never starts, stops or replaces the shared OpenCode daemon.
+Native instrumentation prepares the current desktop process at startup. Never launch or own another CodeNomad process, or start, stop or replace the shared OpenCode daemon through instrumentation.
 
 Electron (`packages/electron-app/electron/main/developer-mode.ts`):
 
@@ -103,9 +101,9 @@ The hidden Electron fixture supplies visible ownership to the controller. Before
 
 ## Design constraints
 
-Browser and developer tools ship together in this one bundled plugin (user decision), every tool available. Execution re-reads session ownership through the shared connection and validated worktree inventory; never let a plugin location or a caller-provided session ID alone grant access. The visible preview, its window, storage partition and permissions stay in the native hosts; the daemon stays independently owned and the connection-scoped compatibility adapter stays.
+Execution re-reads session ownership through the shared connection and validated worktree inventory; never let a plugin location or a caller-provided session ID alone grant access. Keep the connection-scoped compatibility adapter.
 
-Native/HTTP deadlines bound browser tool execution; the tool context's `signal` is unused (`opencode/automation/desktop-plugin.ts`), so an interrupted turn leaves dispatched native work running until its deadline. Stronger cancellation needs end-to-end propagation and native tests.
+Native/HTTP deadlines bound browser tools; the tool context's `signal` is unused (`opencode/automation/desktop-plugin.ts`). Dispatched work continues until its deadline after turn interruption. Stronger cancellation requires end-to-end propagation and native tests.
 
 ## Native Hosts
 

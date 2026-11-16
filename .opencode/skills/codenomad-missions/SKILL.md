@@ -34,6 +34,6 @@ and shared mutable checks; never treat a background launch as completion. Reused
 Missions never switches the model of a busy session. Queued native inputs can pick up
 later model or environment changes made from another client.
 
-The map is a coordination protocol: never create speculative tasks, polling loops, nested coordinators, or publication automation.
+Never create speculative tasks, polling loops, nested coordinators, or publication automation.
 
 Use only tools and fields exposed by the attached server; never emulate missing tools, fabricate bindings, or migrate real mission data. Business report envelope for coordinator native readouts or assigned independent-root actors: `mission.report({ missionID, taskKey, outcome: "completed", summary, evidence: [], next: [], artifact, final: false })`; use the playbook's role-specific artifact. A business readout settles the plan only: execution termination, invocation identity and human consent each need their own evidence.
