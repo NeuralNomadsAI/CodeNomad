@@ -337,6 +337,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.title": "Binaire OpenCode",
   "opencodeBinarySelector.customPath.placeholder": "Saisissez le chemin vers le binaire {name}…",
   "opencodeBinarySelector.actions.add": "Ajouter",
+  "opencodeBinarySelector.actions.chooseOther": "Choisir un autre binaire…",
   "opencodeBinarySelector.actions.browse": "Parcourir le binaire…",
   "opencodeBinarySelector.actions.removeTitle": "Supprimer le binaire",
   "opencodeBinarySelector.status.checkingVersions": "Vérification des versions…",

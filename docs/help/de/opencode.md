@@ -3,7 +3,7 @@
 ## CLI auswählen oder installieren {#select-cli}
 
 1. Öffnen Sie **Einstellungen → OpenCode** und wählen Sie auf der Karte **OpenCode-Binärdatei** unterhalb von **OpenCode-Version** die Programmdatei.
-2. Lassen Sie den automatischen Eintrag ausgewählt, um den PATH des Servers zu bevorzugen, sofern er kein älteres OpenCode enthält, und danach dessen OpenCode-2-Installation im Benutzer-npm; oder verwenden Sie **Nach Binärdatei suchen...** beziehungsweise geben Sie einen Pfad ein und wählen **Hinzufügen**.
+2. Lassen Sie den automatischen Eintrag ausgewählt oder öffnen Sie **Andere Binärdatei wählen…**, um **Nach Binärdatei suchen...** zu verwenden oder einen Pfad einzugeben und **Hinzufügen** zu wählen.
 3. Verwenden Sie **Status und Updates prüfen**. Fehlt OpenCode, wählen Sie **OpenCode installieren und starten**; prüfen Sie vorher Host und Installationsumfang.
 4. Falls die Einrichtung **Verbinden und fortfahren** anbietet, verwenden Sie dies nach Behebung des gemeldeten Problems.
 
@@ -11,7 +11,7 @@
 
 Steht ein älteres OpenCode im PATH an erster Stelle, hängt die angebotene Aktion davon ab, wie es installiert wurde. Bei einem mit npm installierten OpenCode 1.x fragt **OpenCode {version} durch OpenCode 2 ersetzen** nach Bestätigung, entfernt dieses npm-Paket und installiert OpenCode 2 im selben npm-Ordner; der OpenCode-Datenordner bleibt erhalten, und OpenCode 2 importiert 1.x-Unterhaltungen selbst. Ein älteres oder unbrauchbares, auf anderem Weg installiertes OpenCode (winget, Homebrew, manuell) wird nie verändert: **OpenCode 2 für CodeNomad installieren** installiert OpenCode 2 daneben im Benutzer-npm-Ordner, und CodeNomad verwendet dann diese Kopie. Liegt dieser ältere Befehl selbst im Benutzer-npm-Ordner (zum Beispiel ein Link in `~/.local/bin`) oder ist dieser Ordner nicht beschreibbar, nennt die Einrichtung den Grund, statt die Aktion anzubieten: Verschieben Sie den Befehl oder benennen Sie ihn um, oder korrigieren Sie die Ordnerrechte, und wählen Sie dann **Status und Updates prüfen**. Der Befehl `opencode` eines Terminals kann weiterhin die ältere Version starten. Eine ausdrücklich ausgewählte benutzerdefinierte Programmdatei wird nie ersetzt.
 
-Installierte Programmdatei und laufender Dienst können unterschiedliche Versionen haben. Vergleichen Sie auf der Karte **OpenCode-Version** **Installierte Version** mit **Laufender Dienst**, statt anzunehmen, eine andere Programmdatei habe den laufenden Daemon ersetzt; **Versionsdetails** nennt Mindest- und empfohlene Version.
+Die Karte **OpenCode-Version** zeigt **Laufender Dienst** separat an, wenn seine Version von **Installierte Version** abweicht oder unbekannt ist. **Versionsdetails** zeigt die Mindestversion und bei Abweichung die empfohlene Version.
 
 ## Erforderliche, empfohlene und ungeprüfte Versionen {#versions}
 

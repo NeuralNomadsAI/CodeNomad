@@ -3,7 +3,7 @@
 ## Seleccionar o instalar la CLI {#select-cli}
 
 1. Abre **Configuración → OpenCode** y usa la tarjeta **Binario de OpenCode**, debajo de **Versión de OpenCode**, para seleccionar el ejecutable.
-2. Deja seleccionada la entrada automática para preferir el PATH del servidor, salvo que contenga un OpenCode anterior, y después su instalación npm de usuario de OpenCode 2; o usa **Explorar binario…** o introduce una ruta y elige **Agregar**.
+2. Deja seleccionada la entrada automática o despliega **Elegir otro binario…** para usar **Explorar binario…** o introducir una ruta y elegir **Agregar**.
 3. Usa **Comprobar estado y actualizaciones**. Si falta OpenCode, elige **Instalar e iniciar OpenCode**; revisa primero el equipo y el ámbito de instalación.
 4. Si la configuración inicial ofrece **Conectar y continuar**, úsalo tras resolver el problema indicado.
 
@@ -11,7 +11,7 @@
 
 Cuando un OpenCode anterior aparece primero en el PATH, la acción ofrecida depende de cómo se instaló. Para OpenCode 1.x instalado con npm, **Reemplazar OpenCode {version} por OpenCode 2** pide confirmación, elimina ese paquete npm e instala OpenCode 2 en la misma carpeta npm; la carpeta de datos de OpenCode se conserva, y OpenCode 2 importa por sí mismo las conversaciones de 1.x. Un OpenCode anterior o inutilizable instalado de otra forma (winget, Homebrew, manual) nunca se modifica: **Instalar OpenCode 2 para CodeNomad** instala OpenCode 2 en la carpeta npm del usuario junto a él, y CodeNomad usa después esa copia. Si ese comando anterior está en la propia carpeta npm del usuario (por ejemplo, un enlace en `~/.local/bin`), o no se puede escribir en esa carpeta, la configuración explica el motivo en lugar de ofrecer la acción: mueve el comando o cámbiale el nombre, o corrige los permisos de la carpeta, y luego elige **Comprobar estado y actualizaciones**. El comando `opencode` de una terminal puede seguir iniciando la versión anterior. Un ejecutable personalizado seleccionado explícitamente nunca se reemplaza.
 
-El ejecutable instalado y el servicio en ejecución pueden tener versiones distintas. Compara **Versión instalada** con **Servicio en ejecución** en la tarjeta **Versión de OpenCode** en lugar de suponer que seleccionar otro ejecutable ha reemplazado el daemon activo; **Detalles de versiones** enumera las versiones mínima y recomendada.
+La tarjeta **Versión de OpenCode** muestra **Servicio en ejecución** por separado cuando su versión difiere de **Versión instalada** o es desconocida. **Detalles de versiones** muestra la versión mínima y, si es distinta, la recomendada.
 
 ## Versiones requeridas, recomendadas y no verificadas {#versions}
 

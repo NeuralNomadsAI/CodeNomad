@@ -336,6 +336,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.title": "OpenCode-Binärdatei",
   "opencodeBinarySelector.customPath.placeholder": "Pfad zur {name}-Binärdatei eingeben...",
   "opencodeBinarySelector.actions.add": "Hinzufügen",
+  "opencodeBinarySelector.actions.chooseOther": "Andere Binärdatei wählen…",
   "opencodeBinarySelector.actions.browse": "Nach Binärdatei suchen...",
   "opencodeBinarySelector.actions.removeTitle": "Binärdatei entfernen",
   "opencodeBinarySelector.status.checkingVersions": "Versionen werden geprüft...",
