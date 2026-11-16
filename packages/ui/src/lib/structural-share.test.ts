@@ -31,6 +31,19 @@ test("keyed items match by identity key across reordering, insertion and removal
   assert.equal(shared[2], previous[0])
 })
 
+test("objects whose identity carries metadata are kept as themselves and never stand for another", () => {
+  const tagged = new WeakSet<object>()
+  const pinned = (value: object) => tagged.has(value)
+  const previousRow = { id: "t", title: "T" }, nextRow = { id: "t", title: "T" }
+  tagged.add(nextRow)
+  const shared = shareUnchanged({ rows: [previousRow], other: { id: "o" } }, { rows: [nextRow], other: { id: "o" } }, pinned)
+  assert.equal(shared.rows[0], nextRow, "a tagged next row stays itself")
+  const taggedPrevious = { id: "u" }
+  tagged.add(taggedPrevious)
+  const fresh = { id: "u" }
+  assert.equal(shareUnchanged([taggedPrevious], [fresh], pinned)[0], fresh, "a tagged previous row never stands for an untagged one")
+})
+
 test("added, removed and undefined keys count as changes; non-plain values compare by identity", () => {
   assert.notEqual(shareUnchanged({ a: 1 }, { a: 1, b: undefined }), undefined)
   const previous = { a: 1, b: undefined as number | undefined }

@@ -8,7 +8,7 @@ import { MissionTaskPageReadError, type MissionTaskPageFailure } from "../lib/mi
 import { shareUnchanged } from "../lib/structural-share"
 import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS } from "../lib/mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "../lib/mission-task-page-schema"
-import { answerTaskRequest, coverAttention, createTaskPageCache, failTaskRequest, mergeTaskPages, recordTaskRequest, recordMissionRowRevision, missionTaskSource, reorderTaskPageCache, taskRequestsOf,
+import { answerTaskRequest, coverAttention, createTaskPageCache, failTaskRequest, mergeTaskPages, recordTaskRequest, recordMissionRowRevision, missionPinnedIdentity, missionTaskSource, reorderTaskPageCache, taskRequestsOf,
   type MissionTaskPageCache } from "./mission-task-pages"
 
 export type MissionLoadStatus = "idle" | "loading" | "ready" | "unavailable" | "error"
@@ -136,7 +136,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   // entries): keyed lists and memos then update only the missions that changed.
   const update = (instanceId: string, value: MissionViewState): void => {
     setStates((current) => {
-      const previous = current.get(instanceId), shared = shareUnchanged(previous, value)
+      const previous = current.get(instanceId), shared = shareUnchanged(previous, value, missionPinnedIdentity)
       if (shared === previous) return current
       const next = new Map(current)
       next.set(instanceId, shared)
