@@ -271,7 +271,7 @@ function renderMarkdown(markdown, file, media, report, { locale, page, strings, 
     const t = strings.tour
     return `<figure class="tour"><video autoplay muted loop playsinline controls preload="metadata" width="1280" height="720" poster="${poster}" aria-label="${escape(t.label)}"><source src="${video}" type="video/mp4" media="${TOUR_MEDIA}"></video><img src="${poster}" alt="${escape(t.poster)}" width="1280" height="720"><figcaption><a href="${TOUR_URL}">${escape(t.caption)}</a></figcaption></figure>\n`
   }
-  // One outlined button per funding.json channel, naming who receives the money.
+  // One outlined button per funding.json channel.
   const fundingList = () => {
     if (!funding.length) {
       report("missing-funding", "{{funding}} needs at least one channel in docs/help/funding.json")

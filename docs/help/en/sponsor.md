@@ -4,7 +4,7 @@
 
 I develop and maintain CodeNomad full time. It is free and open source, and I want to keep giving it the attention that a tool used for real work deserves.
 
-My background is in 3D and visual effects, with three decades spent creating, solving production problems and building software alongside the people who use them. That experience shapes how I approach CodeNomad: a tool has to hold up beyond the first demonstration, through long sessions, complex projects and the unexpected things that happen in daily use.
+My background is in 3D and visual effects, with three decades spent creating, solving production problems and building software alongside the people who use it. That experience shapes how I approach CodeNomad: a tool has to hold up beyond the first demonstration, through long sessions, complex projects and the unexpected things that happen in daily use.
 
 Feedback, bug reports and code contributions help make CodeNomad better. Donations support the time I spend turning that input into something dependable, and maintaining it as OpenCode evolves.
 
