@@ -112,7 +112,7 @@ Un objectif appartient à sa conversation : les sous-sessions et les bifurcation
 ## Bifurquer, annuler et récupérer une exécution échouée {#fork-errors}
 
 1. Sur un message, choisissez **Bifurquer après ce message** pour créer une conversation après ce point sans remplacer l’originale.
-2. Pour annuler, examinez attentivement **Annuler les changements jusqu'ici (supprime les messages)**. La palette propose **Annuler le dernier message** et **Rétablir le dernier message** pour l’annulation en cours.
+2. Pour annuler, examinez attentivement **Annuler les changements jusqu'ici (supprime les messages)**. La palette propose **Annuler le dernier message** et **Rétablir le dernier message** pour l’annulation en cours. Annuler est désactivé sans message utilisateur annulable ; Rétablir est désactivé sans annulation en cours.
 3. Si l’exécution échoue, consultez **Erreur de session**, l’erreur de réponse et les détails **Échec de l'envoi** avant d’envoyer à nouveau.
 
 La bifurcation copie le contexte de conversation jusqu’au point sélectionné ; elle ne crée pas de worktree Git et n’isole pas les fichiers. Le retour en arrière n’est pas une simple navigation. Vérifiez les effets sur les fichiers et la limite d’annulation avant de continuer ; utilisez une bifurcation pour une discussion alternative sans réécrire le parcours initial.

@@ -97,8 +97,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)",
   "commands.undoLastMessage.description": "अन्तिम सन्देश उल्टाउनुहोस्",
   "commands.undoLastMessage.keywords": "उल्टाउनुहोस्, फिर्ता",
-  "commands.undoLastMessage.none.title": "फिर्ता लिनको लागि कुनै कार्य छैन",
-  "commands.undoLastMessage.none.message": "फिर्ता लिनको लागि केहि छैन",
   "commands.undoLastMessage.failed.title": "फिर्ता लिन असफल",
   "commands.undoLastMessage.failed.message": "सन्देश उल्टाउन असफल भयो",
   "commands.redoLastMessage.label": "अन्तिम सन्देश फेरि गर्नुहोस्",

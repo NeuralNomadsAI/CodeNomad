@@ -97,8 +97,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "Letzte Nachricht rückgängig machen",
   "commands.undoLastMessage.description": "Die letzte Nachricht rückgängig machen",
   "commands.undoLastMessage.keywords": "rückgängig, wiederherstellen",
-  "commands.undoLastMessage.none.title": "Keine Aktionen zum Rückgängigmachen",
-  "commands.undoLastMessage.none.message": "Nichts zum Rückgängigmachen",
   "commands.undoLastMessage.failed.title": "Rückgängigmachen fehlgeschlagen",
   "commands.undoLastMessage.failed.message": "Nachricht konnte nicht rückgängig gemacht werden",
   "commands.redoLastMessage.label": "Letzte Nachricht wiederherstellen",

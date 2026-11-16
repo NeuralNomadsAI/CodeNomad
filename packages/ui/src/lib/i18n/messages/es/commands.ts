@@ -97,8 +97,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "Deshacer último mensaje",
   "commands.undoLastMessage.description": "Revertir el último mensaje",
   "commands.undoLastMessage.keywords": "revertir, deshacer",
-  "commands.undoLastMessage.none.title": "No hay acciones para deshacer",
-  "commands.undoLastMessage.none.message": "Nada que deshacer",
   "commands.undoLastMessage.failed.title": "No se pudo deshacer",
   "commands.undoLastMessage.failed.message": "No se pudo revertir el mensaje",
   "commands.redoLastMessage.label": "Rehacer último mensaje",

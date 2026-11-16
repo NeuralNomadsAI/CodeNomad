@@ -97,8 +97,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "Annuler le dernier message",
   "commands.undoLastMessage.description": "Revenir sur le dernier message",
   "commands.undoLastMessage.keywords": "revenir, annuler",
-  "commands.undoLastMessage.none.title": "Aucune action à annuler",
-  "commands.undoLastMessage.none.message": "Rien à annuler",
   "commands.undoLastMessage.failed.title": "Échec de l'annulation",
   "commands.undoLastMessage.failed.message": "Impossible de revenir au message",
   "commands.redoLastMessage.label": "Rétablir le dernier message",

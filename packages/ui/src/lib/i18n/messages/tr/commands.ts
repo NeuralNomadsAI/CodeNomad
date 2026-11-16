@@ -73,8 +73,6 @@ export const commandMessages = {
   "commands.undoLastMessage.label": "Son Mesajı Geri Al",
   "commands.undoLastMessage.description": "Son mesajı geri al",
   "commands.undoLastMessage.keywords": "geri al, eski haline getir",
-  "commands.undoLastMessage.none.title": "Geri alınacak işlem yok",
-  "commands.undoLastMessage.none.message": "Geri alınacak bir şey yok",
   "commands.undoLastMessage.failed.title": "Geri alma başarısız",
   "commands.undoLastMessage.failed.message": "Mesaj geri alınamadı",
   "commands.redoLastMessage.label": "Son Mesajı Yinele",

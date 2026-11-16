@@ -2,6 +2,9 @@ import { render } from "solid-js/web"
 import { createSignal, Show } from "solid-js"
 import { serverApi } from "../../../src/lib/api-client"
 import { applyMergePatch } from "../../../../server/src/settings/merge-patch"
+import CommandPalette from "../../../src/components/command-palette"
+import { messageStoreBus } from "../../../src/stores/message-v2/bus"
+import { alertDialogState } from "../../../src/stores/alerts"
 import "../../../src/index.css"
 
 // Simulated config owner implements the server's merge-patch deletion semantics,
@@ -32,7 +35,9 @@ let temporaryInstances = 0, redos = 0
 const [visible, setVisible] = createSignal(true)
 const [home, setHome] = createSignal(false)
 const [hasInstance, setHasInstance] = createSignal(true)
+const [hasClient, setHasClient] = createSignal(true)
 const [sessionId, setSessionId] = createSignal<string | null>("session")
+const [paletteOpen, setPaletteOpen] = createSignal(false)
 const instance = { id: "fixture", client: { session: { revert: { clear: async () => { redos++ } } } } }
 function Fixture() {
   const config = useConfig()
@@ -40,7 +45,7 @@ function Fixture() {
     handleNewInstanceRequest: () => { newInstances++ },
     handleNewTemporaryInstance: async () => { temporaryInstances++ },
     handleCloseActiveTab: async () => {}, handleNewSession: async () => {}, handleCloseSession: async () => {},
-    getActiveInstance: () => hasInstance() ? instance as any : null, getActiveSessionIdForInstance: sessionId,
+    getActiveInstance: () => hasInstance() ? (hasClient() ? instance : { ...instance, client: null }) as any : null, getActiveSessionIdForInstance: sessionId,
   }
   const commands = useCommands({ ...config, ...actions })
   useAppLifecycle({
@@ -51,9 +56,14 @@ function Fixture() {
     commands: () => commands.commands().map(({ id, shortcutId }) => ({ id, shortcutId })),
     registered: (id: string) => Boolean(keyboardRegistry.get(id)),
     preferences: config.preferences,
+    executeMenuCommand: commands.executeMenuCommand,
+    run: (id: string) => commands.commandRegistry.get(id)?.action(),
+    alert: alertDialogState,
   }
   return <>
     <button id="outside" title={hotkeyLabel("new-instance")}>Outside target</button>
+    <button onClick={() => setPaletteOpen(true)}>Palette</button>
+    <CommandPalette id="fixture-palette" open={paletteOpen()} focusRequest={0} onClose={() => setPaletteOpen(false)} commands={commands.commands()} onExecute={commands.executeCommand} />
     <div class="session-cache-pane" aria-hidden="false"><textarea class="prompt-input" aria-label="Prompt" /></div>
     <Show when={visible()}><HotkeysSettingsSection /></Show>
   </>
@@ -62,7 +72,14 @@ render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigPro
 ;(window as any).fixture = {
   newInstances: () => newInstances, config: () => config, patches: () => patches,
   isRecording: isHotkeyRecording, setVisible, failSave: (value: boolean) => { failSave = value },
-  temporaryInstances: () => temporaryInstances, redos: () => redos, setHome, setHasInstance, setSessionId,
+  temporaryInstances: () => temporaryInstances, redos: () => redos, setHome, setHasInstance, setHasClient, setSessionId,
+  setMessages: (messages: { id: string; role: "user" | "assistant"; created?: number }[]) => {
+    const store = messageStoreBus.getOrCreate("fixture")
+    store.hydrateMessages("session",
+      messages.map(message => ({ id: message.id, sessionId: "session", role: message.role, status: "complete" })),
+      messages.map(message => ({ id: message.id, sessionID: "session", role: message.role, time: { created: message.created } })) as any)
+  },
+  setStoreRevert: (messageID?: string) => messageStoreBus.getOrCreate("fixture").setSessionRevert("session", messageID ? { messageID } : null),
   setRevert: (enabled: boolean) => setSessions(previous => new Map(previous).set("fixture", new Map([
     ["session", { id: "session", revert: enabled ? { messageID: "previous" } : undefined } as any],
   ]))),
