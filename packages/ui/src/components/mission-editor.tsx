@@ -580,7 +580,7 @@ export function MissionEditor(props: {
       <Show when={prefilling()}><MissionBodyPending failed={reopen() === "failed" || reopen() === "idle" && prefillState() === "failed"}
         changed={reopen() === "idle" && prefillState() === "changed"} actionLabel={offersReopen() ? "missions.control.reopen" : undefined}
         onRetry={() => offersReopen() ? reopenEdit() : retryMissionTarget([editedObjective(), editedNotes()])} /></Show>
-      <Show when={!schedule.ready()}><p role={schedule.failed() ? "alert" : "status"}>{t(schedule.failed() ? "missions.scheduling.loadFailed" : "missions.control.loading")}</p>
+      <Show when={!schedule.ready()}><p role={schedule.failed() ? "alert" : "status"}>{t(schedule.failed() ? "missions.scheduling.loadFailed" : "missions.control.form.loading")}</p>
         <Show when={schedule.failed()}><button type="button" class="window-action" onClick={schedule.retryRead}>{t("missions.control.refresh")}</button></Show></Show>
       <Show when={schedule.conflict()}><p role="alert">{t("missions.control.mutation.conflict")}</p>
         <button type="button" class="window-action" disabled={schedule.reading() || !!schedule.held()} onClick={() => void schedule.reload()}>{t("missions.scheduling.reload")}</button></Show>
