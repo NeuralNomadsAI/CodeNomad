@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
-  armLive, assistantRow, emitEvent, readFixture, readTestingSessionId as sessionId, textOf,
+  armLive, assistantRow, emitEvent, readFixture, readTestingModel, readTestingSessionId as sessionId, textOf,
 } from "./opencode-data-read-testing.ts"
 
 /** Quiet means no new fetch for a window covering many fetch round trips, so
@@ -164,6 +164,43 @@ describe("OpenCode data delivery repair read", () => {
 
       await waitForQuietReads(() => reads)
       assert.equal(textOf(data, "live"), "", "a committed empty final with native metadata must replace the streamed draft")
+    } finally {
+      f.cleanup()
+    }
+  })
+
+  it("keeps streamed reasoning when the page holds the open fragment empty with its started native metadata", async () => {
+    const instanceId = "opencode-data-delivery-repair-open-reasoning"
+    let reads = 0
+    const f = readFixture(instanceId, async () => {
+      reads += 1
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      // Reasoning persists its provider metadata when it starts, so `native`
+      // alone does not mark it ended; only `time.completed` does.
+      return {
+        data: [
+          { id: "msg_prompt", type: "user", text: "follow-up", time: { created: 250 } },
+          {
+            ...assistantRow("live", undefined, 100),
+            content: [
+              { type: "reasoning", text: "", native: { itemId: "rs_1", reasoningEncryptedContent: null }, time: { created: 150 } },
+            ],
+          },
+        ],
+        cursor: {},
+      }
+    })
+    try {
+      const live = { assistantMessageID: "live" }
+      emitEvent(instanceId, "session.step.started", { ...live, agent: "build", model: readTestingModel, started: 100 })
+      emitEvent(instanceId, "session.reasoning.started", { ...live, ordinal: 0 })
+      const data = emitEvent(instanceId, "session.reasoning.delta", { ...live, ordinal: 0, delta: streamedText })
+      armDeliveryRepair(instanceId)
+
+      await waitForQuietReads(() => reads)
+      const row: any = data.session.message.get(sessionId, "live")
+      const reasoning = row?.content?.find((part: any) => part.type === "reasoning")?.text
+      assert.equal(reasoning, streamedText, "the repair read's open reasoning fragment rewound the streamed reasoning")
     } finally {
       f.cleanup()
     }

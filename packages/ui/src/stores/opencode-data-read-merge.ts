@@ -52,13 +52,15 @@ function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, s
  * a fragment, and the native persists a fragment's text only when its
  * full-text ending commits — as the accumulated value or as the provider's
  * completed-item replacement, which may be shorter, prefixed or empty. An
- * ending commits before the next part is appended, in a separate step, and a
- * committed ending stamps the provider's `native` metadata onto the stored
- * part while an uncommitted fragment has none. A fetched part holding no text
- * is therefore older than the deltas the live row already displays only when
- * it is the row's last fetched part, without native metadata, on a step that
- * is open on both sides. Committed finals — any value, native metadata,
- * anywhere but last, or beside the row's completion — keep full page
+ * ending commits before the next part is appended, in a separate step. A
+ * committed text ending stamps the provider's `native` metadata onto the
+ * stored part while an uncommitted text fragment has none; reasoning persists
+ * `native` when it starts and marks its ending with `time.completed`. A
+ * fetched part holding no text is therefore older than the deltas the live
+ * row already displays only when it is the row's last fetched part, not ended
+ * (text without native metadata, reasoning without `time.completed`), on a
+ * step that is open on both sides. Committed finals — any value, an ended
+ * marker, anywhere but last, or beside the row's completion — keep full page
  * authority. */
 function isUnpersistedOpenFragment(
   row: SessionMessageInfo,
@@ -72,7 +74,8 @@ function isUnpersistedOpenFragment(
   if ((fetched as unknown as { time?: { completed?: unknown } }).time?.completed !== undefined) return false
   if (typeof live !== "string" || live === "") return false
   if (typeof (fetchedPart as { text?: unknown })?.text !== "string") return false
-  if ((fetchedPart as { native?: unknown }).native !== undefined && (fetchedPart as { native?: unknown }).native !== null) return false
+  const part = fetchedPart as { type?: unknown; native?: unknown }
+  if (part.type === "text" && part.native !== undefined && part.native !== null) return false
   const endedReasoning = (fetchedPart as { time?: { completed?: unknown } }).time?.completed
   return (fetchedPart as { text?: unknown }).text === "" && endedReasoning === undefined
 }
