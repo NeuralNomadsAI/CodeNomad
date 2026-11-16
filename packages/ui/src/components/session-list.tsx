@@ -1,5 +1,6 @@
 import { Component, For, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { focusInterruption } from "../stores/interruption-navigation"
+import { beginGesture } from "../stores/session-surface"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { observeListEnd } from "../lib/list-end-observer"
 import { preserveListFocus } from "../lib/preserve-list-focus"
@@ -359,7 +360,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (isSessionDeleting(sessionId)) return
     const operation = captureBackendOperation(props.instanceId)
     if (!operation.current()) return
-
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
     const confirmed = await showConfirmDialog(
       t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
       {
@@ -409,7 +410,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       await deleteSession(props.instanceId, sessionId)
       if (!operation.current()) return
       if (fallbackSessionId) {
-        setActiveSessionFromList(props.instanceId, fallbackSessionId)
+        setActiveSessionFromList(props.instanceId, fallbackSessionId, intent)
       }
     } catch (error) {
       if (!operation.current()) return
@@ -544,9 +545,9 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (!operation.current()) return
     const selected = Array.from(selectedSessionIds())
     if (selected.length === 0) return
-
+    const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
     const confirmed = await showConfirmDialog(
-      t("sessionList.bulkDelete.confirmMessage", { count: selected.length }),
+      t(selected.length === 1 ? "sessionList.bulkDelete.confirmMessage.one" : "sessionList.bulkDelete.confirmMessage.other", { count: selected.length }),
       {
         title: t("sessionList.bulkDelete.title"),
         variant: "warning",
@@ -601,12 +602,12 @@ const SessionList: Component<SessionListProps> = (props) => {
     setSelectedSessionIds(new Set<string>())
 
     if (fallbackSessionId) {
-      setActiveSessionFromList(props.instanceId, fallbackSessionId)
+      setActiveSessionFromList(props.instanceId, fallbackSessionId, intent)
     }
 
     if (failed > 0) {
       showToastNotification({ category: "sessions",
-        message: t("sessionList.bulkDelete.error", { count: failed }),
+        message: t(failed === 1 ? "sessionList.bulkDelete.error.one" : "sessionList.bulkDelete.error.other", { count: failed }),
         variant: "error",
       })
     }
@@ -1055,7 +1056,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                 type="button"
                 class="button-tertiary"
                 onClick={handleBulkDelete}
-                aria-label={t("sessionList.bulkDelete.ariaLabel", { count: selectedCount() })}
+                aria-label={t(selectedCount() === 1 ? "sessionList.bulkDelete.ariaLabel.one" : "sessionList.bulkDelete.ariaLabel.other", { count: selectedCount() })}
               >
                 {t("sessionList.bulkDelete.button", { count: selectedCount() })}
               </button>

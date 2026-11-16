@@ -7,6 +7,7 @@ import { createRemoteBackendClient, registerBackendClient, localBackend } from "
 import { backendEvents } from "../../../src/lib/backend-events"
 import { openSessionPreview, getSessionPreview, restoreSessionPreview, showSessionPreview } from "../../../src/stores/session-previews"
 import { attachInstanceTabMembership, detachInstanceTabMembership } from "../../../src/stores/app-tab-membership"
+import { addInstance } from "../../../src/stores/instances"
 import "../../../src/index.css"
 
 localBackend.api.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
@@ -15,9 +16,9 @@ const [ready, setReady] = createSignal(false)
 const clients = ["a", "b"].map(id => createRemoteBackendClient(id, { bindRelayAuthority: true }))
 const detach = new Map<string, () => void>()
 async function open(id: string) {
-  const restored = await restoreSessionPreview("same-session", `${id}~/same`, `${id}~same-workspace`)
+  const restored = await restoreSessionPreview("same-session", `${id}~same-workspace`)
   if (restored) showSessionPreview(restored.storageKey)
-  else await openSessionPreview("same-session", "http://app.invalid/start", `${id}~/same`, `${id}~same-workspace`)
+  else await openSessionPreview("same-session", "http://app.invalid/start", `${id}~same-workspace`)
 }
 async function start() {
   for (const client of clients) {
@@ -25,6 +26,8 @@ async function start() {
     if (!client.admitRelayAuthority?.(response.headers.get("x-codenomad-backend-authority"))) throw new Error("Missing proof")
     registerBackendClient(client)
     detach.set(client.id, backendEvents.attach(client.id, client.events))
+    addInstance({ id: `${client.id}~same-workspace`, backendId: client.id, folder: "/same",
+      status: "ready", client: null, proxyPath: "", port: 0, pid: 0 })
     attachInstanceTabMembership(`${client.id}~same-workspace`)
     await open(client.id)
   }
@@ -33,7 +36,7 @@ async function start() {
 render(() => <ConfigProvider><I18nProvider>
   <Show when={ready()}><For each={["a", "b"]}>{id =>
     <section data-owner={id} style={{ height: "420px", display: "flex", "flex-direction": "column" }}>
-      <Show when={getSessionPreview("same-session", `${id}~/same`)}>{preview =>
+      <Show when={getSessionPreview("same-session", `${id}~same-workspace`)}>{preview =>
         <SessionPreviewView preview={preview()} onInsertComment={() => {}} />
       }</Show>
     </section>
@@ -43,7 +46,7 @@ render(() => <ConfigProvider><I18nProvider>
   open,
   detach: (id: string) => detach.get(id)?.(),
   closeTab: (id: string) => detachInstanceTabMembership(`${id}~same-workspace`),
-  history: (id: string) => getSessionPreview("same-session", `${id}~/same`)?.history,
-  source: (id: string) => getSessionPreview("same-session", `${id}~/same`)?.contentUrl,
+  history: (id: string) => getSessionPreview("same-session", `${id}~same-workspace`)?.history,
+  source: (id: string) => getSessionPreview("same-session", `${id}~same-workspace`)?.contentUrl,
 }
 void start()

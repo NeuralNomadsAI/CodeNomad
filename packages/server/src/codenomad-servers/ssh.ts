@@ -1,9 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process"
+import { EventEmitter } from "node:events"
 import fs from "node:fs"
 import { createServer } from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { ExplicitEndpointError } from "../opencode/servers/endpoint"
+import { guardProxyListener } from "../server/proxy-destination"
 
 /** An OpenSSH destination: a config alias, `user@host` or `ssh://user@host:port`. Never an option. */
 export const SSH_HOST = /^[A-Za-z0-9_.@:/[\]%+][A-Za-z0-9_.@:/[\]%+-]{0,254}$/
@@ -17,6 +19,7 @@ const HOSTS = 500
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer()
+    guardProxyListener(server)
     server.once("error", reject)
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
@@ -45,11 +48,17 @@ export function openSshForward(host: string, target: string, options: {
   let child: ChildProcess | undefined
   let closed = false
   let exited = false
+  // OpenSSH owns the socket; this adapter retains its exact address until child exit.
+  let bound: { address: string; port: number } | null = null
+  const listener = Object.assign(new EventEmitter(), { address: () => bound })
+  guardProxyListener(listener)
+  const releaseListener = () => { bound = null; listener.emit("close") }
   const exit = () => { if (!exited) { exited = true; options.onExit?.() } }
   const ready = (async () => {
     if (!SSH_HOST.test(host)) throw new ExplicitEndpointError("invalid_origin")
     const port = await freePort()
     if (closed) throw new ExplicitEndpointError("network")
+    bound = { address: "127.0.0.1", port }
     const args = ["-v", "-N", "-T",
       "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ExitOnForwardFailure=yes",
       "-o", "ControlMaster=no", "-o", "ControlPath=none",
@@ -68,11 +77,15 @@ export function openSshForward(host: string, target: string, options: {
         log = (log + chunk).slice(-16_384)
         if (log.includes(READY)) { settled = true; clearTimeout(timer); resolve(port) }
       })
-      running.once("error", () => { clearTimeout(timer); settled = true; reject(new ExplicitEndpointError("ssh_unavailable")); exit() })
-      running.once("exit", () => { clearTimeout(timer); if (!settled) { settled = true; reject(failure(log)) } exit() })
+      running.once("error", () => {
+        clearTimeout(timer); settled = true; reject(new ExplicitEndpointError("ssh_unavailable"))
+        if (running.pid === undefined) releaseListener()
+        exit()
+      })
+      running.once("exit", () => { releaseListener(); clearTimeout(timer); if (!settled) { settled = true; reject(failure(log)) } exit() })
     })
   })()
-  ready.catch(exit)
+  ready.catch(() => { if (!child) releaseListener(); exit() })
   return { ready, close() { closed = true; child?.kill() } }
 }
 

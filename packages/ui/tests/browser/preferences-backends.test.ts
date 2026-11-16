@@ -157,7 +157,7 @@ for (const kind of ["electron", "tauri"] as const) {
     try {
       await page.goto(url)
       await page.waitForFunction(() => (window as any).ready)
-      await page.getByRole("status").filter({ hasText: "Open a project to connect" }).waitFor()
+      await page.getByRole("status").filter({ hasText: "Open a project first." }).waitFor()
       assert.equal(await page.getByLabel("Image generation", { exact: true }).count(), 0)
       assert.equal(await page.getByLabel("For the current project", { exact: true }).count(), 0)
       assert.equal(await page.evaluate(() => (window as any).request.instanceId), "a~same")
@@ -182,7 +182,7 @@ for (const kind of ["electron", "tauri"] as const) {
       const inventory = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/a/api/workspaces")
       await page.goto(url)
       await inventory
-      await page.getByRole("status").filter({ hasText: "Open a project to connect" }).waitFor()
+      await page.getByRole("status").filter({ hasText: "Open a project first." }).waitFor()
       const before = f.requests.length
       await check()
       await page.waitForFunction(() => (window as any).usageResult !== "pending" || !!document.querySelector(".alert-dialog"))

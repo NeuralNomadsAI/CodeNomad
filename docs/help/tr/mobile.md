@@ -22,7 +22,7 @@ Kurulum cihaz/tarayıcı ve origin bazındadır. Telefona Node, Git veya OpenCod
 
 Uzaktan PWA kurulumu ve mikrofon erişimi tarayıcının tanıdığı güvenli bağlam gerektirir. Kullanılan ana bilgisayar adı/IP ile tam eşleşen güvenilir HTTPS sertifikası kullanın. Oluşturulan yerel sertifikaya istemci cihazı/tarayıcı açıkça güvenmelidir; uyarı sayfasını aşmak güvenilir kurulum değildir. Tarayıcının localhost istisnası başka bilgisayarın HTTP LAN adresine değil, o cihaza uygulanır.
 
-Kurulum eksikse önce HTTPS güvenini ve tarayıcı desteğini doğrulayın, ardından sayfayı yerleşik QR/uygulama içi tarayıcı yerine tam tarayıcıda yeniden açın. Mikrofon arızaları için tarayıcı/işletim sistemi sitesi iznini ve [Ses](voice.md)'yi inceleyin. Kurulumu düzeltmek için kimlik doğrulamayı veya TLS doğrulamayı kapatmayın.
+Kurulumu düzeltmek için kimlik doğrulamayı veya TLS doğrulamayı kapatmayın.
 
 ## Dokunmatik yerleşimlerle çalışın {#touch-layout}
 
@@ -41,6 +41,6 @@ Gezinmeyi ve araçları açmak için **Sol panel** ve **Sağ panel** kontrolleri
 | Mikrofon, pano, bildirimler ve yükleme istemi | Tarayıcı/işletim sistemi desteğine, güvenli içeriğe ve kullanıcı izinlerine bağlıdır. |
 | Çevrimdışı çalışma | Çevrimdışı arka uç veya önbelleğe alınmış API geçmişi yok. Statik kullanıcı arayüzü varlıkları önbelleğe alınabilir ancak belgeler ve API yanıtları çevrimdışı bir çalışma alanı değildir. |
 
-Arka ucu erişilebilir tutun. Mobil işletim sisteminin askıya alması veya ağ değişimi olay akışını kesebilir; geri dönmek, garantili olay tekrarı olmadan yeniden bağlanıp güncel durumu getirir. Yeniden denemeden önce işlemin tamamlanıp tamamlanmadığını kontrol edin. PWA kapatmak bağımsız arka ucu durdurmaz; ana bilgisayardaki masaüstü uygulamasından ve arka uçtan çıkmak Uzaktan Kontrolü sonraki başlatmaya kadar kullanılamaz yapar.
+Arka ucu erişilebilir tutun. Yeniden denemeden önce işlemin tamamlanıp tamamlanmadığını kontrol edin. PWA kapatmak bağımsız arka ucu durdurmaz; ana bilgisayardaki masaüstü uygulamasından ve arka uçtan çıkmak Uzaktan Kontrolü sonraki başlatmaya kadar kullanılamaz yapar.
 
 Yüklü PWA dahil her tarayıcı sekmesi, açık projelerini, seçili konuşmalarını, gönderilmemiş taslaklarını ve kaydırma konumlarını o sekme için saklar: sayfa yeniden yüklendiğinde veya mobil işletim sistemi onu uygulama değişikliği ya da ekran kilidinden sonra yeniden yüklediğinde geri gelirler. Yeni bir sekme veya işletim sisteminin tamamen kapattığı bir PWA ana sayfada açılır. Bunu sekme için **Ayarlar → Genel → Önceki durumu geri yükle** ile kapatın.

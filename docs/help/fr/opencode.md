@@ -1,7 +1,5 @@
 # Configuration d’OpenCode
 
-CodeNomad se connecte à un service OpenCode partagé sur l’hôte d’exécution. Sélectionner une CLI, mettre à jour ses fichiers, redémarrer ce service et recharger la configuration sont des opérations différentes ; aucune ne remplace les autres.
-
 ## Sélectionner ou installer la CLI {#select-cli}
 
 1. Ouvrez **Paramètres → OpenCode** et utilisez la carte **Binaire OpenCode**, sous **Version d’OpenCode**, pour sélectionner l’exécutable.
@@ -9,31 +7,29 @@ CodeNomad se connecte à un service OpenCode partagé sur l’hôte d’exécuti
 3. Utilisez **Vérifier l’état et les mises à jour**. Si OpenCode manque, choisissez **Installer et démarrer OpenCode** ; vérifiez d’abord l’hôte et la portée d’installation.
 4. Si la configuration propose **Connecter et continuer**, utilisez-le après résolution du problème signalé.
 
-L’installation utilise l’environnement Node sur lequel tourne le serveur CodeNomad et son npm (sur le bureau, le Node intégré d’Electron ou le Node embarqué par Tauri) pour une installation utilisateur standard partagée avec d’autres clients. **Installer pour l’utilisateur et configurer le PATH** change la configuration du terminal de cet utilisateur ; ouvrez ensuite un nouveau terminal. Un navigateur se connecte au serveur CodeNomad : son sélecteur de fichiers et son choix d’exécutable concernent ce serveur, pas l’appareil de navigation.
+**Installer pour l’utilisateur et configurer le PATH** change la configuration du terminal de cet utilisateur ; ouvrez ensuite un nouveau terminal. Un navigateur se connecte au serveur CodeNomad : son sélecteur de fichiers et son choix d’exécutable concernent ce serveur, pas l’appareil de navigation.
 
 Lorsqu’un OpenCode plus ancien apparaît en premier dans le PATH, l’action proposée dépend de son mode d’installation. Pour OpenCode 1.x installé avec npm, **Remplacer OpenCode {version} par OpenCode 2** demande une confirmation, retire ce paquet npm et installe OpenCode 2 dans le même dossier npm ; le dossier de données d’OpenCode est conservé, et OpenCode 2 importe lui-même les conversations 1.x. Un OpenCode plus ancien ou inutilisable installé autrement (winget, Homebrew, manuellement) n’est jamais modifié : **Installer OpenCode 2 pour CodeNomad** installe OpenCode 2 dans le dossier npm de l’utilisateur à côté de lui, et CodeNomad utilise ensuite cette copie. Si cette ancienne commande se trouve elle-même dans le dossier npm de l’utilisateur (par exemple un lien dans `~/.local/bin`), ou si ce dossier n’est pas accessible en écriture, la configuration en indique la raison au lieu de proposer l’action : déplacez ou renommez la commande, ou corrigez les droits du dossier, puis choisissez **Vérifier l’état et les mises à jour**. La commande `opencode` d’un terminal peut encore lancer l’ancienne version. Un exécutable personnalisé explicitement sélectionné n’est jamais remplacé.
 
-L’exécutable installé et le service actif peuvent avoir des versions différentes. Comparez **Version installée** et **Service en cours** dans la carte **Version d’OpenCode** au lieu de supposer que sélectionner un autre exécutable a remplacé le démon actif ; **Détails des versions** indique les versions minimale et recommandée. Si l’installation est occupée ou l’exécutable verrouillé, attendez sa libération par l’installateur ou le processus et vérifiez l’état avant de réessayer ; ne lancez pas des installateurs concurrents.
+L’exécutable installé et le service actif peuvent avoir des versions différentes. Comparez **Version installée** et **Service en cours** dans la carte **Version d’OpenCode** au lieu de supposer que sélectionner un autre exécutable a remplacé le démon actif ; **Détails des versions** indique les versions minimale et recommandée.
 
 ## Versions requises, recommandées et non vérifiées {#versions}
 
 | Classification | Exigence actuelle | Signification |
 | --- | --- | --- |
-| Minimum | OpenCode **2.3.0** | L’outil de génération d’images qu’utilisent les réglages **Images** et l’extension Design, ainsi que l’ordre correct d’exécution des tâches JavaScript dans Code Mode et le format natif de rejeu et de compaction ; les conversations enregistrées par les versions antérieures restent lisibles après la mise à jour. Elle fournit aussi les résultats des sous-agents sous forme de rapports en arrière-plan, que lisent les cartes de sous-agent et les Missions. |
+| Minimum | OpenCode **2.3.0** | Requis pour cette version de CodeNomad. Les conversations enregistrées par les versions antérieures restent lisibles après la mise à jour. |
 | Recommandée | OpenCode **2.3.0** | Cible qualifiée ; actuellement la même version que le minimum. |
 | Non vérifiée | Version plus récente ou personnalisée non entièrement validée | Non rejetée simplement parce que non testée ; les contrats API réels du service connecté sont vérifiés. |
-
-Le service connecté doit exposer les contrats requis de session, permission, Form, boîte de réception et environnement de session. La programmation native des Missions vérifie aussi les API de programmation, l’ensemble plugin/fournisseur et le réglage effectif `experimental.schedules`. La disponibilité suit les capacités consommées, y compris sur les versions futures compatibles. Si la configuration signale un service actif non pris en charge, sélectionnez/installez une CLI prise en charge et utilisez le redémarrage explicite du service partagé lorsque vous êtes prêt.
 
 ## Hôte, WSL et portée du service partagé {#execution-host}
 
 Sous Windows, un exécutable WSL sélectionné s’exécute dans la distribution choisie. Installez/mettez-le à jour là-bas et utilisez des chemins valides dans cette distribution. La connectivité WSL dépend du transfert localhost de Windows. Une CLI Windows et une CLI WSL ne sont pas des environnements d’exécution interchangeables.
 
-OpenCode possède l’enregistrement global de son service, ses sessions, messages et base de données. CodeNomad ne crée pas une base OpenCode privée par fenêtre ou projet. Fermer un onglet de projet ferme ce projet dans CodeNomad ; les sessions continuent dans OpenCode et réapparaissent quand vous rouvrez le projet. CodeNomad ne décharge jamais les Locations natives. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; ni ces actions ni l’arrêt du backend n’arrêtent le démon partagé. Voir [Projets](projects.md).
+Fermer un onglet de projet ferme ce projet dans CodeNomad ; les sessions continuent dans OpenCode et réapparaissent quand vous rouvrez le projet. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; ni ces actions ni l’arrêt du backend n’arrêtent le démon partagé. Voir [Projets](projects.md).
 
-## Démarrer OpenCode au démarrage {#login-start}
+## Lancer au démarrage {#login-start}
 
-Dans **Paramètres → OpenCode**, **Démarrer OpenCode au démarrage** demande au système de lancer le service OpenCode en arrière-plan quand vous ouvrez votre session, même CodeNomad fermé. Le réglage reste désactivé tant que vous ne l'activez pas, prend effet à la prochaine ouverture de session et concerne votre compte sur l'ordinateur qui exécute le serveur CodeNomad. Il lance l'exécutable choisi dans la carte **Binaire OpenCode** ; choisir un autre exécutable natif le met à jour, sinon il continue de lancer le précédent.
+Dans **Paramètres → OpenCode**, **Lancer au démarrage** demande au système de lancer le service OpenCode en arrière-plan quand vous ouvrez votre session, même CodeNomad fermé. Le réglage reste désactivé tant que vous ne l'activez pas, prend effet à la prochaine ouverture de session et concerne votre compte sur l'ordinateur qui exécute le serveur CodeNomad. Il lance l'exécutable choisi dans la carte **Binaire OpenCode** ; choisir un autre exécutable natif le met à jour, sinon il continue de lancer le précédent.
 
 | Système | Ce qui lance OpenCode | Après un plantage |
 | --- | --- | --- |
@@ -41,7 +37,7 @@ Dans **Paramètres → OpenCode**, **Démarrer OpenCode au démarrage** demande 
 | macOS | Un LaunchAgent. | Relancé par macOS. |
 | Linux | Un service utilisateur systemd démarré à l'ouverture de session, sans activer linger. | Relancé par systemd. |
 
-La désactivation retire seulement cette tâche, ce LaunchAgent ou ce service ; un OpenCode en cours continue de fonctionner. Si le réglage ne peut pas être modifié, une erreur apparaît dessous : choisissez le programme OpenCode natif plutôt qu'un script d'appel, ou vérifiez le planificateur de tâches ou les services utilisateur du système, puis réessayez. **Indisponible sur ce système** apparaît quand le serveur CodeNomad s'exécute dans WSL ou sur un autre système sans démarrage à l'ouverture de session.
+La désactivation retire seulement cette tâche, ce LaunchAgent ou ce service ; un OpenCode en cours continue de fonctionner. **Indisponible sur ce système** apparaît quand le serveur CodeNomad s'exécute dans WSL ou sur un autre système sans démarrage à l'ouverture de session.
 
 ## Mettre à jour, redémarrer ou recharger {#maintenance}
 
@@ -50,15 +46,13 @@ La désactivation retire seulement cette tâche, ce LaunchAgent ou ce service ; 
 3. Vérifiez l’état du service actif. Utilisez **Redémarrer le service partagé** seulement pour activer volontairement l’installation sélectionnée pour tous les clients connectés.
 4. Pour redémarrer le processus sans rien installer, développez **Dépannage** et choisissez **Redémarrer le service OpenCode**, puis confirmez.
 
-Le redémarrage reste accessible pendant une actualisation du statut en arrière-plan. Chaque demande vérifie de nouveau le statut avant de modifier le service ; un échec de vérification bloque le redémarrage.
+| Action | Portée et effet |
+| --- | --- |
+| Mettre à jour la CLI | Change l’exécutable installé pris en charge ; ne redémarre pas implicitement le démon actif. |
+| Redémarrer le service | Remplace le processus partagé et interrompt le travail actif de tous les clients OpenCode connectés ; l’historique reste. |
+| Recharger la configuration OpenCode | Conserve le processus. Pour tous les clients connectés, annule les permissions/Forms en attente, ferme terminaux/commandes en arrière-plan et peut interrompre le travail actif. |
 
-| Action | Portée et effet | Récupération sûre |
-| --- | --- | --- |
-| Mettre à jour la CLI | Change l’exécutable installé pris en charge ; ne redémarre pas implicitement le démon actif. | Vérifiez les versions installée et active après un échec ; réessayez explicitement après résolution de l’erreur seulement. |
-| Redémarrer le service | Remplace le processus partagé et interrompt le travail actif de tous les clients OpenCode connectés ; l’historique reste. | Les programmations natives de Missions saines et en marche récupèrent automatiquement ; inspectez les passages en attente et toute pause/erreur/incertitude. Les entrées quotidiennes existantes exigent **Reprendre**. Inspectez séparément les conversations ponctuelles et leurs commandes de récupération ; voir [Missions](missions.md#lifetime). |
-| Recharger la configuration OpenCode | Conserve le processus mais reconstruit **chaque Location chargée** pour tous les clients. Annule les permissions/Forms en attente et ferme terminaux/commandes en arrière-plan ; le travail actif peut être interrompu. | Revérifiez ressources et travaux en attente après rechargement. Ne répétez pas un prompt ou une modification simplement parce que sa réponse a été perdue. |
-
-Utilisez explicitement **Recharger la configuration OpenCode**, sous **Dépannage** lorsque le service actif le prend en charge, lorsqu’une configuration enregistrée ou un plugin installé reste indisponible et que l’interruption est acceptable. Ce n’est pas une actualisation d’affichage anodine. CodeNomad n’utilisera pas une CLI sélectionnée plus ancienne pour rétrograder un démon actif plus récent.
+Utilisez **Recharger la configuration OpenCode**, sous **Dépannage** lorsque le service actif le prend en charge, lorsqu’une configuration enregistrée ou un plugin installé reste indisponible. Lisez puis confirmez l’avertissement : le rechargement peut interrompre le travail actif de tous les clients connectés. CodeNomad n’utilisera pas une CLI sélectionnée plus ancienne pour rétrograder un démon actif plus récent.
 
 ## Environnement de session {#session-environment}
 
@@ -66,11 +60,11 @@ Utilisez explicitement **Recharger la configuration OpenCode**, sous **Dépannag
 2. Ajoutez, modifiez ou retirez les remplacements du profil ; chaque changement est enregistré immédiatement.
 3. Envoyez le prochain prompt, commande personnalisée ou demande shell de session via CodeNomad pour appliquer l’environnement courant à cette conversation.
 
-C’est un réglage de profil de configuration, appliqué côté serveur avant chaque envoi. Simplement ouvrir/lire une conversation ou enregistrer les paramètres ne modifie pas une session native. Retirer un remplacement restaure la valeur héritée de l’hôte d’exécution, ou la supprime si elle y est absente. Un échec d’application bloque l’envoi au lieu d’utiliser des valeurs périmées.
+C’est un réglage de profil de configuration. Simplement ouvrir/lire une conversation ou enregistrer les paramètres ne modifie pas une session native. Retirer un remplacement restaure la valeur héritée de l’hôte d’exécution, ou la supprime si elle y est absente.
 
 L’environnement contrôle les lancements shell locaux suivants de cette session native. Les processus déjà actifs gardent leur environnement. Il ne reconfigure **pas** les fournisseurs, serveurs MCP/LSP, terminaux indépendants ni shells en arrière-plan propres à une Location. Les prompts en file ne capturent pas chacun leur environnement, et un autre client OpenCode peut remplacer celui de la même session. Ne supposez pas que les sessions enfants créées entièrement dans OpenCode reçoivent une mise à jour CodeNomad au moment de l’envoi.
 
-Les variables autorisées sont aussi transmises au démarrage d’un service arrêté ; se connecter à un démon existant ne change pas son environnement de processus. Dans WSL, les valeurs sont combinées avec l’environnement d’exécution Linux, pas le PATH/HOME Windows. Changer ces remplacements ne déplace pas la base de données ni l’enregistrement du service OpenCode.
+Les variables autorisées sont aussi transmises au démarrage d’un service arrêté ; se connecter à un démon existant ne change pas son environnement de processus. Dans WSL, les valeurs sont combinées avec l’environnement d’exécution Linux, pas le PATH/HOME Windows.
 
 ## Modifier les fichiers de configuration natifs {#configuration-files}
 

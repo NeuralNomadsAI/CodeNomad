@@ -2,7 +2,7 @@ import { For, Show, createComputed, createMemo, createSignal, onCleanup } from "
 import type { MissionCleanup } from "../../../server/src/missions/model"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
-import { deletionErrorKey, missionCleanupPending } from "../lib/mission-cleanup"
+import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
 import { useI18n } from "../lib/i18n"
 import { MissionDisclosure } from "./mission-disclosure"
 import { MissionListItem } from "./mission-list-item"
@@ -47,32 +47,45 @@ export function MissionCleanupPanel(props: {
     const backend = captureBackendOperation(instanceId)
     const current = () => backend.current() && alive && operation === attempt && viewCurrent() && Boolean(rows().get(key) && missionCleanupPending(rows().get(key)!))
     if (!current()) return
+    const api = backendOf(instanceId).api
     setPending(key); setError("")
     try {
       // Display data is never destructive authority. Reconcile the original
       // intent before an explicit retry, then let the native bridge revalidate.
-      const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, saved.missionID)
+      const snapshot = await api.fetchMission(instanceId, saved.missionID)
       if (!current()) return
       const fresh = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.deletionID === saved.deletionID
         && item.missionID === saved.missionID && item.requestID === saved.requestID
         && item.expectedRevision === saved.expectedRevision && item.deleteManagedSessions === saved.deleteManagedSessions)
       if (!fresh) throw new Error("Unconfirmed cleanup intent")
-      if (missionCleanupPending(fresh)) await backendOf(instanceId).api.deleteMission(instanceId, fresh.missionID, {
+      if (missionCleanupPending(fresh)) await api.deleteMission(instanceId, fresh.missionID, {
         requestId: fresh.requestID, expectedRevision: fresh.expectedRevision, deleteManagedSessions: fresh.deleteManagedSessions,
       })
       if (current()) await props.refresh()
     } catch (failure) {
-      if (current()) { setError(t(deletionErrorKey(failure))); await props.refresh() }
+      if (!current()) return
+      const key = deletionErrorKey(failure)
+      if (failure instanceof MissionDeletionError && failure.status === 409) {
+        try {
+          const snapshot = await api.fetchMission(instanceId, saved.missionID)
+          if (!current()) return
+          const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.deletionID === saved.deletionID
+            && item.missionID === saved.missionID && item.requestID === saved.requestID
+            && item.expectedRevision === saved.expectedRevision && item.deleteManagedSessions === saved.deleteManagedSessions)
+          if (intent && !missionCleanupPending(intent)) { await props.refresh(); return }
+        } catch { /* Keep the original intent when its receipt cannot be read. */ }
+      }
+      if (current()) { setError(t(key)); await props.refresh() }
     } finally { if (alive && operation === attempt) setPending("") }
   }
 
-  return <Show when={props.cleanups.length}><MissionDisclosure missionId={`cleanup:${props.instanceId}`} name="cleanup"
+  return <Show when={props.cleanups.length}><MissionDisclosure instanceId={props.instanceId} missionId="cleanup" name="cleanup"
     title={t(props.cleanups.some(missionCleanupPending) ? "missions.cleanup.title" : "missions.progress.cleanupHistory")}
     defaultOpen={defaultOpen()} class="mission-cleanup">
     <For each={[...rows().keys()]}>{key => <Show when={rows().get(key)}>{item => <MissionListItem text={item().objective} title={item().objective}
       status={<span role="status">{t("missions.cleanup.counts", { removed: item().removed, retained: item().retained, pending: item().pending })}</span>}
       statusKind={missionCleanupPending(item()) ? "needs-input" : "completed"}
-      actions={missionCleanupPending(item()) ? [{ key: "retry", label: t(pending() === key ? "missions.control.mutation.pending" : "missions.control.retry"),
+      actions={missionCleanupPending(item()) ? [{ key: "retry", label: t(pending() === key ? "missions.cleanup.retrying" : "missions.control.retry"),
         icon: <RefreshCw class="h-3.5 w-3.5" />, disabled: props.disabled || !props.active || Boolean(pending()), onSelect: () => retry(key) }] : []}>
       <Show when={item().documentPending}><p role="status">{t("missions.cleanup.documentPending")}</p></Show>
       <Show when={item().retained > 0}><For each={item().reasons}>{reason => <p>{t(`missions.cleanup.reason.${reason}`)}</p>}</For></Show>

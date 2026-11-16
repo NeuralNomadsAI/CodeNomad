@@ -109,6 +109,37 @@ async function setup(page: Page, initial: Record<string, unknown> = {}, delay?: 
   return { writes, creates, reads, errors, bucket: () => bucket, replace: (value: Record<string, any>) => { bucket = value } }
 }
 
+test("configuration progress names save, confirmation, removal and read separately", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
+  let release = () => {}, gate = Promise.resolve()
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Progress")
+    await nameBrief(page, "Progress")
+    await page.route("**/api/storage/config/ui*", async route => { await gate; return route.fallback() })
+    gate = new Promise<void>(resolve => { release = resolve })
+    await page.getByRole("button", { name: await text(page, "missions.models.save"), exact: true }).click()
+    await page.getByRole("status").filter({ hasText: /^Saving configuration…$/ }).waitFor()
+    release()
+    await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionModels.length === 1)
+    await pickBrief(page, fixture.bucket().settings.missionModels[0].id)
+    await briefMenu(page, "missions.models.remove")
+    assert.equal(await page.locator(".mission-brief-picker [role=status]").count(), 0, "confirmation has not started a write")
+    gate = new Promise<void>(resolve => { release = resolve })
+    await page.getByRole("dialog").getByRole("button", { name: await text(page, "missions.models.remove"), exact: true }).click()
+    await page.getByRole("status").filter({ hasText: /^Removing configuration…$/ }).waitFor()
+    release()
+    await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionModels.length === 0)
+    gate = new Promise<void>(resolve => { release = resolve })
+    await briefMenu(page, "missions.models.reload")
+    await page.getByRole("status").filter({ hasText: /^Reloading configurations…$/ }).waitFor()
+    release()
+    await page.getByRole("status").filter({ hasText: /^Reloading configurations…$/ }).waitFor({ state: "detached" })
+    assert.equal(fixture.writes.length, 2)
+    assert.deepEqual(fixture.errors, [])
+  } finally { release(); await page.close() }
+})
+
 test("creation waits for loaded defaults and exposes exact requested choices", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let release!: () => void
@@ -293,6 +324,46 @@ test("a rejected choice is not resent: an edit made from it is refused, an indep
     assert.equal(await mode.inputValue(), "independent")
     assert.deepEqual(fixture.errors, [])
   } finally { release(); await page.close() }
+})
+
+for (const outcome of ["accepted", "replaced", "invalid", "unreadable"] as const) test(`a lost defaults write response reconciles ${outcome} owner state without replay`, async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
+  let writes = 0, reads = 0
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.evaluate(() => window.missionDefaultsModels.view("settings"))
+    await page.route("**/api/storage/config/ui*", route => {
+      if (route.request().method() === "GET") {
+        reads++
+        return outcome === "unreadable" ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: fixture.bucket() })
+      }
+      writes++
+      const submitted = route.request().postDataJSON().patch.settings.missionProfileDefaults
+      fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionProfileDefaults:
+        outcome === "replaced" ? [{ template: "all", profiles: {}, taskMode: "native" }]
+          : outcome === "invalid" ? [{ template: "broken" }] : submitted } })
+      return route.fulfill({ status: 503, json: { error: "Write response lost" } })
+    })
+    const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
+    await mode.selectOption("independent")
+    if (outcome === "unreadable") {
+      await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).waitFor()
+    } else {
+      await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    }
+    const alert = page.getByRole("alert").filter({ hasText: await text(page, "missions.defaults.error") })
+    if (outcome === "accepted") {
+      await page.waitForFunction(() => !document.querySelector<HTMLSelectElement>(".mission-preferences-scope select")?.disabled)
+      assert.equal(await alert.count(), 0, "the saved choice clears the false failure")
+      assert.equal(await mode.inputValue(), "independent")
+    } else {
+      await alert.waitFor()
+      if (outcome === "replaced") assert.equal(await mode.inputValue(), "native", "the other client's current choice wins")
+    }
+    assert.equal(writes, 1, "recovery never repeats a write")
+    assert.equal(reads, outcome === "unreadable" ? 3 : 1)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
 })
 
 test("failed UI-owner reads stay fenced despite general readiness and server/state updates, then explicit reload recovers", async () => {
@@ -546,18 +617,16 @@ test("queued agent/model edits touch only their role and are refused when that s
   } finally { release(); await page.close() }
 })
 
-test("Settings info tips open on tap for touch screens", async () => {
+test("Mission scope stays directly available without a duplicate explanation", async () => {
   const page = await browser.newPage({ locale: "en-US", hasTouch: true })
   try {
     await setup(page)
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
-    const tip = page.locator(".mission-preferences-scope .settings-info-tip"), content = page.locator(".section-info-tooltip")
-    await tip.tap()
-    await content.filter({ hasText: await text(page, "missions.defaults.priority") }).waitFor()
-    assert.equal(await page.locator(".mission-preferences-scope select").evaluate(element => element === document.activeElement), false, "the tap never activates the row's control")
-    await tip.tap()
-    await content.waitFor({ state: "hidden" })
+    assert.equal(await page.locator(".mission-preferences-scope .settings-info-tip").count(), 0)
+    assert.equal(await page.getByLabel(await text(page, "missions.defaults.scope"), { exact: true }).isEnabled(), true)
+    await page.locator(".mission-preferences > header .settings-info-tip").focus()
+    await page.locator(".section-info-tooltip").filter({ hasText: await text(page, "missions.defaults.hint") }).waitFor()
   } finally { await page.close() }
 })
 

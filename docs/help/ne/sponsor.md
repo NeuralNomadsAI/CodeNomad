@@ -1,7 +1,5 @@
 # CodeNomad लाई आर्थिक सहयोग गर्नुहोस्
 
-CodeNomad निःशुल्क र खुला-स्रोत हो, र स्वयंसेवकहरूले यसलाई maintain गर्छन्। प्रायोजनले यसलाई fix, release र सुधार गर्न लाग्ने समयको खर्च बेहोर्छ।
-
 ## CodeNomad लाई किन प्रायोजन गर्ने {#why}
 
 CodeNomad [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) अन्तर्गत प्रकाशित छ र डाउनलोड वा प्रयोग गर्न केही पनि लाग्दैन। Pascal André र Shantur Rathore ले समुदायको योगदानसहित आफ्नै समयमा यसलाई maintain गर्छन्। OpenCode स्वतन्त्र रूपमा update हुन्छ, त्यसैले कुनै नयाँ feature भन्दा पहिले compatible रहन मात्र पनि CodeNomad लाई नियमित काम चाहिन्छ।
@@ -12,8 +10,6 @@ CodeNomad [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LIC
 - **रिलिज**: Windows, macOS र Linux एप build, test र publish गर्ने।
 - **भाषा**: interface र यो help site दस भाषामा अद्यावधिक राख्ने।
 - **नयाँ feature**, जस्तै [मिसन](missions.md), [Remote Control](remote-control.md) र [इतिहास खोज](history.md) पछाडिको काम।
-
-दीर्घकालीन लक्ष्य भनेको CodeNomad को विकास यसलाई प्रयोग गर्ने व्यक्ति र कम्पनीहरूबाट वित्तपोषित होस् भन्ने हो।
 
 ## आर्थिक सहयोग नीति {#policy}
 

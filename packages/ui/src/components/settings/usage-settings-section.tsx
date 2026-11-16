@@ -9,6 +9,7 @@ import { backendEvents as serverEvents } from "../../lib/server-events"
 import { isExecutionTerminalEvent } from "../../lib/native-execution-events"
 import { activeInstanceId } from "../../stores/instances"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../../lib/event-refresh-scheduler"
+import { SettingsInfoTip } from "./settings-info-tip"
 
 export function UsageSettingsSection(props: { instanceId?: string }) {
   const { t, locale } = useI18n()
@@ -160,9 +161,8 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
         <p>{new Date(data().stats.range.from).toLocaleString(locale())} — {new Date(data().stats.range.to).toLocaleString(locale())} · {timezone}</p>
         <dl class="usage-metrics">
           <For each={metrics()}>{([label, value]) => <div><dt>{t(`settings.usage.${label}`)}</dt><dd>{number(value)}</dd></div>}</For>
-          <div><dt>{t("settings.usage.cost")}</dt><dd>{money(data().stats.cost)}</dd></div>
+          <div><dt>{t("settings.usage.cost")} <SettingsInfoTip text={t("settings.usage.costHint")} /></dt><dd>{money(data().stats.cost)}</dd></div>
         </dl>
-        <p class="settings-inline-note">{t("settings.usage.costHint")}</p>
         <h4 class="settings-card-section-title">{t("settings.usage.models")}</h4>
         <div class="usage-table-scroll"><table>
           <thead><tr><th>{t("settings.usage.model")}</th><th>{t("settings.usage.steps")}</th><th>{t("settings.usage.input")}</th><th>{t("settings.usage.output")}</th><th>{t("settings.usage.cost")}</th></tr></thead>

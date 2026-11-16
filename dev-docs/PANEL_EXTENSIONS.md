@@ -11,12 +11,10 @@ ZIP/refresh actions; disposal never replays a mutation.
 
 The official index lives in
 [`NeuralNomadsAI/CodeNomad-Extensions`](https://github.com/NeuralNomadsAI/CodeNomad-Extensions).
-That repository may hold **multiple** official addons plus the catalogue. Other
-authors can host addons in their own repositories; the curated catalogue points
-to their exact release assets.
+The catalogue points to exact release assets in official or third-party addon repositories.
 
-API 1 exposes context only (session ID, locale, appearance). API 2 adds the explicit
-`session.assets.read` permission used by the independent **MCP Assets** addon:
+API 1 exposes context only (session ID, locale, appearance). API 2 adds
+`session.assets.read` for the independent **MCP Assets** addon:
 bounded tool-result asset metadata and demand-only embedded bytes from the
 currently displayed session, never prompts, transcript text, arbitrary URLs,
 local files, credentials or a generic RPC proxy. API 3 adds the explicit

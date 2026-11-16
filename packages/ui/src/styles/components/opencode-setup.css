@@ -52,7 +52,6 @@
   border-left: 2px solid var(--border-base);
 }
 
-.opencode-installation-notice,
-.opencode-installation-text {
+.opencode-installation-notice {
   overflow-wrap: anywhere;
 }

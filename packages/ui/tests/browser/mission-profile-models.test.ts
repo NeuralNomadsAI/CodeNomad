@@ -95,6 +95,47 @@ test("Settings model selects show the conversation selector's named, filtered li
   } finally { await page.close() }
 })
 
+test("a failed profile catalog offers a read-only reload that keeps the requested profile", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let fail = true, reads = 0
+  try {
+    const fixture = await setup(page, { missionProfileDefaults: [{ template: "all", profiles: { coordinator: { model: OPUS } } }] }, {})
+    await page.route("**/workspaces/fixture/instance/api/{agent,model,provider}**", route => {
+      reads++
+      return fail ? route.fulfill({ status: 503, json: {} }) : route.fallback()
+    })
+    await page.locator(".mission-profiles-disclosure > summary").click()
+    const error = page.getByRole("status").filter({ hasText: await text(page, "missions.control.profiles.error") })
+    await error.waitFor()
+    assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), key(OPUS.providerID, OPUS.id))
+    const reload = page.locator(".mission-profiles").getByRole("button", { name: await text(page, "missions.preferences.reload"), exact: true })
+    await reload.waitFor()
+    await page.evaluate(() => window.missionDefaultsModels.active(false))
+    assert.equal(await reload.isDisabled(), true)
+    assert.equal(reads, 3, "hidden controls never retry")
+    fail = false
+    await page.evaluate(() => window.missionDefaultsModels.active(true))
+    await loadedCatalog(page, "Coordinator · Model")
+    await error.waitFor({ state: "hidden" })
+    // Fail a visible event refresh, then recover through the explicit action.
+    fail = true
+    await page.evaluate(async () => {
+      const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
+      serverEvents.dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "config.updated", id: "changed", created: 1, location: { directory: "/fixture" }, data: {} } }])
+    })
+    await error.waitFor()
+    const beforeReload = reads
+    fail = false
+    await reload.click()
+    await error.waitFor({ state: "hidden" })
+    await loadedCatalog(page, "Coordinator · Model")
+    assert.equal(await page.getByLabel("Coordinator · Model", { exact: true }).inputValue(), key(OPUS.providerID, OPUS.id))
+    assert.deepEqual(fixture.writes, [])
+    assert.deepEqual(fixture.errors, [])
+    assert.equal(reads - beforeReload, 3, "Reload rereads the agents, models and providers once")
+  } finally { await page.close() }
+})
+
 test("the editor and Compare follow favorites-only and keep hidden or non-favorite saved choices under their names", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {

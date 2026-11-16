@@ -4,11 +4,10 @@ import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { instances } from "./instances"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
-import { showSessionChatFor } from "./session-previews"
+import { applySurface, beginGesture } from "./session-surface"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 import { setSessionSearchDestination } from "./session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
-import { projectScope } from "../lib/backend-identity"
 import { captureBackendOperation } from "../lib/backend-operation"
 
 export interface HistorySessionLabel {
@@ -119,9 +118,10 @@ export function createHistorySessionLabels(instanceId: () => string) {
 export async function openHistoryMatchSession(instanceId: string, sessionId: string, messageId: string, current: () => boolean,
   highlight?: { query: string; match: SessionSearchMatch }): Promise<boolean> {
   const operation = captureBackendOperation(instanceId, undefined, current)
+  const intent = beginGesture({ instanceId, sessionId })
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
-  const admitted = () => operation.current() && instances().get(instanceId)?.client === client
+  const admitted = () => intent.current() && operation.current() && instances().get(instanceId)?.client === client
     && getOpenCodeInstanceGeneration(instanceId) === generation
     && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
   if (!admitted()) return false
@@ -132,9 +132,8 @@ export async function openHistoryMatchSession(instanceId: string, sessionId: str
   // A destination left on its browser preview would hide the transcript.
   batch(() => {
     if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
-    setActiveSessionFromList(instanceId, sessionId)
-    const instance = instances().get(instanceId)
-    showSessionChatFor(sessionId, instance ? projectScope(instance) : "")
+    setActiveSessionFromList(instanceId, sessionId, intent)
+    applySurface({ instanceId, sessionId }, { kind: "conversation" }, intent)
   })
   return true
 }

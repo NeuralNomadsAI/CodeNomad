@@ -12,8 +12,6 @@ bug report, current release र contribution का लागि repository प�
 
 थप निदान चाहिए **क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्** वा **.txt डाउनलोड गर्नुहोस्** ले छुट्टै report बनाउँछ। त्यस विस्तृत report मा local path र network address हुन सक्छन्: attach अघि review/redact गर्नुहोस्। automatic diagnostic report ले authentication secret हटाए पनि screenshot वा log अंशमा secret हुन सक्छन्।
 
-GitHub form मा incompatible field भए CodeNomad ले उही report जानकारीसहित plain issue खोल्छ। form पढ्दाको अस्थायी failure ले खोल्न रोक्दैन। सधैं [issue सूची](https://github.com/NeuralNomadsAI/CodeNomad/issues) हातैले प्रयोग गर्न सकिन्छ।
-
 ## समुदाय र release {#community}
 
 | स्रोत | प्रयोग |
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-development परिवर्तनले development host प्रभावित गर्छन्, स्वतन्त्र चलिरहेको OpenCode daemon को installed version होइन। native packaging लाई उचित target tool चाहिन्छ; target OS मै build प्राथमिकता दिनुहोस्।
+native packaging लाई उचित target tool चाहिन्छ; target OS मै build प्राथमिकता दिनुहोस्।
 
 ### build र validation {#build-and-validate}
 

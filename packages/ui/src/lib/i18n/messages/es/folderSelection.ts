@@ -26,7 +26,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "Discord de CodeNomad",
 
   "folderSelection.empty.title": "No hay carpetas recientes",
-  "folderSelection.empty.description": "Busca una carpeta para comenzar",
 
   "folderSelection.recent.title": "Carpetas recientes",
   "folderSelection.recent.subtitle.one": "{count} carpeta disponible",
@@ -58,7 +57,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.destination.title": "Seleccionar destino del clon",
   "folderSelection.clone.destination.description": "Selecciona la carpeta que contendrá el clon; la carpeta del repositorio se crea dentro.",
   "folderSelection.clone.dialog.title": "Clonar repositorio Git",
-  "folderSelection.clone.dialog.description": "Clona un repositorio Git en una carpeta local y luego abre esa carpeta como workspace.",
   "folderSelection.clone.dialog.repositoryUrl": "URL del repositorio",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "Carpeta de destino",
@@ -80,10 +78,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "Buscar",
 
   "folderSelection.loading.title": "Iniciando instancia...",
-  "folderSelection.loading.subtitle": "Espera mientras preparamos tu espacio de trabajo.",
 
   "folderSelection.drop.title": "Suelta una carpeta para abrirla",
-  "folderSelection.drop.subtitle": "Inicia una nueva instancia en la carpeta soltada.",
   "folderSelection.drop.invalidTitle": "No se pudo abrir el elemento soltado",
   "folderSelection.drop.invalidMessage": "Suelta una carpeta para iniciar una nueva instancia.",
 
@@ -96,7 +92,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "Abre un servidor remoto de CodeNomad guardado en una ventana nueva",
   "folderSelection.servers.count": "{count} servidores",
   "folderSelection.servers.empty.title": "No hay servidores guardados",
-  "folderSelection.servers.empty.description": "Añade un servidor remoto para volver a conectarte rápidamente desde este dispositivo",
   "folderSelection.servers.connectTitle": "Conectar a un servidor",
   "folderSelection.servers.connectSubtitle": "Guarda un servidor remoto de CodeNomad y ábrelo en una ventana nueva",
   "folderSelection.servers.connectButton": "Conectar a un servidor",
@@ -104,7 +99,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "TLS autofirmado",
   "folderSelection.servers.errorTitle": "Falló la conexión remota",
   "folderSelection.servers.dialog.title": "Conectar a un servidor",
-  "folderSelection.servers.dialog.description": "Añade un servidor remoto de CodeNomad y ábrelo ahora si quieres.",
   "folderSelection.servers.dialog.name": "Nombre del servidor",
   "folderSelection.servers.dialog.namePlaceholder": "Servidor de producción",
   "folderSelection.servers.dialog.url": "URL del servidor",

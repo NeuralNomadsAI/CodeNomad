@@ -5,6 +5,7 @@ import type { WebSearchSelection } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { useWebSearchSettings } from "./useWebSearchSettings"
 import { WebSearchProviderConnections } from "./websearch-provider-connections"
+import { SettingsInfoTip } from "./settings-info-tip"
 
 const encode = (value: WebSearchSelection) => value === null ? "default" : value === false ? "off" : `provider:${value}`
 const decode = (value: string): WebSearchSelection => value === "default" ? null : value === "off" ? false : value.slice(9)
@@ -32,10 +33,15 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
       <div class="websearch-settings-scopes">
         <For each={data().scopes}>{entry => <label class="settings-toggle-row settings-toggle-row-compact">
           <span class="providers-card-copy">
-            <span class="settings-toggle-title" title={entry.path}>{t(`settings.websearch.${entry.scope}`)}</span>
+            <span class="settings-toggle-title" title={entry.path}>
+              {t(`settings.websearch.${entry.scope}`)}
+              <Show when={entry.scope === "global"}>
+                <SettingsInfoTip text={t("settings.websearch.defaultHint")} help={{ page: "providers", anchor: "web-search" }} />
+              </Show>
+            </span>
           </span>
           <select class="selector-trigger" aria-label={t(`settings.websearch.${entry.scope}`)}
-            title={entry.scope === "project" ? t("settings.websearch.effective", { provider: label(data().effective) }) : t("settings.websearch.defaultHint")}
+            title={entry.scope === "project" ? t("settings.websearch.effective", { provider: label(data().effective) }) : undefined}
             disabled={settings.busy()} value={encode(entry.selection)}
             onChange={event => void settings.save(entry.scope, decode(event.currentTarget.value))}>
             <option value="default" selected={entry.selection === null}>{t("settings.websearch.default")}</option>
@@ -48,7 +54,6 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
           </select>
         </label>}</For>
       </div>
-      <p class="settings-toggle-caption">{t("settings.websearch.defaultHint")}</p>
     </div>}</Show>
   </section>
 }

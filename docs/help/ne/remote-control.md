@@ -37,7 +37,7 @@ link मा उही पाँच मिनेट र एकपटक प्र
 
 revocation ले हालका HTTP/SSE जडान र भावी पहुँच दुवै अन्त्य गर्छ। पहुँच फर्काउन नयाँ link बाट pair गर्नुहोस्। device **30 दिन प्रयोग नभएपछि** expire हुन्छ। **32-device सीमा** मा नयाँ pairing ले सबैभन्दा पुरानो last-seen device बदल्छ र त्यसका जडान बन्द गर्छ।
 
-backend ले configuration base को `remote-control-devices.json` मा credential hash राख्छ, raw credential होइन। client मा host-scoped `Secure`, `HttpOnly`, `SameSite=Lax` device cookie हुन्छ। browser lifetime server को 30-दिन inactivity सीमाभन्दा लामो हुन सक्छ; registry नै आधिकारिक हो। site data खाली, browser profile switch वा private browsing गर्दा पुनःpair चाहिन सक्छ।
+site data खाली, browser profile switch वा private browsing गर्दा पुनःpair चाहिन सक्छ।
 
 direct-access password बदल्दा device revoke **हुँदैनन्**। **रिमोट कन्ट्रोल रोक्नुहोस्** ले tunnel disconnect गर्छ तर paired-device सूची राख्छ; authorization हटाउन **हटाउनुहोस्** प्रयोग गर्नुहोस्।
 
@@ -58,7 +58,6 @@ recovery ले खुला पृष्ठ र मस्यौदा जोग
 | Remote Control रोक्ने | tunnel पहुँच disconnect र automatic launch-resume हटाउँछ; device record राख्छ। |
 | backend shutdown / अन्तिम desktop window बन्द भई app quit | Remote Control offline हुन्छ। shared OpenCode सेवा चलिरहन सक्छ, तर रोकिएको backend बाट यो UI दिन सक्दैन। |
 | Remote Control started छोडेपछि launch | नयाँ pairing link नदिई background मा reconnect हुन्छ। कहिल्यै start नगरिएका installation आफैं enabled हुँदैनन्। |
-| resume असफल वा fatal tunnel error | सम्झिएको चयन रहन्छ र host ले त्रुटि देखाउँछ; Remote Control card को refresh icon ले यसको अवस्था फेरि पढ्छ। **रिमोट कन्ट्रोल सुरु गर्नुहोस्** ले अहिले नै retry गर्छ; **रिमोट कन्ट्रोल रोक्नुहोस्** ले चयन हटाउँछ। अन्यथा पछिको launch ले retry गर्छ। |
 
 automatic launch-resume प्रति configuration directory एउटा backend मा सीमित छ। थप tunnel क्षमताका लागि उही configuration मा प्रतिस्पर्धी host नचलाउनुहोस्। desktop exit पछि पनि पुग्नुपर्ने host का लागि छुट्टै व्यवस्थापित [standalone server](server.md) राख्नुहोस्; Remote Control स्वतन्त्र daemon होइन।
 
@@ -82,7 +81,7 @@ paired device ले समान ownership जाँचअन्तर्गत
 
 ## Relay र गोपनीयता {#relay-privacy}
 
-CodeNomad ले [OpenTunnel](https://github.com/anomalyco/opentunnel) प्रयोग गरी machine को shared default tunnel identity मा एउटा random route लिन्छ। Stop ले CodeNomad bridge छोड्छ, अन्य app को shared identity होइन।
+CodeNomad ले [OpenTunnel](https://github.com/anomalyco/opentunnel) प्रयोग गरी machine को shared default tunnel identity मा एउटा random route लिन्छ।
 
 TLS CodeNomad backend मा terminate हुन्छ। relay ले ciphertext forward गर्छ र app सामग्री पढ्न सक्दैन, तर hostname, connection timing र traffic size देख्न सक्छ। tunnel certificate/private key host मै रहन्छन्। host tunnel storage र CodeNomad configuration लाई credential झैं सुरक्षित गर्नुहोस्; अनुमान गर्न नसकिने ठेगाना authorization होइन।
 

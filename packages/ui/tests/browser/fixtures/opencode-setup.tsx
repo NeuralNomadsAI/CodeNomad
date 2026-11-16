@@ -24,6 +24,7 @@ let resumed = 0
 let replacementResult: boolean | string | null | undefined
 const params = new URLSearchParams(location.search)
 const settings = params.has("settings")
+const [automatic, setAutomatic] = createSignal(!settings)
 const [shellOpen, setShellOpen] = createSignal(false)
 const shellReads: { owner: string; url: string }[] = []
 let releaseShell: (() => void) | undefined
@@ -46,7 +47,7 @@ render(() => <ConfigProvider><ThemeProvider><I18nProvider>
     <button onClick={() => setActiveInstanceId("logsB~same")}>Navigate B</button><span data-selected>{activeInstanceId()}</span>
     <ShellOutputDialog open={shellOpen()} instanceId="logsA~same" directory="/repo/A" shell={{ id: "s", command: "echo A" } as any} onClose={() => setShellOpen(false)} />
   </aside>}
-   <OpenCodeSetup automatic={!settings} />
+   <OpenCodeSetup automatic={automatic()} />
    <AlertDialog />
 </I18nProvider></ThemeProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: params.get("locale") === "fr" ? "fr" : "en" })
@@ -54,6 +55,7 @@ await setThemePreference(params.get("theme") === "dark" ? "dark" : "light")
 ;(window as any).fixture = {
   open: () => openOpenCodeSetup(async () => { resumed++ }), resumed: () => resumed,
   reopen: () => openOpenCodeSetup(),
+  automatic: setAutomatic,
    selectedBinary: () => serverSettings().opencodeBinary,
    selectBinary: updateLastUsedBinary,
   refresh: refreshOpenCodeSetup,

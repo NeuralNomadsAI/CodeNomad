@@ -13,7 +13,8 @@ import { createGitChangeWindows } from "./git-change-window"
 import { preferences } from "../../../../stores/preferences"
 import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { backgroundReads } from "../../../../lib/background-read-queue"
-import { closeFilePreview, getFilePreview, openFilePreview } from "../../../../stores/files-preview"
+import { closeFilePreview, getFilePreview, openFilePreview, reconcileFilePreview } from "../../../../stores/files-preview"
+import { beginGesture } from "../../../../stores/session-surface"
 
 type UseGitChangesOptions = {
   isActive: Accessor<boolean>
@@ -190,26 +191,31 @@ export function useGitChanges(options: UseGitChangesOptions) {
     return `${item.path}::${item.originalPath ?? ""}::${item.section}::${item.status}::${item.additions}::${item.deletions}`
   }
 
-  const captureGitSelection = () => {
+  const captureGitSelection = (passive = false) => {
     const selection = describeGitSelection(gitSelectedItemId())
     const target = options.externalDiff ? getFilePreview(options.instanceId) : null
     const preview = target && target.kind !== "workspace" && !target.commit &&
       target.slug === options.worktreeSlug() &&
       target.directory === gitLocation(target.slug).directory ? target : null
-    return { selection, preview, version: gitDiffRequestVersion }
+    const surfaceIntent = !passive ? beginGesture({ instanceId: options.instanceId, sessionId: preview?.sessionId ?? null }) : undefined
+    return { selection, preview, version: gitDiffRequestVersion, surfaceIntent }
   }
 
   const reconcileGitSelection = async (previous: ReturnType<typeof captureGitSelection>) => {
     // The eye and sidebar selection are independent. Reader navigation is fenced
-    // by target identity; sidebar clicks are fenced by their selection version.
+    // by target identity and shared surface intent; sidebar clicks keep their selection version.
     const preview = previous.preview
-    if (preview && getFilePreview(options.instanceId) === preview) {
+    const current = previous.surfaceIntent?.current() ?? true
+    if (preview && current && !disposed && gitStatusInventory() !== null && (previous.surfaceIntent || getFilePreview(options.instanceId) === preview)) {
       const candidates = gitListItems().filter(item => item.path === preview.path)
       const item = candidates.find(item => item.section === (preview.scope ?? "unstaged")) ?? candidates[0]
-      if (item) {
+      const target = item ? { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section } : undefined
+      if (!previous.surfaceIntent) reconcileFilePreview(options.instanceId, preview, target)
+      else {
         // A fresh target also reloads unchanged content on explicit refresh.
-        openFilePreview(options.instanceId, { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section })
-      } else closeFilePreview(options.instanceId)
+        if (target) openFilePreview(options.instanceId, target, previous.surfaceIntent)
+        else closeFilePreview(options.instanceId, previous.surfaceIntent)
+      }
     }
     if (previous.version !== gitDiffRequestVersion) return
     const selected = resolveValidGitSelection(previous.selection)
@@ -359,7 +365,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (gitCommitSubmitting()) return
 
     const refresh = passiveGitRefresh = {}
-    const previous = captureGitSelection()
+    const previous = captureGitSelection(true)
     const previousSelection = previous.selection
     const previousFingerprint = describeGitSelectionFingerprint(previousSelection.itemId)
     const hadSelectedDiff =

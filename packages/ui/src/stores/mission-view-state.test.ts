@@ -16,6 +16,9 @@ Object.assign(globalThis, { window: {
 } })
 const { initializeClientState } = await import("./client-state")
 await initializeClientState()
+const { captureTabViewState, seedTabViewState } = await import("./tab-view-state")
+const { publishInstanceLifecycleAuthority } = await import("./instance-lifecycle-authority")
+for (const [instanceId, value] of JSON.parse(process.env.MISSION_VIEW_STORAGE ?? "[]")) seedTabViewState(instanceId, value)
 const { markMissionsFinishedSeen, seedMissionFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView,
   markScheduleSuccessSeen, scheduleSuccessSeen, seedScheduleSuccessSeen } = await import("./mission-view-state")
 const playbookReader = { missionId: "debug", kind: "playbook", taskMode: "independent" } as const
@@ -28,7 +31,8 @@ const seen = (from: readonly ReturnType<typeof completion>[]) => from.map(item =
 function reloadWith(checks: Record<string, string>) {
   const { NODE_TEST_CONTEXT: _parent, ...env } = process.env
   const output = execFileSync(process.execPath, ["--conditions=browser", "--import", "tsx", fileURLToPath(import.meta.url)],
-    { env: { ...env, MISSION_SEEN_STORAGE: JSON.stringify([...storage]), ...checks }, encoding: "utf8" })
+    { env: { ...env, MISSION_SEEN_STORAGE: JSON.stringify([...storage]),
+      MISSION_VIEW_STORAGE: JSON.stringify(["project", "unknown-playbook", "A", "B"].map(id => [id, captureTabViewState(id)])), ...checks }, encoding: "utf8" })
   assert.match(output, /pass 1\b/)
   assert.match(output, /fail 0\b/)
 }
@@ -102,9 +106,9 @@ if (reload) {
   if (process.env.MISSION_SEEN_EXPECTED) test("a fresh window keeps every seen completion and every unseen one, and the newest toggled sections", () => {
     assert.deepEqual(seen(listed), JSON.parse(process.env.MISSION_SEEN_EXPECTED!))
     assert.equal(missionFinishedSeen("project", completion(6_000)), false, "a later completion starts unseen")
-    assert.equal(missionDisclosureOpen("msn_sections", "task-399"), false)
-    assert.equal(missionDisclosureOpen("msn_sections", "task-85"), false)
-    assert.equal(missionDisclosureOpen("msn_sections", "task-0"), true, "the oldest toggles fall back to their default")
+    assert.equal(missionDisclosureOpen("project", "msn_sections", "task-399"), false)
+    assert.equal(missionDisclosureOpen("project", "msn_sections", "task-300"), false)
+    assert.equal(missionDisclosureOpen("project", "msn_sections", "task-0"), true, "the oldest toggles fall back to their default")
   })
   if (process.env.MISSION_ORDER_CHECKS) test("a fresh window keeps the mark of a completion finished after a deletion and an earlier clock", () => {
     for (const check of JSON.parse(process.env.MISSION_ORDER_CHECKS!)) assert.equal(missionFinishedSeen("ordered", check.completion), check.seen)
@@ -112,6 +116,16 @@ if (reload) {
   if (process.env.MISSION_PLAYBOOK_CHECK) test("a fresh window restores a playbook reader and drops one naming no playbook", () => {
     assert.deepEqual(missionProjectView("project").reader, playbookReader)
     assert.equal(missionProjectView("unknown-playbook").reader, undefined)
+  })
+  if (process.env.MISSION_OCCURRENCES_CHECK) test("each restored occurrence keeps its reader, selection, tree and disclosures", () => {
+    assert.equal(missionProjectView("A").selected, "mission-a")
+    assert.equal(missionProjectView("B").selectedScheduled, "schedule-b")
+    assert.deepEqual(missionProjectView("A").selectedTask, { missionId: "mission-a", taskId: "task-a" })
+    assert.deepEqual(missionProjectView("A").expanded, ["mission:mission-a"])
+    assert.equal(missionProjectView("A").reader?.itemId, "report-a")
+    assert.equal(missionProjectView("B").reader, undefined)
+    assert.equal(missionDisclosureOpen("A", "mission-a", "technical"), false)
+    assert.equal(missionDisclosureOpen("B", "mission-a", "technical"), true)
   })
 } else {
   test("schedule success uses exact passage identity, initial history, ownership and captured acknowledgement", () => {
@@ -131,6 +145,19 @@ if (reload) {
     seedScheduleSuccessSeen("other-project", "daily", "schedule")
     assert.equal(scheduleSuccessSeen("other-project", "daily", "schedule", "A"), false)
     reloadWith({ MISSION_PASSAGE_CHECK: "1" })
+  })
+  test("duplicate project occurrences keep presentation independent across restore and closure", () => {
+    updateMissionProjectView("A", { selected: "mission-a", selectedTask: { missionId: "mission-a", taskId: "task-a" },
+      expanded: ["mission:mission-a"], reader: { missionId: "mission-a", kind: "report", itemId: "report-a" } })
+    updateMissionProjectView("B", { selectedScheduled: "schedule-b" })
+    setMissionDisclosureOpen("A", "mission-a", "technical", false)
+    assert.equal(missionProjectView("B").reader, undefined)
+    assert.equal(missionDisclosureOpen("B", "mission-a", "technical"), true)
+    reloadWith({ MISSION_OCCURRENCES_CHECK: "1" })
+    const other = missionProjectView("B")
+    publishInstanceLifecycleAuthority({ type: "removed", instanceId: "A", folder: "/same", occurrence: 1 })
+    assert.equal(missionProjectView("A").reader, undefined)
+    assert.equal(missionProjectView("B"), other)
   })
   test("discovering a colliding legacy positive first preserves the original seen mission and unopened boundary", () => {
     const folder = "/legacy-collision", scope = JSON.stringify([folder, "project"])
@@ -236,7 +263,7 @@ function scale() {
   assert.ok(value().length <= before)
   assert.deepEqual(seen(range(0, 1_000)), Array(1_000).fill(true), "listed or not, history below the watermark stays seen")
   // More toggled sections than one layout value holds: the newest persist.
-  for (let index = 0; index < 400; index++) setMissionDisclosureOpen("msn_sections", `task-${index}`, false)
-  assert.equal(missionDisclosureOpen("msn_sections", "task-0"), false, "this window keeps every toggle")
+  for (let index = 0; index < 400; index++) setMissionDisclosureOpen("project", "msn_sections", `task-${index}`, false)
+  assert.equal(missionDisclosureOpen("project", "msn_sections", "task-399"), false)
   reloadWith({ MISSION_SEEN_EXPECTED: JSON.stringify(seen(listed)) })
 }

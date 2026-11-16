@@ -1,7 +1,5 @@
 # Sorun giderme
 
-Önce başarısız işlemin sahibini kontrol ederek kurtarın: tarayıcı, CodeNomad arka ucu, OpenCode hizmeti veya sağlayıcısı. Kayıp bir yanıt, değişiklik işleminin başarısız olduğunu kanıtlamaz; tekrarlamadan önce mevcut durumu yeniden okuyun.
-
 ## Masaüstü başlatma sorunları {#desktop-launch}
 
 ### macOS karantinası {#macos-quarantine}
@@ -37,9 +35,11 @@ Electron, Chromium'u kullanır ve aynı ana bilgisayardaki bir alternatiftir. FU
 
 Yalnızca dizin konuşmaları Git olmadan kullanılabilir durumda kalır; Worktree ve Git kontrolleri bunu yapmaz. Windows'ta, yalnızca WSL içine yüklenen Git, Windows arka ucu için yeterli değildir. Deposu olmayan bilinen bir klasör **Git'i başlat** öğesini açığa çıkarabilir; eksik bir Git yürütülebilir dosyası farklı bir durumdur ve öncelikle düzeltilmesi gerekir. Bkz. [gereksinimler](install.md#requirements) ve [Dosyalar](files.md).
 
-Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa, rastgele yolları denemek veya yerel depolamayı düzenlemek yerine fiziksel klasörünü açıkça açın. Hangi yerleşimin gerçekte mevcut olduğunu görmek için belirsiz bir taşıma/kaldırma işleminden sonra yenileyin. Bir çalışma ağacının zorla kaldırılması commit edilmemiş dosyaları yok edebilir; bağlantı onarımı olarak kullanmayın.
+Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa, rastgele yolları denemek veya yerel depolamayı düzenlemek yerine fiziksel klasörünü açıkça açın. Bir çalışma ağacının zorla kaldırılması commit edilmemiş dosyaları yok edebilir; bağlantı onarımı olarak kullanmayın.
 
 ## OpenCode çalışma zamanı ve WSL {#opencode-runtime}
+
+Başlatma hatası iletişim kutusunda yürütülebilir dosyayı ve sürümü kontrol etmek için **OpenCode Ayarlarını Aç** seçeneğini kullanın; özel ortam değerleri için **Gelişmiş → Ortam Değişkenleri** bölümüne geçin.
 
 1. **Preferences → OpenCode** öğesini açın ve **OpenCode sürümü** kartını (kurulu sürüm ve çalışan hizmet durumu), ardından **OpenCode Binary** altındaki seçili yürütülebilir dosyayı kontrol edin.
 2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.3.0**; önerilen/doğrulanan sürüm: **2.3.0**.
@@ -49,19 +49,16 @@ Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa,
 
 WSL yürütülebilir dosyasında amaçlanan dağıtımı ve Windows localhost yönlendirmesini doğrulayın. Hizmet yaşam döngüsü Linux içinde çalışır; CodeNomad yine de Windows'tan loopback uç noktasına erişmelidir. Hizmet kaydını/veritabanını asla düzenlemeyin veya Windows'tan tahmini Linux süreç kimliklerine sinyal göndermeyin.
 
-Özel/daha yeni sürüm, uyumsuz olmadan da doğrulanmamış olabilir. Sürüm değiştirmeden önce gerçek sözleşme hatasını okuyun. Oturum ortamı eşitlemesi başarısızsa yürütme ana bilgisayarının ortamını/bağlantısını düzeltin: CodeNomad bu eşitleme olmadan istem göndermez. Bkz. [OpenCode](opencode.md).
-
 ## Oturum açma, TLS ve doğrudan bağlantı {#login-and-tls}
 
 | Belirti | Güvenli kontrol ve kurtarma |
 | --- | --- |
 | **CodeNomad’a yeniden giriş yapın** | Sayfayı açık tutun, sunucu kullanıcı adını/şifresini girin ve **Giriş yap** öğesini seçin. Taslakları tutmak için kurtarma yeniden bağlanır; başarısız olan eylemi tekrarlamaz. |
-| Sunucuya ulaşılamıyor | Arka ucun çalıştığını doğrulayın ve yazdırılan adresini/gerçek bağlantı noktasını kullanın. Ulaşılamayan bir kontrol tek başına giriş bilgilerinizin süresinin dolduğunu kanıtlamaz. |
-| Sağlayıcı kimlik doğrulamayı reddediyor | Sağlayıcının giriş bilgilerini sahibi aracılığıyla onarın; sağlayıcı OAuth'yi onarmak için CodeNomad sunucu şifresini değiştirmeyin. |
+| Sunucuya ulaşılamıyor | Arka ucun çalıştığını doğrulayın ve yazdırılan adresini/gerçek bağlantı noktasını kullanın. |
 | Sertifika adı/güven hatası | Gerçek ana bilgisayar adını/IP'yi SANs sertifikasına göre kontrol edin ve amaçlanan CA güvenini veya geçerli bir sunucu sertifikasını yükleyin. TLS doğrulamasını devre dışı bırakmayın. |
-| Doğrudan bağlantı reddedildi | Etkili HTTP/HTTPS bağlamayı, güvenlik duvarını ve yönlendirmeyi kontrol edin. HTTP masaüstü veya çift dinleyici modunda geri döngüde kalır; bağımsız HTTP-yalnızca farklı bağlanma davranışına sahiptir. |
+| Doğrudan bağlantı reddedildi | Etkili HTTP/HTTPS bağlamayı, güvenlik duvarını ve yönlendirmeyi kontrol edin. |
 
-Kimlik doğrulama kurtarıldıktan sonra, yanıtı belirsiz olan bir değişiklik işlemini manuel olarak yeniden denemeden önce durumu inceleyin. Çalışma zamanı parolaları her arka uç başlangıcında sağlanmalıdır; ayarlar aracılığıyla kaydedilen şifre kalır. Bkz. [güvenlik](security.md), [TLS/bağlama kuralları](remote-access.md) ve [sunucu referansı](server.md).
+Çalışma zamanı parolaları her arka uç başlangıcında sağlanmalıdır; ayarlar aracılığıyla kaydedilen şifre kalır. Bkz. [güvenlik](security.md), [TLS/bağlama kuralları](remote-access.md) ve [sunucu referansı](server.md).
 
 ## Uzaktan Kontrol eşleştirme {#pairing}
 
@@ -73,18 +70,9 @@ Eşleştirme bağlantıları tek kullanımlıktır ve kısa ömürlüdür; doğr
 
 ## Sağlayıcı, eklenti ve uzantı durumu {#providers-and-addons}
 
-**Tam zaman çizelgesi kullanılamıyor** ile birlikte `codenomad-session-pruning` eklentisi başarısız görünüyorsa OpenCode günlüğündeki yükleme hatasını inceleyin. Bu eklenti, tam geçmişte gezinmeyi ve bekleyen soru/izin kurtarmayı sağlar. Eklenti başarıyla yüklendikten sonra zaman çizelgesini yeniden deneyin; oturum verilerinizi koruyun.
-
-| Sorun | Kurtarma |
-| --- | --- |
-| Yanlış sağlayıcı hesabı/kota | Seçilen yerel hesabı ve **Kullanım** öğesini kontrol edin. Kota ekranı bir belirteç/maliyet toplamı değildir. Belirsiz bir hesap değişikliğinden sonra yenileyin; seçim o hizmetin diğer istemcilerini etkileyebilir. |
-| Süresi dolmuş harici mülkiyetli OAuth | OpenCode, Claude Code veya ilgili kimlik bilgisi sahibi aracılığıyla tekrar oturum açın. CodeNomad yenileme jetonlarını değiştirmez. |
-| Otomatik hesap seçimi geçiş yapmıyor | Özelliğin açık ve hesabın uygun olduğunu, mevcut kotanın tamamen dolduğunu kontrol edin. Bu, devam eden isteğe müdahale veya hemen yeniden yürütme değil, kabul öncesi ilkedir. |
-| Eklenti durumu eski görünüyor | **Plugin denetimlerini yenile** öğesini kullanın ve eklenti ipucunun kapsamını/hedefini inceleyin; çalışma zamanı aktivasyonu yerel yenilemeyi bekleyebilir. Belirsiz bir yazmayı tekrar tekrar değiştirmeyin. |
-| Eklenen eklenti başarısız oldu veya **Onaylanmadı** gösteriyor | OpenCode ana makinesinden paket adını, sürümü ve kayıt defteri erişimini denetleyin. Başarısız bir kurulumda, eklenti araç ipucundaki hata referansını OpenCode günlüğünde arayın. **Onaylanmadı** devre dışı bir eklenti için de görünür. Eklentiyi kaldırmak, indirilen paketi OpenCode önbelleğinde bırakır. |
-| **Görev Kontrolü kullanılamıyor** | Belirtilen nedeni izleyin. OpenCode Görevler eklentisini yüklemediyse yenileyin, sorun sürerse **OpenCode yapılandırmasını yeniden yükle** eylemini kullanın; eklenti yüklenemediyse hatasını Eklentiler listesinde okuyun; sunucu yerel Görevler bağlantısını açamadıysa sunucu günlüğünü kontrol edin, çünkü OpenCode'u yeniden yüklemek işe yaramaz. Görevler bağımsız sunucuda da çalışır. |
-| Yüklü uzantı eksik | Panel özelleştirmesinde tek etkinleştirme onay kutusunu işaretleyin. Kurulum/değiştirme işlemi, siz açıkça etkinleştirip gerekli onayı onaylayana kadar onu devre dışı bırakır. |
-| Uzantı öğeleri reddedildi | Geçerli bağlı oturum için API 2 varlık okuma iznini onaylayın. Bir uzantı yüklemek, rastgele dosyaları/geçmişi okuma izni değildir. |
+- Eklenen eklenti başarısız oldu veya **Onaylanmadı** gösteriyor — OpenCode ana makinesinden paket adını, sürümü ve kayıt defteri erişimini denetleyin. Eklenti araç ipucundaki hata referansını OpenCode günlüğünde arayın. **Onaylanmadı** devre dışı bir eklenti için de görünür.
+- Yüklü uzantı eksik — Panel özelleştirmesinde etkinleştirin. Kurulum/değiştirme işlemi, siz açıkça etkinleştirip gerekli onayı onaylayana kadar onu devre dışı bırakır.
+- **Tam zaman çizelgesi kullanılamıyor** — OpenCode günlüğündeki `codenomad-session-pruning` yükleme hatasını okuyun.
 
 Bkz. [Sağlayıcılar](providers.md), [Entegrasyonlar](integrations.md) ve [Uzantılar](extensions.md).
 
@@ -92,13 +80,11 @@ Bkz. [Sağlayıcılar](providers.md), [Entegrasyonlar](integrations.md) ve [Uzan
 
 Tam geçmiş araması, halihazırda yüklü olan konuşma dökümü satırlarıyla sınırlı değildir. Görüntüleme filtresi içeriği silmeden gizler; Arama, sıkıştırma, teknik temizleme ve silme işlemlerini ayırt etmek için [Geçmiş](history.md)'yi kullanın.
 
-Bekleyen istek kurtarma işlemi tamamlanmadıysa CodeNomad, eksik kapsamı boş bir kuyruk olarak ele almak yerine bilinen kuyrukları ve yanıt taslaklarını korur. Art arda iki eksik kurtarma sonrasında projeyi, nedeni, klasörleri ve etkilenen oturumları belirterek bir kez uyarır; uyarı **Projeler ve sekmeler** bildirim kategorisine aittir (varsayılan olarak ekranda ve geçmişte görünür; bkz. **Ayarlar → Bildirimler**). Geçici arızalar canlılık kontrolü tarafından yeniden denenir. Sıkıştırmayla ilgili erteleme, talebin iptal edildiği anlamına gelmez. Taslağı olduğu gibi bırakın, hizmet bağlantısını doğrulayın ve tekrar yanıtlamadan önce isteğin mevcut durumunu kullanın.
-
-İptal edilmiş veya kısmi temizlikte başka silme başlatmadan önce ilerlemeyi/karar kayıtlarını okuyun. İptal gönderilmiş toplu işlemi geri almaz. Geçmişi OpenCode veritabanını düzenleyerek onarmayın. Görev belirsizliğinde yeni çalıştırma oluşturmak veya işi otomatik tekrarlamak yerine **Durumu denetle**/yenileme kurtarmasını kullanın; [Görevler](missions.md) yeniden başlatma ve çalışma ömrü sınırlarını açıklar.
+İptal edilmiş veya kısmi temizlikte başka silme başlatmadan önce ilerlemeyi/karar kayıtlarını okuyun. İptal gönderilmiş toplu işlemi geri almaz. Geçmişi OpenCode veritabanını düzenleyerek onarmayın.
 
 ## Günlükler ve güvenli tanılama {#diagnostics}
 
-1. **Ayarlar → OpenCode → OpenCode loglarını görüntüle** yolunu açın. Seçilen yürütme sunucusunun genel `opencode.log` dosyası `opencode debug paths log` ile bulunur. Taşınabilir, modal olmayan pencere, arayüzün geri kalanını kullanmanıza izin verir. En fazla son 128 KiB gösterilir; **Yenile** dosyayı tekrar okur. Loglar mesajlardan ve model isteklerinden ayrı kalır.
+1. **Ayarlar → OpenCode → OpenCode loglarını görüntüle** yolunu açın. Seçilen yürütme sunucusunun genel `opencode.log` dosyası `opencode debug paths log` ile bulunur. En fazla son 128 KiB gösterilir; **Yenile** dosyayı tekrar okur.
 2. **Preferences → OpenCode** bölümünde amaçlanan **Varsayılan log seviyesi** öğesini yalnızca daha fazla ayrıntıya ihtiyaç duyulduğunda seçin. Bağımsız CodeNomad günlük kaydı için [sunucu CLI günlük kaydı seçenekleri](server.md)'yi kullanın.
 3. **Ayarlar → Bilgi → Tanılama** öğesini açın ve **Hata bildir**, **Panoya kopyala** veya **.txt indir** öğesini kullanın.
 

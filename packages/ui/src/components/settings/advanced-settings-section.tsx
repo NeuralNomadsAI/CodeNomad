@@ -23,7 +23,7 @@ export const AdvancedSettingsSection: Component = () => {
       kind: "toggle",
       id: "behavior.holdLongAssistantReplies",
       titleKey: "settings.behavior.holdLongAssistantReplies.title",
-      subtitleKey: "settings.behavior.holdLongAssistantReplies.subtitle",
+      infoKey: "settings.behavior.holdLongAssistantReplies.subtitle",
       get: (current) => Boolean(current.holdLongAssistantReplies ?? true),
       set: (next) => config.updatePreferences({ holdLongAssistantReplies: next }),
     },

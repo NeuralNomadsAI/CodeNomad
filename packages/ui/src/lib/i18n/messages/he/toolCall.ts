@@ -4,7 +4,7 @@ export const toolCallMessages = {
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "קריאות כלים מקוננות",
   "toolCall.execute.more": "{count} קריאות נוספות הוסתרו.",
-  "toolCall.execute.truncated": "הפלט המקורי קוצר. הפלט המלא:",
+  "toolCall.execute.truncated": "הפלט קוצר. הפלט המלא:",
   "toolCall.pending.waitingToRun": "ממתין להרצה...",
   "toolCall.error.label": "שגיאה:",
 
@@ -62,9 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "מפרט ספרייה...",
 
   "toolCall.renderer.bash.title.timeout": "פסק זמן: {timeout}",
-  "toolCall.output.truncated": "[הפלט קוצר לצורך תצוגה; יש להעתיק כדי לגשת לפלט המלא]",
-  "toolCall.output.tooLarge": "הפלט המובנה לא מוצג מכיוון שהוא גדול מדי.",
-  "toolCall.task.steps.truncated": "מוצגים {count} השלבים האחרונים; שלבים קודמים הושמטו.",
+  "toolCall.output.truncated": "הפלט קוצר. העתיקו לקבלת הפלט המלא.",
+  "toolCall.output.tooLarge": "התוכן גדול מדי להצגה.",
+  "toolCall.task.steps.truncated": "מוצגים {count} השלבים האחרונים.",
   "toolCall.renderer.read.detail.offset": "היסט: {offset}",
   "toolCall.renderer.read.detail.limit": "מגבלה: {limit}",
 
@@ -145,7 +145,8 @@ export const toolCallMessages = {
   "toolCall.task.sections.prompt": "פקודה",
   "toolCall.task.sections.steps": "שלבים",
   "toolCall.task.sections.output": "פלט",
-  "toolCall.task.steps.count": "{count} שלבים",
+  "toolCall.task.steps.count.one": "שלב {count}",
+  "toolCall.task.steps.count.other": "{count} שלבים",
   "toolCall.task.meta.agentModel": "סוכן: {agent} • מודל: {model}",
   "toolCall.task.meta.agent": "סוכן: {agent}",
   "toolCall.task.meta.model": "מודל: {model}",
@@ -156,7 +157,6 @@ export const toolCallMessages = {
   "toolCall.status.error": "שגיאה",
   "toolCall.status.unknown": "לא ידוע",
 
-  "toolCall.applyPatch.action.preparing": "מכין apply_patch...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} קובץ)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} קבצים)",
   "toolCall.applyPatch.fileFallback": "קובץ {number}",

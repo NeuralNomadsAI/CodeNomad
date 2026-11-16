@@ -19,7 +19,6 @@ export const SavedRemoteServersCard: Component = () => {
             <Globe class="settings-card-heading-icon" />
             <div>
               <h3 class="settings-card-title">{t("folderSelection.tabs.servers")}</h3>
-              <p class="settings-card-subtitle">{t("folderSelection.servers.empty.description")}</p>
             </div>
           </div>
           <button type="button" class="selector-button selector-button-secondary w-auto" onClick={() => setDialogOpen(true)}>

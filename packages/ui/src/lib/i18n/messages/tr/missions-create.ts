@@ -1,6 +1,6 @@
 export const missionCreateMessages = {
   "missions.create.objective": "Hedef",
-  "missions.create.objectivePlaceholder": "İstediğiniz sonucu açıklayın. Günlük bir görevde bu talimatlar her çalıştırmaya uygulanır.",
+  "missions.create.objectivePlaceholder": "İstediğiniz sonucu açıklayın.",
   "missions.create.title": "Başlık",
   "missions.create.options": "Seçenekler",
   "missions.create.agents": "Ajanlar ve modeller",

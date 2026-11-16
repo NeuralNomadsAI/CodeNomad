@@ -63,7 +63,7 @@ async function panel(options: { list: () => MissionMap; content: () => MissionMa
   await page.evaluate(async () => {
     const instances = "/src/stores/instances.ts", view = "/src/stores/mission-view-state.ts"
     ;(await import(instances)).setActiveInstanceId("fixture")
-    ;(await import(view)).updateMissionProjectView("/fixture", { selected: "msn_intent" })
+    ;(await import(view)).updateMissionProjectView("fixture", { selected: "msn_intent" })
   })
   await missionToolbar(page).getByRole("button", { name: "More actions", exact: true }).waitFor()
   return { page, errors, writes, preferenceWrites, reads }
@@ -90,7 +90,7 @@ test("an edit prefills only the fields of the map it opened: a warm older body n
     await refresh(f.page)
     hold = gate()
     await (await missionMenuAction(f.page, "Edit selected mission")).click()
-    await status(f.page).filter({ hasText: "Reading the mission map…" }).waitFor()
+    await status(f.page).filter({ hasText: "Reading content…" }).waitFor()
     assert.deepEqual(await fields(f.page).evaluateAll(nodes => nodes.map(node => [(node as HTMLTextAreaElement).value, (node as HTMLTextAreaElement).disabled])),
       [["", true], ["", true]], "the retained revision-1 bodies never prefill a revision-3 edit")
     hold.release(); hold = undefined
@@ -145,7 +145,7 @@ test("a Reopen in progress keeps the old form read-only, so no draft is lost to 
     await f.page.evaluate(() => new Promise(resolve => setTimeout(resolve, 400)))
     assert.deepEqual(await fields(f.page).evaluateAll(nodes => nodes.map(node => [(node as HTMLTextAreaElement).value, (node as HTMLTextAreaElement).disabled])),
       [["", true], ["", true]], "the matching fields do not reopen the old form while Reopen runs")
-    await status(f.page).filter({ hasText: "Reading the mission map…" }).waitFor()
+    await status(f.page).filter({ hasText: "Reading content…" }).waitFor()
     await assert.rejects(fields(f.page).nth(0).fill("Draft typed while Reopen waits", { timeout: 300 }), "no draft can be typed into it")
     hold.release(); hold = undefined
     await f.page.waitForFunction(() => !(document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled)

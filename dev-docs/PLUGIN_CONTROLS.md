@@ -42,7 +42,7 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   (409). The result must parse to the original minus exactly that element.
   Activation rules (`id`/`-id`) are left in place, and OpenCode's package cache is
   never touched.
-  Every ordinary plugin uses the ordinary source removal, independently of catalog, family or binding count.
+  Source removal is independent of catalog, family or binding count.
   The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
   and connections (including other projects for Global), and enables its scoped removal action after 600 ms.
   Unsent consent expires after 120 s and is revoked by navigation, invalidation or disconnection.
@@ -64,10 +64,8 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   (`reloadPending`). A just-added spec is `pending` (busy row, **Installing**)
   until `plugin.list` reports its exact target, which turns it into an ordinary
   active or failed row (`error` and native `ref` in the tooltip).
-  `PLUGIN_SOURCE_PENDING_TIMEOUT_MS` (120 s) bounds that window: a source still
-  absent afterwards, like any configured source the inventory never reports, is
-  `unconfirmed` (**Not confirmed**, with a Refresh action), since a disabled
-  package and a never-installed one look the same to `plugin.list`. `plugin.list`
+  `PLUGIN_SOURCE_PENDING_TIMEOUT_MS` (120 s) bounds that window: a configured source still
+  absent is `unconfirmed` (**Not confirmed**, with a Refresh action). `plugin.list`
   omits disabled plugins and exposes no package-to-ID link for them, so a disabled
   package with an exact `-id` rule shows two rows: its ID row with switches, and
   its unconfirmed source row carrying the Remove items.

@@ -3,10 +3,11 @@ import type { RequestOptions } from "node:https"
 import { request as httpsRequest } from "node:https"
 import type { Socket } from "node:net"
 import type { Logger } from "../logger"
+import { proxyDestination, ProxyDestinationDenied } from "./proxy-destination"
 
 // Use Node's bounded HTTP parser before forwarding a handshake. Piping raw
 // upstream bytes would let Set-Cookie overwrite the application's credentials.
-export function proxyWebSocket(args: {
+export async function proxyWebSocket(args: {
   request: IncomingMessage
   socket: Socket
   head: Buffer
@@ -15,14 +16,27 @@ export function proxyWebSocket(args: {
   responseHeaders: (headers: IncomingHttpHeaders) => IncomingHttpHeaders
   logger: Logger
   logContext: Record<string, unknown>
+  /** Internal capability transport: caller owns the pinned dial, TLS identity and revocation signal. */
   connection?: RequestOptions
   signal?: AbortSignal
 }) {
   const { request, socket, head, targetUrl } = args
+  if (socket.destroyed || args.signal?.aborted) { socket.destroy(); return }
+  let lookup
+  try {
+    // The capability caller already resolved its saved destination, possibly through
+    // an authorized private SSH forward. Ordinary proxies always use the boundary.
+    if (!args.connection) lookup = await proxyDestination(targetUrl.hostname, Number(targetUrl.port) || (targetUrl.protocol === "https:" ? 443 : 80))
+  } catch (error) {
+    const status = error instanceof ProxyDestinationDenied ? "404 Not Found" : "502 Bad Gateway"
+    if (!socket.destroyed) socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+    return
+  }
+  if (socket.destroyed || args.signal?.aborted) { socket.destroy(); return }
   let upgraded: Socket | undefined
   let replied = false
   const send = targetUrl.protocol === "https:" ? httpsRequest : httpRequest
-  const upstream = send(targetUrl, { ...args.connection, method: request.method, headers: args.headers, agent: false, signal: args.signal })
+  const upstream = send(targetUrl, { lookup, ...args.connection, method: request.method, headers: args.headers, agent: false, signal: args.signal })
   const abort = () => { upstream.destroy(); upgraded?.destroy(); socket.destroy() }
   args.signal?.addEventListener("abort", abort, { once: true })
   if (args.signal?.aborted) abort()
@@ -39,7 +53,7 @@ export function proxyWebSocket(args: {
     upgraded = remote
     upstream.setTimeout(0)
     remote.setTimeout(0)
-    if (socket.destroyed) { remote.destroy(); return }
+    if (socket.destroyed || args.signal?.aborted) { remote.destroy(); socket.destroy(); return }
     remote.on("error", () => socket.destroy())
     remote.once("close", () => socket.end())
     const headers = args.responseHeaders(response.headers)
@@ -54,7 +68,7 @@ export function proxyWebSocket(args: {
   })
   upstream.once("response", response => {
     upstream.setTimeout(0)
-    if (socket.destroyed) { response.destroy(); return }
+    if (socket.destroyed || args.signal?.aborted) { response.destroy(); socket.destroy(); return }
     // Non-101 responses also carry cookies. ServerResponse re-encodes decoded
     // chunked bodies correctly, rather than forwarding stale transfer framing.
     replied = true

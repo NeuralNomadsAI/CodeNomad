@@ -43,7 +43,6 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
         <div class="settings-card-header settings-language-row">
           <div>
             <h3 class="settings-card-title">{t("folderSelection.language.ariaLabel")}</h3>
-            <p class="settings-card-subtitle">{t("settings.general.language.subtitle")}</p>
           </div>
           <LocaleSelector />
         </div>

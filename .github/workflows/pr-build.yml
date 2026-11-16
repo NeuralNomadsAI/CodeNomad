@@ -519,6 +519,12 @@ jobs:
           packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
           packages/ui/src/stores/backend-preview-routing.test.ts
+          packages/ui/src/stores/session-surface-passive.test.ts
+          packages/ui/src/stores/session-deletion-reconciliation.test.ts
+          packages/ui/src/components/instance/shell/right-panel/useGitChanges.test.ts
+          packages/ui/src/stores/tab-view-state.test.ts
+          packages/ui/src/stores/tab-view-state-local.test.ts
+          packages/ui/src/stores/mission-view-state-migration.test.ts
           packages/ui/src/lib/browser-history.test.ts
           packages/ui/src/lib/keyboard-offset.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts
@@ -538,6 +544,7 @@ jobs:
           packages/ui/src/stores/mission-task-pages.test.ts
           packages/ui/src/stores/mission-task-seen.test.ts
           packages/ui/tests/contracts/mission-task-page-read.test.ts
+          packages/ui/tests/contracts/mission-panel-inventory.test.ts
           packages/ui/tests/contracts/mission-defaults.test.ts
           packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
@@ -573,6 +580,7 @@ jobs:
           packages/ui/src/stores/missions.test.ts
           packages/ui/src/stores/session-generation-recovery-integration.test.ts
           packages/ui/src/stores/session-list-restoration.test.ts
+          packages/ui/src/stores/session-surface.test.ts
 
       - name: Test restore ownership integration
         run: >-
@@ -664,6 +672,7 @@ jobs:
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/shell-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts
+          packages/ui/src/stores/session-create-pending.test.ts
           packages/ui/src/stores/session-archive.test.ts
           packages/ui/src/stores/session-goal-activation.test.ts
           packages/ui/src/stores/session-model-reconciliation.test.ts
@@ -682,7 +691,6 @@ jobs:
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-default-agent.test.ts
           packages/ui/src/stores/session-default-model.test.ts
-          packages/ui/src/stores/session-create-pending.test.ts
           packages/ui/src/stores/history-search-sessions.test.ts
           packages/ui/src/stores/session-git-degraded.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts

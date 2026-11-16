@@ -1,8 +1,8 @@
 export const logMessages = {
   "settings.opencode.logs.title": "לוגי OpenCode",
   "settings.opencode.logs.open": "הצג לוגי OpenCode",
-  "settings.opencode.logs.info": "לוגים גלובליים במארח OpenCode שנבחר. הם עשויים להכיל מידע פרטי. פתיחה קוראת את 128 KiB האחרונים; רענון קורא שוב.",
-  "settings.opencode.logs.failed": "לא ניתן לקרוא את לוגי OpenCode. בדקו את קובץ ההפעלה והגישה לקובץ ורעננו.",
+  "settings.opencode.logs.info": "לוגים גלובליים במארח OpenCode שנבחר. הם עשויים להכיל מידע פרטי.",
+  "settings.opencode.logs.failed": "בדקו את קובץ ההפעלה והגישה לקובץ ורעננו.",
   "settings.opencode.logs.empty": "הלוג ריק.",
   "settings.opencode.logs.truncated": "מוצג סוף הלוג (עד 128 KiB).",
   "logsView.title": "לוגי שרת",

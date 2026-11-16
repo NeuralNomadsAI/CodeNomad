@@ -35,7 +35,7 @@ metadata:
 
 Use this recipe with `design-core`. File names start with `logo-`, for example `.codenomad/design/<subject>/logo-editorial-a.png`.
 
-A logo is not decoration: it is a reduced argument for why the project exists. Infer what the project does, for whom, and what it should feel like before you write a prompt.
+Before prompting, infer what the project does, for whom, and what it should feel like.
 
 ## Framing questions
 

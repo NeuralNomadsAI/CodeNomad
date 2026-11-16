@@ -6,7 +6,7 @@
 2. **अपडेट फिड** लाई **स्थिर रिलिजहरू** वा **पूर्वावलोकन र स्थिर रिलिजहरू** मा सेट गर्नुहोस्।
 3. refresh/check गरी installation स्वीकार्नुअघि offered release समीक्षा गर्नुहोस्।
 
-feed CodeNomad server configuration मा सुरक्षित हुन्छ र offered release मात्र बदल्छ। desktop data profile, draft, window, OpenCode session वा service configuration बदल्दैन। स्पष्ट चयन नभए preview-labelled build को default preview र अन्यको stable हुन्छ।
+फिडले प्रस्तावित रिलिजहरू मात्र बदल्छ। डेस्कटप डाटा प्रोफाइल, ड्राफ्ट, विन्डो, OpenCode सत्र र सेवा कन्फिगरेसन यथावत् रहन्छन्। स्पष्ट चयन नभए preview-labelled build को default preview र अन्यको stable हुन्छ।
 
 Stable ले नवीनतम final release चयन गर्छ। Preview ले publication order पछ्याउँछ किनकि development build ले एउटै base version number साझा गर्न सक्छन्; numeric version मात्र तुलना नगर्नुहोस्। preview release यसका सबै build प्रकाशित भएपछि मात्र प्रस्ताव गरिन्छ। preview package prerelease व्यवहार परीक्षण गर्न इच्छुकका लागि हुन्; restart अघि release note जाँचेर महत्त्वपूर्ण draft जोगाउनुहोस्।
 
@@ -26,13 +26,11 @@ Stable ले नवीनतम final release चयन गर्छ। Preview
 
 Tauri application र native **प्राथमिकताहरू** window मा release प्रस्ताव हुँदा अपडेटहरू card ले **अपडेट स्थापना गर्नुहोस्** देखाउँछ। यसले चयनित feed जाँच्छ र in-app update उपलब्ध हुँदा **स्थापना गरी पुनः सुरु गर्नुहोस्** प्रस्ताव गर्छ; अन्यथा card मा देखाइएको release page खोल्छ। Electron, web र remote window ले यसको सट्टा **अपडेट डाउनलोड गर्नुहोस्** link देखाउँछन्, native updater check गर्दैनन्।
 
-Tauri को **मद्दत → अपडेटहरू जाँच गर्नुहोस्…** menu ले focus भएको application window मा update flow चलाउँछ। प्राथमिकताहरू वा remote window बाट प्रयोग गर्दा, यसले सबैभन्दा हाल प्रयोग गरिएको application window अगाडि ल्याएर check चलाउँछ; remote window मार्फत install गर्दैन। लक्षित loading, login वा pairing screen लगायत कुनै application window ले कार्य ग्रहण गर्न नसके menu ले यसको सट्टा release page खोल्छ।
+Tauri को **मद्दत → अपडेटहरू जाँच गर्नुहोस्…** menu ले focus भएको application window मा update flow चलाउँछ। प्राथमिकताहरू वा remote window बाट प्रयोग गर्दा, यसले सबैभन्दा हाल प्रयोग गरिएको application window अगाडि ल्याएर check चलाउँछ; remote window मार्फत install गर्दैन।
 
-Tauri ले chosen feed/target को published update manifest भएका release मात्र स्थापना गर्छ। घोषित release अझै install गर्न नमिले notification ले यसको सट्टा release page खोल्छ। installation अघि native signature verification आवश्यक छ। updater signature OS notarization/code-signing आश्वासनभन्दा फरक हुन्।
+installation अघि native signature verification आवश्यक छ। updater signature OS notarization/code-signing आश्वासनभन्दा फरक हुन्।
 
 installation ले app बदल्नु/restart अघि सबै app window flush र owned CodeNomad backend stop गर्छ। स्वतन्त्र OpenCode daemon यो shutdown को भाग होइन। CodeNomad बन्द हुँदा नफर्केसम्म backend-dependent सुविधा हराउँछन्; continuing OpenCode session बाट UI सेवा निर्बाध छ नठान्नुहोस्।
-
-check busy भए अर्को window को कार्य पर्खनुहोस्। download, validation वा shutdown failure मा error पढी नयाँ check गर्नुहोस्; पुरानो notification पुराना byte reinstall गर्ने अनुमति होइन। असफल installation ले backend फर्काएर window reload गर्न सक्छ र installation स्वतः replay गर्दैन। native installation नभए उपयुक्त package का लागि release page प्रयोग गर्नुहोस्; [स्थापना](install.md) हेर्नुहोस्।
 
 ## standalone server update {#standalone-update}
 

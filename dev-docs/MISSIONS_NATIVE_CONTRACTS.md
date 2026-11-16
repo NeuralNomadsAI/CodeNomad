@@ -17,7 +17,7 @@ and revision, then rereads the original receipt before releasing that permit.
 The held action, request, revision and payload digest stay fixed. Explicit partial
 retry also requires a positive exact partial receipt and the original connection.
 A retired connection's permit can settle through a fresh connection after the
-same workspace, native project and physical-root proof. Reads can use that retained
+same workspace, native project, profile and physical-root proof. Reads can use that retained
 permit while deletion waits, and remain observation-only. Revalidate live human
 auth, request cancellation and ownership after asynchronous reads and responses.
 Never infer an exact DELETE acknowledgement from an unqualified tombstone.
@@ -468,13 +468,6 @@ with its pending and archive, and a changed revision cannot reuse that request.
 The response combines calendar and actor receipts. Document deletion remains
 pending through compaction; the tombstone exposes a bounded `deletionReceipt`
 containing only ID, original request/revision and the cleanup option.
-
-The scheduled HTTP route retains its physical deletion permit after dispatch until
-a positive exact complete receipt. Holds are fence-scoped, bounded to 128 Missions
-and persist until that receipt. GET/reconnect stay read-only. An explicit Check of a positively
-recorded partial request runs under the original permit, then rereads that original
-receipt. A replaced connection can settle a positive receipt only after the same
-workspace, project, profile and physical placement are re-proven.
 
 The authenticated parent completes this preparation before the calendar owner's
 Play/Resume and composes scheduled controls, immutable carrier mappings, the

@@ -28,6 +28,8 @@ import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { syncSessionInstructions } from "./session-instructions"
 import { serializeSessionAction } from "./session-action-queue"
+import { beginGesture } from "./session-surface"
+import { activeSessionId } from "./session-selection-state"
 
 const log = getLogger("actions")
 const technicalPartUpdates = new Map<string, { signal: AbortSignal; running: Promise<void> }>()
@@ -68,18 +70,19 @@ const pendingNewSessions = new Map<string, { signal: AbortSignal; running: Promi
  * Creates and activates a new session for a user-triggered entry point (sidebar
  * button, new-session hotkey, command palette). Failures — including a rejected
  * create request on a stalled network — surface as an alert instead of silence.
- * Returns the activated session, or null when creation failed.
+ * Returns the created session even when a newer gesture supersedes selection, or null when creation failed.
  */
 function startNewSession(instanceId: string, agent?: string): Promise<Session | null> {
   const operation = captureBackendOperation(instanceId)
   const pending = pendingNewSessions.get(instanceId)
   if (pending?.signal === operation.signal) return pending.running
+  const intent = beginGesture({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null })
   const attempt = (async () => {
     try {
       operation.signal.throwIfAborted()
       const session = await createSession(instanceId, agent)
       if (!operation.current()) return session
-      setActiveParentSession(instanceId, session.id)
+      setActiveParentSession(instanceId, session.id, intent)
       return session
     } catch (error) {
       if (!operation.current()) return null

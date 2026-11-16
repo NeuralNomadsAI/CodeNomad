@@ -64,7 +64,7 @@ Use OS accounts, containers/VMs and upstream permission configuration where actu
 
 ## Keep credentials and diagnostics private {#privacy}
 
-OpenCode owns provider connections and its global conversation storage. CodeNomad reads connection metadata and selected credentials server-side for supported usage integrations; browser APIs do not return provider secret values. Externally owned OAuth login refresh belongs to its owner; CodeNomad does not exchange those refresh tokens. See [Providers](providers.md).
+OpenCode owns provider connections and its global conversation storage. CodeNomad reads connection metadata and selected credentials server-side for supported usage integrations; browser APIs do not return provider secret values. See [Providers](providers.md).
 
 | Material | Handling |
 | --- | --- |

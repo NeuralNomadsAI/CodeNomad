@@ -1,7 +1,5 @@
 # Composer
 
-The prompt composer: context selectors, height, focus after send, alternate delivery, attachments, `@` mentions, overlays and `/btw`.
-
 ## Agent conventions
 
 - Prompt history uses a persistence identity separate from the physical directory: `PromptInput` supplies `usePromptState.historyKey` as `backendScoped(backendId, instanceFolder)`. Local keys retain the exact directory string, including case, separators and trailing slashes. Drafts and attachments use the global instance key plus session; file operations retain the physical directory.

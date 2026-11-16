@@ -284,9 +284,8 @@ export function getDefaultToolAction(toolName: string) {
     case "todowrite":
       return tGlobal("toolCall.renderer.action.planning")
     case "patch":
-      return tGlobal("toolCall.renderer.action.preparingPatch")
     case "apply_patch":
-      return tGlobal("toolCall.applyPatch.action.preparing")
+      return tGlobal("toolCall.renderer.action.preparingPatch")
     default:
       return tGlobal("toolCall.renderer.action.working")
   }

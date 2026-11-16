@@ -27,7 +27,6 @@ export interface ColorSchemeColors {
 export interface ColorSchemeDefinition {
   id: ColorSchemeId
   labelKey: string
-  descriptionKey: string
   appearance: ColorSchemeAppearance
   editable: boolean
   colors?: Readonly<ColorSchemeColors>
@@ -111,14 +110,12 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "system",
     labelKey: "settings.appearance.colorScheme.option.system",
-    descriptionKey: "settings.appearance.colorScheme.description.system",
     appearance: "system",
     editable: false,
   },
   {
     id: "light",
     labelKey: "settings.appearance.colorScheme.option.codeNomadClassic",
-    descriptionKey: "settings.appearance.colorScheme.description.light",
     appearance: "light",
     editable: false,
     colors: LIGHT_COLOR_SCHEME_COLORS,
@@ -126,7 +123,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "classic",
     labelKey: "settings.appearance.colorScheme.option.codeNomadClassic",
-    descriptionKey: "settings.appearance.colorScheme.description.codeNomadClassic",
     appearance: "dark",
     editable: false,
     colors: {
@@ -150,7 +146,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "basalt",
     labelKey: "settings.appearance.colorScheme.option.basalt",
-    descriptionKey: "settings.appearance.colorScheme.description.basalt",
     appearance: "dark",
     editable: false,
     colors: {
@@ -162,7 +157,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "fjord",
     labelKey: "settings.appearance.colorScheme.option.fjord",
-    descriptionKey: "settings.appearance.colorScheme.description.fjord",
     appearance: "dark",
     editable: false,
     colors: {
@@ -183,7 +177,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "lichen",
     labelKey: "settings.appearance.colorScheme.option.lichen",
-    descriptionKey: "settings.appearance.colorScheme.description.lichen",
     appearance: "dark",
     editable: false,
     colors: {
@@ -204,7 +197,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "velvet",
     labelKey: "settings.appearance.colorScheme.option.velvet",
-    descriptionKey: "settings.appearance.colorScheme.description.velvet",
     appearance: "dark",
     editable: false,
     colors: {
@@ -225,7 +217,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "ember",
     labelKey: "settings.appearance.colorScheme.option.ember",
-    descriptionKey: "settings.appearance.colorScheme.description.ember",
     appearance: "dark",
     editable: false,
     colors: {
@@ -246,7 +237,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "custom",
     labelKey: "settings.appearance.colorScheme.option.custom",
-    descriptionKey: "settings.appearance.colorScheme.description.custom",
     appearance: "dark",
     editable: true,
     colors: DEFAULT_CUSTOM_COLORS,

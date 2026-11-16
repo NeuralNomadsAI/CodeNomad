@@ -2,8 +2,6 @@
 
 OpenCode için yapay zekâ kodlama kokpiti: projeler, uzun konuşmalar ve Git çalışma ağaçları genelinde çok sayıda ajan çalıştıran geliştiriciler için bir masaüstü ve tarayıcı çalışma alanı.
 
-OpenCode size motoru verir. CodeNomad size kokpiti verir. OpenCode'un paylaşılan arka plan hizmetine bağlanır: oturumlarınız OpenCode'a aittir, bu hizmetin diğer istemcileri onları kullanabilir ve CodeNomad'i kapatmak onları durdurmaz.
-
 [CodeNomad'i indirin](download.md)
 
 {{tour-video}}
@@ -21,8 +19,6 @@ Uzaktan Kontrol, bir telefonu, tableti veya başka bir bilgisayarı tek kullanı
 Bir konuşmanın saklanan tüm geçmişinde arayın veya gerektiğinde araç çıktısı ve düşünceler de dahil olmak üzere açık projedeki ve çalışma ağaçlarındaki sonuçları sıralayın. Mesaj zaman çizelgesi, aradaki her mesajı yüklemeden uzun oturumlar arasında atlamanızı sağlar. Bkz. [Geçmiş, arama ve temizleme](history.md).
 
 ## Önce bunu okuyun {#read-this-first}
-
-Bu kılavuz, OpenCode hizmetinizle kullanılan mevcut CodeNomad masaüstü veya tarayıcı çalışma alanını kapsar: OpenCode yapılandırma eğitimlerini veya bir sürüm arşivini değil, CodeNomad'in kontrollerini, yürütme sınırlarını ve kurtarmayı.
 
 CodeNomad çalışma alanınızı tek, paylaşılan OpenCode arka plan hizmetine bağlar. Oturumlar ve mesajlar OpenCode'a; sekmeler, ileti taslakları ve yerleşim CodeNomad istemcisine aittir. Sekmeyi kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda bulunur. CodeNomad'i kapatmak OpenCode'u durdurmaz.
 
@@ -89,9 +85,9 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 Durum paneli etkin oturumun sağlayıcı kullanımını ve OpenCode arka plan Shell süreçlerini gösterir. Konuşma durumu ve alt konuşma etkinliği; çalışan, sıkıştırılan ve girdi bekleyen oturumları belirtir. Arka plan Shell sürecini izlemek, ileti düzenleyicisinden Shell isteği göndermekten veya ayrı barındırılan terminal SideCar kullanmaktan farklıdır.
 
 1. Seçilen görüşmenin Location'si (veya hiçbir konuşma seçilmediğinde açık çalışma alanı) için **Durum → Arka Plan Shell'leri** öğesini açın.
-2. Yalnızca açıkça arka plana alınmış çalışan komutlar, her satırda bir tane listelenir. Üzerine gelince kabuk, klasör ve PID görünür; **Çıktıyı görüntüle** simgesi yerel çıktıyı açar. OpenCode arka plan görevleri API’si yoksa yükleme hatası gösterilir.
+2. Yalnızca açıkça arka plana alınmış çalışan komutlar, her satırda bir tane listelenir. Üzerine gelince kabuk, klasör ve PID görünür; **Çıktıyı görüntüle** simgesi yerel çıktıyı açar.
 3. Satırdaki **Durdur ve kaldır** simgesini kullanıp hedefi onaylayın.
 
-Çalışan bir Shell'nin kaldırılması bu işlemi durdurur; çıkış penceresini kapatmak bunu yapmaz. Yenileme/yeniden bağlanma, kaçırılan çıktı olaylarını yeniden oluşturmak yerine mevcut yerel durumu okur.
+Çalışan bir Shell'nin kaldırılması bu işlemi durdurur; çıkış penceresini kapatmak bunu yapmaz.
 
-Görüntüleme anlık görüntüleri OpenCode değişiklikleri, yeniden bağlanma ve görünür talep üzerine yenilenir. Bunlar garantili tekrar günlükleri değildir. Sonuç belirsizse değişiklik işlemini yeniden denemeden önce yetkili durumu yenileyin; yalnızca bir bildirim veya olay kaçırıldı diye tekrar göndermeyin.
+Sonuç belirsizse değişiklik işlemini yeniden denemeden önce yetkili durumu yenileyin; yalnızca bir bildirim veya olay kaçırıldı diye tekrar göndermeyin.

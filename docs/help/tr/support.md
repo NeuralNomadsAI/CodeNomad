@@ -12,8 +12,6 @@ Eylem, CodeNomad ve OpenCode sürümlerini (kurulu olandan farklıysa çalışan
 
 Daha fazla tanılama gerekiyorsa **Panoya kopyala** veya **.txt indir** ayrı rapor üretir. Bu kapsamlı rapor yerel yolları ve ağ adreslerini içerebilir: eklemeden önce inceleyip hassas bilgileri gizleyin. Otomatik rapor kimlik doğrulama sırlarını hariç tutsa da ekran görüntüsü veya günlük alıntısı sır içerebilir.
 
-GitHub formunun alanları uyumsuzsa CodeNomad aynı rapor bilgileriyle düz bir sorun bildirimi açar. Formu okumadaki geçici hata açılmasını engellemez. Her zaman [sorun listesini](https://github.com/NeuralNomadsAI/CodeNomad/issues) elle kullanabilirsiniz.
-
 ## Topluluk ve sürümler {#community}
 
 | Kaynak | Kullanım |
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Geliştirme değişiklikleri, bağımsız olarak çalışan OpenCode arka plan programının yüklü sürümünü değil, geliştirme ana bilgisayarını etkiler. Yerel paketlemenin uygun hedef araçlara ihtiyacı vardır; hedef işletim sistemi üzerinde derlemeleri tercih edin.
+Yerel paketlemenin uygun hedef araçlara ihtiyacı vardır; hedef işletim sistemi üzerinde derlemeleri tercih edin.
 
 ### Derleyin ve doğrulayın {#build-and-validate}
 

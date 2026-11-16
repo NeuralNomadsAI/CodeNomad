@@ -4,8 +4,11 @@ import { sdkManager } from "../lib/sdk-manager"
 import { addInstance, removeInstance } from "./instances"
 import { createSession, isCreatingSession } from "./session-api"
 import { startNewSession } from "./session-actions"
-import { activeParentSessionId, setProviders, setSessions } from "./session-state"
+import { activeParentSessionId, activeSessionId, sessions, setProviders, setSessions } from "./session-state"
 import { messageStoreBus } from "./message-v2/bus"
+import { serverApi } from "../lib/api-client"
+import { openSessionPreview } from "./session-previews"
+import { getSessionSurface } from "./session-surface"
 
 const until = async (predicate: () => boolean) => {
   while (!predicate()) await new Promise(resolve => setTimeout(resolve, 5))
@@ -131,4 +134,25 @@ test("repeated new-session entries share one creation and activate it once settl
   } finally {
     teardown(instanceId)
   }
+})
+
+test("a new session created after a newer held browser gesture stays listed without selecting itself", async () => {
+  const instanceId = "create-browser-race", { gates, requests } = setup(instanceId)
+  const create = serverApi.createPreview, remove = serverApi.deletePreview
+  let release!: (value: any) => void
+  serverApi.createPreview = () => new Promise(done => { release = done })
+  serverApi.deletePreview = async () => {}
+  try {
+    const creating = startNewSession(instanceId)
+    await until(() => requests.length === 1)
+    const browser = openSessionPreview("same", "https://example.com", instanceId)
+    gates[0](false)
+    const created = await creating
+    assert.ok(created)
+    assert.ok(sessions().get(instanceId)?.has(created.id), "the created conversation remains available")
+    assert.equal(activeSessionId().get(instanceId), undefined, "stale creation cannot adopt navigation")
+    release({ token: "browser", sessionId: "same", targetUrl: "https://example.com" })
+    await browser
+    assert.equal(getSessionSurface({ instanceId, sessionId: "same" }).kind, "web")
+  } finally { teardown(instanceId); serverApi.createPreview = create; serverApi.deletePreview = remove }
 })

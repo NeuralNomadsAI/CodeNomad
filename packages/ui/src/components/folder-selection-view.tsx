@@ -537,7 +537,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 <Globe class="w-12 h-12 mx-auto" />
                               </div>
                               <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
-                              <p class="panel-empty-state-description">{t("folderSelection.servers.empty.description")}</p>
                               <Show when={canManageRemoteServers()}><button
                                 type="button"
                                 class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
@@ -611,7 +610,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                             <Clock class="w-12 h-12 mx-auto" />
                           </div>
                           <p class="panel-empty-state-title">{t("folderSelection.empty.title")}</p>
-                          <p class="panel-empty-state-description">{t("folderSelection.empty.description")}</p>
                         </div>
                       }
                     >
@@ -850,7 +848,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             <div class="folder-loading-indicator">
               <div class="spinner" />
               <p class="folder-loading-text">{t("folderSelection.loading.title")}</p>
-              <p class="folder-loading-subtext">{t("folderSelection.loading.subtitle")}</p>
             </div>
           </div>
         </Show>
@@ -859,7 +856,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             <div class="folder-drop-card">
               <FolderPlus class="w-8 h-8 icon-muted" />
               <p class="folder-drop-title">{t("folderSelection.drop.title")}</p>
-              <p class="folder-drop-subtext">{t("folderSelection.drop.subtitle")}</p>
             </div>
           </div>
         </Show>

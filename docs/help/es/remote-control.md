@@ -37,7 +37,7 @@ Con los ajustes multibackend experimentales, pega el enlace de vinculación en *
 
 La revocación finaliza las conexiones HTTP/SSE actuales del dispositivo y su acceso futuro. Vuelve a emparejarlo con un enlace nuevo para restaurar el acceso. Un dispositivo caduca tras **30 días sin uso**. Al alcanzar el **límite de 32 dispositivos**, un emparejamiento nuevo reemplaza el dispositivo con actividad más antigua y cierra sus conexiones.
 
-El backend almacena hashes de credenciales, no credenciales de dispositivo en bruto, en `remote-control-devices.json` bajo su base de configuración. El cliente conserva una cookie de dispositivo con ámbito del anfitrión, `Secure`, `HttpOnly` y `SameSite=Lax`. Su duración en el navegador puede superar el límite de inactividad de 30 días del servidor; el registro sigue siendo autoritativo. Borrar los datos del sitio, cambiar de perfil de navegador o usar navegación privada puede exigir emparejarse de nuevo.
+Borrar los datos del sitio, cambiar de perfil de navegador o usar navegación privada puede exigir emparejarse de nuevo.
 
 Cambiar la contraseña de acceso directo **no** revoca dispositivos. **Detener control remoto** desconecta el túnel, pero conserva la lista de dispositivos emparejados; usa **Revocar** cuando quieras retirar la autorización.
 
@@ -58,7 +58,6 @@ La recuperación conserva la página abierta y los borradores; no repite una acc
 | Detener control remoto | Desconecta el acceso por el túnel y borra la reanudación automática al iniciar; conserva los registros de dispositivos. |
 | Apagado del backend / se cierra la última ventana de escritorio y la aplicación termina | Control remoto queda sin conexión. El servicio compartido de OpenCode puede seguir ejecutándose, pero no puede servir esta interfaz mediante un backend detenido. |
 | Iniciar después de dejar Control remoto activado | Reconecta en segundo plano sin emitir un enlace de emparejamiento nuevo. Las instalaciones donde nunca se inició no se activan solas. |
-| Reanudación fallida o error fatal del túnel | La elección recordada permanece y el anfitrión muestra el error; el icono de actualizar de la tarjeta de Control remoto vuelve a leer su estado. **Iniciar control remoto** reintenta ahora; **Detener control remoto** borra la elección. Si no, un inicio posterior reintenta. |
 
 La reanudación automática al iniciar se limita a un backend por directorio de configuración. No inicies anfitriones que compitan con la misma configuración para obtener más capacidad de túnel. Para un equipo que deba seguir accesible tras salir del escritorio, despliega un [servidor independiente](server.md) gestionado por separado; Control remoto no es un daemon independiente.
 
@@ -82,7 +81,7 @@ Usa una conexión loopback en el anfitrión para los proxies/WebSockets reservad
 
 ## Relé y privacidad {#relay-privacy}
 
-CodeNomad usa [OpenTunnel](https://github.com/anomalyco/opentunnel) y reserva una ruta aleatoria en la identidad de túnel predeterminada compartida del equipo. Detener libera el puente de CodeNomad, no la identidad compartida usada por otras aplicaciones.
+CodeNomad usa [OpenTunnel](https://github.com/anomalyco/opentunnel) y reserva una ruta aleatoria en la identidad de túnel predeterminada compartida del equipo.
 
 TLS termina en el backend de CodeNomad. El relé reenvía texto cifrado y no puede leer el contenido de la aplicación, pero puede observar nombres de host, tiempos de conexión y tamaños de tráfico. El certificado/clave privada del túnel permanece en el anfitrión. Protege el almacenamiento del túnel del anfitrión y la configuración de CodeNomad como credenciales; una dirección imposible de adivinar no es autorización.
 

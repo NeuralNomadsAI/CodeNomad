@@ -34,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "יש לפתוח פרויקט תחילה.",
 
   "commands.closeInstance.label": "סגור לשונית",
-  "commands.closeInstance.description": "סגור את הלשונית העליונה הנוכחית",
   "commands.closeInstance.keywords": "עצור, סגור, לשונית",
 
   "commands.nextInstance.label": "הלשונית הבאה",
-  "commands.nextInstance.description": "עבור ללשונית העליונה הבאה",
   "commands.nextInstance.keywords": "החלף, נווט, לשונית",
 
   "commands.previousInstance.label": "הלשונית הקודמת",
-  "commands.previousInstance.description": "עבור ללשונית העליונה הקודמת",
   "commands.previousInstance.keywords": "החלף, נווט, לשונית",
 
   "commands.newSession.label": "סשן חדש",
@@ -62,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "מידע, לוגים, קונסולה, פלט",
 
   "commands.nextSession.label": "סשן הבא",
-  "commands.nextSession.description": "עבור לסשן הבא",
   "commands.nextSession.keywords": "החלף, נווט",
 
   "commands.previousSession.label": "סשן קודם",
-  "commands.previousSession.description": "עבור לסשן הקודם",
   "commands.previousSession.keywords": "החלף, נווט",
 
   "commands.previousUserMessage.label": "הודעת משתמש קודמת",
-  "commands.previousUserMessage.description": "מעבר להודעה הקודמת ששלחת בשיחה זו",
   "commands.previousUserMessage.keywords": "קפוץ, נווט, הנחיה, הודעת משתמש",
   "commands.nextUserMessage.label": "הודעת משתמש הבאה",
-  "commands.nextUserMessage.description": "מעבר להודעה הבאה ששלחת בשיחה זו",
   "commands.nextUserMessage.keywords": "קפוץ, נווט, הנחיה, הודעת משתמש",
 
   "commands.compactSession.label": "סכם סשן",
@@ -91,13 +84,12 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "פלטי כלים: {toolCount}; מקטעי חשיבה: {reasoningCount}. הטקסט הסופי יישמר.",
   "commands.removeSessionTechnicalParts.confirm.label": "הסר",
   "commands.removeSessionTechnicalParts.failed.title": "ההסרה נכשלה",
-  "commands.removeSessionTechnicalParts.failed.message": "ניקוי {count} תשובות נכשל.",
+  "commands.removeSessionTechnicalParts.failed.message.one": "ניקוי תשובה {count} נכשל.",
+  "commands.removeSessionTechnicalParts.failed.message.other": "ניקוי {count} תשובות נכשל.",
 
   "commands.undoLastMessage.label": "בטל הודעה אחרונה",
   "commands.undoLastMessage.description": "בטל את ההודעה האחרונה",
   "commands.undoLastMessage.keywords": "חזרה, ביטול",
-  "commands.undoLastMessage.none.title": "אין פעולות לביטול",
-  "commands.undoLastMessage.none.message": "אין מה לבטל",
   "commands.undoLastMessage.failed.title": "הביטול נכשל",
   "commands.undoLastMessage.failed.message": "ביטול ההודעה נכשל",
   "commands.redoLastMessage.label": "ביצוע מחדש של ההודעה האחרונה",
@@ -107,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "ניקוי הביטול המוכן נכשל",
 
   "commands.openModelSelector.label": "פתח בורר מודלים",
-  "commands.openModelSelector.description": "בחר מודל אחר",
   "commands.openModelSelector.keywords": "מודל, llm, ai",
 
   "commands.selectModelVariant.label": "בחר גרסת מודל",
@@ -115,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "גרסה, חשיבה, מאמץ",
 
   "commands.openAgentSelector.label": "פתח בורר סוכנים",
-  "commands.openAgentSelector.description": "בחר סוכן אחר",
   "commands.openAgentSelector.keywords": "סוכן, מצב",
 
   "commands.clearInput.label": "נקה קלט",
-  "commands.clearInput.description": "נקה את תיבת הטקסט של הפקודה",
   "commands.clearInput.keywords": "נקה, אפס",
 
   "commands.thinkingBlocks.label.show": "הצג חשיבה",

@@ -86,9 +86,6 @@ message, without paths, values or error causes. Failed reads return no snapshot,
 so callers cannot apply `session.environment` or send prompt/synthetic input.
 Native authority, connection and ownership fences apply around the awaits.
 
-The snapshot built from it always excludes internal authentication and native storage variables; its base is
-the authority process environment, which can change when the authority restarts.
-
 Its regressions use isolated temporary files:
 
 ```text
@@ -104,11 +101,11 @@ Run the real native regression against an explicitly selected CLI:
 node scripts/test-session-environment-native.mjs <absolute-opencode-executable>
 ```
 
-It creates isolated service configuration, state and database with its own port;
-uses the real WorkspaceManager, proxy and native shells; checks two conversations,
-settings changes/removal, read-only behavior and an unchanged daemon PID; and
-stops only that isolated service. Windows also exercises Git Bash at its standard
-installation path. It never calls a provider or touches an existing conversation.
+The fixture uses isolated service configuration, state, database and port with the real
+WorkspaceManager, proxy and native shells. It checks two conversations, settings
+changes/removal, read-only behavior and an unchanged daemon PID. Windows also exercises
+Git Bash at its standard installation path. Never call a provider, touch an existing
+conversation or stop a shared service in this fixture.
 
 ## Agent conventions
 

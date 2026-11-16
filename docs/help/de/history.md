@@ -1,7 +1,5 @@
 # Verlauf, Suche und Bereinigung
 
-Suche, Zeitleiste, Bildergalerie und technische Bereinigung unterstützen auch OpenCodes experimentellen `part_rows`-Speicher und Nachrichten mit getrennten und eingebetteten Teilen. Bereits getrennte Teile bleiben nach dem Deaktivieren der Option lesbar.
-
 Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter Modellkontext sind getrennte Dinge. Wählen Sie Navigation oder Filter, bevor Sie etwas löschen.
 
 ## Gesamten Verlauf durchsuchen {#full-history-search}
@@ -15,11 +13,9 @@ Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter M
 
 Unterhaltungsseiten zeigen beim Eintreffen der Stapel **Diese Seite: … Ergebnisse · … Nachrichten durchsucht**. Die Projektsuche zeigt **Beste Ergebnisse: …** sowie kompakte Hinweise auf Teilsuchen oder ausgeschlossene Verzeichnisse. Ist die sortierte Suche in der Laufzeit nicht verfügbar, verwenden Sie **Gesamte Sitzung**. Übersprungene Nachrichten werden gemeldet; starten Sie für neue Nachrichten eine neue Suche.
 
-Das Öffnen einer leeren Suche durchsucht keinen Verlauf. Änderungen an Begriff/Umfang, Schließen des Fensters oder Verlassen der Sitzung brechen veraltete Sucharbeit ab. Verwenden Sie bei einem Lesefehler **Erneut versuchen**; dies sendet keinen Prompt und ändert keinen Verlauf.
-
 Projektsuchen beginnen bei höchstens 16.384 neuesten gespeicherten Nachrichten je Ort. **Weiter zurück suchen** ersetzt die Liste durch die besten Treffer des nächsten älteren Fensters. Der Hinweis nennt den geprüften Bereich, je Projektort von neu nach alt. Die Rangfolge gilt nur innerhalb dieses Fensters. Änderungen an Suchtext, Bereich oder technischen Inhalten, Schließen der Suche oder Verlassen der Sitzung setzen das Fenster zurück. Eine neue Suche berücksichtigt neue Nachrichten.
 
-Läuft ein Suchfenster ab oder ändert sich sein Verlauf, beginnt **Neue Suche starten** mit denselben Suchbegriffen und Optionen bei den neuesten Nachrichten. Ein Hinweis erklärt die Wiederherstellung. Bei gewöhnlichen Lesefehlern wiederholt **Erneut versuchen** das aktuelle Fenster.
+Läuft ein Suchfenster ab oder ändert sich sein Verlauf, beginnt **Neue Suche starten** mit denselben Suchbegriffen und Optionen bei den neuesten Nachrichten.
 
 ## Ergebnisse öffnen und Timeline nutzen {#timeline-navigation}
 
@@ -30,8 +26,6 @@ Läuft ein Suchfenster ab oder ändert sich sein Verlauf, beginnt **Neue Suche s
 Die Timeline stellt die gesamte Sitzungsstruktur dar, auch wenn die Verlaufsanzeige nur eine begrenzte Passage enthält. Sprünge laden das Ziel, nicht jede dazwischenliegende Nachricht. Suchvorschauen anderer Sitzungen laden weder deren gesamten Verlauf noch wählen sie diese aus; nur **In Sitzung öffnen** wechselt die Unterhaltung.
 
 Werkzeugmarkierungen folgen **Nachrichteninhalt**: Ein dort ausgeblendeter Werkzeugtyp hat keine Markierung (bei **Nichts** gar keine), außer einem Werkzeug, das auf eine Berechtigung wartet. Ein Schritt, der nur Werkzeuge ausgeführt hat, zeigt nur seine Werkzeugmarkierungen, ohne leere Agentenmarkierung.
-
-Während ein Sprung lädt, bleibt die alte Passage sichtbar. Ein neuerer Sprung oder manueller Eingriff in den Verlauf ersetzt veraltete Navigation; ein fehlgeschlagener Sprung lässt die sichtbare Passage unverändert. Versuchen Sie das Ziel erneut, statt wiederholt das ganze Projekt neu zu laden. Historisches Lesen ändert nicht die Agenten-/Modellauswahl des Eingabefelds.
 
 Bei zu schmaler Unterhaltung (unter 420 CSS-Pixeln) ist die Timeline ausgeblendet; verwenden Sie dort Suche und Verlaufssteuerung. Die gespeicherte Sichtbarkeitseinstellung wird durch diese responsive Änderung nicht gelöscht.
 
@@ -65,8 +59,6 @@ Komprimierung ändert den Kontext, mit dem OpenCode die Sitzung fortsetzt. Sie g
 Nur geeignete abgeschlossene Werkzeuge und Denkprozesse werden entfernt. Aktive/unvollständige Inhalte werden nicht bereinigt, ebenso wenig eine Nachricht, die in der von OpenCode gelesenen Form (einschließlich angehängter Dateien) größer als 16 MB ist und als übersprungener Inhalt zählt; geänderte Inhalte werden abgelehnt, statt den bestätigten Umfang stillschweigend auszuweiten. Endgültiger Text und Nachrichten-/Sitzungsmetadaten bleiben erhalten, entfernte technische Ausgaben lassen sich aber nicht wiederherstellen. Sichern Sie benötigte Inhalte vor der Bestätigung.
 
 Sitzungsbereinigung ist nicht über die gesamte Sitzung atomar. Frühere erfolgreiche Entfernungen bleiben bestehen, wenn eine spätere Nachricht einen Konflikt oder Fehler verursacht. **Abbrechen stoppt künftige Stapel; ein bereits versandter Stapel wird nicht zurückgerollt** und kann weiterhin festgeschrieben werden.
-
-Warten Sie bei belegtem Speicher, bis aktuelle Ausführungs-/Speicherarbeit beendet ist. Laden Sie bei einer geänderten Nachricht neu und wählen Sie erneut aus. Verbinden/öffnen Sie bei nicht verfügbarem Plugin CodeNomad erneut und prüfen Sie vor dem Wiederholen den Fehler. Aktualisieren und beurteilen Sie nach ungewisser Antwort die verbleibenden Inhalte; nehmen Sie weder an, dass nichts geschehen ist, noch dass die gesamte Sitzung bereinigt wurde.
 
 ## Sitzungen löschen und bereinigen {#delete-scrub}
 

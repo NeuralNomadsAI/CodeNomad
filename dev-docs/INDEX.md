@@ -1,8 +1,8 @@
 # Documentation Index
 
-Start with [README](../README.md) for installation and usage, then
-[architecture](architecture.md) for ownership boundaries and code locations.
-[AGENTS.md](../AGENTS.md) defines the rules that apply everywhere (styling, i18n, contribution) and indexes the area documents whose rules bind each area.
+[README](../README.md): installation and usage.
+[architecture](architecture.md): ownership and code locations.
+[AGENTS.md](../AGENTS.md): global rules and binding area-document index.
 
 ## Runtime and ownership
 

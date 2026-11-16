@@ -1,4 +1,4 @@
-import { createEffect, createRoot, createSignal, Show } from "solid-js"
+import { createEffect, createRoot, createSignal, For, Show } from "solid-js"
 import { render } from "solid-js/web"
 import SessionView from "../../../src/components/session/session-view"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
@@ -21,6 +21,9 @@ import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
 const instanceId = "navigation", sessionId = "s", count = 1500
+const duplicate = location.search.includes("duplicate")
+const instanceIds = duplicate ? [instanceId, "navigation-duplicate"] : [instanceId]
+const [selectedOccurrence, setSelectedOccurrence] = createSignal(instanceId)
 const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage
   : location.search.includes("deep") ? deepNavigationMessage : navigationMessage
 const model = { providerID: "fixture", id: "fixture" }
@@ -36,9 +39,11 @@ let config = { settings: { locale: "en", showMessageTimeline: true } }
 serverApi.fetchConfigOwner = async () => config as any
 serverApi.patchConfigOwner = async (_owner, patch: any) => (config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }) as any
 serverApi.fetchStateOwner = async () => ({} as any)
-const emit = (type: string, data: any) => (sseManager as any).handleEvent(instanceId, {
-  id: `event_${++time}`, type, created: time, location: { directory: "/fixture" }, data: { sessionID: sessionId, ...data },
-})
+const emit = (type: string, data: any) => {
+  // Each backend workspace occurrence receives the native Location's same frame.
+  const event = { id: `event_${++time}`, type, created: time, location: { directory: "/fixture" }, data: { sessionID: sessionId, ...data } }
+  for (const id of instanceIds) (sseManager as any).handleEvent(id, event)
+}
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async () => ({ id: sessionId, title: "Long navigation", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } }),
@@ -79,6 +84,14 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
 }]])))
 setProviders(previous => new Map(previous).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
 setActiveSession(instanceId, sessionId)
+if (duplicate) {
+  const id = instanceIds[1]
+  ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
+  addInstance({ id, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  setSessions(previous => new Map(previous).set(id, new Map([[sessionId, { ...previous.get(instanceId)!.get(sessionId)!, instanceId: id }]])))
+  setProviders(previous => new Map(previous).set(id, previous.get(instanceId)!))
+  setActiveSession(id, sessionId)
+}
 const savedIndexes = sessionStorage.getItem("fixture-outline-restore")
 if (savedIndexes) {
   const encoded = JSON.parse(savedIndexes)
@@ -90,11 +103,24 @@ if (location.search.includes("hiddenTimeline")) await applyUiSettings({ locale: 
 const [visible, setVisible] = createSignal(true)
 const store = messageStoreBus.getOrCreate(instanceId)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}>
-  <SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} />
+  <For each={instanceIds}>{id => <Show when={selectedOccurrence() === id}>
+    <div data-occurrence={id} style={{ display: "flex", width: "100%", height: "100%" }}>
+      <SessionView sessionId={sessionId} activeSessions={sessions().get(id)!} instanceId={id} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} />
+    </div>
+  </Show>}</For>
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+// This scenario addresses controls by their English accessible names. Linux's
+// navigator language can select French before the fixture's UI config loads.
+if (duplicate) await updatePreferences({ locale: "en" })
 ;(window as any).fixture = {
   id: navigationMessageId,
   releaseMessages,
+  selectOccurrence: (id: string) => { setSelectedOccurrence(id); setActiveInstanceId(id) },
+  occurrenceSnapshot: (id: string) => {
+    const store = messageStoreBus.getOrCreate(id)
+    return { ids: store.getSessionMessageIds(sessionId), window: store.getMessageWindow(sessionId),
+      scroll: store.getScrollSnapshot(sessionId, "message-stream") }
+  },
   /** Holds the next native page read until `releaseList`. */
   holdNextList: () => { listHold = new Promise<void>(resolve => { releaseListHold = resolve }) },
   listPending: () => listPending,

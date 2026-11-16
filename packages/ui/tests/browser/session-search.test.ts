@@ -85,6 +85,7 @@ test("search is flat, filters each session, selects only matches and restores th
     assert.deepEqual(await rows(), ["child"])
     await page.getByRole("button", { name: "Select all sessions" }).click()
     assert.equal(await page.locator('.session-item-base input[type="checkbox"]:checked').count(), 1)
+    assert.equal(await page.getByRole("button", { name: "Delete 1 selected session", exact: true }).count(), 1)
     await toggle.uncheck()
     assert.deepEqual(await rows(), [])
     assert.equal(await page.getByRole("button", { name: /Delete selected/ }).count(), 0)
@@ -141,6 +142,7 @@ test("dragging across the selection checkboxes gives every crossed session the f
     await page.mouse.move(first.x, first.y)
     await page.mouse.up()
     assert.deepEqual(await checked(), [true, true, true, true])
+    assert.equal(await page.getByRole("button", { name: "Delete 4 selected sessions", exact: true }).count(), 1)
 
     // Back up from the last, then released over the second row's title: the release opens no session.
     const second = await center(1), title = (await page.locator(".session-item-select").nth(1).boundingBox())!

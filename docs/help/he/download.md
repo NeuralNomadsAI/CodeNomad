@@ -42,6 +42,6 @@ npx @neuralnomads/codenomad --generate-token --launch
 
 ## תמיכה בפיתוח {#support-development}
 
-CodeNomad הוא חינמי ומתוחזק על ידי מתנדבים בזמנם הפנוי. אם הוא מועיל לכם או לצוות שלכם, חסות עוזרת לשמור על תחזוקתו ועל תאימותו לגרסאות חדשות של OpenCode. העמוד [תמכו ב־CodeNomad](sponsor.md) מסביר למה משמשת החסות.
+העמוד [תמכו ב־CodeNomad](sponsor.md) מסביר למה משמשת החסות.
 
 {{funding}}

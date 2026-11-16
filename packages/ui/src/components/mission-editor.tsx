@@ -393,7 +393,7 @@ export function MissionEditor(props: {
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
           if (intent && !missionCleanupPending(intent)) { props.onSaved(); return }
           const live = snapshot.mission
-          if (!intent && live && live.revision !== original.revision) throw new MissionDeletionError(404)
+          if (!intent && live && live.revision !== original.revision) throw new MissionDeletionError(409, "revision-conflict")
           // Neither the map nor its cleanup: capacity may have purged a committed
           // deletion's history. Its durable record answers this exact original request.
         }
@@ -427,9 +427,8 @@ export function MissionEditor(props: {
           const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
           if (intent && !missionCleanupPending(intent)) { props.onSaved(); return }
-          if (intent) key = intent.documentPending ? "missions.cleanup.documentPending" : "missions.cleanup.error.pending"
-          else if (snapshot.available && !snapshot.cleanupUnavailable && snapshot.mission
-            && error instanceof MissionDeletionError && [400, 403, 409].includes(error.status)) setDeleteAttempted(false)
+          if (intent && !(error instanceof MissionDeletionError && error.status === 409))
+            key = intent.documentPending ? "missions.cleanup.documentPending" : "missions.cleanup.error.pending"
         } catch { /* Unknown observation is not permission to change the intent. */ }
         if (current()) { setError(t(key)); void missionStore.refresh(instanceId) }
       } else {
@@ -585,7 +584,7 @@ export function MissionEditor(props: {
       <Show when={prefilling()}><MissionBodyPending failed={reopen() === "failed" || reopen() === "idle" && prefillState() === "failed"}
         changed={reopen() === "idle" && prefillState() === "changed"} actionLabel={offersReopen() ? "missions.control.reopen" : undefined}
         onRetry={() => offersReopen() ? reopenEdit() : retryMissionTarget([editedObjective(), editedNotes()])} /></Show>
-      <Show when={!schedule.ready()}><p role={schedule.failed() ? "alert" : "status"}>{t(schedule.failed() ? "missions.scheduling.loadFailed" : "missions.control.loading")}</p>
+      <Show when={!schedule.ready()}><p role={schedule.failed() ? "alert" : "status"}>{t(schedule.failed() ? "missions.scheduling.loadFailed" : "missions.control.form.loading")}</p>
         <Show when={schedule.failed()}><button type="button" class="window-action" onClick={schedule.retryRead}>{t("missions.control.refresh")}</button></Show></Show>
       <Show when={schedule.conflict()}><p role="alert">{t("missions.control.mutation.conflict")}</p>
         <button type="button" class="window-action" disabled={schedule.reading() || !!schedule.held()} onClick={() => void schedule.reload()}>{t("missions.scheduling.reload")}</button></Show>

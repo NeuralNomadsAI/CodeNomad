@@ -1,7 +1,5 @@
 # समस्या समाधान
 
-असफल कार्यको स्वामी—browser, CodeNomad backend, OpenCode service वा provider—पहिले जाँचेर पुनःप्राप्ति गर्नुहोस्। reply हराउनु mutation असफल भएको प्रमाण होइन; दोहोर्‍याउनुअघि current state फेरि पढ्नुहोस्।
-
 ## desktop launch समस्या {#desktop-launch}
 
 ### macOS quarantine {#macos-quarantine}
@@ -37,9 +35,11 @@ Electron ले Chromium प्रयोग गर्छ र उही host म�
 
 Git बिना directory-only कुराकानी उपलब्ध रहन्छन्; worktree र Git नियन्त्रण हुँदैनन्। Windows मा WSL भित्र मात्र Git पर्याप्त होइन। repository नभएको ज्ञात folder ले **Git सुरु गर्नुहोस्** दिन सक्छ; Git executable नै नहुनु फरक अवस्था हो र पहिले ठीक गर्नुपर्छ। [आवश्यकता](install.md#requirements) र [फाइल](files.md) हेर्नुहोस्।
 
-owned worktree वा conversation placement verify गर्न नसके मनपरी path वा native storage सम्पादन गर्नुको सट्टा physical folder स्पष्ट खोल्नुहोस्। अनिश्चित move/removal पछि कुन placement वास्तविक छ हेर्न refresh गर्नुहोस्। force-removing ले uncommitted file नष्ट गर्न सक्छ; connection मर्मतका लागि प्रयोग नगर्नुहोस्।
+owned worktree वा conversation placement verify गर्न नसके मनपरी path वा native storage सम्पादन गर्नुको सट्टा physical folder स्पष्ट खोल्नुहोस्। force-removing ले uncommitted file नष्ट गर्न सक्छ; connection मर्मतका लागि प्रयोग नगर्नुहोस्।
 
 ## OpenCode runtime र WSL {#opencode-runtime}
+
+सुरुवात त्रुटिको संवादमा executable र संस्करण जाँच्न **OpenCode सेटिङहरू खोल्नुहोस्** रोज्नुहोस्; वातावरणका अनुकूलित मानहरूका लागि **उन्नत → वातावरण चरहरू (Environment Variables)** मा जानुहोस्।
 
 1. **प्राथमिकताहरू → OpenCode** खोली **OpenCode संस्करण** card (installed version र running service status), त्यसपछि **OpenCode बाइनरी** अन्तर्गतको selected executable जाँच्नुहोस्।
 2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.3.0**; recommended/qualified संस्करण: **2.3.0**।
@@ -49,19 +49,16 @@ owned worktree वा conversation placement verify गर्न नसके �
 
 WSL executable मा अभिप्रेत वितरण र Windows localhost forwarding जाँच्नुहोस्। service lifecycle Linux भित्र चल्छ; CodeNomad ले Windows बाट loopback endpoint पुग्नुपर्छ। service registration/database सम्पादन वा अनुमानित Linux process ID लाई Windows बाट signal नगर्नुहोस्।
 
-custom/newer संस्करण incompatible नभई unverified हुन सक्छ। संस्करण बदल्नुअघि वास्तविक contract error पढ्नुहोस्। session environment sync असफल भए execution-host environment/connection ठीक गर्नुहोस्: synchronization बिना CodeNomad prompt पठाउँदैन। [OpenCode](opencode.md) हेर्नुहोस्।
-
 ## login, TLS र direct connectivity {#login-and-tls}
 
 | लक्षण | सुरक्षित जाँच र पुनःप्राप्ति |
 | --- | --- |
 | **CodeNomad मा फेरि साइन इन गर्नुहोस्** | पृष्ठ खुलै राखी server username/password भरेर **साइन इन गर्नुहोस्** चयन गर्नुहोस्। recovery ले मस्यौदा राख्न त्यहीं reconnect गर्छ; असफल कार्य replay गर्दैन। |
-| server पुगिँदैन | backend चलिरहेको र छापिएको address/actual port प्रयोग भएको जाँच्नुहोस्। unreachable जाँच मात्र login expired प्रमाण होइन। |
-| provider authentication अस्वीकार | स्वामीमार्फत provider login मर्मत गर्नुहोस्; provider OAuth ठीक गर्न CodeNomad server password नबदल्नुहोस्। |
+| server पुगिँदैन | backend चलिरहेको र छापिएको address/actual port प्रयोग भएको जाँच्नुहोस्। |
 | certificate name/trust त्रुटि | actual hostname/IP लाई certificate SAN सँग जाँचेर intended CA trust वा valid server certificate स्थापना गर्नुहोस्। TLS verification अक्षम नगर्नुहोस्। |
-| direct connection refused | प्रभावकारी HTTP/HTTPS binding, firewall र routing जाँच्नुहोस्। desktop वा dual-listener mode को HTTP loopback मै रहन्छ; standalone HTTP-only को binding फरक छ। |
+| direct connection refused | प्रभावकारी HTTP/HTTPS binding, firewall र routing जाँच्नुहोस्। |
 
-authentication recovery पछि अनिश्चित reply भएको mutation हातैले retry गर्नुअघि state जाँच्नुहोस्। runtime password हरेक backend start मा दिनुपर्छ; settings बाट सुरक्षित password रहिरहन्छ। [सुरक्षा](security.md), [TLS/binding नियम](remote-access.md) र [server सन्दर्भ](server.md) हेर्नुहोस्।
+runtime password हरेक backend start मा दिनुपर्छ; settings बाट सुरक्षित password रहिरहन्छ। [सुरक्षा](security.md), [TLS/binding नियम](remote-access.md) र [server सन्दर्भ](server.md) हेर्नुहोस्।
 
 ## Remote Control pairing {#pairing}
 
@@ -73,18 +70,9 @@ pairing link single-use र छोटो आयुका हुन्; direct-ac
 
 ## provider, plugin र extension अवस्था {#providers-and-addons}
 
-**पूरा टाइमलाइन उपलब्ध छैन** सँगै `codenomad-session-pruning` plugin असफल भएको देखिए OpenCode लगमा यसको लोड त्रुटि हेर्नुहोस्। यस plugin ले पूरा इतिहास नेभिगेसन र बाँकी प्रश्न तथा अनुमति पुनर्स्थापना दिन्छ। plugin सफलतापूर्वक लोड भएपछि टाइमलाइन फेरि प्रयास गर्नुहोस्; आफ्नो सत्र डेटा सुरक्षित राख्नुहोस्।
-
-| समस्या | पुनःप्राप्ति |
-| --- | --- |
-| गलत provider account/quota | selected native account र **प्रयोग** जाँच्नुहोस्। quota display token/cost total होइन। अनिश्चित account परिवर्तनपछि refresh; चयनले उही सेवाका अरू client असर गर्न सक्छ। |
-| बाह्य स्वामित्वको OAuth expired | OpenCode, Claude Code वा credential owner बाट फेरि sign in गर्नुहोस्। CodeNomad ले refresh token साट्दैन। |
-| automatic rotation switch हुँदैन | opt-in eligibility र current account साँच्चै full छ कि जाँच्नुहोस्। pre-admission नीति हो, in-flight failover वा prompt replay होइन। |
-| plugin अवस्था पुरानो | **प्लगइन नियन्त्रण ताजा गर्नुहोस्** र tooltip scope/target जाँच्नुहोस्; runtime activation लाई native refresh पर्खनुपर्न सक्छ। अनिश्चित write बारम्बार toggle नगर्नुहोस्। |
-| थपेको plugin असफल भयो वा **पुष्टि भएको छैन** देखाउँछ | OpenCode host बाट package नाम, संस्करण र रजिस्ट्री पहुँच जाँच्नुहोस्। असफल स्थापनामा, plugin tooltip को त्रुटि सन्दर्भ OpenCode लगमा खोज्नुहोस्। निष्क्रिय plugin का लागि पनि **पुष्टि भएको छैन** देखिन्छ। plugin हटाउँदा डाउनलोड गरिएको package OpenCode cache मा रहन्छ। |
-| **मिसन नियन्त्रण उपलब्ध छैन** | यसले बताएको कारण पछ्याउनुहोस्। OpenCode ले Missions plugin लोड गरेको छैन भने refresh गर्नुहोस्, रहिरहे **OpenCode कन्फिगरेसन पुनः लोड गर्नुहोस्** प्रयोग गर्नुहोस्; plugin लोड हुन असफल भए Plugins सूचीमा यसको त्रुटि पढ्नुहोस्; server ले आफ्नो स्थानीय Missions जडान खोल्न सकेन भने server log जाँच्नुहोस्, किनकि OpenCode reload गर्दा मद्दत हुँदैन। Missions standalone server मा पनि चल्छन्। |
-| स्थापित extension हराएको | panel customization मा एउटै activation checkbox जाँच्नुहोस्। installation/replacement पछि explicit activation र required consent नदिँदासम्म disabled हुन्छ। |
-| extension asset denied | current mounted session को API 2 asset-read consent जाँच्नुहोस्। extension स्थापना मनपरी file/history पढ्ने अनुमति होइन। |
+- थपेको plugin असफल भयो वा **पुष्टि भएको छैन** देखाउँछ — OpenCode host बाट package नाम, संस्करण र रजिस्ट्री पहुँच जाँच्नुहोस्। plugin tooltip को त्रुटि सन्दर्भ OpenCode लगमा खोज्नुहोस्। निष्क्रिय plugin का लागि पनि **पुष्टि भएको छैन** देखिन्छ।
+- स्थापित extension हराएको — panel customization मा यसलाई सक्रिय गर्नुहोस्। installation/replacement पछि explicit activation र required consent नदिँदासम्म disabled हुन्छ।
+- **पूरा टाइमलाइन उपलब्ध छैन** — OpenCode लगमा `codenomad-session-pruning` को लोड त्रुटि हेर्नुहोस्।
 
 [प्रदायक](providers.md), [एकीकरण](integrations.md) र [विस्तार](extensions.md) हेर्नुहोस्।
 
@@ -92,13 +80,11 @@ pairing link single-use र छोटो आयुका हुन्; direct-ac
 
 full-history search हाल loaded transcript row मा सीमित छैन। display filter ले नमेटी सामग्री लुकाउँछ; search, compaction, technical cleanup र deletion छुट्याउन [इतिहास](history.md) प्रयोग गर्नुहोस्।
 
-pending-request recovery अपूर्ण भए CodeNomad ले coverage नभएकोलाई खाली लाम नठानी ज्ञात queue र answer draft राख्छ। लगातार दुई अपूर्ण recovery पछि यसले परियोजना, कारण, फोल्डर र प्रभावित सत्रको नाम दिँदै एक पटक चेतावनी दिन्छ; चेतावनी **परियोजना र ट्याबहरू** सूचना वर्गमा पर्छ (पूर्वनिर्धारित रूपमा स्क्रिनमा र इतिहासमा; **सेटिङहरू → सूचनाहरू** हेर्नुहोस्)। liveness check ले अस्थायी failure retry गर्छ। compaction-सम्बन्धी deferral request रद्द भएको होइन। draft राख्नुहोस्, service connection जाँच्नुहोस् र फेरि उत्तरअघि current request state प्रयोग गर्नुहोस्।
-
-cancelled वा partial cleanup मा अर्को deletion अघि progress/receipt पढ्नुहोस्। cancel ले dispatched batch undo गर्दैन। native database सम्पादन गरी history मर्मत नगर्नुहोस्। Mission uncertainty मा अर्को run बनाउने वा automatic replay को सट्टा **अवस्था जाँच गर्नुहोस्**/refresh recovery प्रयोग गर्नुहोस्; [मिसन](missions.md) ले restart र lifetime सीमा बताउँछ।
+cancelled वा partial cleanup मा अर्को deletion अघि progress/receipt पढ्नुहोस्। cancel ले dispatched batch undo गर्दैन। native database सम्पादन गरी history मर्मत नगर्नुहोस्।
 
 ## log र सुरक्षित निदान {#diagnostics}
 
-1. **सेटिङहरू → OpenCode → OpenCode लगहरू हेर्नुहोस्** खोल्नुहोस्। छानिएको कार्यान्वयन होस्टको विश्वव्यापी `opencode.log` फाइल `opencode debug paths log` बाट पत्ता लगाइन्छ। सार्न मिल्ने गैर-मोडल विन्डोले बाँकी इन्टरफेस प्रयोग गर्न दिन्छ। अन्तिम बढीमा 128 KiB देखाइन्छ; **रिफ्रेस** ले फेरि पढ्छ। लगहरू सन्देश र मोडेल अनुरोधबाट अलग रहन्छन्।
+1. **सेटिङहरू → OpenCode → OpenCode लगहरू हेर्नुहोस्** खोल्नुहोस्। छानिएको कार्यान्वयन होस्टको विश्वव्यापी `opencode.log` फाइल `opencode debug paths log` बाट पत्ता लगाइन्छ। अन्तिम बढीमा 128 KiB देखाइन्छ; **रिफ्रेस** ले फेरि पढ्छ।
 2. **प्राथमिकताहरू → OpenCode** मा थप विवरण चाहिँदा मात्र अभिप्रेत **पूर्वनिर्धारित लग स्तर** रोज्नुहोस्। standalone logging मा [server CLI logging विकल्प](server.md) प्रयोग गर्नुहोस्।
 3. **सेटिङहरू → जानकारी → निदान (Diagnostics)** खोली **बग रिपोर्ट गर्नुहोस्**, **क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्** वा **.txt डाउनलोड गर्नुहोस्** प्रयोग गर्नुहोस्।
 

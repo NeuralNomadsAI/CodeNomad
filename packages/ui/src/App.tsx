@@ -72,7 +72,7 @@ import {
   getSessions,
   getSessionRoot,
   activeSessionId,
-  clearActiveParentSession,
+  clearSelectedSession,
   fetchSessions,
   loadMessages,
   setActiveSessionFromList,
@@ -81,6 +81,7 @@ import {
   updateSessionModel,
 } from "./stores/sessions"
 import { openSessionPreview } from "./stores/session-previews"
+import { beginGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -93,7 +94,7 @@ import {
   ensureSidecarsLoaded,
   openSidecarTab,
 } from "./stores/sidecars"
-import { projectScope, parseInstanceKey, backendIdOf } from "./lib/backend-identity"
+import { parseInstanceKey, backendIdOf } from "./lib/backend-identity"
 import { captureBackendOperation } from "./lib/backend-operation"
 import {
   activeAppTab,
@@ -277,7 +278,8 @@ const App: Component = () => {
     }, 30_000)
     const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
       // Host-native requests carry a session id from the local backend only.
-      const localInstances = () => [...instances().values()].filter((instance) => parseInstanceKey(instance.id).backendId === "local")
+      const localInstances = () => appTabs().flatMap(tab => tab.kind === "instance"
+        && parseInstanceKey(tab.instance.id).backendId === "local" ? [tab.instance] : [])
       const findOwners = () => localInstances().filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
       let owners = findOwners()
       if (owners.length === 0) {
@@ -298,22 +300,24 @@ const App: Component = () => {
         return
       }
       const operation = captureBackendOperation(owner.id, undefined, () => !disposed && instances().has(owner.id)
-        && getSessions(owner.id).some((session) => session.id === sessionID))
-      if (!operation.current() || !await claimNativeBrowserOpen(requestID)) return
+        && findOwners().some(candidate => candidate.id === owner.id))
+      const intent = beginGesture({ instanceId: owner.id, sessionId: sessionID })
       try {
-        if (!operation.current()) {
+        if (!operation.current() || !intent.current() || !await claimNativeBrowserOpen(requestID)) return
+        if (!operation.current() || !intent.current()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }
         const instance = owner
-        await openSessionPreview(sessionID, url, projectScope(instance), instance.id, async () => !disposed && operation.current() && await claimNativeBrowserOpen(requestID))
-        if (disposed || !operation.current()) {
+        const stillOwned = () => operation.current() && intent.current()
+        await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned(), intent)
+        if (!stillOwned()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }
         setShowFolderSelection(false)
         selectInstanceTab(instance.id)
-        setActiveSessionFromList(instance.id, sessionID)
+        setActiveSessionFromList(instance.id, sessionID, intent)
       } catch (error) {
         await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
           log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
@@ -344,6 +348,15 @@ const App: Component = () => {
     const tab = activeAppTab()
     return tab?.kind === "instance" ? tab.instance : null
   })
+  const automaticLocalSetup = () => {
+    const tab = activeAppTab()
+    if (tab) return tab.kind === "instance"
+      ? parseInstanceKey(tab.instance.id).backendId === "local"
+      : tab.kind !== "remote-restore"
+    const saved = loadedRestorableSession()
+    const selected = saved?.tabs[saved.activeTabIndex]
+    return selected?.kind !== "workspace" || backendIdOf(selected) === "local"
+  }
   const activeSessionIdForInstance = createMemo(() => {
     const instance = activeInstance()
     if (!instance) return null
@@ -645,7 +658,7 @@ const App: Component = () => {
     const parentSession = getSessionRoot(instanceId, sessionId)
     if (!parentSession) return
 
-    clearActiveParentSession(instanceId)
+    clearSelectedSession(instanceId)
 
     try {
       await fetchSessions(instanceId, { reset: true })
@@ -750,7 +763,7 @@ const App: Component = () => {
 
   return (
     <>
-      <OpenCodeSetup />
+      <OpenCodeSetup automatic={automaticLocalSetup()} />
       <InstanceDisconnectedModal
         open={Boolean(disconnectedInstance())}
         folder={disconnectedInstance()?.folder}
@@ -785,15 +798,13 @@ const App: Component = () => {
                </div>
 
                <div class="flex justify-end gap-2">
-                 <Show when={launchError()?.missingBinary}>
-                   <button
-                     type="button"
-                     class="selector-button selector-button-secondary"
-                    onClick={handleLaunchErrorAdvanced}
-                  >
-                    {t("app.launchError.openAdvancedSettings")}
-                  </button>
-                </Show>
+                 <button
+                   type="button"
+                   class="selector-button selector-button-secondary"
+                   onClick={handleLaunchErrorAdvanced}
+                 >
+                   {t("app.launchError.openAdvancedSettings")}
+                 </button>
                 <button type="button" class="selector-button selector-button-primary" onClick={handleLaunchErrorClose}>
                   {t("app.launchError.close")}
                 </button>

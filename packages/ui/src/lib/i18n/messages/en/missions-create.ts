@@ -1,6 +1,6 @@
 export const missionCreateMessages = {
   "missions.create.objective": "Objective",
-  "missions.create.objectivePlaceholder": "Describe the outcome you want. For a daily mission, these instructions apply to every run.",
+  "missions.create.objectivePlaceholder": "Describe the outcome you want.",
   "missions.create.title": "Title",
   "missions.create.options": "Options",
   "missions.create.agents": "Agents and models",

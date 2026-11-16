@@ -15,32 +15,28 @@ export const NotificationsSettingsSection: Component = () => {
     void refetch()
   })
 
-  const notify = (message: string, variant: "success" | "warning", duration?: number) =>
-    showToastNotification({ category: "settings", title: t("settings.section.notifications.title"), message, variant, duration })
+  const notify = (message: string) =>
+    showToastNotification({ category: "settings", title: t("settings.section.notifications.title"), message, variant: "warning" })
 
   const supported = () => capability()?.supported ?? false
   const unsupported = () => !supported() && capability.state === "ready"
   const permissionMissing = () => supported() && (capability()?.permission ?? "unsupported") !== "granted"
-  const infoMessage = () => capability()?.info
+  const infoMessage = () => supported() ? capability()?.info : undefined
 
   /** The system column is the consent: asking happens on the gesture that needs it. */
-  const requestPermission = async (announceGranted: boolean) => {
+  const requestPermission = async () => {
     const cap = capability()
     if (cap && !cap.supported) {
-      notify(cap.info ?? t("settings.notifications.messages.unsupportedGeneral"), "warning")
+      notify(t("settings.notifications.unsupportedNote"))
       return
     }
     const permission = await requestOsNotificationPermission()
     void refetch()
-    if (permission === "granted") {
-      if (announceGranted) notify(t("settings.notifications.messages.permissionGranted"), "success", 6000)
-      return
-    }
+    if (permission === "granted") return
     notify(
       permission === "denied"
         ? t("settings.notifications.messages.permissionRequestDenied")
         : t("settings.notifications.messages.permissionNotGranted"),
-      "warning",
     )
   }
 
@@ -49,7 +45,7 @@ export const NotificationsSettingsSection: Component = () => {
       <div class="settings-card">
         <NotificationRoutingTable
           systemUnavailable={unsupported()}
-          onSystemChecked={() => { if (permissionMissing()) void requestPermission(false) }}
+          onSystemChecked={() => { if (permissionMissing()) void requestPermission() }}
         />
       </div>
 
@@ -61,14 +57,10 @@ export const NotificationsSettingsSection: Component = () => {
         <div class="settings-stack">
           <Show when={permissionMissing()}>
             <div class="settings-toggle-row settings-toggle-row-compact">
-              <div>
-                <div class="settings-toggle-title">{t("settings.notifications.requestPermission.title")}</div>
-                <div class="settings-toggle-caption">{t("settings.notifications.requestPermission.subtitle")}</div>
-              </div>
               <button
                 type="button"
                 class="selector-button selector-button-secondary w-auto whitespace-nowrap"
-                onClick={() => void requestPermission(true)}
+                onClick={() => void requestPermission()}
               >
                 {t("settings.notifications.requestPermission.action")}
               </button>
@@ -78,7 +70,6 @@ export const NotificationsSettingsSection: Component = () => {
           <SettingsChoiceRow
             checked={Boolean(preferences().osNotificationsAllowWhenVisible)}
             title={t("settings.notifications.allowVisible.title")}
-            info={t("settings.notifications.allowVisible.subtitle")}
             disabled={unsupported()}
             onChange={(enabled) => updatePreferences({ osNotificationsAllowWhenVisible: enabled })}
           />

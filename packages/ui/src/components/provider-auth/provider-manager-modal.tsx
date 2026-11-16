@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, type Component } from "solid-js"
 import { captureBackendOperation } from "../../lib/backend-operation"
-import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, X } from "lucide-solid"
+import { ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, X } from "lucide-solid"
 import type { ConnectionInfo, FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { copyToClipboard } from "../../lib/clipboard"
@@ -31,7 +31,7 @@ import {
   type ProviderVisibilityModel,
 } from "./provider-model-visibility-manager"
 
-type AuthStage = "idle" | "prompts" | "authorizing" | "code" | "waiting" | "success" | "error"
+type AuthStage = "idle" | "prompts" | "authorizing" | "code" | "waiting" | "error"
 
 type MethodOption = {
   value: string
@@ -201,7 +201,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   })
   const canSubmit = createMemo(() => {
     if (!activeProviderId()) return false
-    if (stage() === "authorizing" || stage() === "waiting" || stage() === "success") return false
+    if (stage() === "authorizing" || stage() === "waiting") return false
     const method = selectedMethod()
     if (method.type === "key" && apiKey().trim().length === 0) return false
     return (method.type === "command" ? [] : method.form ?? [])
@@ -851,7 +851,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                   <Show when={authorizationLaunchBlocked() && authorization()}>
                     <div class="settings-card-message" role="alert">{t("settings.providers.oauth.popupBlocked")}</div>
                   </Show>
-                  <Show when={stage() === "success"}><div class="providers-success-card" role="status"><Check class="providers-success-icon" /><span>{t("settings.providers.success")}</span></div></Show>
 
                   <div class="providers-actions-row">
                     <Show when={stage() === "code"} fallback={<button type="button" class="selector-button selector-button-primary" disabled={!canSubmit()} onClick={() => void submitAuth()}><Show when={stage() === "authorizing"} fallback={t("settings.providers.actions.continue")}><Loader2 class="providers-spin-icon" />{t("settings.providers.actions.working")}</Show></button>}>

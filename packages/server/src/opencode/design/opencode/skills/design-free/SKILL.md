@@ -25,4 +25,4 @@ Usually ask nothing: the user's prompt is the brief. When something essential is
 
 ## Review
 
-Judge whether the image matches what the user wrote, then apply the review of `design-core`.
+Check the image against the user's wording and `design-core` review.

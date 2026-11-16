@@ -15,7 +15,7 @@ La pestaña **Archivos** del panel derecho combina exploración de copias de tra
 | Cambios | Cambios del índice y del árbol de trabajo | Las modificaciones de Git solo ocurren mediante acciones explícitas |
 | Commits | Historial paginado de commits y contenido de revisiones | Historial de solo lectura; no cambia la copia de trabajo |
 
-Las carpetas expandidas sobreviven a los cambios de modo. Las listas/el estado/el historial usan instantáneas en caché y se revalidan tras cambios relevantes del sistema de archivos, al activarse o con una actualización explícita; enfocar el panel no garantiza una lectura nueva. Las carpetas visibles de Espacio de trabajo detectan por sí solas los archivos creados, editados, renombrados o eliminados en el equipo del backend, como máximo una vez cada cinco segundos durante una actividad continua; las carpetas contraídas y los demás worktrees solo se vuelven a leer cuando los muestras.
+Las carpetas expandidas sobreviven a los cambios de modo. Las carpetas visibles de Espacio de trabajo detectan por sí solas los archivos creados, editados, renombrados o eliminados en el equipo del backend, como máximo una vez cada cinco segundos durante una actividad continua; las carpetas contraídas y los demás worktrees solo se vuelven a leer cuando los muestras.
 
 Las acciones de fila incluyen **Copiar ruta** y, cuando el cliente permite abrir rutas del backend, acciones de administrador de archivos/editor/terminal como **Abrir con la aplicación predeterminada**, **Mostrar en la carpeta**, **Abrir en el explorador de archivos** y **Abrir terminal aquí**. Las acciones pueden trasladarse a **Más acciones para {name}** cuando el espacio es limitado; el nombre del archivo o carpeta reemplaza `{name}`. Un navegador remoto no puede suponer que una ruta del servidor es local al dispositivo; consulta [Control remoto](remote-control.md).
 
@@ -28,11 +28,13 @@ Los archivos `.mmd` del Workspace se abren como diagramas. Usa **Mostrar código
 3. Edita y elige **Guardar**, o pulsa **Ctrl/Cmd+S** mientras el editor tenga el foco.
 4. Si el archivo cambió externamente, revisa la confirmación de sobrescritura; elige **Cancelar** para conservar tu borrador sin sobrescribir ese cambio.
 
-Guardar escribe el archivo real en la copia de trabajo explorada, incluido un worktree vinculado; no envía un mensaje ni prepara/confirma la edición. Al guardar se vuelve a leer primero el archivo autoritativo. El diálogo de conflicto dice **El archivo fue modificado por el agente. ¿Sobrescribir los cambios del agente?**; trata con el mismo cuidado los cambios de cualquier otro escritor externo.
+Guardar escribe el archivo real en la copia de trabajo explorada, incluido un worktree vinculado; no envía un mensaje ni prepara/confirma la edición. El diálogo de conflicto dice **El archivo fue modificado por el agente. ¿Sobrescribir los cambios del agente?**; trata con el mismo cuidado los cambios de cualquier otro escritor externo.
 
-Los borradores de código fuente modificados se conservan en la memoria del renderer por instancia de proyecto, directorio y ruta cuando se cierran o cambian los lectores. Las actualizaciones del sistema de archivos no los reemplazan silenciosamente. No es almacenamiento duradero de archivos: guarda o copia las ediciones importantes antes de reiniciar/recargar el cliente. Los fallos de lectura/escritura conservan el borrador. **Actualizar** explícitamente advierte antes de descartar ediciones sin guardar.
+Los borradores de código fuente modificados se conservan en la memoria del renderer por instancia de proyecto, directorio y ruta cuando se cierran o cambian los lectores. Las actualizaciones del sistema de archivos no los reemplazan silenciosamente. No es almacenamiento duradero de archivos: guarda o copia las ediciones importantes antes de reiniciar/recargar el cliente. **Actualizar** explícitamente advierte antes de descartar ediciones sin guardar.
 
 Cerrar el lector con su botón de cierre final devuelve a la conversación; el editor de mensajes permanece disponible debajo del lector. Ocultar el panel con **Panel derecho**, o una ventana demasiado estrecha para él, deja el lector abierto con el ancho liberado; volver a mostrar el panel lo conserva tal cual. Cambiar de sesión/worktree borra el lector seleccionado, lo que no implica que se guarde su borrador. Abrir una vista previa de navegador reemplaza el lector; abrir un archivo devuelve esa vista al modo de chat.
+
+Reemplazar o cerrar el lector afecta solo a la pestaña de proyecto actual. Las pestañas duplicadas pueden leer archivos distintos o mantener un archivo junto al chat, la web o el contenido de una Misión. La elección entre fuente y vista renderizada, la selección del editor y el desplazamiento se conservan al cambiar de pestaña mientras su destino y modelo sigan en memoria; guarda los borradores importantes antes de recargar. El modo de Archivos se restaura por pestaña; las preferencias de diff y ajuste de línea siguen compartidas.
 
 ## Vistas previas de solo lectura y acotadas {#preview-limits}
 
@@ -48,7 +50,7 @@ Cerrar el lector con su botón de cierre final devuelve a la conversación; el e
 | Diferencia de texto de Cambios/Commits | Comparación de solo lectura, no un editor para ninguno de los lados |
 | Diferencia de imagen de Git | Imágenes Antes/Después de las revisiones exactas comparadas |
 
-Las lecturas de vista previa están acotadas; el contenido grande/no compatible puede no estar disponible en lugar de cargarse sin límite. Las imágenes históricas nunca se sustituyen por el archivo actual del worktree. Un fallo de vista previa no significa que el archivo subyacente no exista. Abre el archivo con una aplicación externa adecuada cuando esté disponible, sin cambiar su revisión solo para obtener una vista previa.
+Las lecturas de vista previa están acotadas; el contenido grande/no compatible puede no estar disponible en lugar de cargarse sin límite. Las imágenes históricas nunca se sustituyen por el archivo actual del worktree. Abre el archivo con una aplicación externa adecuada cuando esté disponible, sin cambiar su revisión solo para obtener una vista previa.
 
 ## Preparar, retirar de preparación y confirmar {#stage-commit}
 
@@ -58,7 +60,7 @@ Las lecturas de vista previa están acotadas; el contenido grande/no compatible 
 
 Las cabeceras de secciones contraídas siguen aceptando archivos arrastrados. Contraer secciones o cambiar de modo conserva su estado y el borrador del mensaje de commit. Una sección larga muestra sus primeros 200 archivos y después una línea como **480 archivos no mostrados** con **Mostrar 200 más** para revelar los siguientes en su lugar; los recuentos de sección siguen siendo los totales completos, y los archivos actual, en vista previa y seleccionados permanecen visibles. Los rangos con Mayús+clic solo cubren las filas mostradas, de modo que una acción masiva nunca incluye un archivo que no puedes ver. Preparar/retirar de preparación cambia el índice en el worktree explorado; confirmar registra solo el contenido preparado. Retirar del área preparada no descarta la edición del worktree.
 
-Revisa los archivos preparados antes de confirmar, sobre todo cuando agentes u otro cliente también escriban allí. Un commit fallido no se repite automáticamente. Actualiza el estado/historial e inspecciona el error antes de reintentar, porque una respuesta perdida no demuestra que no se haya creado un commit.
+Revisa los archivos preparados antes de confirmar, sobre todo cuando agentes u otro cliente también escriban allí.
 
 ## Leer el historial de commits {#commit-history}
 
@@ -74,7 +76,7 @@ El historial de texto compara el commit con su primer padre (o una base vacía p
 2. Desactívalo si necesitas inspeccionar ediciones sin preparar que solo cambian espacios en blanco y se omiten en Cambios.
 3. Revisa la diferencia real y el contenido preparado antes de confirmar.
 
-El ajuste está activado por defecto. Su efecto principal es ocultar de la lista Cambios, los recuentos, la selección, la preparación masiva y las acciones de arrastre las modificaciones de texto con seguimiento, sin preparar, que solo cambian espacios en blanco y cumplen los criterios. Los archivos ocultos permanecen sin preparar. Los archivos preparados siguen visibles, al igual que los archivos sin seguimiento, añadidos/eliminados/renombrados y binarios. Una detección fallida/no compatible mantiene los archivos visibles en lugar de adivinar.
+El ajuste está activado por defecto. Su efecto principal es ocultar de la lista Cambios, los recuentos, la selección, la preparación masiva y las acciones de arrastre las modificaciones de texto con seguimiento, sin preparar, que solo cambian espacios en blanco y cumplen los criterios. Los archivos ocultos permanecen sin preparar. Los archivos preparados siguen visibles, al igual que los archivos sin seguimiento, añadidos/eliminados/renombrados y binarios.
 
 La detección de listas de Git puede ignorar espacios interiores, cambios solo de CRLF y saltos de línea finales añadidos/eliminados. La comparación de espacios en blanco del lector de diferencias es más limitada: sangría y espacios/tabulaciones finales, no todos los espacios interiores. Preparar y Commit siempre actúan sobre el contenido exacto, independientemente de la preferencia de visualización.
 
@@ -86,4 +88,4 @@ Las diferencias de final de línea y marca de orden de bytes pueden producir una
 2. Elige **Inicializar Git**; se ejecuta inmediatamente sin confirmación.
 3. Espera a que se actualicen proyecto/sesión y después prepara y confirma explícitamente cuando esté listo.
 
-La inicialización crea `.git` en la carpeta abierta explícitamente; no inicializa un directorio padre ni crea un primer commit. Si falta Git en el backend, siguen siendo posibles las conversaciones limitadas al directorio y la exploración de Espacio de trabajo, pero la inicialización y las operaciones Git no están disponibles. Ante un fallo incierto, actualiza antes de reintentar; ninguna solicitud de inicialización se repite automáticamente. Consulta [Proyectos](projects.md).
+La inicialización crea `.git` en la carpeta abierta explícitamente; no inicializa un directorio padre ni crea un primer commit. Si falta Git en el backend, siguen siendo posibles las conversaciones limitadas al directorio y la exploración de Espacio de trabajo, pero la inicialización y las operaciones Git no están disponibles. Consulta [Proyectos](projects.md).

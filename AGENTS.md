@@ -1,6 +1,6 @@
 # AGENT NOTES
 
-Rules here apply everywhere. Before changing code in an area listed under [Area conventions](#area-conventions), read that area's document; its rules bind like this file. `dev-docs/INDEX.md` lists every document.
+Before changing code in an area listed under [Area conventions](#area-conventions), read its binding document. Rules here apply repository-wide; `dev-docs/INDEX.md` lists all documents.
 
 ## Styling Guidelines
 - Reuse the existing token & utility layers before introducing new CSS variables or custom properties. Extend `src/styles/tokens.css` / `src/styles/utilities.css` if a shared pattern is needed.

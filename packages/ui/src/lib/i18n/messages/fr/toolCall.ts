@@ -4,7 +4,7 @@ export const toolCallMessages = {
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "Appels d’outils imbriqués",
   "toolCall.execute.more": "{count} appels supplémentaires masqués.",
-  "toolCall.execute.truncated": "Sortie native tronquée. Sortie complète :",
+  "toolCall.execute.truncated": "Sortie tronquée. Sortie complète :",
   "toolCall.pending.waitingToRun": "En attente d'exécution...",
   "toolCall.error.label": "Erreur :",
 
@@ -62,9 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Liste du répertoire...",
 
   "toolCall.renderer.bash.title.timeout": "Délai : {timeout}",
-  "toolCall.output.truncated": "[Sortie tronquée pour l’affichage ; copiez-la pour accéder à la sortie complète]",
-  "toolCall.output.tooLarge": "Sortie structurée omise de l’affichage car elle est trop volumineuse.",
-  "toolCall.task.steps.truncated": "Affichage des {count} étapes les plus récentes ; les étapes antérieures sont omises.",
+  "toolCall.output.truncated": "Sortie tronquée. Copiez pour obtenir la sortie complète.",
+  "toolCall.output.tooLarge": "Contenu trop volumineux pour être affiché.",
+  "toolCall.task.steps.truncated": "Affichage des {count} dernières étapes.",
   "toolCall.renderer.read.detail.offset": "Décalage : {offset}",
   "toolCall.renderer.read.detail.limit": "Limite : {limit}",
 
@@ -145,7 +145,8 @@ export const toolCallMessages = {
   "toolCall.task.sections.prompt": "Prompt",
   "toolCall.task.sections.steps": "Étapes",
   "toolCall.task.sections.output": "Sortie",
-  "toolCall.task.steps.count": "{count} étapes",
+  "toolCall.task.steps.count.one": "{count} étape",
+  "toolCall.task.steps.count.other": "{count} étapes",
   "toolCall.task.meta.agentModel": "Agent : {agent} • Modèle : {model}",
   "toolCall.task.meta.agent": "Agent : {agent}",
   "toolCall.task.meta.model": "Modèle : {model}",
@@ -156,7 +157,6 @@ export const toolCallMessages = {
   "toolCall.status.error": "Erreur",
   "toolCall.status.unknown": "Inconnu",
 
-  "toolCall.applyPatch.action.preparing": "Préparation de apply_patch...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} fichier)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} fichiers)",
   "toolCall.applyPatch.fileFallback": "Fichier {number}",

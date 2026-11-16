@@ -2,8 +2,7 @@
 
 `scripts/test-recurring-simple-native.mjs` qualifies the daily-document acceptance journeys of
 [`MISSIONS_RECURRING.md`](MISSIONS_RECURRING.md) against a real
-isolated OpenCode service and the shipped Missions bundle. That document defines
-the journeys; this one maps them to fixture letters and describes the fixture.
+isolated OpenCode service and the shipped Missions bundle.
 
 ## Unified native schedules
 
@@ -36,7 +35,7 @@ pagination, diagnostics and carrier links across locales.
 Read-only native capture replay uses
 `npm run qualify:browser:native-mission-replay --workspace @codenomad/ui` with the
 captured run's `NATIVE_MISSION_CAPTURE` and its own `NATIVE_MISSION_OUTPUT`.
-Keep observed results and unexecuted platform gates in delivery evidence.
+Record results and unexecuted platform gates in delivery evidence.
 
 ## Daily fixture run
 
@@ -70,7 +69,7 @@ code 1 on any failure.
 
 ## Isolation
 
-Everything the fixture touches lives under one private root
+The fixture uses one private root
 (`%LOCALAPPDATA%\Temp\opencode\recurring-simple-native-*`): the CLI copy,
 HOME/XDG/config/database/bridge roots and a loopback deterministic provider. Every
 `debug paths` location must resolve inside that root. The service runs as an owned
