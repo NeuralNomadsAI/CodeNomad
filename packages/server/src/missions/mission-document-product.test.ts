@@ -426,7 +426,7 @@ test("a full tombstone registry leaves the stopped complete map visible and pres
   assert.equal(saved.deletion!.requestID, input.requestID)
   assert.equal((await f.control.snapshot()).missions[0].id, mission.id)
   assert.equal((await f.control.snapshot()).missions[0].document!.deletion!.expectedRevision, input.expectedRevision)
-  await assert.rejects(f.control.delete({ ...input, requestID: "evade-capacity" }), /different request/)
+  await assert.rejects(f.control.delete({ ...input, requestID: "evade-capacity" }), { code: "request-conflict" })
   assert.equal((f.values.get(registryKey) as { entries: unknown[] }).entries.length, 4096)
   assert.ok(f.sessions.has(mission.coordinatorSessionId))
 })

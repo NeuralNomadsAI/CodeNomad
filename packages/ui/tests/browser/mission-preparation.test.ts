@@ -31,6 +31,9 @@ async function setup(page: Page, lose = false, calendar?: Awaited<ReturnType<typ
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   await events.route(page)
+  await page.route("**/workspaces/fixture/instance/api/location*", route => route.fulfill({ json: { directory, project: { id: "project" } } }))
+  await page.route("**/workspaces/fixture/instance/api/session**", route => route.fulfill({ json:
+    new URL(route.request().url()).pathname.endsWith("/session") ? { data: [f.source], cursor: {} } : { data: f.source } }))
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { locale: "en" } } }))
   await page.route("**/workspaces/fixture/instance/api/agent**", route => route.fulfill({ json: { data: [{ id: "coordinator", mode: "all" }] } }))
   await page.route("**/workspaces/fixture/instance/api/model**", route => route.fulfill({ json: { data: [
@@ -251,7 +254,7 @@ test("scheduled followed context survives return to immediate and is frozen only
     await form.getByLabel("Title", { exact: true }).waitFor()
     await page.waitForFunction(() => !!document.querySelector('form.mission-editor .mission-scheduling'))
     await convert(page, "once")
-    await form.getByRole("status").filter({ hasText: /read and frozen at Play/ }).waitFor()
+    assert.equal(await form.getByRole("button", { name: "Followed conversation 1", exact: true }).getAttribute("data-source-id"), "ses_followed")
     assert.equal(await form.getByRole("button", { name: "Save", exact: true }).isDisabled(), false)
     await form.getByRole("button", { name: "Save", exact: true }).click(); await form.waitFor({ state: "detached" })
     assert.equal((await f.read()).dormantJournal, null); assert.deepEqual((await f.read()).configuration.watchedConversationIDs, ["ses_followed"])

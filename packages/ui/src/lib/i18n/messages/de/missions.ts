@@ -1,4 +1,8 @@
 export const missionMessages = {
+  "missions.followed.title": "Verfolgte Gespräche",
+  "missions.followed.add": "Gespräch hinzufügen",
+  "missions.followed.source": "Verfolgtes Gespräch {number}",
+  "missions.followed.remove": "Gespräch {number} entfernen",
   "missions.control.creation.capacity": "Zu viele ungeklärte Missionserstellungen.",
   "missions.recurrence.interruptedRestart": "Die Zeitplanung wurde nach einem Dienstneustart angehalten. Setzen Sie fort, wenn Sie bereit sind.",
   "missions.recurrence.interruptedError": "Zeitplanung unterbrochen. Prüfen Sie den Status vor dem Fortsetzen.",
@@ -15,7 +19,7 @@ export const missionMessages = {
   "missions.simple.profilesNative": "Agenten und Modelle: native Standardwerte",
   "missions.simple.resumeExplanation": "Fortsetzen prüft den laufenden Durchlauf; er wird niemals zweimal gesendet.",
   "missions.recurrence.run-now": "{id} jetzt ausführen",
-  "missions.recurrence.watchedInvalid": "Bis zu 32 eindeutige Gesprächs-IDs eingeben, eine pro Zeile.",
+  "missions.recurrence.watchedInvalid": "Wählen Sie bis zu 32 verschiedene Gespräche.",
   "missions.recurrence.invalid": "Felder und Profile des Zeitplans prüfen.",
   "missions.recurrence.profilesRequired": "Agent und Modell für die Koordination und jede Rolle des Playbooks auswählen.",
   "missions.recurrence.stale": "Aktualisierung fehlgeschlagen. Letzter bestätigter Stand wird angezeigt.",

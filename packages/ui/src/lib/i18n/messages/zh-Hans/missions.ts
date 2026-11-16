@@ -1,4 +1,8 @@
 export const missionMessages = {
+  "missions.followed.title": "关注的对话",
+  "missions.followed.add": "添加对话",
+  "missions.followed.source": "关注的对话 {number}",
+  "missions.followed.remove": "移除对话 {number}",
   "missions.control.creation.capacity": "未确认的任务创建过多。",
   "missions.recurrence.interruptedRestart": "服务重启后定时调度已停止。准备好后再恢复。",
   "missions.recurrence.interruptedError": "定时调度已中断。恢复前请检查状态。",
@@ -15,7 +19,7 @@ export const missionMessages = {
   "missions.simple.profilesNative": "代理和模型：原生默认设置",
   "missions.simple.resumeExplanation": "恢复时会检查正在进行的执行，绝不会重复发送。",
   "missions.recurrence.run-now": "立即运行 {id}",
-  "missions.recurrence.watchedInvalid": "最多输入 32 个不重复的对话 ID，每行一个。",
+  "missions.recurrence.watchedInvalid": "最多选择 32 个不同的对话。",
   "missions.recurrence.invalid": "请检查日程的字段和配置。",
   "missions.recurrence.profilesRequired": "请为协调员和任务方案中的每个角色选择代理和模型。",
   "missions.recurrence.stale": "无法刷新日程，显示上次确认的状态。",

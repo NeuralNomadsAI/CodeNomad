@@ -1,4 +1,8 @@
 export const missionMessages = {
+  "missions.followed.title": "Takip edilen konuşmalar",
+  "missions.followed.add": "Konuşma ekle",
+  "missions.followed.source": "Takip edilen konuşma {number}",
+  "missions.followed.remove": "Konuşma {number} kaldır",
   "missions.control.creation.capacity": "Çok fazla sonuçlanmamış görev oluşturma işlemi var.",
   "missions.recurrence.interruptedRestart": "Hizmet yeniden başlatıldıktan sonra zamanlama durdu. Hazır olduğunuzda sürdürün.",
   "missions.recurrence.interruptedError": "Zamanlama kesintiye uğradı. Sürdürmeden önce durumu kontrol edin.",
@@ -15,7 +19,7 @@ export const missionMessages = {
   "missions.simple.profilesNative": "Ajanlar ve modeller: yerel varsayılanlar",
   "missions.simple.resumeExplanation": "Sürdürme, devam eden çalıştırmayı kontrol eder; onu asla iki kez göndermez.",
   "missions.recurrence.run-now": "{id} şimdi çalıştır",
-  "missions.recurrence.watchedInvalid": "Satır başına bir tane olmak üzere en fazla 32 benzersiz kimlik girin.",
+  "missions.recurrence.watchedInvalid": "En fazla 32 farklı konuşma seçin.",
   "missions.recurrence.invalid": "Zamanlamanın alanlarını ve profillerini kontrol edin.",
   "missions.recurrence.profilesRequired": "Koordinatör ve çalışma planındaki her rol için ajan ve model seçin.",
   "missions.recurrence.stale": "Zamanlamalar yenilenemedi. Son doğrulanan durum gösteriliyor.",

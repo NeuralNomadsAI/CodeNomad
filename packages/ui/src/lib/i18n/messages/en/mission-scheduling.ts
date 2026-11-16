@@ -139,8 +139,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "Enter a valid time.",
   "missions.scheduling.error.count": "Too many criteria: at most eight schedules (seven with separately checked events) and eight events.",
   "missions.scheduling.error.duplicate": "Remove the duplicated criterion.",
-  "missions.scheduling.immediateFollowed": "Followed conversation context is read and frozen at Play. Incomplete sources or context beyond launch capacity block the launch.",
-  "missions.scheduling.immediateCreationFollowed": "Create with a scheduled policy to keep followed conversations, then edit it to launch immediately before Play.",
   "missions.scheduling.once": "Once, immediately",
   "missions.scheduling.frequency.at": "Once, at a date",
   "missions.scheduling.frequency.in": "Once, after a delay",

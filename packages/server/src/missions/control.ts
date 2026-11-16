@@ -65,6 +65,7 @@ import { prepareMissionOneTimeDocument, prepareMissionOneTimeControl, acknowledg
 import { isCoordinatorNotificationReport, parseNativeCall, sameNativeCall } from "./native-report-provenance"
 import { finishMissionDocumentDeletion, prepareMissionDocumentDeletion } from "./mission-document-deletion"
 import { configureMissionPreparation, type MissionPreparationNative, type MissionPreparationRequest } from "./mission-preparation"
+import { nativeDocumentID } from "./launch-policy"
 export { MissionControlError } from "./control-error"
 import type {
   MissionDelegateInput,
@@ -474,6 +475,12 @@ export class MissionControl {
 
   private async createCurrent(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
     input = structuredClone(input)
+    if (input.watchedConversationIDs !== undefined) {
+      const ids = nativeDocumentID.array().max(32).refine(ids => new Set(ids).size === ids.length).safeParse(input.watchedConversationIDs)
+      if (!ids.success || ids.data.length && !this.options.documents)
+        throw new MissionControlError("Invalid or unavailable followed conversations", "invalid-input")
+      input.watchedConversationIDs = ids.data
+    }
     input.taskMode = parseMissionTaskMode(input.taskMode)
     if (input.title !== undefined) {
       const title = parseMissionTitle(input.title)

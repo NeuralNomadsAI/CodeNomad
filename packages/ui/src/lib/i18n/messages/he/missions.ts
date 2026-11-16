@@ -1,4 +1,8 @@
 export const missionMessages = {
+  "missions.followed.title": "שיחות במעקב",
+  "missions.followed.add": "הוספת שיחה",
+  "missions.followed.source": "שיחה במעקב {number}",
+  "missions.followed.remove": "הסרת שיחה {number}",
   "missions.control.creation.capacity": "יותר מדי יצירות משימה שלא הוכרעו.",
   "missions.recurrence.interruptedRestart": "התזמון נעצר לאחר הפעלה מחדש של השירות. חדשו כשתהיו מוכנים.",
   "missions.recurrence.interruptedError": "התזמון נקטע. בדקו את המצב לפני החידוש.",
@@ -15,7 +19,7 @@ export const missionMessages = {
   "missions.simple.profilesNative": "סוכנים ומודלים: ברירות המחדל המובנות",
   "missions.simple.resumeExplanation": "החידוש בודק את ההרצה הפעילה; הוא לעולם לא שולח אותה פעמיים.",
   "missions.recurrence.run-now": "להריץ את {id} עכשיו",
-  "missions.recurrence.watchedInvalid": "יש להזין עד 32 מזהי שיחות ייחודיים, אחד בכל שורה.",
+  "missions.recurrence.watchedInvalid": "בחרו עד 32 שיחות שונות.",
   "missions.recurrence.invalid": "יש לבדוק את השדות והפרופילים של לוח הזמנים.",
   "missions.recurrence.profilesRequired": "יש לבחור סוכן ומודל למתאם ולכל תפקיד בתוכנית העבודה.",
   "missions.recurrence.stale": "עדכון לוחות הזמנים נכשל. מוצג המצב המאומת האחרון.",

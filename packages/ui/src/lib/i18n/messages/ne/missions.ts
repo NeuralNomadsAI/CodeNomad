@@ -1,4 +1,8 @@
 export const missionMessages = {
+  "missions.followed.title": "पछ्याइएका कुराकानीहरू",
+  "missions.followed.add": "कुराकानी थप्नुहोस्",
+  "missions.followed.source": "पछ्याइएको कुराकानी {number}",
+  "missions.followed.remove": "कुराकानी {number} हटाउनुहोस्",
   "missions.control.creation.capacity": "धेरै मिसन सिर्जनाहरू अझै समाधान भएका छैनन्।",
   "missions.recurrence.interruptedRestart": "सेवा पुनः सुरु भएपछि तालिकाअनुसार सञ्चालन रोकियो। तयार भएपछि पुनः जारी गर्नुहोस्।",
   "missions.recurrence.interruptedError": "तालिकाअनुसार सञ्चालन अवरुद्ध भयो। पुनः जारी गर्नुअघि स्थिति जाँच्नुहोस्।",
@@ -15,7 +19,7 @@ export const missionMessages = {
   "missions.simple.profilesNative": "एजेन्ट र मोडेल: मूल पूर्वनिर्धारित विकल्पहरू",
   "missions.simple.resumeExplanation": "पुनः जारी गर्दा चलिरहेको सञ्चालन जाँचिन्छ; त्यसलाई कहिल्यै दुई पटक पठाइँदैन।",
   "missions.recurrence.run-now": "{id} अहिले चलाउनुहोस्",
-  "missions.recurrence.watchedInvalid": "प्रत्येक लाइनमा एउटा गरी बढीमा ३२ फरक वार्तालाप ID राख्नुहोस्।",
+  "missions.recurrence.watchedInvalid": "बढीमा ३२ फरक कुराकानी छान्नुहोस्।",
   "missions.recurrence.invalid": "तालिकाका विवरण र प्रोफाइल जाँच्नुहोस्।",
   "missions.recurrence.profilesRequired": "संयोजक र कार्ययोजनाको प्रत्येक भूमिकाका लागि एजेन्ट र मोडेल छान्नुहोस्।",
   "missions.recurrence.stale": "तालिका ताजा गर्न सकिएन। पछिल्लो पुष्टि भएको अवस्था देखाइएको छ।",

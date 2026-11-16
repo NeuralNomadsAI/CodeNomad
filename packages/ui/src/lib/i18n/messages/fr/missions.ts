@@ -1,4 +1,8 @@
 export const missionMessages = {
+  "missions.followed.title": "Conversations suivies",
+  "missions.followed.add": "Ajouter une conversation",
+  "missions.followed.source": "Conversation suivie {number}",
+  "missions.followed.remove": "Retirer la conversation {number}",
   "missions.control.creation.capacity": "Trop de créations de mission non résolues.",
   "missions.recurrence.interruptedRestart": "La programmation s’est arrêtée après le redémarrage du service. Reprenez quand vous êtes prêt.",
   "missions.recurrence.interruptedError": "Programmation interrompue. Vérifiez l’état avant de reprendre.",
@@ -15,7 +19,7 @@ export const missionMessages = {
   "missions.simple.profilesNative": "Agents et modèles : valeurs natives par défaut",
   "missions.simple.resumeExplanation": "La reprise vérifie le passage en cours ; elle ne l’envoie jamais deux fois.",
   "missions.recurrence.run-now": "Exécuter {id} maintenant",
-  "missions.recurrence.watchedInvalid": "Saisissez au plus 32 ID uniques, un par ligne.",
+  "missions.recurrence.watchedInvalid": "Choisissez au plus 32 conversations différentes.",
   "missions.recurrence.invalid": "Vérifiez les champs et les profils du programme.",
   "missions.recurrence.profilesRequired": "Choisissez un agent et un modèle pour le coordinateur et chaque rôle du scénario.",
   "missions.recurrence.stale": "Actualisation impossible. Dernier état confirmé affiché.",

@@ -1,4 +1,8 @@
 export const missionMessages = {
+  "missions.followed.title": "フォロー中の会話",
+  "missions.followed.add": "会話を追加",
+  "missions.followed.source": "フォロー中の会話 {number}",
+  "missions.followed.remove": "会話 {number} を削除",
   "missions.control.creation.capacity": "未解決のミッション作成が多すぎます。",
   "missions.recurrence.interruptedRestart": "サービスの再起動によりスケジュールが停止しました。準備ができたら再開してください。",
   "missions.recurrence.interruptedError": "スケジュールが中断されました。再開する前に状態を確認してください。",
@@ -15,7 +19,7 @@ export const missionMessages = {
   "missions.simple.profilesNative": "エージェントとモデル：ネイティブの既定値",
   "missions.simple.resumeExplanation": "再開時は実行中の処理を確認します。同じ処理を二度送信することはありません。",
   "missions.recurrence.run-now": "{id}を今すぐ実行",
-  "missions.recurrence.watchedInvalid": "重複しない会話 ID を 32 件以内で、1 行に 1 件入力してください。",
+  "missions.recurrence.watchedInvalid": "異なる会話を32件まで選択してください。",
   "missions.recurrence.invalid": "スケジュールの入力項目とプロファイルを確認してください。",
   "missions.recurrence.profilesRequired": "調整役とプレイブックの各役割にエージェントとモデルを選んでください。",
   "missions.recurrence.stale": "更新できませんでした。前回確認した状態を表示しています。",

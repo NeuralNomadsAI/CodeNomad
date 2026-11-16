@@ -1,4 +1,8 @@
 export const missionMessages = {
+  "missions.followed.title": "Отслеживаемые беседы",
+  "missions.followed.add": "Добавить беседу",
+  "missions.followed.source": "Отслеживаемая беседа {number}",
+  "missions.followed.remove": "Убрать беседу {number}",
   "missions.control.creation.capacity": "Слишком много неподтверждённых созданий миссий.",
   "missions.recurrence.interruptedRestart": "Выполнение по расписанию остановлено после перезапуска службы. Возобновите, когда будете готовы.",
   "missions.recurrence.interruptedError": "Выполнение по расписанию прервано. Проверьте состояние перед возобновлением.",
@@ -15,7 +19,7 @@ export const missionMessages = {
   "missions.simple.profilesNative": "Агенты и модели: штатные значения по умолчанию",
   "missions.simple.resumeExplanation": "Возобновление проверяет текущий запуск и никогда не отправляет его дважды.",
   "missions.recurrence.run-now": "Запустить {id} сейчас",
-  "missions.recurrence.watchedInvalid": "Укажите до 32 уникальных ID, по одному в строке.",
+  "missions.recurrence.watchedInvalid": "Выберите до 32 разных бесед.",
   "missions.recurrence.invalid": "Проверьте поля и профили расписания.",
   "missions.recurrence.profilesRequired": "Выберите агента и модель для координатора и каждой роли плана.",
   "missions.recurrence.stale": "Не удалось обновить расписания. Показаны последние подтверждённые данные.",

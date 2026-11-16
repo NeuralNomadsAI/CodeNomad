@@ -135,8 +135,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.time": "הזינו שעה תקינה.",
   "missions.scheduling.error.count": "יותר מדי קריטריונים: לכל היותר שמונה תזמונים (שבעה עם אירועים שנבדקים בנפרד) ושמונה אירועים.",
   "missions.scheduling.error.duplicate": "הסירו את הקריטריון הכפול.",
-  "missions.scheduling.immediateFollowed": "הקשר השיחות שבמעקב נקרא ומוקפא בעת Play. מקורות לא שלמים או הקשר החורג מהקיבולת חוסמים את ההפעלה.",
-  "missions.scheduling.immediateCreationFollowed": "צרו עם מדיניות מתוזמנת כדי לשמור שיחות במעקב, ואז שנו להפעלה מיידית לפני Play.",
   "missions.scheduling.once": "פעם אחת, מיד",
   "missions.scheduling.frequency.at": "פעם אחת, בתאריך מסוים",
   "missions.scheduling.frequency.in": "פעם אחת, לאחר השהיה",

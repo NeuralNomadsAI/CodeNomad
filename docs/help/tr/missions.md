@@ -78,6 +78,8 @@ Baştaki tetikleyiciler 15 dakikada bir kontrol edilir. İlk Başlat referansı 
 
 Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı geçişleri ve geçmişi gösterir. Son 30 sonuç saklanır; toplam sayaçlar korunur. Kabul edilen **Şimdi çalıştır** sayılır. Gösterilemeyen kayıtlı kural, açıkça değiştirilene kadar korunur; düzenlemeden önce bitiş ve sınırları inceleyin.
 
+**Takip edilen konuşmalar** altında **Konuşma ekle** ile bir konuşma seçin; anında Görev için de kullanılabilir. Başlatmadan önce seçimi değiştirin veya × düğmesiyle kaldırın.
+
 ### Mevcut günlük programlar {#existing-daily-schedules}
 
 Kendi kontrollerini ve saat dilimini korurlar. Hizmet yeniden başlayınca kesintiye uğramış günlük kayıtlar Devam gerektirir. Kaçırılan tüm günler yerine son uygun günü telafi ederler. Sonuçlar seçilen kayıttadır.
