@@ -91,7 +91,8 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "Выводы инструментов: {toolCount}; блоки рассуждений: {reasoningCount}. Итоговый текст будет сохранён.",
   "commands.removeSessionTechnicalParts.confirm.label": "Удалить",
   "commands.removeSessionTechnicalParts.failed.title": "Ошибка удаления",
-  "commands.removeSessionTechnicalParts.failed.message": "Не удалось очистить ответов: {count}.",
+  "commands.removeSessionTechnicalParts.failed.message.one": "Не удалось очистить {count} ответ.",
+  "commands.removeSessionTechnicalParts.failed.message.other": "Не удалось очистить ответов: {count}.",
 
   "commands.undoLastMessage.label": "Отменить последнее сообщение",
   "commands.undoLastMessage.description": "Откатить последнее сообщение",

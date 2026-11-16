@@ -230,7 +230,7 @@ test("changing an indexed task key does not transfer a removed tool's disclosure
 for (const retainedIndex of [0, 1]) {
   test(`authoritative task membership 2->1->2 preserves retained step-${retainedIndex}`, async () => open("mode=task&count=2", async page => {
     const retained = step(page, retainedIndex)
-    const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+ steps$/ })
+    const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+ steps?$/ })
     await retained.waitFor()
     assert.equal(await counter.textContent(), "2 steps")
     await retained.locator(":scope > .tool-call-header > .tool-call-header-toggle").click()
@@ -243,7 +243,7 @@ for (const retainedIndex of [0, 1]) {
     await page.evaluate(index => (window as any).fixture.replaceChildTools([index]), retainedIndex)
     await frames(page)
     assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), 1)
-    assert.equal(await counter.textContent(), "1 steps", "removed parts must also leave the membership counter")
+    assert.equal(await counter.textContent(), "1 step", "removed parts must also leave the membership counter")
     await page.evaluate(index => (window as any).fixture.replaceChildTools([index, 2]), retainedIndex)
     await frames(page)
     assert.equal(await counter.textContent(), "2 steps")
@@ -257,7 +257,7 @@ for (const retainedIndex of [0, 1]) {
 
 test("authoritative task membership replaces and reorders equal-cardinality identities", async () => open("mode=task&count=2", async page => {
   const retained = step(page, 0)
-  const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+ steps$/ })
+  const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+ steps?$/ })
   await retained.waitFor()
   await retained.locator(":scope > .tool-call-header > .tool-call-header-toggle").click()
   await retained.locator("pre code").waitFor()
@@ -275,15 +275,15 @@ test("authoritative task membership drops a tool changed to text under the same 
   await step(page, 1).waitFor()
   await page.evaluate(() => (window as any).fixture.replaceChildTools([0, 1], [1]))
   await frames(page)
-  const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+ steps$/ })
-  assert.equal(await counter.textContent(), "1 steps")
+  const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+ steps?$/ })
+  assert.equal(await counter.textContent(), "1 step")
   assert.equal(await step(page, 1).count(), 0)
   assert.equal(await step(page, 0).count(), 1)
 }))
 
 test("authoritative task membership keeps the 200-step bound and clears stale truncation after shrink", async () => open("mode=task&count=201", async page => {
   await step(page, 200).waitFor()
-  const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+\+? steps$/ })
+  const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+\+? steps?$/ })
   assert.equal(await counter.textContent(), "200+ steps")
   assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), 200)
   await page.evaluate(() => (window as any).fixture.replaceChildTools(Array.from({ length: 199 }, (_, index) => index + 2)))
@@ -296,7 +296,7 @@ test("authoritative task membership keeps the 200-step bound and clears stale tr
 for (const { count, legacy } of [{ count: 2, legacy: false }, { count: 201, legacy: false }, { count: 201, legacy: true }]) {
   test(`native batched child deletion clears task membership (count=${count}, legacy=${legacy})`, async () => open(`mode=task&count=${count}${legacy ? "&legacy=1" : ""}`, async page => {
     const parent = page.locator('.tool-call[data-part-id="parent-task"]')
-    const counter = parent.locator(".tool-call-task-section-meta").filter({ hasText: /^\d+\+? steps$/ })
+    const counter = parent.locator(".tool-call-task-section-meta").filter({ hasText: /^\d+\+? steps?$/ })
     await step(page, count - 1).waitFor()
     assert.equal(await counter.textContent(), `${count > 200 ? "200+" : count} steps`)
     assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), Math.min(count, 200))
@@ -314,7 +314,7 @@ for (const { count, legacy } of [{ count: 2, legacy: false }, { count: 201, lega
     assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), 0)
     assert.equal(await parent.locator(".tool-call-diagnostic-message").count(), 0, "deleted native membership must clear its truncation state")
     if (legacy) {
-      assert.equal(await counter.textContent(), "1 steps", "fallback count must use the parent's legacy summary, not deleted native keys")
+      assert.equal(await counter.textContent(), "1 step", "fallback count must use the parent's legacy summary, not deleted native keys")
       assert.equal(await parent.locator('[data-task-id="legacy-step"]').textContent().then(text => text?.includes("Parent legacy summary")), true)
     } else {
       assert.equal(await counter.count(), 0, "a deleted child without legacy steps must not retain a ghost count")

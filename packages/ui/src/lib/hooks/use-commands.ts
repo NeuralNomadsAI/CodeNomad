@@ -397,7 +397,8 @@ export function useCommands(options: UseCommandsOptions) {
           progress.pruning(0, plan.candidates.length)
           const failed = await executeSessionTechnicalPartDeletion(plan, { signal: progress.signal, progress: progress.pruning })
           if (failed.length > 0 || plan.skipped) {
-            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed.length + plan.skipped }), {
+            const count = failed.length + plan.skipped
+            showAlertDialog(tGlobal(count === 1 ? "commands.removeSessionTechnicalParts.failed.message.one" : "commands.removeSessionTechnicalParts.failed.message.other", { count }), {
               title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
               detail: [...new Set(failed), ...(plan.skipped ? [tGlobal("history.skipped", { count: plan.skipped })] : [])].join("\n"),
               variant: "error",

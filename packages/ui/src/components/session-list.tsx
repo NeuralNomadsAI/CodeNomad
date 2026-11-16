@@ -530,7 +530,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     if (selected.length === 0) return
 
     const confirmed = await showConfirmDialog(
-      t("sessionList.bulkDelete.confirmMessage", { count: selected.length }),
+      t(selected.length === 1 ? "sessionList.bulkDelete.confirmMessage.one" : "sessionList.bulkDelete.confirmMessage.other", { count: selected.length }),
       {
         title: t("sessionList.bulkDelete.title"),
         variant: "warning",
@@ -588,7 +588,7 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     if (failed > 0) {
       showToastNotification({ category: "sessions",
-        message: t("sessionList.bulkDelete.error", { count: failed }),
+        message: t(failed === 1 ? "sessionList.bulkDelete.error.one" : "sessionList.bulkDelete.error.other", { count: failed }),
         variant: "error",
       })
     }
@@ -1037,7 +1037,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                 type="button"
                 class="button-tertiary"
                 onClick={handleBulkDelete}
-                aria-label={t("sessionList.bulkDelete.ariaLabel", { count: selectedCount() })}
+                aria-label={t(selectedCount() === 1 ? "sessionList.bulkDelete.ariaLabel.one" : "sessionList.bulkDelete.ariaLabel.other", { count: selectedCount() })}
               >
                 {t("sessionList.bulkDelete.button", { count: selectedCount() })}
               </button>

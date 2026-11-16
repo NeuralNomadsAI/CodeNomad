@@ -91,7 +91,8 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "ツール出力: {toolCount}、推論ブロック: {reasoningCount}。最終回答は保持されます。",
   "commands.removeSessionTechnicalParts.confirm.label": "削除",
   "commands.removeSessionTechnicalParts.failed.title": "削除に失敗しました",
-  "commands.removeSessionTechnicalParts.failed.message": "{count} 件の回答をクリーンアップできませんでした。",
+  "commands.removeSessionTechnicalParts.failed.message.one": "{count} 件の回答をクリーンアップできませんでした。",
+  "commands.removeSessionTechnicalParts.failed.message.other": "{count} 件の回答をクリーンアップできませんでした。",
 
   "commands.undoLastMessage.label": "直前のメッセージを取り消す",
   "commands.undoLastMessage.description": "直前のメッセージへ戻す",

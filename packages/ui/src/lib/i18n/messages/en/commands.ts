@@ -91,7 +91,8 @@ export const commandMessages = {
   "commands.removeSessionTechnicalParts.confirm.message": "Tool outputs: {toolCount}; reasoning blocks: {reasoningCount}. Final response text will be preserved.",
   "commands.removeSessionTechnicalParts.confirm.label": "Remove",
   "commands.removeSessionTechnicalParts.failed.title": "Removal failed",
-  "commands.removeSessionTechnicalParts.failed.message": "Failed to clean {count} responses.",
+  "commands.removeSessionTechnicalParts.failed.message.one": "Failed to clean {count} response.",
+  "commands.removeSessionTechnicalParts.failed.message.other": "Failed to clean {count} responses.",
 
   "commands.undoLastMessage.label": "Undo Last Message",
   "commands.undoLastMessage.description": "Revert the last message",
