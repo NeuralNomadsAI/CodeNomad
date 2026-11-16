@@ -20,10 +20,24 @@ Lichen, Velvet and Ember keep their declared surface colors. Custom colors are
 never silently recolored.
 
 The soft light canvases are darker than the original editor whites. Dark
-canvases use mid-dark grays instead of near-black. Text is adjusted for at least
-4.5:1 on base, panel, tool and user-message surfaces; participant colors are
-checked at full opacity for at least 3:1. These thresholds apply at full
-opacity; decorative resting icons keep their partial opacity.
+canvases use mid-dark grays instead of near-black. `palette-quality.test.ts`
+checks text at 4.5:1 on base, panel, muted, user-message and assistant/tool
+surfaces, with exact `textMuted` exceptions: Slate `#9DB5D2` on `#404E65`
+uses 3.99:1; Clay `#C6B9A5` on `#55524E` uses 4.02:1. Participant colors
+use 3:1, except Porcelain `compactionAccent` `#A07AFF` on `#CFD1D4`,
+`#E1E3E5`, `#BDC1C6` or `#D6DCE0`, which uses 1.72:1.
+
+The 3:1 emphasis check on base/panel surfaces exempts these exact pairs:
+
+- Porcelain `compactionAccent` `#A07AFF` on `#CFD1D4` / `#E1E3E5`.
+- Dawn `accentPrimary` `#7F69E2` on `#BCD2E5`.
+- Parchment `accentPrimary` `#A9BA45` on `#D5C09E` / `#E2CEB0`.
+- Linen `accentPrimary` `#9D8325` and `statusSuccess` `#699245` on `#E6E0CE`.
+- Iris `accentPrimary` `#6B7CFF` on `#E0D4E5` / `#EDDFEF`.
+- Sage Light `accentPrimary` `#6C7FCB` on `#CBD8C1` / `#DCE6D2`.
+
+These thresholds apply at full opacity; decorative resting icons keep their
+partial opacity.
 
 ## Reference revisions
 
