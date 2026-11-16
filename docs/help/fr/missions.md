@@ -42,8 +42,6 @@ Dépliez **Agents et modèles** pour modifier une ligne Agent / Modèle / Réfle
 
 L’engrenage des Missions ouvre les défauts pour **Toutes les missions** ou pour un scénario. Les Préférences enregistrent chaque modification immédiatement. Les listes de modèles suivent la visibilité et les favoris du sélecteur de conversation ; un modèle enregistré hors de la liste reste sélectionné.
 
-Un échec d’enregistrement relit les préférences stockées ; des choix identiques effacent l’alerte. Si le catalogue des agents et modèles ne se charge pas, **Recharger** le relit en conservant vos sélections.
-
 **Comparer deux modèles** exige des modèles différents pour A et B ; changer seulement Réflexion ne suffit pas. Le juge aveugle utilise le modèle du coordinateur sauf choix différent. Employer A ou B comme juge peut biaiser la comparaison.
 
 Une programmation gérée par calendrier nécessite un agent et un modèle explicites pour le coordinateur et chaque rôle du scénario.

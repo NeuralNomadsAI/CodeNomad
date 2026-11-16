@@ -38,8 +38,6 @@ Despliega **Agentes y modelos** para editar Agente / Modelo / Razonamiento por r
 
 El engranaje abre los valores de todas las misiones o de un guion. Preferencias guarda cada cambio inmediatamente. Las listas siguen visibilidad y favoritos del selector de conversación; un modelo guardado fuera de la lista sigue seleccionado.
 
-Si falla el guardado, se releen las preferencias almacenadas; si coinciden, se quita la alerta. Si no se carga el catálogo de agentes y modelos, **Recargar** vuelve a leerlo conservando las selecciones.
-
 **Comparar dos modelos** requiere A y B distintos; cambiar solo Razonamiento no basta. El juez usa el modelo del coordinador salvo otra selección. Usar A o B como juez puede sesgar la comparación.
 
 La programación basada en calendario requiere agente y modelo explícitos para el coordinador y cada rol del guion.

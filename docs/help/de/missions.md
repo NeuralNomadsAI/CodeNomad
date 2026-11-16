@@ -38,8 +38,6 @@ Eine Projekttiefe erlaubt außerdem Unteragenten, innerhalb dieser Tiefe selbst 
 
 Das Zahnrad öffnet Vorgaben für alle Missionen oder ein Playbook. Dort wird jede Änderung sofort gespeichert. Modelllisten folgen Sichtbarkeit und Favoriten der Unterhaltungsauswahl; gespeicherte Werte außerhalb der Liste bleiben erhalten.
 
-Nach einem Speicherfehler werden die gespeicherten Vorgaben erneut gelesen; übereinstimmende Werte entfernen die Warnung. Falls der Agenten-/Modellkatalog nicht lädt, liest **Neu laden** ihn erneut und behält Ihre Auswahl bei.
-
 **Zwei Modelle vergleichen** benötigt unterschiedliche Modelle für A und B. Eine andere Denken-Stufe reicht nicht. Der Gutachter verwendet ohne eigene Auswahl das Koordinatormodell; A oder B als Gutachter kann verzerren.
 
 Kalenderbasierte Zeitplanung benötigt einen expliziten Agenten und ein Modell für den Koordinator und jede Playbook-Rolle.

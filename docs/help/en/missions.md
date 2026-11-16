@@ -42,8 +42,6 @@ Expand **Agents and models** to edit one Agent / Model / Thinking row per role. 
 
 The Missions gear opens the defaults for **All missions** or a particular playbook. Preferences save each change immediately. Model lists follow the conversation selector's visibility and favorites settings; a saved model outside the list stays selected.
 
-A failed save rereads the stored preferences; matching choices clear the alert. If the agent/model catalog fails to load, use **Reload** to read it again while keeping your selections.
-
 **Compare two models** requires different models for A and B; changing Thinking alone does not make a different model. The blind judge uses the coordinator's model unless you choose another one. Using A or B as judge can bias the comparison.
 
 Calendar-backed scheduling requires an explicit agent and model for the coordinator and every playbook role.
