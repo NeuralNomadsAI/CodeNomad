@@ -57,7 +57,7 @@ Utilisez **Recharger la configuration OpenCode**, sous **Dépannage** lorsque le
 ## Environnement de session {#session-environment}
 
 1. Ouvrez **Paramètres → Avancé** et développez **Variables d'environnement**.
-2. Ajoutez, modifiez ou retirez les remplacements du profil ; chaque changement est enregistré immédiatement.
+2. Ajoutez des remplacements, modifiez leurs valeurs ou retirez-les ; les noms enregistrés sont en lecture seule et chaque changement est enregistré immédiatement.
 3. Envoyez le prochain prompt, commande personnalisée ou demande shell de session via CodeNomad pour appliquer l’environnement courant à cette conversation.
 
 C’est un réglage de profil de configuration. Simplement ouvrir/lire une conversation ou enregistrer les paramètres ne modifie pas une session native. Retirer un remplacement restaure la valeur héritée de l’hôte d’exécution, ou la supprime si elle y est absente.
