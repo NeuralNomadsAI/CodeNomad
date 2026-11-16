@@ -34,3 +34,13 @@ test("an invalid document reads as false until the file changes", t => {
   fs.writeFileSync(file, "server:\n  sidecarsOverDirectHttps: true\n")
   assert.equal(reader.enabled("sidecarsOverDirectHttps"), true)
 })
+
+test("nested UI admission flags follow authoritative strict boolean changes", t => {
+  const file = configFile(t, "ui:\n  settings:\n    multiBackend: true\n")
+  const reader = new ServerFlagReader(file)
+  assert.equal(reader.enabled("multiBackend", ["ui", "settings"]), true)
+  fs.writeFileSync(file, "ui:\n  settings:\n    multiBackend: 'true'\n")
+  assert.equal(reader.enabled("multiBackend", ["ui", "settings"]), false)
+  fs.writeFileSync(file, "ui: [unclosed\n")
+  assert.equal(reader.enabled("multiBackend", ["ui", "settings"]), false)
+})

@@ -1,6 +1,6 @@
 {
   "components/server-add-field.tsx": ["delegated:backend x3"],
-  "components/settings/servers-settings-section.tsx": ["delegated:backend x3"],
+  "components/settings/servers-settings-section.tsx": ["delegated:backend x4"],
   "lib/remote-server-request.ts": ["network:fetch x1"],
   "stores/backend-registry.ts": ["continuation:delegated x1","delegated:backend x9","network:fetch x1"],
   "stores/remote-backends.ts": ["delegated:backend x2"],
@@ -90,7 +90,7 @@
   "components/remote-restore-view.tsx": ["api-client:connectRemoteBackend x1","delegated:backend x7"],
   "components/session-list.tsx": ["continuation:createEffect x3","continuation:delegated x1","continuation:setTimeout x1","delegated:backend x14"],
   "components/remote-server-browser.tsx": ["api-client:browseRemoteServer x1","api-client:connectRemoteServer x1","continuation:createEffect x1","continuation:onMount x1","delegated:backend x17"],
-  "components/settings-screen.tsx": ["delegated:backend x2"],
+  "components/settings-screen.tsx": ["continuation:onMount x1","delegated:backend x2","server-meta:getServerMeta x1"],
   "components/settings/agent-memory-editor.tsx": ["delegated:backend x2"],
   "components/settings/agent-memory-settings-card.tsx": ["backend-events:on x1","backend-events:onOpen x1","continuation:backend-events:on x1","continuation:backend-events:onOpen x1","continuation:createEffect x1","delegated:backend x12"],
   "components/session-picker.tsx": ["delegated:backend x5"],

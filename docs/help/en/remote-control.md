@@ -71,7 +71,8 @@ Paired devices can use ordinary project/conversation APIs, send prompts, inspect
 | Normal authenticated UI, workspaces, conversations and SSE | Available to a paired device. |
 | Password login/logout, password changes, local token bootstrap | Unavailable; device credentials are required even if direct authentication is disabled. |
 | Remote Control status | Readable by a paired device; management is unavailable. Start/Stop, pairing creation, device list and revocation stay on the host access path. |
-| Desktop remote-window/server management and proxy routes | Unavailable (`/api/remote-servers/`, `/api/remote-proxy/`). |
+| Experimental saved servers and backend relay | Authenticated remote clients can use/manage all host-saved servers when the feature and host capabilities allow it. New server passwords/pairing links require Remote Control or HTTPS, not plain LAN HTTP. See [saved servers](remote-access.md#saved-servers). |
+| Desktop remote windows and window proxy | Host-only (`/api/remote-proxy/`). |
 | SideCar **content proxy** | Requires loopback (`/sidecars/`), as do SideCar WebSockets. The `/api/sidecars` registration APIs are available to paired devices and authenticated direct LAN clients. |
 | Web preview content | Available while **Web previews** is on (the default) under **Settings → Remote Access → Remote Control** on the host. Each preview address opens its page without pairing, so keep it private. Turning the switch off stops served previews and their WebSockets; paired devices hide **Open web preview** once they reload. |
 | Automation bridge | Unavailable (`/api/opencode-plugin/`). Native desktop capabilities do not become browser capabilities. |

@@ -18,11 +18,12 @@ import { registerRemoteServerBrowseRoutes } from "../../../server/src/server/rou
 import { registerBackendRelayRoutes } from "../../../server/src/server/routes/backend-relay"
 import { RemoteServerBrowseManager } from "../../../server/src/codenomad-servers/browse-manager"
 import { startFakeCodeNomad } from "../../../server/src/codenomad-servers/test-support/fake-codenomad"
-import type { RemoteServerProfile } from "../../../server/src/api-types"
+import type { RemoteServerProfile, ServerMeta } from "../../../server/src/api-types"
 import { CODENOMAD_API_CONTRACT } from "../../../server/src/meta-contract"
 
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
-async function fixture(t: TestContext, flag: unknown = true, locale = "en", intent = false, sshOnly = false) {
+async function fixture(t: TestContext, flag: unknown = true, locale = "en", intent = false, sshOnly = false,
+  meta: Partial<ServerMeta> = { localRequest: true }) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-servers-ui-")), logger = pino({ level: "silent" })
   const a = await startFakeCodeNomad(), b = await startFakeCodeNomad()
   const settings = new SettingsService(resolveConfigLocation(directory), undefined, logger)
@@ -77,7 +78,7 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
       manager.reconcile()
     }
   })
-  app.get("/api/meta", async () => ({ localRequest: true }))
+  app.get("/api/meta", async () => meta)
   app.get("/api/memory/settings", async () => ({ enabled: false }))
   app.get("/api/speech/capabilities", async () => ({}))
   app.get("/api/auth/status", async () => ({ authenticated: true }))
@@ -164,6 +165,37 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
 }
 const field = (page: Page) => page.locator("[data-server-add-field]")
 const edit = (page: Page, name: string) => page.getByRole("button", { name: `Edit server: ${name}`, exact: true }).click()
+
+for (const manageable of [false, true]) test(`non-local Servers capability allows use with management ${manageable}`, { timeout: 90_000 }, async t => {
+  const f = await fixture(t, true, "en", true, false, { localRequest: false, serversUsable: true,
+    serversManageable: manageable, secretEntryAllowed: false }), { page } = f
+  const open = page.getByRole("button", { name: "Open: Alpha", exact: true }).last()
+  await open.waitFor()
+  assert.equal(await open.isDisabled(), false)
+  assert.equal(await field(page).count(), manageable ? 2 : 0)
+  assert.equal(await page.getByRole("button", { name: "Edit server: Alpha", exact: true }).count(), manageable ? 2 : 0)
+  assert.equal(await page.getByRole("button", { name: "Remove saved server: Alpha", exact: true }).count(), manageable ? 2 : 0)
+  await open.click()
+  assert.deepEqual(await page.evaluate(() => (window as any).serversFixture.intents), [{ id: "a", baseUrl: f.a.origin, skipTlsVerify: false }])
+  assert.equal(await page.getByRole("button", { name: "Change password", exact: true }).count(), 0)
+  if (manageable) {
+    await page.getByRole("button", { name: "Edit server: Alpha", exact: true }).last().click()
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("Remote rename")
+    await page.getByRole("textbox", { name: "Name", exact: true }).press("Enter")
+    await page.getByRole("dialog").waitFor({ state: "hidden" })
+    assert.equal(f.profileRows()[0].name, "Remote rename")
+  }
+  f.check()
+})
+
+test("explicitly refused Servers capability hides navigation even for a local request", { timeout: 90_000 }, async t => {
+  const f = await fixture(t, true, "en", false, false, { localRequest: true, serversUsable: false, serversManageable: false })
+  await f.page.getByRole("heading", { name: "General", exact: true }).waitFor()
+  assert.equal(await f.page.getByRole("button", { name: "Servers", exact: true }).count(), 0)
+  assert.equal(await field(f.page).count(), 0)
+  assert.equal(f.calls.filter(call => /\/remote-servers\//.test(call.url)).length, 0)
+  f.check()
+})
 
 test("Preferences CRUD uses host profiles; rename offline, normalized duplicate, no implicit open, observable removal failure", { timeout: 90_000 }, async t => {
   const f = await fixture(t), { page } = f

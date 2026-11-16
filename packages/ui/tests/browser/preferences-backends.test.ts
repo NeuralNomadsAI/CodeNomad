@@ -86,7 +86,8 @@ async function api(page: Page, selected: () => string) {
       : path.endsWith("/integration") ? [{ id: "ai", name: owner, methods: [{ type: "key", label: "API key" }], connections: [] }] : []
     const value = path === "/api/storage/config/ui" ? { settings: { locale: "en", multiBackend: true } }
       : path === "/api/storage/state/ui" ? { remoteServers: ["a", "b"].map(id => ({ id, name: id, baseUrl: `http://${id}.test`, skipTlsVerify: false, createdAt: "", updatedAt: "" })) }
-      : path === "/api/meta" ? { serverId: owner === "a" ? identity : `server-${owner}`, apiContract: 1 }
+      : path === "/api/meta" ? { serverId: owner === "a" ? identity : `server-${owner}`, apiContract: 1,
+        ...(owner === "local" ? { localRequest: true, serversUsable: true, serversManageable: true, secretEntryAllowed: true } : {}) }
       : path === "/api/workspaces" ? missing ? [] : [{ id, path: "/homonym", status: "ready", proxyPath: `/workspaces/${id}/instance` }]
       : path === "/api/memory/settings" ? { enabled: true }
       : path === "/api/memory" ? body.operation.action === "list" ? {

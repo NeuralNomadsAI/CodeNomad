@@ -108,6 +108,8 @@ export interface RemoteGateDeps {
   assignDirectDevice?(socket: Socket, deviceId: string): void
   /** The host's opt-in for SideCar content on verified direct HTTPS origins only. */
   allowsDirectSidecar?(request: FastifyRequest): boolean
+  /** Host-owned experimental multi-backend admission for browser UI routes. */
+  allowsBackendUi?(): boolean
 }
 
 /**
@@ -172,7 +174,9 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
     reject(reply, 404, "Not found")
     return true
   }
-  if ((isHostOnlyPath(pathname, method) || ingress && (pathname === "/api/memory" || pathname.startsWith("/api/memory/")))
+  const backendUi = request.headers["x-codenomad-server-request"] === undefined && device !== null
+    && deps.allowsBackendUi?.() === true && isBackendUiRoute(pathname, method)
+  if ((isHostOnlyPath(pathname, method) && !backendUi || ingress && (pathname === "/api/memory" || pathname.startsWith("/api/memory/")))
     && !(PUBLIC_PATHS.has(pathname) && !serverRequest)) {
     reject(reply, 404, "Not found")
     return true
@@ -218,7 +222,9 @@ function gateDirectHttpsDevice(request: FastifyRequest, reply: FastifyReply, tok
     return true
   }
   const directSidecar = pathname.startsWith("/sidecars/") && deps.allowsDirectSidecar?.(request) === true
-  if ((isHostOnlyPath(pathname, method) && !directSidecar || pathname === "/api/memory" || pathname.startsWith("/api/memory/")) && !PUBLIC_PATHS.has(pathname)) {
+  const backendUi = request.headers["x-codenomad-server-request"] === undefined
+    && deps.allowsBackendUi?.() === true && isBackendUiRoute(pathname, method)
+  if ((isHostOnlyPath(pathname, method) && !directSidecar && !backendUi || pathname === "/api/memory" || pathname.startsWith("/api/memory/")) && !PUBLIC_PATHS.has(pathname)) {
     reject(reply, 404, "Not found")
     return true
   }
@@ -268,4 +274,18 @@ export function isHostOnlyPath(pathname: string, method: string, direct = false)
 export function isMemoryRelayRoute(pathname: string, method: string): boolean {
   return pathname === "/api/memory" && method === "POST"
     || pathname === "/api/memory/settings" && ["GET", "HEAD", "PUT"].includes(method)
+}
+
+/** Browser-only exceptions; remote-side host administration and nested relays stay closed. */
+export function isBackendUiRoute(pathname: string, method: string): boolean {
+  const verb = method === "HEAD" ? "GET" : method
+  if (verb === "PATCH" && ["/api/storage/state", "/api/storage/state/ui"].includes(pathname)) return true
+  if (verb === "GET" && pathname === "/api/remote-servers/ssh-hosts") return true
+  if (verb === "POST" && (pathname === "/api/remote-servers/probe"
+    || /^\/api\/remote-servers\/[A-Za-z0-9_-]{1,64}\/(?:browse|connect|forget)$/.test(pathname))) return true
+  const target = pathname.match(/^\/api\/backends\/[A-Za-z0-9_-]{1,64}(\/.+)$/)?.[1]
+  if (!target || target === "/api/memory" || target.startsWith("/api/memory/")) return false
+  if (verb === "POST" && ["/api/auth/login", "/api/auth/logout"].includes(target)) return true
+  return !isHostOnlyPath(target, method) && target !== "/api/remote-control/status"
+    && SERVER_DEVICE_ROUTES.some(([methods, pattern]) => methods.split(" ").includes(verb) && pattern.test(target))
 }

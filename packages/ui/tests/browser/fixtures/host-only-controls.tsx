@@ -1,7 +1,7 @@
 import "./remote-server-pairing-api"
 import { render } from "solid-js/web"
 import { serverApi } from "../../../src/lib/api-client"
-import { ConfigProvider } from "../../../src/stores/preferences"
+import { ConfigProvider, useConfig } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import FolderSelectionView from "../../../src/components/folder-selection-view"
@@ -25,6 +25,9 @@ serverApi.fetchServerMeta = (async () => {
   if (mode === "failure") throw new Error("Unavailable")
   const meta = { localUrl: "http://localhost:3000", listeningMode: "all", addresses: [],
     ...(query.has("locked") ? { listeningLocked: true, host: "10.20.0.7" } : {}) }
+  if (mode === "servers" || mode === "servers-readonly" || mode === "servers-refused") return {
+    ...meta, localRequest: false, serversUsable: mode !== "servers-refused", serversManageable: mode === "servers",
+  }
   // "sidecars": a non-local client the host lets open SideCars over direct HTTPS.
   return mode === "missing" ? meta : { ...meta, localRequest: mode === "local", ...(mode === "sidecars" ? { sidecarsAllowed: true } : {}) }
 }) as typeof serverApi.fetchServerMeta
@@ -37,6 +40,7 @@ serverApi.fetchSidecars = async () => ({ sidecars: [{ id: "fixture", name: "Fixt
   insecure: true, prefixMode: "strip", status: "running" }] }) as Awaited<ReturnType<typeof serverApi.fetchSidecars>>
 
 function Harness() {
+  Object.assign(window, { hostControlsConfig: useConfig() })
   const surface = query.get("surface")
   void getServerMeta().catch(() => {}).finally(() => { document.documentElement.dataset.metaSettled = "true" })
   if (surface === "picker") return <SideCarPickerDialog open onClose={() => {}} onOpenSidecar={() => {}} />

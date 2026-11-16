@@ -99,7 +99,8 @@ import { proxyWebSocket } from "./proxy-websocket"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
-import { gateRemoteRequest, isHostOnlyPath, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
 import { registerDirectOriginPolicy } from "./direct-origin"
 import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
@@ -249,7 +250,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   const sidecarOverDirectHttps = createSideCarDirectHttpsAccess({
     meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, enabled: () => sidecarsOverDirectHttpsEnabled(deps.settings),
   })
-  const requestGate = { ...remoteGate, allowsDirectSidecar: sidecarOverDirectHttps }
+  const multiBackendEnabled = () => deps.settings.multiBackendEnabled?.() === true
+  const requestGate = { ...remoteGate, allowsDirectSidecar: sidecarOverDirectHttps, allowsBackendUi: multiBackendEnabled }
   const getSelfOrigins = (): Set<string> => {
     const origins = new Set<string>()
     for (const candidate of [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl, ...(deps.serverMeta.addresses ?? []).map(address => address.remoteUrl)]) {
@@ -292,8 +294,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     if (pathname === null) return reply.header("connection", "close").code(400).send({ error: "Invalid request path" })
     // Browser pairing also answers on verified direct HTTPS origins; its route rechecks the origin.
     const directPairing = pathname === PAIR_EXCHANGE_PATH && verifiedDirectHttpsOrigin(request, remoteGate?.directHttpsOrigins?.() ?? []) !== null
+    const backendUi = request.headers["x-codenomad-server-request"] === undefined
+      && multiBackendEnabled() && isBackendUiRoute(pathname, request.method)
     if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)
-      && !directPairing && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
+      && !directPairing && !backendUi && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
       return reply.header("connection", "close").code(404).send({ error: "Not found" })
     }
     done()
@@ -301,6 +305,11 @@ export function createHttpServer(deps: HttpServerDeps) {
   const allowsDirectSource = registerDirectOriginPolicy(app, {
     meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, devServerUrl: deps.uiDevServerUrl,
     publicHost: () => remoteGate.publicHost(), isPreview: isLivePreview,
+  })
+  const backendUiAccess = createBackendUiAccess({
+    enabled: multiBackendEnabled, selfOrigins: getSelfOrigins, allowsDirectSource,
+    publicHost: () => remoteGate.publicHost(),
+    directHttpsOrigins: () => remoteGate.directHttpsOrigins?.() ?? [],
   })
 
   app.register(replyFrom, {
@@ -412,7 +421,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   const memory = deps.memoryStore ? new MemoryService(deps.memoryStore, deps.settings, deps.workspaceManager, deps.eventBus) : undefined
   if (memory) registerMemoryRoutes(app, memory)
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
-    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined })
+    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined,
+    guardServerProfiles: backendUiAccess.guardProfiles })
   const accounts = new ProviderAccountsService(deps.settings)
   const freeUsage = createOpenCodeFreeUsage()
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
@@ -427,7 +437,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   const remotePreviewsAllowed = () => deps.remoteControlManager.previewsAllowed()
-  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed, sidecarsOverDirectHttps: sidecarOverDirectHttps })
+  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed, sidecarsOverDirectHttps: sidecarOverDirectHttps,
+    backendUiCapabilities: backendUiAccess.capabilities })
   registerEventRoutes(app, {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,
@@ -441,10 +452,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
-  registerRemoteServerRoutes(app, { logger: apiLogger })
+  registerRemoteServerRoutes(app, { logger: apiLogger, guardCaller: backendUiAccess.guard })
   const remoteServerBrowse = deps.remoteServerBrowseManager ?? new RemoteServerBrowseManager(deps.settings)
-  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
-  registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
+  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard, guardSecret: backendUiAccess.guardSecret })
+  registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard, guardSecret: backendUiAccess.guardSecret })
   registerRemotePreviewCapabilityRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, logger: deps.logger })
   const reconcileBackends = () => remoteServerBrowse.reconcile()
   if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)

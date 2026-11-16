@@ -95,11 +95,13 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
+L’option expérimentale `multiBackend` est désactivée par défaut et n’a aucun contrôle d’activation visible. Lorsqu’elle est active, les clients distants authentifiés peuvent utiliser et gérer tous les serveurs enregistrés sur l’hôte ; l’accueil et **Paramètres → Serveurs** affichent les actions autorisées par les capacités de l’hôte. Saisissez de nouveaux mots de passe de serveur ou liens d’appairage uniquement via le Contrôle à distance ou HTTPS ; le HTTP simple sur le réseau local permet d’utiliser les connexions enregistrées.
+
 Pour une destination accessible uniquement par SSH dans les **Paramètres → Serveurs** expérimentaux, choisissez **Ajouter le serveur**, saisissez son **URL** et son **Hôte SSH (facultatif)**, puis **Enregistrer**. Le profil s’enregistre hors ligne ; sa connexion passe par le relais SSH du backend.
 
 Avec le réglage multi-backend expérimental, utilisez **Paramètres → Serveurs** : collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou validez par Entrée. L’ajout enregistre un profil sur l’hôte sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. **Supprimer le serveur enregistré** demande confirmation, oublie sa connexion puis enregistre le retrait ; une erreur de sauvegarde conserve le profil pour réessayer. Les autres connexions restent disponibles.
 
-**Ignorer la vérification TLS** est proposé après un échec de certificat pour cette adresse ; changer d’adresse retire l’accord. L’appairage vérifie toujours TLS. **Ouvrir** est désactivé dans ces réglages expérimentaux. Les étapes ci-dessous décrivent le mode par défaut.
+**Ignorer la vérification TLS** est proposé après un échec de certificat pour cette adresse ; changer d’adresse retire l’accord. L’appairage vérifie toujours TLS. **Ouvrir** affiche les projets du serveur. Les étapes ci-dessous décrivent le mode par défaut.
 
 Avec le multi-backend expérimental activé, **Hôte SSH (facultatif)** enregistre un hôte ou alias OpenSSH pour le relais du backend. Les suggestions proviennent du fichier `~/.ssh/config` du compte exécutant le backend local. Saisissez l’adresse de CodeNomad vue depuis cet hôte (par exemple `https://127.0.0.1:9898`, avec son port réel), puis **Enregistrer**. Les profils SSH passent par le relais ; **Se connecter** ouvre des fenêtres directes et est désactivé pour ces profils. CodeNomad doit déjà y être installé et démarré. OpenSSH doit être disponible localement, avec une authentification par clé et une clé d’hôte vérifiée dans `known_hosts` ; l’authentification CodeNomad et les contrôles des certificats HTTPS s’appliquent toujours.
 

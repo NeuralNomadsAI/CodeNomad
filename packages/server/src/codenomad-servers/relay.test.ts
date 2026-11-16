@@ -17,8 +17,104 @@ import { FAKE_TUNNEL_HOST, startRemoteSurface } from "../remote-control/test-sup
 import { registerRequestLogging } from "../server/request-logging"
 import type { Logger } from "../logger"
 import { RELAY_AUTHORITY_HEADER as AUTHORITY, RELAY_AUTHORITY_QUERY, RELAY_BOOTSTRAP } from "./relay-authority"
+import { backendAdmissionFixture } from "../remote-control/test-support/backend-admission"
 
 const PREFIX = "/api/backends/saved"
+
+async function remoteCallerFixture(t: TestContext) {
+  const f = await backendAdmissionFixture(t)
+  const surface = await startRemoteSurface(t, { settings: f.settings })
+  const origin = `http://${surface.target()}`
+  const publicOrigin = `https://${FAKE_TUNNEL_HOST}`
+  const paired = await send(origin, "/api/remote-control/pair", { method: "POST",
+    headers: { host: FAKE_TUNNEL_HOST, origin: publicOrigin, "content-type": "application/json" },
+    body: JSON.stringify({ code: surface.code }) })
+  assert.equal(paired.status, 200, paired.body)
+  const cookie = String(paired.headers["set-cookie"]).split(";")[0]!
+  const call = (target: string, options: Parameters<typeof send>[2] = {}) => send(origin, target, {
+    ...options, headers: { host: FAKE_TUNNEL_HOST, origin: publicOrigin, cookie, ...options.headers },
+  })
+  const proofs = new Map<string, string>()
+  for (const id of ["A", "B"]) {
+    const connected = await call(`/api/remote-servers/${id}/connect`, { method: "POST",
+      headers: { "content-type": "application/json" }, body: "{}" })
+    assert.equal(connected.status, 200, `${id} connect: ${connected.body}`)
+    const response = await call(`/api/backends/${id}/api/meta`, { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })
+    assert.equal(response.status, 200, `${id} remote bootstrap: ${response.body}; upstream: ${JSON.stringify(f.remotes.map(remote => remote.state.requests.map(request => request.path)))}`)
+    const proof = String(response.headers[AUTHORITY])
+    assert.match(proof, /^[A-Za-z0-9_-]{43}$/)
+    proofs.set(id, proof)
+  }
+  return { ...f, call, proofs, cookie }
+}
+
+test("remote caller relay isolates identical raw workspace/session IDs and private headers", async t => {
+  const f = await remoteCallerFixture(t)
+  assert.notEqual(f.proofs.get("A"), f.proofs.get("B"))
+  for (const [index, id] of ["A", "B"].entries()) {
+    const target = "/workspaces/same-workspace/instance/api/session/same-session"
+    f.remotes[index]!.state.overrides.set(target, { status: 200,
+      body: { id: "same-session", server: id }, headers: {
+        "set-cookie": "remote-private=relay-response-secret; HttpOnly",
+        authorization: "Bearer relay-response-secret", location: "https://secret.test/relay-response-secret",
+        [AUTHORITY]: "relay-response-secret",
+      } })
+    const response = await f.call(`/api/backends/${id}${target}`, { headers: {
+      [AUTHORITY]: f.proofs.get(id), authorization: "Bearer caller-secret",
+      "x-forwarded-for": "127.0.0.1", "x-forwarded-host": "caller-secret",
+    } })
+    assert.equal(response.status, 200, response.body)
+    assert.deepEqual(JSON.parse(response.body), { id: "same-session", server: id })
+    const upstream = f.remotes[index]!.state.requests.at(-1)!
+    assert.equal(upstream.path, target)
+    for (const name of [AUTHORITY, "authorization", "origin", "referer", "x-forwarded-for", "x-forwarded-host"]) {
+      assert.equal(upstream.headers[name], undefined, name)
+    }
+    assert.equal(JSON.stringify(upstream.headers).includes(f.cookie), false)
+    for (const secret of ["relay-response-secret", "caller-secret", f.cookie]) {
+      assert.equal(JSON.stringify(response).includes(secret), false, secret)
+    }
+  }
+})
+
+test("remote caller relay refuses wrong-profile, malformed and stale proofs before remote IO", async t => {
+  const f = await remoteCallerFixture(t)
+  const proof = f.proofs.get("A")!
+  const before = f.io()
+  for (const [id, value] of [["B", proof], ["missing", proof], ["A", "malformed"], ["A", "x".repeat(43)]]) {
+    const response = await f.call(`/api/backends/${id}/api/workspaces`, { headers: { [AUTHORITY]: value } })
+    assert.equal(response.status, 502, response.body)
+    assert.equal(f.io(), before)
+  }
+  assert.equal((await f.call("/api/backends/missing/api/workspaces")).status, 404)
+  assert.equal(f.io(), before)
+  const forgotten = await f.call("/api/remote-servers/A/forget", { method: "POST",
+    headers: { "content-type": "application/json" }, body: "{}" })
+  assert.equal(forgotten.status, 200, forgotten.body)
+  const afterForget = f.io()
+  for (const target of ["/api/workspaces", `/api/workspaces?${RELAY_AUTHORITY_QUERY}=${proof}`]) {
+    const response = await f.call(`/api/backends/A${target}`, { headers: { [AUTHORITY]: proof } })
+    assert.equal(response.status, 502, response.body)
+    assert.equal(f.io(), afterForget)
+  }
+})
+
+test("remote caller relay keeps nested relay, remote admin and server-request protocol closed before IO", async t => {
+  const f = await remoteCallerFixture(t)
+  const before = f.io()
+  for (const target of ["/api/backends/B/api/meta", "/api/%62ackends/B/api/meta",
+    "/api/remote-servers/B/connect", "/api/remote-%73ervers/B/forget",
+    "/api/remote-control/status", "/api/auth/password"]) {
+    const response = await f.call(`/api/backends/A${target}`, { headers: { [AUTHORITY]: f.proofs.get("A") } })
+    assert.equal(response.status, 404, `${target}: ${response.body}`)
+    assert.equal(f.io(), before)
+  }
+  const explicit = await f.call("/api/backends/A/api/workspaces", { headers: {
+    [AUTHORITY]: f.proofs.get("A"), "x-codenomad-server-request": "1",
+  } })
+  assert.ok([403, 404].includes(explicit.status), explicit.body)
+  assert.equal(f.io(), before)
+})
 
 test("memory relay requires the current proof and local browser authority before any remote IO", async t => {
   const f = await fixture(t)

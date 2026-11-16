@@ -71,7 +71,8 @@ paired device ले समान ownership जाँचअन्तर्गत
 | सामान्य authenticated UI, workspace, कुराकानी र SSE | paired device लाई उपलब्ध। |
 | password login/logout, password परिवर्तन, local token bootstrap | अनुपलब्ध; direct authentication disabled भए पनि device credential चाहिन्छ। |
 | Remote Control status | paired device ले पढ्न सक्छ; management अनुपलब्ध। Start/Stop, pairing सिर्जना, device सूची र revocation host access path मै रहन्छन्। |
-| desktop remote-window/server management र proxy route | अनुपलब्ध (`/api/remote-servers/`, `/api/remote-proxy/`)। |
+| प्रयोगात्मक बचत भएका सर्भर र backend relay | सुविधा र होस्टको क्षमताले अनुमति दिँदा प्रमाणीकृत रिमोट क्लाइन्टहरूले होस्टमा बचत भएका सबै सर्भर प्रयोग/व्यवस्थापन गर्न सक्छन्। नयाँ सर्भर पासवर्ड वा जोडी बनाउने लिङ्कका लागि रिमोट कन्ट्रोल वा HTTPS चाहिन्छ, साधारण LAN HTTP होइन। [बचत भएका सर्भर](remote-access.md#saved-servers) हेर्नुहोस्। |
+| desktop remote window र window proxy | होस्टमा मात्र (`/api/remote-proxy/`)। |
 | SideCar **सामग्री proxy** | loopback चाहिन्छ (`/sidecars/`); SideCar WebSocket लाई पनि यही चाहिन्छ। `/api/sidecars` दर्ता API जोडी बनाइएका उपकरण र प्रमाणीकृत प्रत्यक्ष LAN क्लाइन्टलाई उपलब्ध छन्। |
 | वेब पूर्वावलोकन सामग्री | host मा **सेटिङहरू → रिमोट पहुँच → रिमोट कन्ट्रोल** अन्तर्गत **वेब पूर्वावलोकन** खुला (पूर्वनिर्धारित) रहँदा उपलब्ध। प्रत्येक पूर्वावलोकन ठेगानाले जोडाइबिना आफ्नो पृष्ठ खोल्छ, त्यसैले यसलाई निजी राख्नुहोस्। switch बन्द गर्दा दिइएका पूर्वावलोकन र तिनका WebSocket रोकिन्छन्; जोडिएका उपकरणहरूले reload पछि **वेब पूर्वावलोकन खोल्नुहोस्** लुकाउँछन्। |
 | automation bridge | अनुपलब्ध (`/api/opencode-plugin/`)। native desktop क्षमता browser क्षमता बन्दैनन्। |

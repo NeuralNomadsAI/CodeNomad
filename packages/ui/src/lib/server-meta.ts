@@ -53,6 +53,8 @@ export type ServerMetaCache = ReturnType<typeof createServerMetaCache>
 export const localServerMeta = createServerMetaCache(serverApi)
 /** Host authority is derived exclusively from the local transport's metadata. */
 export const localRequest = () => localServerMeta.meta()?.localRequest === true
+export const serversUsable = () => (localServerMeta.meta()?.serversUsable ?? localRequest()) === true
+export const serversManageable = () => (localServerMeta.meta()?.serversManageable ?? localRequest()) === true
 /** Whether this client may open SideCars: a host-local client, or one the host allows over direct HTTPS. */
 export const sidecarsAllowed = () => localRequest() || localServerMeta.meta()?.sidecarsAllowed === true
 

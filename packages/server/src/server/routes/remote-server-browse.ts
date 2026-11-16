@@ -1,22 +1,26 @@
-import type { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify"
 import { guardLocalBackendCaller } from "../../codenomad-servers/local-caller"
 import { BrowseBody, ConnectBody, type RemoteServerBrowseManager } from "../../codenomad-servers/browse-manager"
 import { endpointErrorCode } from "../../codenomad-servers/client"
 import { listSshHosts } from "../../codenomad-servers/ssh"
+import type { BackendCallerGuard } from "../../codenomad-servers/ui-caller"
 
 export function registerRemoteServerBrowseRoutes(app: FastifyInstance, deps: {
   manager: RemoteServerBrowseManager
   getSelfOrigins(): Set<string>
+  guardCaller?: BackendCallerGuard
+  guardSecret?: (request: FastifyRequest, reply: FastifyReply, body: unknown) => boolean
 }) {
+  const guard = deps.guardCaller ?? ((request: FastifyRequest, reply: FastifyReply) => guardLocalBackendCaller(request, reply, deps.getSelfOrigins()))
   app.get("/api/remote-servers/ssh-hosts", {
-    onRequest: async (request, reply) => { guardLocalBackendCaller(request, reply, deps.getSelfOrigins()) },
+    onRequest: async (request, reply) => { guard(request, reply) },
   }, async () => ({ hosts: listSshHosts() }))
   // This guard is deliberately stricter than CORS and runs before body parsing or secret/network access.
   for (const action of ["browse", "connect", "forget"] as const) {
     app.post<{ Params: { id: string } }>(`/api/remote-servers/:id/${action}`, {
       bodyLimit: 24 * 1024,
       onRequest: async (request, reply) => {
-        guardLocalBackendCaller(request, reply, deps.getSelfOrigins())
+        guard(request, reply)
       },
     }, async (request, reply) => {
       const controller = new AbortController()
@@ -26,7 +30,11 @@ export function registerRemoteServerBrowseRoutes(app: FastifyInstance, deps: {
         const id = request.params.id
         if (!id || id.length > 256) return reply.code(404).send({ error: "unknown_server" })
         if (action === "forget") return await deps.manager.forget(id)
-        if (action === "connect") return await deps.manager.connect(id, ConnectBody.parse(request.body ?? {}), controller.signal)
+        if (action === "connect") {
+          if (deps.guardSecret?.(request, reply, request.body)) return
+          const body = ConnectBody.parse(request.body ?? {})
+          return await deps.manager.connect(id, body, controller.signal)
+        }
         return await deps.manager.browse(id, BrowseBody.parse(request.body ?? {}), controller.signal)
       } catch (error) {
         const code = endpointErrorCode(error)

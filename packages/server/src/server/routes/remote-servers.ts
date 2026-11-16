@@ -3,9 +3,11 @@ import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { Logger } from "../../logger"
 import type { RemoteServerProbeResponse } from "../../api-types"
+import type { BackendCallerGuard } from "../../codenomad-servers/ui-caller"
 
 interface RouteDeps {
   logger: Logger
+  guardCaller?: BackendCallerGuard
 }
 
 const ProbeSchema = z.object({
@@ -16,7 +18,9 @@ const ProbeSchema = z.object({
 const PROBE_TIMEOUT_MS = 8_000
 
 export function registerRemoteServerRoutes(app: FastifyInstance, deps: RouteDeps) {
-  app.post("/api/remote-servers/probe", async (request, reply) => {
+  app.post("/api/remote-servers/probe", {
+    onRequest: async (request, reply) => { deps.guardCaller?.(request, reply) },
+  }, async (request, reply) => {
     try {
       const body = ProbeSchema.parse(request.body ?? {})
       return await probeRemoteServer(body.baseUrl, Boolean(body.skipTlsVerify))
@@ -99,7 +103,9 @@ async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean): Promi
 }
 
 function normalizeBaseUrl(input: string): string {
-  const parsed = new URL(input.trim())
+  let parsed: URL
+  try { parsed = new URL(input.trim()) } catch { throw new Error("Invalid server URL") }
+  if (parsed.username || parsed.password || parsed.hash) throw new Error("Server URL must not contain credentials or pairing data")
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Server URL must use http:// or https://")
   }

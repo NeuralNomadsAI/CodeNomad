@@ -1,8 +1,9 @@
 import { Readable } from "node:stream"
-import type { FastifyInstance, FastifyRequest } from "fastify"
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify"
 import { ConnectBody, type RemoteServerBrowseManager } from "../../codenomad-servers/browse-manager"
 import { endpointErrorCode } from "../../codenomad-servers/client"
 import { guardLocalBackendCaller } from "../../codenomad-servers/local-caller"
+import type { BackendCallerGuard } from "../../codenomad-servers/ui-caller"
 import { isHostOnlyPath, isMemoryRelayRoute } from "../../remote-control/gate"
 import { routedPath } from "../routed-path"
 import { isRelayAuthority, RELAY_AUTHORITY_HEADER, RELAY_AUTHORITY_QUERY, RELAY_BOOTSTRAP } from "../../codenomad-servers/relay-authority"
@@ -26,9 +27,13 @@ function relayAuthority(request: FastifyRequest, target = request.raw.url ?? "")
 }
 
 /** Raw bodies and response streams retain the request and saved client's cancellation. */
-export function registerBackendRelayRoutes(app: FastifyInstance, deps: { manager: RemoteServerBrowseManager; getSelfOrigins(): Set<string> }) {
+export function registerBackendRelayRoutes(app: FastifyInstance, deps: {
+  manager: RemoteServerBrowseManager; getSelfOrigins(): Set<string>; guardCaller?: BackendCallerGuard
+  guardSecret?: (request: FastifyRequest, reply: FastifyReply, body: unknown) => boolean
+}) {
+  const guard = deps.guardCaller ?? ((request: FastifyRequest, reply: FastifyReply) => guardLocalBackendCaller(request, reply, deps.getSelfOrigins()))
   void app.register(async scope => {
-    scope.addHook("onRequest", async (request, reply) => { guardLocalBackendCaller(request, reply, deps.getSelfOrigins()) })
+    scope.addHook("onRequest", async (request, reply) => { guard(request, reply) })
     scope.post<{ Params: { id: string } }>("/api/backends/:id/api/auth/login", { bodyLimit: 24 * 1024 }, async (request, reply) => {
       if (!profileId.test(request.params.id)) return reply.code(404).send({ error: "unknown_server" })
       const controller = new AbortController()
@@ -38,7 +43,9 @@ export function registerBackendRelayRoutes(app: FastifyInstance, deps: { manager
         const { proof } = relayAuthority(request)
         // Login/status bootstrap is needed to authenticate a candidate before metadata admission.
         if (proof !== undefined && proof !== RELAY_BOOTSTRAP) deps.manager.assertProof(request.params.id, proof)
-        return await deps.manager.connect(request.params.id, ConnectBody.parse(request.body ?? {}), controller.signal)
+        if (deps.guardSecret?.(request, reply, request.body)) return
+        const body = ConnectBody.parse(request.body ?? {})
+        return await deps.manager.connect(request.params.id, body, controller.signal)
       }
       catch { return reply.code(401).send({ error: "auth" }) }
       finally { reply.raw.off("close", abort) }
