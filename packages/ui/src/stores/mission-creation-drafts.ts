@@ -3,6 +3,8 @@ import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionExecution } from "../../../server/src/missions/execution"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTaskMode } from "../lib/mission-defaults"
+import { serverApi } from "../lib/api-client"
+import type { MissionCreationReceipt } from "../../../server/src/missions/creation-receipt"
 
 export interface UncertainMissionCreation {
   requestId: string
@@ -22,10 +24,11 @@ export type MissionCreationHoldState = "pending" | "uncertain"
 interface HeldCreation { operation: Readonly<UncertainMissionCreation>; state: MissionCreationHoldState }
 
 // Window-memory only, not native settlement authority or restart persistence.
-// Retain dispatched/unknown operations by their original scope/request; reads cannot
-// clear these holds. No drafts are written into the identity-only native view layout.
+// Retain dispatched/unknown operations by their original scope/request until the
+// original response or its exact receipt settles them.
 const held = new Map<string, Map<string, HeldCreation>>()
 const [version, setVersion] = createSignal(0)
+const reading = new Map<string, Promise<MissionCreationReceipt | undefined>>()
 const freeze = (operation: UncertainMissionCreation): Readonly<UncertainMissionCreation> => Object.freeze({
   ...operation, ...(operation.profiles === undefined ? {} : { profiles: copyMissionProfiles(operation.profiles) }),
   ...(operation.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: Object.freeze([...operation.watchedConversationIDs]) }),
@@ -47,6 +50,26 @@ export function releaseMissionCreation(scope: string, requestId: string): void {
   operations.delete(requestId)
   if (!operations.size) held.delete(scope)
   setVersion(value => value + 1)
+}
+
+/** Reads the original request only. Absence, transport loss and mismatches keep its hold. */
+export function reconcileMissionCreation(scope: string, instanceId: string): Promise<MissionCreationReceipt | undefined> {
+  const operation = missionCreationHold(scope)
+  if (operation?.state !== "uncertain") return Promise.resolve(undefined)
+  const key = JSON.stringify([scope, operation.operation.requestId])
+  const existing = reading.get(key)
+  if (existing) return existing
+  const pending = serverApi.missionCreationReceipt(instanceId, operation.operation.requestId).then(receipt => {
+    if (missionCreationHold(scope) !== operation || receipt.requestId !== operation.operation.requestId
+      || receipt.state !== "created" && receipt.state !== "rejected"
+      || receipt.state === "created" && (!receipt.mission || typeof receipt.mission.id !== "string")) return
+    held.get(scope)!.delete(receipt.requestId)
+    if (!held.get(scope)!.size) held.delete(scope)
+    setVersion(value => value + 1)
+    return receipt
+  }).catch(() => undefined).finally(() => reading.delete(key))
+  reading.set(key, pending)
+  return pending
 }
 
 export function retainUncertainMissionCreation(scope: string, operation: UncertainMissionCreation): void {

@@ -1,7 +1,30 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation, retainUncertainMissionCreation,
-  uncertainMissionCreation } from "./mission-creation-drafts"
+  uncertainMissionCreation, reconcileMissionCreation } from "./mission-creation-drafts"
+import { serverApi } from "../lib/api-client"
+
+test("exact original receipts release created/rejected holds; unknown and foreign receipts cannot authorize duplicates", async t => {
+  const operation = { requestId: "receipt-original", objective: "Original", notes: "", template: "custom" as const, directory: "/original" }
+  let receipt: any = { requestId: operation.requestId, state: "unknown" }, reads = 0
+  t.mock.method(serverApi, "missionCreationReceipt", async (instanceId: string, requestId: string) => {
+    reads++; assert.equal(instanceId, "original-instance"); assert.equal(requestId, operation.requestId)
+    return receipt
+  })
+  for (const state of ["created", "rejected"] as const) {
+    const scope = `receipt/${state}`
+    holdMissionCreation(scope, operation); retainUncertainMissionCreation(scope, operation)
+    for (const response of [{ requestId: operation.requestId, state: "unknown" }, { requestId: "other", state: "rejected" }, {}]) {
+      receipt = response
+      assert.equal(await reconcileMissionCreation(scope, "original-instance"), undefined)
+      assert.equal(holdMissionCreation(scope, { ...operation, requestId: "duplicate" }), false)
+    }
+    receipt = { requestId: operation.requestId, state, ...(state === "created" ? { mission: { id: "msn_original" } } : {}) }
+    assert.equal((await reconcileMissionCreation(scope, "original-instance"))?.state, state)
+    assert.equal(missionCreationHold(scope), undefined)
+  }
+  assert.equal(reads, 8)
+})
 
 test("uncertain creation keeps immutable original request/draft in its window scope, never adopting a refreshed scope", () => {
   const original = { requestId: "original", objective: "Draft", notes: "Notes", template: "custom" as const, directory: "/private" }

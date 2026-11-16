@@ -8,7 +8,7 @@ Ist Missions nicht verfügbar, öffnet **OpenCode-Einstellungen** die Dienstwied
 
 Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Verwenden Sie vorzugsweise HTTPS, um den Netzwerkverkehr zu schützen.
 
-**Mission erstellen** öffnet das Formular anstelle des Baums. Die Gruppen folgen dieser Reihenfolge.
+**Mission erstellen** öffnet das Formular anstelle des Baums. Eine bestätigte Erstellung wählt die Mission aus; bei einer abgelehnten Erstellung bleibt das Formular bearbeitbar.
 
 ### Konfiguration {#saved-briefs}
 

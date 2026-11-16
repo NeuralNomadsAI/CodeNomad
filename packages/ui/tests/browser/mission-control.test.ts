@@ -1304,6 +1304,56 @@ test("mission selection, focus and reader survive native invalidations, remount 
   } catch (error) { console.error(await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
+for (const outcome of ["created", "rejected", "unknown", "remounted"] as const) test(`lost creation response reconciles ${outcome} silently without a duplicate`, async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    await setup(page)
+    await routeUiSettings(page, {})
+    const created = { ...mission("recovered"), title: "Recovered mission", objective: "Original request" }
+    let requestId = "", creates = 0, reads = 0, settled = false
+    const state = () => outcome === "remounted" ? settled ? "created" : "unknown" : outcome
+    await page.route("**/api/workspaces/fixture/missions**", async route => {
+      const request = route.request()
+      if (request.url().includes("/creation/")) {
+        reads++
+        assert.ok(request.url().endsWith(encodeURIComponent(requestId)))
+        return route.fulfill({ json: { requestId, state: state(), ...(state() === "created" ? { mission: created } : {}) } })
+      }
+      if (isMissionContentRequest(request.url())) return route.fallback()
+      if (request.method() === "POST" && !request.url().endsWith("/panel-page")) {
+        creates++; requestId = request.postDataJSON().requestId
+        return outcome === "remounted" ? route.fulfill({ status: 409, json: { code: "creation-conflict" } }) : route.abort("failed")
+      }
+      return route.fulfill({ json: { available: true, missions: panelMissions(state() === "created" && reads ? [created] : []), generatedAt: 1, discardedEvents: 0 } })
+    })
+    await page.goto(url)
+    await missionGeneralAction(page, "Create mission").click()
+    const form = page.locator("form.mission-editor"), objective = form.locator("textarea").first(), submit = form.locator("button[type=submit]")
+    await objective.fill("Original request")
+    await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
+    await submit.click()
+    await until(() => reads > 0)
+    if (outcome === "remounted") {
+      await page.getByRole("button", { name: "Cancel", exact: true }).click()
+      settled = true
+      await missionGeneralAction(page, "Create mission").click()
+    }
+    if (state() === "created") await selectedMissionTitle(page).filter({ hasText: "Recovered mission" }).waitFor()
+    else if (outcome === "rejected") {
+      await page.waitForFunction(() => !(document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled)
+      assert.equal(await objective.inputValue(), "Original request")
+    } else {
+      assert.equal(await submit.isDisabled(), true)
+      await form.evaluate(element => (element as HTMLFormElement).requestSubmit())
+      await page.getByRole("button", { name: "Cancel", exact: true }).click()
+      await missionGeneralAction(page, "Create mission").click()
+      assert.equal(await page.locator("form.mission-editor button[type=submit]").isDisabled(), true)
+    }
+    assert.equal(await page.locator("form.mission-editor [role=alert]").count(), 0)
+    assert.equal(creates, 1)
+  } finally { await page.close() }
+})
+
 test("edits keep drafts and original revision during refresh, and creation retries reuse request identity", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {

@@ -162,7 +162,9 @@ test("a lost immediate creation reply keeps followed IDs read-only across remoun
     await picker.click(); await page.getByRole("option", { name: source.title, exact: true }).click()
     await ready(page); f.lose = true
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
-    await form(page).getByRole("alert").filter({ hasText: "The native creation result is unconfirmed." }).waitFor()
+    await page.waitForFunction(() => (document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled
+      && document.querySelector('form.mission-editor button[type=submit]')?.textContent === "Create")
+    assert.equal(await form(page).locator("[role=alert]").count(), 0)
     await page.evaluate(() => window.schedulingEditor.mount(false))
     await page.evaluate(() => window.schedulingEditor.mount(true))
     await picker.waitFor()
@@ -808,7 +810,10 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     }
     await ready(page); f.lose = true
     await form(page).locator('button[type="submit"]').click()
-    await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    if (kind === "create") {
+      await page.waitForFunction(() => Boolean(window.schedulingEditor.held()))
+      assert.equal(await form(page).locator("[role=alert]").count(), 0)
+    } else await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     const held = await page.evaluate(() => window.schedulingEditor.held())
     assert.equal(JSON.parse(held!.payload).requestID, f.posts[0].requestID)
     await form(page).getByRole("button", { name: "Cancel", exact: true }).click()

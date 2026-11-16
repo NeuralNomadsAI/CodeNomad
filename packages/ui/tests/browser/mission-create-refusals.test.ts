@@ -156,7 +156,8 @@ test("a codeless server failure stays an exact uncertain hold without a resend",
     await fixture.objective.fill("Possibly committed")
     await submitReady(page)
     await fixture.submit.click()
-    await page.getByRole("alert").filter({ hasText: UNCONFIRMED }).waitFor()
+    await page.waitForFunction(() => Boolean(window.missionEditorLifetime.held()))
+    assert.equal(await fixture.form.locator("[role=alert]").count(), 0)
     assert.equal(await fixture.submit.isDisabled(), true)
     assert.equal((await page.evaluate(() => window.missionEditorLifetime.held()))?.requestId, fixture.attempts[0]!.requestId)
     await page.waitForTimeout(200)
@@ -165,7 +166,7 @@ test("a codeless server failure stays an exact uncertain hold without a resend",
   } finally { await page.close() }
 })
 
-test("a newer editor whose adopted pending hold becomes uncertain keeps its unsent draft with truthful wording", async () => {
+test("a newer editor whose adopted pending hold becomes uncertain keeps its unsent draft silently", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   let release!: () => void
   const reply = new Promise<void>(resolve => { release = resolve })
@@ -184,10 +185,8 @@ test("a newer editor whose adopted pending hold becomes uncertain keeps its unse
     await submitReady(page)
     await fixture.submit.click()
     release()
-    const alert = page.getByRole("alert").filter({ hasText: "Another creation request from this window is unconfirmed" })
-    await alert.waitFor()
-    assert.match(await alert.innerText(), /draft shown here was not sent/)
-    assert.doesNotMatch(await alert.innerText(), /exactly as sent/)
+    await page.waitForFunction(() => Boolean(window.missionEditorLifetime.held()))
+    assert.equal(await fixture.form.locator("[role=alert]").count(), 0)
     assert.equal(await fixture.objective.inputValue(), "Newer unsent draft", "the unsent draft is not replaced or misattributed")
     assert.equal(await fixture.submit.isDisabled(), true)
     assert.equal(await fixture.form.getByRole("button", { name: "Save configuration", exact: true }).isDisabled(), false, "the unsent draft can still be kept as a configuration")
@@ -195,11 +194,11 @@ test("a newer editor whose adopted pending hold becomes uncertain keeps its unse
     await page.waitForTimeout(200)
     assert.equal(fixture.attempts.length, 1, "the newer draft was never sent")
 
-    // Reopening shows the held original with the sender's wording.
+    // Reopening shows the held original.
     await fixture.form.getByRole("button", { name: "Cancel", exact: true }).click()
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     assert.equal(await fixture.objective.inputValue(), "First pending create")
-    await page.getByRole("alert").filter({ hasText: "keeps the request exactly as sent" }).waitFor()
+    assert.equal(await fixture.form.locator("[role=alert]").count(), 0)
     assert.deepEqual(fixture.errors, [])
   } finally { release(); await page.close() }
 })

@@ -926,6 +926,9 @@ export const serverApi = {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
     return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "POST", input)
   },
+  missionCreationReceipt(instanceId: string, requestId: string): Promise<import("../../../server/src/missions/creation-receipt").MissionCreationReceipt> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/creation/${encodeURIComponent(requestId)}`)
+  },
   editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
     return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "PATCH", input)

@@ -15,6 +15,7 @@ import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
 import type { MissionCreationMetadata } from "../../missions/creation-defaults"
 import { nativeDocumentID } from "../../missions/launch-policy"
+import type { MissionPanelMap } from "../../missions/mission-panel-map"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
@@ -120,6 +121,7 @@ export async function prepareMissionCreation(input: {
   let disposed = false
   let executing = false
   let dispatched = false
+  let rejected = false
   const release = () => { if (!disposed) { disposed = true; admission.release() } }
   const dispose = () => { if (!executing) release() }
   const assertCurrent = async () => {
@@ -128,8 +130,20 @@ export async function prepareMissionCreation(input: {
   }
   return {
     missionID, sessionID, creationMessageID, request: structuredClone(nativeInput), dispose,
+    async readReceipt(): Promise<MissionPanelMap | undefined> {
+      // Reconcile in the captured native Location, never the workspace's current default.
+      await admission.assertReceiptCurrent()
+      const result = await client.rpc(CODENOMAD_MISSIONS_RPC).creationReceipt(nativeInput,
+        { location, ...locationRequestOptions(location), signal: AbortSignal.timeout(10_000) }) as { requestID: string; projectID: string; mission?: MissionPanelMap }
+      await admission.assertReceiptCurrent()
+      if (result.requestID !== request.requestId || result.projectID !== projectID || result.mission?.id !== missionID
+        || result.mission.projectID !== projectID) return
+      admission.reconcile()
+      return result.mission
+    },
     /** False until the native create is attempted: any earlier failure proves no effect. */
     get dispatched() { return dispatched },
+    get rejected() { return rejected },
     /** Internal protected composition may supply a fresh exact passage fence.
      * This is NOT a standing grant: recurrence never exposes execute until its
      * real protected grant and native first-effect enforcement are qualified. */
@@ -155,7 +169,7 @@ export async function prepareMissionCreation(input: {
         try { result = await client.rpc(CODENOMAD_MISSIONS_RPC).create(nativeInput,
           { location, ...locationRequestOptions(location) }) as { mission: MissionMap } }
         catch (error) {
-          if (isMissionCreateNoEffectError(error, nativeInput.requestID, missionID)) admission.settled()
+          if (isMissionCreateNoEffectError(error, nativeInput.requestID, missionID)) { rejected = true; admission.settled() }
           throw error
         }
         const coordinator = result.mission?.actors?.find(actor => actor.sessionId === result.mission.coordinatorSessionId && actor.kind === "coordinator")

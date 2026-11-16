@@ -8,7 +8,7 @@ Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación d
 
 Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.
 
-**Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Los grupos siguen este orden.
+**Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Una creación confirmada selecciona la misión; una creación rechazada deja el formulario editable.
 
 ### Configuración {#saved-briefs}
 

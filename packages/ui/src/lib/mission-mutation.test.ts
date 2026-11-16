@@ -7,9 +7,9 @@ import { isDefinitiveCreationRejection, isUncertainCreation, missionMutationCode
 
 test("Mission mutation classification distinguishes held creation, capacity, scope and actual revision conflicts", () => {
   const key = (status: number, code: ConstructorParameters<typeof MissionMutationError>[2]) => missionMutationErrorKey(new MissionMutationError(status, "create", code))
-  assert.equal(key(409, "creation-uncertain"), "missions.control.creation.uncertain")
+  assert.equal(key(409, "creation-uncertain"), "missions.control.mutation.error")
   assert.equal(key(503, "creation-capacity"), "missions.control.creation.capacity")
-  assert.equal(key(409, "creation-conflict"), "missions.control.creation.scopeConflict")
+  assert.equal(key(409, "creation-conflict"), "missions.control.mutation.error")
   assert.equal(key(503, "creation-unavailable"), "missions.control.creation.unavailable")
   assert.equal(key(409, "creation-worktree-deleting"), "missions.control.creation.worktreeDeleting")
   assert.equal(key(409, "revision-conflict"), "missions.control.mutation.conflict")
@@ -26,10 +26,10 @@ test("Mission mutation classification distinguishes held creation, capacity, sco
 
 test("only a received reviewed rejection is a definitive creation outcome; transport, decode and unknown statuses stay uncertain", () => {
   const create = (status: number, code?: ConstructorParameters<typeof MissionMutationError>[2]) => new MissionMutationError(status, "create", code)
-  for (const error of [create(400), create(401), create(403), create(404), create(409, "creation-conflict"), create(503, "creation-capacity"),
+  for (const error of [create(400), create(401), create(403), create(404), create(503, "creation-capacity"),
     create(503, "creation-unavailable"), create(409, "creation-worktree-deleting"),
     create(409, "revision-conflict"), create(409, "request-conflict")]) assert.equal(isDefinitiveCreationRejection(error), true, `${error.status} ${error.code}`)
-  for (const error of [new TypeError("fetch failed"), new SyntaxError("truncated JSON"), create(409, "creation-uncertain"), create(409),
+  for (const error of [new TypeError("fetch failed"), new SyntaxError("truncated JSON"), create(409, "creation-uncertain"), create(409, "creation-conflict"), create(409),
     create(500), create(502), create(503), create(504), new MissionMutationError(400, "edit"), new Error("private"), undefined]) {
     assert.equal(isDefinitiveCreationRejection(error), false, String(error))
   }
@@ -55,7 +55,7 @@ test("recurring create releases only refusals the route proves preceded the nati
   assert.equal(await classify(503, { code: "creation-unavailable" }), "missions.control.creation.unavailable")
   assert.equal(await classify(409, { code: "creation-worktree-deleting" }), "missions.control.creation.worktreeDeleting")
   assert.equal(await classify(503, { code: "creation-capacity" }), "missions.control.creation.capacity")
-  assert.equal(await classify(409, { code: "creation-conflict" }), "missions.control.creation.scopeConflict")
+  assert.equal(await classify(409, { code: "creation-conflict" }), undefined)
   assert.equal(await classify(503, { code: "recurrence-capacity" }), "missions.recurrence.capacity")
   assert.equal(await classify(400, { code: "recurrence-input-capacity" }), "missions.recurrence.invalid")
   for (const code of ["compare-models-required", "compare-models-identical"]) assert.equal(await classify(400, { code }), `missions.compare.${code}`)

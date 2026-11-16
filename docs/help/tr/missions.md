@@ -8,7 +8,7 @@ Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir
 
 Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak için HTTPS tercih edin.
 
-**Görev oluştur**, oluşturana veya iptal edene kadar ağacın yerine formu gösterir. Gruplar aşağıdaki sıradadır.
+**Görev oluştur**, oluşturana veya iptal edene kadar ağacın yerine formu gösterir. Oluşturma doğrulanınca görev seçilir; reddedilince form düzenlenebilir kalır.
 
 ### Yapılandırma {#saved-briefs}
 

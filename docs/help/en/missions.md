@@ -8,7 +8,7 @@ If Missions is unavailable, **OpenCode settings** opens runtime recovery for a m
 
 Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.
 
-Choose **Create mission**. The form replaces the tree until you create or cancel. Its groups follow the order below.
+Choose **Create mission**. The form replaces the tree until you create or cancel. A confirmed creation selects the Mission; a refused creation leaves the form editable.
 
 ### Configuration {#saved-briefs}
 
