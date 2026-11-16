@@ -4,6 +4,8 @@ Usa la interfaz de navegador en un teléfono o tableta para continuar trabajando
 
 ## Conectarse desde un teléfono o tableta {#connect}
 
+Con varios servidores activados en el anfitrión, los servidores guardados están disponibles en Inicio y Configuración → Servidores. Las pestañas de proyecto de cada backend, incluido el principal, recuperan sus borradores y vistas tras recargar. Un proyecto no disponible conserva su pestaña: **Reintentar** recupera un registro existente; **Abrir** abre explícitamente un proyecto ausente.
+
 1. En el anfitrión, abre **Configuración → Acceso remoto → Control remoto** y elige **Iniciar control remoto**.
 2. Escanea el QR de emparejamiento con tu dispositivo móvil y abre el enlace en el navegador que quieras seguir usando.
 3. Como alternativa, configura el [acceso directo](remote-access.md), abre la URL HTTPS accesible y de confianza del anfitrión e inicia sesión con su contraseña de servidor.

@@ -5,6 +5,7 @@ import { backends, localBackend, isLocalBackend, type BackendClient, type Backen
 import { backendEvents } from "../lib/backend-events"
 import { tGlobal } from "../lib/i18n"
 import { parseInstanceKey } from "../lib/backend-identity"
+import { generateUUID } from "../lib/client-identity"
 import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
@@ -624,7 +625,7 @@ function buildRemoteServerProfile(input: RemoteServerProfileInput, source: Remot
   const existing = input.id ? source.find((entry) => entry.id === input.id) : undefined
   const now = new Date().toISOString()
   return {
-    id: existing?.id ?? input.id ?? createRandomId(),
+    id: existing?.id ?? input.id ?? generateUUID(),
     name: input.name.trim(),
     baseUrl: input.baseUrl.trim(),
     skipTlsVerify: Boolean(input.skipTlsVerify),
@@ -642,13 +643,6 @@ function buildRemoteServerList(profile: RemoteServerProfile, source: RemoteServe
     const right = b.lastConnectedAt ?? b.updatedAt
     return right.localeCompare(left)
   })
-}
-
-function createRandomId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID()
-  }
-  return `remote-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function createPreferencesStore(backend: BackendClient) {

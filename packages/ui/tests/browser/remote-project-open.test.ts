@@ -126,19 +126,25 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     fs.rmSync(directory, { recursive: true, force: true })
   })
   const errors: string[] = []
-  async function prepare(host: "electron" | "tauri" = "electron", native = false) {
+  async function prepare(host: "electron" | "tauri" | "web" = "electron", native = false) {
     const page = await browser.newPage({ locale: "en-US" })
     page.on("pageerror", error => errors.push(error.message))
     await page.addInitScript("window.__name = value => value")
     await page.addInitScript(({ host, native }) => {
       ;(window as any).__CODENOMAD_RUNTIME_HOST__ = host
-      window.__CODENOMAD_WINDOW_CONTEXT__ = native ? "preferences" : "local"
+      window.__CODENOMAD_WINDOW_CONTEXT__ = native ? "preferences" : host === "web" ? "remote" : "local"
       ;(window as any).selections = []
+      if (host === "web") return
       window.electronAPI = { selectServer: async intent => { (window as any).selections.push(intent) } } as any
       ;(window as any).__TAURI_INTERNALS__ = { invoke: async (command: string, args: any) => {
         if (command === "preferences_select_server") (window as any).selections.push(args.intent)
       }, metadata: { currentWindow: { label: native ? "preferences" : "main" } } }
     }, { host, native })
+    if (host === "web") await page.route("**/api/meta", route => {
+      if (new URL(route.request().url()).pathname !== "/api/meta") return route.continue()
+      return route.fulfill({ json: { apiContract: CODENOMAD_API_CONTRACT, serverId: "local",
+        localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false } })
+    })
     await page.goto(`${origin}/fixture${native ? "?preferences" : ""}`)
     await page.waitForFunction(() => !!(window as any).remoteOpenFixture)
     return page
@@ -256,8 +262,8 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       assert.deepEqual(mutations.slice(before), ["a:POST", "a:/w/creation/release:POST"])
     } finally { accept(); await preferences.close(); await main.close() }
   })
-  await t.test("home, navigation, typed path, recents, server labels and ordinary instance tabs", async () => {
-    const page = await prepare(), pathStart = paths.length
+  for (const host of ["electron", "web"] as const) await t.test(`${host}: home, navigation, typed path, recents, server labels and ordinary instance tabs`, async () => {
+    const page = await prepare(host), pathStart = paths.length
     await page.getByRole("button", { name: /Servers/ }).click()
     await page.getByRole("button", { name: /^Alpha/ }).click()
     await dialog(page).getByRole("button", { name: "app", exact: true }).waitFor()

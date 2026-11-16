@@ -444,7 +444,8 @@ for (const disabled of [false, true]) {
       for (const [method, pathname] of boundaryPaths) {
         const response = await f.app.inject({ method, url: pathname, remoteAddress: "192.0.2.20",
           headers: directHeaders, ...(method === "POST" ? { payload: {} } : {}) })
-        assert.equal(response.statusCode, 404, `${method} ${pathname}: ${response.body}`)
+        assert.equal(response.statusCode, ["/api/memory", "/api/memory/settings"].includes(pathname) ? 403 : 404,
+          `${method} ${pathname}: ${response.body}`)
       }
       assert.equal(f.remote.state.requests.length, afterSidecar, "SideCar opt-in grants no relay, memory or preview-management authority")
       assert.equal((await send(cap.contentUrl)).status, 200, "refused remote revocation preserves the local capability")

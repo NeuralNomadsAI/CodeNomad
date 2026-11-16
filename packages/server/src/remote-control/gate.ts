@@ -17,10 +17,9 @@ const DEVICE_COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60
 
 // Reachable remotely without a paired device.
 const PUBLIC_PATHS = new Set([PAIR_PAGE_PATH, PAIR_EXCHANGE_PATH, "/api/auth/status"])
-// Host-only surfaces: local login/bootstrap, Remote Control management, desktop
-// windows, local tools and the automation bridge. Never reachable remotely, except
-// web previews through their capability token while the host allows them.
-const LOCAL_ONLY_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/token", "/api/auth/password", "/api/auth/logout"])
+// Host-only surfaces retain the reviewed browser UI exceptions below and live
+// preview capabilities while the host allows them.
+const LOCAL_ONLY_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/token", "/api/auth/password", "/api/auth/logout", "/api/opencode/logs"])
 const LOCAL_ONLY_PREFIXES = ["/auth/", "/api/backends/", "/api/remote-control/", "/api/remote-proxy/", "/api/remote-servers/", "/api/opencode-plugin/", "/sidecars/", "/previews/"]
 const REMOTE_MANAGEMENT_READS = new Set(["/api/remote-control/status"])
 // Client-supplied routing or authority metadata is never trusted on the remote surface.
@@ -62,7 +61,7 @@ const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["GET POST", /^\/api\/workspaces\/temporary$/],
   ["GET DELETE", /^\/api\/workspaces\/[^/]+$/],
   ["POST", /^\/api\/workspaces\/[^/]+\/(?:creation\/release|keep|discard|git-init|images-conversation)$/],
-  ["GET", /^\/api\/workspaces\/[^/]+\/(?:background-shells|git-branches|pending-requests|files(?:\/(?:search|preview|content))?|plugin-controls|integrations|service-usage(?:\/(?:owner|cache))?)$/],
+  ["GET", /^\/api\/workspaces\/[^/]+\/(?:background-shells|git-branches|repository-source|pending-requests|files(?:\/(?:search|preview|content))?|plugin-controls|integrations|service-usage(?:\/(?:owner|cache))?)$/],
   ["PUT", /^\/api\/workspaces\/[^/]+\/files\/content$/],
   ["PATCH", /^\/api\/workspaces\/[^/]+\/plugin-controls$/],
   ["POST DELETE", /^\/api\/workspaces\/[^/]+\/plugin-sources$/],
@@ -77,7 +76,7 @@ const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["GET", /^\/api\/workspaces\/[^/]+\/sessions\/[^/]+\/(?:permission-receipts|goal)$/],
   ["GET", /^\/api\/workspaces\/[^/]+\/session-media\/[^/]+\/[^/]+\/[^/]+\/[^/]+\/[^/]+$/],
   ["POST", /^\/api\/workspaces\/[^/]+\/session-history\/(?:window|outline|outlinePreview|query|ranked|prune)$/],
-  ["POST", /^\/api\/workspaces\/[^/]+\/session-pruning\/prune$/],
+  ["POST", /^\/api\/workspaces\/[^/]+\/session-pruning\/(?:preview|prune)$/],
   ["GET POST", /^\/api\/workspaces\/[^/]+\/missions$/],
   ["POST", /^\/api\/workspaces\/[^/]+\/missions\/panel-page$/],
   ["GET POST", /^\/api\/workspaces\/[^/]+\/missions\/(?:scheduled|recurrence)$/],
@@ -176,7 +175,7 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
   }
   const backendUi = request.headers["x-codenomad-server-request"] === undefined && device !== null
     && deps.allowsBackendUi?.() === true && isBackendUiRoute(pathname, method)
-  if ((isHostOnlyPath(pathname, method) && !backendUi || ingress && (pathname === "/api/memory" || pathname.startsWith("/api/memory/")))
+  if (((isHostOnlyPath(pathname, method) || ingress && (pathname === "/api/memory" || pathname.startsWith("/api/memory/"))) && !backendUi)
     && !(PUBLIC_PATHS.has(pathname) && !serverRequest)) {
     reject(reply, 404, "Not found")
     return true
@@ -224,7 +223,7 @@ function gateDirectHttpsDevice(request: FastifyRequest, reply: FastifyReply, tok
   const directSidecar = pathname.startsWith("/sidecars/") && deps.allowsDirectSidecar?.(request) === true
   const backendUi = request.headers["x-codenomad-server-request"] === undefined
     && deps.allowsBackendUi?.() === true && isBackendUiRoute(pathname, method)
-  if ((isHostOnlyPath(pathname, method) && !directSidecar && !backendUi || pathname === "/api/memory" || pathname.startsWith("/api/memory/")) && !PUBLIC_PATHS.has(pathname)) {
+  if (((isHostOnlyPath(pathname, method) && !directSidecar || pathname === "/api/memory" || pathname.startsWith("/api/memory/")) && !backendUi) && !PUBLIC_PATHS.has(pathname)) {
     reject(reply, 404, "Not found")
     return true
   }
@@ -272,7 +271,7 @@ export function isHostOnlyPath(pathname: string, method: string, direct = false)
   return LOCAL_ONLY_PATHS.has(pathname) || LOCAL_ONLY_PREFIXES.some((prefix) => pathname.startsWith(prefix) || `${pathname}/` === prefix)
 }
 
-/** Reviewed memory methods exposed by the local UI relay; ingress stays host-only. */
+/** Reviewed memory methods; browser admission retains the host feature and principal guards. */
 export function isMemoryRelayRoute(pathname: string, method: string): boolean {
   return pathname === "/api/memory" && method === "POST"
     || pathname === "/api/memory/settings" && ["GET", "HEAD", "PUT"].includes(method)
@@ -281,12 +280,14 @@ export function isMemoryRelayRoute(pathname: string, method: string): boolean {
 /** Browser-only exceptions; remote-side host administration and nested relays stay closed. */
 export function isBackendUiRoute(pathname: string, method: string): boolean {
   const verb = method === "HEAD" ? "GET" : method
+  if (isMemoryRelayRoute(pathname, method)) return true
   if (["GET", "PATCH"].includes(verb) && ["/api/storage/state", "/api/storage/state/ui"].includes(pathname)) return true
   if (verb === "GET" && pathname === "/api/remote-servers/ssh-hosts") return true
   if (verb === "POST" && (pathname === "/api/remote-servers/probe"
     || /^\/api\/remote-servers\/[A-Za-z0-9_-]{1,64}\/(?:browse|connect|forget)$/.test(pathname))) return true
   const target = pathname.match(/^\/api\/backends\/[A-Za-z0-9_-]{1,64}(\/.+)$/)?.[1]
-  if (!target || target === "/api/memory" || target.startsWith("/api/memory/")) return false
+  if (!target) return false
+  if (isMemoryRelayRoute(target, method)) return true
   if (verb === "POST" && ["/api/auth/login", "/api/auth/logout"].includes(target)) return true
   return !isHostOnlyPath(target, method) && target !== "/api/remote-control/status"
     && SERVER_DEVICE_ROUTES.some(([methods, pattern]) => methods.split(" ").includes(verb) && pattern.test(target))

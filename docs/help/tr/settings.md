@@ -38,6 +38,8 @@ Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen pal
 
 ## Kalıcı ajan belleği {#agent-memory}
 
+Deneysel çoklu arka uç (`multiBackend`) etkinken Uzaktan Kontrol, doğrulanmış HTTPS, LAN veya yüklü PWA üzerinden kimliği doğrulanmış kullanıcılar seçili yerel ya da uzak projenin belleğini inceleyebilir, değiştirebilir ve **Düzenle** işlemini kullanabilir. Seçili proje, belleği hangi arka ucun yöneteceğini belirler.
+
 CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir.
 
 **Tercihler → Genel → Bellek** yolunu açın (tarayıcıda **Ayarlar → Genel**). Bellek varsayılan olarak kapalıdır. Ajanın yararlı bilgileri ve tercihleri konuşmalar arasında saklaması için etkinleştirin. Anahtar bağlı CodeNomad yapılandırması için geçerlidir; kapatmak kayıtları ve geçmişlerini korur. Kapalıyken ajanlar bellek aracı almaz; değişiklik yeniden başlatmadan, birkaç saniye içinde devam eden konuşmalara da uygulanır.
