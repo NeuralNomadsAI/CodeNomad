@@ -406,7 +406,7 @@ Commands:
   refusal, and consent-off withdrawal against the pinned real kit. Sentinel scans cover
    HTTP, native and relayed events, SSE, metadata and fixture logs, including the production debug/trace completion
    logger and an adversarial opaque session ID.
-  Every child uses the fixture environment.
+  Every child uses the fixture environment. Qualify manual AC-B4 separately.
 - `node --import tsx scripts/test-integrations-host-install-native.mjs <absolute-cli> [integration-checkout]`:
   actual Fastify installation route and a supported OpenCode runtime's RPCs using the real built integration kit. Environment and
   kernel WSL detections run with and without authenticated validated offers; selected/backend WSL refuses before

@@ -187,8 +187,9 @@
   Electron's release index (`releases.electronjs.org/releases.json`). The npm
   proposal also requires those two files unchanged on the default branch.
   Otherwise the job warns and names the rejected runtime; updating that runtime
-  first unblocks the proposal. `engines.node` declares runtime compatibility;
-  behavioural validation requires the PR build and maintainer's checklist. Major
+  first unblocks the proposal. The proposal and job summary state that `engines.node`
+  is npm's compatibility declaration only; behavioural validation requires the PR build
+  and maintainer's checklist. Major
   npm releases are proposed too, because npm ships fixes on its current major
   only, but never adopted from the engines check: their title and body say
   "maintainer qualification needed", and the body lists the breaking-change,
