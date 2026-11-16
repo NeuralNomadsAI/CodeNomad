@@ -102,15 +102,17 @@ describe("OpenCode data delivery repair read", () => {
     })
   }
 
-  it("takes the page's committed empty final that precedes a later part in an open step", async () => {
+  it("keeps the streamed draft when the page's empty text precedes a later part in an open step", async () => {
     const instanceId = "opencode-data-delivery-repair-open-final"
     let reads = 0
     const f = readFixture(instanceId, async () => {
       reads += 1
       await new Promise<void>((resolve) => setImmediate(resolve))
-      // The fragment finalized as empty and a tool input already started in
-      // the same open step: the tool part's append proves the empty ending
-      // committed, so the empty text is the authoritative final.
+      // A tool input already started in the same open step. The native
+      // publisher starts it after flushing pending deltas without ending the
+      // text, so a later part proves nothing: without its own ending state or
+      // the step's completion, the empty text is the open fragment's late
+      // persistence, not a committed final.
       return {
         data: [
           { id: "msg_prompt", type: "user", text: "follow-up", time: { created: 250 } },
@@ -130,7 +132,7 @@ describe("OpenCode data delivery repair read", () => {
       armDeliveryRepair(instanceId)
 
       await waitForQuietReads(() => reads)
-      assert.equal(textOf(data, "live"), "", "a committed empty final before a later part must replace the streamed draft")
+      assert.equal(textOf(data, "live"), streamedText, "a later part must not commit the open text's empty persistence")
     } finally {
       f.cleanup()
     }

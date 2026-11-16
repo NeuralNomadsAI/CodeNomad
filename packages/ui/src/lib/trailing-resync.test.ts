@@ -65,3 +65,31 @@ it("does not lose a request queued as the previous pass settles", async () => {
 it("continues recovery after a prerequisite rejects", async () => {
   await assert.doesNotReject(waitForSettledPrerequisite(Promise.reject(new Error("initial hydration failed"))))
 })
+it("retries a failed pass with bounded backoff until one succeeds", async () => {
+  let calls = 0
+  const errors: unknown[] = []
+  const coordinator = new TrailingResyncCoordinator(async () => {
+    calls += 1
+    if (calls <= 2) throw new Error("reconciliation failed")
+  }, (_key, error) => errors.push(error), [5, 5, 5])
+  await coordinator.request("workspace-1")
+  assert.equal(calls, 1)
+  const deadline = Date.now() + 2000
+  while (calls < 3 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.equal(calls, 3, "each failed pass is retried")
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(calls, 3, "a successful pass ends the retries")
+  assert.equal(errors.length, 2)
+})
+it("stops retrying once the backoff budget is spent, or when cancelled", async () => {
+  let calls = 0
+  const coordinator = new TrailingResyncCoordinator(async () => { calls += 1; throw new Error("still failing") }, () => undefined, [5, 5])
+  await coordinator.request("workspace-1")
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  assert.equal(calls, 3, "one pass plus two bounded retries")
+  calls = 0
+  await coordinator.request("workspace-2")
+  coordinator.cancel("workspace-2")
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(calls, 1)
+})
