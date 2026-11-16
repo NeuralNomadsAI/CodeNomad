@@ -12,7 +12,8 @@ test("names the serving host, with a non-default port", () => {
 })
 
 test("keeps the product name on loopback", () => {
-  for (const href of ["http://localhost:9898/", "http://app.localhost/", "http://127.0.0.1:9898/",
+  for (const href of ["http://localhost:9898/", "http://app.localhost/", "http://localhost.:9898/",
+    "http://app.localhost./", "http://LOCALHOST/", "http://127.0.0.1:9898/",
     "http://127.1.2.3/", "http://[::1]:9898/", "http://[::ffff:127.0.0.1]/"]) {
     assert.equal(webTabTitle(at(href)), "CodeNomad", href)
   }

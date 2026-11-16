@@ -1,7 +1,8 @@
 const PRODUCT_TITLE = "CodeNomad"
 
 function isLoopbackHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  // Brackets of IPv6 literals and the DNS root dot (`localhost.`) carry no meaning here.
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "")
   return host === "localhost" || host.endsWith(".localhost") || host === "::1"
     || /^127(\.\d{1,3}){3}$/.test(host) || /^::ffff:127(\.\d{1,3}){3}$/.test(host)
     // URL parsing serializes an IPv4-mapped loopback as ::ffff:7fxx:xxxx.
