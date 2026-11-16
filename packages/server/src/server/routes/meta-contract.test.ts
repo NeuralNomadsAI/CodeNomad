@@ -43,9 +43,10 @@ test("metadata identity persists across HTTP server restarts and separates confi
       assert.deepEqual(meta.capabilities, ["workspaces", "workspace-files", "workspace-git", "events"])
       assert.match(meta.serverId, /^[0-9a-f-]{36}$/)
       assert.equal(meta.localRequest, true)
+      assert.equal(meta.sidecarsAllowed, true)
       assert.deepEqual(Object.keys(meta).sort(), [
         "serverId", "apiContract", "capabilities", "localUrl", "eventsUrl", "host", "listeningMode",
-        "localPort", "hostLabel", "workspaceRoot", "addresses", "system", "localRequest",
+        "localPort", "hostLabel", "workspaceRoot", "addresses", "system", "localRequest", "sidecarsAllowed",
       ].sort())
       return meta.serverId as string
     } finally { await app.close() }
