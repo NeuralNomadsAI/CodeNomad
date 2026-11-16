@@ -8,7 +8,6 @@ import { showConfirmDialog } from "../stores/alerts"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 import ActionOverflowMenu from "./action-overflow-menu"
 import { MissionBodyPending } from "./mission-reader-body"
-import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 export type MissionModelBrief = Pick<UserMissionModel, "objective" | "notes" | "template" | "profiles" | "taskMode">
 
@@ -95,7 +94,7 @@ export function MissionModelLibrary(props: LibraryProps) {
   const selection = () => config.preferences().missionModels.find(model => model.id === selected())
   return <section class="mission-model-library" aria-label={t("missions.models.title")}>
     {/* The group title names the list; the select needs no second visible label. */}
-    <header><h4 title={t("missions.models.hint")} aria-description={t("missions.models.hint")}>{t("missions.models.title")}</h4>
+    <header><h4>{t("missions.models.title")}</h4>
       <select aria-label={t("missions.models.select")} value={selected()} disabled={actions.disabled()}
         onChange={event => setSelected(event.currentTarget.value)}>
         <option value="">{t("missions.models.none")}</option>
@@ -132,7 +131,6 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
   return <>
     <section class="mission-brief-picker" aria-label={t("missions.models.title")}>
       <label for={selectId}><Bookmark aria-hidden="true" />{t("missions.create.brief.start")}
-        <SettingsInfoTip text={t("missions.models.hint")} help={{ page: "missions", anchor: "saved-briefs" }} />
       </label>
       <div class="mission-brief-picker-row">
           <select id={selectId} value={selected()} disabled={actions.disabled()} onChange={event => {

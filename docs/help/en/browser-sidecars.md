@@ -6,11 +6,11 @@
 2. Enter a credential-free `http://` or `https://` **Preview URL**, then **Open preview**. Use the toolbar to navigate, refresh and go Back/Forward.
 3. Use the preview's close button to return to chat. Reopen it in that conversation to continue.
 
-Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's web preview, on every client where previews are available. Through Remote Control when the host keeps web previews off, or on a client where previews are otherwise unavailable, such links keep their normal browser behavior. Ctrl+click (⌘-click on macOS) or middle-click opens the link in your browser instead. Inside the sandboxed preview frame, where real storage is unavailable, the page gets an in-memory `localStorage`, `sessionStorage` and `document.cookie` jar for the current page load; a per-token preview host opened on its own keeps its real storage.
+Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's web preview, on every client where previews are available. Through Remote Control when the host keeps web previews off, or on a client where previews are otherwise unavailable, such links keep their normal browser behavior. Ctrl+click (⌘-click on macOS) or middle-click opens the link in your browser instead.
 
 Each preview belongs to its project folder and session. Switching conversation, project, Info or chat hides an explicitly opened native guest without discarding its live document/history. Hidden guests are not automation targets. Closing the project/window or restarting the renderer ends the live document.
 
-Saved history restores only when you explicitly reopen that session's browser, not at startup/session selection. It stores URLs and a cursor, not unsent forms, DOM, POST bodies or JavaScript memory. History is bounded to 32 URLs per session and a shared layout budget; older entries may be trimmed. Restoring a URL may perform a fresh page load; it is not transaction replay.
+Saved history restores only when you explicitly reopen that session's browser, not at startup/session selection. It stores URLs and a cursor, not unsent forms, DOM, POST bodies or JavaScript memory. History is bounded to 32 URLs per session and a shared layout budget; older entries may be trimmed.
 
 ## Shared sign-ins and automation boundaries {#signins-automation}
 
@@ -24,13 +24,11 @@ Native previews share cookies, sign-ins and site storage across projects/session
 | Linux Tauri | Native WebKitGTK child; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | WebKit mobile identity and CSS viewport; native density/input limits |
 | Plain browser/remote view | Iframe fallback | No local native preview target | Dimensions only |
 
-On every native desktop host, the session-bound `codenomad.browser` tool opens, navigates, snapshots and screenshots the preview, and performs click, type, select, hover, drag, scroll, key and text-wait actions. Execution checks the owning backend, native capabilities, session and visible target. Hidden, replaced or navigated targets fail safely; actions are never retried automatically. Page content stays untrusted. For sites blocking iframe embedding, use an external browser.
+Element comments are unavailable in native mode. GTK clipboard reads require explicit Ctrl+V; clipboard writes and native copy/paste work. For sites blocking iframe embedding, use an external browser.
 
-Native previews open manually or through the agent, retain shared sign-ins across restarts and use native Back/Forward history. Local menus and dialogs hide the preview. Element comments are unavailable in native mode. WebKit snapshots capture script-created closed shadow roots; declarative closed roots stay opaque. On macOS, the first hover can omit pointerenter and ⌘A selects through the native responder without an A keydown. GTK clipboard reads require explicit Ctrl+V; clipboard writes and native copy/paste work.
+Native pop-ups share preview sign-ins, preserve `opener`/`postMessage` and close with their opener. Typed/restored addresses accept credential-free HTTP(S); sites can also open blank and same-origin blob documents. File and app schemes are blocked. Downloads save to Downloads with sanitized unique names, never overwrite files and never auto-open. Camera, microphone, location and notifications are denied; classified permissions use consent, unknown requests show an error. Tauri and Electron support `alert`/`confirm`/`prompt`; Electron's prompt dialog covers top-level preview pages, pop-ups and subframes.
 
-Native pop-ups share preview sign-ins, preserve `opener`/`postMessage` and close with their opener. Typed/restored addresses accept credential-free HTTP(S); sites can also open blank and same-origin blob documents. File and app schemes are blocked. Downloads save to Downloads with sanitized unique names, never overwrite files and never auto-open. Camera, microphone, location and notifications are denied; classified permissions use consent, unknown requests show an error. Tauri and Electron support `alert`/`confirm`/`prompt`; Electron's prompt dialog covers top-level preview pages, pop-ups and subframes. Device and screen selectors scroll through the available entries. Other APIs depend on the engine and hardware.
-
-Sites can ask for confirmation when closing a native pop-up. Linux pointer-lock consent appears at the top of its owning window. WebKitGTK builds affected by [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), including 2.52.6, require the page's file input for uploads because dropped-file access is blocked for security. Save page work before closing or reloading the owning CodeNomad window.
+Sites can ask for confirmation when closing a native pop-up. WebKitGTK builds affected by [WebKit 323277](https://bugs.webkit.org/show_bug.cgi?id=323277), including 2.52.6, require the page's file input for uploads because dropped-file access is blocked for security. Save page work before closing or reloading the owning CodeNomad window.
 
 On Tauri macOS/Linux, focus the preview to zoom it with ⌘/Ctrl +, − or 0, or the app's zoom menu. With focus elsewhere, these menu actions zoom the app.
 
@@ -49,7 +47,7 @@ On Tauri macOS/Linux, focus the preview to zoom it with ⌘/Ctrl +, − or 0, or
 | Mobile viewport | 390 × 844 |
 | Mobile landscape | 844 × 390 |
 
-On Electron and Windows Tauri, mobile templates set Android/Chromium identity, orientation, touch and DPR 2.75 on the owned guest only. Returning to responsive/desktop/tablet clears those overrides and reloads. Tauri macOS/Linux apply a generic WebKit mobile identity to HTTP and JavaScript and fit CSS viewports independently of app zoom/DPI, reloading on template/profile changes and reset. macOS uses native DPR 2.75 when available; GTK density follows the fitted zoom and monitor. Screen, platform, pointer/hover media and maximum touch points keep native desktop values. GTK mobile clicks deliver native touch with mouse compatibility events; macOS keeps mouse input. The iframe fallback resizes only. These profiles provide layout references; phone keyboards, system bars and mobile OS text settings stay outside their scope. Save page work before changing templates because reload can discard unsent page state.
+On Electron and Windows Tauri, mobile templates set Android/Chromium identity, orientation, touch and DPR 2.75 on the owned guest only. Returning to responsive/desktop/tablet clears those overrides and reloads. Tauri macOS/Linux apply a generic WebKit mobile identity to HTTP and JavaScript and fit CSS viewports independently of app zoom/DPI, reloading on template/profile changes and reset. macOS uses native DPR 2.75 when available; GTK density follows the fitted zoom and monitor. The iframe fallback resizes only. These profiles provide layout references; phone keyboards, system bars and mobile OS text settings stay outside their scope. Save page work before changing templates because reload can discard unsent page state.
 
 ## Register a SideCar {#register-sidecar}
 
@@ -65,7 +63,7 @@ On Electron and Windows Tauri, mobile templates set Android/Chromium identity, o
 | Strip prefix (default) | `/sidecars/<id>/path` is forwarded upstream as `/path`. |
 | Preserve prefix | `/sidecars/<id>/path` is forwarded upstream unchanged. Configure the service's own base path to match. |
 
-Registration is server configuration, shared by its clients; it neither installs nor starts the service. The port is on the backend host, not your viewing laptop or phone. **Running** indicates reachability, not that the tool's application/authentication is healthy. Removing registration does not stop the separately launched process. Closing its tab does not stop it either.
+Registration is server configuration, shared by its clients; it neither installs nor starts the service. The port is on the backend host, not your viewing laptop or phone. Removing registration does not stop the separately launched process. Closing its tab does not stop it either.
 
 If unreachable, check the process and port on the backend. If HTML loads but assets/WebSockets fail, check the tool's base path and prefix mode. Recreate a wrong registration with the intended settings; do not expose the upstream publicly just to work around a proxy error. SideCar applications can expose a terminal or files with the server account's authority; trust their users and configuration.
 

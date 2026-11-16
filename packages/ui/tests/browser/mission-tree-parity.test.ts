@@ -519,13 +519,13 @@ test("command feedback is announced and joins the primary button's tooltip inste
     await primary.click()
     const feedback = page.locator(".mission-picker-selection-actions .mission-action-feedback")
     const alert = feedback.getByRole("alert")
-    await alert.getByText("Pause was not applied", { exact: false }).waitFor({ state: "attached" })
+    await alert.getByText("Review the changed mission, then try pausing it again.", { exact: true }).waitFor({ state: "attached" })
     await chevron(page, RELEASE).click()
     await attribute(chevron(page, RELEASE), "aria-expanded", "false")
     assert.equal(await detail.isVisible(), false)
     const text = (await alert.innerText()).trim()
     await until(async () => await primary.getAttribute("title") === `Pause mission — ${text}`, "the tooltip with the feedback")
-    assert.match(await alert.ariaSnapshot(), /Pause was not applied/, "folding the row preserves the live announcement in the accessibility tree")
+    assert.match(await alert.ariaSnapshot(), /Review the changed mission, then try pausing it again/, "folding the row preserves the live announcement in the accessibility tree")
     assert.ok(await alert.evaluate(element => { const box = element.getBoundingClientRect(); return box.width <= 1 && box.height <= 1 }),
       "the explanation takes no room in the panel")
     // A retained uncertain request also keeps its explicit recovery actions in the header.

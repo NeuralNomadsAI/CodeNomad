@@ -7,7 +7,7 @@ export const loadingScreenMessages = {
   "loadingScreen.status.stopped": "服务器已停止",
   "loadingScreen.errors.missingRoot": "未找到加载根元素",
   "loadingScreen.remoteUnavailable.title": "无法连接到此服务器",
-  "loadingScreen.remoteUnavailable.message": "CodeNomad 无法加载此服务器。请确认它正在运行且可以访问，然后重试。",
+  "loadingScreen.remoteUnavailable.message": "请确认服务器正在运行且可以访问，然后重试。",
   "loadingScreen.remoteUnavailable.retry": "重试",
   "loadingScreen.remoteUnavailable.openLocal": "打开本地窗口",
   "loadingScreen.remoteUnavailable.close": "关闭窗口",

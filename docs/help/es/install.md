@@ -54,7 +54,7 @@ En Windows, instala [Git for Windows](https://gitforwindows.org/) con el acceso 
 
 Después de cambiar `PATH`, sal completamente de la aplicación de escritorio y vuelve a iniciarla, o reinicia el backend independiente con la cuenta prevista. Recargar un navegador no actualiza el entorno del backend. Que Git esté disponible solo dentro de WSL no satisface el requisito de Git de un backend de Windows.
 
-Sin Git, aún puedes abrir una carpeta física y usar conversaciones limitadas al directorio, incluso pedir ayuda de instalación al agente. Las operaciones de repositorio/worktree siguen sin estar disponibles; el acceso a las sesiones permanece limitado a esa carpeta exacta. CodeNomad informa al agente sobre la disponibilidad de Git en el backend antes de los mensajes/comandos personalizados y retira ese aviso tras la recuperación. El equipo de ejecución del agente puede ser distinto del equipo del backend, así que instala Git para el backend, no solo para el shell del agente.
+Sin Git, aún puedes abrir una carpeta física y usar conversaciones limitadas al directorio, incluso pedir ayuda de instalación al agente. Las operaciones de repositorio/worktree siguen sin estar disponibles; el acceso a las sesiones permanece limitado a esa carpeta exacta. El equipo de ejecución del agente puede ser distinto del equipo del backend, así que instala Git para el backend, no solo para el shell del agente.
 
 ## Seleccionar OpenCode en el primer inicio {#first-launch}
 

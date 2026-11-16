@@ -31,6 +31,6 @@ test("package actions address native target once across rows and retain pending 
     await page.getByRole("menuitem", { name: "Update fixture-plugin@latest", exact: true }).first().click()
     await page.evaluate(() => (window as any).fixture.refreshSource())
     await page.evaluate(() => (window as any).fixture.reject())
-    await page.getByText("Package operation failed for fixture-plugin@latest. Refresh to reconcile its status.", { exact: true }).waitFor()
+    await page.getByText("Package operation failed for fixture-plugin@latest. Refresh to check its status.", { exact: true }).waitFor()
   } finally { await page.close(); await fixture.close() }
 })

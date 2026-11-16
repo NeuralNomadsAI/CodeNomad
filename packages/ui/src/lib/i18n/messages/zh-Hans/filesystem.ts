@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "浏览已配置的工作区根目录下的文件夹。",
   "directoryBrowser.close": "关闭",
   "directoryBrowser.currentFolder": "选择文件夹或输入路径",
   "directoryBrowser.currentFolder.inputAriaLabel": "文件夹路径",

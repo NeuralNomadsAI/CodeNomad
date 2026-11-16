@@ -219,7 +219,7 @@ test("tool-error body copies the complete error beyond the 10000-character previ
 
   // The bounded preview reveals the rest of the error in place.
   const notice = body.locator(".message-hidden-text")
-  assert.match((await notice.textContent())!, /more characters hidden to keep this message responsive/)
+  assert.match((await notice.textContent())!, /more characters hidden/)
   await notice.getByRole("button", { name: "Show all", exact: true }).click()
   await body.getByText(/END-ERROR/).waitFor()
   assert.equal(await notice.count(), 0)
@@ -246,13 +246,13 @@ test("oversized tool input copies complete JSON from its inner IO header, indepe
   assert.ok(JSON.stringify(original).length > 20_000)
   const preview = await inputSection.locator(".tool-call-io-body").textContent()
   assert.ok(preview!.length < 1000, "Oversized input must render a bounded omission placeholder")
-  assert.match(preview!, /Structured output omitted from rendering/)
+  assert.match(preview!, /Content too large to display/)
   assert.ok(!preview!.includes("INPUT-END"))
   const before = await inputSection.locator("*").count()
   const copied = await copyWithPointer(page, inputSection.getByRole("button", { name: "Copy tool input", exact: true }))
   assert.deepEqual(JSON.parse(copied), original)
   assert.ok(await inputSection.locator("*").count() < 100, "Highlighting and copy must retain the bounded placeholder DOM")
-  assert.match((await inputSection.locator(".tool-call-io-body").textContent())!, /Structured output omitted from rendering/)
+  assert.match((await inputSection.locator(".tool-call-io-body").textContent())!, /Content too large to display/)
   assert.ok(before < 100)
 
   // The outer header's alternate copy route is output-only, so it cannot

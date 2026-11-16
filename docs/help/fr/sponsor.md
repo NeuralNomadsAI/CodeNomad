@@ -1,7 +1,5 @@
 # Soutenir CodeNomad
 
-CodeNomad est libre et open source, maintenu par des bénévoles. Le parrainage finance le temps nécessaire pour le corriger, le publier et l’améliorer.
-
 ## Pourquoi parrainer CodeNomad {#why}
 
 CodeNomad est publié sous [licence MIT](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) et ne coûte rien à télécharger ni à utiliser. Pascal André et Shantur Rathore le maintiennent sur leur temps libre, avec des contributions de la communauté. OpenCode est mis à jour indépendamment : CodeNomad demande donc un travail régulier rien que pour rester compatible, avant toute nouvelle fonctionnalité.
@@ -12,8 +10,6 @@ CodeNomad est publié sous [licence MIT](https://github.com/NeuralNomadsAI/CodeN
 - **Versions** : compiler, tester et publier les applications Windows, macOS et Linux.
 - **Langues** : tenir à jour l’interface et ce site d’aide en dix langues.
 - **Nouvelles fonctionnalités**, comme le travail derrière les [Missions](missions.md), le [Contrôle à distance](remote-control.md) et la [recherche dans l’historique](history.md).
-
-L’objectif à long terme est que le développement de CodeNomad soit financé par les personnes et les entreprises qui l’utilisent.
 
 ## Politique de financement {#policy}
 

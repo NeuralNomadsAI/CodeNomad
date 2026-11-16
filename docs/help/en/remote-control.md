@@ -21,7 +21,7 @@ To pair another desktop CodeNomad, choose **Connect CodeNomad Server** on its ho
 
 Revocation ends that device's current HTTP/SSE connections as well as future access. Pair again with a new link to restore access. A device expires after **30 days without use**. At the **32-device limit**, a new pairing replaces the least recently seen device and closes its connections.
 
-The backend stores credential hashes, not raw device credentials, in `remote-control-devices.json` under its configuration base. The client holds a host-scoped `Secure`, `HttpOnly`, `SameSite=Lax` device cookie. Its browser lifetime can be longer than the server's 30-day inactivity limit; the registry remains authoritative. Clearing site data, switching browser profiles or using private browsing can require pairing again.
+Clearing site data, switching browser profiles or using private browsing can require pairing again.
 
 Changing the direct-access password does **not** revoke devices. **Stop Remote Control** disconnects the tunnel but retains the paired-device list; use **Revoke** when you want to remove authorization.
 
@@ -42,7 +42,6 @@ Recovery preserves the open page and drafts; it does not replay a failed action.
 | Stop Remote Control | Disconnects access and clears automatic launch-resume; keeps device records. |
 | Backend shutdown / last desktop window closes and the app quits | Remote Control goes offline. OpenCode's shared service can remain running, but cannot serve this UI through a stopped backend. |
 | Launch after leaving Remote Control started | Reconnects in the background without issuing a new pairing link. Installations never started do not enable themselves. |
-| Failed resume or fatal tunnel error | The remembered choice remains and the host shows the error; the Remote Control card's refresh icon rereads its state. **Start Remote Control** retries now; **Stop Remote Control** clears the choice. Otherwise a later launch retries. |
 
 Automatic launch-resume is limited to one backend per configuration directory. Do not start competing hosts with the same configuration to obtain extra tunnel capacity. For a host that must stay reachable after a desktop exit, deploy a separately managed [standalone server](server.md); Remote Control is not an independent daemon.
 
@@ -65,7 +64,7 @@ Use a loopback connection on the host for host-only proxy/WebSocket surfaces and
 
 ## Relay and privacy {#relay-privacy}
 
-CodeNomad uses [OpenTunnel](https://github.com/anomalyco/opentunnel) and claims one random route on the machine's shared default tunnel identity. Stopping releases CodeNomad's bridge, not the shared identity used by other applications.
+CodeNomad uses [OpenTunnel](https://github.com/anomalyco/opentunnel) and claims one random route on the machine's shared default tunnel identity.
 
 TLS terminates in the CodeNomad backend. The relay forwards ciphertext and cannot read application contents, but can observe hostnames, connection timing and traffic sizes. The tunnel certificate/private key remain on the host. Protect the host's tunnel storage and CodeNomad configuration as credentials; an unguessable address is not authorization.
 

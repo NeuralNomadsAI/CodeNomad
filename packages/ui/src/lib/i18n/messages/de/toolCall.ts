@@ -4,7 +4,7 @@ export const toolCallMessages = {
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "Verschachtelte Werkzeugaufrufe",
   "toolCall.execute.more": "{count} weitere Aufrufe ausgeblendet.",
-  "toolCall.execute.truncated": "Native Ausgabe gekürzt. Vollständige Ausgabe:",
+  "toolCall.execute.truncated": "Ausgabe gekürzt. Vollständige Ausgabe:",
   "toolCall.pending.waitingToRun": "Wartet auf Ausführung...",
   "toolCall.error.label": "Fehler:",
 
@@ -62,9 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Verzeichnis wird aufgelistet...",
 
   "toolCall.renderer.bash.title.timeout": "Zeitüberschreitung: {timeout}",
-  "toolCall.output.truncated": "[Ausgabe für die Darstellung gekürzt; kopieren Sie sie für die vollständige Ausgabe]",
-  "toolCall.output.tooLarge": "Die strukturierte Ausgabe wird nicht dargestellt, da sie zu groß ist.",
-  "toolCall.task.steps.truncated": "Die neuesten {count} Schritte werden angezeigt; ältere Schritte wurden ausgelassen.",
+  "toolCall.output.truncated": "Ausgabe gekürzt. Kopieren Sie die vollständige Ausgabe.",
+  "toolCall.output.tooLarge": "Inhalt zu groß für die Anzeige.",
+  "toolCall.task.steps.truncated": "Die neuesten {count} Schritte werden angezeigt.",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 
@@ -157,7 +157,6 @@ export const toolCallMessages = {
   "toolCall.status.error": "Fehler",
   "toolCall.status.unknown": "Unbekannt",
 
-  "toolCall.applyPatch.action.preparing": "apply_patch wird vorbereitet...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} Datei)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} Dateien)",
   "toolCall.applyPatch.fileFallback": "Datei {number}",

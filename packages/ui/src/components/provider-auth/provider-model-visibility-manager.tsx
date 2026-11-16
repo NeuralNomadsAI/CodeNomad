@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, For, on, onMount, Show, type Co
 import { useI18n } from "../../lib/i18n"
 import { toggleSweepGroup } from "../../lib/toggle-sweep"
 import { useConfig } from "../../stores/preferences"
+import { SettingsInfoTip } from "../settings/settings-info-tip"
 
 export interface ProviderVisibilityModel {
   id: string
@@ -72,11 +73,11 @@ export const ProviderModelVisibilityManager: Component<ProviderModelVisibilityMa
           <ArrowLeft class="w-4 h-4" />
           {t("settings.providers.modelVisibility.back")}
         </button>
-        <div>
+        <div class="flex items-center gap-2">
           <h4 id={headingId} class="settings-card-title">
             {t("settings.providers.modelVisibility.title", { provider: props.providerName })}
           </h4>
-          <p class="settings-card-subtitle">{t("settings.providers.modelVisibility.subtitle")}</p>
+          <SettingsInfoTip text={t("settings.providers.modelVisibility.subtitle")} help={{ page: "providers", anchor: "models" }} />
         </div>
       </header>
 

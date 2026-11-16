@@ -64,7 +64,7 @@ direct remote access मा trusted HTTPS प्रयोग गर्नुह�
 
 ## credential र निदान निजी राख्नुहोस् {#privacy}
 
-provider connection र global conversation storage OpenCode का हुन्। समर्थित usage integration का लागि CodeNomad ले connection metadata र selected credential server-side पढ्छ; browser API ले provider secret मान फर्काउँदैनन्। बाह्य OAuth login refresh त्यसको स्वामीको हो; CodeNomad ले ती refresh token साट्दैन। [प्रदायक](providers.md) हेर्नुहोस्।
+provider connection र global conversation storage OpenCode का हुन्। समर्थित usage integration का लागि CodeNomad ले connection metadata र selected credential server-side पढ्छ; browser API ले provider secret मान फर्काउँदैनन्। [प्रदायक](providers.md) हेर्नुहोस्।
 
 | सामग्री | व्यवस्थापन |
 | --- | --- |

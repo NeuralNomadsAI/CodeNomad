@@ -54,7 +54,7 @@ Windows'ta, komut satırı/üçüncü taraf erişimi etkinleştirilmiş olarak [
 
 `PATH`'yi değiştirdikten sonra, masaüstü uygulamasından tamamen çıkıp yeniden başlatın veya amaçlanan hesap altında bağımsız arka ucu yeniden başlatın. Bir tarayıcının yeniden yüklenmesi arka uç ortamını güncellemez. Yalnızca WSL içinde bulunan Git, Windows arka ucunun Git gereksinimini karşılamaz.
 
-Git olmadan, yine de fiziksel bir klasörü açabilir ve aracıdan kurulum yardımı istemek de dahil olmak üzere yalnızca dizin konuşmalarını kullanabilirsiniz. Depo/çalışma ağacı işlemleri kullanılamıyor; oturum erişimi tam olarak bu klasörle sınırlı kalır. CodeNomad, istemlerden/özel komutlardan önce aracıya arka uç Git kullanılabilirliği hakkında bilgi verir ve kurtarma sonrasında bu uyarıyı kaldırır. Aracının yürütme ana bilgisayarı arka uç ana bilgisayarından farklı olabilir; bu nedenle Git'i yalnızca aracının kabuğu için değil, arka uç için de yükleyin.
+Git olmadan, yine de fiziksel bir klasörü açabilir ve aracıdan kurulum yardımı istemek de dahil olmak üzere yalnızca dizin konuşmalarını kullanabilirsiniz. Depo/çalışma ağacı işlemleri kullanılamıyor; oturum erişimi tam olarak bu klasörle sınırlı kalır. Aracının yürütme ana bilgisayarı arka uç ana bilgisayarından farklı olabilir; bu nedenle Git'i yalnızca aracının kabuğu için değil, arka uç için de yükleyin.
 
 ## İlk başlatmada OpenCode'u seçin {#first-launch}
 

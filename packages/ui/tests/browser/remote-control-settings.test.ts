@@ -34,7 +34,7 @@ test("after a failed resume, paired devices stay listed and Stop forgets the cho
   page.on("pageerror", error => errors.push(error.message))
   try {
     await page.goto(`${url}?scenario=failed-resume`)
-    await page.getByText("Relay connection failed", { exact: true }).waitFor()
+    await page.getByText("Connection failed", { exact: true }).waitFor()
     await page.getByText("Android · Firefox", { exact: true }).waitFor()
     await page.getByRole("button", { name: "Start Remote Control" }).waitFor()
     const stop = page.getByRole("button", { name: "Stop Remote Control" })
@@ -118,7 +118,7 @@ test("a resuming tunnel updates by itself until it can create pairing links", as
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {
     await page.goto(`${url}?scenario=resuming`)
-    await page.getByText("Connecting to the relay…", { exact: true }).waitFor()
+    await page.getByText("Connecting…", { exact: true }).waitFor()
     const newLink = page.getByRole("button", { name: "Create new pairing link" })
     assert.equal(await newLink.isDisabled(), true)
     await page.getByText("Ready for remote connections", { exact: true }).waitFor({ timeout: 15_000 })

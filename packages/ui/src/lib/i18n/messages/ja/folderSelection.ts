@@ -9,7 +9,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "CodeNomad の Discord",
 
   "folderSelection.empty.title": "最近使ったフォルダはありません",
-  "folderSelection.empty.description": "フォルダを選択して開始",
 
   "folderSelection.recent.title": "最近使ったフォルダ",
   "folderSelection.recent.subtitle.one": "{count} 件のフォルダ",
@@ -41,7 +40,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.destination.title": "クローン先を選択",
   "folderSelection.clone.destination.description": "クローンを置くフォルダーを選択してください。その中にリポジトリのフォルダーが作成されます。",
   "folderSelection.clone.dialog.title": "Git リポジトリをクローン",
-  "folderSelection.clone.dialog.description": "Git リポジトリをローカルフォルダにクローンし、ワークスペースとして開きます。",
   "folderSelection.clone.dialog.repositoryUrl": "リポジトリ URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "保存先フォルダ",
@@ -63,10 +61,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "参照",
 
   "folderSelection.loading.title": "インスタンスを起動中...",
-  "folderSelection.loading.subtitle": "ワークスペースを準備しています。しばらくお待ちください。",
 
   "folderSelection.drop.title": "フォルダをドロップして開く",
-  "folderSelection.drop.subtitle": "ドロップしたフォルダで新しいインスタンスを開始します。",
   "folderSelection.drop.invalidTitle": "ドロップした項目を開けませんでした",
   "folderSelection.drop.invalidMessage": "新しいインスタンスを開始するにはフォルダをドロップしてください。",
 
@@ -79,7 +75,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "保存したリモート CodeNomad サーバーを新しいウィンドウで開きます",
   "folderSelection.servers.count": "{count} サーバー",
   "folderSelection.servers.empty.title": "保存済みサーバーはありません",
-  "folderSelection.servers.empty.description": "この端末からすばやく再接続できるように、リモートサーバーを追加してください",
   "folderSelection.servers.connectTitle": "サーバーに接続",
   "folderSelection.servers.connectSubtitle": "リモート CodeNomad サーバーを保存して新しいウィンドウで開きます",
   "folderSelection.servers.connectButton": "サーバーに接続",
@@ -87,7 +82,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "自己署名 TLS",
   "folderSelection.servers.errorTitle": "リモート接続に失敗しました",
   "folderSelection.servers.dialog.title": "サーバーに接続",
-  "folderSelection.servers.dialog.description": "リモート CodeNomad サーバーを追加し、必要に応じてすぐに開きます。",
   "folderSelection.servers.dialog.name": "サーバー名",
   "folderSelection.servers.dialog.namePlaceholder": "本番サーバー",
   "folderSelection.servers.dialog.url": "サーバー URL",

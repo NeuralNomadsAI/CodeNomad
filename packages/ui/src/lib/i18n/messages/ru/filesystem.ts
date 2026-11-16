@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "Просматривайте папки в пределах настроенного корня рабочего пространства.",
   "directoryBrowser.close": "Закрыть",
   "directoryBrowser.currentFolder": "Выберите папку или введите путь",
   "directoryBrowser.currentFolder.inputAriaLabel": "Путь к папке",

@@ -65,8 +65,8 @@ const submitReady = (page: Page) => page.waitForFunction(() => !(document.queryS
 test("pre-send creation refusals keep the draft, re-enable Create and explain the refusal", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   const refusals = [
-    { status: 503, json: { error: "Mission plugin unavailable", code: "creation-unavailable" }, message: /Nothing was sent/ },
-    { status: 409, json: { error: "Worktree deletion is in progress", code: "creation-worktree-deleting" }, message: /worktree deletion is in progress/i },
+    { status: 503, json: { error: "Mission plugin unavailable", code: "creation-unavailable" }, message: /Missions are not available right now\. Try again shortly\./ },
+    { status: 409, json: { error: "Worktree deletion is in progress", code: "creation-worktree-deleting" }, message: /Wait for the worktree deletion to finish, then try again\./ },
   ]
   try {
     const fixture = await setup(page, (route, attempt, body) => attempt <= refusals.length

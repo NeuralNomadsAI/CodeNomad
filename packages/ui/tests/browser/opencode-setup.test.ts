@@ -149,7 +149,7 @@ test("closing required-update screen leaves recovery clickable above a pending f
     assert.equal(await page.getByText("2.2.2", { exact: true }).count(), 1)
     assert.equal(await page.locator("details[open]").count(), 0)
     await page.getByText("Version details", { exact: true }).click()
-    await page.getByText(/requires OpenCode 2\.2\.3 or later for the image generation tool used by the Images settings/).waitFor()
+    await page.getByText("Minimum version", { exact: true }).waitFor()
     assert.equal(await page.getByText("settings.opencode.setup.native_contract", { exact: true }).count(), 0)
   } catch (error) { console.error(await page.locator("body").innerText()); throw error }
   finally { await page.close() }
@@ -174,7 +174,6 @@ test("optional updates stay non-blocking and a failed install remains recoverabl
     await page.waitForFunction(() => Boolean((window as any).fixture))
     assert.equal(await page.getByRole("dialog").count(), 0)
     await page.evaluate(() => (window as any).fixture.open())
-    await page.getByText(/OpenCode 2.0.10 has not been fully validated/).waitFor()
     if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-setup-optional.png") })
     await page.getByRole("button", { name: "Update to OpenCode 2.0.11" }).click()
     await page.locator(".settings-error-message").waitFor()
@@ -838,7 +837,7 @@ test("OpenCode 1.x npm replacement is confirmed explicitly and a failure after r
       state: phase === "installed" ? "ready" : phase === "legacy" ? "update_required" : "missing",
       currentVersion: phase === "installed" ? "2.0.30" : phase === "legacy" ? "1.18.10" : null, latestVersion: "2.0.30",
       updateAvailable: phase !== "installed", canUpgrade: phase !== "installed", minimumVersion: "2.0.27", recommendedVersion: "2.0.29",
-      binaryPath: phase === "removed" ? "opencode2" : "C:/Users/fixture/AppData/Roaming/npm/opencode.cmd", installationSource: phase === "removed" ? undefined : "path",
+      binaryPath: phase === "removed" ? "opencode2" : "C:/Other/opencode.exe", installationSource: phase === "removed" ? undefined : "path",
       ...(phase === "legacy" ? { legacyReplacement: { path: "C:/Users/fixture/AppData/Roaming/npm/opencode.cmd", version: "1.18.10" } } : {}),
       versionAssessment: phase === "installed" ? "untested" : "incompatible", target: "host", canRestart: false,
       serviceState: phase === "installed" ? "ready" : undefined, daemonVersion: phase === "installed" ? "2.0.30" : undefined,
@@ -849,11 +848,12 @@ test("OpenCode 1.x npm replacement is confirmed explicitly and a failure after r
     const panel = page.locator(".opencode-setup-panel")
     const replace = panel.getByRole("button", { name: "Replace OpenCode 1.18.10 with OpenCode 2", exact: true })
     await replace.waitFor()
-    await panel.getByText(/OpenCode 1\.18\.10 was installed with npm/).waitFor()
+    await panel.getByText("C:/Other/opencode.exe", { exact: true }).waitFor()
     assert.equal(await panel.getByText(/Select a supported executable/).count(), 0, "a replaceable npm installation is never a manual dead end")
     await replace.click()
     const dialog = page.getByRole("dialog", { name: "Replace OpenCode 1.18.10?", exact: true })
-    await dialog.getByText(/imports OpenCode 1\.x conversations itself/).waitFor()
+    await dialog.getByText(/imports OpenCode 1\.x conversations at service startup/).waitFor()
+    await dialog.getByText(/C:\/Users\/fixture\/AppData\/Roaming\/npm\/opencode\.cmd/).waitFor()
     if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-legacy-confirm.png") })
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
     await dialog.waitFor({ state: "hidden" })

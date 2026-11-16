@@ -2,13 +2,10 @@ import { Show } from "solid-js"
 import type { OpenCodeUpdateStatus } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 
-/** Explains an OpenCode 1.x npm replacement or an older OpenCode left untouched elsewhere on PATH. */
+/** Reports an older OpenCode left untouched elsewhere on PATH. */
 export function OpenCodeInstallationNotice(props: { status: OpenCodeUpdateStatus }) {
   const { t } = useI18n()
   return <>
-    <Show when={props.status.canUpgrade && props.status.legacyReplacement}>
-      {legacy => <p class="settings-toggle-caption opencode-installation-text">{t("settings.opencode.setup.legacy.description", legacy())}</p>}
-    </Show>
     <Show when={props.status.foreignInstallation}>
       {foreign => <div class="opencode-installation-notice" role="note">
         <p class="settings-toggle-caption">{foreign().version

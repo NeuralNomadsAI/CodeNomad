@@ -65,15 +65,6 @@ export const appMessages = {
   "app.closeInstance.toast.error": "Не удалось закрыть проект.",
   "app.closeInstance.toast.otherWindow": "Проект {project} закрыт из другого окна.",
 
-  "emptyState.logoAlt": "Логотип CodeNomad",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Выберите папку, чтобы начать писать код с AI",
-  "emptyState.actions.selectFolder": "Выбрать папку",
-  "emptyState.actions.selecting": "Выбор…",
-  "emptyState.keyboardShortcut": "Горячая клавиша: {shortcut}",
-  "emptyState.examples": "Примеры: {example}",
-  "emptyState.multipleInstances": "Можно иметь несколько экземпляров одной и той же папки",
-
   "releases.upgradeRequired.title": "Требуется обновление",
   "releases.desktop.checking": "Проверка обновлений CodeNomad…",
   "releases.desktop.current": "Установлена последняя версия CodeNomad.",

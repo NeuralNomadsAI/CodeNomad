@@ -121,12 +121,10 @@ export function MissionProfileControls(props: {
       // The revert button disappears with the customization; keep keyboard focus in the row.
       queueMicrotask(() => fieldset?.querySelector("select")?.focus())
     }
-    return <fieldset ref={fieldset} class="mission-profile-row" disabled={props.disabled}
-      aria-description={props.inherited && !customized() ? t("missions.defaults.fromGlobalHint", { all: t("missions.defaults.allPlaybooks") }) : undefined}>
+    return <fieldset ref={fieldset} class="mission-profile-row" disabled={props.disabled}>
       <legend>{label()}
         <Show when={props.inherited}>
-          <Show when={customized()} fallback={<span class="mission-profile-origin"
-            title={t("missions.defaults.fromGlobalHint", { all: t("missions.defaults.allPlaybooks") })}>{t("missions.defaults.fromGlobal")}</span>}>
+          <Show when={customized()} fallback={<span class="mission-profile-origin">{t("missions.defaults.fromGlobal")}</span>}>
             <button type="button" class="mission-profile-revert" aria-label={t("missions.defaults.revert", { role: label() })}
               title={t("missions.defaults.revert", { role: label() })} disabled={props.disabled} onClick={inherit}><RotateCcw aria-hidden="true" /></button>
           </Show>

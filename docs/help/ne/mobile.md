@@ -22,7 +22,7 @@ Remote Control लाई device pairing चाहिन्छ; direct connection
 
 remote PWA स्थापना र microphone पहुँचलाई browser ले चिन्ने secure context चाहिन्छ। ठ्याक्कै hostname/IP मिल्ने trusted HTTPS certificate प्रयोग गर्नुहोस्। generated local certificate लाई client device/browser ले स्पष्ट trust गर्नुपर्छ; warning page वा bypass भरपर्दो installation setup होइन। browser localhost अपवाद त्यही device मा लागू हुन्छ, अर्को host को HTTP LAN address मा होइन।
 
-install विकल्प नभए पहिले HTTPS trust र browser support जाँचेर embedded QR/in-app browser होइन पूर्ण browser मा पृष्ठ फेरि खोल्नुहोस्। microphone असफल भए browser/OS site permission र [आवाज](voice.md) हेर्नुहोस्। install ठीक गर्न authentication वा TLS verification बन्द नगर्नुहोस्।
+install ठीक गर्न authentication वा TLS verification बन्द नगर्नुहोस्।
 
 ## touch layout मा काम {#touch-layout}
 
@@ -41,6 +41,6 @@ navigation र tool खोल्न **बायाँ प्यानल** र *
 | microphone, clipboard, notification र install prompt | browser/OS support, secure context र user permission मा निर्भर। |
 | offline काम | offline backend वा cached API history छैन। static UI asset cache हुन सक्छन्, तर document र API response offline workspace होइनन्। |
 
-backend पहुँचयोग्य राख्नुहोस्। mobile OS suspension वा network switch ले event stream छुटाउन सक्छ; फर्कँदा reconnect र current state refetch हुन्छ, सुनिश्चित event replay हुँदैन। retry अघि कार्य सकियो कि जाँच्नुहोस्। PWA बन्द गर्दा standalone backend रोकिँदैन; host desktop app र backend quit हुँदा अर्को launch सम्म Remote Control अनुपलब्ध हुन्छ।
+backend पहुँचयोग्य राख्नुहोस्। retry अघि कार्य सकियो कि जाँच्नुहोस्। PWA बन्द गर्दा standalone backend रोकिँदैन; host desktop app र backend quit हुँदा अर्को launch सम्म Remote Control अनुपलब्ध हुन्छ।
 
 स्थापना गरिएको PWA सहित प्रत्येक ब्राउजर ट्याबले त्यही ट्याबका लागि खुला परियोजनाहरू, चयन गरिएका कुराकानीहरू, नपठाइएका ड्राफ्टहरू र स्क्रोल स्थिति राख्छ: पृष्ठ पुनः लोड हुँदा, वा एप बदलेपछि वा स्क्रिन लक भएपछि मोबाइल OS ले पुनः लोड गर्दा ती फर्किन्छन्। नयाँ ट्याब, वा OS ले पूर्ण रूपमा बन्द गरेको PWA, गृह पृष्ठमा खुल्छ। यो ट्याबका लागि बन्द गर्न **सेटिङ → सामान्य → अघिल्लो अवस्था पुनर्स्थापना गर्नुहोस्** प्रयोग गर्नुहोस्।

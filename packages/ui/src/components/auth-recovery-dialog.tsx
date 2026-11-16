@@ -37,8 +37,8 @@ export default function AuthRecoveryDialog() {
           <div class="window-header"><Dialog.Title class="window-title">{t(authRecovery.pairingRequired() ? "authRecovery.pairingTitle" : "authRecovery.title")}</Dialog.Title></div>
           <form onSubmit={signIn}>
             <div class="window-body">
-              <Dialog.Description>{t(authRecovery.pairingRequired() ? "authRecovery.pairing" : "authRecovery.description")}</Dialog.Description>
-              <p>{t("authRecovery.drafts")}</p>
+              <Show when={authRecovery.pairingRequired()}><p>{t("authRecovery.pairing")}</p></Show>
+              <Dialog.Description>{t("authRecovery.drafts")}</Dialog.Description>
               <Show when={!authRecovery.pairingRequired()}>
                 <label for="auth-recovery-username">{t("authRecovery.username")}</label>
                 <input id="auth-recovery-username" class="form-input" name="username" autocomplete="username"

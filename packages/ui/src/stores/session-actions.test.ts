@@ -345,7 +345,7 @@ describe("plugin RPC message pruning", () => {
     store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
       { id: "tool-1", type: "tool", tool: "bash" }, { id: "keep", type: "text", text: "keep" },
     ] })
-    const reasons = { unavailable: /plugin is unavailable/, maintenance_required: /storage is busy/, conflict: /message changed/, not_deletable: /cannot be deleted/, unsupported_storage: /could not validate/ } as const
+    const reasons = { unavailable: /Reopen CodeNomad/, maintenance_required: /Wait for the current operation/, conflict: /Reload the message/, not_deletable: /Only completed tools and reasoning/, unsupported_storage: /could not validate/ } as const
     for (const reason of Object.keys(reasons) as Array<keyof typeof reasons>) {
       serverApi.pruneSessionMessage = async () => ({ status: "blocked", reason })
       await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"), reasons[reason])
@@ -383,7 +383,7 @@ describe("plugin RPC message pruning", () => {
     messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
       { id: `${messageId}-reasoning-0`, type: "reasoning", text: "same" },
     ] })
-    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /message changed/)
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /Reload the message/)
     assert.equal(calls, 0)
   })
 
@@ -406,7 +406,7 @@ describe("plugin RPC message pruning", () => {
       let calls = 0
       serverApi.pruneSessionMessage = async () => { calls++; throw new Error("Destructive RPC must not be called") }
 
-      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[0].id!), /message changed/)
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[0].id!), /Reload the message/)
 
       assert.equal(calls, 0)
       assert.deepEqual(store.getMessage(messageId)?.partIds, normalized.parts.map(part => part.id))

@@ -42,6 +42,6 @@ Laden Sie nur von dieser Seite oder den [offiziellen Releases](https://github.co
 
 ## Entwicklung unterstützen {#support-development}
 
-CodeNomad ist kostenlos und wird von Freiwilligen in ihrer Freizeit gepflegt. Wenn es Ihnen oder Ihrem Team nützt, hilft Sponsoring, es zu pflegen und mit neuen OpenCode-Releases kompatibel zu halten. Die Seite [CodeNomad unterstützen](sponsor.md) erklärt, was Sponsoring finanziert.
+Die Seite [CodeNomad unterstützen](sponsor.md) erklärt, was Sponsoring finanziert.
 
 {{funding}}

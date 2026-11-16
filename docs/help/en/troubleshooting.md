@@ -1,7 +1,5 @@
 # Troubleshooting
 
-Recover by checking the owner of the failing operation first: browser, CodeNomad backend, OpenCode service or provider. A lost reply does not prove a mutation failed; reread current state before repeating it.
-
 ## Desktop launch problems {#desktop-launch}
 
 ### macOS quarantine {#macos-quarantine}
@@ -37,7 +35,7 @@ Electron uses Chromium and is an alternative on the same host. If the AppImage i
 
 Directory-only conversations remain available without Git; worktree and Git controls do not. On Windows, Git installed only inside WSL is not enough for the Windows backend. A known folder without a repository can expose **Initialize Git**; a missing Git executable is a different condition and must be fixed first. See [requirements](install.md#requirements) and [Files](files.md).
 
-If an owned worktree or conversation placement cannot be verified, open its physical folder explicitly rather than trying arbitrary paths or editing native storage. Refresh after an uncertain move/removal to see which placement actually exists. Force-removing a worktree can destroy uncommitted files; do not use it as a connection repair.
+If an owned worktree or conversation placement cannot be verified, open its physical folder explicitly rather than trying arbitrary paths or editing native storage. Force-removing a worktree can destroy uncommitted files; do not use it as a connection repair.
 
 ## OpenCode runtime and WSL {#opencode-runtime}
 
@@ -51,19 +49,16 @@ In a launch-error dialog, choose **Open OpenCode Settings** to check the executa
 
 For a WSL executable, confirm the intended distribution and Windows localhost forwarding. Service lifecycle runs inside Linux; CodeNomad must still reach its loopback endpoint from Windows. Never edit the service registration/database or signal guessed Linux process IDs from Windows.
 
-A custom/newer version can be unverified without being incompatible. Read the actual contract error before changing versions. If session environment synchronization fails, fix the execution-host environment/connection: CodeNomad will not send a prompt without that synchronization. See [OpenCode](opencode.md).
-
 ## Login, TLS and direct connectivity {#login-and-tls}
 
 | Symptom | Safe check and recovery |
 | --- | --- |
 | **Sign in to CodeNomad again** | Keep the page open, enter the server username/password and select **Sign in**. Recovery reconnects in place to keep drafts; it does not replay the failed action. |
-| Server unreachable | Verify the backend is running and use its printed address/actual port. An unreachable check alone does not prove your login expired. |
-| Provider rejects authentication | Repair the provider's login through its owner; do not change the CodeNomad server password to repair provider OAuth. |
+| Server unreachable | Verify the backend is running and use its printed address/actual port. |
 | Certificate name/trust error | Check the actual hostname/IP against certificate SANs and install the intended CA trust or a valid server certificate. Do not disable TLS verification. |
-| Direct connection refused | Check effective HTTP/HTTPS binding, firewall and routing. HTTP in desktop or dual-listener mode stays loopback; standalone HTTP-only has different binding behavior. |
+| Direct connection refused | Check effective HTTP/HTTPS binding, firewall and routing. |
 
-After authentication recovery, inspect state before manually retrying a mutation whose reply was uncertain. Runtime passwords must be supplied on every backend start; a password saved through settings persists. See [security](security.md), [TLS/binding rules](remote-access.md) and [server reference](server.md).
+Runtime passwords must be supplied on every backend start; a password saved through settings persists. See [security](security.md), [TLS/binding rules](remote-access.md) and [server reference](server.md).
 
 ## Remote Control pairing {#pairing}
 
@@ -75,18 +70,9 @@ Pairing links are single-use and short-lived; the direct-access password is not 
 
 ## Provider, plugin and extension state {#providers-and-addons}
 
-If **Full timeline unavailable** accompanies a failed `codenomad-session-pruning` plugin, inspect its load error in the OpenCode log. This plugin supplies full-history navigation and pending-question/permission recovery. Retry the timeline after the plugin loads successfully; preserve your session data.
-
-| Problem | Recovery |
-| --- | --- |
-| Wrong provider account/quota | Check the selected native account and **Usage**. A quota display is not a token/cost total. Refresh after an uncertain account change; selection can affect other clients of that service. |
-| Expired externally owned OAuth | Sign in again through OpenCode, Claude Code or the relevant credential owner. CodeNomad does not exchange their refresh tokens. |
-| Automatic rotation does not switch | Check opt-in eligibility and whether the current account is actually full. It is a pre-admission policy, not in-flight failover or prompt replay. |
-| Plugin state looks stale | Use **Refresh plugin controls** and inspect the plugin tooltip's scope/target; runtime activation may await native refresh. Do not repeatedly toggle an uncertain write. |
-| Added plugin failed or shows **Not confirmed** | Check the package name, version and registry access of the OpenCode host. For a failed install, search the OpenCode log for the error reference in the plugin tooltip. **Not confirmed** also appears for a disabled plugin. Removing the plugin keeps the downloaded package in OpenCode's cache. |
-| **Mission Control is unavailable** | Follow the cause it names. If OpenCode has not loaded the Missions plugin, refresh, then use **Reload OpenCode configuration** if it persists; if the plugin failed to load, read its error in the Plugins list; if the server could not open its local Missions connection, check the server log, because reloading OpenCode will not help. Missions also run on the standalone server. |
-| Installed extension missing | Check its single activation checkbox in panel customization. Installation/replacement leaves it disabled until you explicitly activate and approve required consent. |
-| Extension assets denied | Confirm API 2 asset-read consent for the current mounted session. Installing an extension is not permission to read arbitrary files/history. |
+- Added plugin failed or shows **Not confirmed** — Check the package name, version and registry access of the OpenCode host. Search the OpenCode log for the error reference in the plugin tooltip. **Not confirmed** also appears for a disabled plugin.
+- Installed extension missing — Enable it in panel customization. Installation/replacement leaves it disabled until you explicitly activate and approve required consent.
+- **Full timeline unavailable** — Read the load error for `codenomad-session-pruning` in the OpenCode log.
 
 See [Providers](providers.md), [Integrations](integrations.md) and [Extensions](extensions.md).
 
@@ -94,13 +80,11 @@ See [Providers](providers.md), [Integrations](integrations.md) and [Extensions](
 
 Full-history search is not limited to the transcript rows currently loaded. A display filter hides content without deleting it; use [History](history.md) to distinguish search, compaction, technical cleanup and deletion.
 
-If pending-request recovery is incomplete, CodeNomad retains known queues and answer drafts instead of treating missing coverage as an empty queue. After two consecutive incomplete recoveries it warns once, naming the project, cause, folders and affected sessions; the warning belongs to the **Projects and tabs** notification category (on screen and in the history by default, see **Settings → Notifications**). Transient failures are retried by the liveness check. Compaction-related deferral does not mean the request was cancelled. Leave the draft intact, verify the service connection and use the request's current state before answering again.
-
-For cancelled or partial cleanup, read its progress/receipts before starting another deletion. Cancelling does not undo an already dispatched batch. Do not repair history by editing the native database. For Mission uncertainty, use its **Check status**/refresh recovery rather than creating another run or automatically replaying work; [Missions](missions.md) explains restart and lifetime limits.
+For cancelled or partial cleanup, read its progress/receipts before starting another deletion. Cancelling does not undo an already dispatched batch. Do not repair history by editing the native database.
 
 ## Logs and safe diagnostics {#diagnostics}
 
-1. Open **Settings → OpenCode → View OpenCode logs**. This reads the selected execution host’s global `opencode.log`, located with `opencode debug paths log`. The movable, non-modal window leaves the rest of the interface usable. It shows at most the last 128 KiB; **Refresh** rereads the file. Logs stay separate from messages and model requests.
+1. Open **Settings → OpenCode → View OpenCode logs**. This reads the selected execution host’s global `opencode.log`, located with `opencode debug paths log`. It shows at most the last 128 KiB; **Refresh** rereads the file.
 2. In **Preferences → OpenCode**, choose the intended **Default log level** only when more detail is needed. For standalone CodeNomad logging, use the [server CLI logging options](server.md).
 3. Open **Settings → Info → Diagnostics** and use **Report a bug**, **Copy to clipboard** or **Download .txt**.
 

@@ -69,7 +69,7 @@ test("a passive list refresh during exact cleanup preflight keeps the original e
   const hold = new Promise<void>(resolve => { release = resolve })
   try {
     const cleanup = page.locator(".mission-control .mission-cleanup")
-    await cleanup.getByText("Deletion is still being confirmed. Retry to finish cleaning up the mission.", { exact: true }).waitFor()
+    await cleanup.getByText("Deletion unconfirmed. Retry to finish mission cleanup.", { exact: true }).waitFor()
     f.state.failCompaction = false
     await page.route(`**/api/workspaces/fixture/missions/${mission.id}`, async route => {
       if (route.request().method() === "GET") await hold
@@ -109,7 +109,7 @@ test("journal deletion without document compaction keeps the editor and exact re
   try {
     const form = page.locator("form.mission-editor")
     await remove(page, "Private cleanup compaction")
-    await form.getByRole("alert").getByText("Deletion is still being confirmed. Retry to finish cleaning up the mission.", { exact: true }).waitFor()
+    await form.getByRole("alert").getByText("Deletion unconfirmed. Retry to finish mission cleanup.", { exact: true }).waitFor()
     assert.equal(await form.getByRole("button", { name: "Try again", exact: true }).isEnabled(), true)
     assert.equal(await form.getByRole("checkbox").count(), 0, "the form asks nothing: the Preferences decide")
     assert.equal(requests.length, 1, "passive reads never resend deletion")
@@ -129,7 +129,7 @@ test("journal deletion without document compaction keeps the editor and exact re
     await form.getByRole("button", { name: "Cancel", exact: true }).click()
     await page.reload()
     const cleanup = page.locator(".mission-control .mission-cleanup")
-    await cleanup.getByText("Deletion is still being confirmed. Retry to finish cleaning up the mission.", { exact: true }).waitFor()
+    await cleanup.getByText("Deletion unconfirmed. Retry to finish mission cleanup.", { exact: true }).waitFor()
     assert.equal(await cleanup.locator('.mission-list-item[data-status="needs-input"]').count(), 1)
     assert.equal(requests.length, 2)
     f.state.failCompaction = false
@@ -152,7 +152,7 @@ test("committed partial cleanup survives cancel, remount and reconnect with the 
   try {
     await fixture(page, "seedCoordinators", [mission.coordinatorSessionId, ...actors.map(actor => actor.sessionId)])
     await remove(page, "Private cleanup remount")
-    await page.getByRole("alert").getByText("Deletion could not be completed. Retry to finish the remaining cleanup.").waitFor()
+    await page.getByRole("alert").getByText("Retry to finish the remaining cleanup.").waitFor()
     assert.deepEqual(f.removed, [actors[1].sessionId])
     await fixture(page, "event", { type: "session.deleted", data: { sessionID: actors[1].sessionId } })
     const resident = await page.evaluate(async () => [...(await import("/src/stores/session-state.ts" as string)).sessions().get("fixture").keys()])

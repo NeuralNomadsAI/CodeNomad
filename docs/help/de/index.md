@@ -2,8 +2,6 @@
 
 Das KI-Coding-Cockpit für OpenCode: ein Desktop- und Browser-Arbeitsbereich für Entwickler, die viele Agenten über Projekte, lange Unterhaltungen und Git-Worktrees hinweg betreiben.
 
-OpenCode liefert den Motor. CodeNomad liefert das Cockpit. Es verbindet sich mit dem gemeinsam genutzten Hintergrunddienst von OpenCode: Ihre Sitzungen gehören zu OpenCode, andere Clients dieses Dienstes können sie verwenden, und das Schließen von CodeNomad beendet sie nicht.
-
 [CodeNomad herunterladen](download.md)
 
 {{tour-video}}
@@ -21,8 +19,6 @@ Fernsteuerung koppelt ein Smartphone, ein Tablet oder einen anderen Computer üb
 Durchsuchen Sie den gesamten gespeicherten Verlauf einer Unterhaltung oder lassen Sie Ergebnisse aus dem geöffneten Projekt und seinen Worktrees nach Relevanz ordnen, bei Bedarf einschließlich Werkzeugausgaben und Denkprozessen. Die Nachrichten-Timeline springt durch lange Sitzungen, ohne jede Nachricht dazwischen zu laden. Siehe [Verlauf, Suche und Bereinigung](history.md).
 
 ## Zuerst lesen {#read-this-first}
-
-Diese Anleitung behandelt den aktuellen CodeNomad-Desktop- oder Browser-Arbeitsbereich mit Ihrem OpenCode-Dienst: die Bedienelemente, Ausführungsgrenzen und Wiederherstellung von CodeNomad, keine Einführung in die OpenCode-Konfiguration und kein Versionsarchiv.
 
 CodeNomad verbindet Ihren Arbeitsbereich mit einem gemeinsam genutzten OpenCode-Hintergrunddienst. Sitzungen und Nachrichten gehören zu OpenCode; Tabs, Eingabeentwürfe und Layout zum CodeNomad-Client. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad; Sitzungen laufen in OpenCode weiter und sind nach erneutem Öffnen des Projekts wieder verfügbar. CodeNomad zu schließen beendet nicht OpenCode.
 
@@ -89,9 +85,9 @@ Das Arbeitsbereichs-Stammverzeichnis begrenzt, welche Ordner CodeNomad öffnet; 
 Das Status-Panel zeigt die Anbieternutzung und nativen Hintergrund-Shells der aktiven Sitzung. Unterhaltungsstatus und Unteraktivität kennzeichnen arbeitende, komprimierende und auf Eingaben wartende Sitzungen. Eine Hintergrund-Shell zu beobachten ist etwas anderes, als im Eingabefeld eine Shell-Anfrage zu senden oder einen separat gehosteten Terminal-SideCar zu verwenden.
 
 1. Öffnen Sie **Status → Hintergrund-Shells** für die Location der ausgewählten Unterhaltung (oder den geöffneten Arbeitsbereich, wenn keine Unterhaltung ausgewählt ist).
-2. Nur laufende, ausdrücklich in den Hintergrund verschobene Befehle werden angezeigt, einer pro Zeile. Beim Darüberfahren erscheinen Shell, Verzeichnis und PID; das Symbol **Ausgabe anzeigen** öffnet die native Ausgabe. Ohne OpenCodes API für Hintergrundaufgaben erscheint ein Ladefehler.
+2. Nur laufende, ausdrücklich in den Hintergrund verschobene Befehle werden angezeigt, einer pro Zeile. Beim Darüberfahren erscheinen Shell, Verzeichnis und PID; das Symbol **Ausgabe anzeigen** öffnet die native Ausgabe.
 3. Verwenden Sie das Symbol **Stoppen und entfernen** der Zeile und bestätigen Sie das Ziel.
 
-Das Entfernen einer laufenden Shell beendet diesen Prozess; das Schließen ihres Ausgabefensters nicht. Aktualisieren/Wiederverbinden liest den aktuellen nativen Zustand, statt verpasste Ausgabeereignisse zu rekonstruieren.
+Das Entfernen einer laufenden Shell beendet diesen Prozess; das Schließen ihres Ausgabefensters nicht.
 
-Anzeigeschnappschüsse werden nach nativen Änderungen, Wiederverbindungen und bei sichtbarem Bedarf aktualisiert. Sie sind keine garantierten Wiederholungsprotokolle. Ist ein Ergebnis ungewiss, aktualisieren Sie vor dem Wiederholen einer Änderung den maßgeblichen Zustand; senden Sie nicht allein wegen einer verpassten Benachrichtigung oder eines verpassten Ereignisses erneut.
+Ist ein Ergebnis ungewiss, aktualisieren Sie vor dem Wiederholen einer Änderung den maßgeblichen Zustand; senden Sie nicht allein wegen einer verpassten Benachrichtigung oder eines verpassten Ereignisses erneut.

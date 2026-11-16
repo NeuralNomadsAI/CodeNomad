@@ -34,15 +34,12 @@ export const commandMessages = {
   "commands.openWorkspace.projectRequired.message": "Ouvrez d'abord un projet.",
 
   "commands.closeInstance.label": "Fermer l'onglet",
-  "commands.closeInstance.description": "Fermer l'onglet de premier niveau actuel",
   "commands.closeInstance.keywords": "arrêter, quitter, fermer, onglet",
 
   "commands.nextInstance.label": "Onglet suivant",
-  "commands.nextInstance.description": "Passer à l'onglet de premier niveau suivant",
   "commands.nextInstance.keywords": "changer, naviguer, suivant, onglet",
 
   "commands.previousInstance.label": "Onglet précédent",
-  "commands.previousInstance.description": "Passer à l'onglet de premier niveau précédent",
   "commands.previousInstance.keywords": "changer, naviguer, précédent, onglet",
 
   "commands.newSession.label": "Nouvelle session",
@@ -62,18 +59,14 @@ export const commandMessages = {
   "commands.instanceInfo.keywords": "infos, journaux, console, sortie, logs",
 
   "commands.nextSession.label": "Session suivante",
-  "commands.nextSession.description": "Passer à l'onglet de session suivant",
   "commands.nextSession.keywords": "changer, naviguer, suivant",
 
   "commands.previousSession.label": "Session précédente",
-  "commands.previousSession.description": "Passer à l'onglet de session précédent",
   "commands.previousSession.keywords": "changer, naviguer, précédent",
 
   "commands.previousUserMessage.label": "Message utilisateur précédent",
-  "commands.previousUserMessage.description": "Aller au message précédent que vous avez envoyé dans cette conversation",
   "commands.previousUserMessage.keywords": "aller, sauter, invite, naviguer, message utilisateur",
   "commands.nextUserMessage.label": "Message utilisateur suivant",
-  "commands.nextUserMessage.description": "Aller au message suivant que vous avez envoyé dans cette conversation",
   "commands.nextUserMessage.keywords": "aller, sauter, invite, naviguer, message utilisateur",
 
   "commands.compactSession.label": "Compacter la session",
@@ -106,7 +99,6 @@ export const commandMessages = {
   "commands.redoLastMessage.failed.message": "Impossible d'annuler le retour en arrière",
 
   "commands.openModelSelector.label": "Ouvrir le sélecteur de modèle",
-  "commands.openModelSelector.description": "Choisir un autre modèle",
   "commands.openModelSelector.keywords": "modèle, llm, ia, ai",
 
   "commands.selectModelVariant.label": "Sélectionner la variante du modèle",
@@ -114,11 +106,9 @@ export const commandMessages = {
   "commands.selectModelVariant.keywords": "variante, réflexion, raisonnement, effort",
 
   "commands.openAgentSelector.label": "Ouvrir le sélecteur d'agent",
-  "commands.openAgentSelector.description": "Choisir un autre agent",
   "commands.openAgentSelector.keywords": "agent, mode",
 
   "commands.clearInput.label": "Effacer la saisie",
-  "commands.clearInput.description": "Effacer la zone de texte du prompt",
   "commands.clearInput.keywords": "effacer, réinitialiser, prompt",
 
   "commands.thinkingBlocks.label.show": "Afficher la réflexion",

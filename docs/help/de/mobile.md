@@ -22,7 +22,7 @@ Installation gilt pro Gerät/Browser und Origin. Sie installiert weder Node, Git
 
 Entfernte PWA-Installation und Mikrofonzugriff benötigen einen vom Browser anerkannten sicheren Kontext. Verwenden Sie ein vertrauenswürdiges HTTPS-Zertifikat für exakt den Hostnamen/die IP. Ein erzeugtes lokales Zertifikat muss vom Client-Gerät/Browser ausdrücklich als vertrauenswürdig eingestuft werden; Warnseite oder Umgehung sind keine zuverlässige Installationseinrichtung. Browserausnahmen für localhost gelten für dieses Gerät, nicht für eine HTTP-LAN-Adresse eines anderen Hosts.
 
-Fehlt die Installation, prüfen Sie zuerst HTTPS-Vertrauen und Browserunterstützung und öffnen Sie dann die Seite im vollständigen Browser statt im eingebetteten QR-/In-App-Browser. Prüfen Sie bei Mikrofonfehlern Browser-/OS-Websiteberechtigungen und [Sprache](voice.md). Deaktivieren Sie zur Installationsreparatur weder Authentifizierung noch TLS-Prüfung.
+Deaktivieren Sie zur Installationsreparatur weder Authentifizierung noch TLS-Prüfung.
 
 ## Touch-Layouts nutzen {#touch-layout}
 
@@ -41,6 +41,6 @@ Das Eingabefeld behält Agent, Modell und Denken in der Fußzeile. Seine Größe
 | Mikrofon, Zwischenablage, Benachrichtigungen und Installationsaufforderung | Hängen von Browser-/OS-Unterstützung, sicherem Kontext und Benutzerrechten ab. |
 | Offline-Arbeit | Kein Offline-Backend und kein zwischengespeicherter API-Verlauf. Statische Oberflächendateien können im Cache liegen, Dokumente und API-Antworten sind aber kein Offline-Arbeitsbereich. |
 
-Halten Sie das Backend erreichbar. Mobile OS-Suspendierung oder Netzwerkwechsel kann den Ereignisstrom trennen; Rückkehr verbindet neu und liest aktuellen Zustand ohne garantierte Ereigniswiederholung. Prüfen Sie vor Wiederholung, ob eine Aktion abgeschlossen wurde. PWA-Schließen stoppt kein eigenständiges Backend; das Beenden der Host-Desktop-App samt Backend macht Fernsteuerung bis zum nächsten Start unverfügbar.
+Halten Sie das Backend erreichbar. Prüfen Sie vor Wiederholung, ob eine Aktion abgeschlossen wurde. PWA-Schließen stoppt kein eigenständiges Backend; das Beenden der Host-Desktop-App samt Backend macht Fernsteuerung bis zum nächsten Start unverfügbar.
 
 Jeder Browser-Tab, auch die installierte PWA, behält für diesen Tab geöffnete Projekte, ausgewählte Unterhaltungen, nicht gesendete Entwürfe und Scrollpositionen: Sie kehren zurück, wenn die Seite neu lädt oder das mobile Betriebssystem sie nach einem App-Wechsel oder einer Bildschirmsperre neu lädt. Ein neuer Tab oder eine vom Betriebssystem vollständig geschlossene PWA öffnet die Startseite. Schalten Sie dies für den Tab unter **Einstellungen → Allgemein → Vorherigen Zustand wiederherstellen** aus.

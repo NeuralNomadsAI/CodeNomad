@@ -284,9 +284,9 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                                 <div class="modal-item-label">
                                   {resolveResolvable(command.label)}
                                 </div>
-                                <div class="modal-item-description">
-                                  {resolveResolvable(command.description)}
-                                </div>
+                                <Show when={resolveResolvable(command.description)}>
+                                  {(description) => <div class="modal-item-description">{description()}</div>}
+                                </Show>
                               </div>
                             </button>
                           )
