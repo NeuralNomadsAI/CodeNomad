@@ -70,6 +70,7 @@ async function fixture(t: TestContext, disabled: boolean, locked: boolean, skipA
   })
   const config = path.join(directory, "config.yaml")
   const settings = {
+    multiBackendEnabled: () => false,
     getOwner: () => ({ remoteServers: [{ id: "saved", baseUrl: remote.origin }] }),
     configYamlPathForAuthority: () => config,
     serverFlag: (key: string) => key === "sidecarsOverDirectHttps",

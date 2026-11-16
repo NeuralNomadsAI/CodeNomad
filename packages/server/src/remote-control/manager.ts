@@ -51,6 +51,7 @@ export class RemoteControlManager {
   private enabled = false
   private error: string | undefined
   private lastConnectedAt: string | undefined
+  private readonly pushRevokedListeners = new Set<(deviceId: string | null, channel?: "tunnel") => void>()
 
   constructor(private readonly options: ManagerOptions) {
     this.ingress = new RemoteIngress((request, response) => {
@@ -90,6 +91,18 @@ export class RemoteControlManager {
     return [...(this.options.directHttpsOrigins?.() ?? [])]
   }
 
+  tunnelPushEpoch(): string {
+    return this.options.registry.tunnelPushEpoch()
+  }
+
+  devicePushEpoch(id: string): string {
+    return this.options.registry.devicePushEpoch(id)
+  }
+
+  invalidatePushConsent(id: string): void {
+    this.options.registry.invalidatePushConsent(id)
+  }
+
   async start(): Promise<RemoteControlStartResponse> {
     if (this.options.disabledByAdministrator) throw new Error(REMOTE_CONTROL_DISABLED)
     this.enabled = true
@@ -120,6 +133,7 @@ export class RemoteControlManager {
 
   async stop(): Promise<RemoteControlStatus> {
     this.options.registry.setStartsOnLaunch(false)
+    this.notifyPushRevoked(null, "tunnel")
     this.enabled = false
     this.error = undefined
     this.generation += 1
@@ -171,11 +185,29 @@ export class RemoteControlManager {
       || this.directHttpsOrigins().some((origin) => this.options.registry.isPaired(id, origin))
   }
 
+  pushAuthority(id: string, channel: "tunnel" | "https", origin: string): "active" | "suspended" | "revoked" {
+    if (this.options.disabledByAdministrator || !this.options.registry.isPaired(id, channel === "https" ? origin : undefined)) return "revoked"
+    if (channel === "https") return this.directHttpsOrigins().includes(origin) ? "active" : "revoked"
+    if (!this.enabled && !this.options.registry.startsOnLaunch()) return "revoked"
+    return this.tunnel?.status().state === "connected" ? "active" : "suspended"
+  }
+
   revokeDevice(id: string): boolean {
     const revoked = this.options.registry.revoke(id)
     // Revocation also ends live HTTP and SSE connections already admitted.
     this.disconnectDevice(id)
     return revoked
+  }
+
+  onPushRevoked(listener: (deviceId: string | null, channel?: "tunnel") => void): () => void {
+    this.pushRevokedListeners.add(listener)
+    return () => { this.pushRevokedListeners.delete(listener) }
+  }
+
+  private notifyPushRevoked(id: string | null, channel?: "tunnel"): void {
+    for (const listener of this.pushRevokedListeners) {
+      try { listener(id, channel) } catch { /* Revocation observers have independent failure boundaries. */ }
+    }
   }
 
   previewsAllowed(): boolean {
@@ -276,6 +308,7 @@ export class RemoteControlManager {
   }
 
   private disconnectDevice(id: string): void {
+    this.notifyPushRevoked(id)
     for (const sockets of [this.deviceSockets, this.directDeviceSockets]) {
       for (const [socket, devices] of sockets) {
         if (devices.has(id)) socket.destroy()

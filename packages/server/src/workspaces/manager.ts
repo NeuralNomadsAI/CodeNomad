@@ -482,6 +482,10 @@ export class WorkspaceManager {
     now: () => this.now(),
   })
 
+  getEventWorktrees(id: string) {
+    return this.eventWorktreeInventory.read(id, "validated", { strict: true })
+  }
+
   private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event", strict = false) {
     const mode = refresh ? "fresh" : "validated"
     return (await (purpose === "event"

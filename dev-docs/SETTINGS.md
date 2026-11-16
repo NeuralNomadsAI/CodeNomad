@@ -2,7 +2,10 @@
 
 ## Agent conventions
 
+- Background-push subscriptions store the device's System-column choices for `needsInput` and `sessionDone` in versioned preferences (`v: 1`). Explicit browser consent initializes the private VAPID key; updates carry current local projects and System choices. The host API and local producer require `multiBackend` and obey `CODENOMAD_WEB_PUSH`; browser activation and service-worker integration belong to the device UI. See [REMOTE_CONTROL.md](REMOTE_CONTROL.md#background-push-host-capability) for protocol, storage and revocation.
+
 - Embedded Missions settings resolve the active qualified project's selected catalog Location before its opened root folder, matching the explicit Location supplied by native Preferences.
+
 - Browser system notifications keep the same qualified action as bubbles/history while the page is open. Clicking focuses the page and selects through that action; attachment revocation closes its notification and fences retained clicks.
 
 - Shared state PATCH routes apply saved-server UI admission before mutations of `ui.remoteServers`, including whole-owner deletion/replacement. Native local writes retain the direct source policy; remote writes require the host's strict multi-backend flag and their authenticated channel.
