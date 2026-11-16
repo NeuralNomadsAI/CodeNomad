@@ -365,7 +365,7 @@ test("removing a focused shell hands focus to its neighboring trash", async () =
   } finally { await page.close() }
 })
 
-test("keyboard scroll keys reveal every long detail while focus stays on the command", async () => {
+for (const offset of [0, 220, 500]) test(`keyboard scroll keys reveal long details within the viewport (panel offset: ${offset}px)`, async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 600, height: 700 } })
   try {
     await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
@@ -373,6 +373,7 @@ test("keyboard scroll keys reveal every long detail while focus stays on the com
       ? { data: [{ id: "sh_long", command: "node script.js " + "argument ".repeat(1800), status: "exited", exit: 0,
         cwd: "/repo", shell: "bash", pid: 42, file: "/tmp/out", metadata: {}, time: { started: 1, completed: 2 } }] } : {} }))
     await page.goto(fixture.url)
+    await page.locator("aside").evaluate((el, offset) => { el.style.marginTop = `${offset}px` }, offset)
     const command = page.locator(".status-process-command"), tooltip = page.getByRole("tooltip")
     await command.focus()
     await tooltip.waitFor()
@@ -382,9 +383,12 @@ test("keyboard scroll keys reveal every long detail while focus stays on the com
     assert.equal(await command.evaluate(el => el === document.activeElement), true)
     await page.keyboard.press("End")
     const end = await tooltip.evaluate(el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight,
-      last: el.lastElementChild!.getBoundingClientRect().bottom, bottom: el.getBoundingClientRect().bottom }))
+      last: el.lastElementChild!.getBoundingClientRect().bottom, bottom: el.getBoundingClientRect().bottom,
+      y: el.getBoundingClientRect().top, viewport: window.innerHeight }))
     assert.ok(Math.abs(end.top - end.max) <= 1)
     assert.ok(end.last <= end.bottom, "the final completion date is visible")
+    assert.ok(end.y >= 0 && end.bottom <= end.viewport, `details fit the viewport: ${JSON.stringify(end)}`)
+    assert.ok(end.last <= end.viewport, "End reveals the final completion date inside the viewport")
     await page.keyboard.press("ArrowUp")
     assert.ok(await tooltip.evaluate(el => el.scrollTop) < end.top)
     await page.keyboard.press("Home")

@@ -67,7 +67,7 @@
 
 .status-process-tooltip {
   max-width: min(32rem, calc(100vw - 16px));
-  max-height: calc(100dvh - 16px);
+  max-height: var(--kb-popper-content-available-height, calc(100dvh - 16px));
   overflow: auto;
   white-space: normal;
 }
