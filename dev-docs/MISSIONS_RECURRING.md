@@ -445,6 +445,11 @@ Context hooks and tool execution use the fixed-method internal business bridge;
 its receiving RPC acquires fresh Session/Database/Location services. Each business
 mutation takes the document exclusion before the existing journal writer. Native
 permissions, original message identities and whole-family H11 settlement apply.
+With an owning CodeNomad backend present, passage coordinators, actors and descendants
+can prepare a separate one-time Mission through `mission.prepare`. The actual caller
+owns its preparation and read-only target access in the ordinary project journal.
+An explicitly requested `startOnCreation` continues only fresh creation through the
+guarded first-Play contract in [Missions](MISSIONS.md#mission-profile-selection-and-creation-recovery).
 Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
 local title/compaction hooks and authoritative ordinary-input guards.
 Context classification and recovery follow the schedule transport's

@@ -348,6 +348,10 @@ export interface MissionBusinessRoute {
   execute?<T>(use: (control: MissionBusinessControl) => Promise<T>): Promise<T>
   /** Descendant reads use their verified root; mutations always retain the real caller. */
   readSessionID: string
+  /** A passage list may include this actual caller's project-journal preparations. */
+  listMissions?(listOffset: number | undefined, operationID: string): Promise<unknown>
+  /** The desktop's separate ordinary-journal preparation route is present. */
+  preparationAvailable?: boolean
   current(): void
   beforeTool(name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown): Promise<void>
 }
@@ -357,7 +361,7 @@ const executeMissionBusiness = <T>(selected: MissionBusinessRoute, use: (control
 
 /** One set of native names. Selection is invocation-scoped, never model-provided storage. */
 export async function setupMissionsBusiness(context: MissionsPluginContext,
-  select: (sessionID: string) => Promise<MissionBusinessRoute | undefined>): Promise<() => Promise<void>> {
+  select: (sessionID: string, name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown) => Promise<MissionBusinessRoute | undefined>): Promise<() => Promise<void>> {
   let active = true
   const writer = createMissionWriterRetirement(), registrations: Registration[] = []
   const assertActive = () => { if (!active) throw new Error("CodeNomad Missions is no longer available") }
@@ -365,7 +369,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
     (...args: Args) => writer.run(() => callback(...args))
   const route = async (sessionID: string, name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown) => {
     assertActive()
-    const selected = await select(sessionID)
+    const selected = await select(sessionID, name, input)
     if (!selected) throw new Error("CodeNomad Missions is no longer available")
     selected.current()
     await selected.beforeTool(name, input)
@@ -398,7 +402,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "inspect", input)
           await tool.progress({ status: "Reading the mission map" })
           selected.current()
-          if (parsed.list) return textResult(await executeMissionBusiness(selected, control => control.inspectTool(selected.readSessionID, parsed, tool.id, undefined)))
+          if (parsed.list) return textResult(selected.listMissions ? await selected.listMissions(parsed.listOffset, tool.id)
+            : await executeMissionBusiness(selected, control => control.inspectTool(selected.readSessionID, parsed, tool.id, undefined)))
           const read = parsed.content
           // The caller's Location's native catalog, read afresh on every call.
           const catalog = async () => readMissionCatalog(context, (await context.session.get({ sessionID: tool.sessionID })).location.directory)
@@ -515,7 +520,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "prepare",
-        description: "Prepare a separate one-time mission with a NEW coordinator conversation; this conversation stays unchanged. Owned ordinary roots and active one-time coordinators only; descendants, actors and scheduled passages are refused. inspect with start attaches THIS conversation instead. startOnCreation defaults false (prepared); set true only when the user explicitly requested automatic first Play. Only a fresh creation acknowledgement may continue through guarded lifecycle admission. Recovered creation never starts or resends Play. Results separate prepared, activated (first Play acknowledged), refused and uncertain; uncertainty retains native operation and mission IDs. Keep exactly one owning CodeNomad backend available. Read selection for frozen requested profiles/taskMode and their origins. Reuse the original tool requestID and inputs, including startOnCreation; never substitute a returned native request ID. The author has read-only access: inspect({ list: true }) or inspect({ missionID }).",
+        description: "Prepare a separate one-time mission with a NEW coordinator conversation; this conversation stays unchanged. Any owned project session may prepare: ordinary roots, coordinators, descendants, current or historical task actors and scheduled passages. The actual caller remains its author with read-only access. inspect with start attaches THIS root conversation instead and keeps its coordinator admission rules. startOnCreation defaults false (prepared); set true only when the user explicitly requested automatic first Play. Only a fresh creation acknowledgement may continue through guarded lifecycle admission. Recovered creation never starts or resends Play. Results separate prepared, activated (first Play acknowledged), refused and uncertain; uncertainty retains native operation and mission IDs. Keep exactly one owning CodeNomad backend available. Read selection for frozen requested profiles/taskMode and their origins. Reuse the original tool requestID and inputs, including startOnCreation; never substitute a returned native request ID. The author has read-only access: inspect({ list: true }) or inspect({ missionID }).",
         input: prepareSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -585,12 +590,14 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       if (!active) return
       return writer.run(async () => {
         try {
-          const selected = await select(event.sessionID)
+          const selected = await select(event.sessionID, "inspect", {})
           if (!selected) {
-            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report"]) delete event.tools[`mission_${name}`]
+            for (const name of ["inspect", ...COORDINATOR_TOOLS, "report", "prepare"]) delete event.tools[`mission_${name}`]
             return
           }
           selected.current()
+          const backendActions = await executeMissionBusiness(selected, async control => control.backendActions)
+          if (!selected.preparationAvailable && !backendActions) delete event.tools.mission_prepare
           // One hinted membership read per turn: the instruction and the coordinator check share it.
           const mission = await executeMissionBusiness(selected, control => control.contextFor(selected.readSessionID))
           if (active && !mission && selected.readSessionID === event.sessionID) {
@@ -610,9 +617,9 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
             return
           }
           event.system.push({ type: "text", text: mission.instruction })
-          // Scheduled passages have no backend route for these actions: do not offer them.
-          if (!await executeMissionBusiness(selected, async control => control.backendActions))
-            for (const name of ["interrupt", "prepare"]) delete event.tools[`mission_${name}`]
+          // Task interruption retains its coordinator/backend admission.
+          if (!backendActions)
+            delete event.tools.mission_interrupt
           if (!mission.coordinator) for (const name of COORDINATOR_TOOLS) delete event.tools[`mission_${name}`]
         } catch {
           // Mission context is additive. A damaged optional map must not block an otherwise valid model request.
@@ -628,7 +635,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
 }
 
 /** Within a Mission, topology and hand-off tools belong to its coordinator. */
-const COORDINATOR_TOOLS = ["delegate", "revise", "briefing", "interrupt", "prepare"] as const
+const COORDINATOR_TOOLS = ["delegate", "revise", "briefing", "interrupt"] as const
 /** Native nesting levels walked to find a paused Mission actor, and sessions whose parent is remembered. */
 const MAX_PAUSE_ANCESTRY = 32
 const MAX_PAUSE_ANCESTRY_CACHE = 4096

@@ -130,8 +130,8 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   const inspect = tools.find((tool) => tool.name === "inspect")!
   assert.match(description("inspect"), /attaching THIS root conversation as coordinator/)
   assert.match(description("prepare"), /NEW coordinator conversation; this conversation stays unchanged/)
-  assert.match(description("prepare"), /Owned ordinary roots and active one-time coordinators/)
-  assert.match(description("prepare"), /descendants, actors and scheduled passages are refused/)
+  assert.match(description("prepare"), /Any owned project session may prepare/)
+  assert.match(description("prepare"), /current or historical task actors and scheduled passages/)
   assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)
   const validateInspect = new Ajv().compile((inspect as any).input)
   const validatePrepare = new Ajv().compile((tools.find(tool => tool.name === "prepare") as any).input)

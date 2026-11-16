@@ -10,7 +10,7 @@ Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Ve
 
 **Mission erstellen** öffnet das Formular anstelle des Baums. Eine bestätigte Erstellung wählt die Mission aus; bei einer abgelehnten Erstellung bleibt das Formular bearbeitbar.
 
-Sie können auch einen Agenten in einer gewöhnlichen Hauptunterhaltung bitten, eine separate pausierte Mission mit einer neuen Koordinator-Unterhaltung vorzubereiten. Ihr Gespräch bleibt unverändert; prüfen und starten Sie die Mission selbst im Panel.
+Sie können einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder einen geplanten Lauf, bitten, eine separate Mission mit einer neuen Koordinator-Unterhaltung vorzubereiten. Ihr Gespräch bleibt unverändert. Die Mission bleibt pausiert, außer Sie verlangen ausdrücklich den automatischen ersten Start; andernfalls prüfen und starten Sie sie selbst im Panel.
 
 ### Konfiguration {#saved-briefs}
 

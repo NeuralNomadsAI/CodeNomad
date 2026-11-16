@@ -32,27 +32,24 @@ test("the backend independently refuses ineligible authors, stale source selecto
   const membership = (coordinatorSessionId: string, status = "active") => ({ id: "source", coordinatorSessionId, status,
     actors: [{ sessionId: base.id }] })
   const cases = [
-    { session: { ...base, parentID: "ses_parent" } },
     { session: { ...base, id: "ses_other" } },
     { session: { ...base, projectID: "foreign" } },
-    { session: { ...base, metadata: { "codenomad.mission": { kind: "coordinator", missionID: "old",
-      recurrence: { scheduleID: "daily", passageID: "old" } } } } },
-    { session: { ...base, metadata: { "codenomad.mission": { kind: "coordinator", missionID: "old",
-      document: { missionID: "schedule", passageID: "old" } } } } },
-    { session: { ...base, metadata: { "codenomad.mission": { kind: "task", missionID: "old" } } } },
     { missions: [membership("ses_coordinator")] },
     { missions: [membership("ses_coordinator", "completed")] },
     { missions: [membership(base.id)] }, // Active coordinator must name its exact source.
+    { missions: [membership(base.id), { ...membership(base.id), id: "ambiguous-source" }], missionID: "source" },
     { missionID: "missing" },
     { workspaces: [] },
+    { workspaces: [{ id: "workspace" }, { id: "ambiguous" }] },
     { controlUnavailable: true },
+    { owns: false },
   ]
   for (const scenario of cases) {
     let creationReads = 0
     const manager = {
       list: () => "workspaces" in scenario ? scenario.workspaces : [{ id: "workspace" }],
       get: () => { creationReads++; assert.fail("Ineligible caller reached creation") },
-      ownsLocation: async () => true,
+      ownsLocation: async () => !("owns" in scenario) || scenario.owns,
       getSharedServiceConnection: async () => ({ client: {
         session: { get: async () => "session" in scenario ? scenario.session : base },
         rpc: () => ({ snapshot: async () => ({ projectID: "project", missions: "missions" in scenario ? scenario.missions : [],

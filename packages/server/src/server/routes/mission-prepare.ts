@@ -35,20 +35,23 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
   let creation: Awaited<ReturnType<typeof prepareMissionCreation>> | undefined
   try {
     if (hasMissionPreparationHold(fence, input.requestID)) throw refusal("prepare-uncertain")
-    const owner = await Promise.any(manager.list().map(async workspace => {
+    const owners = await Promise.allSettled(manager.list().map(async workspace => {
       const connection = await manager.getSharedServiceConnection(workspace.id)
       if (!connection) throw new Error("Workspace unavailable")
       const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })
-      if (coordinator.id !== coordinatorID || coordinator.parentID
+      if (coordinator.id !== coordinatorID
         || !await manager.ownsLocation(workspace.id, coordinator.location, connection.client)) throw new Error("Foreign coordinator")
       return { connection, workspace, coordinator }
-    })).catch(() => undefined)
-    if (!owner) throw refusal("prepare-refused")
+    }))
+    const owned = owners.flatMap(result => result.status === "fulfilled" ? [result.value] : [])
+    if (new Set(owned.map(owner => owner.connection)).size !== 1) throw refusal("prepare-refused")
+    const owner = owned[0]
     const { connection, workspace, coordinator } = owner
     const snapshot = await connection.client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, {
       location: { directory: coordinator.location.directory }, ...locationRequestOptions(coordinator.location), signal,
     }) as MissionSnapshot
-    const source = missionPreparationSource(snapshot, coordinator)
+    const get = (sessionID: string) => connection.client.session.get({ sessionID }, { signal })
+    const source = await missionPreparationSource(snapshot, coordinator, get)
     if (source?.id !== input.missionID) {
       throw refusal("prepare-refused")
     }
@@ -65,7 +68,7 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
         location: { directory: coordinator.location.directory }, ...locationRequestOptions(coordinator.location), signal,
       }) as MissionSnapshot
       if (fresh.id !== coordinatorID || !sameLocation(fresh.location, coordinator.location)
-        || missionPreparationSource(freshSnapshot, fresh)?.id !== source?.id) throw refusal("prepare-refused")
+        || (await missionPreparationSource(freshSnapshot, fresh, get))?.id !== source?.id) throw refusal("prepare-refused")
       connection.assertCurrent()
        return () => { signal.throwIfAborted(); connection.assertCurrent() }
      })

@@ -112,8 +112,8 @@ questions and decisions).
 Coordinator actions that need native reads or effects outside the plugin's
 Promise API cross the authenticated desktop bridge (`sendMissionInput`, fixed error
 codes in `missions/recovery-error.ts`), so they work only with backend presence and
-refuse otherwise. One-time coordinators have `mission.interrupt` and `mission.prepare`;
-owned ordinary roots outside a mission also have `mission.prepare`.
+refuse otherwise. Coordinators retain `mission.interrupt`; any owned project session
+can use `mission.prepare`, including descendants, task actors and scheduled passages.
 
 - `mission.inspect({ taskKey })` adds the task's observed native conversations
   (`server/routes/mission-task-native.ts`): the coordinator's direct children
@@ -135,12 +135,15 @@ owned ordinary roots outside a mission also have `mission.prepare`.
   acknowledgement through the ordinary guarded lifecycle operation. The trusted `preparedBy`
   (`{ coordinatorSessionId, missionId? }`) gives its author read-only
   visibility (`inspect({ missionID })`, `inspect({ list: true })`). The stable
-  `coordinatorSessionId` field names the author session, including an ordinary root;
-  `missionId` records an active source mission when present. Stored provenance with
-  both fields uses the same journal, index and RPC readers. An owned ordinary root
-  outside a mission or an active one-time coordinator can prepare hand-offs.
-  Native control and the backend independently refuse descendants, current or historical
-  non-coordinator actors, persisted passage provenance and ambiguous ownership.
+  `coordinatorSessionId` field names the actual author session, including a descendant;
+  `missionId` records the source from native membership, passage metadata or bounded
+  native ancestry when available. Stored provenance with both fields uses the same
+  journal, index and RPC readers. Ordinary roots, coordinators, current or historical
+  task actors, descendants and scheduled-passage sessions share the author admission.
+  Native control and the backend independently validate project and placement;
+  ambiguous ownership is refused. Passage preparation uses the ordinary project
+  journal, preserving its isolated source journal. Authored target reads use that
+  same ordinary journal; lists combine the caller's preparations and passage membership.
   The calling conversation stays unchanged. Follow
   the [creation and retry discipline](#mission-profile-selection-and-creation-recovery).
 
@@ -295,8 +298,10 @@ only the original first-Play acknowledgement or uncertainty. Never send another 
 from prepare replay, receipt reads, inspection, listing, reconnect or restart.
 Pause, Resume, Stop and recurrence controls remain human actions.
 
-For active coordinators the requestID is scoped to the coordinator and mission;
-ordinary authors use a distinct stable `outside-mission` domain scoped to their session.
+Preparation requestIDs are scoped to the actual author and native source mission
+when present; authors outside a mission use their stable `outside-mission` domain.
+Historical source provenance preserves replay after source completion. Each author
+retains its own read-only visibility.
 Preparations with the
 same requestID are serialized. Reuse that requestID and the original inputs:
 a retry first reads the saved creation event/document and returns the saved

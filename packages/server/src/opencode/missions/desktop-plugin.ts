@@ -10,6 +10,8 @@ import { MissionJournalIndex } from "../../missions/journal-index"
 import { hintsShowWork, retainMissionWork } from "./lifetime"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 import type { MissionDocumentAccess } from "../../missions/mission-document-one-time"
+import { boundedMissionList } from "../../missions/inspect-view"
+import type { MissionControl } from "../../missions/control"
 
 export interface NativeDocumentBusiness {
   select(sessionID: string): Promise<MissionBusinessRoute | undefined>
@@ -27,9 +29,28 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
       const index = new MissionJournalIndex()
       const journal = new MissionJournal(ctx.storage, ctx.location.project.id, ctx.location.project.canonical, undefined, index)
       let ordinary: MissionBusinessRoute | undefined
-      const disposeBusiness = await setupMissionsBusiness(ctx, async sessionID =>
-        await documentBusiness?.select(sessionID) ?? await selectNativePassageBusiness(ctx, sessionID, humanGate)
-          ?? (ordinary && { ...ordinary, readSessionID: sessionID }))
+      const disposeBusiness = await setupMissionsBusiness(ctx, async (sessionID, name, raw) => {
+        const author = ordinary && { ...ordinary, readSessionID: sessionID }
+        // Separate preparations always belong to the project journal, including
+        // when their actual author executes inside an isolated passage journal.
+        if (name === "prepare") return author
+        const input = raw as { list?: boolean; missionID?: string }
+        const own = author && name === "inspect" && (input.list || input.missionID)
+          ? await author.control.listMissions(sessionID) : undefined
+        if (author && own?.some(mission => mission.missionID === input.missionID && mission.relation === "prepared")) return author
+        const selected = await documentBusiness?.select(sessionID) ?? await selectNativePassageBusiness(ctx, sessionID, humanGate)
+        if (selected && author && own && input.list) {
+          return { ...selected, preparationAvailable: true, listMissions: async (offset, operationID) => {
+            const use = (control: MissionBusinessRoute["control"]) => control.inspectTool(selected.readSessionID, { list: true }, operationID, undefined)
+            // The isolated passage owns exactly one mission, so its list fits whole.
+            const source = await (selected.execute ? selected.execute(use) : use(selected.control)) as { missions: Awaited<ReturnType<MissionControl["listMissions"]>> }
+            selected.current(); author.current()
+            const missions = [...new Map([...source.missions, ...own].map(mission => [mission.missionID, mission])).values()]
+            return boundedMissionList(missions.sort((a, b) => b.createdAt - a.createdAt), offset)
+          } }
+        }
+        return selected ? { ...selected, preparationAvailable: Boolean(author) } : author
+      })
       const promptHook = await ctx.session.hook("prompt", async event => {
         if (!await documentBusiness?.prepare(event.sessionID)) await prepareNativePassageSession(ctx, event.sessionID, humanGate)
       })

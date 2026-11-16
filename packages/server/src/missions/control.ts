@@ -656,8 +656,8 @@ export class MissionControl {
       if (automaticStart) {
         const snapshot = await this.snapshot()
         const mission = this.requireRequestedMission(snapshot, input.missionID)
-        const author = await this.ownedRootSession(automaticStart.authorSessionID)
-        const source = missionPreparationSource(snapshot, author)
+        const author = await this.ownedSession(automaticStart.authorSessionID)
+        const source = await missionPreparationSource(snapshot, author, id => this.ownedSession(id))
         await consumeAutomaticStart(this.options.documents, mission, input, automaticStart,
           { directory: author.location.directory, sourceMissionID: source?.id }, () => { this.assertActive(); return true })
       }
@@ -1075,7 +1075,7 @@ export class MissionControl {
   private async inspectCurrent(sessionID: string, input: MissionInspectInput, operationID: string,
     selected?: { input?: MissionStartInput & { creationDefaults?: MissionCreationMetadata }; preferenceError?: unknown; location: NativeMissionSession["location"] }): Promise<MissionInspection> {
     input = structuredClone(input)
-    const caller = await this.ownedRootSession(sessionID)
+    const caller = input.start ? await this.ownedRootSession(sessionID) : await this.ownedSession(sessionID)
     if (input.start) {
       // Creation keeps the authoritative full read: replay, membership refusal, timestamp.
       let snapshot = await this.snapshot()
@@ -1164,7 +1164,7 @@ export class MissionControl {
 
   /** The caller's missions and the hand-offs it prepared, newest first, without task or report text. */
   async listMissions(sessionID: string) {
-    await this.ownedRootSession(sessionID)
+    await this.ownedSession(sessionID)
     return (await this.hintedSelection(sessionID)).missions.flatMap(mission => {
       const relation = missionRelation(mission, sessionID)
       return relation ? [missionListEntry(mission, relation)] : []
@@ -1177,14 +1177,15 @@ export class MissionControl {
   }
 
   private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap; preparation: PreparationResult }> {
-    const caller = await this.ownedRootSession(sessionID)
+    const caller = await this.ownedSession(sessionID)
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
     const originalInput = structuredClone(input)
-    const source = missionPreparationSource(await this.snapshot(), caller)
+    const snapshot = await this.snapshot()
+    const source = await missionPreparationSource(snapshot, caller, id => this.ownedSession(id))
     if (!this.options.transport?.prepare) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "prepare-unavailable")
     const sendPreparation = this.options.transport.prepare.bind(this.options.transport)
-    // Keep coordinator identities stable; ordinary authors have a distinct domain.
+    // Preserve existing replay domains, always bound to the actual author.
     const requestID = `prepare_${stableToken(source ? `${source.id}\0${sessionID}\0${input.requestID}`
       : `outside-mission\0${sessionID}\0${input.requestID}`, 24)}`
     // A retry after a lost or uncertain reply finds the saved creation instead of asking the backend again.
@@ -1227,14 +1228,14 @@ export class MissionControl {
       let result: unknown
       try {
         if (input.creationDefaults) {
-          const caller = await this.ownedRootSession(sessionID)
+          const caller = await this.ownedSession(sessionID)
           try { await this.options.validateProfiles?.(input.profiles, caller.location.directory, parseMissionTaskMode(input.taskMode)) }
           catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
           input = await this.retainCreationInput(input, missionID, "prepare-conflict")
         }
         this.assertActive()
-        const fresh = await this.ownedRootSession(sessionID)
-        const freshSource = missionPreparationSource(await this.snapshot(), fresh)
+        const fresh = await this.ownedSession(sessionID)
+        const freshSource = await missionPreparationSource(await this.snapshot(), fresh, id => this.ownedSession(id))
         if (!sameLocation(caller.location, fresh.location) || freshSource?.id !== source?.id) throw missionRecoveryControlError("prepare-refused")
         dispatched = true
         result = await sendPreparation(sessionID, { ...structuredClone(input), requestID,

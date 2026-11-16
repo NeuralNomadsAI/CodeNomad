@@ -68,7 +68,7 @@ test("scoped store serializes native I/O without reentrant deadlock, expires its
   await assert.rejects(escaped.read("calendar_test"), /exclusion ended/)
   const created = await f.store.withExclusion(locked => locked.create("second_document", f.configuration, f.now, f.current, null,
     { requestID: "original_creation", digest: "f".repeat(64) }))
-  await assert.rejects(f.store.change(created.id, created.revision, f.current, doc => { doc.creation!.digest = "0".repeat(64) }), /monotone/)
+  await assert.rejects(f.store.change(created.id, created.revision, f.current, doc => { doc.creation!.digest = "0".repeat(64) }), /immutable/)
   const raw = structuredClone(created) as any
   delete raw.calendarOwner; delete raw.fanIn; delete raw.creation
   const parsed = parseMissionDocument(raw, created)

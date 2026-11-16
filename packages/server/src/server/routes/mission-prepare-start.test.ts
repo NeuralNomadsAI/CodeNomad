@@ -20,7 +20,7 @@ type Cut = "create-ack" | "before-consume" | "consume-ack" | "before-play" | "ad
 function fixture() {
   const values = new Map<string, MissionJsonValue>()
   const sessions = new Map<string, NativeMissionSession>([[author, { id: author, projectID: "project", location: { directory } }]])
-  let cut: Cut | undefined, creates = 0, admissions = 0, starts = 0, capability = true, beforeStart: (() => Promise<void>) | undefined
+  let cut: Cut | undefined, creates = 0, admissions = 0, starts = 0, capability = true, duplicateWorkspace = false, beforeStart: (() => Promise<void>) | undefined
   let prepareBackend!: NonNullable<import("../../missions/control-types").MissionInputTransport["prepare"]>
   const storage = {
     get: async (key: string) => structuredClone(values.get(key)),
@@ -102,7 +102,7 @@ function fixture() {
   }
   const workspace = { id: "workspace" }, connection = { client, assertCurrent() {} }
   const manager = {
-    get: () => workspace, list: () => [workspace], getServiceLocation: () => ({ directory }),
+    get: () => workspace, list: () => duplicateWorkspace ? [workspace, { id: "second-tab" }] : [workspace], getServiceLocation: () => ({ directory }),
     getSharedServiceConnection: async () => connection, ownsLocation: async () => true,
     getServiceDirectoryForPath: async () => directory, getWorktreeIdentityForPath: async () => directory,
   }
@@ -112,6 +112,7 @@ function fixture() {
   return { prepare, control, store, values, rpc, sessions, get creates() { return creates }, get admissions() { return admissions },
     get starts() { return starts }, setCut: (value?: Cut) => { cut = value }, oldNative: () => { capability = false },
     restartBackend: () => { fence = new WorktreeDeletionFence() },
+    duplicateWorkspace: () => { duplicateWorkspace = true },
     beforeStart: (callback: () => Promise<void>) => { beforeStart = callback } }
 }
 
@@ -128,6 +129,54 @@ for (const flag of [undefined, false, true]) test(`explicit creation start ${fla
   assert.equal(f.creates, 1)
   assert.equal(f.admissions, flag ? 1 : 0)
 })
+
+test("two project tabs with the same owned connection share one preparation owner", async () => {
+  const f = fixture()
+  f.duplicateWorkspace()
+  assert.equal((await f.prepare({ ...request, startOnCreation: true })).outcome, "activated")
+  assert.equal(f.creates, 1)
+  assert.equal(f.admissions, 1)
+})
+
+for (const kind of ["descendant", "coordinator", "actor", "ended-actor", "daily", "scheduled", "passage-descendant"] as const)
+  test(`${kind} authors create separately with explicit automatic first Play and replay without effects`, async () => {
+    const f = fixture()
+    const root = "ses_native_parent"
+    if (kind === "coordinator") await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: author })
+    const original = f.sessions.get(author)!
+    if (["descendant", "passage-descendant"].includes(kind)) {
+      f.sessions.set(root, { ...original, id: root, ...(kind === "passage-descendant"
+        ? { metadata: { "codenomad.mission": { missionID: "msn_source", kind: "coordinator",
+          document: { missionID: "schedule", passageID: "passage" } } } } : {}) })
+      original.parentID = root
+    } else if (kind !== "coordinator") {
+      original.metadata = { "codenomad.mission": { missionID: "msn_source", kind: kind.includes("actor") ? "task" : "coordinator",
+        ...(kind === "daily" ? { recurrence: { scheduleID: "schedule", passageID: "passage" } } : {}),
+        ...(kind === "scheduled" ? { document: { missionID: "schedule", passageID: "passage" } } : {}) } }
+    }
+    const before = structuredClone([...f.sessions]), source = (await f.control.snapshot()).missions
+    const input = { ...request, startOnCreation: true }
+    const first = await f.prepare(input)
+    assert.equal(first.outcome, "activated")
+    assert.ok(first.target?.kind === "one-time")
+    const mission = first.target.mission
+    assert.equal(mission.preparedBy!.coordinatorSessionId, author)
+    assert.equal(mission.preparedBy!.missionId, kind === "descendant" ? undefined : kind === "coordinator" ? source[0].id : "msn_source")
+    assert.notEqual(mission.coordinatorSessionId, author)
+    assert.deepEqual([...f.sessions].slice(0, before.length), before)
+    assert.deepEqual((await f.control.snapshot()).missions.filter(value => value.id !== mission.id), source)
+    assert.equal((await f.control.inspect(author, { missionID: mission.id }, "read")).actor, null)
+    assert.ok((await f.control.listMissions(author)).some(value => value.missionID === mission.id && value.relation === "prepared"))
+    const bytes = structuredClone([...f.values])
+    const replay = await f.prepare(input)
+    assert.equal(replay.outcome, "activated")
+    assert.ok(replay.target?.kind === "one-time")
+    assert.equal(replay.target.mission.id, mission.id)
+    assert.deepEqual([...f.values], bytes)
+    assert.equal(f.creates, 1)
+    assert.equal(f.admissions, 1)
+    assert.equal(f.starts, 1)
+  })
 
 test("two concurrent positive requests consume a single automatic-start slot", async () => {
   const f = fixture(), input = { ...request, startOnCreation: true }
