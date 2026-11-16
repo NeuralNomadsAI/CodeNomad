@@ -207,7 +207,6 @@ export const missionMessages = {
   "missions.control.unavailable.host": "Ce serveur CodeNomad n’a pas pu ouvrir sa connexion locale pour les Missions (127.0.0.1) : il ne fournit donc pas le plugin. Consultez le journal du serveur ; recharger OpenCode n’y changera rien.",
   "missions.control.error.title": "La carte de mission n’a pas pu être actualisée",
   "missions.control.error.detail": "Vérifiez la connexion à l’espace de travail, puis réessayez.",
-  "missions.control.error.stale": "La dernière carte durable reste affichée pendant la reconnexion.",
   "missions.control.retry": "Réessayer",
   "missions.control.empty.title": "Aucune mission pour l'instant",
   "missions.control.empty.detail": "Créez une mission ou demandez à votre assistant d’en préparer une.",

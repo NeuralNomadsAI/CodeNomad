@@ -4,7 +4,7 @@ import { BrandLogo } from "./brand-logo"
 
 interface BrandedEmptyStateProps {
   title?: JSX.Element
-  description: JSX.Element
+  description?: JSX.Element
   class?: string
   children?: JSX.Element
 }
@@ -20,7 +20,7 @@ const BrandedEmptyState: Component<BrandedEmptyStateProps> = (props) => {
           <h1 class="empty-state-brand-title text-3xl font-semibold text-primary">{t("messageSection.empty.brandTitle")}</h1>
         </div>
         {props.title ? <h3>{props.title}</h3> : null}
-        <p>{props.description}</p>
+        {props.description ? <p>{props.description}</p> : null}
         {props.children}
       </div>
     </div>

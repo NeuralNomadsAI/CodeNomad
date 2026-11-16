@@ -41,6 +41,8 @@ Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa,
 
 ## OpenCode çalışma zamanı ve WSL {#opencode-runtime}
 
+Başlatma hatası iletişim kutusunda yürütülebilir dosyayı ve sürümü kontrol etmek için **OpenCode Ayarlarını Aç** seçeneğini kullanın; özel ortam değerleri için **Gelişmiş → Ortam Değişkenleri** bölümüne geçin.
+
 1. **Preferences → OpenCode** öğesini açın ve **OpenCode sürümü** kartını (kurulu sürüm ve çalışan hizmet durumu), ardından **OpenCode Binary** altındaki seçili yürütülebilir dosyayı kontrol edin.
 2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.3.0**; önerilen/doğrulanan sürüm: **2.3.0**.
 3. Kurulu CLI, çalışan hizmetten farklıysa, paylaşılan hizmetin yeniden başlatılıp başlatılmayacağına açıkça karar verin.

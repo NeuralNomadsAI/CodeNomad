@@ -1,5 +1,5 @@
 export const openCodeLoginStartMessages = {
-  "settings.loginStart.title": "הפעלת OpenCode בעת האתחול",
+  "settings.loginStart.title": "הפעלה בעת האתחול",
   "settings.loginStart.info": "OpenCode מופעל בעת הכניסה לחשבון המשתמש שלכם.",
   "settings.loginStart.unavailable": "לא זמין במערכת זו.",
   "settings.loginStart.error.read": "לא ניתן היה לקרוא את ההגדרה הזו.",

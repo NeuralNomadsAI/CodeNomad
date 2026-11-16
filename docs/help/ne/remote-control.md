@@ -70,3 +70,7 @@ CodeNomad ले [OpenTunnel](https://github.com/anomalyco/opentunnel) प्र
 TLS CodeNomad backend मा terminate हुन्छ। relay ले ciphertext forward गर्छ र app सामग्री पढ्न सक्दैन, तर hostname, connection timing र traffic size देख्न सक्छ। tunnel certificate/private key host मै रहन्छन्। host tunnel storage र CodeNomad configuration लाई credential झैं सुरक्षित गर्नुहोस्; अनुमान गर्न नसकिने ठेगाना authorization होइन।
 
 `CODENOMAD_REMOTE_CONTROL_API` ले self-hosted OpenTunnel API रोज्छ; unset हुँदा hosted service प्रयोग हुन्छ। यसले tunnel deployment बदल्छ, pairing आवश्यकता वा blocked सतह होइन। credential र निदान व्यवस्थापनका लागि [सुरक्षा](security.md) हेर्नुहोस्।
+
+## प्रशासक नीति {#administrator-policy}
+
+प्रशासकले कम्प्युटरका सबै प्रयोगकर्ताका लागि रिमोट कन्ट्रोल बन्द गर्न सक्छ: वातावरण चर `CODENOMAD_REMOTE_CONTROL=disabled` सम्पूर्ण प्रणालीमा सेट गर्नुहोस्, त्यसपछि CodeNomad पुनः सुरु गर्नुहोस्। ब्याकइन्डले कहिल्यै टनेल जोड्दैन, **रिमोट कन्ट्रोल सुरु गर्नुहोस्** र जोड्ने लिङ्क अस्वीकार गर्छ र सुरु हुँदा पुनः जडान गर्दैन; सेटिङहरूमा **प्रशासकद्वारा निष्क्रिय** देखिन्छ। पहिले जोडिएका उपकरणहरू जडान हुन सक्दैनन् र रद्द गर्न सकियोस् भनेर सूचीमै रहन्छन्। सेट नगरिएको वा खाली भए कुनै नीति लागू हुँदैन; अरू कुनै मान, खाली ठाउँ मात्र भए पनि, ले ब्याकइन्ड सुरु हुन दिँदैन।

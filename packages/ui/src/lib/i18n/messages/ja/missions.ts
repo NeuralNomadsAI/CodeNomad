@@ -207,7 +207,6 @@ export const missionMessages = {
   "missions.control.unavailable.host": "この CodeNomad サーバーはミッション用のローカル接続 (127.0.0.1) を開けなかったため、プラグインを提供していません。サーバーログを確認してください。OpenCode を再読み込みしても解決しません。",
   "missions.control.error.title": "ミッションマップを更新できませんでした",
   "missions.control.error.detail": "ワークスペース接続を確認して、もう一度お試しください。",
-  "missions.control.error.stale": "再接続中のため、最後の永続マップを表示しています。",
   "missions.control.retry": "再試行",
   "missions.control.empty.title": "ミッションはまだありません",
   "missions.control.empty.detail": "ミッションを作成するか、アシスタントに計画を依頼してください。",

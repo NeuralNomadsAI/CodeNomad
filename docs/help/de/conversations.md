@@ -112,7 +112,7 @@ Ein Ziel gehört zu seiner Unterhaltung: Untersitzungen und Abzweigungen beginne
 ## Abzweigen, rückgängig machen und Fehler beheben {#fork-errors}
 
 1. Wählen Sie an einer Nachricht **Nach dieser Nachricht abzweigen (Fork)**, um nach diesem Punkt eine Unterhaltung anzulegen, ohne das Original zu ersetzen.
-2. Prüfen Sie zum Rückgängigmachen **Änderungen bis hierhin rückgängig machen (löscht Nachrichten)** sorgfältig. Die Palette bietet **Letzte Nachricht rückgängig machen** und **Letzte Nachricht wiederherstellen** für die vorgemerkte Rücknahme.
+2. Prüfen Sie zum Rückgängigmachen **Änderungen bis hierhin rückgängig machen (löscht Nachrichten)** sorgfältig. Die Palette bietet **Letzte Nachricht rückgängig machen** und **Letzte Nachricht wiederherstellen** für die vorgemerkte Rücknahme. Rückgängigmachen ist ohne rücknehmbare Benutzernachricht deaktiviert; Wiederherstellen ist ohne vorgemerkte Rücknahme deaktiviert.
 3. Prüfen Sie bei fehlgeschlagener Ausführung vor erneutem Senden **Sitzungsfehler**, den Antwortfehler und gegebenenfalls Details unter **Senden fehlgeschlagen**.
 
 Abzweigen kopiert den Unterhaltungskontext bis zum ausgewählten Punkt; es erzeugt keinen Git-Worktree und isoliert keine Dateien. Zurücksetzen ist nicht bloß Navigation. Prüfen Sie vor dem Fortfahren Dateiauswirkungen und Rücknahmegrenze; nutzen Sie einen Fork für eine alternative Diskussion ohne Umschreiben des ursprünglichen Verlaufs.

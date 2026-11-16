@@ -23,10 +23,11 @@ function fixture(t: test.TestContext) {
   const alive = new Set<number>()
   let nextPid = 100
   // Each launch is a new manager over the same config directory, as after a restart.
-  const launch = () => {
+  const launch = (disabledByAdministrator = false) => {
     const pid = nextPid++
     alive.add(pid)
     const manager = new RemoteControlManager({
+      disabledByAdministrator,
       registry: new RemoteDeviceRegistry(file),
       lease: new RemoteControlOwnerLease(path.join(directory, "remote-control.owner"), pid, (candidate) => alive.has(candidate)),
       router: () => null,
@@ -69,6 +70,30 @@ test("only one backend sharing the configuration resumes, until it goes away", a
   await next.resume()
   assert.equal(opened.length, 3)
   assert.equal(next.status().state, "connected")
+})
+
+test("an administrator-disabled Remote Control never opens a tunnel, resumes or pairs", async (t) => {
+  const { opened, launch } = fixture(t)
+  // A user left Remote Control on and paired a device before the policy applied.
+  const before = launch()
+  const { pairing } = await before.start()
+  const device = before.exchangePairing(new URL(pairing.url).hash.slice(1), undefined)
+  assert(device)
+  await before.shutdown()
+  before.exit()
+
+  const disabled = launch(true)
+  await disabled.resume()
+  await assert.rejects(disabled.start(), /disabled by the administrator/)
+  assert.throws(() => disabled.createPairing(), /not connected/)
+  assert.equal(opened.length, 1, "no tunnel after the policy applied")
+  assert.deepEqual(disabled.status(), { manageable: true, disabledByAdministrator: true, enabled: false, startsOnLaunch: false,
+    previews: true, state: "stopped", pairedDevices: 1 })
+  assert.equal(disabled.isDeviceAuthorized(device.device.id), false)
+  assert.equal(disabled.gate().publicHost(), null)
+  // Devices stay listed and revocable on the host.
+  assert.equal(disabled.revokeDevice(device.device.id), true)
+  assert.equal(disabled.status().pairedDevices, 0)
 })
 
 test("a started Remote Control reconnects at the next launch without a pairing link", async (t) => {

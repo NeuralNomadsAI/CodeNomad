@@ -104,6 +104,8 @@ La referencia pública enumera las opciones para usuarios; los anfitriones de es
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; repositorio consultado para ofertas de versiones. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Sin definir: API alojada de OpenTunnel. Establece un origen API para un despliegue de relé autoalojado. |
+| `CODENOMAD_REMOTE_CONTROL` | Sin definir: los usuarios pueden iniciar el control remoto. `disabled`: desactivado por un administrador ([política](remote-control.md#administrator-policy)); sin definir o vacía no aplica ninguna política, cualquier otro valor (incluidos espacios) impide el inicio. |
+| `CODENOMAD_LOCKED_HOST` | Sin definir o vacía: se aplica `--host`; solo espacios impide el inicio. Una dirección: el servidor escucha en ella sin importar `--host`, `CLI_HOST` ni el interruptor de escucha ([política](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Archivo CA adicional opcional de Node; se pasa con el entorno de inicio permitido al iniciar un daemon OpenCode ausente. No cambia un daemon ya en ejecución. |
 
 Las credenciales de uso específicas de proveedores se cubren en [Proveedores](providers.md). La selección del perfil de datos de escritorio se cubre en [Escritorio](desktop.md); no la controla el canal de versiones.

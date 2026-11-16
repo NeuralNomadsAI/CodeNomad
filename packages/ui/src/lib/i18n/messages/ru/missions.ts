@@ -207,7 +207,6 @@ export const missionMessages = {
   "missions.control.unavailable.host": "Этот сервер CodeNomad не смог открыть локальное подключение для миссий (127.0.0.1), поэтому не предоставляет плагин. Проверьте журнал сервера; перезагрузка OpenCode не поможет.",
   "missions.control.error.title": "Не удалось обновить карту миссии",
   "missions.control.error.detail": "Проверьте подключение рабочей области и повторите попытку.",
-  "missions.control.error.stale": "Во время переподключения показана последняя постоянная карта.",
   "missions.control.retry": "Повторить",
   "missions.control.empty.title": "Миссий пока нет",
   "missions.control.empty.detail": "Создайте миссию или попросите помощника спланировать её.",

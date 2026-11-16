@@ -104,6 +104,8 @@ Genel referans, kullanıcıya yönelik seçenekleri listeler; masaüstü ana bil
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; sürüm teklifleri için depo sorgulandı. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Ayarlanmadı: barındırılan OpenTunnel API. Şirket içinde barındırılan geçiş dağıtımı için bir API kaynağı ayarlayın. |
+| `CODENOMAD_REMOTE_CONTROL` | Ayarlanmamış: kullanıcılar Uzaktan Kontrol'ü başlatabilir. `disabled`: bir yönetici tarafından kapatıldı ([ilke](remote-control.md#administrator-policy)); ayarlanmamış veya boş: ilke yok, başka herhangi bir değer (boşluklar dahil) başlatmayı engeller. |
+| `CODENOMAD_LOCKED_HOST` | Ayarlanmamış veya boş: `--host` geçerlidir; yalnızca boşluk başlatmayı engeller. Bir adres: sunucu `--host`, `CLI_HOST` veya dinleme anahtarından bağımsız olarak orada dinler ([ilke](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Node'un isteğe bağlı ek CA dosyası; eksik OpenCode daemon'ı başlatılırken izin verilen başlangıç ortamıyla iletilir. Çalışan daemon'ı değiştirmez. |
 
 Sağlayıcıya özel kullanım kimlik bilgileri, [Sağlayıcılar](providers.md) belgesinde ele alınmaktadır. Masaüstü veri profili seçimi [Masaüstü](desktop.md) kapsamındadır ve yayın akışı tarafından kontrol edilmez.

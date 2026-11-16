@@ -112,7 +112,7 @@ Bir hedef kendi görüşmesine aittir: alt oturumlar ve çatallar hedefsiz başl
 ## Başarısız bir çalıştırmayı çatallayın, geri alın ve kurtarın {#fork-errors}
 
 1. Bir mesajda, bu noktadan sonra orijinali değiştirmeden bir konuşma oluşturmak için **Bu mesajdan sonra fork'la** öğesini seçin.
-2. Geri almak için **Buraya kadarki değişiklikleri geri al (mesajları siler)** öğesini dikkatlice inceleyin. Palet, aşamalı geri alma için **Son Mesajı Geri Al** ve **Son Mesajı Yinele** öğesini sunuyor.
+2. Geri almak için **Buraya kadarki değişiklikleri geri al (mesajları siler)** öğesini dikkatlice inceleyin. Palet, aşamalı geri alma için **Son Mesajı Geri Al** ve **Son Mesajı Yinele** öğesini sunuyor. Geri alınabilecek kullanıcı mesajı yoksa geri alma, hazırlanmış geri alma yoksa yineleme devre dışıdır.
 3. Yürütme başarısız olursa, tekrar göndermeden önce **Session hatası** öğesini, yanıt hatasını ve tüm **Gönderme başarısız** ayrıntılarını inceleyin.
 
 Çatallama seçilen noktaya kadar konuşma bağlamını kopyalar; Git çalışma ağacı oluşturmaz veya dosyaları yalıtmaz. Geri alma yalnızca gezinme değildir. Devam etmeden önce dosya etkilerini ve geri alma sınırını inceleyin; özgün akışı yeniden yazmadan alternatif konuşma istiyorsanız çatallama kullanın.

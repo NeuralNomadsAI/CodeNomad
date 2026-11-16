@@ -749,15 +749,13 @@ const App: Component = () => {
                </div>
 
                <div class="flex justify-end gap-2">
-                 <Show when={launchError()?.missingBinary}>
-                   <button
-                     type="button"
-                     class="selector-button selector-button-secondary"
-                    onClick={handleLaunchErrorAdvanced}
-                  >
-                    {t("app.launchError.openAdvancedSettings")}
-                  </button>
-                </Show>
+                 <button
+                   type="button"
+                   class="selector-button selector-button-secondary"
+                   onClick={handleLaunchErrorAdvanced}
+                 >
+                   {t("app.launchError.openAdvancedSettings")}
+                 </button>
                 <button type="button" class="selector-button selector-button-primary" onClick={handleLaunchErrorClose}>
                   {t("app.launchError.close")}
                 </button>

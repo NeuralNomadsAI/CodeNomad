@@ -226,8 +226,8 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
   } finally { await run.close() }
 })
 
-// The controller aims once, then dispatches: creation's first depth result, or a mission map
-// refresh adding a panel banner while the form is open, may land in between.
+// The controller aims once, then dispatches: creation's first depth result or a mission
+// refresh result while the form is open may land in between.
 const existing = { ...createdMission({ title: "Existing mission", objective: "Existing mission", template: "custom" }), id: "msn_existing" }
 const map = (extra: Record<string, unknown> = {}) => ({ json: { available: true, projectID: "project", missions: panelMissions([existing]), generatedAt: 1, discardedEvents: 0, ...extra } })
 const depth = (supported: boolean) => ({ json: { location: { directory: "/fixture" }, capability: supported ? { minimum: 0 } : null,
@@ -237,8 +237,7 @@ const HELD_OUTCOMES = [
   { name: "an unsupported first depth read", held: "depth", response: depth(false), shown: "This OpenCode connection does not expose an editable depth contract." },
   { name: "a failed first depth read", held: "depth", response: { status: 503, json: { error: "unavailable" } },
     shown: "Depth could not be verified. Your value is kept; refresh before changing it." },
-  { name: "a failed map refresh (stale banner)", held: "map", response: { status: 503, json: { error: "unavailable" } },
-    shown: "Showing the last durable map while reconnection is pending." },
+  { name: "a failed map refresh", held: "map", response: { status: 503, json: { error: "unavailable" } } },
   { name: "a cleanup-unavailable map", held: "cleanups", response: map({ cleanupUnavailable: true }),
     shown: "Deletion could not be confirmed. Refresh before trying again." },
 ] as const
@@ -291,8 +290,9 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
     cdp.command = async (state, method, params) => {
       if (!after && method === "Input.dispatchMouseEvent" && params?.type === "mouseMoved") {
         response.resolve()
+        if (outcome.held === "map") await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").status === "error")
         // The rendered text, a closed menu's options included (as an agent's text wait reads it).
-        await page.waitForFunction(text => document.querySelector<HTMLElement>(".mission-control")?.innerText.includes(text) ?? false, outcome.shown)
+        else await page.waitForFunction(text => document.querySelector<HTMLElement>(".mission-control")?.innerText.includes(text) ?? false, outcome.shown)
         await page.waitForFunction(() => !document.querySelector(".mission-depth select")?.hasAttribute("aria-disabled"))
         assert.equal(await page.getByLabel("Objective", { exact: true }).inputValue(), "Hold a read", "the read preserves the draft")
         after = await create.boundingBox()

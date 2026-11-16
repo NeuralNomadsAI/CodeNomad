@@ -52,6 +52,10 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 不要假定端口是 9898 或 9899：省略端口时，繁忙会回退。显式非零的 `--https-port`，或启用 HTTP 时的 `--http-port`，会固定端口，无法绑定则失败；`0` 请求操作系统分配。本次运行以打印的 **Local Connection URL**、**Remote Connection URL** 和刷新的**可访问地址**为准。参阅完整[服务器 CLI 参考](server.md)。
 
+## 管理员策略 {#administrator-policy}
+
+管理员可以固定监听地址：在系统范围将 `CODENOMAD_LOCKED_HOST` 设置为服务器必须使用的地址，然后重启 CodeNomad。它优先于 `--host`、`CLI_HOST` 和 **允许其他 IP 连接**；该开关会显示结果，但无法更改。使用内网地址可让同事通过公司网络访问服务器，使用 `127.0.0.1` 则仅限本机。若要让所有访问都留在公司网络内，还需设置 `CODENOMAD_REMOTE_CONTROL=disabled`（[远程控制](remote-control.md#administrator-policy)）。
+
 ## 升级 {#upgrading}
 
 升级后请重新登录。使用主机名别名、反向代理或单独托管的界面时，请在后端设置 `CODENOMAD_ALLOWED_ORIGINS`，列出可信的界面来源（协议、主机名和端口）。局域网原生客户端必须在修改请求中提供允许的 `Origin` 请求头。

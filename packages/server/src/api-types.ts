@@ -817,6 +817,8 @@ export interface RemoteProxySessionCreateResponse {
 export interface RemoteControlStatus {
   /** False for requests arriving through Remote Control: only the host manages it. */
   manageable: boolean
+  /** The administrator disabled Remote Control (CODENOMAD_REMOTE_CONTROL=disabled): it never starts. */
+  disabledByAdministrator?: boolean
   enabled: boolean
   /** The user started Remote Control and has not stopped it: it reconnects at launch. */
   startsOnLaunch: boolean
@@ -959,6 +961,8 @@ export interface ServerMeta {
   host: string
   /** Listening mode derived from host binding. */
   listeningMode: "local" | "all"
+  /** The administrator fixed the listening address (CODENOMAD_LOCKED_HOST); the UI cannot change it. */
+  listeningLocked?: boolean
   /** Actual local port in use after binding. */
   localPort: number
   /** Actual direct remote port in use after binding (when remoteUrl is set). */
@@ -998,7 +1002,7 @@ export interface ServiceUsageSnapshot {
   connection?: string
   stats: import("@opencode/client").SessionStatsInfo
 }
-/** Settings → OpenCode "Start OpenCode at startup": the presence of the OS login artifact. */
+/** Settings → OpenCode "Launch at startup": the presence of the OS login artifact. */
 export type LoginStartState = "on" | "off" | "unavailable"
 export interface LoginStartResponse { state: LoginStartState }
 export interface LoginStartControl { enabled: boolean }

@@ -52,6 +52,10 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 Do not assume port 9898 or 9899: omitted ports can fall back when busy. An explicit nonzero `--https-port`, or `--http-port` with HTTP enabled, pins the port and fails if it cannot bind; `0` asks the OS to assign one. The printed **Local Connection URL** and **Remote Connection URL**, and refreshed **Reachable addresses**, are authoritative for that run. See the complete [server CLI reference](server.md).
 
+## Administrator policy {#administrator-policy}
+
+An administrator can fix the listening address: set `CODENOMAD_LOCKED_HOST` machine-wide to the address the server must use, then restart CodeNomad. It wins over `--host`, `CLI_HOST` and **Allow connections from other IPs**, which shows the result but cannot change it. Use an intranet address so colleagues reach the server over the company network, or `127.0.0.1` to keep it on this computer. To keep all access inside the company network, also set `CODENOMAD_REMOTE_CONTROL=disabled` ([Remote Control](remote-control.md#administrator-policy)).
+
 ## Upgrading {#upgrading}
 
 Sign in again after upgrading. For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations.

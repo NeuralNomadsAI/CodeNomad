@@ -70,3 +70,7 @@ CodeNomad verwendet [OpenTunnel](https://github.com/anomalyco/opentunnel) und be
 TLS endet im CodeNomad-Backend. Das Relay leitet Chiffretext weiter und kann Anwendungsinhalte nicht lesen, aber Hostnamen, Verbindungszeiten und Datenmengen beobachten. Tunnelzertifikat und privater Schlüssel bleiben auf dem Host. Schützen Sie Tunnelspeicher und CodeNomad-Konfiguration des Hosts wie Zugangsdaten; eine nicht erratbare Adresse ist keine Autorisierung.
 
 `CODENOMAD_REMOTE_CONTROL_API` wählt eine selbst gehostete OpenTunnel-API; ohne Wert gilt der gehostete Dienst. Dies ändert die Tunnelbereitstellung, nicht Kopplungsanforderungen oder blockierte Oberflächen. Zum Umgang mit Zugangsdaten und Diagnosen siehe [Sicherheit](security.md).
+
+## Administratorrichtlinie {#administrator-policy}
+
+Ein Administrator kann die Fernsteuerung für alle Benutzer eines Computers ausschalten: Setzen Sie die Umgebungsvariable `CODENOMAD_REMOTE_CONTROL=disabled` systemweit und starten Sie CodeNomad neu. Das Backend verbindet dann nie einen Tunnel, lehnt **Fernsteuerung starten** und Kopplungslinks ab und verbindet sich beim Start nicht erneut; die Einstellungen zeigen **Vom Administrator deaktiviert**. Zuvor gekoppelte Geräte können sich nicht verbinden und bleiben zum Widerrufen aufgelistet. Nicht gesetzt oder leer bedeutet keine Richtlinie; jeder andere Wert, auch nur Leerzeichen, verhindert den Start des Backends.

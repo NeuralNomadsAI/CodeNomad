@@ -723,13 +723,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           })
         }} />
       }}</Show>
-      <Show when={state().status === "error" && rows().length > 0}>
-        <div class="mission-control-stale" role="status">
-          <AlertTriangle class="h-3.5 w-3.5" aria-hidden="true" />
-          {props.t("missions.control.error.stale")}
-        </div>
-      </Show>
-
       <MissionRows entries={pickerEntries()} query={query()} selectedKey={selectedKey()} revealDetail={reveal => { revealDetail = reveal }}
         rowSelected={!taskSelected()}
         expanded={() => view().expanded ?? []}
@@ -798,7 +791,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       {scheduled.view()}
 
       {/* The selection's detail is the selected row's children. */}
-      {/* A parked failed read keeps the stale banner and the refresh button instead. */}
+      {/* A parked failed read remains retryable through the refresh button. */}
        <Show when={selectedRow() && !mission() && state().status !== "error"}><p role="status">{props.t(missionStore.mapMissing(props.instanceId, selectedRow()!.id)
          ? "missions.control.reader.missing" : "missions.control.loading")}</p></Show>
       <Show when={selectedOneTimeId()} keyed>{id => {

@@ -9,7 +9,7 @@ import type {
 import { createCommandRegistry, resolveResolvable, type Command } from "../commands"
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
-import type { ClientPart, MessageInfo } from "../../types/message"
+import type { ClientPart } from "../../types/message"
 import { getSessions, getVisibleSessionIds, selectSessionFromList } from "../../stores/sessions"
 import { showAlertDialog, showConfirmDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
@@ -397,7 +397,8 @@ export function useCommands(options: UseCommandsOptions) {
           progress.pruning(0, plan.candidates.length)
           const failed = await executeSessionTechnicalPartDeletion(plan, { signal: progress.signal, progress: progress.pruning })
           if (failed.length > 0 || plan.skipped) {
-            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed.length + plan.skipped }), {
+            const count = failed.length + plan.skipped
+            showAlertDialog(tGlobal(count === 1 ? "commands.removeSessionTechnicalParts.failed.message.one" : "commands.removeSessionTechnicalParts.failed.message.other", { count }), {
               title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
               detail: [...new Set(failed), ...(plan.skipped ? [tGlobal("history.skipped", { count: plan.skipped })] : [])].join("\n"),
               variant: "error",
@@ -431,59 +432,50 @@ export function useCommands(options: UseCommandsOptions) {
       return document.querySelector(selector) as HTMLTextAreaElement | null
     }
 
+    function getUndoTarget() {
+      const instance = activeInstance()
+      const sessionId = activeSessionIdForInstance()
+      if (!instance?.client || !sessionId || sessionId === "info") return null
+
+      const session = getSessions(instance.id).find((candidate) => candidate.id === sessionId)
+      if (!session) return null
+
+      const store = messageStoreBus.getOrCreate(instance.id)
+      const messageIds = store.getSessionMessageIds(sessionId)
+
+      const revertState = store.getSessionRevert(sessionId) ?? session.revert
+      let after = 0
+      if (revertState?.messageID) {
+        const revertInfo = store.getMessageInfo(revertState.messageID)
+        after = revertInfo?.time?.created || 0
+      }
+
+      for (let i = messageIds.length - 1; i >= 0; i--) {
+        const id = messageIds[i]
+        const record = store.getMessage(id)
+        const info = store.getMessageInfo(id)
+        if (record?.role === "user" && info?.time?.created) {
+          if (after > 0 && info.time.created >= after) {
+            continue
+          }
+          return { instance, sessionId, store, messageID: id }
+        }
+      }
+      return null
+    }
+
     commandRegistry.register({
       id: "undo",
       label: () => tGlobal("commands.undoLastMessage.label"),
       description: () => tGlobal("commands.undoLastMessage.description"),
       category: "Session",
       keywords: () => ["/undo", ...splitKeywords("commands.undoLastMessage.keywords")],
+      disabled: () => !getUndoTarget(),
       action: async () => {
-        const instance = activeInstance()
-        const sessionId = activeSessionIdForInstance()
-        if (!instance || !instance.client || !sessionId || sessionId === "info") return
-
-        const sessions = getSessions(instance.id)
-        const session = sessions.find((s) => s.id === sessionId)
-        if (!session) return
-
-        const store = messageStoreBus.getOrCreate(instance.id)
-        const messageIds = store.getSessionMessageIds(sessionId)
-        const infoMap = new Map<string, MessageInfo>()
-        messageIds.forEach((id) => {
-          const info = store.getMessageInfo(id)
-          if (info) infoMap.set(id, info)
-        })
-
-        const revertState = store.getSessionRevert(sessionId) ?? session.revert
-        let after = 0
-        if (revertState?.messageID) {
-          const revertInfo = infoMap.get(revertState.messageID) ?? store.getMessageInfo(revertState.messageID)
-          after = revertInfo?.time?.created || 0
-        }
-
-        let messageID = ""
-        let restoredText: string | null = null
-        for (let i = messageIds.length - 1; i >= 0; i--) {
-          const id = messageIds[i]
-          const record = store.getMessage(id)
-          const info = infoMap.get(id) ?? store.getMessageInfo(id)
-          if (record?.role === "user" && info?.time?.created) {
-            if (after > 0 && info.time.created >= after) {
-              continue
-            }
-            messageID = id
-            restoredText = extractUserTextFromRecord(record)
-            break
-          }
-        }
-
-        if (!messageID) {
-          showAlertDialog(tGlobal("commands.undoLastMessage.none.message"), {
-            title: tGlobal("commands.undoLastMessage.none.title"),
-            variant: "info",
-          })
-          return
-        }
+        const target = getUndoTarget()
+        if (!target) return
+        const { instance, sessionId, store, messageID } = target
+        let restoredText = extractUserTextFromRecord(store.getMessage(messageID))
 
         try {
           await stageSessionRevert(instance.id, sessionId, messageID)
@@ -512,25 +504,29 @@ export function useCommands(options: UseCommandsOptions) {
       },
     })
 
+    function getRedoTarget() {
+      const instance = activeInstance()
+      const sessionId = activeSessionIdForInstance()
+      if (!instance?.client || !sessionId || sessionId === "info") return null
+      const session = getSessions(instance.id).find((candidate) => candidate.id === sessionId)
+      if (!session) return null
+      const revert = messageStoreBus.getOrCreate(instance.id).getSessionRevert(sessionId) ?? session.revert
+      return revert?.messageID ? { client: instance.client, sessionId } : null
+    }
+
     commandRegistry.register({
       id: "redo",
       label: () => tGlobal("commands.redoLastMessage.label"),
       description: () => tGlobal("commands.redoLastMessage.description"),
       category: "Session",
       keywords: () => ["/redo", ...splitKeywords("commands.redoLastMessage.keywords")],
-      disabled: () => {
-        const instance = activeInstance()
-        const sessionId = activeSessionIdForInstance()
-        if (!instance || !sessionId || sessionId === "info") return true
-        const session = getSessions(instance.id).find((candidate) => candidate.id === sessionId)
-        return !(messageStoreBus.getOrCreate(instance.id).getSessionRevert(sessionId) ?? session?.revert)
-      },
+      disabled: () => !getRedoTarget(),
       action: async () => {
-        const instance = activeInstance()
-        const sessionId = activeSessionIdForInstance()
-        if (!instance?.client || !sessionId || sessionId === "info") return
+        const target = getRedoTarget()
+        if (!target) return
+        const { client, sessionId } = target
         try {
-          await instance.client.session.revert.clear({ sessionID: sessionId })
+          await client.session.revert.clear({ sessionID: sessionId })
         } catch (error) {
           log.error("Failed to clear session revert", error)
           showAlertDialog(tGlobal("commands.redoLastMessage.failed.message"), {
