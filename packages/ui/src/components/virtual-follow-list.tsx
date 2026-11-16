@@ -227,8 +227,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let nativeScrollbarDragging = false
   // The block `scrollToKey` holds instead of its row, during that dispatch only.
   let keyJumpSelect: (() => HTMLElement | null) | undefined
-  // Until when an unowned upward scroll still belongs to a lifted flick's fling.
+  // Until when an unowned scroll still belongs to a lifted flick's fling.
   let touchFlingClaimUntil = 0
+  // The extent of the last observation: displacement that shrinks it is
+  // geometry (a clamp, a compensation), not momentum.
+  let lastObservedScrollHeight = 0
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -239,6 +242,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   function cancelActiveScrollRestore() {
     readerSettlement.cancel()
+    touchFlingClaimUntil = 0
     const onCancelled = cancelRestore
     if (!onCancelled) return
     invalidateScrollRestore()
@@ -248,6 +252,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   /** A user gesture or explicit navigation supersedes restoration, alignment and any explicit bottom pin. */
   function supersedePositioning() {
     rollReader = rollAnchor = undefined
+    touchFlingClaimUntil = 0
     cancelActiveScrollRestore()
     if (bottomPin?.settle || explicitBottomPinIntent()) cancelExplicitBottomPin()
   }
@@ -630,13 +635,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const programmatic = hasProgrammaticScrollIntent()
     if (scrollTraceEnabled()) traceObservation(offset, metrics.scrollHeight, programmatic, now)
     // A lifted flick's fling scrolls with unowned scroll events; keep them
-    // user-owned so a late fling escapes follow instead of being repinned.
-    if (now < touchFlingClaimUntil && !programmatic && !nativeScrollbarDragging) {
+    // user-owned so a late fling is attributed to the reader instead of being
+    // repinned. Displacement that shrank the extent is geometry (a clamp, a
+    // compensation): follow keeps owning it, whatever the direction.
+    if (now < touchFlingClaimUntil && !programmatic && !nativeScrollbarDragging && metrics.scrollHeight >= lastObservedScrollHeight - 1) {
       const previous = scrollController.snapshot()
-      if (now > previous.userIntentUntil && offset < previous.lastObservedOffset - 1) {
+      if (now > previous.userIntentUntil && Math.abs(offset - previous.lastObservedOffset) > 1) {
         scrollController.setUserIntent(null, now + USER_SCROLL_INTENT_WINDOW_MS)
       }
     }
+    lastObservedScrollHeight = metrics.scrollHeight
     const observed = scrollController.observeViewport(metrics, now, programmatic)
     const result = nativeScrollbarDragging ? scrollController.setFollow(false) : observed
     const restoring = result.state.restoring

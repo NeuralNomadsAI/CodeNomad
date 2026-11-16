@@ -1989,6 +1989,85 @@ test("a late fling scroll after the intent window must not be repinned", async (
   }, { hasTouch: true })
 })
 
+test("a fling claim never reads a layout clamp as momentum", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await page.evaluate(() => { (window as any).fixture.follow(); (window as any).fixture.resizeRow("row-199", 400) })
+    await frames(page, 10)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following")
+    await replayThrottledTouchFlick(page, 24)
+    await page.waitForTimeout(650)
+    // A tail row shrinking clamps the offset down with the extent: geometry, not
+    // a scroll. The row grows back within the same frame the clamp lands, before
+    // the observation gate runs, like a streaming relayout.
+    await page.evaluate(() => new Promise(resolve => {
+      const fixture = (window as any).fixture
+      fixture.resizeRow("row-199", 48)
+      const check = () => {
+        const el = document.querySelector<HTMLElement>(".message-stream")!
+        if (el.scrollTop >= 9000) return requestAnimationFrame(check)
+        fixture.resizeRow("row-199", 400)
+        resolve(null)
+      }
+      requestAnimationFrame(check)
+    }))
+    await frames(page, 15)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following", "A layout clamp must stay following")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap < 48, `Follow must re-pin to the regrown bottom: ${gap}`)
+  }, { name: "list", hasTouch: true })
+})
+
+test("a late downward fling stays escaped until it reaches the bottom", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await page.evaluate(() => { (window as any).fixture.follow(); (window as any).fixture.middle() })
+    await frames(page, 5)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped")
+    await replayThrottledTouchFlick(page, -24)
+    await page.waitForTimeout(650)
+    await page.evaluate(() => new Promise(resolve => {
+      const el = document.querySelector<HTMLElement>(".message-stream")!
+      let framesLeft = 4
+      const next = () => { el.scrollTop += 120; if (--framesLeft) requestAnimationFrame(next); else resolve(null) }
+      requestAnimationFrame(next)
+    }))
+    await frames(page, 2)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "escaped", "A downward fling off the bottom stays escaped")
+    await page.evaluate(() => new Promise(resolve => {
+      const el = document.querySelector<HTMLElement>(".message-stream")!
+      const max = () => el.scrollHeight - el.clientHeight
+      let framesLeft = 60
+      const next = () => {
+        el.scrollTop = Math.min(el.scrollTop + 120, max())
+        if (--framesLeft && el.scrollTop < max()) requestAnimationFrame(next); else resolve(null)
+      }
+      requestAnimationFrame(next)
+    }))
+    await frames(page, 5)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following", "A downward fling reaching the bottom resumes follow")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap < 48, `The landing must be the bottom: ${gap}`)
+  }, { name: "list", hasTouch: true })
+})
+
+test("an explicit Latest clears an armed fling claim", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    await page.evaluate(() => (window as any).fixture.follow())
+    await frames(page, 5)
+    await replayThrottledTouchFlick(page, 24)
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page, 5)
+    await page.waitForTimeout(650)
+    await stream.evaluate(el => { el.scrollTop -= 40 })
+    await frames(page, 10)
+    assert.equal(await stream.getAttribute("data-follow-mode"), "following", "Latest re-owns positioning; a stale claim must not escape")
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap < 48, `Follow must re-pin after the unowned write: ${gap}`)
+  }, { name: "list", hasTouch: true })
+})
+
 type FrameSample = { frame: number; time: number; top: number; gap: number; mode?: string; anchorOffset: number | null }
 
 /**
