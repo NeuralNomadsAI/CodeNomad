@@ -1,7 +1,5 @@
 # Settings and Preferences
 
-Settings rows and actions, the native Preferences window and its project context, Providers/Web search, Stats, notifications and bug reports.
-
 ## Agent conventions
 
 - Native Servers Open succeeds after the main renderer accepts its selection. Tauri correlates replies with a native-generated request ID and the exact opener, bounds pending requests to 32 and waits up to five seconds. Refusal, a missing handler and a lost reply reach the existing Preferences error path; expired and duplicate replies leave later selections untouched. Only local main windows can reply.
@@ -45,7 +43,7 @@ Settings rows and actions, the native Preferences window and its project context
 
 - General's Memory **Tidy up** captures the current resolved Preferences project and memory scope and confirms before sending a fixed native intent to its exact local opener. The main renderer checks fresh memory availability/writability, creates a new session at that directory, activates it and sends the fixed cleanup prompt once. Embedded browser Settings use the same main-renderer action and close after a confirmed send. Preferences owns only the review and pending confirmation; context changes revoke unsent consent. See [AGENT_MEMORY.md](AGENT_MEMORY.md#cleanup-sessions-from-preferences).
 
-- Settings → OpenCode's `OpenCodeLoginStartCard` (stable row anchor `#opencode-login-start`) presents **Start OpenCode at startup** as one lone-setting switch with a one-sentence **i** tip saying it starts when the user session opens; the switch is its state. It reads `GET /api/opencode/login-start` on mount and reconnect (the latest request wins) and changes it with `POST`, the switch disabled until the server answers. A refused change re-reads the state and shows one fixed, localized error under the row (`failed` or `unsupported-binary`); a failed read adds **Try again**; `unavailable` disables the switch with a caption. Runtime, artifacts and the replacement of the former supervision are in [OPENCODE_RUNTIME_SETUP.md](OPENCODE_RUNTIME_SETUP.md#start-opencode-at-login). Browser regression: `tests/browser/opencode-login-start.test.ts`.
+- Settings → OpenCode's `OpenCodeLoginStartCard` (stable row anchor `#opencode-login-start`) presents **Launch at startup** as one lone-setting switch with a one-sentence **i** tip saying it starts when the user session opens; the switch is its state. It reads `GET /api/opencode/login-start` on mount and reconnect (the latest request wins) and changes it with `POST`, the switch disabled until the server answers. A refused change re-reads the state and shows one fixed, localized error under the row (`failed` or `unsupported-binary`); a failed read adds **Try again**; `unavailable` disables the switch with a caption. Runtime, artifacts and stored supervision reconciliation are in [OPENCODE_RUNTIME_SETUP.md](OPENCODE_RUNTIME_SETUP.md#start-opencode-at-login). Browser regression: `tests/browser/opencode-login-start.test.ts`.
 
 - General offers `autoExpandActiveSubsessions` (default true): a new working/compacting/input chevron state opens visible branches belonging to the selected conversation, including its descendants at every depth (`dev-docs/UI_SHELL.md`). Disabling it leaves activity indicators and explicit navigation available; the preference is stored with the shared UI settings.
 

@@ -12,11 +12,9 @@ Browser previews are an ordinary desktop feature and must work in user projects 
 - Browser and developer calls share the backend's loopback registration and private native transport. Native instrumentation is prepared at normal startup and every tool is available. Execution still verifies the selected backend, supported native capabilities and invoking session.
 - Developer inspection targets the native window, independently of its selected project/conversation (including empty views). The invoking session still identifies an owning backend; it need not be visible. Actions retain the inspected window/run and document-scoped accessibility references, so agents can navigate back themselves. Window automation stays valid across session/project selection; navigation, replaced pages, changed native targets or windows and restarts require fresh inspection. Browser-preview tools retain their separate per-session attachment rules.
 - `packages/server/src/server/routes/automation-plugin.ts` serves the `/api/opencode-plugin/automation` endpoint with the per-process token.
-- `browser-claim` verifies that exactly one CodeNomad instance owns the session before an `open` action asks the UI to create a preview.
-- `browser-probe` also requires a visible native preview registered to that session.
+- `browser-claim` verifies exactly one browser-capable backend owning the session before an `open` action asks the UI to select a project-tab occurrence under the targeting rule below.
+- `browser-probe` requires exactly one visible native preview registered to that session.
 - `browser-execute` validates the browser action and forwards `browser.probe` or `browser.execute` over the fenced native-parent request channel.
-
-The bridge is loopback-only, token-authenticated, bounded, and session-location gated.
 
 An active backend publishes an ephemeral registration with a per-process 256-bit
 token and removes it on graceful shutdown. All bridge discovery checks the
@@ -32,7 +30,7 @@ ownership and retry rules are in the [creation recovery contract](MISSIONS.md#mi
 
 ## Desktop instrumentation
 
-At normal startup, native instrumentation prepares the current CodeNomad desktop process for agent feedback. It never launches or owns another CodeNomad process and never starts, stops or replaces the shared OpenCode daemon.
+Native instrumentation prepares the current desktop process at startup. Never launch or own another CodeNomad process, or start, stop or replace the shared OpenCode daemon through instrumentation.
 
 Electron (`packages/electron-app/electron/main/developer-mode.ts`):
 
@@ -166,9 +164,9 @@ opaque callers and legitimate own-origin resources.
 
 ## Design constraints
 
-Browser and developer tools ship together in this one bundled plugin (user decision), every tool available. Execution re-reads session ownership through the shared connection and validated worktree inventory; never let a plugin location or a caller-provided session ID alone grant access. The visible preview, its window, storage partition and permissions stay in the native hosts; the daemon stays independently owned and the connection-scoped compatibility adapter stays.
+Execution re-reads session ownership through the shared connection and validated worktree inventory; never let a plugin location or a caller-provided session ID alone grant access. Keep the connection-scoped compatibility adapter.
 
-Native/HTTP deadlines bound browser tool execution; the tool context's `signal` is unused (`opencode/automation/desktop-plugin.ts`), so an interrupted turn leaves dispatched native work running until its deadline. Stronger cancellation needs end-to-end propagation and native tests.
+Native/HTTP deadlines bound browser tools; the tool context's `signal` is unused (`opencode/automation/desktop-plugin.ts`). Dispatched work continues until its deadline after turn interruption. Stronger cancellation requires end-to-end propagation and native tests.
 
 ## Native Hosts
 
@@ -230,7 +228,29 @@ WebKitGTK clipboard writes and native Ctrl+C/V use the engine's user-initiated p
 - WebKit history reads the native back/forward list on the UI thread. Each retained native item gets a monotonic numeric handle, with at most 32 exposed entries; redirects and `replaceState` update that item's URL, while distinct same-URL entries keep distinct handles. Reads and traversal revalidate the registration's owner/generation, reject expired or removed handles and release retained items on replacement, close and primary-renderer reload. GTK observes native URI/list changes. WKWebView samples native lists every 250 ms while visible and every second while hidden because its public list API has no same-URL `pushState` notification. Saved restoration keeps only URLs/cursor and loads the selected URL on explicit reopening.
 - Remote project tabs' `remote_view.rs` can adopt this layer by replacing direct `add_child`, geometry, visibility, closure and storage setup with `EmbeddedViews`, using unique `embedded-remote-` labels and a `Storage` descriptor with a server-profile directory and domain. A bare `PathBuf` selects the preview domain; remote consumers must specify their distinct server-profile domain. `RemoteViews` retains origin/profile identity, project entry, login/pairing, titles, events and notifications. Add its same-origin restriction to the mandatory URL policy, keep Entry/Help effects single-shot and allow only the approved help site to open externally. Keep application capabilities confined to primary local webviews. Qualify remote TLS exceptions and notification permissions separately; never apply `linux_tls.rs` remote-window exceptions to browser previews.
 
-The UI routes a host-native autonomous open request among local-backend instances containing the session, claims the request for one local window, selects that session, and opens its preview. Claim and creation continuations revalidate attachment, instance and session ownership; stale admitted claims release their exact request. Hidden or duplicate targets are rejected rather than selected implicitly.
+Autonomous native opens consider local-backend occurrences containing the session:
+choose the active occurrence, otherwise its unique open owner; refuse ambiguity.
+Claim for one local window, select that occurrence/session and open its preview.
+Keep that occurrence pinned through claim and creation; revalidate attachment,
+instance and session ownership. Closing it releases its new proxy token; stale
+admitted claims release their exact request. Never reroute to a duplicate.
+Page actions require exactly one visible native target for the invoking session.
+Ambiguity, hiding and closure invalidate it. Registrations retain the real native
+session ID on Electron and Tauri Windows/macOS/Linux.
+
+Renderer preview operations retain occurrence/session identity fences while pending.
+Lifecycle unavailability or removal invalidates those fences; completion releases
+the exact operation's fence. Admission checks the lifecycle authority's open
+occurrence set.
+
+`stores/session-surface.ts` supplies occurrence gesture generations. Autonomous opens
+capture their generation after owner selection and before claiming, and recheck it with
+ownership and operation fences before adoption. Passive browser resource restoration
+uses its own occurrence/session operation fence, allocates independently of foreground
+authority and preserves the saved foreground mode. Rejected creations release their
+own proxy tokens. SessionView reads the shared typed foreground projection; browser
+resources retain their independent lifetimes. Location/history notifications apply
+immediately while pending gestures retain their generation.
 
 Native open claims retain their request deadline and backend-generation fence. The UI revalidates the claim after asynchronous preview-record creation and before publishing the preview; a rejected record's token is released. Native-parent stdin preserves UTF-8 across buffer boundaries, and timed-out response IDs stay retired independently of subsequent requests.
 
@@ -258,10 +278,11 @@ Native open claims retain their request deadline and backend-generation fence. T
 
 ## Agent conventions
 
-- Browser preview state is keyed by backend-scoped project folder and session ID; local persistence keys stay folder-based. Live open/restore/navigation callers pass their instance key to resolve the owning backend before HTTP. Token deletion, including superseded-response cleanup, retains that client. Attachment revocation removes live guests while retaining saved history; restore coalescence and completion cleanup belong to that attachment and request. Nonlocal frame sources resolve against their backend, while local proxy paths and native token-subdomain URLs retain their existing contract. Project preview availability follows the same backend's attachment-scoped metadata; host version and update checks use local metadata.
-- Keep explicitly opened guests mounted in stable DOM order across chat/session/Info/project visibility changes; the preview's X also hides it and returns to chat without discarding history. Only their lightweight session shells remain: inactive transcripts and composers still unmount and the transcript memory budget stays independent. Hidden guests must stop being automation targets (Electron unregisters, Tauri hides). Saved project-wide URLs migrate once to the first restoring session. Across renderer restart, restore URL history/cursor only on explicit browser opening; never eagerly visit saved pages or persist native pageState/forms/POST bodies. Reuse owned CDP history IDs for live traversal and load just the selected saved URL when its native entry no longer exists. History is bounded to 32 credential-free HTTP(S) URLs/session within the 4 KB aggregate layout budget; trim history before evicting saved previews.
+- Live open/restore/navigation resolves the owning backend from the instance key before HTTP. Token deletion, including superseded-response cleanup, retains that client. Attachment revocation releases live resources and preserves the occurrence's saved history; restore coalescence and cleanup retain the exact attachment/request. Nonlocal frame sources resolve against their backend; local proxy paths and native token-subdomain URLs keep their contract. Preview availability follows attachment-scoped backend metadata; host version/update checks use local metadata.
 - After changing fixed page programs or their signatures, run `node --import tsx scripts/build-page-function-registry.ts` and the driver contract tests. Keep `functions.generated.json` derived from the authored registry. Bump the private driver contract version for incompatible operation/signature changes. Preserve the fixed-program hashes and snapshot goldens when behavior is unchanged. Never accept caller-supplied protocol names or JavaScript source in the page channel.
 
 - Give `embedded_view.rs` child modules explicit `#[path = "embedded_view/..."]` attributes so the native qualification example can include the production layer directly. Keep fixture-only lifecycle controls inside the example executable.
 
-- Native session previews behave as tabs in one browser: share the persistent preview profile's cookies/site storage across sessions and projects within a CodeNomad data profile/config pair, but never with the trusted app renderer, remote-window profiles or the other desktop engine. Keep documents, navigation stacks, history cursors and automation attachments session-owned. Electron uses `persist:codenomad-browser-shared-v1`; Windows/Linux Tauri uses `browser/shared-v1`; macOS Tauri uses its profile/config-derived identified WebKit store. Leave per-session preview profiles found on disk in place and never merge them into the shared profile: they can hold conflicting accounts. Iframe fallbacks keep their sandbox; never grant guests native capabilities.
+- Native session previews behave as tabs in one browser: share the persistent preview profile's cookies/site storage across sessions and projects within a CodeNomad data profile/config pair, but never with the trusted app renderer, remote-window profiles or the other desktop engine. Keep documents, navigation stacks, history cursors, device templates and native registrations owned by the occurrence/session pair. Native registrations retain the real session ID for ownership and automation authority. Electron uses `persist:codenomad-browser-shared-v1`; Windows/Linux Tauri uses `browser/shared-v1`; macOS Tauri uses its profile/config-derived identified WebKit store. Leave per-session preview profiles found on disk in place and never merge them into the shared profile: they can hold conflicting accounts. Iframe fallbacks keep their sandbox; never grant guests native capabilities.
+- Browser preview state is keyed by instance UUID and session ID and saved in the occurrence's `viewState.previews` envelope (see `PROJECTS.md`). Keep explicitly opened guests mounted in stable DOM order across chat/session/Info/project visibility changes; the preview's X hides only that occurrence's guest and returns to chat without discarding history. Only their lightweight session shells remain: inactive transcripts and composers still unmount and the transcript memory budget stays independent. Hidden guests must stop being automation targets (Electron unregisters, Tauri hides). Closing an occurrence invalidates its pending opens/restores, releases its proxy tokens and disposes its own guests/listeners; duplicate occurrences retain their views. Late responses and failures honor the originating operation's lifetime; error dialogs appear only in its active view. Across renderer restart, restore URL history/cursor and device template only on explicit browser opening; never eagerly visit saved pages or persist native pageState/forms/POST bodies. Reuse owned CDP history IDs for live traversal and load just the selected saved URL when its native entry no longer exists. History is bounded to 32 credential-free HTTP(S) URLs per occurrence/session within the 4 KB aggregate window budget; trim history before evicting saved previews.
+- Plain-browser and Remote Control clients retain bounded occurrence envelopes in local storage, keyed by normalized folder and duplicate occurrence. Allocation and closure compaction share the local bound-occurrence inventory, so duplicates opened during a pending backend deletion retain contiguous ranks. Repeated opening notifications reuse the existing binding. The fallback admits 32 envelopes within 64K UTF-16 units and shares the 4 KB preview budget. Explicit browser opening adopts each missing session's matching legacy URL into that occurrence, merging with its other sessions; exact session entries take precedence over project-wide fallbacks independently of source order. Only the consumed source retires after successful persistence; hydration stays data-only. Native primary windows use their existing captured workspace descriptors and partition publication.

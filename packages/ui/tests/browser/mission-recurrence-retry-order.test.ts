@@ -29,7 +29,7 @@ const TITLE = "Daily source review", OTHER = "Weekly digest"
 const CHECK = (title = TITLE) => `Check control outcome for ${title}`
 const STOP = `Stop schedule ${TITLE}`
 const UNCONFIRMED = "Control outcome unconfirmed; check status before another action."
-const NOT_SENT = "This action was not sent, so nothing was applied. Review the schedule's current state, then try again if needed."
+const NOT_SENT = "Review the schedule's current state, then try again if needed."
 const RESEND = "Refresh and resend the unconfirmed action"
 const notDispatched = { status: 409, json: { error: "Recurrence request refused before dispatch; nothing was sent", code: "recurrence-not-dispatched" } }
 

@@ -358,6 +358,20 @@ describe("BrowserController private page channel", () => {
 })
 
 describe("BrowserController preview lifecycle", () => {
+  it("duplicate occurrence registrations require exactly one visible target and never retarget a lease", async () => {
+    const h = createHarness()
+    h.add(createGuest({ id: 90, owner: h.owner }).guest, "occurrence-a")
+    const lease = await begin(h.controller)
+    h.add(createGuest({ id: 91, owner: h.owner }).guest, "occurrence-b")
+    assert.throws(() => h.controller.probe("session"), /Multiple visible/)
+    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText" }), /Multiple visible/)
+    h.controller.unregister(h.owner, "occurrence-a")
+    assert.deepEqual(h.controller.probe("session"), { available: true })
+    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText" }), /no longer current|changed|unavailable/)
+    const next = await begin(h.controller)
+    await page(h.controller, "end", next)
+  })
+
   it("reads only bounded public history and refuses foreign or unsafe traversal", async () => {
     const h = createHarness()
     const commands: Array<{ method: string; params?: Record<string, unknown> }> = []

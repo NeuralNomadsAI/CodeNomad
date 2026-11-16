@@ -33,7 +33,6 @@ type WorktreeOption =
 type DeleteErrorKind = "localChanges" | "inUse" | "notFound" | "permissionDenied" | "unknown"
 
 type DeleteErrorDetails = {
-  summary: string
   causeLabel: string
   nextStep: string
 }
@@ -288,31 +287,26 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     switch (kind) {
       case "localChanges":
         return {
-          summary: t("instanceShell.worktree.delete.error.summary.localChanges"),
           causeLabel: t("instanceShell.worktree.delete.error.cause.localChanges"),
           nextStep: t("instanceShell.worktree.delete.error.nextStep.localChanges"),
         }
       case "inUse":
         return {
-          summary: t("instanceShell.worktree.delete.error.summary.inUse"),
           causeLabel: t("instanceShell.worktree.delete.error.cause.inUse"),
           nextStep: t("instanceShell.worktree.delete.error.nextStep.inUse"),
         }
       case "notFound":
         return {
-          summary: t("instanceShell.worktree.delete.error.summary.notFound"),
           causeLabel: t("instanceShell.worktree.delete.error.cause.notFound"),
           nextStep: t("instanceShell.worktree.delete.error.nextStep.notFound"),
         }
       case "permissionDenied":
         return {
-          summary: t("instanceShell.worktree.delete.error.summary.permissionDenied"),
           causeLabel: t("instanceShell.worktree.delete.error.cause.permissionDenied"),
           nextStep: t("instanceShell.worktree.delete.error.nextStep.permissionDenied"),
         }
       default:
         return {
-          summary: t("instanceShell.worktree.delete.error.summary.unknown"),
           causeLabel: t("instanceShell.worktree.delete.error.cause.unknown"),
           nextStep: t("instanceShell.worktree.delete.error.nextStep.unknown"),
         }
@@ -695,7 +689,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       <Show when={deleteErrorDetails()}>
                         {(details) => (
                           <>
-                            <p class="text-sm text-primary font-medium">{details().summary}</p>
                             <p class="text-sm text-secondary">
                               <span class="font-medium text-primary">{t("instanceShell.worktree.delete.error.causeLabel")}</span>{" "}
                               {details().causeLabel}

@@ -203,9 +203,6 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
                   <Dialog.Title class="text-xl font-semibold text-primary">
                     {t("folderSelection.clone.dialog.title")}
                   </Dialog.Title>
-                  <Dialog.Description class="text-sm text-secondary mt-2">
-                    {t("folderSelection.clone.dialog.description")}
-                  </Dialog.Description>
                 </div>
 
                 <label class="flex flex-col gap-2 text-sm text-secondary">

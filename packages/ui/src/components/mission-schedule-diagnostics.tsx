@@ -5,9 +5,9 @@ import { MissionDisclosure } from "./mission-disclosure"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 /** Document-owned identifiers only: technical carriers have no composer/navigation action. */
-export function MissionScheduleDiagnostics(props: { document: UnifiedMissionSchedule }) {
+export function MissionScheduleDiagnostics(props: { instanceId: string; document: UnifiedMissionSchedule }) {
   const { t } = useI18n()
-  return <MissionDisclosure missionId={props.document.id} name="schedule-technical" defaultOpen={false}
+  return <MissionDisclosure instanceId={props.instanceId} missionId={props.document.id} name="schedule-technical" defaultOpen={false}
     title={t("missions.scheduleDiagnostics.title")} class="mission-schedule-diagnostics"
     actions={<SettingsInfoTip text={`${t("missions.scheduleDiagnostics.cost")} ${t("missions.scheduleDiagnostics.retention")}`} />}>
     <p>{t("missions.scheduleDiagnostics.wakes", { count: props.document.observation.wakeCount ?? t("missions.scheduleList.unavailable") })}</p>

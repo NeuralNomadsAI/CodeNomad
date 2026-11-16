@@ -9,12 +9,10 @@ exclusion. The daily document runtime keeps its own admission and control path.
 transport/local-language primitives. `registerNativeScheduleCarrierFoundation`
 provides a separate no-business-effect qualification composition.
 
-The launch policy, document CAS and passage engine describe business scheduling
-independently of native transport. Only the adapter owns the fixed carrier prompt,
-private calendar facade and own-process HTTP hop. UI configuration projects the
-Missions policy rather than native scripts. The observation port separately
-requires original-input/terminal correlation and whole-family quiescence; a native
-idle or inactive process-local session alone leaves that business proof incomplete.
+The adapter owns the fixed carrier prompt, private calendar facade and own-process
+HTTP hop; the launch policy, document CAS and passage engine own business scheduling.
+UI configuration projects Missions policy. The observation port requires
+original-input/terminal correlation and whole-family quiescence.
 
 ## Transport contract
 
@@ -83,9 +81,8 @@ All map, task, list and content inspection uses `inspectTool` in the owning invo
 Its observed conversations and decision candidates are fitted with the rest of the
 task view. Direct `inspect`, `listMissions`, `observeTask` and `decisionCandidates`
 bridge calls are refused; internal observation stays inside the receiver. Each fitted
-result's two-space JSON holds at most 100,000 UTF-16 units, hence at most 300,000 UTF-8
-bytes (three bytes per unit; escaped controls and lone surrogates are already counted
-in the JSON text), plus fewer than 128 bytes of fixed RPC envelopes, below 1 MiB.
+result's two-space JSON holds at most 100,000 UTF-16 units / 300,000 UTF-8 bytes,
+plus fewer than 128 bytes of fixed RPC envelopes, below 1 MiB.
 Catalog ownership checks carry a null acknowledgement after validation. Replies use
 the byte-checked JSON codec so journal-valid artifact nesting fits inside its display
 and RPC envelopes; requests retain the authority codec's structural checks.

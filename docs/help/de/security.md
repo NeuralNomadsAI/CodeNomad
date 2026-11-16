@@ -64,7 +64,7 @@ Verwenden Sie für echte Isolation OS-Konten, Container/VMs und vorgelagerte Ber
 
 ## Zugangsdaten und Diagnosen privat halten {#privacy}
 
-OpenCode verwaltet Anbieterverbindungen und seinen globalen Unterhaltungsspeicher. CodeNomad liest Verbindungsmetadaten und ausgewählte Zugangsdaten serverseitig für unterstützte Nutzungsintegrationen; Browser-APIs liefern keine geheimen Anbieterwerte zurück. Die Erneuerung extern verwalteter OAuth-Anmeldungen liegt bei deren Eigentümer; CodeNomad tauscht deren Refresh-Tokens nicht aus. Siehe [Anbieter](providers.md).
+OpenCode verwaltet Anbieterverbindungen und seinen globalen Unterhaltungsspeicher. CodeNomad liest Verbindungsmetadaten und ausgewählte Zugangsdaten serverseitig für unterstützte Nutzungsintegrationen; Browser-APIs liefern keine geheimen Anbieterwerte zurück. Siehe [Anbieter](providers.md).
 
 | Material | Umgang |
 | --- | --- |

@@ -29,12 +29,10 @@ Bu, tek projeyi veya Uzaktan Kontrolü değil, ana bilgisayarın doğrudan dinle
 
 | Başlatma/mod | HTTP şuraya bağlanır: | HTTPS bağlanır |
 | --- | --- | --- |
-| Bağımsız, yalnızca HTTPS (varsayılan) | Yalnızca özel geri döngü dinleyicisi (aşağıya bakın) | `--host` |
+| Bağımsız, yalnızca HTTPS (varsayılan) | Yalnızca özel geri döngü dinleyicisi | `--host` |
 | Bağımsız, yalnızca HTTP | **`--host`**, LAN/joker karakter adresi dahil | Etkin değil |
 | Bağımsız, her iki dinleyici | `127.0.0.1`, `--host`'den bağımsız olarak | `--host` |
 | Yerel masaüstü arka ucu | HTTP dinleyicisi, ana bilgisayar dahili dinleyicisi de dahil olmak üzere `127.0.0.1`'de kalır | HTTPS etkinleştirildiğinde `--host` |
-
-Her arka uç, Görevler gibi CodeNomad'in kendi paketlenmiş OpenCode eklentileri için `127.0.0.1` üzerinde ayrıca bir HTTP dinleyicisi tutar. HTTP istenmediğinde veya istenen HTTP dinleyicisi `127.0.0.1` ya da `0.0.0.0` dışında bir adrese bağlandığında, arka uç rastgele bir `127.0.0.1` portunda özel bir HTTP dinleyicisi ekler. Bu dinleyici hiçbir zaman yazdırılmaz veya bağlantı adresi olarak sunulmaz, başka makinelerden erişilemez ve aynı kimlik doğrulamalı uygulamayı sunar.
 
 Somut bir LAN adresinin geridöngü bağlantılarını kabul etmesi gerekmez. `0.0.0.0`, tüm IPv4 arayüzleri anlamına gelir; `::` çift yığınlı joker karakter dinleyicisidir. Bir tarayıcıda joker karakter değil, gerçek ulaşılabilir bir adres kullanın. IPv6 bölge tanımlayıcıları `--host`'de desteklenmez.
 
@@ -89,7 +87,7 @@ HTTPS etkinken ve anahtar/sertifika çifti sağlanmadığında, CodeNomad, yapı
 2. Sertifikayı oluşturmak/yeniden kontrol etmek için arka ucu yeniden başlatın.
 3. Ana makineyi/CA'yı güvenilir bir kanal aracılığıyla doğrulayın ve ardından **yalnızca CA sertifikasını** amaçlanan her istemci/tarayıcı güven deposuna aktarın. Alternatif olarak genel olarak güvenilen bir sertifika veya TLS ters proxy kullanın.
 
-Oluşturulan sunucu sertifikası 30 gün geçerlidir. Başlangıçta, bitimine üç gün veya daha az kaldığında, gerekli SANs eksikse, sertifika kontrolleri başarısızsa veya özel anahtar dosyası yoksa yenilenir. Oluşturulan CA 365 gün geçerlidir; süresi dolunca, sertifika kontrolleri başarısızsa veya özel anahtarı yoksa değiştirilir; değiştirilmesi sunucu sertifikasını da yeniden üretir. Mevcut bozuk, okunamayan veya eşleşmeyen özel anahtarlar otomatik onarılmaz. İstemciler yeni CA'ya güvenmelidir. Süreç içinde sürekli yenileme yoktur: uzun süre çalışan kurulumlarda süre dolmadan bilinçli yeniden başlatma planlayın.
+Oluşturulan sunucu sertifikası 30 gün geçerlidir. Başlangıçta, bitimine üç gün veya daha az kaldığında, gerekli SANs eksikse, sertifika kontrolleri başarısızsa veya özel anahtar dosyası yoksa yenilenir. Oluşturulan CA 365 gün geçerlidir; süresi dolunca, sertifika kontrolleri başarısızsa veya özel anahtarı yoksa değiştirilir; değiştirilmesi sunucu sertifikasını da yeniden üretir. İstemciler yeni CA'ya güvenmelidir. Süreç içinde sürekli yenileme yoktur: uzun süre çalışan kurulumlarda süre dolmadan bilinçli yeniden başlatma planlayın.
 
 Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adını, SANs'yi, güven deposunu ve son kullanma tarihini kontrol edin. Doğrulamayı devre dışı bırakmayın veya uyarılara tıklamayı dağıtım prosedürünüz haline getirmeyin. Güvenilir HTTPS, [PWA kurulumu ve mikrofon erişimi](mobile.md) gibi uzak tarayıcı özellikleri için de gereklidir.
 
@@ -109,8 +107,8 @@ Deneysel çoklu backend etkinleştirildiğinde **SSH sunucusu (isteğe bağlı)*
 
 Kayıtlı bir sunucuyu yeniden açmak için ana sayfanın **Sunucular** sekmesinde onu seçin. Yer imleri uzak sunucunun projelerine değil, bu CodeNomad yapılandırmasına aittir. Bir URL'nin kaydedilmesi sunucuyu başlatmaz veya erişim sağlamaz. **Kayıtlı sunucuyu kaldır**, uzak konuşmaları, arka ucu veya kimlik bilgilerini değil, yer işaretini kaldırır.
 
-Kayıtlı bir sunucuyu doğrudan komut satırından açmak için masaüstü uygulamasını sunucunun kayıtlı adıyla veya `https://` URL'siyle `--connect-server <ad>` (ya da `--connect-server=<ad>`) seçeneğiyle başlatın. CodeNomad yalnızca uzak pencereyi açar; denetimler ve oturum açma **Bağlan** ile aynıdır. CodeNomad zaten çalışıyorsa sunucuyu yeni bir pencere yerine geçerli penceresi açar. Hiçbir kayıtlı sunucuyla eşleşmeyen bir URL, ana bilgisayar adıyla kaydedilir. Başlatma değerleri hiçbir zaman kimlik bilgisi taşımaz: kullanıcı adı, parola veya eşleştirme kodu içeren bir URL reddedilir. Ad bilinmiyorsa, URL geçersizse veya bağlantı başarısız olursa CodeNomad normal şekilde başlar ve hatayı gösterir. Bağlantı, kendinden imzalı bir sunucu için yerel sertifikanın yüklenmesi gibi bir onay gerektirdiğinde de CodeNomad normal şekilde başlar ve onayı orada ister. Windows'ta bir başlatma bağımsız değişkeni `|` içerdiğinde Tauri derlemesi başlamaz; bunun yerine sunucunun URL'sini kullanın veya sunucuyu yeniden adlandırın.
+Kayıtlı bir sunucuyu doğrudan komut satırından açmak için masaüstü uygulamasını sunucunun kayıtlı adıyla veya `https://` URL'siyle `--connect-server <ad>` (ya da `--connect-server=<ad>`) seçeneğiyle başlatın. CodeNomad yalnızca uzak pencereyi açar; denetimler ve oturum açma **Bağlan** ile aynıdır. CodeNomad zaten çalışıyorsa sunucuyu yeni bir pencere yerine geçerli penceresi açar. Hiçbir kayıtlı sunucuyla eşleşmeyen bir URL, ana bilgisayar adıyla kaydedilir. Başlatma değerleri hiçbir zaman kimlik bilgisi taşımaz: kullanıcı adı, parola veya eşleştirme kodu içeren bir URL reddedilir. Windows'ta bir başlatma bağımsız değişkeni `|` içerdiğinde Tauri derlemesi başlamaz; bunun yerine sunucunun URL'sini kullanın veya sunucuyu yeniden adlandırın.
 
-Uzak pencere bu bilgisayara dönmenin bir yolunu her zaman bırakır. Uzak pencereler açık kalırken son yerel pencereyi kapatmak sekmelerini korur: uzak penceredeki **Pencere → Yeni pencere** ya da CodeNomad'ı yeniden başlatmak onu yeniden açar. Bir sunucu yüklenemezse penceresi bunu bildirir ve **Yeniden dene**, **Yerel pencere aç** ve **Pencereyi kapat** seçeneklerini sunar; Tauri sürümünde sayfanın yeniden yükleme düğmesini ve **Pencere → Yeni pencere** öğesini kullanın.
+Uzak pencereler açık kalırken son yerel pencereyi kapatmak sekmelerini korur: uzak penceredeki **Pencere → Yeni pencere** ya da CodeNomad'ı yeniden başlatmak onu yeniden açar.
 
 Uzaktan Kontrol için bunun yerine **Sunucu URL'si** öğesine yeni bir eşleştirme bağlantısı yapıştırın. Yer imi yalnızca tünelin kökenini korur, asla tek kullanımlık eşleştirme kodunu içermez; Cihaz çerezi kaybından sonra yeniden eşleştirme için bkz. [Uzaktan Kontrol](remote-control.md).

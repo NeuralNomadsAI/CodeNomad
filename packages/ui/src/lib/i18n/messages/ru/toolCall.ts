@@ -4,7 +4,7 @@ export const toolCallMessages = {
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "Вложенные вызовы инструментов",
   "toolCall.execute.more": "Скрыто дополнительных вызовов: {count}.",
-  "toolCall.execute.truncated": "Нативный вывод сокращён. Полный вывод:",
+  "toolCall.execute.truncated": "Вывод сокращён. Полный вывод:",
   "toolCall.pending.waitingToRun": "Ожидание запуска…",
   "toolCall.error.label": "Ошибка:",
 
@@ -62,9 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Просмотр каталога…",
 
   "toolCall.renderer.bash.title.timeout": "Таймаут: {timeout}",
-  "toolCall.output.truncated": "[Вывод сокращён для отображения; скопируйте его для доступа к полному выводу]",
-  "toolCall.output.tooLarge": "Структурированный вывод не отображается, поскольку он слишком большой.",
-  "toolCall.task.steps.truncated": "Показаны последние {count} шагов; более ранние шаги опущены.",
+  "toolCall.output.truncated": "Вывод сокращён. Скопируйте для получения полного вывода.",
+  "toolCall.output.tooLarge": "Содержимое слишком велико для отображения.",
+  "toolCall.task.steps.truncated": "Показаны последние {count} шагов.",
   "toolCall.renderer.read.detail.offset": "Смещение: {offset}",
   "toolCall.renderer.read.detail.limit": "Лимит: {limit}",
 
@@ -145,7 +145,8 @@ export const toolCallMessages = {
   "toolCall.task.sections.prompt": "Промпт",
   "toolCall.task.sections.steps": "Шаги",
   "toolCall.task.sections.output": "Вывод",
-  "toolCall.task.steps.count": "{count} шагов",
+  "toolCall.task.steps.count.one": "{count} шаг",
+  "toolCall.task.steps.count.other": "Шаги: {count}",
   "toolCall.task.meta.agentModel": "Агент: {agent} • Модель: {model}",
   "toolCall.task.meta.agent": "Агент: {agent}",
   "toolCall.task.meta.model": "Модель: {model}",
@@ -156,7 +157,6 @@ export const toolCallMessages = {
   "toolCall.status.error": "Ошибка",
   "toolCall.status.unknown": "Неизвестно",
 
-  "toolCall.applyPatch.action.preparing": "Подготовка apply_patch…",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} файл)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} файлов)",
   "toolCall.applyPatch.fileFallback": "Файл {number}",

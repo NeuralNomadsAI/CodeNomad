@@ -10,6 +10,8 @@ import type { Session } from "../../../src/types/session"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { getFilePreview } from "../../../src/stores/files-preview"
+import { beginGesture } from "../../../src/stores/session-surface"
+import { invalidateFilesystemCaches } from "../../../src/lib/filesystem-events"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -53,10 +55,14 @@ markSessionListsRestored(id)
 setMessagesLoaded(previous => new Map(previous).set(id, new Set(conversations.map(session => session.id))))
 await ensureWorktreesLoaded(id)
 
+let held: ReturnType<typeof beginGesture> | undefined
 window.filePreviewPanel = { target: () => getFilePreview(id)?.path ?? null, scope: () => getFilePreview(id)?.scope ?? null,
-  reads: () => [...reads], gitReads: () => ({ ...gitReads }) }
+  reads: () => [...reads], gitReads: () => ({ ...gitReads }),
+  hold: () => { held = beginGesture({ instanceId: id, sessionId: "ses_one" }) },
+  current: () => held?.current() ?? false, invalidate: () => invalidateFilesystemCaches(id) }
 declare global {
-  interface Window { filePreviewPanel: { target(): string | null; scope(): string | null; reads(): string[]; gitReads(): { status: number; diff: number } } }
+  interface Window { filePreviewPanel: { target(): string | null; scope(): string | null; reads(): string[]; gitReads(): { status: number; diff: number };
+    hold(): void; current(): boolean; invalidate(): void } }
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>

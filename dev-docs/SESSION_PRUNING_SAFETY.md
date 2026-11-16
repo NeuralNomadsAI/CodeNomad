@@ -23,9 +23,8 @@ writers are unsupported.
   plugin changes only an already-completed assistant's stored content, with exact-data
   CAS on its envelope and split-part deletions under the same write lock; it never manufactures sequence values or emits replacement events.
 
-Rather than relying on move/revert controls, the plugin rechecks
-directory/project/workspace identity and staged-revert/compaction state *inside*
-the transaction.
+Recheck directory/project/workspace identity and staged-revert/compaction state
+*inside* the transaction.
 Other native writes serialize on SQLite; the plugin preserves snapshots, metadata,
 IDs and ordering. A concurrently staged revert may apply after the prune, just as
 it can apply after another committed operation. It must not restore deleted payloads.

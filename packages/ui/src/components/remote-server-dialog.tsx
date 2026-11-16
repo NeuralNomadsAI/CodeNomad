@@ -191,7 +191,6 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
           <Dialog.Content class="modal-surface w-full max-w-lg p-6 flex flex-col gap-5" tabIndex={-1}>
             <div>
               <Dialog.Title class="text-xl font-semibold text-primary">{t("folderSelection.servers.dialog.title")}</Dialog.Title>
-              <Dialog.Description class="text-sm text-secondary mt-2">{t("folderSelection.servers.dialog.description")}</Dialog.Description>
             </div>
             <label class="flex flex-col gap-2 text-sm text-secondary">
               <span>{t("folderSelection.servers.dialog.name")}</span>

@@ -1,7 +1,8 @@
 import { Component, createSignal, For, Show } from "solid-js"
-import { Plus, Trash2, Key, Globe, Shield, ShieldOff } from "lucide-solid"
+import { Plus, Trash2, Key, Shield, ShieldOff } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import { useI18n } from "../lib/i18n"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 interface EnvironmentVariablesEditorProps {
   disabled?: boolean
@@ -66,13 +67,12 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
     <div class="space-y-3">
       <Show when={!props.bare}>
         <div class="flex items-center gap-2 mb-3">
-          <Globe class="w-4 h-4 icon-muted" />
-          <span class="text-sm font-medium text-secondary">{t("envEditor.title")}</span>
           <span class="text-xs text-muted">
             {entries().length === 1
               ? t("envEditor.count.one", { count: entries().length })
               : t("envEditor.count.other", { count: entries().length })}
           </span>
+          <SettingsInfoTip text={t("envEditor.help")} help={{ page: "opencode", anchor: "session-environment" }} />
         </div>
       </Show>
 
@@ -175,18 +175,6 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
           <Plus class="w-3.5 h-3.5" />
         </button>
       </div>
-
-      <Show when={!props.bare}>
-        <Show when={entries().length === 0}>
-          <div class="text-xs text-muted text-center py-2">
-            {t("envEditor.empty")}
-          </div>
-        </Show>
-
-        <div class="text-xs text-muted mt-2">
-          {t("envEditor.help")}
-        </div>
-      </Show>
     </div>
   )
 }

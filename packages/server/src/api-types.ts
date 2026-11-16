@@ -1020,7 +1020,7 @@ export interface ServiceUsageSnapshot {
   connection?: string
   stats: import("@opencode/client").SessionStatsInfo
 }
-/** Settings → OpenCode "Start OpenCode at startup": the presence of the OS login artifact. */
+/** Settings → OpenCode "Launch at startup": the presence of the OS login artifact. */
 export type LoginStartState = "on" | "off" | "unavailable"
 export interface LoginStartResponse { state: LoginStartState }
 export interface LoginStartControl { enabled: boolean }

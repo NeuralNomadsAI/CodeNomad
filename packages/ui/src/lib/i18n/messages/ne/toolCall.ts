@@ -4,7 +4,7 @@ export const toolCallMessages = {
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "नेस्टेड उपकरण कलहरू",
   "toolCall.execute.more": "थप {count} कलहरू लुकाइएका छन्।",
-  "toolCall.execute.truncated": "नेटिभ आउटपुट छोट्याइएको छ। पूरा आउटपुट:",
+  "toolCall.execute.truncated": "आउटपुट छोट्याइएको छ। पूरा आउटपुट:",
   "toolCall.pending.waitingToRun": "चलाउनको लागि पर्खँदै...",
   "toolCall.error.label": "त्रुटि:",
 
@@ -62,9 +62,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "डाइरेक्टरी सूचीबद्ध गर्दै...",
 
   "toolCall.renderer.bash.title.timeout": "समय समाप्त: {timeout}",
-  "toolCall.output.truncated": "[प्रदर्शनका लागि आउटपुट छोट्याइएको छ; पूर्ण आउटपुटका लागि प्रतिलिपि गर्नुहोस्]",
-  "toolCall.output.tooLarge": "संरचित आउटपुट धेरै ठूलो भएकाले प्रदर्शन गरिएको छैन।",
-  "toolCall.task.steps.truncated": "पछिल्ला {count} चरणहरू देखाइँदैछन्; पुराना चरणहरू हटाइएका छन्।",
+  "toolCall.output.truncated": "आउटपुट छोट्याइएको छ। पूरा आउटपुटका लागि प्रतिलिपि गर्नुहोस्।",
+  "toolCall.output.tooLarge": "सामग्री देखाउनका लागि धेरै ठूलो छ।",
+  "toolCall.task.steps.truncated": "पछिल्ला {count} चरणहरू देखाइँदैछन्।",
   "toolCall.renderer.read.detail.offset": "अफसेट: {offset}",
   "toolCall.renderer.read.detail.limit": "सीमा: {limit}",
 
@@ -145,7 +145,8 @@ export const toolCallMessages = {
   "toolCall.task.sections.prompt": "प्रम्प्ट",
   "toolCall.task.sections.steps": "चरणहरू",
   "toolCall.task.sections.output": "आउटपुट",
-  "toolCall.task.steps.count": "{count} चरणहरू",
+  "toolCall.task.steps.count.one": "{count} चरण",
+  "toolCall.task.steps.count.other": "{count} चरणहरू",
   "toolCall.task.meta.agentModel": "एजेन्ट: {agent} • मोडेल: {model}",
   "toolCall.task.meta.agent": "एजेन्ट: {agent}",
   "toolCall.task.meta.model": "मोडेल: {model}",
@@ -156,7 +157,6 @@ export const toolCallMessages = {
   "toolCall.status.error": "त्रुटि",
   "toolCall.status.unknown": "अज्ञात",
 
-  "toolCall.applyPatch.action.preparing": "apply_patch तयारी गर्दै...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} फाइल)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} फाइलहरू)",
   "toolCall.applyPatch.fileFallback": "फाइल {number}",

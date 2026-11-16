@@ -1,7 +1,7 @@
 import { keyboardRegistry } from "../keyboard-registry"
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
-import { activeSessionId, getVisibleSessionIds, setActiveSessionFromList } from "../../stores/sessions"
+import { activeSessionId, getVisibleSessionIds, selectSessionFromList } from "../../stores/sessions"
 import { openSettings } from "../../stores/settings-screen"
 
 export function registerNavigationShortcuts(isMainView: () => boolean = () => true) {
@@ -42,7 +42,7 @@ export function registerNavigationShortcuts(isMainView: () => boolean = () => tr
 
       const targetSessionId = navigationIds[targetIndex]
       if (targetSessionId) {
-        setActiveSessionFromList(instanceId, targetSessionId)
+        selectSessionFromList(instanceId, targetSessionId)
       }
     },
     description: "previous session",
@@ -65,7 +65,7 @@ export function registerNavigationShortcuts(isMainView: () => boolean = () => tr
 
       const targetSessionId = navigationIds[targetIndex]
       if (targetSessionId) {
-        setActiveSessionFromList(instanceId, targetSessionId)
+        selectSessionFromList(instanceId, targetSessionId)
       }
     },
     description: "next session",

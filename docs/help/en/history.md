@@ -1,7 +1,5 @@
 # History, search and cleanup
 
-Search, timeline navigation, the image gallery and technical cleanup also support OpenCode's experimental `part_rows` storage, including messages containing both split and inline parts. Existing split parts remain supported after the option is disabled.
-
 Stored history, what the transcript currently displays and the model's compacted context are separate. Choose navigation or filtering before deleting anything.
 
 ## Search full history {#full-history-search}
@@ -15,11 +13,9 @@ Stored history, what the transcript currently displays and the model's compacted
 
 Conversation pages show **This page: … results · … messages scanned** as batches arrive. Workspace search shows **Best results: …** and compact notices for partial scans or excluded directories. When ranked search is unavailable in the runtime, use **Entire session**. Skipped messages are reported; run a fresh search to include new messages.
 
-Opening an empty search does not scan history. Changing query/scope, closing the window or leaving the session cancels obsolete search work. If a read fails, use **Retry**; it does not submit a prompt or mutate history.
-
 Project scans start with up to 16,384 newest stored messages per location. **Search further back** replaces the list with the next older window's best results. The note names the examined range, from the most recent messages to later message ordinals, newest first within each project location. Results are ranked only within that window. Changing query, scope or **Include tools and thinking**, closing search or leaving the session resets the window. New messages are included by starting a fresh search.
 
-If a search window expires or its history changes, **Start fresh search** restarts from the newest messages with the same query and options. A notice explains this recovery. Ordinary read failures keep **Retry**, which retries the current window.
+If a search window expires or its history changes, **Start fresh search** restarts from the newest messages with the same query and options.
 
 ## Open results and use the timeline {#timeline-navigation}
 
@@ -30,8 +26,6 @@ If a search window expires or its history changes, **Start fresh search** restar
 The timeline represents full session structure even when the transcript holds only a bounded passage. Jumps load the destination rather than fetching every intervening message. Other-session search previews do not load that session's entire transcript or select it; only **Open in session** switches conversations.
 
 Tool markers follow **Message content**: a tool type hidden there has no marker (none with **Nothing**), except a tool waiting for a permission. A step that only ran tools shows just its tool markers, without an empty agent marker.
-
-While a jump loads, the old passage stays visible. A newer jump or manual transcript interaction supersedes obsolete navigation; a failed jump leaves the visible passage intact. Retry the destination rather than repeatedly reloading the whole project. Historical reading does not change the composer agent/model selection.
 
 The timeline is hidden when the conversation is too narrow (below 420 CSS pixels); use search and transcript controls there. Its saved visibility preference is not erased by that responsive change.
 
@@ -65,8 +59,6 @@ Compaction changes the context OpenCode uses to continue the session. It is not 
 Only eligible completed tools and reasoning are removed. Active/incomplete content is not pruned, nor is a message larger than 16 MB as OpenCode reads it (attached files included), which counts as skipped content; changed content is refused rather than silently expanding what you confirmed. Final text and message/session metadata remain, but removed technical output has no undo. Preserve anything you need before confirming.
 
 Session cleanup is not atomic across the whole session. Successful earlier removals remain if a later message conflicts or fails. **Cancellation stops future batches; it does not roll back an already dispatched batch**, which may still commit.
-
-For a busy-storage error, wait for current execution/storage work to finish. For a changed-message error, reload and select again. For an unavailable plugin, reconnect/reopen CodeNomad and inspect the error before retrying. After an uncertain reply, refresh and assess the remaining content; do not assume either that nothing happened or that the whole session was cleaned.
 
 ## Delete and scrub sessions {#delete-scrub}
 

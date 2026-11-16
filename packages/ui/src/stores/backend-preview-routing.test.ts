@@ -5,11 +5,14 @@ import ts from "typescript"
 import { backends, createBackendClient, localBackend, type BackendClient } from "../lib/backend-client"
 import { backendEvents } from "../lib/backend-events"
 import { captureBackendOperation } from "../lib/backend-operation"
-import { projectScope, parseInstanceKey } from "../lib/backend-identity"
+import { backendIdOf, parseInstanceKey } from "../lib/backend-identity"
 import { selectBrowserOpenOwner } from "../lib/native/browser"
 import { getPreviewFrameSource } from "../components/browser-frame-security"
 import { closeSessionPreview, dismissSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, showSessionChatFor, showSessionPreview, updateSessionPreviewHistory } from "./session-previews"
 import { detachInstanceTabMembership } from "./app-tab-membership"
+import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { beginGesture } from "./session-surface"
+import { getTabViewState, seedTabViewState } from "./tab-view-state"
 
 const registry = backends as Map<string, BackendClient>
 function fixture(id: string, baseUrl = `https://${id}.example/tenant/`) {
@@ -28,9 +31,13 @@ function fixture(id: string, baseUrl = `https://${id}.example/tenant/`) {
   } })
   registry.set(id, backend)
   let detach = backendEvents.attach(id, backend.events)
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId: `${id}~workspace`, folder: "/same", occurrence: 0, backendId: id })
   return { backend, calls, pending, hold: () => { held = true }, release: () => { held = false; pending.splice(0).forEach(resolve => resolve()) },
     detach: () => detach(), reattach: () => { detach = backendEvents.attach(id, backend.events) },
-    dispose: () => { detach(); backend.events.dispose(); registry.delete(id) } }
+    dispose: () => {
+      publishInstanceLifecycleAuthority({ type: "removed", instanceId: `${id}~workspace`, folder: "/same", occurrence: 0, backendId: id })
+      detach(); backend.events.dispose(); registry.delete(id)
+    } }
 }
 
 test("preview store routes creation, replacement and deletion by instance; local keys and URLs stay exact", async t => {
@@ -39,22 +46,23 @@ test("preview store routes creation, replacement and deletion by instance; local
   t.mock.method(localBackend.api, "createPreview", async ({ sessionId, url }: { sessionId: string; url: string }) => ({ token: "local-token", sessionId, targetUrl: url, proxyUrl: "/previews/local-token/app?q=1#hash", createdAt: "" }))
   t.mock.method(localBackend.api, "deletePreview", async () => {})
   for (const owner of [a, b]) {
-    const scope = projectScope({ folder: "/same", backendId: owner.backend.id }), instanceId = `${owner.backend.id}~workspace`
-    const first = await openSessionPreview("same-session", "http://localhost:3000/app?q=1#hash", scope, instanceId)
-    assert.equal(first.storageKey, JSON.stringify([scope, "same-session"]))
+    const instanceId = `${owner.backend.id}~workspace`
+    const first = await openSessionPreview("same-session", "http://localhost:3000/app?q=1#hash", instanceId)
+    assert.equal(first.storageKey, JSON.stringify([instanceId, "same-session"]))
     assert.equal(first.proxyUrl, `/previews/${owner.backend.id}-1/app?q=1#hash`)
     for (const host of ["web", "electron", "tauri"] as const) {
       assert.equal(getPreviewFrameSource({ host, windowContext: "local" }, first, "http://127.0.0.1:9899/src/", owner.backend.id), first.contentUrl)
     }
-    const next = await openSessionPreview("same-session", "https://example.com/next", scope, instanceId)
+    const next = await openSessionPreview("same-session", "https://example.com/next", instanceId)
     await closeSessionPreview(next.storageKey)
     assert.deepEqual(owner.calls.map(call => [call.method, new URL(call.url).pathname]), [
       ["POST", "/preview-capabilities"], ["POST", "/preview-capabilities"], ["DELETE", `/preview-capabilities/cap-${owner.backend.id}-1`], ["DELETE", `/preview-capabilities/cap-${owner.backend.id}-2`],
     ])
     assert.deepEqual(owner.calls[0].body, { sessionId: "same-session", url: "http://localhost:3000/app?q=1#hash" })
   }
-  const local = await openSessionPreview("same-session", "http://localhost:3000/app?q=1#hash", "/same", "workspace")
-  assert.equal(local.storageKey, JSON.stringify(["/same", "same-session"]))
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId: "workspace", folder: "/same", occurrence: 0 })
+  const local = await openSessionPreview("same-session", "http://localhost:3000/app?q=1#hash", "workspace")
+  assert.equal(local.storageKey, JSON.stringify(["workspace", "same-session"]))
   assert.equal(local.proxyUrl, "/previews/local-token/app?q=1#hash")
   assert.equal(getPreviewFrameSource({ host: "tauri", windowContext: "local" }, local, "http://127.0.0.1:9899/src/"), "http://local-token.preview.localhost:9899/app?q=1#hash")
   await closeSessionPreview(local.storageKey)
@@ -65,25 +73,26 @@ test("revoked creates clean their own tokens and restore deduplication never joi
   t.after(owner.dispose)
   const localDeletes: string[] = []
   t.mock.method(localBackend.api, "deletePreview", async (token: string) => { localDeletes.push(token) })
-  const scope = projectScope({ folder: "/race", backendId: owner.backend.id }), id = `${owner.backend.id}~workspace`
-  const first = await openSessionPreview("session", "https://example.com/saved", scope, id)
+  const id = `${owner.backend.id}~workspace`
+  const first = await openSessionPreview("session", "https://example.com/saved", id)
   assert.equal(sessionPreviews().get(first.storageKey), first, "published preview is in the live map")
   owner.detach()
-  assert.equal(getSessionPreview("session", scope), null)
+  assert.equal(getSessionPreview("session", id), null)
   assert.equal(sessionPreviews().has(first.storageKey), false, "revocation removes the published record, independently of filtered getters")
   assert.deepEqual(owner.calls.filter(call => call.method === "DELETE"), [{
     url: `https://preview_generation.example/preview-capabilities/${first.capability}`, method: "DELETE", body: undefined,
   }], "revocation deletes the exact published token through its owning backend")
   assert.deepEqual(localDeletes, [], "remote token cleanup never falls back to the host")
   owner.reattach(); owner.hold()
-  const old = restoreSessionPreview("session", scope, id)
-  assert.equal(restoreSessionPreview("session", scope, id), old)
+  const old = restoreSessionPreview("session", id)
+  assert.equal(restoreSessionPreview("session", id), old)
   owner.detach(); owner.reattach()
-  const replacement = restoreSessionPreview("session", scope, id)
+  const replacement = restoreSessionPreview("session", id)
   assert.notEqual(old, replacement)
+  const rejected = assert.rejects(old, { name: "AbortError" })
   owner.pending.shift()!()
-  assert.equal(await old, null)
-  assert.equal(restoreSessionPreview("session", scope, id), replacement)
+  await rejected
+  assert.equal(restoreSessionPreview("session", id), replacement)
   owner.release()
   const restored = await replacement
   assert.equal(restored?.token, "preview_generation-3")
@@ -91,32 +100,34 @@ test("revoked creates clean their own tokens and restore deduplication never joi
   assert.ok(owner.calls.some(call => call.method === "DELETE" && call.url.endsWith("/cap-preview_generation-2")))
   await closeSessionPreview(restored!.storageKey)
   owner.hold()
-  const opening = openSessionPreview("late", "https://example.com/late", scope, id)
+  const opening = openSessionPreview("late", "https://example.com/late", id)
   owner.detach(); owner.release()
   await assert.rejects(opening, /superseded/)
-  assert.equal(getSessionPreview("late", scope), null)
+  assert.equal(getSessionPreview("late", id), null)
   assert.ok(owner.calls.some(call => call.method === "DELETE" && call.url.endsWith("/cap-preview_generation-4")))
 })
 
 test("missing preview owner refuses create and restore without local requests", async t => {
   let localCalls = 0
   t.mock.method(localBackend.api, "createPreview", async () => { localCalls++; throw new Error("local fallback") })
-  await assert.rejects(openSessionPreview("s", "https://example.com/", "missing~/repo", "missing~workspace"), /Backend unavailable/)
-  assert.throws(() => restoreSessionPreview("s", "missing~/repo", "missing~workspace"), /Backend unavailable/)
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId: "missing~workspace", folder: "/repo", occurrence: 0, backendId: "missing" })
+  seedTabViewState("missing~workspace", { version: 1, previews: { s: { targetUrl: "https://example.com/", mode: "preview" } } })
+  await assert.rejects(openSessionPreview("s", "https://example.com/", "missing~workspace"), /Backend unavailable/)
+  assert.throws(() => restoreSessionPreview("s", "missing~workspace"), /Backend unavailable/)
   assert.equal(localCalls, 0)
 })
 
 test("remote close revokes live authority but retains logical history for explicit reopening", async t => {
   const owner = fixture("preview_close")
   t.after(owner.dispose)
-  const id = `${owner.backend.id}~workspace`, scope = `${owner.backend.id}~/repo`
-  const preview = await openSessionPreview("s", "https://example.com/start", scope, id)
+  const id = `${owner.backend.id}~workspace`
+  const preview = await openSessionPreview("s", "https://example.com/start", id)
   updateSessionPreviewHistory(preview.storageKey, { urls: ["https://example.com/start", "https://example.com/next"], index: 1 })
   updateSessionPreviewHistory(preview.storageKey, { urls: [preview.contentUrl!], index: 0 })
-  assert.equal(getSessionPreview("s", scope)?.targetUrl, "https://example.com/next")
+  assert.equal(getSessionPreview("s", id)?.targetUrl, "https://example.com/next")
   dismissSessionPreview(preview.storageKey)
-  assert.equal(getSessionPreview("s", scope), null)
-  const restored = await restoreSessionPreview("s", scope, id)
+  assert.equal(getSessionPreview("s", id), null)
+  const restored = await restoreSessionPreview("s", id)
   assert.equal(restored?.targetUrl, "https://example.com/next")
   assert.deepEqual(restored?.history, { urls: ["https://example.com/start", "https://example.com/next"], index: 1 })
   assert.notEqual(restored?.capability, preview.capability)
@@ -126,33 +137,33 @@ test("remote close revokes live authority but retains logical history for explic
 test("tab detachment fences pending creates and restore coalescence without touching a replacement", async t => {
   const owner = fixture("preview_tab")
   t.after(owner.dispose)
-  const id = `${owner.backend.id}~workspace`, scope = `${owner.backend.id}~/repo`
-  await openSessionPreview("s", "https://example.com/start", scope, id)
+  const id = `${owner.backend.id}~workspace`
+  await openSessionPreview("s", "https://example.com/start", id)
   owner.detach(); owner.reattach(); owner.hold()
-  const old = restoreSessionPreview("s", scope, id)
+  const old = restoreSessionPreview("s", id)
   detachInstanceTabMembership(id)
-  const fresh = restoreSessionPreview("s", scope, id)
+  const fresh = restoreSessionPreview("s", id)
   assert.notEqual(old, fresh)
   const rejected = assert.rejects(old, { name: "AbortError" })
   owner.pending.shift()!()
   await rejected
   owner.release()
   const restored = await fresh
-  assert.equal(getSessionPreview("s", scope)?.capability, restored?.capability)
+  assert.equal(getSessionPreview("s", id)?.capability, restored?.capability)
   await closeSessionPreview(restored!.storageKey)
 })
 
 test("preview URLs reject embedded credentials and foreign frame sources before publication", async t => {
   const owner = fixture("preview_urls")
   t.after(owner.dispose)
-  const id = `${owner.backend.id}~workspace`, scope = `${owner.backend.id}~/repo`
-  await assert.rejects(openSessionPreview("s", "https://user:secret@localhost/app", scope, id), TypeError)
+  const id = `${owner.backend.id}~workspace`
+  await assert.rejects(openSessionPreview("s", "https://user:secret@localhost/app", id), TypeError)
   assert.equal(owner.calls.length, 0)
   for (const contentUrl of ["https://user:secret@preview_urls.example/previews/t", "https://other.example/previews/t", "javascript:alert(1)"]) {
     t.mock.method(owner.backend.api, "createPreviewCapability", async () => ({ token: "bad", capability: "bad-cap", contentUrl,
       sessionId: "s", targetUrl: "https://example.com/", proxyUrl: "/previews/bad/", createdAt: "" }))
-    await assert.rejects(openSessionPreview("s", "https://example.com/", scope, id), TypeError)
-    assert.equal(getSessionPreview("s", scope), null)
+    await assert.rejects(openSessionPreview("s", "https://example.com/", id), TypeError)
+    assert.equal(getSessionPreview("s", id), null)
   }
   assert.equal(owner.calls.filter(call => call.method === "DELETE").length, 3)
 })
@@ -160,47 +171,81 @@ test("preview URLs reject embedded credentials and foreign frame sources before 
 test("a reader/chat gesture during restore stays superseded rather than inviting a default-page open", async t => {
   const owner = fixture("preview_gesture")
   t.after(owner.dispose)
-  const id = `${owner.backend.id}~workspace`, scope = `${owner.backend.id}~/repo`
-  await openSessionPreview("s", "https://example.com/", scope, id)
+  const id = `${owner.backend.id}~workspace`
+  await openSessionPreview("s", "https://example.com/", id)
   owner.detach(); owner.reattach(); owner.hold()
-  const restoring = restoreSessionPreview("s", scope, id)
-  showSessionChatFor("s", scope)
+  const restoring = restoreSessionPreview("s", id)
+  showSessionChatFor("s", id)
   owner.release()
   await assert.rejects(restoring, { name: "AbortError" })
-  assert.equal(getSessionPreview("s", scope), null)
+  assert.equal(getSessionPreview("s", id), null)
 })
 
 test("explicit reopen after chat starts a fresh restore without joining or clearing the superseded navigation", async t => {
   const owner = fixture("preview_reopen")
   t.after(owner.dispose)
-  const id = `${owner.backend.id}~workspace`, scope = `${owner.backend.id}~/repo`
-  await openSessionPreview("s", "https://example.com/saved", scope, id)
+  const id = `${owner.backend.id}~workspace`
+  await openSessionPreview("s", "https://example.com/saved", id)
   owner.detach(); owner.reattach(); owner.hold()
-  const old = restoreSessionPreview("s", scope, id)
-  showSessionChatFor("s", scope)
-  const reopened = restoreSessionPreview("s", scope, id)
+  const old = restoreSessionPreview("s", id)
+  showSessionChatFor("s", id)
+  const reopened = restoreSessionPreview("s", id)
   const rejected = assert.rejects(old, { name: "AbortError" })
   assert.notEqual(reopened, old)
   assert.equal(owner.pending.length, 2)
   owner.pending.shift()!()
   await rejected
-  assert.equal(restoreSessionPreview("s", scope, id), reopened)
+  assert.equal(restoreSessionPreview("s", id), reopened)
   owner.release()
   const restored = await reopened
   assert.equal(restored?.token, "preview_reopen-3")
   assert.equal(restored?.targetUrl, "https://example.com/saved")
-  assert.equal(getSessionPreview("s", scope)?.token, restored?.token)
+  assert.equal(getSessionPreview("s", id)?.token, restored?.token)
   showSessionPreview(restored!.storageKey)
-  assert.equal(getSessionPreview("s", scope)?.mode, "preview")
+  assert.equal(getSessionPreview("s", id)?.mode, "preview")
   await closeSessionPreview(restored!.storageKey)
 })
 
-function appNativeBrowserOpen(boundaries: Record<string, unknown>) {
+test("duplicate remote occurrences isolate gestures, capabilities and recovery across same-name backends", async t => {
+  const a = fixture("duplicate_a"), b = fixture("duplicate_b")
+  const firstId = `${a.backend.id}~workspace`, siblingId = `${a.backend.id}~sibling`, otherId = `${b.backend.id}~workspace`
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId: siblingId, folder: "/same", occurrence: 1, backendId: a.backend.id })
+  t.after(() => {
+    publishInstanceLifecycleAuthority({ type: "removed", instanceId: siblingId, folder: "/same", occurrence: 1, backendId: a.backend.id })
+    a.dispose(); b.dispose()
+  })
+  const first = await openSessionPreview("same", "https://example.com/first", firstId)
+  const sibling = await openSessionPreview("same", "https://example.com/sibling", siblingId)
+  const other = await openSessionPreview("same", "https://example.com/other", otherId)
+  const siblingIntent = beginGesture({ instanceId: siblingId, sessionId: "same" })
+  dismissSessionPreview(first.storageKey)
+  assert.equal(siblingIntent.current(), true)
+  assert.equal(getSessionPreview("same", siblingId), sibling)
+  assert.equal(getSessionPreview("same", otherId), other)
+  assert.equal(getTabViewState(firstId).previews?.same.mode, "chat")
+  assert.equal(getTabViewState(siblingId).previews?.same.mode, "preview")
+  a.hold()
+  const pending = restoreSessionPreview("same", firstId)
+  a.detach(); a.reattach()
+  const fresh = restoreSessionPreview("same", firstId)
+  const rejected = assert.rejects(pending, { name: "AbortError" })
+  a.pending.shift()!()
+  await rejected
+  assert.equal(getSessionPreview("same", otherId), other)
+  assert.equal(getTabViewState(siblingId).previews?.same.targetUrl, sibling.targetUrl)
+  a.release()
+  const restored = await fresh
+  assert.equal(restored?.targetUrl, first.targetUrl)
+  assert.notEqual(restored?.capability, first.capability)
+  assert.equal(getSessionPreview("same", siblingId), null, "revocation drops live authority, retaining sibling saved state")
+})
+
+function appCallback(name: string, boundaries: Record<string, unknown>) {
   const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8")
   const ast = ts.createSourceFile("App.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   let handler: ts.Expression | undefined
   const visit = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === "openRequestedPreview") handler = node.initializer
+    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === name) handler = node.initializer
     ts.forEachChild(node, visit)
   }
   visit(ast)
@@ -209,7 +254,7 @@ function appNativeBrowserOpen(boundaries: Record<string, unknown>) {
   const javascript = ts.transpileModule(`const consumer = ${handler.getText(ast)}; return consumer;`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
   }).outputText
-  return new Function(...Object.keys(boundaries), javascript)(...Object.values(boundaries)) as (session: string, url: string, request: string) => Promise<void>
+  return new Function(...Object.keys(boundaries), javascript)(...Object.values(boundaries))
 }
 
 test("App host-native browser-open consumer excludes colliding remote owners and remote hydration", async () => {
@@ -219,24 +264,25 @@ test("App host-native browser-open consumer excludes colliding remote owners and
     const sessions = new Map([[remote.id, [{ id: "collision" }]], [local.id, scenario === "loaded" ? [{ id: "collision" }] : []]])
     const fetched: string[] = [], opened: unknown[][] = [], claimed: string[] = [], selected: string[] = []
     const boundaries = {
-      instances: () => projects, getSessions: (id: string) => sessions.get(id) ?? [],
-      parseInstanceKey, projectScope, selectBrowserOpenOwner, captureBackendOperation, disposed: false,
+      instances: () => projects, appTabs: () => [...projects.values()].map(instance => ({ kind: "instance", instance })),
+      getSessions: (id: string) => sessions.get(id) ?? [],
+      parseInstanceKey, beginGesture: () => ({ current: () => true }), selectBrowserOpenOwner, captureBackendOperation, disposed: false,
       activeAppTab: () => ({ kind: "instance", instance: remote }),
       fetchSessions: async (id: string) => { fetched.push(id); sessions.set(id, [{ id: "collision" }]) },
       claimNativeBrowserOpen: async (id: string) => { claimed.push(id); return true },
       releaseNativeBrowserOpen: async () => {}, openSessionPreview: async (...args: unknown[]) => {
-        opened.push(args.slice(0, 4))
-        assert.equal(await (args[4] as () => Promise<boolean>)(), true)
+        opened.push(args.slice(0, 3))
+        assert.equal(await (args[3] as () => Promise<boolean>)(), true)
       },
       setShowFolderSelection: () => {}, selectInstanceTab: (id: string) => selected.push(id),
       setActiveSessionFromList: () => {}, log: { warn: () => {} },
     }
-    const consumer = appNativeBrowserOpen(boundaries)
+    const consumer = appCallback("openRequestedPreview", boundaries)
     await consumer("collision", "http://localhost:3000/app", "host-request")
     if (scenario === "remote-only") {
       assert.deepEqual(opened, []); assert.deepEqual(claimed, []); assert.deepEqual(selected, [])
     } else {
-      assert.deepEqual(opened, [["collision", "http://localhost:3000/app", "/same", "same"]])
+      assert.deepEqual(opened, [["collision", "http://localhost:3000/app", "same"]])
       assert.deepEqual(claimed, ["host-request", "host-request"]); assert.deepEqual(selected, ["same"])
     }
     assert.deepEqual(fetched, scenario === "hydrate" ? ["same"] : [])
@@ -255,9 +301,10 @@ test("App native browser claim and preview continuations retain the admitted att
       const gate = new Promise<void>(resolve => { resume = resolve })
       const waiting = new Promise<void>(resolve => { admitted = resolve })
       const opened: unknown[][] = [], released: string[] = [], claimed: string[] = [], navigated: string[] = [], fetched: string[] = []
-      const consumer = appNativeBrowserOpen({
-        instances: () => projects, getSessions: () => sessions,
-        parseInstanceKey, projectScope, selectBrowserOpenOwner, captureBackendOperation, disposed: false,
+      const consumer = appCallback("openRequestedPreview", {
+        instances: () => projects, appTabs: () => [...projects.values()].map(instance => ({ kind: "instance", instance })),
+        getSessions: () => sessions,
+        parseInstanceKey, beginGesture: () => ({ current: () => true }), selectBrowserOpenOwner, captureBackendOperation, disposed: false,
         activeAppTab: () => ({ kind: "instance", instance: local }),
         fetchSessions: async (id: string) => { fetched.push(id) },
         claimNativeBrowserOpen: async (request: string) => {
@@ -289,4 +336,20 @@ test("App native browser claim and preview continuations retain the admitted att
       t.mock.restoreAll()
     }
   }
+})
+
+test("App automatic host setup follows the selected live or restoring backend without gating remote tabs", () => {
+  let active: any, saved: any
+  const automatic = appCallback("automaticLocalSetup", {
+    activeAppTab: () => active, loadedRestorableSession: () => saved, parseInstanceKey, backendIdOf,
+  })
+  assert.equal(automatic(), true)
+  saved = { tabs: [{ kind: "workspace", folder: "/same", backendId: "remote" }], activeTabIndex: 0 }
+  assert.equal(automatic(), false, "saved remote selection refuses automatic local setup before its live tab arrives")
+  active = { kind: "remote-restore" }
+  assert.equal(automatic(), false)
+  active = { kind: "instance", instance: { id: "remote~same" } }
+  assert.equal(automatic(), false)
+  active = { kind: "instance", instance: { id: "same" } }
+  assert.equal(automatic(), true)
 })

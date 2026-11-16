@@ -4,13 +4,13 @@ Three independent notions:
 
 | Notion | What it is | Who chooses it | What it affects |
 |---|---|---|---|
-| Installed version | The build you run, e.g. `0.20.1` or `0.20.1-dev-20261008-…` | The installer | Nothing else. It never selects data. |
+| Installed version | The build you run, e.g. `0.20.1` or `0.20.1-dev-20261008-…` | The installer | Build code and resources. |
 | Update feed | Which releases are offered: `stable` or `preview` | The user, in Settings → Info → Updates (`server.updateFeed`) | Update offers only. Until chosen, `-dev-*` builds default to preview, others to stable. |
 | Data profile | Which desktop state is used: windows, tabs, drafts, WebView/Chromium storage, singleton and CodeNomad backend | The user, in Settings → General → Restore previous state (**Data profile**); developers with `CODENOMAD_PROFILE` | Desktop data only. |
 
 OpenCode sessions and messages live in the shared OpenCode daemon and are the same in every profile. Server configuration (`CLI_CONFIG`, default `~/.config/codenomad/config.yaml`) is also independent of the profile; a non-default config file gets its own scope.
 
-**Start OpenCode at startup** belongs to the OS account, outside data profiles; changing or deleting a profile preserves it ([runtime setup](OPENCODE_RUNTIME_SETUP.md#start-opencode-at-login)).
+**Launch at startup** belongs to the OS account, outside data profiles; changing or deleting a profile preserves it ([runtime setup](OPENCODE_RUNTIME_SETUP.md#start-opencode-at-login)).
 
 ## Selecting a profile
 
@@ -49,7 +49,7 @@ On a packaged launch without `CODENOMAD_PROFILE`/alias and without a usable reme
 
 Remembering is best effort. If the selection folder, the lock or `choices.json` cannot be written (antivirus EPERM/EBUSY, full disk, read-only `%APPDATA%`), the launch still starts with the detected profile and the automatic choice simply runs again next time.
 
-The automatic choice never moves, copies, merges, renames or deletes anything. Other profiles stay on disk until the user deletes them (see below).
+Never move, copy, merge, rename or delete profile data during automatic selection.
 
 Writes to `choices.json` take `profile-selection/choices.lock` (exclusive create, taken over once it is 15 s old). A first attempt only moves a stale lock aside, so the launch and the profile manager try twice. A launch that finds the lock held, or cannot use it, opens the detected profile without remembering it; concurrent first launches detect the same result. Known, accepted race: taking over a stale lock moves it aside and restores it if it turns out to be fresh; if a third launcher creates a new lock in between, the restore fails and two writers may hold the lock at once, and the automatic choice still never overwrites a valid entry.
 

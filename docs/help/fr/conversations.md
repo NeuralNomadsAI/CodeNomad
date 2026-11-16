@@ -1,14 +1,12 @@
 # Conversations
 
-CodeNomad présente les sessions natives OpenCode comme des conversations, avec une hiérarchie pour le travail délégué et des commandes distinctes pour votre prochain envoi.
+Les messages affichent du Markdown, du code, des diffs et les images de résultats d’outils prises en charge. **Contenu des messages** change la visibilité sans supprimer les parties enregistrées ; [Historique](history.md#operation-reference) distingue les commandes d’affichage du nettoyage.
 
-Les messages affichent du Markdown, du code, des diffs et les images de résultats d’outils prises en charge. La copie de texte, la recherche dans l’historique complet et la voix utilisent des projections textuelles, pas les octets des images intégrées. **Contenu des messages** change la visibilité sans supprimer les parties enregistrées ; [Historique](history.md#operation-reference) distingue les commandes d’affichage du nettoyage.
-
-Les en-têtes de raisonnement et d’outils indiquent la durée de chaque étape, comptée en direct pendant son exécution ; les durées inférieures à une seconde ne sont pas affichées. Lorsque **Tokens** est affiché dans **Contenu des messages** (le préréglage **Tout** l’affiche), chaque message d’agent se termine par une seule ligne de tokens et de coût après son texte final. Cette ligne additionne le message et les messages contenant les outils et raisonnements que couvre son action **Supprimer les outils et raisonnements de cette réponse**, dans la transcription chargée ; dépliez-la pour les comptes de raisonnement et de cache. Les étapes qui n’ont exécuté que des outils n’ont pas de ligne propre.
+Les en-têtes de raisonnement et d’outils indiquent la durée de chaque étape, comptée en direct pendant son exécution ; les durées inférieures à une seconde ne sont pas affichées. Lorsque **Tokens** est affiché dans **Contenu des messages** (le préréglage **Tout** l’affiche), chaque message d’agent se termine par une seule ligne de tokens et de coût après son texte final. Cette ligne additionne le message et les messages contenant les outils et raisonnements que couvre son action **Supprimer les outils et raisonnements de cette réponse**, dans la transcription chargée ; dépliez-la pour les comptes de raisonnement et de cache.
 
 ## Diagrammes Mermaid {#mermaid}
 
-Les blocs `mermaid` et `mmd` sont rendus avec Mermaid Tiny après la fin du flux. Utilisez **Afficher la source** / **Afficher le diagramme** dans l’en-tête du code ; Copier conserve le texte source. Tiny exclut les mindmaps, les diagrammes d’architecture et KaTeX. Un diagramme invalide, non pris en charge ou trop volumineux garde sa source avec une erreur. Le rendu est local, sans réseau, limité à 50 000 caractères et 500 arêtes.
+Les blocs `mermaid` et `mmd` sont rendus avec Mermaid Tiny après la fin du flux. Utilisez **Afficher la source** / **Afficher le diagramme** dans l’en-tête du code ; Copier conserve le texte source. Tiny exclut les mindmaps, les diagrammes d’architecture et KaTeX. Le rendu est local, sans réseau, limité à 50 000 caractères et 500 arêtes.
 
 ## Trouver des conversations et naviguer {#navigate-conversations}
 
@@ -17,17 +15,17 @@ Les blocs `mermaid` et `mmd` sont rendus avec Mermaid Tiny après la fin du flux
 3. Utilisez **Rechercher des sessions…**, **Sessions principales** / **Sous-sessions**, le filtre de worktree et le tri **Activité**, **Nom** ou **Worktree** pour réduire la liste. Dans les résultats de recherche, faites glisser le pointeur sur les cases des lignes pour sélectionner ou désélectionner plusieurs conversations d'un coup.
 4. Utilisez **Retour** et **Avancer** dans la barre latérale pour revisiter les conversations affichées.
 
-Cliquez sur un badge **Inactif** ou **Interrompu** (**Effacer**) pour l’acquitter sans ouvrir la conversation, ou appuyez sur Entrée/Espace lorsqu’il a le focus. À la souris ou au stylet, maintenez un badge et glissez sur les autres pour en effacer plusieurs ; le glissement tactile conserve le défilement. Les indicateurs d’activité et de saisie/permission en attente restent visibles. Consulter la session efface **Inactif** ; **Interrompu** exige un geste explicite d’effacement. Les acquittements sont enregistrés avec l’état des sessions de cette fenêtre ; une nouvelle interruption réaffiche le badge. Effacer change uniquement l’indicateur ; la flèche de rechargement recharge toujours les messages.
+Cliquez sur un badge **Inactif** ou **Interrompu** (**Effacer**) pour l’acquitter sans ouvrir la conversation, ou appuyez sur Entrée/Espace lorsqu’il a le focus. À la souris ou au stylet, maintenez un badge et glissez sur les autres pour en effacer plusieurs ; le glissement tactile conserve le défilement. Les indicateurs d’activité et de saisie/permission en attente restent visibles. Consulter la session efface **Inactif** ; **Interrompu** exige un geste explicite d’effacement. Les acquittements sont enregistrés avec l’état des sessions de cette fenêtre ; une nouvelle interruption réaffiche le badge.
 
-La navigation normale est hiérarchique ; les résultats de recherche/filtre sont des entrées à plat avec l’identité et le worktree propres à chaque conversation. Dans **Réglages → Général**, **Déplier automatiquement les sous-sessions** est activé par défaut. Une ligne visible et repliée ouvre les chemins vers ses sous-sessions actives lorsque son chevron passe en activité, en compactage ou en attente de réponse, si elle est sélectionnée ou descend de la conversation sélectionnée. La règle s’applique à chaque profondeur. Faire défiler une ligne déjà active dans la zone visible la laisse fermée jusqu’à une nouvelle transition. Désactivez l’option pour empêcher l’activité d’ouvrir des branches ; le dépliage manuel et la navigation explicite restent disponibles. Les branches ouvertes, y compris automatiquement, sont mémorisées pour la restauration.
+La navigation normale est hiérarchique ; les résultats de recherche/filtre sont des entrées à plat avec l’identité et le worktree propres à chaque conversation. Dans **Réglages → Général**, **Déplier automatiquement les sous-sessions** est activé par défaut. Les branches visibles de la conversation sélectionnée s’ouvrent quand des sous-sessions commencent à travailler, à compacter ou à attendre une réponse. Désactivez l’option pour empêcher l’activité d’ouvrir des branches ; le dépliage manuel et la navigation explicite restent disponibles. Les branches ouvertes, y compris automatiquement, sont mémorisées pour la restauration.
 
-Retour/Avancer est un historique de visites par onglet de projet et par fenêtre, pas l’ordre de la liste. Il reste en mémoire, ignore les conversations indisponibles/supprimées et n’est pas restauré après redémarrage. Sélectionner une nouvelle conversation après un retour remplace le parcours suivant. **Session précédente** / **Session suivante** dans la palette parcourent plutôt la liste visible.
+Retour/Avancer est un historique de visites par onglet de projet et par fenêtre, pas l’ordre de la liste. **Session précédente** / **Session suivante** dans la palette parcourent plutôt la liste visible.
 
 ## Archiver et restaurer {#archive}
 
 Choisissez **Archiver la session** dans les actions d’une ligne pour conserver son historique tout en retirant sa branche inactive de la navigation normale. La conversation sélectionnée et les conversations en cours de travail ou attendant une réponse restent accessibles. L’archivage n’arrête pas le travail, ne supprime aucun message et ne change pas l’état d’archivage propre aux sous-sessions.
 
-Ouvrez la recherche de sessions et choisissez **Sessions archivées** ou **Toutes les sessions**. Les lignes portent la mention **Archivée** et proposent **Restaurer la session**. Activez le filtre des sous-sessions pour trouver les enfants indépendamment, y compris sous un parent archivé. **Sessions non archivées** filtre selon l’état propre à chaque conversation. Restaurez un ancêtre archivé pour retrouver sa branche inactive dans la navigation normale. Si une action n’est pas confirmée, actualisez la liste avant de réessayer.
+Ouvrez la recherche de sessions et choisissez **Sessions archivées** ou **Toutes les sessions**. Les lignes portent la mention **Archivée** et proposent **Restaurer la session**. Activez le filtre des sous-sessions pour trouver les enfants indépendamment, y compris sous un parent archivé. **Sessions non archivées** filtre selon l’état propre à chaque conversation. Restaurez un ancêtre archivé pour retrouver sa branche inactive dans la navigation normale.
 
 ## Choisir Agent, Modèle et Réflexion {#agent-model-thinking}
 
@@ -54,7 +52,7 @@ Ces choix d’exécution concernent les envois suivants, pas les réponses anté
 
 Les fichiers de l’appareil doivent être lisibles et respecter le budget de pièces jointes : au maximum 5 Mio chacun, 10 fichiers et 20 Mio au total. Un fichier refusé n’est pas joint ; lisez l’avis au lieu de supposer que toute la sélection a réussi.
 
-Choisir une compétence retire le jeton `@query` et ajoute une étiquette. L’envoi efface cette sélection de la zone de saisie, pas les instructions déjà enregistrées par OpenCode avec le message envoyé. Les messages historiques conservent les étiquettes de compétences. Retirer une compétence pendant la modification d’un prompt en attente la laisse retirée de l’envoi de remplacement.
+Choisir une compétence retire le jeton `@query` et ajoute une étiquette. L’envoi efface cette sélection de la zone de saisie, pas les instructions déjà enregistrées par OpenCode avec le message envoyé. Les messages historiques conservent les étiquettes de compétences.
 
 Sur ordinateur, l’envoi place le focus clavier sur la conversation : les flèches, les touches de défilement par page et Espace la font défiler ; taper un caractère revient à la zone de saisie avec ce caractère. **Effacer le texte du prompt** dans **Plus d'actions** (par défaut **Ctrl/Cmd+K**) efface le brouillon de la zone de saisie.
 
@@ -72,7 +70,7 @@ Les brouillons sont un état de travail côté client, pas des messages natifs p
 2. Pour une commande shell directe, tapez `!` au début d’une zone de saisie vide pour entrer en **Mode shell**.
 3. Envoyez la commande. Pour quitter le mode shell sans l’exécuter, utilisez Échap, ou Retour arrière dans un champ vide.
 
-Seuls les noms de commandes slash connus passent par le chemin des commandes personnalisées ; un `/text` inconnu est un prompt ordinaire. Les commandes personnalisées utilisent leur définition native. Les pièces jointes fichier/image ne sont pas envoyées par ce chemin et restent disponibles pour un prompt ultérieur ; le texte collé utilisé dans les arguments est résolu dans ceux-ci.
+Seuls les noms de commandes slash connus passent par le chemin des commandes personnalisées ; un `/text` inconnu est un prompt ordinaire. Les pièces jointes fichier/image ne sont pas envoyées par ce chemin et restent disponibles pour un prompt ultérieur ; le texte collé utilisé dans les arguments est résolu dans ceux-ci.
 
 Le mode shell exécute une demande shell native de session, et ne demande pas au modèle de proposer une commande. Il peut modifier des fichiers et démarrer des processus sur l’hôte d’exécution. Les paramètres d’environnement du profil s’appliquent avant le prochain prompt, la prochaine commande personnalisée ou demande shell ; ils ne redémarrent pas un service existant. Voir [Intégrations](integrations.md) et [Configuration d’OpenCode](opencode.md).
 
@@ -89,17 +87,15 @@ Le mode shell exécute une demande shell native de session, et ne demande pas au
 
 Au repos, un envoi ordinaire utilise le chemin immédiat normal quel que soit ce réglage, et l’alternative de **Plus d'actions** n’est pas disponible. La modification restaure un prompt en attente et ses pièces jointes retirables dans la zone de saisie ; **Annuler la modification** quitte ce mode. Un prompt déjà consommé par OpenCode n’est plus une entrée en attente modifiable. Retirer une entrée n’annule pas le travail déjà effectué.
 
-Si une mise à jour de file échoue, inspectez la file actuelle avant de réessayer. L’admission ne prouve pas que le modèle a consommé un suivi, et une reconnexion n’autorise pas à le soumettre à nouveau.
-
 ## Poser une question annexe avec /btw {#side-question}
 
 1. Envoyez `/btw your question` dans une conversation existante, ou `/btw` pour ouvrir la fenêtre de question annexe.
 2. Lisez la réponse, utilisez **Copier la réponse**, ou choisissez **Annuler la question** pendant son attente.
 3. Fermez la fenêtre une fois terminé.
 
-C’est une demande au modèle distincte utilisant le contexte de la session. Elle n’exécute pas de boucle d’outils, n’effectue pas d’actions et n’ajoute pas sa question/réponse à la conversation. Les pièces jointes fichier/image restent dans la zone de saisie ; le texte collé utilisé dans la question est inclus comme texte. Ce n’est ni une nouvelle conversation durable ni un autre moyen de distribuer du travail.
+C’est une demande au modèle distincte utilisant le contexte de la session. Elle n’exécute pas de boucle d’outils, n’effectue pas d’actions et n’ajoute pas sa question/réponse à la conversation. Les pièces jointes fichier/image restent dans la zone de saisie ; le texte collé utilisé dans la question est inclus comme texte.
 
-Fermer annule la demande annexe en attente sans interrompre la session principale. Quitter la conversation active efface cette fenêtre éphémère ; copiez d’abord ce dont vous avez besoin. Les réponses vides/erreurs apparaissent ici plutôt que comme messages de transcription.
+Fermer annule la demande annexe en attente sans interrompre la session principale. Quitter la conversation active efface cette fenêtre éphémère ; copiez d’abord ce dont vous avez besoin.
 
 ## Continuer jusqu’à un objectif avec /goal {#goal}
 
@@ -107,14 +103,14 @@ Fermer annule la demande annexe en attente sans interrompre la session principal
 2. Tant que la conversation a un objectif, **Statut** l’affiche sur une ligne au-dessus de **Tokens** : son état (**Actif**, **En pause** ou **Atteint**), l’objectif et les tours utilisés sur le maximum autorisé. Survolez l’objectif ou donnez-lui le focus pour le lire en entier, avec la raison du dernier changement, par exemple pourquoi l’objectif s’est mis en pause ou a été atteint.
 3. Utilisez **Mettre l'objectif en pause** ou **Reprendre l'objectif** sur cette ligne, ou envoyez `/goal pause` ou `/goal resume`. Utilisez **Effacer l'objectif** ou `/goal clear` pour supprimer l’objectif.
 
-Un objectif appartient à sa conversation : les sous-sessions et les bifurcations commencent sans objectif. OpenCode met aussi un objectif en pause de lui-même quand vous arrêtez la session, quand une exécution échoue, quand il ne progresse plus, à sa limite de tours ou au redémarrage du service ; reprenez-le pour continuer. Mettre en pause ou effacer n’annule pas le travail déjà fait. Une commande qui ne s’applique pas, comme une mise en pause sans objectif actif, affiche le message d’OpenCode. Sans objectif, ou avec un service OpenCode qui ne prend pas en charge les objectifs, la ligne n’apparaît pas.
+Un objectif appartient à sa conversation : les sous-sessions et les bifurcations commencent sans objectif. OpenCode met aussi un objectif en pause de lui-même quand vous arrêtez la session, quand une exécution échoue, quand il ne progresse plus, à sa limite de tours ou au redémarrage du service ; reprenez-le pour continuer. Mettre en pause ou effacer n’annule pas le travail déjà fait. Sans objectif, ou avec un service OpenCode qui ne prend pas en charge les objectifs, la ligne n’apparaît pas.
 
 ## Bifurquer, annuler et récupérer une exécution échouée {#fork-errors}
 
 1. Sur un message, choisissez **Bifurquer après ce message** pour créer une conversation après ce point sans remplacer l’originale.
-2. Pour annuler, examinez attentivement **Annuler les changements jusqu'ici (supprime les messages)**. La palette propose **Annuler le dernier message** et **Rétablir le dernier message** pour l’annulation en cours.
+2. Pour annuler, examinez attentivement **Annuler les changements jusqu'ici (supprime les messages)**. La palette propose **Annuler le dernier message** et **Rétablir le dernier message** pour l’annulation en cours. Annuler est désactivé sans message utilisateur annulable ; Rétablir est désactivé sans annulation en cours.
 3. Si l’exécution échoue, consultez **Erreur de session**, l’erreur de réponse et les détails **Échec de l'envoi** avant d’envoyer à nouveau.
 
 La bifurcation copie le contexte de conversation jusqu’au point sélectionné ; elle ne crée pas de worktree Git et n’isole pas les fichiers. Le retour en arrière n’est pas une simple navigation. Vérifiez les effets sur les fichiers et la limite d’annulation avant de continuer ; utilisez une bifurcation pour une discussion alternative sans réécrire le parcours initial.
 
-Un statut **Nouvelle tentative** avec un compte à rebours signifie qu’OpenCode réessaie de lui-même après une erreur du fournisseur ; attendez ou arrêtez la session plutôt que d’envoyer à nouveau. Un envoi échoué restaure le brouillon et les pièces jointes tentés si cela n’écrase pas une saisie plus récente. Une exécution échouée peut déjà avoir exécuté des outils : vérifiez [Fichiers](files.md), les [demandes](permissions.md) en attente et l’activité native avant de réessayer. **Recharger les messages** ou **Recharger la session** lit l’état ; aucun des deux ne demande de répéter une modification. **Arrêter la session** interrompt l’exécution, sans annuler les changements aux fichiers ou aux services externes.
+Un statut **Nouvelle tentative** avec un compte à rebours signifie qu’OpenCode réessaie de lui-même après une erreur du fournisseur ; attendez ou arrêtez la session plutôt que d’envoyer à nouveau. Une exécution échouée peut déjà avoir exécuté des outils : vérifiez [Fichiers](files.md), les [demandes](permissions.md) en attente et l’activité native avant de réessayer. **Arrêter la session** interrompt l’exécution, sans annuler les changements aux fichiers ou aux services externes.

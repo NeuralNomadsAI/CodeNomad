@@ -124,6 +124,28 @@ export function latestReportForLaunch(deliveries: SubagentDeliveries | undefined
   return null
 }
 
+/**
+ * The child session's current state across its whole delivery range, shared by every card that
+ * launched or continued it: the newest readable report of the newest round (at or after the latest
+ * call), or `running` while that round has not reported yet. `createdAt` is the deciding report's
+ * time, else the newest round's start. A call whose reports fell out of the scan window entirely
+ * still owns its reports when only they remain indexed.
+ */
+export function latestChildState(
+  deliveries: SubagentDeliveries | undefined,
+  readText: (messageId: string, partId: string) => string | undefined,
+): { state: SubagentReportState; createdAt: number } | null {
+  if (!deliveries) return null
+  const newestRound = deliveries.launches.reduce((latest, time) => Math.max(latest, time), 0)
+  const candidates = deliveries.reports.filter(report => report.createdAt >= newestRound).sort(newer)
+  for (const candidate of candidates) {
+    const text = readText(candidate.messageId, candidate.partId)
+    const report = text === undefined ? null : parseSubagentReport(text)
+    if (report?.childId === candidate.childId) return { state: report.state, createdAt: candidate.createdAt }
+  }
+  return { state: "running", createdAt: newestRound }
+}
+
 /** Weakly owned by the session's resident message-id list: a replaced or evicted list releases its index. */
 const indexes = new WeakMap<object, { revision: number; length: number; index: Map<string, SubagentDeliveries> }>()
 

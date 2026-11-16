@@ -5,7 +5,7 @@ description: Fix a difficult bug with the dynamic Debugging mission playbook and
 
 # Debug Mission
 
-Start `mission.inspect` with template `debug` and the exact bug report as the objective. Follow the returned evidence gates rather than blindly dispatching every stage.
+Start `mission.inspect` with template `debug` and the exact bug report as the objective. Follow the returned evidence gates.
 
 - Keep one `diagnostician` session until it reports a minimized red feedback loop and confirmed cause.
 - Declare clear tasks before their prerequisites finish if useful; a declaration executes nothing. Admit `implementer` only after dependency-connected diagnosis. Require behavioral red/green evidence and the original loop green.

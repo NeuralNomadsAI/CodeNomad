@@ -74,7 +74,7 @@ test("adding a plugin defaults to Global, warns for Project and shows Installing
     assert.equal(await pending.getAttribute("data-source-state"), "pending")
     assert.equal(await pending.getByRole("status").innerText(), "Installing")
     assert.equal(await page.getByText("fixture.package", { exact: true }).count(), 0, "no active claim before plugin.list")
-    assert.match(await tooltip(page, '[data-source-target="fixture-plugin@1.0.0"]'), /Installing\. OpenCode shows it here once it is loaded\./)
+    assert.doesNotMatch(await tooltip(page, '[data-source-target="fixture-plugin@1.0.0"]'), /Installing/)
 
     await page.evaluate(() => (window as any).fixture.report("fixture-plugin@1.0.0", "active", { id: "fixture.package" }))
     const row = page.locator('[data-plugin-id="fixture.package"]')
@@ -121,7 +121,7 @@ test("an install failure shows its native reference, and a refused spec stays in
     await page.evaluate(() => (window as any).fixture.failNextAdd(503, "timeout"))
     await dialog.getByLabel("Package", { exact: true }).fill("slow-plugin")
     await dialog.getByRole("button", { name: "Add", exact: true }).click()
-    await dialog.getByText("OpenCode did not answer in time. Nothing was added; try again.", { exact: true }).waitFor()
+    await dialog.getByText("Try adding the plugin again.", { exact: true }).waitFor()
     await page.keyboard.press("Escape")
     await dialog.waitFor({ state: "hidden" })
 

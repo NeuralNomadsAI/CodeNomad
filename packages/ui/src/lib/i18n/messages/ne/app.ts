@@ -65,15 +65,6 @@ export const appMessages = {
   "app.closeInstance.toast.error": "परियोजना बन्द गर्न असफल भयो।",
   "app.closeInstance.toast.otherWindow": "{project} अर्को विन्डोबाट बन्द गरियो।",
 
-  "emptyState.logoAlt": "CodeNomad लोगो",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "AI सँग कोडिङ सुरु गर्न फोल्डर चयन गर्नुहोस्",
-  "emptyState.actions.selectFolder": "फोल्डर चयन गर्नुहोस्",
-  "emptyState.actions.selecting": "चयन गर्दै...",
-  "emptyState.keyboardShortcut": "किबोर्ड सर्टकट: {shortcut}",
-  "emptyState.examples": "उदाहरणहरू: {example}",
-  "emptyState.multipleInstances": "तपाईंसँग एउटै फोल्डरका धेरै उदाहरणहरू हुन सक्छन्",
-
   "releases.upgradeRequired.title": "अपग्रेड आवश्यक छ",
   "releases.desktop.checking": "CodeNomad को अद्यावधिक जाँच गर्दै…",
   "releases.desktop.current": "CodeNomad अद्यावधिक छ।",

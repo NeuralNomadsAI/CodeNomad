@@ -72,7 +72,7 @@ test("project damage the hints have not seen refuses the coordinator request: no
     assert.equal((await app.inject({ method: "GET", url: `/api/workspaces/fixture/missions/${mission.id}` })).json().mission.controlUnavailable, undefined)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionNavigation))
-    await page.evaluate(async id => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("/fixture", { selected: id }), mission.id)
+    await page.evaluate(async id => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { selected: id }), mission.id)
     // A new Mission has no tasks: its row is a leaf and its detail stays folded.
     await page.locator("section.mission-detail").waitFor({ state: "attached" })
     await (await missionMenuItem(page, "request")).click()

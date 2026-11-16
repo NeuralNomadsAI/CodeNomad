@@ -42,6 +42,6 @@ npx @neuralnomads/codenomad --generate-token --launch
 
 ## 開発を支援する {#support-development}
 
-CodeNomad は無料で、ボランティアが自分の時間で保守しています。あなたやチームの役に立っているなら、支援は CodeNomad の保守と、新しい OpenCode リリースとの互換性の維持に役立ちます。支援金の使い道は[CodeNomad を支援する](sponsor.md)のページで説明しています。
+支援金の使い道は[CodeNomad を支援する](sponsor.md)のページで説明しています。
 
 {{funding}}

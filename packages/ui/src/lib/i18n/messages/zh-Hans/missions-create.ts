@@ -1,6 +1,6 @@
 export const missionCreateMessages = {
   "missions.create.objective": "目标",
-  "missions.create.objectivePlaceholder": "描述你想要的结果。对于每日任务，这些指令适用于每次运行。",
+  "missions.create.objectivePlaceholder": "描述你想要的结果。",
   "missions.create.title": "标题",
   "missions.create.options": "选项",
   "missions.create.agents": "代理和模型",

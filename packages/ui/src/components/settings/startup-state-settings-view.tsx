@@ -2,6 +2,7 @@ import type { Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { DataProfilesSettings } from "./data-profiles-settings"
 import { SettingsSwitch } from "./settings-switch"
+import { SettingsInfoTip } from "./settings-info-tip"
 
 interface StartupStateSettingsViewProps {
   restoreEnabled: boolean
@@ -16,8 +17,7 @@ export const StartupStateSettingsView: Component<StartupStateSettingsViewProps> 
     <div class="settings-card" data-testid="startup-state-settings">
       <div class="settings-card-header">
         <div>
-          <h3 class="settings-card-title">{t("settings.appearance.startup.restore.title")}</h3>
-          <p class="settings-card-subtitle">{t("settings.appearance.startup.restore.subtitle")}</p>
+          <h3 class="settings-card-title">{t("settings.appearance.startup.restore.title")}<SettingsInfoTip text={t("settings.appearance.startup.restore.subtitle")} /></h3>
         </div>
         <SettingsSwitch
           checked={props.restoreEnabled}

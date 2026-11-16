@@ -138,9 +138,9 @@ test("long text parts and tool outputs reveal in place, keep the reveal point an
   const textNotice = textPart(page).locator(".message-hidden-text")
   await scrollTo(page, textNotice)
   assert.equal(await textNotice.count(), 1)
-  assert.match((await textNotice.textContent())!, new RegExp(`${fixture.textHidden.toLocaleString("en-US")} more characters hidden to keep this message responsive`))
+  assert.match((await textNotice.textContent())!, new RegExp(`${fixture.textHidden.toLocaleString("en-US")} more characters hidden`))
   assert.ok(!(await textPart(page).textContent())!.includes("TEXT-TAIL-PROOF"))
-  assert.equal(await textPart(page).getByText(/Output truncated for rendering/).count(), 0, "no copy-only suffix remains")
+  assert.equal(await textPart(page).getByText(/Output truncated/).count(), 0, "no copy-only suffix remains")
 
   // The reported case renders whole: prose uses the Markdown bound, not the tool-output one.
   await taskTool(page).getByText(/REPORT-TAIL-PROOF/).waitFor({ state: "attached" })

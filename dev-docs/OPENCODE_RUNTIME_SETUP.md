@@ -53,8 +53,8 @@ CLI's documented global log directory.
 
 Startup recovery and Preferences share `OpenCodeSetupPanel` and its store, but
 missing installations, known incompatibility and optional updates expose
-different actions; installed/running/minimum/recommended versions and the
-technical reason show separately, with retry and executable selection. Dismissal
+different actions; installed/running/minimum/recommended versions and
+incompatibility reasons appear with retry and executable selection. Dismissal
 leaves a recovery entry; optional updates never force the dialog. Connection
 changes, foreground entry and unsupported proxy responses refresh state; stale
 responses cannot overwrite a changed executable or completed action. Only a
@@ -77,9 +77,8 @@ command. On Windows, that alias is skipped only when the npm `.cmd` script
 positively invokes the package's `.cjs` target; a customized `.cmd` wrapper
 keeps PATH priority and the automatic npm updater never overwrites it.
 
-Default host installation runs the backend's npm (bundled in Electron's resources
-for its integrated Node, beside Tauri's bundled Node, or beside a standalone server's
-own Node) to run a standard global npm installation of `@opencode/cli`. Both desktop
+Default host installation uses the backend's npm (Electron resources, beside Tauri's
+bundled Node, or beside a standalone server's Node) for a global `@opencode/cli` installation. Both desktop
 hosts bundle the npm release pinned in `.npm-version` (`dev-docs/RUNTIME_MAINTENANCE.md`);
 a standalone server uses the npm installed with its Node. npm blocks dependency install
 scripts unless its `allow-scripts` policy lists them (the default from npm 12), and the
@@ -239,23 +238,25 @@ Mounted Windows discovery directories and Linux aliases are canonicalized throug
 the selected distro, then translated for host filesystem access. Native import
 URLs and lease paths stay Linux-native; canonical outside-root storage is kept.
 Native watchers can miss changes through mounts and symlinks, so the setup card
-offers explicit **Reload OpenCode configuration** recovery. Its copy names every
+offers explicit **Reload OpenCode configuration** recovery. The shared setup panel
+confirms it before dispatch from Settings or startup recovery. Its dialog names every
 effect (all loaded locations rebuilt, pending permissions/Forms cancelled,
-terminals/background commands closed for all clients) and never presents it as a
+terminals/background commands closed for all clients), warns that active work can
+be interrupted and never presents it as a
 process restart or memory reclamation. Conflicting service actions are refused
 while an explicit action runs.
 
 ## Start OpenCode at login
 
-`host-lifetime/opencode-login-start.ts` backs Settings → OpenCode **Start OpenCode at startup** (started at login):
+`host-lifetime/opencode-login-start.ts` backs Settings → OpenCode **Launch at startup** (started at login):
 a voluntary preference, off by default, whose only state is one OS artifact per account.
 Missions never read or change it. `GET|POST /api/opencode/login-start`
 (`server/routes/opencode-login-start.ts`) returns `{ state: "on" | "off" | "unavailable" }`
 and accepts `{ enabled }`; POST requires the live human session of `recurrenceHumanSession`.
-A GET also applies the replacement of a former ON below, which can install the artifact.
+A GET also reconciles stored ON supervision records as described below, which can install the artifact.
 Failures cross the boundary only as `login-start-unavailable` (503),
 `login-start-unsupported-binary` (422) and `login-start-failed` (500). `OpenCodeLoginStart`
-runs reads, changes and the replacement of the former supervision one at a time; they only
+runs reads, changes and supervision-record reconciliation one at a time; they only
 write or remove the artifact. OpenCode then runs on its own: on Windows a crashed OpenCode
 stays stopped until the next login.
 
@@ -304,14 +305,16 @@ helper of `process-identity.ts`. It lands as `dist/host-lifetime/process-identit
 the module of the same name, so the server's import loader (`src/loader.ts`) resolves
 extensionless relative imports to their compiled `.js` file before the bare path.
 
-### Replacing the former supervision
+<a id="replacing-the-former-supervision"></a>
 
-At server startup and before every read or change, `opencode-login-start-legacy.ts` looks for
-the former supervision root (`%LOCALAPPDATA%\CodeNomadServiceSupervision` on Windows,
-`~/.codenomad-service-supervision` on macOS and Linux). When a service key there was ON, the
-login artifact is installed first; if that fails, the former installation stays untouched for
+### Supervision-record reconciliation
+
+At server startup and before every read or change, `opencode-login-start-legacy.ts` reads
+the supervision root (`%LOCALAPPDATA%\CodeNomadServiceSupervision` on Windows,
+`~/.codenomad-service-supervision` on macOS and Linux). For an ON service key, the
+login artifact is installed first; if that fails, the stored installation stays untouched for
 the next pass and reads report `on`, since it still starts OpenCode. An explicit OFF retires it
-without installing anything and fails while a former ON cannot be released. Each guard is then released by rewriting its manifest to OFF, and only its exact
+without installing anything and fails while a stored ON cannot be released. Each guard is then released by rewriting its manifest to OFF, and only its exact
 resources are removed:
 
 - Windows disables `CodeNomad-OpenCode-<key>-Main` and `-Recovery` (their description marker

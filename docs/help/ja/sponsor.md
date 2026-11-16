@@ -1,7 +1,5 @@
 # CodeNomad を支援する
 
-CodeNomad は無料のオープンソースで、ボランティアが保守しています。支援金は、修正、リリース、改善にかかる時間に充てられます。
-
 ## CodeNomad を支援する理由 {#why}
 
 CodeNomad は [MIT ライセンス](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE)で公開されており、ダウンロードも利用も無料です。Pascal André と Shantur Rathore が、コミュニティからの貢献を受けながら自分の時間で保守しています。OpenCode は独立して更新されるため、新機能以前に、互換性を保つだけでも CodeNomad には継続的な作業が必要です。
@@ -12,8 +10,6 @@ CodeNomad は [MIT ライセンス](https://github.com/NeuralNomadsAI/CodeNomad/
 - **リリース**：Windows、macOS、Linux 向けアプリのビルド、テスト、公開。
 - **言語**：インターフェースとこのヘルプサイトを 10 言語で最新に保つこと。
 - **新機能**：[ミッション](missions.md)、[リモートコントロール](remote-control.md)、[履歴検索](history.md)を支えた作業など。
-
-長期的な目標は、CodeNomad の開発を、それを使う個人や企業からの支援でまかなうことです。
 
 ## 資金に関する方針 {#policy}
 

@@ -258,7 +258,7 @@ test("Support CodeNomad opens the sponsor page of the UI locale and reports a fa
   try {
     await page.goto(url)
     const card = page.locator(".settings-section-stack > .settings-card", { has: page.getByRole("heading", { name: "Support CodeNomad", exact: true }) })
-    assert.equal(await card.getByText("CodeNomad is free and maintained by volunteers.", { exact: true }).count(), 1)
+    assert.equal(await card.getByText("CodeNomad is free and maintained by volunteers.", { exact: true }).count(), 0)
     const button = card.getByRole("button", { name: "Sponsor or contribute", exact: true })
     assert.match(await button.getAttribute("class") ?? "", /\bselector-button-secondary\b/)
     await button.click()

@@ -47,8 +47,7 @@ and is sent once. Directory fallback belongs to preparation. The Python referenc
 and Blender host carry the same implementation; native fixture qualification checks
 cold advertisement, attachment and withdrawal against the real runtime.
 
-OpenCode imports RPC definitions through Effect's JSON Schema import, which refuses `pattern` ("Patterns may block
-validation and are disabled"; OpenCode 2.2.5): a call whose declared output schema has a pattern fails with
+OpenCode's Effect JSON Schema import refuses `pattern`; calls declaring output patterns fail with
 `rpc.invalid_output`. Integration packages (spec/rpc-contract.md §4) register their definitions without
 `pattern` and validate themselves every input whose definition loses a pattern, as well as the opaque `advertise`
 and `withdraw` inputs. OpenCode therefore lets through outputs the specification forbids (a path as a document, a
@@ -78,7 +77,7 @@ UTF-8 JSON within `integrationCatalogSchema`.
   catalog is served as `stale`.
 - `fresh`: the last read succeeded. `stale`: it failed (unreachable, refused status, oversized, not JSON, outside the
   schema, no catalog release) and the last valid catalog is served with its `fetchedAt`. `unavailable`: no valid
-  catalog is known, with an empty list. No catalog is bundled; the last valid one persists in
+  catalog is known, with an empty list. Never bundle a catalog; the last valid one persists in
   `integrations-catalog.json` of CodeNomad's configuration folder. Failures are logged by reason only.
 
 ## Recognition and state
@@ -422,7 +421,7 @@ Commands:
   refusal, and consent-off withdrawal against the pinned real kit. Sentinel scans cover
    HTTP, native and relayed events, SSE, metadata and fixture logs, including the production debug/trace completion
    logger and an adversarial opaque session ID.
-  Every child uses the fixture environment. Manual AC-B4 has its own acceptance run.
+  Every child uses the fixture environment. Qualify manual AC-B4 separately.
 - `node --import tsx scripts/test-integrations-host-install-native.mjs <absolute-cli> [integration-checkout]`:
   actual Fastify installation route and a supported OpenCode runtime's RPCs using the real built integration kit. Environment and
   kernel WSL detections run with and without authenticated validated offers; selected/backend WSL refuses before
@@ -446,8 +445,8 @@ Commands:
 - The RPC ID of an integration comes from the catalog on the server, never from a client.
 - Read the catalog only through `IntegrationCatalogSource`; never add another remote URL, a bundled catalog or a
   timer that refreshes it. Integration displays read on demand and on events, never by polling.
-- Never gate an integration call on `features.rpc`: OpenCode does not report it for plugins that register their RPC
-  in `setup`. The native RPC error decides `unsupported`.
+- Never gate an integration call on `features.rpc`; plugins registering RPC in `setup` require
+  the native RPC error to decide `unsupported`.
 - Never expose or log a host port, token, `script_handle`, `binding_key` or `offer_key`; leak tests use
   `FAKE_INTEGRATION_SENTINELS` and the fake host's `leaky` mode.
 - Every lease, expiry or rate window takes an injectable clock (`now`), so tests move time instead of waiting.

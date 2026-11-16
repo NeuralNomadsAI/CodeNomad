@@ -1,9 +1,7 @@
 # Remote Control
 
 Remote Control reaches CodeNomad from another device without an inbound port.
-It is separate from direct `--host` access; neither falls back to the other.
-Its device registry also pairs browsers on verified direct HTTPS origins
-([Direct HTTPS devices](#direct-https-devices)).
+Keep it independent of direct `--host` access; never fall back between them.
 
 ```text
 browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SDK in the backend (TLS ends here)
@@ -20,8 +18,8 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   device's shared `default` identity. OpenCode's `opencode pair --remote` and
   the OpenTunnel CLI use the same identity with their own routes. Stopping
   closes CodeNomad's bridge only and never calls `tunnel.remove()`.
-- The relay can observe hostnames, connection timing and sizes. It cannot read
-  traffic. Impersonating the host requires a misissued certificate for the
+- The relay observes hostnames, connection timing and sizes; TLS keeps traffic encrypted.
+  Impersonating the host requires a misissued certificate for the
   tunnel hostname, which would appear in Certificate Transparency logs.
   `opentunnel.xyz` is on the Public Suffix List, so other users' tunnels are
   cross-site; OpenCode's route on the same device is same-site, so mutations
@@ -197,21 +195,14 @@ Where the tunnel is blocked but a direct HTTPS deployment exists (a TLS-terminat
 
 ### Isolated remote preview capabilities
 
-Remote preview creation and revocation use the host's
-`/api/backends/:id/preview-capabilities` routes with the same local-origin guard
-and a required current relay-authority header. A separate content-only loopback
-listener maps a random local capability to one backend generation and remote
-preview. Its HTTP and WebSocket transports pin the saved destination, preserve
-TLS hostname verification and borrow the identity-gated SSH forward when present.
-The backend's private connection identity is used only for preview creation and
-deletion. Content uses the remote preview's existing cookie-free capability
-protocol; Remote Control's preview switch continues to govern ingress content.
-Ingress clients remain subject to the host-only gate for capability management.
-Each content document retains its exclusive origin inside the sandbox. Origin
-carriers and WebSocket handshakes require that exact origin; CORS reflects only
-the owning origin. Same-origin resource policy protects no-CORS sub-resources,
-and frame-ancestor policy restricts embedding to that content origin and its
-issuing local UI.
+See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
+for capability APIs, exclusive content origins, sandbox/resource policy,
+revocation, original-client cleanup, logical history and service-worker refusal.
+Management requires the host's local-origin guard and current relay proof;
+ingress content follows Remote Control's **Web previews** switch.
+HTTP/WS transports pin the saved destination, verify its TLS hostname and borrow
+the identity-gated SSH forward. Private connection credentials serve only preview
+creation/deletion; content uses the cookie-free remote capability protocol.
 
 Preview and SideCar proxies apply a per-listener target boundary before HTTP,
 asset-fallback and WebSocket dispatch. Control APIs on this backend's own origins
@@ -225,17 +216,6 @@ Relay APIs share that listener and retain their loopback-origin admission.
 Outbound profile transports, SSH forwards and the isolated preview listener keep
 their private lifetimes and bindings; a local relay operation leaves the Remote
 Control administrator policy unchanged.
-See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
-for the API and revocation lifetime.
-
-Remote project previews retain their issuing client for dismissal, tab cleanup
-and attachment revocation. Renderer `pagehide` sends keepalive capability deletion
-under that same proof. Displayed addresses and persisted history use application
-URLs; loading capabilities remain inside the embedded preview.
-
-The isolated listener refuses service-worker script fetches before dispatch and
-keeps scope-widening response headers private. Expired content-origin network
-responses request storage cleanup independently of the host UI's storage.
 
 ## Direct listener origins and password sessions
 

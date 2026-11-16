@@ -12,8 +12,6 @@ Die Aktion füllt die Versionen von CodeNomad und OpenCode (einschließlich des 
 
 Benötigen Sie mehr Diagnosen, erzeugen **In Zwischenablage kopieren** oder **.txt herunterladen** einen separaten Bericht. Dieser ausführlichere Bericht kann lokale Pfade und Netzwerkadressen enthalten: Prüfen und schwärzen Sie ihn vor dem Anhängen. Screenshots oder Log-Auszüge können weiterhin Geheimnisse enthalten, selbst wenn der automatische Diagnosebericht Authentifizierungsgeheimnisse ausschließt.
 
-Hat das GitHub-Formular inkompatible Felder, öffnet CodeNomad ein einfaches Issue mit denselben Berichtsinformationen. Ein vorübergehender Lesefehler des Formulars verhindert das Öffnen nicht. Sie können jederzeit manuell die [Issue-Liste](https://github.com/NeuralNomadsAI/CodeNomad/issues) verwenden.
-
 ## Community und Releases {#community}
 
 | Ressource | Verwendung |
@@ -46,7 +44,7 @@ npm run dev
 npm run dev:tauri
 ```
 
-Entwicklungsänderungen betreffen den Entwicklungshost, nicht die installierte Version eines unabhängig laufenden OpenCode-Daemons. Native Paketierung benötigt passende Zielwerkzeuge; bevorzugen Sie Builds auf dem Ziel-OS.
+Native Paketierung benötigt passende Zielwerkzeuge; bevorzugen Sie Builds auf dem Ziel-OS.
 
 ### Bauen und validieren {#build-and-validate}
 

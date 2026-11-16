@@ -12,9 +12,11 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
 
-Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel. Ein fehlgeschlagener Klon ist kein Grund, ein vorhandenes Projekt zu löschen; prüfen Sie vor dem Wiederholen das gemeldete Ziel und den Fehler.
+Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel.
 
 Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** ändert den Anzeigenamen; **Aus Liste entfernen** entfernt die Verknüpfung, nicht die Dateien oder Unterhaltungen. Ein Klick auf ein bereits geöffnetes zuletzt verwendetes Projekt öffnet einen neuen Tab; seine Schaltfläche **Offen** (**Zum offenen Projekt wechseln**) wählt stattdessen den vorhandenen Tab.
+
+Öffnen Sie denselben Ordner zweimal und wählen Sie in beiden Tabs dieselbe Unterhaltung, um in einem den Chat und im anderen eine Webvorschau, eine Datei oder einen Missionsbericht anzuzeigen. Jeder Tab behält seine eigene Ansicht, Scrollposition der Unterhaltung, Auswahl im rechten Panel und seinen Dateien-Modus; Nachrichten, Ausführung und Projektdaten bleiben gemeinsam.
 
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
@@ -34,21 +36,19 @@ Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellst
 | Tab schließen | Entfernt die CodeNomad-Projektverbindung dieses Tabs; ein anderer, separat geöffneter Tab desselben Ordners bleibt unberührt | Löscht weder Projektdateien noch nativen Verlauf, stoppt keine Sitzungen und entlädt nicht die OpenCode-Location |
 | Sitzung stoppen | Ausführung der ausgewählten Unterhaltung | Schließt weder Projekt noch löscht es dessen Verlauf |
 
-Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab ebenfalls und dieses Fenster zeigt eine Benachrichtigung. Das auslösende Fenster zeigt keine. Das Schließen erfolgt sofort; kann das Backend das Projekt nicht schließen, erscheint ein Fehler, und **Zum offenen Projekt wechseln** auf der Startseite erreicht es weiterhin. Es gibt keine automatische Wiederholung. Ungesendete Entwürfe und Anhänge des geschlossenen Tabs kehren zurück, wenn Sie denselben Ordner in diesem Fenster erneut öffnen; das Fenster behält sie für seine 16 zuletzt geschlossenen Projekte, bis es neu geladen oder geschlossen wird. Sie gehören nicht zur Startwiederherstellung.
+Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab ebenfalls und dieses Fenster zeigt eine Benachrichtigung. Ungesendete Entwürfe und Anhänge des geschlossenen Tabs kehren zurück, wenn Sie denselben Ordner in diesem Fenster erneut öffnen; das Fenster behält sie für seine 16 zuletzt geschlossenen Projekte, bis es neu geladen oder geschlossen wird. Sie gehören nicht zur Startwiederherstellung.
 
 Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Projektverbindungen nicht; die normale Startwiederherstellung gilt weiterhin. Stoppen Sie relevante Ausführungen ausdrücklich, wenn Sie sicherstellen müssen, dass sie beendet sind. CodeNomad entlädt niemals native Locations; die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
 
+Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigenen Panel-Auswahlen, Missionsauswahl und -leseansicht sowie die gespeicherte Browser-URL und den Browserverlauf wieder her. Gespeicherte Browserseiten laden beim ausdrücklichen erneuten Öffnen. Das Schließen einer Instanz entfernt nur ihre gespeicherte Ansicht; erneutes Öffnen des Ordners erzeugt eine neue Instanz.
+
 ## Remote-Tabs wiederherstellen {#restore-remote-tabs}
 
-**Wiederholen** stellt auch weiterhin geöffnete wartende Tabs wieder her, wenn die automatische Wiederherstellung beim Start deaktiviert ist. Einzelne Tabs desselben Ordners behalten ihre eigenen Entwürfe.
+Bei aktiviertem Multi-Backend behalten gespeicherte Remote-Projekte ihre Tab-Reihenfolge, Auswahl und eigenen Entwürfe pro Tab. Ein unerreichbarer Server hinterlässt einen wartenden Tab: Wählen Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Benutzername/Passwort oder einem neuen **Kopplungslink**. Andere Server bleiben nutzbar.
 
-Eine Benachrichtigung öffnet den vorhandenen wartenden Tab; verwenden Sie **Wiederholen**, um die Verbindung wiederherzustellen.
+**Wiederholen** stellt wartende Tabs auch bei deaktivierter automatischer Startwiederherstellung wieder her. Benachrichtigungen wählen den vorhandenen wartenden Tab aus. Prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie erneut senden.
 
-Wenn Einstellungen noch diesen Server verwendet, öffnen Sie **Einstellungen** von einem anderen Projekt aus, bevor Sie den Server entfernen oder seine Adresse ändern.
-
-Bei aktiviertem Multi-Backend kehren gespeicherte Remote-Projekte mit Tab-Reihenfolge, Entwürfen und Auswahl zurück. Ein nicht verfügbarer Server behält einen wartenden Tab: Verwenden Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Zugangsdaten oder einem neuen **Kopplungslink**. Andere Server bleiben nutzbar. Die Wiederherstellung liest den Zustand; prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie selbst erneut senden.
-
-Schließen Sie die Projekttabs dieses Servers in allen Fenstern, bevor Sie ihn entfernen oder seine Adresse ändern. Ein unerreichbarer Bestand blockiert die Änderung bis zur Prüfung.
+Bevor Sie einen Server entfernen oder seine Adresse ändern, schließen Sie seine Projekttabs in allen Fenstern und öffnen Sie **Einstellungen** von einem anderen Projekt aus, falls die Einstellungen noch diesen Server verwenden. Ein unerreichbarer Projektbestand blockiert die Änderung bis zur Prüfung.
 
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 
@@ -72,7 +72,7 @@ Verwerfen wird verweigert, während eine Unterhaltung läuft oder der Ordner in 
 2. Wählen Sie einen vorhandenen gefundenen Worktree oder **+ Worktree erstellen**.
 3. Geben Sie zum Erstellen **Name** ein und wählen Sie **Worktree erstellen und verwenden**.
 
-CodeNomad findet Worktrees über OpenCode und prüft ihre Zugehörigkeit zum geöffneten Repository. Ist das Projekt ein Ordner innerhalb eines Repositorys, werden nur Worktrees aufgeführt, die diesen Ordner enthalten. Um aus einem solchen Ordner einen Worktree zu erstellen, muss Git ihn verfolgen. Ein neuer Branch-Name beginnt am HEAD des ausgewählten Checkouts. Ein vorhandener Branch-Name verwendet dessen aktuelle Revision; Git kann einen bereits anderswo ausgecheckten Branch verweigern. Worktrees verwenden standardmäßig `.codenomad/worktrees`. Nicht committete Änderungen bleiben im ursprünglichen Checkout; die Erstellung kopiert sie nicht in den neuen Worktree.
+Ist das Projekt ein Ordner innerhalb eines Repositorys, werden nur Worktrees aufgeführt, die diesen Ordner enthalten. Um aus einem solchen Ordner einen Worktree zu erstellen, muss Git ihn verfolgen. Ein neuer Branch-Name beginnt am HEAD des ausgewählten Checkouts. Ein vorhandener Branch-Name verwendet dessen aktuelle Revision; Git kann einen bereits anderswo ausgecheckten Branch verweigern. Worktrees verwenden standardmäßig `.codenomad/worktrees`. Nicht committete Änderungen bleiben im ursprünglichen Checkout; die Erstellung kopiert sie nicht in den neuen Worktree.
 
 Die Auswahl im Eingabefeld verschiebt die übergeordnete Unterhaltung und ihre rekursiven Nachfahren als überprüfte Familie. Eine Untersitzung kann diese Auswahl nicht unabhängig ändern. Aktive Sitzungen blockieren den Vorgang: Lassen Sie die Familie zuerst fertig werden oder stoppen Sie deren Ausführung. Warten Sie den Abschluss einer Verschiebung ab, bevor Sie die nächste anfordern; prüfen Sie bei Fehlern vor dem Wiederholen den aktualisierten Unterhaltungs-/Worktree-Zustand.
 
@@ -86,7 +86,7 @@ Die Auswahl im Eingabefeld verschiebt die übergeordnete Unterhaltung und ihre r
 
 Die Löschung entfernt den lokalen Ordner des Worktrees. Gits Haupt-Checkout ist kein entfernbares Ziel. CodeNomad verschiebt betroffene Unterhaltungsfamilien zurück zum Stamm-Checkout und überprüft ihren Ort vor dem Entfernen des Worktrees; aktive Sitzungen können das Entfernen blockieren. Löschen ist weder Archivierung noch Sicherung nicht committeter Dateien.
 
-Verweigert Git geänderte/nicht verfolgte Dateien, sichern oder bereinigen Sie diese vor dem Wiederholen. Erzwungenes Löschen verwirft sie ausdrücklich. Schließen Sie bei gesperrten Verzeichnissen darauf zugreifende Terminals, Editoren, Watcher und Hintergrundprozesse. Aktualisieren Sie bei fehlendem Eintrag die Worktrees und prüfen Sie vor einem erneuten Versuch den Pfad. Der Fehlerdialog bietet **Bereinigten Fehler kopieren** zum Teilen von Diagnosen; prüfen Sie auch bereinigten Text vorher.
+Verweigert Git geänderte/nicht verfolgte Dateien, sichern oder bereinigen Sie diese vor dem Wiederholen. Erzwungenes Löschen verwirft sie ausdrücklich. Schließen Sie bei gesperrten Verzeichnissen darauf zugreifende Terminals, Editoren, Watcher und Hintergrundprozesse. Der Fehlerdialog bietet **Bereinigten Fehler kopieren** zum Teilen von Diagnosen; prüfen Sie auch bereinigten Text vorher.
 
 ## Git initialisieren oder ohne Git arbeiten {#initialize-git}
 
@@ -94,6 +94,6 @@ Verweigert Git geänderte/nicht verfolgte Dateien, sichern oder bereinigen Sie d
 2. Wählen Sie **Git initialisieren**. Die Aktion erfolgt sofort, ohne zusätzliche Bestätigung.
 3. Warten Sie auf die Aktualisierung von Projektmetadaten und Unterhaltungen; verwenden Sie **Aktualisieren**, falls Git außerhalb von CodeNomad initialisiert wurde.
 
-Die Initialisierung erstellt das Repository im ausdrücklich geöffneten Ordner, nicht dessen übergeordnetem Verzeichnis. Sie erstellt keinen Commit. Prüfen Sie bei Fehlern die Meldung und aktualisieren Sie vor dem Wiederholen: Eine ungewisse Antwort wird nicht automatisch erneut ausgeführt.
+Die Initialisierung erstellt das Repository im ausdrücklich geöffneten Ordner, nicht dessen übergeordnetem Verzeichnis. Sie erstellt keinen Commit.
 
 Kann das Backend Git nicht ausführen, bleiben Unterhaltungen und begrenztes Durchsuchen von Dateien für den ausdrücklich geöffneten Ordner im Verzeichnismodus verfügbar. Worktree-Vorgänge und Git-Initialisierung erfordern Git auf diesem Backend. Siehe [Installation](install.md) und [Dateien](files.md).

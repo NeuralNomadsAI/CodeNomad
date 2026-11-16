@@ -4,7 +4,7 @@ export const toolCallMessages = {
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "Nested tool calls",
   "toolCall.execute.more": "{count} additional calls omitted.",
-  "toolCall.execute.truncated": "Native output truncated. Full output:",
+  "toolCall.execute.truncated": "Output truncated. Full output:",
   "toolCall.pending.waitingToRun": "Waiting to run...",
   "toolCall.error.label": "Error:",
 
@@ -66,9 +66,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "Listing directory...",
 
   "toolCall.renderer.bash.title.timeout": "Timeout: {timeout}",
-  "toolCall.output.truncated": "[Output truncated for rendering; copy to access the full output]",
-  "toolCall.output.tooLarge": "Structured output omitted from rendering because it is too large.",
-  "toolCall.task.steps.truncated": "Showing the most recent {count} steps; older steps are omitted.",
+  "toolCall.output.truncated": "Output truncated. Copy for the full output.",
+  "toolCall.output.tooLarge": "Content too large to display.",
+  "toolCall.task.steps.truncated": "Showing the latest {count} steps.",
   "toolCall.renderer.read.detail.offset": "Offset: {offset}",
   "toolCall.renderer.read.detail.limit": "Limit: {limit}",
 
@@ -149,7 +149,8 @@ export const toolCallMessages = {
   "toolCall.task.sections.prompt": "Prompt",
   "toolCall.task.sections.steps": "Steps",
   "toolCall.task.sections.output": "Output",
-  "toolCall.task.steps.count": "{count} steps",
+  "toolCall.task.steps.count.one": "{count} step",
+  "toolCall.task.steps.count.other": "{count} steps",
   "toolCall.task.meta.agentModel": "Agent: {agent} • Model: {model}",
   "toolCall.task.meta.agent": "Agent: {agent}",
   "toolCall.task.meta.model": "Model: {model}",
@@ -160,7 +161,6 @@ export const toolCallMessages = {
   "toolCall.status.error": "Error",
   "toolCall.status.unknown": "Unknown",
 
-  "toolCall.applyPatch.action.preparing": "Preparing apply_patch...",
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} file)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} files)",
   "toolCall.applyPatch.fileFallback": "File {number}",

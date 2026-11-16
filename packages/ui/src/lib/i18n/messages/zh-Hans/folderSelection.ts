@@ -26,7 +26,6 @@ export const folderSelectionMessages = {
   "folderSelection.links.discord": "CodeNomad 的 Discord",
 
   "folderSelection.empty.title": "没有最近的文件夹",
-  "folderSelection.empty.description": "浏览并选择文件夹以开始使用",
 
   "folderSelection.recent.title": "最近的文件夹",
   "folderSelection.recent.subtitle.one": "{count} 个文件夹可用",
@@ -58,7 +57,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.destination.title": "选择克隆目标位置",
   "folderSelection.clone.destination.description": "选择存放克隆的文件夹;仓库文件夹会在其中创建。",
   "folderSelection.clone.dialog.title": "克隆 Git 仓库",
-  "folderSelection.clone.dialog.description": "将 Git 仓库克隆到本地文件夹，然后作为工作区打开。",
   "folderSelection.clone.dialog.repositoryUrl": "仓库 URL",
   "folderSelection.clone.dialog.repositoryUrlPlaceholder": "https://github.com/user/repo.git",
   "folderSelection.clone.dialog.destinationPath": "目标文件夹",
@@ -80,10 +78,8 @@ export const folderSelectionMessages = {
   "folderSelection.hints.browse": "浏览",
 
   "folderSelection.loading.title": "正在启动实例...",
-  "folderSelection.loading.subtitle": "正在准备你的工作区，请稍候。",
 
   "folderSelection.drop.title": "拖放文件夹以打开",
-  "folderSelection.drop.subtitle": "在拖放的文件夹中启动一个新实例。",
   "folderSelection.drop.invalidTitle": "无法打开拖放的项目",
   "folderSelection.drop.invalidMessage": "请拖放一个文件夹来启动新实例。",
 
@@ -96,7 +92,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.subtitle": "在新窗口中打开已保存的远程 CodeNomad 服务器",
   "folderSelection.servers.count": "{count} 个服务器",
   "folderSelection.servers.empty.title": "没有已保存的服务器",
-  "folderSelection.servers.empty.description": "添加远程服务器，以便在此设备上快速重新连接",
   "folderSelection.servers.connectTitle": "连接到服务器",
   "folderSelection.servers.connectSubtitle": "保存远程 CodeNomad 服务器并在新窗口中打开它",
   "folderSelection.servers.connectButton": "连接到服务器",
@@ -104,7 +99,6 @@ export const folderSelectionMessages = {
   "folderSelection.servers.skipTls": "自签名 TLS",
   "folderSelection.servers.errorTitle": "远程连接失败",
   "folderSelection.servers.dialog.title": "连接到服务器",
-  "folderSelection.servers.dialog.description": "添加远程 CodeNomad 服务器，并可选择立即打开。",
   "folderSelection.servers.dialog.name": "服务器名称",
   "folderSelection.servers.dialog.namePlaceholder": "生产服务器",
   "folderSelection.servers.dialog.url": "服务器 URL",

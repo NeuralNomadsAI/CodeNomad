@@ -1,6 +1,6 @@
 import { activeInstanceId } from "../stores/instances"
 import { selectAppTabByIndex } from "../stores/app-tabs"
-import { activeSessionId, setActiveSession, getSessionFamily, activeParentSessionId } from "../stores/sessions"
+import { activeSessionId, selectActiveSession, getSessionFamily, activeParentSessionId } from "../stores/sessions"
 import { keyboardRegistry } from "./keyboard-registry"
 
 export function setupTabKeyboardShortcuts(
@@ -39,7 +39,7 @@ export function setupTabKeyboardShortcuts(
       const parentId = activeParentSessionId().get(instanceId)
       if (!parentId) return
       const tabs = getSessionFamily(instanceId, parentId).map(session => session.id).concat(["logs"])
-      if (tabs[index]) setActiveSession(instanceId, tabs[index])
+      if (tabs[index]) selectActiveSession(instanceId, tabs[index])
     }, hasInstance)
   }
   // All actions use the shared dispatcher; no anonymous global listener survives cleanup.

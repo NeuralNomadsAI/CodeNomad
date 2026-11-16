@@ -8,7 +8,9 @@ import { ConfigProvider, updatePreferences } from "../../../src/stores/preferenc
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { initializeClientState } from "../../../src/stores/client-state"
-import { missionProjectView, updateMissionProjectView } from "../../../src/stores/mission-view-state"
+import { missionProjectView, navigateMissionProjectView } from "../../../src/stores/mission-view-state"
+import { beginGesture } from "../../../src/stores/session-surface"
+import { publishInstanceLifecycleAuthority } from "../../../src/stores/instance-lifecycle-authority"
 import { missionStore } from "../../../src/stores/missions"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
@@ -17,12 +19,14 @@ import { markSessionListsRestored } from "./session-list-restored"
 await initializeClientState()
 markSessionListsRestored("track3")
 const instance: Instance = { id: "track3", folder: "/fixture", port: 0, pid: 0, proxyPath: "/fixture", status: "ready", client: null }
+publishInstanceLifecycleAuthority({ type: "opened", instanceId: instance.id, folder: instance.folder, occurrence: 0 })
 function Fixture() {
   const { t } = useI18n()
   ;(window as any).track3 = {
     show: async (kind: "overview" | "task" | "report" | "change", itemId?: string) => {
+      const intent = beginGesture({ instanceId: instance.id, sessionId: null })
       await missionStore.refresh(instance.id)
-      updateMissionProjectView(instance.id, { reader: { missionId: "reader", kind, itemId } })
+      navigateMissionProjectView(instance.id, { reader: { missionId: "reader", kind, itemId } }, intent)
     },
     locale: (locale: "en" | "he" | "tr") => updatePreferences({ locale }),
     bounded: (text: string) => getRenderTextWindow(text, MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT).text,

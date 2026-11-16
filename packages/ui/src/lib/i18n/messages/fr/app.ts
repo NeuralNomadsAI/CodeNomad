@@ -65,15 +65,6 @@ export const appMessages = {
   "app.closeInstance.toast.error": "Impossible de fermer le projet.",
   "app.closeInstance.toast.otherWindow": "{project} a été fermé depuis une autre fenêtre.",
 
-  "emptyState.logoAlt": "Logo CodeNomad",
-  "emptyState.brandTitle": "CodeNomad",
-  "emptyState.tagline": "Sélectionnez un dossier pour commencer à coder avec l'IA",
-  "emptyState.actions.selectFolder": "Sélectionner un dossier",
-  "emptyState.actions.selecting": "Sélection...",
-  "emptyState.keyboardShortcut": "Raccourci clavier : {shortcut}",
-  "emptyState.examples": "Exemples : {example}",
-  "emptyState.multipleInstances": "Vous pouvez avoir plusieurs instances du même dossier",
-
   "releases.upgradeRequired.title": "Mise à jour requise",
   "releases.desktop.checking": "Recherche d’une mise à jour de CodeNomad…",
   "releases.desktop.current": "CodeNomad est à jour.",

@@ -1,7 +1,6 @@
 # Cache and refresh conventions
 
-Use consistent refresh semantics across features. Keep domain-specific implementations
-where their authority, lifetime or runtime differs.
+Keep domain-specific implementations where authority, lifetime or runtime differs.
 
 ## Common rules
 
@@ -73,14 +72,13 @@ content before promoting it, and retain the last good display on expiry.
 | Background HTTP reads | Worktree display, Git status/diffs, project/location/status maps, composer catalogues, Shell lists and pending-request scans share two browser request slots across instances. Queued scans observe cancellation; per-request timeouts start at dispatch. Session/message reads and mutations stay independent so catalogue fan-out cannot occupy all HTTP/1.1 connections. | UI `lib/background-read-queue.ts`, `lib/sdk-manager.ts`, `stores/instances.ts`, `stores/worktrees.ts` |
 | Virtualized lists | Session list, transcript and timeline use `virtua/solid`; virtualization bounds rendered rows only. | UI `session-list.tsx`, `virtual-follow-list.tsx`, `message-timeline.tsx` |
 
-Git updates are regulated but always full: each server status calculation runs
+Each server status calculation runs
 five Git commands plus untracked-file processing, and the UI also requests
 native status. Continuous activity can sustain repeated full calculations and
 selected-diff reads.
 
-The worktree cache is in memory; the first native inventory scan and mandatory
-authoritative scans pay their full cost. The event relay isolates these waits by
-entity and recipient and never substitutes stale display data for authorization.
+The in-memory worktree cache requires full first and authoritative scans. The event
+relay isolates waits by entity and recipient; never authorize from stale display data.
 
 Pending recovery's fresh-read and session-family move-hold rules are in
 [NATIVE_INTERRUPTION_UX.md](NATIVE_INTERRUPTION_UX.md). `worktrees.ts` captures

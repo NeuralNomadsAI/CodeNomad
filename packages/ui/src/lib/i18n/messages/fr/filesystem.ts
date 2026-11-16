@@ -1,5 +1,4 @@
 export const filesystemMessages = {
-  "directoryBrowser.defaultDescription": "Parcourez les dossiers sous la racine d'espace de travail configurée.",
   "directoryBrowser.close": "Fermer",
   "directoryBrowser.currentFolder": "Sélectionner un dossier ou saisir un chemin",
   "directoryBrowser.currentFolder.inputAriaLabel": "Chemin du dossier",

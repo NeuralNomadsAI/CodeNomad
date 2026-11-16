@@ -64,7 +64,8 @@ import {
   showSessionChat,
   showSessionPreview,
 } from "../../stores/session-previews"
-import { clearActiveParentSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { beginGesture } from "../../stores/session-surface"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -90,7 +91,6 @@ import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/clie
 import { runtimeEnv } from "../../lib/runtime-env"
 import { createProjectServerMeta } from "../../lib/project-server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
-import { projectScope } from "../../lib/backend-identity"
 
 const log = getLogger("session")
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
@@ -445,7 +445,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId, projectScope(props.instance)) : null
+    return sessionId ? getSessionPreview(sessionId, props.instance.id) : null
   })
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
@@ -463,17 +463,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
-    const instanceId = props.instance.id, scope = projectScope(props.instance)
+    const instanceId = props.instance.id
     const operation = captureBackendOperation(instanceId, undefined, () => props.instance.id === instanceId && activeSessionIdForInstance() === sessionId)
+    const intent = beginGesture({ instanceId, sessionId })
     try {
       if (!operation.current()) return
-      const restored = await restoreSessionPreview(sessionId, scope, instanceId)
-      if (!operation.current()) return
-      if (restored) showSessionPreview(restored.storageKey)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, scope, instanceId)
+      const restored = await restoreSessionPreview(sessionId, instanceId)
+      if (!operation.current() || !intent.current()) return
+      if (restored) showSessionPreview(restored.storageKey, intent)
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, instanceId, undefined, intent)
     } catch (error) {
-      if (!operation.current()) return
-      if (error instanceof DOMException && error.name === "AbortError") return
+      if (!operation.current() || !intent.current()) return
+      if (error instanceof Error && error.name === "AbortError") return
+      if (props.isActiveInstance === false || activeSessionIdForInstance() !== sessionId) return
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -728,7 +730,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // still unmount and remain subject to the existing transcript memory budget.
   const mountedSessionIds = createMemo<string[]>((previous) => {
     const wanted = new Set([
-      ...getPreviewSessionIds(projectScope(props.instance)).filter((id) => allInstanceSessions().has(id)),
+      ...getPreviewSessionIds(props.instance.id).filter((id) => allInstanceSessions().has(id)),
       ...cachedSessionIds(),
     ])
     // Reordering an Electron webview in the DOM can recreate its guest.
@@ -916,7 +918,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   // Readers that need no conversation: schedules and playbook details.
   const readingWithoutConversation = () => Boolean(props.isActiveInstance)
-    && ["recurrence", "playbook"].includes(missionProjectView(projectScope(props.instance)).reader?.kind ?? "")
+    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
@@ -996,6 +998,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (draftSessionCreation) return draftSessionCreation
     const operation = captureBackendOperation(props.instance.id)
     const assertCurrent = () => { if (!operation.current()) throw new DOMException("Backend detached", "AbortError") }
+    const intent = beginGesture({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() ?? null })
     const creation = (async () => {
       assertCurrent()
       const agent = draftAgent()
@@ -1010,10 +1013,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         await updateSessionModel(props.instance.id, session.id, model)
         assertCurrent()
       }
-      if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
+      if (intent.current() && (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches)) {
         setFocusConversationSessionId(session.id)
       }
-      setActiveParentSession(props.instance.id, session.id)
+      setActiveParentSession(props.instance.id, session.id, intent)
       return session
     })()
     draftSessionCreation = creation
@@ -1071,7 +1074,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (sessionIds.length > 0) {
       handleSessionSelect(sessionIds[0])
     } else {
-      clearActiveParentSession(props.instance.id)
+      clearSelectedSession(props.instance.id)
     }
   }
 
@@ -1207,7 +1210,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
           class="content-area"
         >
-              <Show when={cachedSessionIds().length === 0 || !activeSessionIdForInstance()}>
+              <Show when={props.isActiveInstance !== false && (cachedSessionIds().length === 0 || !activeSessionIdForInstance())}>
                   <Show when={!activeSessionIdForInstance()} fallback={
                     <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
                       <MessageSection
@@ -1233,7 +1236,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
-                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={projectScope(props.instance)} /></Show>
+                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} /></Show>
                     </div>
 
                     <Show when={draftAttachments().length > 0}>
@@ -1296,7 +1299,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     activeSessions={activeSessions()}
                     instanceId={props.instance.id}
                     instanceFolder={props.instance.folder}
-                    scope={projectScope(props.instance)}
                     escapeInDebounce={props.escapeInDebounce}
                     isPhoneLayout={isPhoneLayout()}
                     focusConversationOnActivate={focusConversationSessionId() === sessionId}

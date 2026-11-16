@@ -1,7 +1,5 @@
 # Support CodeNomad
 
-CodeNomad is free and open source, maintained by volunteers. Sponsorship pays for the time it takes to fix, release and improve it.
-
 ## Why sponsor CodeNomad {#why}
 
 CodeNomad is released under the [MIT license](https://github.com/NeuralNomadsAI/CodeNomad/blob/dev/LICENSE) and costs nothing to download or use. Pascal André and Shantur Rathore maintain it in their own time, with contributions from the community. OpenCode is updated independently, so CodeNomad needs regular work just to stay compatible, before any new feature.
@@ -12,8 +10,6 @@ CodeNomad is released under the [MIT license](https://github.com/NeuralNomadsAI/
 - **Releases**: building, testing and publishing the Windows, macOS and Linux apps.
 - **Languages**: keeping the interface and this help site current in ten languages.
 - **New features**, like the work behind [Missions](missions.md), [Remote Control](remote-control.md) and [history search](history.md).
-
-The long-term goal is for CodeNomad's development to be funded by the people and companies who use it.
 
 ## Funding policy {#policy}
 

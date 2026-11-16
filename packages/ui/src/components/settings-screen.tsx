@@ -315,7 +315,6 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                 onPointerCancel={handleDragEnd}
               >
                 <div class="settings-screen-content-header-title-group">
-                  <p class="settings-screen-content-eyebrow">{t("settings.content.eyebrow")}</p>
                   <h1 class="window-title settings-screen-content-title">
                     {activeSection()?.label}
                   </h1>

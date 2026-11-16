@@ -21,7 +21,7 @@ Geben Sie diese Argumente nach der **Desktop-Programmdatei** (Tauri oder Electro
 | `<path> ...` | Öffnet Projektverzeichnisse ohne ausdrückliches `--folder`. **Bereits laufendes Windows Tauri:** Verwenden Sie für jedes Verzeichnis `--folder`. Werden Positionspfade mit `--folder` gemischt, entfällt ebenfalls die gesamte Ordneranforderung. |
 | `--new-window` | Fordert ein neues Anwendungsfenster an, auch wenn ein weiterer Start sonst das vorhandene Fenster fokussieren würde. |
 
-Auch `--connect-server=<server>` und `--folder=<path>` funktionieren. Pfade und Namen mit Leerzeichen müssen in Anführungszeichen stehen. Für ausschließlich das entfernte Fenster verwenden Sie nur `--connect-server`, ohne Ordner oder `--new-window`; lokale Fenster werden erst bei einem Verbindungsfehler wiederhergestellt. Das lokale Hilfsbackend bleibt zur Desktop-Koordination aktiv.
+Auch `--connect-server=<server>` und `--folder=<path>` funktionieren. Pfade und Namen mit Leerzeichen müssen in Anführungszeichen stehen. Für ausschließlich das entfernte Fenster verwenden Sie nur `--connect-server`, ohne Ordner oder `--new-window`; lokale Fenster werden erst bei einem Verbindungsfehler wiederhergestellt.
 
 In **PowerShell**:
 
@@ -40,13 +40,13 @@ Desktop-Profil und Konfiguration wählen Sie vor dem Start mit `CODENOMAD_PROFIL
 2. Schalten Sie unter **Allgemein** die Option **Vorherigen Zustand wiederherstellen** ein oder aus.
 3. Verwenden Sie zum Vergessen des gespeicherten Fensterlayouts **Gespeicherten Startzustand löschen**. Dies wirkt sofort, ohne Bestätigung.
 
-Nach einem Absturz können wiederhergestellte Kosten-/Tokenzähler den letzten gespeicherten Stand zeigen, bis OpenCode sie aktualisiert. Während Generierung oder Komprimierung warten reine Zähleränderungen auf den nächsten Speicherpunkt; normales Schließen speichert die aktuellen Zähler.
-
 Wiederherstellung kann Arbeitsbereichs-/SideCar-Tabs und aktive Sitzungen, ungesendeten Text, Scrollpositionen, Panels, Fensterposition und Zoom erneut öffnen. Es handelt sich um fensterbezogenen Client-Zustand, keine Kopie der nativen Unterhaltungsdatenbank. Löschen entfernt gespeicherte Tabs, Entwürfe und Layout; es löscht weder CodeNomad-Konfiguration noch OpenCode-Unterhaltungen. Sichern Sie wichtige ungesendete Entwürfe vorher anderswo.
+
+Jeder Projekt-Tab stellt seine eigene Auswahl im rechten Panel, seinen Dateien-Modus und seine Missionsleseansicht und -auswahl wieder her, auch bei mehreren Tabs derselben Unterhaltung. Gespeicherte Browser-URLs und der Verlauf öffnen sich auf Anforderung erneut; siehe [Browser-Vorschauen und SideCars](browser-sidecars.md#session-browser).
 
 Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Diese Bedienelemente zielen auf das Fenster, das es öffnete. Ist dieses geschlossen oder unbekannt, weil die Einstellungen beim Start wieder geöffnet wurden, folgen sie stattdessen dem zuletzt verwendeten Fenster; eine für ein anderes Fenster vorbereitete Änderung wird nie angewendet, die Bedienelemente zeigen zuerst den Wert des neuen Fensters. Um ein bestimmtes Fenster zu konfigurieren, öffnen Sie die Einstellungen aus diesem Fenster. Projektbezogene Einstellungen verwenden ebenfalls die Location des öffnenden Fensters und bleiben ohne sie nicht verfügbar. Werden die Einstellungen beim Start wieder geöffnet, verbinden sie sich erneut, sobald dieses Projekt fertig geöffnet ist; solange der Ordner noch startet oder in mehreren Tabs geöffnet ist, bleiben sie nicht verfügbar, bis Sie die Einstellungen aus dem gewünschten Fenster öffnen.
 
-Browser- und Remote-Einstellungen sind eingebettet, kein zweiter nativer Einstellungsbesitzer. Ein Fehler beim Öffnen nativer Einstellungen wird gemeldet; er bedeutet nicht, dass stattdessen eine versteckte eingebettete Einstellungsseite geöffnet wurde.
+Browser- und Remote-Clients verwenden eingebettete Einstellungen.
 
 ## Desktop-Datenprofile {#data-profiles}
 
@@ -80,7 +80,7 @@ Unter macOS-Tauri teilen Profile System-WebKit-Speicher, Anmeldungen und Cache; 
 
 Die Löschung entfernt gespeicherte Tabs, Entwürfe, Layout und zugehörigen Webspeicher/Cache/Anmeldungen dieses Profils, auch bei einem aufgelisteten Profil einer anderen Konfiguration. Sie bewahrt geöffnetes Profil, OpenCode-Unterhaltungen und Projektdateien. Ein geöffnetes Profil oder eines mit unbekanntem Zustand kann nicht gelöscht werden; schließen Sie die relevanten CodeNomad-Fenster, aktualisieren Sie die Liste und versuchen Sie es erneut. Unbekannte Inhalte werden behalten und gemeldet statt pauschal gelöscht.
 
-Der gemeinsame WebKit-Speicher von macOS-Tauri bleibt erhalten, da dessen Löschung andere Profile betreffen würde. Diese Bereinigung ist nicht rückgängig zu machen: Eine erhaltene native Unterhaltung stellt keinen gelöschten ungesendeten Entwurf wieder her. **Gespeicherten Startzustand löschen** ist die kleinere Aktion, wenn Sie nur das aktuelle Fenster zurücksetzen möchten.
+Der gemeinsame Webspeicher, Anmeldungen und Cache von Tauri unter macOS bleiben erhalten. Diese Bereinigung ist nicht rückgängig zu machen: Eine erhaltene native Unterhaltung stellt keinen gelöschten ungesendeten Entwurf wieder her. **Gespeicherten Startzustand löschen** ist die kleinere Aktion, wenn Sie nur das aktuelle Fenster zurücksetzen möchten.
 
 ## Zoom und Panel-Geometrie {#zoom-panels}
 

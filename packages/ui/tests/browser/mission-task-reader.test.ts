@@ -142,7 +142,7 @@ test("dependencies, dependents and replacements navigate reader identity without
   try {
     await f.page.locator("#draft").fill("Preserved draft")
     await f.page.locator("#transcript").evaluate(e => { e.scrollTop = 100 })
-    await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("/fixture", {
+    await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("task-reader", {
       selected: "another-mission", selectedRecurrence: "another-daily", selectedScheduled: "another-schedule",
       selectedTask: { missionId: "another-mission", taskId: "another-task" },
     }))
@@ -157,8 +157,9 @@ test("dependencies, dependents and replacements navigate reader identity without
     assert.equal(dependencyView.selected, "mission")
     assert.equal(dependencyView.selectedRecurrence, undefined)
     assert.equal(dependencyView.selectedScheduled, undefined)
-    assert((await f.page.locator(".mission-reader").innerText()).includes("Retired from the plan; native work is still outstanding."))
     assert.equal(await f.page.getByRole("button", { name: "Back to chat", exact: true }).evaluate(e => e === document.activeElement), true)
+    await expand(f.page, "Technical details")
+    assert((await f.page.locator(".mission-reader").innerText()).includes("Retired from the plan; native work is still outstanding."))
     await f.page.getByRole("button", { name: "Replaced by Work title", exact: true }).click()
     assert.deepEqual((await f.page.evaluate(() => (window as any).taskReader.snapshot())).view.selectedTask, { missionId: "mission", taskId: "task" })
     assert.equal(await article(f.page, "Task brief").getByRole("spinbutton").inputValue(), "1")
@@ -245,6 +246,41 @@ test("task reader session link uses authorized catalog navigation and never writ
     assert.equal((await f.page.evaluate(() => (window as any).taskReader.snapshot())).active, "actor")
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
+})
+
+test("a newer held browser open supersedes task actor hydration before either request commits", async () => {
+  const f = await setup()
+  let releaseActor!: () => void, actorReached!: () => void, releasePreview!: () => void, previewReached!: () => void
+  const actorHeld = new Promise<void>(resolve => { releaseActor = resolve }), actorStarted = new Promise<void>(resolve => { actorReached = resolve })
+  const previewHeld = new Promise<void>(resolve => { releasePreview = resolve }), previewStarted = new Promise<void>(resolve => { previewReached = resolve })
+  try {
+    await f.page.route("**/instance/api/session/actor", async route => {
+      actorReached(); await actorHeld; await route.fulfill({ json: { data: nativeSession("actor") } })
+    })
+    await f.page.route("**/api/previews", async route => {
+      previewReached(); await previewHeld
+      await route.fulfill({ json: { sessionId: "coordinator", token: "newer-browser", targetUrl: "https://example.com", url: "/preview/newer-browser" } })
+    })
+    await f.page.evaluate(() => (window as any).taskReader.removeActor())
+    await show(f.page)
+    await f.page.locator(".mission-reader").getByRole("button", { name: "Open conversation", exact: true }).click()
+    await actorStarted
+    await f.page.evaluate(() => { (window as any).previewOpen = (window as any).taskReader.openPreview().then(() => "opened", (error: Error) => error.name) })
+    await previewStarted
+    const response = f.page.waitForResponse(response => response.url().endsWith("/instance/api/session/actor"))
+    releaseActor(); await response
+    await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    const snapshot = await f.page.evaluate(() => (window as any).taskReader.snapshot())
+    assert.equal(snapshot.active, "coordinator")
+    assert.equal(snapshot.actor, undefined, "superseded hydration cannot publish its session")
+    assert.equal(snapshot.view.reader.itemId, "task", "the pending browser leaves the current reader in place")
+    releasePreview()
+    assert.equal(await f.page.evaluate(() => (window as any).previewOpen), "opened")
+    const final = await f.page.evaluate(() => (window as any).taskReader.snapshot())
+    assert.equal(final.active, "coordinator")
+    assert.equal(final.view.reader, undefined)
+    assert.deepEqual(f.errors, [])
+  } finally { releaseActor(); releasePreview(); await f.page.close() }
 })
 
 for (const actor of [undefined, "coordinator", "unowned-worker"] as const)

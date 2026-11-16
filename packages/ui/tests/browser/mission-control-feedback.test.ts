@@ -44,8 +44,8 @@ function mission(id: string, projectID = "fixture"): MissionMap {
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 const frames = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-// The view scope is the instance folder, or its ID for the store-less visibility fixture.
-const select = (page: Page, id: string, scope = "/fixture") => page.evaluate(async ({ id, scope }) => {
+// View selection belongs to the occurrence in both navigation and visibility fixtures.
+const select = (page: Page, id: string, scope = "fixture") => page.evaluate(async ({ id, scope }) => {
   const view = "/src/stores/mission-view-state.ts"
   ;(await import(view)).updateMissionProjectView(scope, { selected: id })
 }, { id, scope })
@@ -104,10 +104,10 @@ test("a certified Pause rejection while hidden is announced once and explained i
     release(); await response; await frames(page)
     assert.equal(counter.reads, before, "a hidden rejection starts no display read")
     assert.deepEqual(await toasts(page), [{ title: "Feedback one", variant: "error",
-      message: "Pause was not applied: the mission changed first. Nothing was resent; review it and try again." }])
+      message: "Review the changed mission, then try pausing it again." }])
     await visibility(page, "activate", true)
-    await alerts(page).getByText("Pause was not applied", { exact: false }).waitFor({ state: "attached" })
-    assert.equal(await primaryTitle(page), "Pause mission — Pause was not applied: the mission changed first. Nothing was resent; review it and try again.")
+    await alerts(page).getByText("Review the changed mission, then try pausing it again.", { exact: true }).waitFor({ state: "attached" })
+    assert.equal(await primaryTitle(page), "Pause mission — Review the changed mission, then try pausing it again.")
     await page.waitForFunction(() => (window as any).missionVisibility.state().missions[0]?.revision === 2)
     assert.equal(await toolbar(page).getByRole("button", { name: "Check control status", exact: true }).count(), 0, "rejection is not an unresolved retry")
     assert.equal(calls.length, 1)
@@ -135,8 +135,8 @@ test("revision drift during Stop confirmation sends nothing and asks to review a
     await visibility(page, "event", "session.execution.started"); await refreshed
     await page.waitForFunction(() => (window as any).missionVisibility.state().missions[0]?.revision === 2)
     await dialog.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
-    await alerts(page).getByText("Stop was not sent; review it and confirm again.", { exact: false }).waitFor({ state: "attached" })
-    assert.match(await primaryTitle(page) ?? "", /^Pause mission — .*Stop was not sent; review it and confirm again\./)
+    await alerts(page).getByText("Review the changed mission, then confirm Stop again.", { exact: true }).waitFor({ state: "attached" })
+    assert.match(await primaryTitle(page) ?? "", /^Pause mission — Review the changed mission, then confirm Stop again\./)
     assert.deepEqual(calls, [], "a stale confirmation never reaches the server")
     assert.equal(await toolbar(page).getByRole("button", { name: "Stop mission permanently", exact: true }).isEnabled(), true)
     assert.deepEqual(errors, [])

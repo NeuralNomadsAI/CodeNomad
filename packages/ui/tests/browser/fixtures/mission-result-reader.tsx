@@ -17,14 +17,14 @@ addInstance({ id: instanceId, folder: scope, port: 0, pid: 0, status: "ready", p
   client: sdkManager.createClient(instanceId, `/workspaces/${instanceId}/instance`, () => true),
   metadata: { project: { id: "project", directory: scope, canonical: scope } } })
 ;(window as any).resultReader = {
-  show: (kind: "overview" | "report" | "task", itemId?: string) => updateMissionProjectView(scope, {
+  show: (kind: "overview" | "report" | "task", itemId?: string) => updateMissionProjectView(instanceId, {
     reader: { missionId: "mission", kind, itemId },
   }),
-  showCurrent: () => updateMissionProjectView(scope, { reader: { missionId: "mission", kind: "report", itemId: "late",
+  showCurrent: () => updateMissionProjectView(instanceId, { reader: { missionId: "mission", kind: "report", itemId: "late",
     recurrence: { instanceId, projectID: "project", scheduleID: "schedule", passageID: "passage" } } }),
 }
 render(() => <ConfigProvider><I18nProvider>
   <main class="mission-transcript-surface" style={{ height: "760px" }}>
-    <Show when={missionProjectView(scope).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
+    <Show when={missionProjectView(instanceId).reader}><MissionReader instanceId={instanceId} scope={scope} /></Show>
   </main>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)

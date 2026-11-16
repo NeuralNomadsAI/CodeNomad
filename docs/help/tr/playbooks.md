@@ -12,20 +12,11 @@ Rehber, bir görevin koordinatörünün izlediği çalışma yöntemidir: adıml
 | [Ürün teslimi](#delivery) | Bir ürün değişikliği küçük bir ekip gibi yürütülmeliyse: şartname, hazırlık incelemesi, dilimler, doğrulama ve belgeler. |
 | [İki modeli karşılaştır](#compare) | İki farklı modelin aynı işi yapmasını ve kör bir hakemin onları puanlamasını istiyorsanız. |
 
-Bir rehber koordinatöre yol gösterir; sabit bir işlem hattı çalıştırmaz. CodeNomad bir sonraki adımı asla kendiliğinden başlatmaz: koordinatör her sonucu okur ve sırada neyi bildirip başlatacağına karar verir.
-
 ## Tüm rehberlerde ortak kurallar {#shared-rules}
 
 ### Koordinatör ve işler {#coordinator}
 
-Koordinatör görevin ana konuşmasıdır. İşleri bildiren, başlatan, planı değiştiren ve görevi bitiren yalnızca odur. Her turda hedefi, notları ve rehber talimatlarını alır ve ihtiyaç duyduğunda planı okur. İşler kendi atamalarını alır: hedef, başlıkları ve özetleri, rollerinin talimatları ve bağlı oldukları şeyler ([Bağlam bir görevde nasıl akar](missions.md#context-flow) bölümüne bakın). Sonuçlar **Görev oturumları** seçimine göre geri gelir: **Yerel alt ajanlar** ile bir iş sonucunu onu başlatan konuşmaya döndürür ve koordinatör bunu işin raporu olarak kaydeder; **Bağımsız oturumlar** ile her iş kendi raporunu kaydeder ve CodeNomad bunu koordinatöre iletir.
-
-Koordinatöre şu talimatlar verilir:
-
-- yalnızca zaten net olan işi bildirmek ve istediğiniz her iş kolunu kapsamak, hâlâ belirsiz olanı notlara yazmak;
-- hazır bağımsız işleri birbiri ardına değil paralel başlatmak ve bağımlılıkları yalnızca gerçek ön koşullar için kullanmak;
-- bir iş kolunda araç ya da yanıt eksik olduğunda veya o kol başarısız olduğunda ilgisiz işi sürdürmek;
-- bir sonraki adıma karar vermeden önce her işin gerçek sonucunu okumak ve Yerel alt ajanlar ile bunu işin raporu olarak kaydetmek.
+Koordinatör görevin ana konuşmasıdır. İşleri bildiren, başlatan, planı değiştiren ve görevi bitiren yalnızca odur.
 
 İşler, yerel izinler ve yapılandırılmış iç içe geçme derinliği içinde, gerekirse paralel olarak kendi yardımcı alt ajanlarını başlatabilir. Kapsamı ve güvenlik kurallarını yardımcılarına iletmeli ve yalnızca gerçekten elde ettikleri sonuçları döndürmelidir.
 
@@ -43,25 +34,19 @@ Bunlar talimattır. Bir ajanın gerçekte ne yapabileceğini, ajanının ve proj
 
 ### Size sorulan sorular {#questions}
 
-Size yalnızca koordinatör soru sorar. İşler ve yardımcıları kendi sorularını, onları başlatan konuşmaya seçenekler, kanıtlar, sonuçlar, geri alınabilirlik ve bir öneriyle geri gönderir ve yanıta bağlı olmayan işe devam eder. Koordinatör önce yapabildiğini çözer ve kalan soruları görevin kırmızı satırından açılan tek bir formda toplar; neleri sorduğunu ve kararların nasıl etiketlendiğini [Sorular ve kararlar](missions.md#questions) açıklar. Tek seferlik veya zamanlanmış her koordinatör ve her iş ataması bu kuralı talimat olarak alır; Keşif [aşağıdaki](#wayfinder-checks) karar denetimlerini ekler.
+Size yalnızca koordinatör soru sorar.
 
 Kırmızı görevi veya işi seçerek açılan istek panelinde yanıtlayın: yalnızca bu sizin yanıtınız sayılır. Sohbete yazılan bir yanıt sıradan bir mesajdır.
 
 ### Durum özetleri ve son rapor {#briefings}
 
-Koordinatöre ilk planından sonra, sonuçlandırdığı her işten sonra, sizi beklemeye başladığı her an ve son raporundan önce bir durum özeti yayımlaması talimatı verilir; [Durum özetleri ve güncelleme istekleri](missions.md#briefings) bölümüne bakın. Durum özetleri, iş özetleri ve son rapor sizin için yazılır: sizin dilinizde, birkaç kısa cümleyle, önce sonuç; tanımlayıcılar ve komutlar kanıtlarda kalır.
+Koordinatöre ilk planından sonra, sonuçlandırdığı her işten sonra, sizi beklemeye başladığı her an ve son raporundan önce bir durum özeti yayımlaması talimatı verilir; [Durum özetleri ve güncelleme istekleri](missions.md#briefings) bölümüne bakın.
 
 Son rapor neyin teslim edildiğini, neyin kaldığını ve neyin sizin kararınızı gerektirdiğini belirtir. Tek seferlik bir görev yalnızca tamamlanmış olarak biter: siz olmadan hiçbir şey ilerleyemediğinde koordinatör başarısız olmak yerine size sorar ve bekler; bir görevi yalnızca siz durdurursunuz. Zamanlanmış bir geçiş başarısız olarak da bitebilir.
 
 ### CodeNomad'in her görevde denetledikleri {#common-checks}
 
-- İş bildirmek, planı değiştirmek ve görevi bitirmek yalnızca koordinatör konuşmasının yapabileceği şeylerdir.
-- Bir işin rolü rehbere ait olmalıdır; Esnek görev hariç.
-- Bağımlılıklar mevcut işleri göstermeli ve döngü oluşturamaz. Bekleyen bir iş asla otomatik başlatılmaz ve bir işin sonucu yalnızca bağlı olduğu işler tamamlandıktan sonra kaydedilir.
-- CodeNomad'in kaydettiği yerel bir iş çağrısının sona erdiği henüz görülmemişken veya çalışması kabul edilmiş geri çekilmiş bir iş ne son raporunu göndermiş ne de sona erdiği görülmüşken bitirme reddedilir. Bu denetimler yalnızca CodeNomad'in kaydettiği çağrıları ve kabulleri kapsar: koordinatöre gerçek sonuçları beklemesi talimatı verilir, ancak onun kaydettiği bir rapor işin konuşmasının durduğunu kanıtlamaz. Başarılı bir bitiş ayrıca her işin tamamlanmış veya geri çekilmiş olmasını gerektirir. Tek seferlik bir görev başarısız olarak bitemez.
 - Her iş, oluşturma sırasında rolü için seçilen ajanı ve modeli ister; koordinatör projenin kataloğundan başka birini belirtirse hariç.
-
-Bir rehberin **CodeNomad'in denetledikleri** bölümü aksini söylemedikçe bu sayfadaki diğer her şey modele verilen bir talimattır.
 
 ## Esnek görev {#custom}
 
@@ -74,11 +59,9 @@ Genel amaçlı rehber: açık bir sonuç ve planı seçmekte serbest bir koordin
 3. Her sonuçtan sonra planı okuyup bir sonraki hamleye karar vermek.
 4. Yalnızca hedef ve denetimleri karşılandığında bitirmek.
 
-| Rol | Amaç | Teslim eder |
-| --- | --- | --- |
-| Görevler | Sınırları belli tek bir atamayı çözmek. | Somut kanıt, çözülmemiş riskler ve en küçük yararlı sonraki adım. |
-
-Koordinatör planı bilinçli olarak değiştirir ve bağımsız iş kollarını görünür tutar. [Ortak kurallara](#shared-rules) uyar; bu rehber başka bir kural eklemez.
+| Rol | Amaç |
+| --- | --- |
+| Görevler | Sınırları belli tek bir atamayı çözmek. |
 
 ### CodeNomad'in denetledikleri {#custom-checks}
 
@@ -103,39 +86,34 @@ Yalnızca [her görevin denetimleri](#common-checks). İş rolleri serbesttir: k
 4. **Çözüm**: iki inceleme de uygulayıcının kendi konuşmasına geri döner; o da her doğru ağır (*hard*) bulguyu ele alır.
 5. **Doğrulama**: yeni, salt okunur bir doğrulayıcı projenin denetimlerini ve regresyon testini çalıştırır.
 
-| Rol | Amaç | Teslim eder |
-| --- | --- | --- |
-| Tanı uzmanı | Herhangi bir düzenlemeden önce hatayı ve nedenini kanıtlamak. Hızlı ve belirlenimci bir yeniden üretim kurar, çürütülebilir üç ila beş hipotezi sıralar ve her seferinde bir değişkeni dener; ürün kodunu düzenlemez. | Tanı: yeniden üreten komut ve başarısız çıktısı, en aza indirilmiş yeniden üretim, kanıtlarıyla doğrulanan hipotez ve reddedilenler. |
-| Uygulayıcı | Kanıta dayalı en küçük düzeltmeyi yapmak. | Düzeltme: değişen dosyalar, önce başarısız sonra başarılı görülen regresyon testi (veya neden test noktası olmadığı), özgün yeniden üretimin geçmesi, geçici izleme kodunun kaldırılması ve tekrarın nasıl önleneceği. |
-| Standart inceleyicisi | Düzenleme yapmadan yalnızca depo standartlarını ve mühendislik riskini incelemek. | İnceleme: geçti veya değişiklik gerekli; STD-1, STD-2… diye numaralanan, her biri *hard* (düzeltilmeli) veya *judgement* olarak işaretlenmiş ve dosya kanıtı olan bulgularla. |
-| Gereksinim inceleyicisi | Düzenleme yapmadan yalnızca davranışı hedefe ve atamaya göre incelemek. | İnceleme: geçti veya değişiklik gerekli; gereksinimi alıntılayan SPEC bulgularıyla. |
-| Uygulayıcı devamı | İncelemeleri uygulayıcının konuşmasında, tahmine dayalı iş yapmadan çözmek. | Çözüm: ele alınan bulgular, gerekçesiyle ertelenen bulgular, çalıştırılan odaklı denetimler. |
-| Yeni doğrulayıcı | Düzenleme yapmadan değişikliğin tamamının yeşil olduğunu ve düzeltmeyi hâlâ içerdiğini kanıtlamak. | Doğrulama: tür denetimi, lint, testler ve derleme ayrı ayrı geçti veya yapılandırılmamış, regresyon testi geçti, karar yeşil. |
+| Rol | Amaç |
+| --- | --- |
+| Tanı uzmanı | Herhangi bir düzenlemeden önce hatayı ve nedenini kanıtlamak. |
+| Uygulayıcı | Kanıta dayalı en küçük düzeltmeyi yapmak. |
+| Standart inceleyicisi | Düzenleme yapmadan yalnızca depo standartlarını ve mühendislik riskini incelemek. |
+| Gereksinim inceleyicisi | Düzenleme yapmadan yalnızca davranışı hedefe ve atamaya göre incelemek. |
+| Uygulayıcı devamı | İncelemeleri uygulayıcının konuşmasında, tahmine dayalı iş yapmadan çözmek. |
+| Yeni doğrulayıcı | Düzenleme yapmadan değişikliğin tamamının yeşil olduğunu ve düzeltmeyi hâlâ içerdiğini kanıtlamak. |
 
 ### Koordinatör ve sorular {#debug-coordinator}
 
 Koordinatör her sonucu okur, iki inceleme eksenini ayrı tutar ve bir adımı ancak bağlı olduğu kanıt mevcut olduğunda başlatır. Her iki inceleyici ve doğrulayıcı için yeni konuşmalar kullanır, çözüm için uygulayıcının kendi konuşmasını sürdürür. **Yerel alt ajanlar** ile her rolün yapılandırılmış raporunu işin döndürdüğü şeyden kaydeder; **Bağımsız oturumlar** ile her rol kendi raporunu gönderir. Asla denetim uydurmaz ve son kanıtı en son uygulamayı kapsamalıdır.
 
-Başarısız bir yeniden üretim kurulamadığında tanı uzmanı tahmin etmek yerine neyin eksik olduğunu bildirir; koordinatör bunları kendisi elde edemezse, örneğin tam adımları, verileri veya ortamı size sorar.
-
 ### CodeNomad'in denetledikleri {#debug-checks}
 
-- Yalnızca Hata ayıklama'nın altı rolü kabul edilir.
+- CodeNomad, düzeltmenin testin kırmızıdan yeşile geçtiğini beyan ettiğini denetler; testi gerçekten çalıştırdığını değil.
 - Sıra: uygulayıcı bir tanıya, her inceleyici bir uygulamaya, devam iki incelemeye ve doğrulayıcı devama bağlı olmalıdır. Bir adım ancak bağlı olduğu adım tamamlandığında başlar.
 - İnceleyiciler ve doğrulayıcı yeni konuşmalarda çalışmalıdır; devam, tamamlanmış uygulayıcının konuşmasını sürdürmelidir.
-- Tamamlanan her rol raporu, rolünün yapılandırılmış raporunu gereken biçimde içermelidir; aksi halde reddedilir. Örneğin düzeltme, regresyon testinin başarısız ve başarılı görüldüğünü belirtmeli; doğrulama dört denetim türünün hepsini hiçbiri başarısız olmadan listelemelidir.
 - Görev ancak en son uygulamanın öncesinde tamamlanmış bir tanı, sonrasında iki inceleme, bir devam ve bir doğrulama varsa, hepsi bağımlılıklarla bağlıysa ve geçerli yapılandırılmış raporlara sahipse yeşil biter.
-
-Yalnızca talimat olanlar: tanının kalitesi, inceleyicilerin ve doğrulayıcının dosya düzenlememesi ve bir raporun iddialarının doğruluğu. CodeNomad, düzeltmenin testin kırmızıdan yeşile geçtiğini beyan ettiğini denetler; testi gerçekten çalıştırdığını değil.
 
 ### Sonuç ve tuzaklar {#debug-result}
 
 Tanıyı, çalışma kopyanızda düzeltmeyi ve regresyon testini (hedefiniz veya **Notlar** açıkça commit istemedikçe commit edilmemiş), iki incelemeyi, çözümü, doğrulamayı ve bir son raporu alırsınız. Tuzaklar:
 
 - Yeniden üretilebilir bir belirti verin: hatayı gösteren komut, girdi veya adımlar. Bu olmadan görev tanıda durur ve size sorar.
-- İlgisiz bir nedenle zaten başarısız olan bir denetim yeşil doğrulamayı engeller, bu yüzden görev yeşil bitemez; koordinatör nasıl devam edileceğini size sorar.
-- Testi, lint'i veya derlemesi olmayan bir proje bu denetimleri yapılandırılmamış olarak bildirir; bu da kanıtı zayıflatır.
 - İnceleyiciler ve doğrulayıcı sıfırdan başlar, bu yüzden modelleri değişikliği baştan okur: **Ajanlar ve modeller** bölümünde onlar için yetenekli modeller seçin.
+- İlgisiz bir nedenle zaten başarısız olan bir denetim yeşil doğrulamayı engeller; koordinatör nasıl devam edileceğini size sorar.
+- Testi, lint'i veya derlemesi olmayan bir proje bu denetimleri yapılandırılmamış olarak bildirir; bu da kanıtı zayıflatır.
 
 ## Keşif {#wayfinder}
 
@@ -149,13 +127,13 @@ Varış noktası net ama yol net değilken kullanılan bir planlama rehberi. Koo
 4. Bağımsız kararları ve araştırmaları paralel başlatmak.
 5. Her kararı sorumlusunun karar özetinden sonuçlandırmak, kimin karar verdiğini kaydetmek ve yalnızca görünür hale gelen soruları eklemek.
 
-| Rol | Amaç | Teslim eder |
-| --- | --- | --- |
-| Haritacı | Varış noktasını adlandırmak ve mevcut sınırı önce genişlemesine haritalamak. | Kararlaştırılmış alan, açık kararlar, sis ve varış noktasının ötesindeki iş, ayrı ayrı. |
-| Araştırma keşifçisi | Bir kararı engelleyen dış bir olguyu çözmek. | Kaynaklar, olgular, kalan belirsizlik ve bu olguların açtığı karar. |
-| Prototip keşifçisi | Bir tartışmayı somutlaştıran ucuz, kaba ve geri alınabilir bir ürün yapmak. | Ürün, size sorulacak tepki sorusu, nelere bakılacağı ve bir öneri. |
-| Karar rehberi | Sizin için bir ürün kararı hazırlamak. | Depodan olgular ve hazır bir soru: kanıt, sonuçlar ve geri alınabilirlikle seçenekler ve bir öneri. |
-| Karar sorumlusu | Koordinatörün sonuçlandıracağı net bir kararı hazırlamak. | Bir karar özeti: soru, kanıt, sonuçlar ve geri alınabilirlikle her seçenek, bir öneri ve yeni görünür hale gelen sis veya izleyen kararlar ya da seçenekleri kurmak için eksik olan şey. |
+| Rol | Amaç |
+| --- | --- |
+| Haritacı | Varış noktasını adlandırmak ve mevcut sınırı önce genişlemesine haritalamak. |
+| Araştırma keşifçisi | Bir kararı engelleyen dış bir olguyu çözmek. |
+| Prototip keşifçisi | Bir tartışmayı somutlaştıran ucuz, kaba ve geri alınabilir bir ürün yapmak. |
+| Karar rehberi | Sizin için bir ürün kararı hazırlamak. |
+| Karar sorumlusu | Koordinatörün sonuçlandıracağı net bir kararı hazırlamak. |
 
 ### Koordinatör ve sorular {#wayfinder-coordinator}
 
@@ -174,11 +152,7 @@ Yanıtınızı asla kendisi yazmaz ve kendi kararını sizinki gibi sunmaz. Sonu
 
 - Yalnızca Keşif'in beş rolü kabul edilir.
 - Bir karar işi yalnızca koordinatörün kendi kararıyla veya sizin yanıtınızla tamamlanır. Koordinatör kararı soruyu, kararı ve gerekçesini belirtir ve asla sizin yanıtınız olarak kaydedilmez.
-- Yanıtınız yalnızca CodeNomad arayüzünde verdiyseniz sayılır. CodeNomad onu sorunun etiketiyle bir işe bağlar: soru koordinatörün konuşmasından sorulmuştur, metni o işin etiketiyle biter ve başka bir karar anmaz, iş bildirildikten sonra yanıtlanmıştır ve başka bir kararı sonuçlandırmamıştır. Toplu bir formun her sorusu ayrı bağlanır; iki kararı anan bir soru hiçbirini sonuçlandırmaz. Karar işinin kendi konuşmasından sorulan bir sorunun yanıtı da kabul edilir.
-- Bir işin kendi raporu kimin karar verdiğini iddia edemez. Bir görev veya zamanlanmış geçiş başarıyla bitmeden önce CodeNomad, tamamlanan her kararı etiketleri dahil yeniden denetler.
 - Bu denetimler **Yerel alt ajanlar** ile geçerlidir. **Bağımsız oturumlar** ile karar sorumluları özetlerini kendileri bildirir ve koordinatör her sonucu kimin karar verdiğini belirterek notlara kaydeder; CodeNomad bunu doğrulamaz.
-
-Yalnızca talimat olanlar: bir seçimin ne zaman geri alınması ucuz sayılacağı, özetlerin ve araştırmanın kalitesi ve planlamayla sınırlı kalmak.
 
 ### Sonuç ve tuzaklar {#wayfinder-result}
 
@@ -203,18 +177,14 @@ NomadWorks Collective yönteminden uyarlanarak işi küçük bir yazılım ekibi
 6. **Doğrulama**: QA ve teknik lider davranışı ve her kabul ölçütünü kanıtla denetler; kullanıcıların gördüğü değişikliklerde UI/UX tasarımcısı da katılır.
 7. **Kapanış**: belgelere etkisini onaylamak, ardından neyin teslim edildiğini bildirmek. Hedefiniz veya **Notlar** açıkça istemedikçe commit'ler size aittir.
 
-Karmaşıklığa göre hazırlık inceleyicileri: küçükte geliştirici ve teknik lider, davranış, ifadeler veya gereksinimler değişirse ayrıca iş analisti; standartta iş analisti ve teknik mimar, teknik risk yüksekse ayrıca teknik lider; karmaşıkta üçü birden. Kullanıcılar değişikliği gördüğünde UI/UX tasarımcısı her zaman katılır.
-
-| Rol | Amaç | Teslim eder |
-| --- | --- | --- |
-| İş analisti | Ürün gereksinimlerinin ve kabul ölçütlerinin sahibi olmak. | Test edilebilir kabul ölçütleri ve açık sorularla şartname değişikliği isteği; kod yok. |
-| Teknik mimar | Etki alanını haritalamak ve onaylanan değişiklikleri dilimlere bölmek. | Etkilenen modüller, arayüzler, veriler ve riskler ile ön koşulları ve kabul ölçütleri olan dilimler; ürün kodu yok. |
-| Teknik lider | Teknik yönün ve doğrulamanın sahibi olmak. | Teslimden önce yaklaşım ve risk incelemesi; sonra okunmuş diff, çalıştırılmış odaklı denetimler ve açık bir onay veya değişiklik gerekli kararı. |
-| Geliştirici | Bir dilimi testleriyle birlikte uygulamak. | Dilim, testleri ve koda yakın belgeler; şartnameden her sapmanın bildirilmesiyle. |
-| QA mühendisi | Teslim edilen davranışı bağımsız olarak doğrulamak. | Kabul ölçütlerinden türetilen test senaryoları, denetim sonuçları ve yeniden üretme adımlarıyla başarısızlıklar; düzeltme yok. Atlanan veya devre dışı bırakılan testler asla geçmiş sayılmaz. |
-| UI/UX tasarımcısı | Etkileşimi, görselliği ve erişilebilirliği şekillendirmek ve incelemek. | Teslimden önce tasarım katkısı, sonra somut öneriler ve mümkünse ekran görüntüleriyle bir inceleme veya onay. |
-
-Her rol aynı bölümleri bildirir: özet, yapılan iş, kabul ölçütlerinin karşılanması, belgelere etkisi, açık riskler ve önerilen sonraki adım. Hazırlık incelemesinde roller hiçbir şeyi düzenlemez ve kapsam, test edilebilirlik, karmaşıklık, bağımlılık veya onaydaki her eksikliği bildirir.
+| Rol | Amaç |
+| --- | --- |
+| İş analisti | Ürün gereksinimlerinin ve kabul ölçütlerinin sahibi olmak. |
+| Teknik mimar | Etki alanını haritalamak ve onaylanan değişiklikleri dilimlere bölmek. |
+| Teknik lider | Teknik yönün ve doğrulamanın sahibi olmak. |
+| Geliştirici | Bir dilimi testleriyle birlikte uygulamak. |
+| QA mühendisi | Teslim edilen davranışı bağımsız olarak doğrulamak. |
+| UI/UX tasarımcısı | Etkileşimi, görselliği ve erişilebilirliği şekillendirmek ve incelemek. |
 
 ### Koordinatör ve sorular {#delivery-coordinator}
 
@@ -231,9 +201,9 @@ Yalnızca Ürün teslimi'nin altı rolü kabul edilir, ayrıca [her görevin den
 Şartname değişikliği isteklerini, hazırlık incelemelerini, çalışma kopyanızdaki uygulamayı (hedefiniz veya **Notlar** açıkça commit istemedikçe commit edilmemiş), testleri, QA ve teknik lider doğrulamasını, güncellenmiş belgeleri ve bir son raporu alırsınız. Tuzaklar:
 
 - Davranışı açık bırakan bir hedef, herhangi bir koddan önce bir onay sorusuna yol açar: teslimin doğrudan başlamasını istiyorsanız neyin, kimin için değiştiğini ve nasıl doğrulanacağını yazın.
+- Çok sayıda uzman çok sayıda konuşma demektir: **Ajanlar ve modeller** bölümünde rol başına model seçin.
 - Küçük bir davranış değişikliği bile şartname değişikliği isteği gerektirir.
 - Aynı anda tek uygulama işi çalışma kopyasını tutarlı tutar ama teslimi sıralı hale getirir.
-- Çok sayıda uzman çok sayıda konuşma demektir: **Ajanlar ve modeller** bölümünde rol başına model seçin.
 
 ## İki modeli karşılaştır {#compare}
 
@@ -256,13 +226,10 @@ Koordinatör tam olarak iki farklı modeli karşılaştırır. Başarısızlıkl
 
 ### CodeNomad'in denetledikleri {#compare-checks}
 
+- Çıktıların hakemin özetinde anonimleştirilmesi ve protokolün ve ölçütlerin adilliği yalnızca talimat olarak kalır.
 - Oluşturma sırasında **Model A** ve **Model B** zorunludur ve farklı modeller olmalıdır; yalnızca farklı bir **Düşünme** düzeyi farklı bir model sayılmaz. Siz bir model seçmedikçe hakem, oluşturma sırasında sabitlenen koordinatör modelini kullanır.
-- Yalnızca İki modeli karşılaştır rehberinin üç rolü kabul edilir. Her çalıştırma ve hakem yeni bir konuşmada başlamalıdır, bir çalıştırma rolünün modelini değiştiremez, model başına tek bir etkin çalıştırma vardır ve iki özet bayt bayt aynı olmalıdır.
-- Yapılandırılmış rapor yalnızca hakem ekleyebilir; rapor tamamlanmış A ve B çalıştırmalarına bu sırayla başvurmalı, her ölçütü en az bir kanıtla 0'dan 10'a kadar bir kez puanlamalı ve dört karardan birini vermelidir.
 - Görev yalnızca tamamlanmış A, B ve hakem işleri ve geçerli bir karşılaştırmayla biter.
 - Hakemin ataması ve bağlamı görevin hedefini ve notlarını içermez.
-
-Yalnızca talimat olanlar: çıktıların hakemin özetinde anonimleştirilmesi ve protokolün ve ölçütlerin adilliği.
 
 ### Sonuç ve tuzaklar {#compare-result}
 

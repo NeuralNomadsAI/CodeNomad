@@ -42,6 +42,6 @@ Descarga solo desde esta página o desde las [versiones oficiales](https://githu
 
 ## Apoyar el desarrollo {#support-development}
 
-CodeNomad es gratuito y lo mantienen voluntarios en su tiempo libre. Si te resulta útil a ti o a tu equipo, patrocinarlo ayuda a mantenerlo y a que siga siendo compatible con las nuevas versiones de OpenCode. La página [Apoyar a CodeNomad](sponsor.md) explica qué financia el patrocinio.
+La página [Apoyar a CodeNomad](sponsor.md) explica qué financia el patrocinio.
 
 {{funding}}
