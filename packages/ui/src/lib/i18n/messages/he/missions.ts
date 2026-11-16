@@ -349,7 +349,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "יש להגביל הוראות התחלה חוזרת ל־{limit} תווים.",
   "missions.recurrence.capacity": "פנו מקום ללוח זמנים חוזר ונסו שוב.",
   "missions.recurrence.sourceInputTooLong": "ההוראות והקשר השיחות במעקב חייבים להיכנס ל־{limit} תווים. קצרו את ההוראות או הסירו שיחות ממעקב.",
-  "missions.recurrence.sourceLocationUnavailable": "רעננו את מיקום המקורות לפני יצירת לוח הזמנים.",
+  "missions.recurrence.sourceLocationUnavailable": "רעננו את מיקום המקורות.",
   "missions.recurrence.state.running": "פועל",
   "missions.recurrence.state.interrupted": "נקטע",
   "missions.recurrence.play": "הפעלת לוח הזמנים {id}",

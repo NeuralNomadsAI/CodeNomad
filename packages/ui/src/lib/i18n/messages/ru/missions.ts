@@ -349,7 +349,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "Ограничьте инструкции повторного запуска {limit} символами.",
   "missions.recurrence.capacity": "Освободите место для повторяющегося расписания и повторите попытку.",
   "missions.recurrence.sourceInputTooLong": "Инструкции и контекст разговоров должны помещаться в {limit} символов. Сократите инструкции или удалите отслеживаемые разговоры.",
-  "missions.recurrence.sourceLocationUnavailable": "Обновите расположение источников перед созданием этого расписания.",
+  "missions.recurrence.sourceLocationUnavailable": "Обновите расположение источников.",
   "missions.recurrence.state.running": "Выполняется",
   "missions.recurrence.state.interrupted": "Прервано",
   "missions.recurrence.play": "Запустить расписание {id}",

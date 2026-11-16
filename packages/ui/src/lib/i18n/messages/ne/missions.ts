@@ -349,7 +349,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "पुनरावर्ती सुरु निर्देशनहरू {limit} अक्षरभित्र राख्नुहोस्।",
   "missions.recurrence.capacity": "पुनरावर्ती तालिकाको लागि ठाउँ खाली गरेर फेरि प्रयास गर्नुहोस्।",
   "missions.recurrence.sourceInputTooLong": "निर्देशन र अनुसरण संवादको सन्दर्भ {limit} अक्षरभित्र हुनुपर्छ। निर्देशन छोट्याउनुहोस् वा अनुसरण संवाद हटाउनुहोस्।",
-  "missions.recurrence.sourceLocationUnavailable": "यो तालिका सिर्जना गर्नुअघि स्रोत स्थान ताजा गर्नुहोस्।",
+  "missions.recurrence.sourceLocationUnavailable": "स्रोत स्थान ताजा गर्नुहोस्।",
   "missions.recurrence.state.running": "चलिरहेको",
   "missions.recurrence.state.interrupted": "अवरुद्ध",
   "missions.recurrence.play": "तालिका {id} सुरु गर्नुहोस्",

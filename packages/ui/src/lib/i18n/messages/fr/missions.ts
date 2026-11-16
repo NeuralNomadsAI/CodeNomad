@@ -349,7 +349,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "Limitez les instructions de démarrage récurrent à {limit} caractères.",
   "missions.recurrence.capacity": "Libérez une place de programme récurrent, puis réessayez.",
   "missions.recurrence.sourceInputTooLong": "Les instructions et le contexte des conversations suivies doivent tenir dans {limit} caractères. Raccourcissez les instructions ou retirez des conversations.",
-  "missions.recurrence.sourceLocationUnavailable": "Actualisez l’emplacement des sources avant de créer ce programme.",
+  "missions.recurrence.sourceLocationUnavailable": "Actualisez l’emplacement des sources.",
   "missions.recurrence.state.running": "En cours",
   "missions.recurrence.state.interrupted": "Interrompue",
   "missions.recurrence.play": "Démarrer le programme {id}",

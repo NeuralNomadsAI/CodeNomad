@@ -349,7 +349,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "Wiederkehrende Startanweisungen auf {limit} Zeichen begrenzen.",
   "missions.recurrence.capacity": "Einen Platz für wiederkehrende Zeitpläne freigeben, dann erneut versuchen.",
   "missions.recurrence.sourceInputTooLong": "Anweisungen und Kontext verfolgter Gespräche müssen in {limit} Zeichen passen. Anweisungen kürzen oder Gespräche entfernen.",
-  "missions.recurrence.sourceLocationUnavailable": "Vor dem Erstellen dieses Zeitplans den Quellenort aktualisieren.",
+  "missions.recurrence.sourceLocationUnavailable": "Aktualisieren Sie den Quellenort.",
   "missions.recurrence.state.running": "Läuft",
   "missions.recurrence.state.interrupted": "Unterbrochen",
   "missions.recurrence.play": "Zeitplan {id} starten",

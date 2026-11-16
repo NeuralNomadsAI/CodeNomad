@@ -349,7 +349,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "Yinelenen başlangıç talimatlarını {limit} karakterle sınırlayın.",
   "missions.recurrence.capacity": "Yinelenen bir program için yer açıp yeniden deneyin.",
   "missions.recurrence.sourceInputTooLong": "Talimatlar ve takip edilen konuşma bağlamı {limit} karaktere sığmalıdır. Talimatları kısaltın veya konuşmaları kaldırın.",
-  "missions.recurrence.sourceLocationUnavailable": "Bu programı oluşturmadan önce kaynak konumunu yenileyin.",
+  "missions.recurrence.sourceLocationUnavailable": "Kaynak konumunu yenileyin.",
   "missions.recurrence.state.running": "Çalışıyor",
   "missions.recurrence.state.interrupted": "Kesintiye uğradı",
   "missions.recurrence.play": "{id} zamanlamasını başlat",

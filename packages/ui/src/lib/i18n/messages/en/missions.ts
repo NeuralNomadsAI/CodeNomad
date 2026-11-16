@@ -36,7 +36,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "Keep recurring start instructions within {limit} characters.",
   "missions.recurrence.capacity": "Free a recurring schedule slot, then try again.",
   "missions.recurrence.sourceInputTooLong": "Instructions plus followed-conversation context must fit {limit} characters. Shorten the instructions or remove followed conversations.",
-  "missions.recurrence.sourceLocationUnavailable": "Refresh the source location before creating this schedule.",
+  "missions.recurrence.sourceLocationUnavailable": "Refresh the source location.",
   "missions.recurrence.watchedInvalid": "Choose up to 32 different conversations.",
   "missions.followed.title": "Followed conversations",
   "missions.followed.add": "Add conversation",

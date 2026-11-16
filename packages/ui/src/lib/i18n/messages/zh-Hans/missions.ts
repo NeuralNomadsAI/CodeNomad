@@ -349,7 +349,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "请将定期启动指令限制在 {limit} 个字符以内。",
   "missions.recurrence.capacity": "请释放一个定期计划名额后重试。",
   "missions.recurrence.sourceInputTooLong": "指令与跟踪对话上下文总计必须在 {limit} 个字符以内。请缩短指令或移除跟踪对话。",
-  "missions.recurrence.sourceLocationUnavailable": "请刷新来源位置后再创建此计划。",
+  "missions.recurrence.sourceLocationUnavailable": "请刷新来源位置。",
   "missions.recurrence.state.running": "运行中",
   "missions.recurrence.state.interrupted": "已中断",
   "missions.recurrence.play": "启动日程 {id}",

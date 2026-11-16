@@ -349,7 +349,7 @@ export const missionMessages = {
   "missions.recurrence.instructionsTooLong": "定期開始の指示は {limit} 文字以内にしてください。",
   "missions.recurrence.capacity": "定期スケジュールの枠を空けてから再試行してください。",
   "missions.recurrence.sourceInputTooLong": "指示と追跡会話のコンテキストは {limit} 文字以内にしてください。指示を短くするか追跡会話を削除してください。",
-  "missions.recurrence.sourceLocationUnavailable": "スケジュールを作成する前にソースの場所を更新してください。",
+  "missions.recurrence.sourceLocationUnavailable": "ソースの場所を更新してください。",
   "missions.recurrence.state.running": "実行中",
   "missions.recurrence.state.interrupted": "中断",
   "missions.recurrence.play": "スケジュール {id} を開始",
