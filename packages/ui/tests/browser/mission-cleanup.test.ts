@@ -79,6 +79,7 @@ test("a passive list refresh during exact cleanup preflight keeps the original e
       && new URL(request.url()).pathname.endsWith(`/${mission.id}`), { timeout: 15000 })
     await clickListItemAction(cleanup.locator(".mission-list-item"), "Try again")
     await reading
+    await cleanup.getByRole("button", { name: "Retrying cleanup…", exact: true }).waitFor()
     await page.evaluate(async () => (await import("/src/stores/missions.ts" as string)).missionStore.refresh("fixture"))
     release()
     await cleanup.waitFor({ state: "detached", timeout: 15000 })

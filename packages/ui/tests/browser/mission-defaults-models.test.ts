@@ -109,6 +109,37 @@ async function setup(page: Page, initial: Record<string, unknown> = {}, delay?: 
   return { writes, creates, reads, errors, bucket: () => bucket, replace: (value: Record<string, any>) => { bucket = value } }
 }
 
+test("configuration progress names save, confirmation, removal and read separately", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
+  let release = () => {}, gate = Promise.resolve()
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Progress")
+    await nameBrief(page, "Progress")
+    await page.route("**/api/storage/config/ui*", async route => { await gate; return route.fallback() })
+    gate = new Promise<void>(resolve => { release = resolve })
+    await page.getByRole("button", { name: await text(page, "missions.models.save"), exact: true }).click()
+    await page.getByRole("status").filter({ hasText: /^Saving configuration…$/ }).waitFor()
+    release()
+    await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionModels.length === 1)
+    await pickBrief(page, fixture.bucket().settings.missionModels[0].id)
+    await briefMenu(page, "missions.models.remove")
+    assert.equal(await page.locator(".mission-brief-picker [role=status]").count(), 0, "confirmation has not started a write")
+    gate = new Promise<void>(resolve => { release = resolve })
+    await page.getByRole("dialog").getByRole("button", { name: await text(page, "missions.models.remove"), exact: true }).click()
+    await page.getByRole("status").filter({ hasText: /^Removing configuration…$/ }).waitFor()
+    release()
+    await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionModels.length === 0)
+    gate = new Promise<void>(resolve => { release = resolve })
+    await briefMenu(page, "missions.models.reload")
+    await page.getByRole("status").filter({ hasText: /^Reloading configurations…$/ }).waitFor()
+    release()
+    await page.getByRole("status").filter({ hasText: /^Reloading configurations…$/ }).waitFor({ state: "detached" })
+    assert.equal(fixture.writes.length, 2)
+    assert.deepEqual(fixture.errors, [])
+  } finally { release(); await page.close() }
+})
+
 test("creation waits for loaded defaults and exposes exact requested choices", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let release!: () => void

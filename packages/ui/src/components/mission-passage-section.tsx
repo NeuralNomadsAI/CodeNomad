@@ -17,7 +17,9 @@ export function MissionPassageSectionContent(props: { instanceId: string; source
   const { t } = useI18n()
   const [value, setValue] = createSignal<MissionRecurrenceCurrentContent>()
   const [error, setError] = createSignal(false)
+  const [attempt, setAttempt] = createSignal(0)
   createEffect(() => {
+    attempt()
     const source = props.source, page = props.page, instanceId = props.instanceId
     const directory = instances().get(instanceId)?.folder, client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
     const key = JSON.stringify([instanceId, directory, generation, source, page])
@@ -48,8 +50,10 @@ export function MissionPassageSectionContent(props: { instanceId: string; source
     return result?.pageCount === 1 && !props.raw ? missionMarkdownPage(result.sourceText, 0, 9_000).markdownText : null
   }
   return <>
-    <Show when={error()}><p role="status">{t(value() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-    <Show when={value()} fallback={<p role="status">{t("missions.control.loading")}</p>}>{result =>
+    <Show when={error()}><p role="status">{t(value() ? "missions.recurrence.section.stale" : "missions.recurrence.section.unavailable")}{" "}
+      <button type="button" class="window-action" onClick={() => setAttempt(value => value + 1)}>{t("missions.control.retry")}</button>
+    </p></Show>
+    <Show when={value()} fallback={<Show when={!error()}><p role="status">{t("missions.control.reader.loading")}</p></Show>}>{result =>
       <Show when={markdown() !== null} fallback={<pre>{result().sourceText}</pre>}>
         <Markdown part={{ type: "text", text: markdown()! }} escapeRawHtml instanceId={props.instanceId} />
       </Show>

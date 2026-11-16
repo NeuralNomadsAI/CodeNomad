@@ -359,7 +359,7 @@ test("proven no-effect refusals release the control and refresh the row; uncerta
     replies.push({ status: 401, json: { error: "Authenticated human session required" } })
     before = snapshots
     await clickMissionAction(page, PAUSE)
-    await released("This action was not admitted, so nothing was applied. Sign in again if needed, then retry.", before)
+    await released("Authentication required. Reconnect.", before)
     assert.notEqual(posts[1].body.requestID, posts[0].body.requestID)
     assert.equal(posts[1].body.expectedRevision, posts[0].body.expectedRevision + 1)
 
@@ -381,6 +381,11 @@ test("proven no-effect refusals release the control and refresh the row; uncerta
     const { directory: _directory, scheduleID: _scheduleID, ...held } = posts[3].body
     assert.deepEqual(statusReads, [held], "the read names the exact held request")
     assert.equal(posts.length, 4, "no control was ever resent")
+    replies.push({ status: 400, json: { error: "Invalid control" } })
+    before = snapshots
+    await clickMissionAction(page, PAUSE)
+    await released("Invalid action. Review the schedule.", before)
+    assert.equal(posts.length, 5)
     assert.deepEqual(errors, [])
   } catch (error) { console.error(errors, posts, replies, await page.locator("body").innerText()); throw error } finally { await page.close() }
 })

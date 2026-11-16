@@ -426,6 +426,7 @@ test("a depth write acknowledged after leaving Settings is accepted and reread o
     await waitForDepthInfo(page, "OpenCode effective depth: 1")
     await waitForDepthReady(page)
     await menu.selectOption("2"); await started
+    assert.equal(await page.locator(".mission-depth [role=status]").textContent(), "Saving subagent depth…")
     await closeMissionSettings(page)
     release()
     await until(() => depth === 2)
