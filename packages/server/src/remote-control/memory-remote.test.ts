@@ -264,10 +264,9 @@ test("memory relays require current destination proof and refuse unreviewed meth
   assert.equal(f.io(), before)
 })
 
-test("reviewed logs, repository source and pruning preview relays dispatch once and reject other methods", { timeout: 20_000 }, async t => {
+test("reviewed repository source and pruning preview relays dispatch once and reject other methods", { timeout: 20_000 }, async t => {
   const f = await fixture(t)
   const routes = [
-    ["GET", "/api/opencode/logs"],
     ["GET", "/api/workspaces/same-workspace/repository-source"],
     ["POST", "/api/workspaces/same-workspace/session-pruning/preview"],
   ] as const

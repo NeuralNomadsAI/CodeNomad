@@ -19,7 +19,7 @@ const DEVICE_COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60
 const PUBLIC_PATHS = new Set([PAIR_PAGE_PATH, PAIR_EXCHANGE_PATH, "/api/auth/status"])
 // Host-only surfaces retain the reviewed browser UI exceptions below and live
 // preview capabilities while the host allows them.
-const LOCAL_ONLY_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/token", "/api/auth/password", "/api/auth/logout"])
+const LOCAL_ONLY_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/token", "/api/auth/password", "/api/auth/logout", "/api/opencode/logs"])
 const LOCAL_ONLY_PREFIXES = ["/auth/", "/api/backends/", "/api/remote-control/", "/api/remote-proxy/", "/api/remote-servers/", "/api/opencode-plugin/", "/sidecars/", "/previews/"]
 const REMOTE_MANAGEMENT_READS = new Set(["/api/remote-control/status"])
 // Client-supplied routing or authority metadata is never trusted on the remote surface.
@@ -32,7 +32,7 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", /^\/api\/memory$/],
   ["GET PUT", /^\/api\/memory\/settings$/],
-  ["GET", /^\/api\/(?:auth\/status|meta|events|remote-control\/status|missions\/playbooks|opencode\/logs)$/],
+  ["GET", /^\/api\/(?:auth\/status|meta|events|remote-control\/status|missions\/playbooks)$/],
   ["POST", /^\/api\/client-connections\/pong$/],
   ["GET", /^\/api\/usage\/[^/]+$/],
   ["GET", /^\/api\/filesystem(?:\/files\/content)?$/],

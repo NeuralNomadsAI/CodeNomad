@@ -327,6 +327,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   app.addHook("onRequest", async (request, reply) => {
     const pathname = routedPath(request.raw.url ?? "")
+    // Global diagnostics retain local UI authority even behind a loopback reverse proxy.
+    if (pathname === "/api/opencode/logs" && !backendUiAccess.localUiRequest(request))
+      return reply.header("connection", "close").code(404).send({ error: "Not found" })
     if (pathname && isBackendUiRoute(pathname, request.method)) {
       // The existing direct server-device memory contract keeps its closed protocol.
       // Every browser memory call uses the same pre-body channel/provenance guard as the relay.

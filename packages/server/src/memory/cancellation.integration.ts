@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import { syncBuiltinESMExports } from "node:module"
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -231,4 +233,48 @@ test("setEnabled cancellation abandons its waiting lock without persisting the p
     await rejected
   }
   assert.deepEqual(await memory.setEnabled(true), { enabled: true })
+})
+
+test("revocation during journal fsync refuses the rename and preserves entry bytes and Git history", { timeout: 60_000 }, async t => {
+  const root = await temporary(t), store = new MemoryStore(root)
+  await save(store)
+  const git = new MemoryGit(store.directory), head = await git.head()
+  const file = path.join(store.directory, "global", `${entry.id}.md`), before = await readFile(file)
+  const journal = path.join(store.directory, ".transaction.json")
+  const reached = deferred(), gate = deferred(), caller = new AbortController()
+  const open = fs.promises.open
+  const mock = t.mock.method(fs.promises, "open", async (...args: Parameters<typeof open>) => {
+    const handle = await open(...args)
+    const target = String(args[0])
+    if (path.dirname(target) === store.directory && path.basename(target).startsWith(".transaction.json.") && target.endsWith(".tmp")) {
+      const sync = handle.sync.bind(handle)
+      handle.sync = async () => { await sync(); reached.resolve(); await gate.promise }
+    }
+    return handle
+  })
+  syncBuiltinESMExports()
+  const pending = store.mutate(global, () => ({
+    kind: "save", entry: { ...entry, text: "Revoked edit must not commit." }, result: undefined,
+  }), caller.signal)
+  const rejected = assert.rejects(pending, { name: "AbortError" })
+  try {
+    await reached.promise
+    caller.abort()
+    await assert.rejects(readFile(journal), { code: "ENOENT" })
+    assert.deepEqual(await readFile(file), before)
+    assert.equal(await git.head(), head)
+    gate.resolve()
+    await rejected
+  } finally {
+    gate.resolve()
+    await pending.catch(() => undefined)
+    mock.mock.restore()
+    syncBuiltinESMExports()
+  }
+  assert.deepEqual(await readFile(file), before)
+  assert.equal(await git.head(), head)
+  assert.equal((await git.run(["rev-list", "--count", "HEAD"])).trim(), "1")
+  await assert.rejects(readFile(journal), { code: "ENOENT" })
+  assert.ok((await readdir(store.directory)).every(name => !name.startsWith(".transaction.json.")))
+  assert.deepEqual(await new MemoryStore(root).list(global), [entry])
 })

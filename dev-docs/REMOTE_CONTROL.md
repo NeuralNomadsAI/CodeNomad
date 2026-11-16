@@ -162,7 +162,7 @@ An originless native caller keeps local UI authority on a loopback target Host. 
 | `/api/remote-servers/:id/connect`, including password/pairing | Common capture; queue and private connection/pairing client inherit its signal | Each connect owns its private candidate; destination-generation checks fence credential persistence | Check before dispatch and credential/result publication |
 | SSH forward readiness and renewal identity check | Each principal owns its interruptible wait; profile generation and forward identity fence readiness | The backend owns one bounded forward/identity check per profile generation, across principals | Cancelled waiters cannot resume business dispatch; retargeting, Forget and final-owner shutdown close shared infrastructure |
 | Probe, SSH-host/profile inventory, Forget and profile-state mutations | Common capture; probe IO inherits the signal; synchronous administration checks before mutation | None; explicit administration retains its profile-wide effects | Common pre-publication check |
-| Host `/api/memory` and `/api/memory/settings` | Common pre-body channel guard and principal capture; signal follows project identity, repository-lock waits, reads and locked decisions | The repository lock serializes transactions; each waiter retains its own signal | Recheck after awaits and before journal admission; accepted journals complete durably; acknowledgement uses the original principal |
+| Host `/api/memory` and `/api/memory/settings` | Common pre-body channel guard and principal capture; signal follows project identity, repository-lock waits, reads and locked decisions | The repository lock serializes transactions; each waiter retains its own signal | Recheck after awaits and immediately before the journal temporary file's atomic rename; published journals complete durably; acknowledgement uses the original principal |
 | Relayed memory and Tidy up preflight | Same relay capture, current destination proof and request signal | Existing backend client and borrower-aware authentication | Memory replies retain the relay header filter and publication fence; Tidy up retains its selected backend/project context |
 | Request logging, including rejected/malformed targets | Independent of admission | None | Static route template, method, status and duration only; raw paths, params, queries and bodies stay private |
 
@@ -210,7 +210,7 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 | Reviewed device-route family | Admission surface |
 |---|---|
 | Identity and connection | GET auth status, metadata, events and read-only Remote Control status; POST connection pong. |
-| Backend data and preferences | Explicit filesystem, config-file, storage owner/instance, usage, runtime/logs, speech, SideCar/previews and panel-extension method/path pairs in `SERVER_DEVICE_ROUTES`; existing host-only exclusions still apply. |
+| Backend data and preferences | Explicit filesystem, config-file, storage owner/instance, usage, runtime, speech, SideCar/previews and panel-extension method/path pairs in `SERVER_DEVICE_ROUTES`; existing host-only exclusions still apply. |
 | Project operations | Workspace inventory/lifecycle, repository-source discovery, directory-owned background Shell inventory (GET), worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning preview and mutation, pending requests, Missions and Yolo method/path pairs. |
 | Agent memory | UI clients use exact POST `/api/memory` and GET/PUT `/api/memory/settings`; remote browser admission requires the strict host flag and channel provenance. Relayed memory requires its current proof. The explicit server-device catalog retains its authenticated direct transport and ingress boundary. Project-directory ownership and strict schemas apply at the destination. |
 | Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
@@ -226,6 +226,7 @@ Authenticated browser admission retains these method/path boundaries:
 | `/login`, `/auth/token`; POST `/api/auth/{login,token,logout,password}` | Local bootstrap/password administration; direct password clients retain login/logout |
 | POST `/api/remote-control/{start,pairings}`; DELETE `/api/remote-control`; GET `/api/remote-control/devices`; DELETE `/api/remote-control/devices/:id`; PUT `/api/remote-control/previews` | Host administration under the Remote Control/listening policy |
 | Config document/owner patches changing `server.sidecarsOverDirectHttps` | Host-owned setting; authoritative before/after comparison |
+| GET `/api/opencode/logs`, including backend relays | Host-only global diagnostics: the absolute path and raw global log may contain credentials and data from other projects |
 | `/sidecars/:id` and descendants, HTTP/WS | Device-local content, with the explicit host-controlled direct HTTPS opt-in |
 | `/api/backends/:id/preview-capabilities` and `/:capability`; preview HTTP/WS content | Scoped preview authority; live ingress content additionally follows the Web previews switch |
 | POST `/api/opencode-plugin/automation` | Private loopback native bridge and token |
@@ -321,6 +322,10 @@ credentials follow their separate registry lifetime and revocation rules.
 
 ## Validation
 
+- `remote-control/logs-host-only.test.ts` uses the production global-log reader
+  with synthetic credentials and private paths. Remote browser/device channels
+  and relays refuse before host binary discovery or upstream IO; native loopback
+  retains the host diagnostic view.
 - `remote-control/memory-remote.test.ts` covers the exact host/relay memory catalog,
   channel provenance, strict feature flag, schemas, project ownership, proofs and
   principal revocation before body parsing, during lock waits and before publication.

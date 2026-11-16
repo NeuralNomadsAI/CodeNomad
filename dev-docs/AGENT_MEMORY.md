@@ -207,9 +207,10 @@ editing and Tidy up on that backend.
 The common pre-body hook captures the request principal. Its signal fences
 project-identity follow-ups, repository-lock waits, read/writability checks,
 locked mutation decisions and response publication. Each lock waiter owns its
-cancellation. The journal checkpoint admits a durable transaction; accepted
-transactions and their Git recovery finish while revoked callers lose their
-acknowledgements. Individual host filesystem/Git reads retain their bounded
+cancellation. After writing, syncing and closing the temporary journal, the
+original signal is checked immediately before its atomic rename. That publication
+admits a durable transaction; accepted transactions and their Git recovery finish
+while revoked callers lose their acknowledgements. Individual host filesystem/Git reads retain their bounded
 native lifetime, with the original signal checked before subsequent work.
 
 `memory/api.ts` validates the shared UI/tool operation contract from
@@ -471,7 +472,8 @@ Windows sharing failures and crash-recovery history remain asserted. Readiness
 and lock-candidate publication coordinate handoffs; test polling deadlines bound
 missing signals independently of the unchanged product lock deadline.
 `memory/cancellation.integration.ts` checks independently cancelled lock/read/write
-waiters, pre-journal refusal and post-journal durability with real Git/filesystem IO.
+waiters, revocation during temporary-journal fsync, pre-rename refusal and
+post-journal durability with real Git/filesystem IO.
 
 ```text
 node --import tsx --test packages/ui/tests/contracts/agent-memory-types.test.ts

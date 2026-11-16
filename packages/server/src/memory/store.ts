@@ -33,7 +33,8 @@ export function decodeMemoryEntry(text: string): MemoryEntry {
 }
 
 /** Same-directory rename replaces files on Windows too; never unlink the destination first. */
-export async function atomicMemoryWrite(file: string, content: string): Promise<void> {
+export async function atomicMemoryWrite(file: string, content: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
   if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) throw new MemoryError("invalid", "Memory file is too large")
   const temporary = `${file}.${randomUUID()}.tmp`
   let created = false
@@ -42,6 +43,7 @@ export async function atomicMemoryWrite(file: string, content: string): Promise<
     created = true
     try { await handle.writeFile(content, "utf8"); await handle.sync() }
     finally { await handle.close() }
+    signal?.throwIfAborted()
     await rename(temporary, file)
   } finally { if (created) await rm(temporary, { force: true }).catch(() => undefined) }
 }
@@ -179,9 +181,9 @@ export class MemoryStore {
       signal?.throwIfAborted()
       const transaction: Transaction = { version: 1, id: randomUUID(), file: `${scope}/${id}.md`, content }
       await this.ensureScope(scope)
-      // The journal admits the durable transaction; recovery owns it after this checkpoint.
+      // Atomic journal publication admits the durable transaction owned by finish/recovery.
       signal?.throwIfAborted()
-      await atomicMemoryWrite(this.journal, JSON.stringify(transaction))
+      await atomicMemoryWrite(this.journal, JSON.stringify(transaction), signal)
       await this.finish(transaction, true)
       return mutation.result
     }, signal)
