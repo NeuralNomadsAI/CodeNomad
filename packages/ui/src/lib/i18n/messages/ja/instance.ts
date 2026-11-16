@@ -337,6 +337,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.title": "OpenCode バイナリ",
   "opencodeBinarySelector.customPath.placeholder": "{name} バイナリのパスを入力…",
   "opencodeBinarySelector.actions.add": "追加",
+  "opencodeBinarySelector.actions.chooseOther": "別のバイナリを選択…",
   "opencodeBinarySelector.actions.browse": "バイナリを参照…",
   "opencodeBinarySelector.actions.removeTitle": "バイナリを削除",
   "opencodeBinarySelector.status.checkingVersions": "バージョンを確認中…",

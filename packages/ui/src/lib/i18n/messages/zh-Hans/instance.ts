@@ -337,6 +337,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.title": "OpenCode 可执行文件",
   "opencodeBinarySelector.customPath.placeholder": "输入 {name} 可执行文件路径…",
   "opencodeBinarySelector.actions.add": "添加",
+  "opencodeBinarySelector.actions.chooseOther": "选择其他可执行文件…",
   "opencodeBinarySelector.actions.browse": "浏览可执行文件…",
   "opencodeBinarySelector.actions.removeTitle": "移除可执行文件",
   "opencodeBinarySelector.status.checkingVersions": "正在检查版本…",

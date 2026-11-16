@@ -231,50 +231,56 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
         </div>
 
         <div class="panel-body space-y-3">
-          <div class="selector-input-group">
-            <input
-              type="text"
-              value={customPath()}
-              onInput={(e) => setCustomPath(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault()
-                  handleCustomPathSubmit()
-                }
-              }}
-              disabled={props.disabled}
-              placeholder={t("opencodeBinarySelector.customPath.placeholder", { name: "opencode2" })}
-              class="selector-input"
-            />
-            <button
-              type="button"
-              onClick={handleCustomPathSubmit}
-              disabled={props.disabled || !customPath().trim()}
-              class="selector-button selector-button-primary"
-            >
-              <Plus class="w-4 h-4" />
-              {t("opencodeBinarySelector.actions.add")}
-            </button>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void handleBrowseBinary()}
-            disabled={props.disabled}
-            class="selector-button selector-button-secondary w-full flex items-center justify-center gap-2"
-          >
-            <FolderOpen class="w-4 h-4" />
-            {t("opencodeBinarySelector.actions.browse")}
-          </button>
-
-          <Show when={validationError()}>
-            <div class="selector-validation-error">
-              <div class="selector-validation-error-content">
-                <AlertCircle class="selector-validation-error-icon" />
-                <span class="selector-validation-error-text">{validationError()}</span>
+          <details class="settings-disclosure">
+            <summary>{t("opencodeBinarySelector.actions.chooseOther")}</summary>
+            <div class="space-y-3">
+              <div class="selector-input-group">
+                <input
+                  type="text"
+                  value={customPath()}
+                  onInput={(e) => setCustomPath(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      handleCustomPathSubmit()
+                    }
+                  }}
+                  disabled={props.disabled}
+                  placeholder={t("opencodeBinarySelector.customPath.placeholder", { name: "opencode2" })}
+                  aria-label={t("opencodeBinarySelector.customPath.placeholder", { name: "opencode2" })}
+                  class="selector-input"
+                />
+                <button
+                  type="button"
+                  onClick={handleCustomPathSubmit}
+                  disabled={props.disabled || !customPath().trim()}
+                  class="selector-button selector-button-primary"
+                >
+                  <Plus class="w-4 h-4" />
+                  {t("opencodeBinarySelector.actions.add")}
+                </button>
               </div>
+
+              <button
+                type="button"
+                onClick={() => void handleBrowseBinary()}
+                disabled={props.disabled}
+                class="selector-button selector-button-secondary w-full flex items-center justify-center gap-2"
+              >
+                <FolderOpen class="w-4 h-4" />
+                {t("opencodeBinarySelector.actions.browse")}
+              </button>
+
+              <Show when={validationError()}>
+                <div class="selector-validation-error">
+                  <div class="selector-validation-error-content">
+                    <AlertCircle class="selector-validation-error-icon" />
+                    <span class="selector-validation-error-text">{validationError()}</span>
+                  </div>
+                </div>
+              </Show>
             </div>
-          </Show>
+          </details>
         </div>
 
         <div class="panel-list panel-list--fill max-h-80 overflow-y-auto">

@@ -30,18 +30,9 @@ export const OpenCodeSettingsSection: Component = () => {
       <OpenCodeLoginStartCard />
 
       <div class="settings-card">
-        <div class="settings-card-header">
-          <div>
-            <h3 class="settings-card-title">{t("settings.opencode.logLevel.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.opencode.logLevel.subtitle")}</p>
-          </div>
-        </div>
         <div class="settings-card-body">
-          <OpenCodeLogsAction />
           <div class="settings-toggle-row settings-toggle-row-compact">
-            <div>
-              <div class="settings-toggle-title">{t("settings.opencode.logLevel.selector.title")}</div>
-            </div>
+            <h3 class="settings-card-title">{t("settings.opencode.logLevel.title")}</h3>
             <Select<LogLevelOption>
               value={selectedLogLevel()}
               onChange={(option) => option && updateLogLevel(option.value)}
@@ -67,6 +58,7 @@ export const OpenCodeSettingsSection: Component = () => {
               </Select.Portal>
             </Select>
           </div>
+          <OpenCodeLogsAction />
         </div>
       </div>
     </div>

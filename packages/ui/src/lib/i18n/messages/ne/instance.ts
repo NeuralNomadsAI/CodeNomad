@@ -336,6 +336,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.title": "OpenCode बाइनरी",
   "opencodeBinarySelector.customPath.placeholder": "{name} बाइनरीको मार्ग प्रविष्ट गर्नुहोस्...",
   "opencodeBinarySelector.actions.add": "थप्नुहोस्",
+  "opencodeBinarySelector.actions.chooseOther": "अर्को बाइनरी छान्नुहोस्…",
   "opencodeBinarySelector.actions.browse": "बाइनरीको लागि ब्राउज गर्नुहोस्...",
   "opencodeBinarySelector.actions.removeTitle": "बाइनरी हटाउनुहोस्",
   "opencodeBinarySelector.status.checkingVersions": "संस्करणहरू जाँच गर्दै...",
