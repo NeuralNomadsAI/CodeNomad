@@ -19,7 +19,8 @@ import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
 import { hasTranscriptProjectionGates, isTranscriptWatched, scheduleTranscriptProjection } from "./opencode-projection-frame"
 import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
 import {
-  divergenceFor, isDiverged, MAX_DIVERGENCE_REPAIRS, missingEventTarget, type TranscriptDivergence,
+  divergenceFor, isDiverged, isRedeliveredFragment, MAX_DIVERGENCE_REPAIRS, missingEventTarget, settleHeldTargets,
+  type TranscriptDivergence,
 } from "./opencode-data-divergence"
 
 const log = getLogger("session")
@@ -254,9 +255,8 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       // A re-delivered `session.tool.called` must not regress a tool part that
       // already settled: the SDK reducer overwrites the state wholesale, which
       // would flip a completed read's images back to "running" until the next
-      // settlement read healed it. A live re-call always follows a fresh
-      // `session.tool.input.started` part, so a `called` whose newest matching
-      // part is already completed or error is stale.
+      // settlement read healed it. Native tool IDs are unique per step, so a
+      // `called` whose newest matching part is already completed or error is stale.
       if (details.type === "session.tool.called" && isStaleToolCalled(data, details)) {
         const payload = (details as { data?: { sessionID?: unknown; assistantMessageID?: unknown; id?: unknown } }).data
         log.warn("Dropped a re-delivered session.tool.called for a settled tool part; applying it would regress the completed result (and its images) back to running", {
@@ -267,6 +267,10 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         })
         return
       }
+      // An authoritative page (a seed, a repair or a settlement read) can hold
+      // a step whose events are still in transit: their fragment starts would
+      // append duplicates of parts the page already holds.
+      if (isRedeliveredFragment(data, details)) return
       for (const listener of listeners) listener({ name: details.type, details })
     }
     return {
@@ -987,7 +991,7 @@ export async function seedOpenCodeSessionMessages(
   const merged = live.length ? mergePageWithSnapshot(live, [...seed].reverse(), snapshotRows(live)).reverse() : seed
   try {
     await entry.syncMessages(sessionId, merged, () => true)
-    if (transcript.entry === entry) transcript.divergence?.targets.clear()
+    if (transcript.entry === entry && transcript.divergence?.entry === entry) settleHeldTargets(transcript.divergence, entry.data)
   } catch (error) {
     log.warn("Failed to seed OpenCode session messages", { instanceId, sessionId, error })
   }
@@ -1010,7 +1014,7 @@ function emitTranscriptEvent(
     noteTranscriptDivergence(instanceId, sessionId, transcript, REDUCE_FAILED_TARGET)
     return
   }
-  if (missing !== undefined) noteTranscriptDivergence(instanceId, sessionId, transcript, missing)
+  if (missing !== undefined) noteTranscriptDivergence(instanceId, sessionId, transcript, missing, event)
 }
 
 const REDUCE_FAILED_TARGET = "\0reduce-failed"
@@ -1025,10 +1029,16 @@ function awaitsFirstPage(instanceId: string, sessionId: string, transcript: Tran
 /** Authoritative recovery already owns reconnects, overflows and rotations.
  * An unwatched session defers its repair to its next page load, which reseeds
  * the reducer (`seedOpenCodeSessionMessages`); a watched one repairs now. */
-function noteTranscriptDivergence(instanceId: string, sessionId: string, transcript: TranscriptEntry, target: string): void {
+function noteTranscriptDivergence(
+  instanceId: string,
+  sessionId: string,
+  transcript: TranscriptEntry,
+  target: string,
+  event?: OpenCodeEvent,
+): void {
   if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.reconnectResync
     || transcript.resyncing || transcript.needsAuthoritativeResync) return
-  divergenceFor(transcript, transcript.entry).targets.add(target)
+  divergenceFor(transcript, transcript.entry).targets.set(target, event)
   if (!isTranscriptWatched(instanceId, sessionId) || awaitsFirstPage(instanceId, sessionId, transcript)) return
   repairDivergedTranscript(instanceId, sessionId, transcript, false)
 }
@@ -1054,11 +1064,9 @@ function repairDivergedTranscript(instanceId: string, sessionId: string, transcr
     if (transcript.divergence !== divergence) return
     divergence.pending = false
     if (transcript.entry !== entry || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
-    // Misses the page healed are settled; the rest wait for a later miss or settlement.
-    divergence.targets.delete(REDUCE_FAILED_TARGET)
-    for (const id of divergence.targets) {
-      if (entry.data.session.message.get(sessionId, id)) divergence.targets.delete(id)
-    }
+    // Misses the page healed are settled (a missed part only once the page
+    // holds that part); the rest wait for a later miss or settlement.
+    settleHeldTargets(divergence, entry.data)
     const owed = divergence.settlementOwed
     divergence.settlementOwed = false
     if (owed) repairDivergedTranscript(instanceId, sessionId, transcript, true)
@@ -1286,9 +1294,8 @@ function reconcileStrandedRoundTools(instanceId: string, sessionId: string, tran
 
 /** A `session.tool.called` whose newest matching part already settled. The
  * daemon never publishes `called` for a settled call (its runner dies on the
- * duplicate), and a legitimate re-call is always preceded by a fresh
- * `session.tool.input.started` part that becomes the reducer's match, so a
- * `called` landing on a completed or errored part is a stale re-delivery. */
+ * duplicate) and tool IDs are unique per step, so a `called` landing on a
+ * completed or errored part is a stale re-delivery. */
 function isStaleToolCalled(data: Data, event: OpenCodeEvent): boolean {
   const payload = (event as { data?: { sessionID?: unknown; assistantMessageID?: unknown; id?: unknown } }).data
   const sessionId = typeof payload?.sessionID === "string" ? payload.sessionID : undefined

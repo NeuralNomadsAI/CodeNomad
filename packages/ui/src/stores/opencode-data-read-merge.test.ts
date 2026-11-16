@@ -89,6 +89,18 @@ describe("OpenCode data read merge", () => {
     assert.equal(merged.content[0], (live as any).content[0], "parts without an identity stay live")
   })
 
+  it("adds identified parts only the page holds to a changed row, beside their page neighbours", () => {
+    const tool = (id: string, status: string) => ({ type: "tool", id, name: "bash", time: { created: 2 }, state: { status, input: {}, metadata: {} } })
+    const withTools = (...content: unknown[]) => ({ ...row("live", "base"), content: [{ type: "text", text: "base" }, ...content] }) as unknown as SessionMessageInfo
+    const since = snapshotRows([withTools(tool("a", "running"), tool("c", "running"))])
+    const live = withTools(tool("a", "completed"), tool("c", "running"))
+    const page = withTools(tool("first", "completed"), tool("a", "running"), tool("b", "completed"), tool("c", "running"), tool("last", "running"))
+    const [merged] = mergePageWithSnapshot([live], [page], since) as any[]
+    assert.deepEqual(merged.content.map((part: any) => part.id ?? part.type), ["text", "first", "a", "b", "c", "last"])
+    assert.equal(merged.content[2].state.status, "completed", "the live change of a part is kept")
+    assert.equal(merged.content[3].state.status, "completed", "a part the live row missed joins it")
+  })
+
   it("settles a stranded tool while a sibling tool reports progress during the fetch", async () => {
     const instanceId = "opencode-merge-sibling-progress"
     const stranded = { assistantMessageID: "live", id: "stranded" }

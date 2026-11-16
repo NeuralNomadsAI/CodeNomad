@@ -29,14 +29,15 @@ const partId = (part: unknown): string | undefined => {
 
 /** A live row changed since its snapshot keeps its live version, except that
  * each identified content part (a tool call, for example) left unchanged since
- * the snapshot takes the page's version: progress on one part never shadows
- * authority for a sibling part. */
+ * the snapshot takes the page's version, and an identified part only the page
+ * holds joins the row beside its page neighbours: progress on one part never
+ * shadows authority for a sibling part, nor hides one the live row missed. */
 function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, snapshot: string | undefined): SessionMessageInfo {
   const content = (row as ContentRow).content
   const fetchedContent = (fetched as ContentRow).content
   const before = snapshot === undefined ? undefined : (JSON.parse(snapshot) as ContentRow).content
-  if (!Array.isArray(content) || !Array.isArray(fetchedContent) || !Array.isArray(before)) return row
-  const beforeById = new Map(before.flatMap((part) => partId(part) === undefined ? [] : [[partId(part)!, JSON.stringify(part)]]))
+  if (!Array.isArray(content) || !Array.isArray(fetchedContent)) return row
+  const beforeById = new Map((Array.isArray(before) ? before : []).flatMap((part) => partId(part) === undefined ? [] : [[partId(part)!, JSON.stringify(part)]]))
   const fetchedById = new Map(fetchedContent.flatMap((part) => partId(part) === undefined ? [] : [[partId(part)!, part]]))
   let replaced = false
   const parts = content.map((part) => {
@@ -44,6 +45,21 @@ function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, s
     if (id === undefined || !fetchedById.has(id) || beforeById.get(id) !== JSON.stringify(part)) return part
     replaced = true
     return fetchedById.get(id)
+  })
+  const liveIds = new Set(content.flatMap((part) => partId(part) === undefined ? [] : [partId(part)!]))
+  fetchedContent.forEach((part, index) => {
+    const id = partId(part)
+    if (id === undefined || liveIds.has(id)) return
+    // After the nearest preceding page part the row holds, else before the
+    // nearest following one, else at the end.
+    const anchorAfter = fetchedContent.slice(0, index).reverse().map(partId).find((other) => other !== undefined && liveIds.has(other))
+    const anchorBefore = fetchedContent.slice(index + 1).map(partId).find((other) => other !== undefined && liveIds.has(other))
+    const position = anchorAfter !== undefined
+      ? parts.findIndex((other) => partId(other) === anchorAfter) + 1
+      : anchorBefore !== undefined ? parts.findIndex((other) => partId(other) === anchorBefore) : parts.length
+    parts.splice(position, 0, part)
+    liveIds.add(id)
+    replaced = true
   })
   return replaced ? { ...(row as object), content: parts } as SessionMessageInfo : row
 }

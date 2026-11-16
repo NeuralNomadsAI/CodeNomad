@@ -169,6 +169,55 @@ describe("live transcript divergence repair", () => {
     } finally { f.dispose() }
   })
 
+  it("repairs a missed tool while a sibling tool changes during the read", async () => {
+    const f = fixture("divergence-sibling-tool")
+    const tool = (id: string, status: string) => ({ type: "tool", id, name: "read", time: { created: 5 },
+      state: status === "completed" ? { status, input: {}, metadata: {}, content: [] } : { status, input: {}, metadata: {} } })
+    const toolStatus = (messageId: string, id: string) => (f.store().getMessage(messageId)?.parts as any)?.[id]?.data?.state?.status
+    try {
+      f.pages.set("s", [user("msg_u1")])
+      await loadMessages("divergence-sibling-tool", "s")
+      await settle()
+      f.native("session.step.started", { assistantMessageID: "msg_a1", agent: "build", model, started: 5 })
+      f.native("session.tool.input.started", { assistantMessageID: "msg_a1", id: "tool_a", name: "read" })
+      f.native("session.tool.called", { assistantMessageID: "msg_a1", id: "tool_a", input: {}, executed: false })
+      // Tool B's start and call never arrived; its success owes a repair, and
+      // tool A completes while that read is in flight.
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", ""), content: [tool("tool_a", "running"), tool("tool_b", "completed")] }])
+      f.setDuringFetch(() => {
+        f.setDuringFetch(undefined)
+        f.native("session.tool.success", { assistantMessageID: "msg_a1", id: "tool_a", metadata: {}, content: [] })
+      })
+      f.native("session.tool.success", { assistantMessageID: "msg_a1", id: "tool_b", metadata: {}, content: [] })
+      await settle()
+      assert.equal(f.reads.length, 2)
+      assert.equal(toolStatus("msg_a1", "tool_a"), "completed", "the live change of tool A is kept")
+      assert.equal(toolStatus("msg_a1", "tool_b"), "completed", "the fetched tool B must join the live-changed row")
+    } finally { f.dispose() }
+  })
+
+  it("keeps a missed part diverged until a page holds it", async () => {
+    const f = fixture("divergence-part-heal")
+    try {
+      f.pages.set("s", [user("msg_u1")])
+      await loadMessages("divergence-part-heal", "s")
+      await settle()
+      f.native("session.step.started", { assistantMessageID: "msg_a1", agent: "build", model, started: 5 })
+      // The page holds the message but not yet tool B.
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", ""), content: [] }])
+      f.native("session.tool.success", { assistantMessageID: "msg_a1", id: "tool_b", metadata: {}, content: [] })
+      await settle()
+      assert.equal(f.reads.length, 2)
+      f.pages.set("s", [user("msg_u1"), { ...assistant("msg_a1", "", true), content: [
+        { type: "tool", id: "tool_b", name: "read", time: { created: 5 }, state: { status: "completed", input: {}, metadata: {}, content: [] } }] }])
+      f.native("session.step.ended", { assistantMessageID: "msg_a1", finish: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } })
+      f.native("session.execution.succeeded", {})
+      await settle()
+      assert.equal(f.reads.length, 3, "settlement still owes the read for the absent part")
+      assert.equal((f.store().getMessage("msg_a1")?.parts as any)?.tool_b?.data?.state?.status, "completed")
+    } finally { f.dispose() }
+  })
+
   it("defers an unwatched session's repair until it is opened", async () => {
     const f = fixture("divergence-unwatched", ["s", "other"])
     try {
