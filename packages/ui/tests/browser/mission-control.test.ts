@@ -1305,20 +1305,24 @@ test("mission selection, focus and reader survive native invalidations, remount 
   } catch (error) { console.error(await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
-for (const outcome of ["created", "rejected", "unknown", "remounted"] as const) test(`lost creation response reconciles ${outcome} silently without a duplicate`, async () => {
+for (const outcome of ["created", "rejected", "unknown", "remounted", "hidden-response", "new-client"] as const) test(`lost creation response reconciles ${outcome} silently without a duplicate`, async () => {
   const page = await browser.newPage({ locale: "en-US" })
+  const receiptGate = Promise.withResolvers<void>()
   try {
     await setup(page)
     await routeUiSettings(page, {})
     const created = { ...mission("recovered"), title: "Recovered mission", objective: "Original request" }
     let requestId = "", creates = 0, reads = 0, settled = false
-    const state = () => outcome === "remounted" ? settled ? "created" : "unknown" : outcome
+    const state = () => outcome === "remounted" ? settled ? "created" : "unknown"
+      : outcome === "hidden-response" ? "created" : outcome === "new-client" ? "unknown" : outcome
     await page.route("**/api/workspaces/fixture/missions**", async route => {
       const request = route.request()
       if (request.url().includes("/creation/")) {
-        reads++
+        const read = ++reads
         assert.ok(request.url().endsWith(encodeURIComponent(requestId)))
-        return route.fulfill({ json: { requestId, state: state(), ...(state() === "created" ? { mission: created } : {}) } })
+        if (outcome === "hidden-response" || outcome === "new-client" && read === 1) await receiptGate.promise
+        const resultState = outcome === "new-client" && read === 1 ? "created" : state()
+        return route.fulfill({ json: { requestId, state: resultState, ...(resultState === "created" ? { mission: created } : {}) } })
       }
       if (isMissionContentRequest(request.url())) return route.fallback()
       if (request.method() === "POST" && !request.url().endsWith("/panel-page")) {
@@ -1328,12 +1332,23 @@ for (const outcome of ["created", "rejected", "unknown", "remounted"] as const) 
       return route.fulfill({ json: { available: true, missions: panelMissions(state() === "created" && reads ? [created] : []), generatedAt: 1, discardedEvents: 0 } })
     })
     await page.goto(url)
+    if (outcome === "new-client") await fixtureCall(page, "connectCatalog")
     await missionGeneralAction(page, "Create mission").click()
     const form = page.locator("form.mission-editor"), objective = form.locator("textarea").first(), submit = form.locator("button[type=submit]")
     await objective.fill("Original request")
     await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
     await submit.click()
     await until(() => reads > 0)
+    if (outcome === "hidden-response") {
+      await page.getByRole("button", { name: "Cancel", exact: true }).click()
+      const received = page.waitForResponse(response => response.url().includes("/missions/creation/"))
+      receiptGate.resolve(); await received
+      await missionGeneralAction(page, "Create mission").click()
+    } else if (outcome === "new-client") {
+      await fixtureCall(page, "replaceClient")
+      await until(() => reads >= 2).catch(async error => { throw new Error(`${error}; reads=${reads}; ${await form.innerText()}`) })
+      receiptGate.resolve()
+    }
     if (outcome === "remounted") {
       await page.getByRole("button", { name: "Cancel", exact: true }).click()
       settled = true
@@ -1352,7 +1367,7 @@ for (const outcome of ["created", "rejected", "unknown", "remounted"] as const) 
     }
     assert.equal(await page.locator("form.mission-editor [role=alert]").count(), 0)
     assert.equal(creates, 1)
-  } finally { await page.close() }
+  } finally { receiptGate.resolve(); await page.close() }
 })
 
 test("edits keep drafts and original revision during refresh, and creation retries reuse request identity", async () => {

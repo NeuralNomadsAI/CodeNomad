@@ -21,14 +21,20 @@ export interface UncertainMissionCreation {
 }
 
 export type MissionCreationHoldState = "pending" | "uncertain"
-interface HeldCreation { operation: Readonly<UncertainMissionCreation>; state: MissionCreationHoldState }
+export interface MissionCreationOwner { client: unknown; generation: number }
+interface HeldCreation {
+  operation: Readonly<UncertainMissionCreation>; state: MissionCreationHoldState
+  confirmed?: { owner: MissionCreationOwner; receipt: MissionCreationReceipt; current(): boolean }
+}
 
 // Window-memory only, not native settlement authority or restart persistence.
 // Retain dispatched/unknown operations by their original scope/request until the
 // original response or its exact receipt settles them.
 const held = new Map<string, Map<string, HeldCreation>>()
 const [version, setVersion] = createSignal(0)
-const reading = new Map<string, Promise<MissionCreationReceipt | undefined>>()
+interface ReceiptRead { owner: MissionCreationOwner; controller: AbortController; promise: Promise<MissionCreationReceipt | undefined> }
+const reading = new Map<string, ReceiptRead>()
+const sameOwner = (left: MissionCreationOwner, right: MissionCreationOwner) => left.client === right.client && left.generation === right.generation
 const freeze = (operation: UncertainMissionCreation): Readonly<UncertainMissionCreation> => Object.freeze({
   ...operation, ...(operation.profiles === undefined ? {} : { profiles: copyMissionProfiles(operation.profiles) }),
   ...(operation.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: Object.freeze([...operation.watchedConversationIDs]) }),
@@ -53,23 +59,36 @@ export function releaseMissionCreation(scope: string, requestId: string): void {
 }
 
 /** Reads the original request only. Absence, transport loss and mismatches keep its hold. */
-export function reconcileMissionCreation(scope: string, instanceId: string): Promise<MissionCreationReceipt | undefined> {
+export function reconcileMissionCreation(scope: string, instanceId: string, owner: MissionCreationOwner, current: () => boolean): Promise<MissionCreationReceipt | undefined> {
   const operation = missionCreationHold(scope)
-  if (operation?.state !== "uncertain") return Promise.resolve(undefined)
+  if (operation?.state !== "uncertain" || !current()) return Promise.resolve(undefined)
+  if (operation.confirmed && sameOwner(operation.confirmed.owner, owner)) return Promise.resolve(operation.confirmed.receipt)
   const key = JSON.stringify([scope, operation.operation.requestId])
   const existing = reading.get(key)
-  if (existing) return existing
-  const pending = serverApi.missionCreationReceipt(instanceId, operation.operation.requestId).then(receipt => {
-    if (missionCreationHold(scope) !== operation || receipt.requestId !== operation.operation.requestId
+  if (existing && sameOwner(existing.owner, owner)) return existing.promise
+  existing?.controller.abort()
+  const controller = new AbortController()
+  let entry: ReceiptRead
+  const promise = serverApi.missionCreationReceipt(instanceId, operation.operation.requestId, controller.signal).then(receipt => {
+    if (!current() || controller.signal.aborted || missionCreationHold(scope) !== operation || receipt.requestId !== operation.operation.requestId
       || receipt.state !== "created" && receipt.state !== "rejected"
       || receipt.state === "created" && (!receipt.mission || typeof receipt.mission.id !== "string")) return
-    held.get(scope)!.delete(receipt.requestId)
-    if (!held.get(scope)!.size) held.delete(scope)
-    setVersion(value => value + 1)
+    held.get(scope)!.get(receipt.requestId)!.confirmed = { owner, receipt, current }
     return receipt
-  }).catch(() => undefined).finally(() => reading.delete(key))
-  reading.set(key, pending)
-  return pending
+  }).catch(() => undefined).finally(() => { if (reading.get(key) === entry) reading.delete(key) })
+  entry = { owner, controller, promise }
+  reading.set(key, entry)
+  return promise
+}
+
+/** Only a current owning view consumes its exact confirmed outcome. */
+export function consumeMissionCreation(scope: string, receipt: MissionCreationReceipt, owner: MissionCreationOwner): boolean {
+  const operation = missionCreationHold(scope)
+  if (!operation?.confirmed || !operation.confirmed.current() || !sameOwner(operation.confirmed.owner, owner) || operation.confirmed.receipt !== receipt) return false
+  held.get(scope)!.delete(receipt.requestId)
+  if (!held.get(scope)!.size) held.delete(scope)
+  setVersion(value => value + 1)
+  return true
 }
 
 export function retainUncertainMissionCreation(scope: string, operation: UncertainMissionCreation): void {

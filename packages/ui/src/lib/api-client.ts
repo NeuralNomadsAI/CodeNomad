@@ -92,7 +92,7 @@ import type { MissionPanelPageRequest } from "../../../server/src/missions/missi
 import type { MissionContentRequest } from "../../../server/src/missions/mission-content-wire"
 import { TASK_WINDOW_CHARACTERS } from "./mission-task-window-budget"
 import { validMissionContentSlice } from "./mission-content-slice"
-import { assertTaskReadLive, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
+import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
@@ -926,8 +926,9 @@ export const serverApi = {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
     return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "POST", input)
   },
-  missionCreationReceipt(instanceId: string, requestId: string): Promise<import("../../../server/src/missions/creation-receipt").MissionCreationReceipt> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/creation/${encodeURIComponent(requestId)}`)
+  missionCreationReceipt(instanceId: string, requestId: string, signal?: AbortSignal): Promise<import("../../../server/src/missions/creation-receipt").MissionCreationReceipt> {
+    const live = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(TASK_READ_TIMEOUT_MS)])
+    return raceTaskRead(request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/creation/${encodeURIComponent(requestId)}`, { signal: live }), live)
   },
   editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`

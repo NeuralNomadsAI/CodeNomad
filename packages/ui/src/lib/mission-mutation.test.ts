@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { serverApi } from "./api-client"
+import { TASK_READ_TIMEOUT_MS } from "./mission-task-read-lifetime"
 import { HttpResponseError } from "./retryable-file-search"
 import { isDefinitiveCreationRejection, isUncertainCreation, missionMutationCode, MissionMutationError, missionMutationErrorKey,
   recurrenceCreationRefusalKey } from "./mission-mutation"
@@ -79,6 +80,31 @@ test("lost fetch and undecodable create acknowledgements surface as non-definiti
     await assert.rejects(serverApi.createMission("private-fixture", input), error => { assert.equal(isDefinitiveCreationRejection(error), false, next); return true })
   }
   assert.equal(calls, 3)
+})
+
+test("creation receipt deadline bounds both pending headers and a stalled response body", async t => {
+  for (const stage of ["headers", "body"] as const) {
+    const timeout = new AbortController()
+    let signal: AbortSignal | undefined, stream: ReadableStreamDefaultController<Uint8Array> | undefined
+    let entered!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    t.mock.method(AbortSignal, "timeout", (duration: number) => { assert.equal(duration, TASK_READ_TIMEOUT_MS); return timeout.signal })
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+      signal = init?.signal as AbortSignal
+      entered()
+      if (stage === "headers") return new Promise<Response>(() => {})
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller } }), { status: 200 })
+    })
+    const receipt = serverApi.missionCreationReceipt("fixture", "bounded")
+    await started
+    await new Promise(resolve => setImmediate(resolve))
+    assert.ok(signal)
+    timeout.abort(new DOMException("Receipt deadline expired", "TimeoutError"))
+    await assert.rejects(receipt, { name: "TimeoutError" })
+    assert.equal(signal.aborted, true)
+    stream?.close()
+    t.mock.restoreAll()
+  }
 })
 
 test("only allowlisted codes survive, and edit cannot manufacture a creation hold", () => {

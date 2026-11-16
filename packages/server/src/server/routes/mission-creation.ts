@@ -51,7 +51,7 @@ export function registerMissionCreation(app: FastifyInstance, deps: MissionRoute
       const id = requestId.data.requestId, entryKey = key(request.params.id, id), digest = canonicalAuthority(request.body)
       const previous = results.get(entryKey)
       if (previous && previous.digest !== digest) throw new MissionCreationHoldError("creation-conflict")
-      if (previous && (previous.pending || previous.receipt.state === "unknown")) {
+      if (previous && (previous.pending || previous.receipt.state !== "rejected")) {
         throw new MissionCreationHoldError("creation-uncertain")
       }
       // Terminal entries are disposable readback evidence; unknown entries have no expiry.
