@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { cachedSubagentDeliveries, indexSubagentDeliveries, isBackgroundSubagentLaunch, latestReportForLaunch, parseSubagentReport, SUBAGENT_REPORT_SCAN_LIMIT } from "./subagent-report"
+import { cachedSubagentDeliveries, indexSubagentDeliveries, isBackgroundSubagentLaunch, latestChildState, latestReportForLaunch, parseSubagentReport, SUBAGENT_REPORT_SCAN_LIMIT } from "./subagent-report"
 
 const report = (child: string, state: string, body: string) =>
   `<subagent sessionID="${child}" state="${state}" description="Nest">\n${body}\n</subagent>`
@@ -18,7 +18,12 @@ function session(entries: Entry[]) {
   }))
   const index = indexSubagentDeliveries(entries.map(entry => entry.id), id => messages.get(id)) as Map<string, any> & { read?: unknown }
   const read = (messageId: string, partId: string) => (messages.get(messageId)?.parts[partId]?.data as { text?: string } | undefined)?.text
-  return Object.assign(index, { latest: (child: string, at: number) => latestReportForLaunch(index.get(child), at, read), messages })
+  return Object.assign(index, {
+    latest: (child: string, at: number) => latestReportForLaunch(index.get(child), at, read),
+    child: (child: string) => latestChildState(index.get(child), read),
+    read,
+    messages,
+  })
 }
 
 describe("background subagent reports", () => {
@@ -95,6 +100,57 @@ describe("background subagent reports", () => {
     ])
     assert.equal(index.latest("ses_child", 1)?.body, "Joined result")
     assert.equal(index.latest("ses_child", 3)?.body, "Joined result")
+  })
+
+  it("tracks one child state across its whole range: running until the newest round settles", () => {
+    // The launch alone: the child session owns background work and has not reported yet.
+    const running = session([{ id: "msg_1", createdAt: 1, launch: { child: "ses_child", created: 1 } }])
+    assert.deepEqual(running.child("ses_child"), { state: "running", createdAt: 1 })
+
+    // A running-tagged report is intermediate: nested background work remains.
+    const nested = session([
+      { id: "msg_1", createdAt: 1, launch: { child: "ses_child", created: 1 } },
+      { id: "msg_2", createdAt: 3, text: report("ses_child", "running", "Nested work") },
+    ])
+    assert.deepEqual(nested.child("ses_child"), { state: "running", createdAt: 3 })
+
+    // The first termination settles the whole range at the report's own time.
+    const settled = session([
+      { id: "msg_1", createdAt: 1, launch: { child: "ses_child", created: 1 } },
+      { id: "msg_2", createdAt: 3, text: report("ses_child", "running", "Nested work") },
+      { id: "msg_3", createdAt: 5, text: report("ses_child", "completed", "First result") },
+    ])
+    assert.deepEqual(settled.child("ses_child"), { state: "completed", createdAt: 5 })
+
+    // A continuation returns the whole range to running until the newest round reports again.
+    const continued = session([
+      { id: "msg_1", createdAt: 1, launch: { child: "ses_child", created: 1 } },
+      { id: "msg_3", createdAt: 5, text: report("ses_child", "completed", "First result") },
+      { id: "msg_4", createdAt: 6, launch: { child: "ses_child", created: 6 } },
+    ])
+    assert.deepEqual(continued.child("ses_child"), { state: "running", createdAt: 6 })
+    const settledAgain = session([
+      { id: "msg_1", createdAt: 1, launch: { child: "ses_child", created: 1 } },
+      { id: "msg_3", createdAt: 5, text: report("ses_child", "completed", "First result") },
+      { id: "msg_4", createdAt: 6, launch: { child: "ses_child", created: 6 } },
+      { id: "msg_5", createdAt: 8, text: report("ses_child", "error", "Failed round") },
+    ])
+    assert.deepEqual(settledAgain.child("ses_child"), { state: "error", createdAt: 8 })
+    assert.equal(settledAgain.child("ses_missing"), null)
+  })
+
+  it("keeps an unreadable newest report running and lets the newest report speak when no launch is indexed", () => {
+    const index = session([
+      { id: "msg_1", createdAt: 1, launch: { child: "ses_child", created: 1 } },
+      { id: "msg_2", createdAt: 2, text: report("ses_child", "completed", "First") },
+      { id: "msg_3", createdAt: 3, launch: { child: "ses_child", created: 3 } },
+      { id: "msg_4", createdAt: 4, text: report("ses_child", "completed", "Evicted") },
+    ])
+    index.messages.delete("msg_4")
+    assert.deepEqual(index.child("ses_child"), { state: "running", createdAt: 3 })
+
+    const reportsOnly = session([{ id: "msg_2", createdAt: 2, text: report("ses_child", "completed", "Only") }])
+    assert.deepEqual(reportsOnly.child("ses_child"), { state: "completed", createdAt: 2 })
   })
 
   it("builds one index per session revision and resident message list", () => {
