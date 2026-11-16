@@ -25,6 +25,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.remove": "{scope} から削除",
   "instanceServiceStatus.plugins.sources.actions": "{name} の操作",
   "instanceServiceStatus.plugins.sources.version": "バージョン {version}",
+  "instanceServiceStatus.plugins.sources.commit": "コミット {commit}",
   "instanceServiceStatus.plugins.sources.outdated": "更新があります",
   "instanceServiceStatus.plugins.sources.failureRef": "OpenCode のログにあるエラー参照: {ref}",
   "instanceServiceStatus.plugins.sources.guiGlobalOnly": "このパッケージにはデスクトップアプリ向けの部分があり、それはグローバル設定からのみ読み込まれます。",

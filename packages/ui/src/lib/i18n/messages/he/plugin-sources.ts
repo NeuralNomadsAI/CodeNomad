@@ -25,6 +25,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.remove": "הסרה מ-{scope}",
   "instanceServiceStatus.plugins.sources.actions": "פעולות עבור {name}",
   "instanceServiceStatus.plugins.sources.version": "גרסה {version}",
+  "instanceServiceStatus.plugins.sources.commit": "קומיט {commit}",
   "instanceServiceStatus.plugins.sources.outdated": "יש עדכון זמין",
   "instanceServiceStatus.plugins.sources.failureRef": "מזהה השגיאה ביומן של OpenCode: {ref}",
   "instanceServiceStatus.plugins.sources.guiGlobalOnly": "לחבילה הזו יש רכיבים לאפליקציית שולחן העבודה, שנטענים רק מהתצורה הכללית.",

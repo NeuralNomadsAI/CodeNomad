@@ -256,6 +256,8 @@ jobs:
           # with a native ref, duplicate and stale refusals, unload with cache kept.
           node --import tsx scripts/test-plugin-sources-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-plugin-git-version-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # OpenCode integration fixtures: fake package through the fake registry,
           # RPC outputs within the zod contract, marker mismatch, isolated Python
           # discovery advertising a fake host, no host secret in outputs or log.

@@ -7,6 +7,16 @@ runs native package check/update (`stores/plugin-package-actions.ts`). Plugin
 options, local-path sources and package installation itself stay with OpenCode:
 CodeNomad writes the declaration and OpenCode resolves, installs and loads it.
 
+Git package rows show the installed manifest version, or a seven-character commit
+when unavailable; details retain the full commit. The presence-scoped
+`codenomad.plugin-versions` RPC reads only native inventory Git targets (64 maximum),
+uses the daemon's read-only `@opencode/Npm.resolve` capability and reads at most
+64 KiB of each regular, single-link `package.json`. Its installed revision must
+match the displayed native revision. The private service key, callable resolver
+and returned directory/revision are checked at runtime; missing capability,
+malformed metadata or the two-second deadline leaves the short commit.
+Native package checks and updates retain their target and commit authority.
+
 ## Source declarations
 
 `POST /api/workspaces/:id/plugin-sources` (`{ location, scope, spec }`) appends
@@ -324,6 +334,9 @@ guessed paths.
 - `scripts/test-plugin-runtime-native.mjs <absolute-cli>` runs an isolated native daemon and
   verifies the reported local source against the generated shim or referenced bundle and the
   session-pruning payload descriptor against the exported plugin ID.
+- `node --import tsx scripts/test-plugin-git-version-native.mjs <absolute-cli>` qualifies
+  the native read-only resolver, installed Git manifest version, commit correlation and
+  native check/update behavior in an isolated cache.
 - Managed provenance, descriptors, retained storage, Windows/WSL paths and link/integrity refusal:
   `desktop-plugin-managed.test.ts`; absent-runtime rules and scoped recovery: `plugin-controls.test.ts`.
 - `CODENOMAD_TEST_WSL_PLUGIN_CONTROLS=Ubuntu` enables the real Linux-filesystem/UNC

@@ -17,6 +17,27 @@ afterEach(() => {
 })
 
 describe("OpenCode V2 plugin activation controls", () => {
+  it("shows installed Git package versions with commit details, and falls back to seven characters", async () => {
+    const target = "git+https://github.com/acme/plugin.git", revision = "3be5340".padEnd(40, "a")
+    for (const packageVersions of [
+      [{ target, revision, version: "1.2.3" }],
+      [],
+      [{ target, revision: "b".repeat(40), version: "9.0.0" }],
+      [{ target, revision, version: "\ninvalid" }],
+    ]) {
+      const fixture = createFixture({ runtime: [
+        { id: "git.plugin", source: { type: "package", target, version: revision, outdated: true, updating: true }, features: {}, state: { status: "active" } },
+        { source: { type: "package", target: "npm-plugin", version: "4.13.0" }, features: {}, state: { status: "failed", error: "fixture" } },
+      ], packageVersions })
+      const snapshot = await fixture.controls.read("workspace", fixture.location)
+      assert.deepEqual(snapshot.runtime[0]!.source, { type: "package", target,
+        version: packageVersions[0]?.version === "1.2.3" ? "1.2.3" : "3be5340", revision, outdated: true, updating: true })
+      assert.deepEqual(snapshot.controls[0]!.runtime?.source, snapshot.runtime[0]!.source)
+      assert.deepEqual(snapshot.runtime[1]!.source, { type: "package", target: "npm-plugin", version: "4.13.0" })
+      assert.equal(fixture.runtime[0].source.version, revision, "the native update inventory is untouched")
+    }
+  })
+
   it("keeps runtime inventory separate from configured sources and ordered rules", async () => {
     const fixture = createFixture({
       globalPlugins: [{ package: "@acme/reviewer", options: { strict: true } }, "-acme.reviewer"],
@@ -902,6 +923,7 @@ function createFixture(options: {
   projectPlugins?: unknown[]
   reportedProjectPlugins?: unknown[]
   runtime?: any[]
+  packageVersions?: unknown
   omitProjectDocument?: boolean
   ownsLocation?: boolean
   assertCurrent?: (count: number) => void
@@ -930,6 +952,7 @@ function createFixture(options: {
   const manager = fakeManager({
     entries,
     runtime,
+    packageVersions: options.packageVersions,
     ownsLocation: options.ownsLocation,
     assertCurrent: options.assertCurrent,
   })
@@ -961,6 +984,7 @@ function createFixture(options: {
 function fakeManager(options: {
   entries: any[]
   runtime: any[]
+  packageVersions?: unknown
   ownsLocation?: boolean
   style?: "win32" | "posix"
   translate?: (servicePath: string) => string | undefined
@@ -972,6 +996,7 @@ function fakeManager(options: {
   const client = {
     config: { get: async (input: any) => { calls.config++; calls.configLocations.push(input.location.directory); return options.entries } },
     plugin: { list: async (input: any) => { calls.plugins++; calls.pluginLocations.push(input.location.directory); return { location: { directory: "unused" }, data: options.runtime } } },
+    rpc: { call: async () => ({ output: options.packageVersions }) },
   }
   return {
     calls,

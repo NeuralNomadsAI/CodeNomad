@@ -25,6 +25,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.remove": "Aus {scope} entfernen",
   "instanceServiceStatus.plugins.sources.actions": "Aktionen für {name}",
   "instanceServiceStatus.plugins.sources.version": "Version {version}",
+  "instanceServiceStatus.plugins.sources.commit": "Commit {commit}",
   "instanceServiceStatus.plugins.sources.outdated": "Update verfügbar",
   "instanceServiceStatus.plugins.sources.failureRef": "Fehlerreferenz im OpenCode-Protokoll: {ref}",
   "instanceServiceStatus.plugins.sources.guiGlobalOnly": "Dieses Paket hat Teile für die Desktop-App, die nur aus der Global-Konfiguration geladen werden.",

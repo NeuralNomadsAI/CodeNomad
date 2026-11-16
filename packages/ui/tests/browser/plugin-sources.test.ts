@@ -37,6 +37,25 @@ async function tooltip(page: Page, row: string) {
   return title
 }
 
+test("Git rows show the package version or short commit, keeping the full commit in accessible details", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    const revision = "3be5340".padEnd(40, "a")
+    await page.evaluate(commit => {
+      ;(window as any).fixture.report("git+https://github.com/acme/plugin.git", "active", { id: "git.plugin", version: "1.2.3", revision: commit })
+      ;(window as any).fixture.report("git+https://github.com/acme/no-version.git", "failed", { version: commit.slice(0, 7), revision: commit })
+    }, revision)
+    const loaded = page.locator('[data-plugin-id="git.plugin"]')
+    await loaded.waitFor()
+    assert.equal(await loaded.locator(".plugin-control-version").innerText(), "1.2.3")
+    assert.match(await tooltip(page, '[data-plugin-id="git.plugin"]'), new RegExp(`Commit ${revision}`))
+    const failed = page.locator('[data-package-target="git+https://github.com/acme/no-version.git"]')
+    assert.equal(await failed.locator(".plugin-control-version").innerText(), "3be5340")
+    assert.match(await tooltip(page, '[data-package-target="git+https://github.com/acme/no-version.git"]'), new RegExp(`Commit ${revision}`))
+  } finally { await page.close() }
+})
+
 test("adding a plugin defaults to Global, warns for Project and shows Installing until the inventory reports it", async () => {
   const page = await browser.newPage({ viewport: { width: 520, height: 800 }, locale: "en-US" })
   const errors: string[] = []

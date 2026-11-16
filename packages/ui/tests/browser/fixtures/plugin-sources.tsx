@@ -88,10 +88,10 @@ const notify = () => (serverEvents as any).dispatchBatch([{
   dropProjectTarget: () => { snapshot.targets = snapshot.targets.filter(target => target.scope !== "project"); notify() },
   notify,
   /** OpenCode reports the target: loaded with a version (and a pending update), or failed with a ref. */
-  report: (target: string, outcome: "active" | "failed", options: { id?: string; gui?: boolean } = {}) => {
+  report: (target: string, outcome: "active" | "failed", options: { id?: string; gui?: boolean; version?: string; revision?: string } = {}) => {
     const runtime: PluginRuntimeInventoryEntry = {
       key: options.id ?? `package:${target}`, ...(options.id ? { id: options.id } : {}),
-      source: { type: "package", target, version: "1.0.0", outdated: true },
+      source: { type: "package", target, version: options.version ?? "1.0.0", ...(options.revision ? { revision: options.revision } : {}), outdated: true },
       features: { server: true, ...(options.gui ? { gui: true as const } : {}) },
       state: outcome === "active" ? { status: "active" } : { status: "failed", error: "Plugin failed to load", ref: "err_fixture01" },
     }

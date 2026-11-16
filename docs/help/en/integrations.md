@@ -51,7 +51,7 @@ To remove a plugin, open the menu beside its name and select **Remove from Globa
 
 The plugin's code runs with your permissions inside OpenCode. A **Project** entry runs whenever that folder is opened in OpenCode, and packages with parts for OpenCode's desktop app load those parts only from **Global**; the tooltip says so when such a package is declared elsewhere. Local paths, configuration variables and plugin IDs are refused here: declare local plugins in the configuration file. A package already declared in a configuration that applies to this Location is refused, whatever its version, range or form.
 
-Hover or focus a plugin's name to see its version, **Update available** and, for a failed install, the error with its reference in the OpenCode log.
+The installed package version appears beside the plugin's name. For Git plugins, the details include the commit; if the version is unavailable, a seven-character commit appears beside the name. Hover or focus the name to see details, **Update available** and, for a failed install, the error with its reference in the OpenCode log.
 
 ## Attach skills {#skills}
 

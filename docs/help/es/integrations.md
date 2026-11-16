@@ -51,7 +51,7 @@ Para quitar un plugin, abre el menú junto a su nombre y elige **Quitar de Globa
 
 El código del plugin se ejecuta con tus permisos dentro de OpenCode. Una entrada de **Proyecto** se ejecuta cada vez que esa carpeta se abre en OpenCode, y los paquetes con partes para la aplicación de escritorio de OpenCode solo las cargan desde **Global**; la información emergente lo indica cuando ese paquete se declara en otro sitio. Aquí se rechazan las rutas locales, las variables de configuración y los ID de plugin: declara los plugins locales en el archivo de configuración. Se rechaza un paquete ya declarado en una configuración que se aplica a esta Location, sea cual sea su versión, rango o forma.
 
-Pasa el puntero o el foco por el nombre de un plugin para ver su versión, **Actualización disponible** y, si la instalación falló, el error con su referencia en el registro de OpenCode.
+La versión del paquete instalado aparece junto al nombre del plugin. En los plugins Git, los detalles incluyen el commit; si la versión no está disponible, aparece el commit de siete caracteres junto al nombre. Pasa el puntero o el foco por el nombre para ver los detalles, **Actualización disponible** y, si la instalación falló, el error con su referencia en el registro de OpenCode.
 
 ## Adjuntar habilidades {#skills}
 
