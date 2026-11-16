@@ -52,11 +52,15 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 Do not assume port 9898 or 9899: omitted ports can fall back when busy. An explicit nonzero `--https-port`, or `--http-port` with HTTP enabled, pins the port and fails if it cannot bind; `0` asks the OS to assign one. The printed **Local Connection URL** and **Remote Connection URL**, and refreshed **Reachable addresses**, are authoritative for that run. See the complete [server CLI reference](server.md).
 
+## Administrator policy {#administrator-policy}
+
+An administrator can fix the listening address: set `CODENOMAD_LOCKED_HOST` machine-wide to the address the server must use, then restart CodeNomad. It wins over `--host`, `CLI_HOST` and **Allow connections from other IPs**, which shows the result but cannot change it. Use an intranet address so colleagues reach the server over the company network, or `127.0.0.1` to keep it on this computer. To keep all access inside the company network, also set `CODENOMAD_REMOTE_CONTROL=disabled` ([Remote Control](remote-control.md#administrator-policy)).
+
 ## Upgrading {#upgrading}
 
 Sign in again after upgrading. For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations. Its HTTPS origins also let the host pair devices without the tunnel; see [Pair over direct HTTPS](remote-control.md#direct-https).
 
-Use a loopback connection for host-only operations: SideCar content (`/sidecars/`) and WebSockets, Remote Control management (`/api/remote-control/`), the plugin bridge (`/api/opencode-plugin/`), remote proxies (`/api/remote-proxy/`), saved-server management (`/api/remote-servers/`), password changes and token bootstrap. These require loopback even when signed in through direct LAN access. Live preview content (`/previews/`) is available over direct LAN access with a valid capability token.
+Use a loopback connection for host-only operations: SideCar content (`/sidecars/`) and WebSockets, Remote Control management (`/api/remote-control/`), the plugin bridge (`/api/opencode-plugin/`), remote proxies (`/api/remote-proxy/`), saved-server management (`/api/remote-servers/`), password changes and token bootstrap. These require loopback even when signed in through direct LAN access. Only SideCars have an exception: the host's **Open SideCars over HTTPS** setting opens their content and WebSockets to browsers signed in through a trusted HTTPS origin ([SideCars](browser-sidecars.md#register-sidecar)). Live preview content (`/previews/`) is available over direct LAN access with a valid capability token.
 
 The `/api/sidecars` registration APIs remain available to authenticated direct LAN clients and paired devices. Remote Control web previews remain available with their capability token while enabled on the host.
 

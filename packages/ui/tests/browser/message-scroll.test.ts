@@ -235,6 +235,45 @@ test("the scroll trace emits coherent labelled writes and detects unclaimed move
   })
 })
 
+// The latest button serves two intents: returning to the newest window from
+// history (an authoritative reload) and returning to the bottom of the window
+// being read. While the session streams, an authoritative latest reload races
+// every live event (its bounded retries give up), so the second intent must
+// scroll locally instead of leaving the button with no effect.
+test("the latest button returns a streaming reader to the bottom without an authoritative reload", async () => {
+  await open(async page => {
+    // Slow every authoritative page read past the streaming cadence, as a real
+    // HTTP round trip is slower than consecutive live events.
+    await page.evaluate(async () => {
+      const { sdkManager } = await import("/src/lib/sdk-manager.ts" as any)
+      const client = (sdkManager as any).clients.get("browser-instance:/workspaces/browser-instance/instance")
+      const list = client.message.list.bind(client)
+      client.message.list = async (input: any) => {
+        await new Promise(resolve => setTimeout(resolve, 40))
+        return list(input)
+      }
+    })
+    await page.evaluate(() => (window as any).fixture.startStored())
+    await page.evaluate(() => { (window as any).streamTimer = setInterval(() => (window as any).fixture.deltaStored("Streaming paragraph.\n\n".repeat(3)), 16) })
+    await frames(page, 20)
+    const stream = page.locator(".message-stream")
+    await stream.hover()
+    await page.mouse.wheel(0, -600)
+    await frames(page, 20)
+    const escaped = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(escaped > 400, `The reader must start away from the bottom (gap=${escaped})`)
+    try {
+      await page.locator(".message-scroll-controls").hover()
+      await latestButton(page).click()
+      await frames(page, 90)
+    } finally {
+      await page.evaluate(() => clearInterval((window as any).streamTimer))
+    }
+    const gap = await stream.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)
+    assert.ok(gap <= 48, `The latest button must land at the bottom while streaming (gap=${Math.round(gap)})`)
+  })
+})
+
 // Only DOM writes position the transcript (Virtua's imperative operations
 // reassert their target over later gestures), and a rolling window keeps the
 // attribution of the write before it.

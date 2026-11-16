@@ -157,3 +157,24 @@ test("an explicit refresh revokes the previous answer, reads the demanded target
   assert.equal(f.reads.length, 2)
   release()
 })
+
+test("view refresh retries only demanded bindings of the exact instance, Location and conversation", async () => {
+  const f = fixture()
+  const targets = [target, { ...target, integrationId: "gaffer" }, { ...target, sessionID: "ses_other" },
+    { ...target, directory: "/other" }, { ...target, instanceId: "other" }]
+  const releases = targets.map(value => f.store.demand(value))
+  for (const read of f.reads) read.resolve({ state: "unknown" })
+  await settle()
+  const refreshed = f.store.refreshDemanded(target)
+  assert.deepEqual(f.reads.slice(5).map(read => read.target), targets.slice(0, 2))
+  f.reads[5]!.resolve(attached); f.reads[6]!.resolve({ state: "none" })
+  await refreshed
+  assert.equal(f.store.state(target).state, "attached")
+  releases[0]!(); releases[1]!()
+  await f.store.refreshDemanded(target)
+  assert.equal(f.reads.length, 7, "released demands are never restarted")
+  f.store.reconnect("i", false)
+  await f.store.refreshDemanded(targets[2]!)
+  assert.equal(f.reads.length, 7, "explicit refresh respects disconnect suspension")
+  releases.slice(2).forEach(release => release())
+})

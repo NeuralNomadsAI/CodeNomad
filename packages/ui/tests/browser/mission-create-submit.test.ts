@@ -39,7 +39,7 @@ function created(body: Record<string, unknown>): MissionMap {
 }
 
 async function setup(page: Page) {
-  const errors: string[] = [], creates: Array<Record<string, unknown>> = [], controls: string[] = []
+  const errors: string[] = [], creates: Array<Record<string, unknown>> = [], controls: string[] = [], activations: Record<string, any>[] = []
   let list: MissionMap[] = []
   let scheduled: Awaited<ReturnType<typeof pausedMissionScheduleReceipt>> | undefined
   page.setDefaultTimeout(15_000); page.setDefaultNavigationTimeout(60_000)
@@ -54,7 +54,16 @@ async function setup(page: Page) {
   await page.route("**/api/workspaces/fixture/missions**", async route => {
     const request = route.request(), path = new URL(request.url()).pathname
     if (path.endsWith("/control")) { controls.push(path); return route.abort() }
-    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true,
+      origin: null, activation: { available: true, targets: [] } } })
+    if (request.method() === "POST" && path.endsWith("/schedule-settings")) {
+      const input = request.postDataJSON(); activations.push(input)
+      assert.equal(input.expectedDocumentRevision, scheduled!.document!.revision)
+      scheduled = { ...scheduled!, document: { ...scheduled!.document!, revision: scheduled!.document!.revision + 1,
+        scheduleActivation: { requestID: input.requestID, expectedRevision: input.expectedDocumentRevision,
+          authority: "a".repeat(64), state: "ready", targets: [], effectiveOrigin: null } } }
+      return route.fulfill({ json: { document: scheduled.document } })
+    }
     if (request.method() === "GET" && path.endsWith("/msn_created/schedule") && scheduled) return route.fulfill({ json: scheduled })
     if (request.method() === "GET" && path.endsWith("/missions/scheduled")) return route.fulfill({ json: {
       version: 1, projectID: "project", schedules: scheduled ? [scheduled.document] : [] } })
@@ -72,7 +81,7 @@ async function setup(page: Page) {
     }
     return route.fulfill({ json: {} })
   })
-  return { errors, creates, controls, get scheduled() { return scheduled } }
+  return { errors, creates, controls, activations, get scheduled() { return scheduled } }
 }
 
 const submitReady = (page: Page) => page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
@@ -394,7 +403,7 @@ for (const lost of [false, true]) test(`opted-in schedule creation sends one Pla
     if (route.request().method() !== "POST") return route.fallback()
     const input = route.request().postDataJSON(); controls.push(input)
     return lost ? route.abort("connectionreset") : route.fulfill({ json: { ...fixture.scheduled, pending: false,
-      document: { ...fixture.scheduled!.document, revision: 1, control: { requestID: input.requestID,
+      document: { ...fixture.scheduled!.document, revision: input.expectedRevision + 1, control: { requestID: input.requestID,
         expectedRevision: input.expectedRevision, action: "play", pending: false } } } })
   })
   const holds = () => page.evaluate(async () => {
@@ -415,10 +424,12 @@ for (const lost of [false, true]) test(`opted-in schedule creation sends one Pla
     assert.equal(fixture.creates.length, 1)
     assert.equal(controls.length, 1)
     assert.equal(controls[0].action, "play")
-    assert.equal(controls[0].expectedRevision, 0)
+    assert.equal(fixture.activations.length, 1, "the ON setting still gets a ready activation proof")
+    assert.equal(fixture.activations[0].expectedDocumentRevision, 0)
+    assert.equal(controls[0].expectedRevision, 1, "Play uses the activated revision")
     if (lost) {
       const held = await holds()
-      assert.deepEqual(held, [{ phase: "control", action: "play", requestID: controls[0].requestID, expectedRevision: 0 }])
+      assert.deepEqual(held, [{ phase: "control", action: "play", requestID: controls[0].requestID, expectedRevision: 1 }])
       await page.evaluate(() => window.missionEditorLifetime.mount(false))
       await page.evaluate(() => window.missionEditorLifetime.mount(true))
       assert.deepEqual(await holds(), held)

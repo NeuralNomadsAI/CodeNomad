@@ -12,4 +12,5 @@ export const markdownMessages = {
   "markdown.copy": "Копировать",
 
   "markdown.link.previewOpens": "Открывается в веб-предпросмотре. Ctrl+щелчок (⌘-щелчок на macOS) или щелчок средней кнопкой открывает ссылку в браузере.",
+  "markdown.link.fileOpens": "Открывается в просмотре файла. Ctrl+щелчок (⌘-щелчок на macOS) или щелчок средней кнопкой открывает ссылку в браузере.",
 } as const

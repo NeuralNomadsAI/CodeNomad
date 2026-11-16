@@ -531,3 +531,51 @@ export class VirtualScrollController {
     return { effect, state: this.snapshot() }
   }
 }
+
+export interface ScrollObservationScheduler {
+  schedule(callback: () => void): number
+  cancel(handle: number): void
+}
+
+/**
+ * Bounds DOM scroll-state observations to one per animation frame. Scroll
+ * events arrive per rendering update while a virtualized list settles (every
+ * programmatic write, Virtua's measurement compensation, the follow pin each
+ * contribute one), and each observation reads layout and can issue a new
+ * write whose event lands in the same update — the observation/write feedback
+ * keeps the settle task long. `request` coalesces those event-driven
+ * observations into the frame's end; `observeNow` keeps synchronous
+ * observation semantics for direct entries (gestures at a clamped edge,
+ * content-rendered flushes) while consuming the frame slot so a frame never
+ * observes twice.
+ */
+export class ScrollObservationGate {
+  private handle: number | null = null
+
+  constructor(
+    private readonly flush: () => void,
+    private readonly scheduler: ScrollObservationScheduler,
+  ) {}
+
+  /** One deferred observation per frame; further requests coalesce into it. */
+  request(): void {
+    if (this.handle !== null) return
+    this.handle = this.scheduler.schedule(() => {
+      this.handle = null
+      this.flush()
+    })
+  }
+
+  /** Observes now, consuming any pending frame observation. */
+  observeNow(): void {
+    this.cancelPending()
+    this.flush()
+  }
+
+  /** Drops a pending frame observation without running it. */
+  cancelPending(): void {
+    if (this.handle === null) return
+    this.scheduler.cancel(this.handle)
+    this.handle = null
+  }
+}

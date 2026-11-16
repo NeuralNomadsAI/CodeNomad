@@ -8,6 +8,7 @@ import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
 import { readAdmissionEnvironment } from "./admission-environment"
+import { ServerFlagReader } from "./server-flag-reader"
 import { canonicalScope } from "../host-lifetime/protocol"
 import { createHash } from "node:crypto"
 import fs from "node:fs"
@@ -15,6 +16,8 @@ import { claimServerIdentity } from "./server-identity"
 import path from "node:path"
 
 export type DocKind = "config" | "state"
+/** Refuses a config write by throwing, given the authoritative document and the would-be result. */
+export type ConfigWriteCheck = (before: SettingsDoc, after: SettingsDoc) => void
 
 const CanonicalLogLevelSchema = z.preprocess(
   (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
@@ -74,6 +77,7 @@ function normalizeConfigDoc(doc: SettingsDoc): SettingsDoc {
 export class SettingsService {
   private readonly configStore: YamlDocStore
   private readonly stateStore: YamlDocStore
+  private readonly serverFlags: ServerFlagReader
 
   constructor(
     private readonly location: ConfigLocation,
@@ -91,6 +95,7 @@ export class SettingsService {
       logger.child({ component: "settings-state" }),
       { throwOnPersistError: true },
     )
+    this.serverFlags = new ServerFlagReader(location.configYamlPath)
   }
 
   /** Identity failures disable native backend admission while startup continues. */
@@ -154,9 +159,24 @@ export class SettingsService {
     const current = this.configStore.get()
     const normalized = normalizeConfigDoc(current)
     if (!isDeepEqual(current, normalized)) {
-      this.configStore.replace(normalized)
+      // Normalize what is on disk now; an unreadable document is displayed, never rewritten.
+      let fresh: SettingsDoc
+      try {
+        fresh = this.configStore.reloadAuthoritative()
+      } catch (error) {
+        if (error instanceof SettingsReadError) return normalized
+        throw error
+      }
+      const repaired = normalizeConfigDoc(fresh)
+      if (!isDeepEqual(fresh, repaired)) this.configStore.replace(repaired)
+      return repaired
     }
     return normalized
+  }
+
+  /** Authoritative boolean server setting for access decisions; see `ServerFlagReader`. */
+  serverFlag(key: string): boolean {
+    return this.serverFlags.enabled(key)
   }
 
   readEnvironmentForAdmission(signal?: AbortSignal): Promise<Record<string, string>> {
@@ -168,14 +188,24 @@ export class SettingsService {
     return this.location.configYamlPath
   }
 
-  mergePatchDoc(kind: DocKind, patch: unknown): SettingsDoc {
+  /**
+   * Config writes start from the document as it is on disk now (`reloadAuthoritative`), so a
+   * stale cache is never written back; an unreadable or invalid document refuses the write
+   * with `SettingsReadError`. `check` sees that base and the result before anything persists.
+   */
+  mergePatchDoc(kind: DocKind, patch: unknown, check?: ConfigWriteCheck): SettingsDoc {
     if (!isPlainObject(patch)) {
       throw new Error("Patch must be a JSON object")
     }
-    const updated =
-      kind === "config"
-        ? this.configStore.replace(normalizeConfigDoc(applyMergePatch(this.configStore.get(), patch) as SettingsDoc))
-        : this.stateStore.mergePatch(patch)
+    let updated: SettingsDoc
+    if (kind === "config") {
+      const before = this.configStore.reloadAuthoritative()
+      const after = normalizeConfigDoc(applyMergePatch(before, patch) as SettingsDoc)
+      check?.(before, after)
+      updated = this.configStore.replace(after)
+    } else {
+      updated = this.stateStore.mergePatch(patch)
+    }
     this.publish(kind, "*")
     return updated
   }
@@ -197,19 +227,21 @@ export class SettingsService {
     return value
   }
 
-  mergePatchOwner(kind: DocKind, owner: string, patch: unknown): SettingsDoc {
+  /** See `mergePatchDoc` for the config write base and `check`. */
+  mergePatchOwner(kind: DocKind, owner: string, patch: unknown, check?: ConfigWriteCheck): SettingsDoc {
     if (!isPlainObject(patch)) {
       throw new Error("Patch must be a JSON object")
     }
-    const updated =
-      kind === "config"
-        ? owner === "server"
-          ? this.configStore.replaceOwner(
-              owner,
-              normalizeServerConfigOwner(applyMergePatch(this.configStore.getOwner(owner), patch) as SettingsDoc),
-            )
-          : this.configStore.mergePatchOwner(owner, patch)
-        : this.stateStore.mergePatchOwner(owner, patch)
+    let updated: SettingsDoc
+    if (kind === "config") {
+      const before = this.configStore.reloadAuthoritative()
+      const merged = applyMergePatch(this.configStore.getOwner(owner), patch) as SettingsDoc
+      const next = owner === "server" ? normalizeServerConfigOwner(merged) : merged
+      check?.(before, { ...before, [owner]: next })
+      updated = this.configStore.replaceOwner(owner, next)
+    } else {
+      updated = this.stateStore.mergePatchOwner(owner, patch)
+    }
     this.publish(kind, owner, updated)
     return updated
   }

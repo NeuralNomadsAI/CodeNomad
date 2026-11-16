@@ -84,19 +84,40 @@
                } else {
                  Err(wry::Error::MessageSender)
                }
-@@ -5169,9 +5178,9 @@
+@@ -4896,6 +4905,13 @@
+     });
+   }
+ 
++  #[cfg(not(any(
++    target_os = "windows",
++    target_os = "macos",
++    target_os = "ios",
++    target_os = "android"
++  )))]
++  let fills_window = webview_attributes.bounds.is_none();
+   let webview_bounds = if let Some(bounds) = webview_attributes.bounds {
+     let bounds: RectWrapper = bounds.into();
+     let bounds = bounds.0;
+@@ -5169,9 +5185,16 @@
        target_os = "android"
      )))]
      WebviewKind::WindowChild => {
 -      // only way to account for menu bar height, and also works for multiwebviews :)
        let vbox = window.default_vbox().unwrap();
 -      webview_builder.build_gtk(vbox)
-+      let (_, children) = gtk_child_layout::containers(vbox);
-+      webview_builder.build_gtk(&children)
++      // The window's own webview has no requested bounds: it is primary content,
++      // laid out below the menu bar, never a fixed rectangle of the window's size.
++      if fills_window {
++        let content = gtk_child_layout::content(vbox);
++        webview_builder.build_gtk(&content)
++      } else {
++        let (_, children) = gtk_child_layout::containers(vbox);
++        webview_builder.build_gtk(&children)
++      }
      }
      #[cfg(any(
        target_os = "windows",
-@@ -5196,7 +5205,8 @@
+@@ -5196,7 +5219,8 @@
        )))]
        let builder = {
          let vbox = window.default_vbox().unwrap();

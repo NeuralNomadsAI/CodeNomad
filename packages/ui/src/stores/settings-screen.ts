@@ -67,7 +67,7 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
 export const toggleSettings = (section?: SettingsSectionId) => openSettings(section, true)
 
 /** Stable setting-row anchors (the row's `id`), independent of their labels. */
-export type SettingsRowId = "opencode-login-start"
+export type SettingsRowId = "opencode-login-start" | `config-file:${string}`
 const SETTINGS_ROWS = new Set<SettingsRowId>(["opencode-login-start"])
 const ROW_HINT_KEY = "codenomad.settings.rowTarget", ROW_HINT_MS = 15_000
 const [settingsRowTarget, setSettingsRowTarget] = createSignal<SettingsRowId>()
@@ -88,11 +88,14 @@ export async function openSettingsRow(section: SettingsSectionId, row: SettingsR
   try { localStorage.setItem(ROW_HINT_KEY, JSON.stringify({ section, row, at: Date.now() })) } catch { /* the section still opens */ }
   return openSettings(section)
 }
+/** Configuration IDs are selected only after matching the editor's server catalogue. */
+export const openSettingsConfigFile = (id: string) => openSettingsRow("config-files", `config-file:${id}`)
 /** Preferences windows adopt a fresh hint for their active section, once. */
 export function adoptSettingsRowHint(section: SettingsSectionId) {
   let hint: { section?: unknown; row?: unknown; at?: unknown } | undefined
   try { hint = JSON.parse(localStorage.getItem(ROW_HINT_KEY) ?? "null") ?? undefined } catch { hint = undefined }
-  if (!hint || hint.section !== section || !SETTINGS_ROWS.has(hint.row as SettingsRowId)
+  if (!hint || hint.section !== section || !(SETTINGS_ROWS.has(hint.row as SettingsRowId)
+    || section === "config-files" && typeof hint.row === "string" && hint.row.startsWith("config-file:") && hint.row.length <= 2048)
     || typeof hint.at !== "number" || Math.abs(Date.now() - hint.at) > ROW_HINT_MS) return
   try { localStorage.removeItem(ROW_HINT_KEY) } catch { /* consumed by the signal below */ }
   targetRow(hint.row as SettingsRowId, section)

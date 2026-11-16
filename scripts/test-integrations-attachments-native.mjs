@@ -110,7 +110,8 @@ try {
     })
     const connection = { ...fixtureConnection, client }
     const info = await client.server.info()
-    assert.match(info.version, /^2\.2\.\d+$/, "Qualify the requested OpenCode 2.2.x runtime")
+    const { isBelowOpenCodeMinimum } = await tsImport("../packages/server/src/opencode/runtime-support.ts", import.meta.url)
+    assert(!isBelowOpenCodeMinimum(info.version), `Qualify a supported OpenCode runtime, not ${info.version}`)
     console.log(`Native runtime: ${info.version}`)
     await writeFixtureServiceRegistration(env, { ...info, url: connection.endpoint.url, password: connection.endpoint.auth.password })
     const location = (await client.location.get({ location: { directory: root } })).directory

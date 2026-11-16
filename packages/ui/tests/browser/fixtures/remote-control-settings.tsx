@@ -12,6 +12,7 @@ import "../../../src/index.css"
 // ?scenario=resuming: reconnecting at launch, connected after a few status reads.
 // ?scenario=connected: running; tests move it with window.setRemoteState().
 // ?scenario=remote: the same, read by a paired device.
+// ?scenario=disabled: the administrator disabled Remote Control; a device paired before stays revocable.
 const scenario = new URLSearchParams(location.search).get("scenario")
 const base: RemoteControlStatus = { manageable: true, enabled: false, startsOnLaunch: false, previews: true, state: "stopped", pairedDevices: 1 }
 const connected: RemoteControlStatus = { ...base, enabled: true, startsOnLaunch: true, state: "connected", remoteUrl: "https://codenomad-fixture.tunnel.test" }
@@ -21,15 +22,17 @@ let status: RemoteControlStatus = scenario === "failed-resume" ? { ...base, star
   : scenario === "remote" ? { ...connected, manageable: false }
   // ?scenario=direct: the tunnel is off; two verified direct HTTPS origins can pair.
   : scenario === "direct" ? { ...base, directOrigins: ["https://code.example.test", "https://ui.example.test:8443"] }
+  : scenario === "disabled" ? { ...base, disabledByAdministrator: true, directOrigins: ["https://code.example.test"] }
   : { ...connected, state: "connecting" }
 let reads = 0
-const fixture = window as unknown as { statusReads: () => number; stops: number; previewChanges: boolean[]; pairingOrigins: Array<string | undefined>; setRemoteState: (state: "reconnecting" | "connected" | "stopped") => void }
+const fixture = window as unknown as { statusReads: () => number; stops: number; previewChanges: boolean[]; pairingOrigins: Array<string | undefined>; setRemoteState: (state: "reconnecting" | "connected" | "stopped" | "disabled") => void }
 fixture.statusReads = () => reads
 fixture.stops = 0
 fixture.previewChanges = []
 fixture.pairingOrigins = []
 fixture.setRemoteState = (state) => {
-  status = state === "stopped" ? { ...base, startsOnLaunch: true, state: "error", error: "tunnel stopped" } : { ...connected, state }
+  status = state === "disabled" ? { ...base, disabledByAdministrator: true, directOrigins: ["https://code.example.test"] }
+    : state === "stopped" ? { ...base, startsOnLaunch: true, state: "error", error: "tunnel stopped" } : { ...connected, state }
 }
 
 serverApi.fetchRemoteControlStatus = async () => {

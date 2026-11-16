@@ -142,6 +142,27 @@ test("a tool image deferred by its transcript page loads from CodeNomad's sessio
   assert.equal(requested.length, 2)
 }))
 
+test("an interrupted shell call shows its output so far as output and only the notice as error", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.interruptedShell())
+  const error = page.locator(".tool-call-error-content")
+  await error.waitFor()
+  assert.match(await error.textContent() ?? "", /Command interrupted by the user \(shell ID: sh_1\)/)
+  assert.doesNotMatch(await error.textContent() ?? "", /PARTIAL_LINE/)
+  const output = page.locator(".tool-call pre", { hasText: "PARTIAL_LINE_1" }).first()
+  await output.waitFor()
+  assert.match(await output.textContent() ?? "", /npm test\s+PARTIAL_LINE_1\nPARTIAL_LINE_2/)
+}))
+
+test("Code Mode indents a compact JSON result and keeps its logs", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.execute("json"))
+  const block = page.locator(".tool-call-execute pre", { hasText: '"answer"' }).first()
+  await block.waitFor()
+  const text = await block.textContent() ?? ""
+  assert.match(text, /\{\n\s+"answer": 42,\n\s+"items": \[\n\s+"a",/)
+  assert.match(text, /Logs:\nhello/)
+  assert.doesNotMatch(text, /\{"answer":42/)
+}))
+
 test("Code Mode renders native progress, nested errors, script, images and historical output", async () => withPage(async page => {
   await page.evaluate(() => (window as any).fixture.execute("running"))
   await page.locator(".execute-calls").waitFor()

@@ -11,6 +11,7 @@ import { acquireNativeMissionScheduleAuthority, NATIVE_MISSION_SCHEDULE_CONTROL_
 import { controlNativeMissionSchedule } from "./native-mission-schedule-control"
 import { readMissionSchedulePage } from "../../missions/mission-schedule-list"
 import { nativeMissionScheduleObservation } from "./native-mission-schedule-display"
+import { readNativeScheduleFlag } from "./native-schedule-flag"
 
 const readInput = z.object({ missionID: documentID, requestID: z.string().min(1).max(128).optional() }).strict()
 const carrierInput = z.object({ sessionID: nativeDocumentID }).strict()
@@ -20,6 +21,7 @@ const carrierInput = z.object({ sessionID: nativeDocumentID }).strict()
 export function nativeMissionScheduleHandlers(ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts) {
   const invocation = nativeInvocation(NATIVE_MISSION_SCHEDULE_CONTROL_TIMEOUT_MS)
   return {
+    scheduleFlag: () => readNativeScheduleFlag(ctx).pipe(Effect.orDie),
     scheduleList: (raw: unknown) => invocation.capture(Effect.tryPromise(() => invocation.check(run =>
       readMissionSchedulePage({ scan: input => run(ctx.storage.scan(input)) }, ctx.location.project, raw,
         doc => nativeMissionScheduleObservation(ctx, doc, run)))).pipe(Effect.orDie)),

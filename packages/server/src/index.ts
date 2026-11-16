@@ -57,6 +57,7 @@ import { provisionDesktopPlugins } from "./opencode/desktop-plugin-provisioning"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
 import { RemoteDeviceRegistry } from "./remote-control/devices"
 import { RemoteControlManager } from "./remote-control/manager"
+import { readNetworkPolicy, type NetworkPolicy } from "./server/network-policy"
 import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
 import { WorktreeDeletionFence } from "./workspaces/worktree-session-evacuation"
 import { IntegrationCatalogSource } from "./opencode/integrations/catalog"
@@ -96,6 +97,9 @@ interface CliOptions {
   generateToken: boolean
   dangerouslySkipAuth: boolean
   upgrade?: string | boolean
+  /** Administrator policy (`network-policy.ts`): the host comes from CODENOMAD_LOCKED_HOST. */
+  hostLocked: boolean
+  remoteControlDisabled: boolean
 }
 
 const DEFAULT_HOST = "127.0.0.1"
@@ -203,7 +207,10 @@ export function parseCliOptions(argv: string[]): CliOptions {
 
   const resolvedRoot = parsed.workspaceRoot ?? parsed.root ?? process.cwd()
 
-  const normalizedHost = resolveHost(parsed.host)
+  let policy: NetworkPolicy
+  try { policy = readNetworkPolicy() } catch (error) { throw new InvalidArgumentError((error as Error).message) }
+  // The administrator's address wins over --host, CLI_HOST and the desktop listening switch.
+  const normalizedHost = resolveHost(policy.lockedHost ?? parsed.host, policy.lockedHost ? "CODENOMAD_LOCKED_HOST" : "--host")
 
   const autoUpdateString = (parsed.uiAutoUpdate ?? "true").trim().toLowerCase()
   const uiAutoUpdate = autoUpdateString === "1" || autoUpdateString === "true" || autoUpdateString === "yes"
@@ -242,6 +249,8 @@ export function parseCliOptions(argv: string[]): CliOptions {
     generateToken: parseBooleanSwitchEnv("CODENOMAD_GENERATE_TOKEN") || Boolean(parsed.generateToken),
     dangerouslySkipAuth: parseBooleanSwitchEnv("CODENOMAD_SKIP_AUTH") || Boolean(parsed.dangerouslySkipAuth),
     upgrade,
+    hostLocked: policy.lockedHost !== undefined,
+    remoteControlDisabled: policy.remoteControlDisabled,
   }
 }
 
@@ -253,12 +262,12 @@ function parsePort(input: string): number {
   return value
 }
 
-export function resolveHost(input: string | undefined): string {
+export function resolveHost(input: string | undefined, source = "--host"): string {
   const trimmed = input?.trim()
   if (!trimmed) return DEFAULT_HOST
 
   if (hasIPv6Zone(trimmed)) {
-    throw new InvalidArgumentError("IPv6 zone identifiers are not supported in --host")
+    throw new InvalidArgumentError(`IPv6 zone identifiers are not supported in ${source}`)
   }
 
   const normalized = normalizeNetworkHost(trimmed)
@@ -315,6 +324,7 @@ async function main() {
     eventsUrl: `/api/events`,
     host: options.host,
     listeningMode: isLoopbackHost(options.host) ? "local" : "all",
+    ...(options.hostLocked ? { listeningLocked: true } : {}),
     localPort: 0,
     remotePort: undefined,
     hostLabel: options.host,
@@ -513,6 +523,7 @@ async function main() {
     previewUpgrade: () => remoteControlPreviewUpgrade,
     hasPreview: (token) => previewManager.get(token) !== undefined,
     tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
+    disabledByAdministrator: options.remoteControlDisabled,
     logger: logger.child({ component: "remote-control" }),
   })
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)

@@ -72,6 +72,7 @@ export class IntegrationsReader {
           plugin: {
             declared: recognition.sources.length > 0,
             ...(recognition.runtime ? { runtime: recognition.runtime.state.status === "failed" ? "failed" as const : "loaded" as const } : {}),
+            ...(!recognition.ambiguous && recognition.runtime?.id ? { runtimeId: recognition.runtime.id } : {}),
           },
           ...(recognition.ambiguous ? { ambiguous: true as const } : {}),
           scopes,

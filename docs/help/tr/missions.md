@@ -42,7 +42,7 @@ Takvim tabanlı zamanlama, koordinatör ve rehberin her rolü için açık bir a
 
 ### Otomatik başlat {#automatic-start}
 
-**Otomatik başlat**, Zamanlama dışındadır ve varsayılan olarak kapalıdır. Kapalıyken görev duraklatılmış oluşturulur ve daha sonra ▶ ile başlatılır. Açıkken oluşturma doğrulanınca olağan kontroller ve gerekli yerel ayar onayıyla başlatma istenir.
+**Otomatik başlat**, Zamanlama dışındadır ve varsayılan olarak kapalıdır. Kapalıyken görev duraklatılmış oluşturulur ve daha sonra ▶ ile başlatılır. Açıkken oluşturma doğrulanınca olağan kontroller ve otomatik zamanlama hazırlığıyla başlatma istenir.
 
 Oluşturma onayı kaybolursa makbuzu okumak otomatik başlatmaz. Doğrulanmamış asıl isteği koruyun; yeniden oluşturmadan önce listeyi ve konuşmayı kontrol edin.
 
@@ -55,6 +55,8 @@ Alt ajan derinliği bilgileri etkin kaynağı **OpenCode yapılandırma dosyası
 İlk ölçüt **Bir kez, şimdi** olur. **Ölçüt ekle** bir tane daha ekler. Türünü seçin, × ile kaldırın, tutamacıyla sıralayın; odaklı tutamaçta Alt+Yukarı/Aşağı kullanabilirsiniz.
 
 Bir kez şimdi, N saatte bir, günlük, haftanın günleri, ayın günü ve cron seçenekleri vardır. Kayıtlı saat dilimi kullanılır; sistemden farklıysa dilim alanı görünür. Seçilen günün bulunmadığı ay atlanır. Bir kez şimdi, zamanı Başlat'ta alır; koşul bu tek fırsatı çalıştırmadan tüketebilir. OpenCode hizmeti ve yürütme makinesi kullanılabilir olmalıdır.
+
+Başlatma veya sürdürme sırasında zamanlama projenin OpenCode yapılandırmasında otomatik hazırlanır. Açık OFF korunur: sunulduğunda **Zamanlama ayarlarını aç** sorumlu dosyayı açar; **i** kaynak veya ortam ayrıntılarını gösterir. Tıklanan düğme yalnızca istek sırasında yükleniyor durumunu gösterir. Onaylanmamış sonuç doğrulanabilir; etkinleştirme kurtarıldıktan sonra başlatma açık bir işlem olarak kalır.
 
 ### Olaylar ve birleşimler {#scheduling-conditions}
 
@@ -88,9 +90,11 @@ Liste sonuna yaklaşınca yeni kayıtlar ve işler otomatik yüklenir. İş sayf
 
 ### Renkler ve durumlar {#status-colours}
 
-Bayrak Görevin durumunu, şevron işlerinin dikkat durumunu gösterir; tekrarlanan kayıtta tekrar simgesi vardır. Kırmızı yanıt bekler, titreşen sarı gözlenen çalışmayı, turuncu duraklama/kesintiyi, yeşil görülmemiş sonucu, mavi hazırlığı veya başlamamış işi gösterir.
+Bayrak Görevin durumunu, şevron işlerinin dikkat durumunu gösterir; tekrarlanan kayıtta tekrar simgesi vardır. Kırmızı yanıt bekler, titreşen sarı gözlenen çalışmayı gösterir. Turuncu duraklatma simgesi duraklamayı, turuncu uyarı üçgeni kesintiyi belirtir. Yeşil, incelenmeyi bekleyen bir Görevi, işi veya başarılı çalıştırmayı gösterir.
 
-Seçim, yeşil iş simgesine tıklama/süpürme veya şevron menüsünden okundu işaretleme sonuçları temizler. Engel her zaman insan sorusu değildir; rapor, tüm yerel işlemlerin sona erdiğini kanıtlamaz. Geri çekilen işin geçmişi tutulur.
+Altında küçük, sabit ve nötr bir çizgi olan vurgu renkli simge **Zamanlanmış çalıştırma bekleniyor** demektir: sonraki uyanma doğrulanmıştır. Vurgu rengi palete bağlıdır. Çizgisiz vurgu simgesi hazırlığı veya başlamamış işi belirtir. İncelenmiş tamamlanmalar, durdurulmuş zamanlamalar ve **Durum doğrulanmadı** nötrdür; durum metnini okuyun.
+
+Seçim veya yeşil iş simgesine tıklama/süpürme sonuçları onaylar; şevron menüsünde **Okundu olarak işaretle** bulunur. **İncelenecek başarılı çalıştırma** için etkin pencerede tekrarlanan satırı açıkça seçin veya **Okundu olarak işaretle** ile tam o çalıştırmayı onaylayın. Zamanlama etkinse simge beklemeye, aksi durumda nötre döner. Geri yüklenen seçim ve zaten seçili satıra gelen yeni sonuçlar okunmamış kalır. İlk yüklemedeki geçmiş başarılar okunmuş sayılır. Geri çekilen işin geçmişi tutulur.
 
 ### Sorular ve kararlar {#questions}
 

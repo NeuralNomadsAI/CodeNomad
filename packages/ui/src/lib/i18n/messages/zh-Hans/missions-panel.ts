@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "正在启动…",
+  "missionsPanel.action.resuming": "正在恢复…",
+  "missionsPanel.action.runningNow": "正在启动本次运行…",
   "missionsPanel.pages.raw": "分页读取原始 JSON",
   "missionsPanel.pages.rawPage": "原始 JSON 第 {page} 页，共 {total} 页",
   "missionsPanel.pages.previous": "上一页",
@@ -41,6 +44,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "计划 ID",
   "missionsPanel.schedule.zoned": "{time}（{zone}）",
   "missionsPanel.state.inProgress": "进行中",
+  "missionsPanel.state.waiting": "等待计划运行",
+  "missionsPanel.state.unreadSuccess": "成功运行待查看",
+  "missionsPanel.state.unconfirmed": "状态未确认",
   "missionsPanel.state.interrupted": "已中断",
   "missionsPanel.run.completed": "已完成",
   "missionsPanel.run.failed": "失败",

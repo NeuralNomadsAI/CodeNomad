@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { PluginControlsSnapshot } from "../../../server/src/api-types"
-import { integrationPlugin } from "./integration-rows"
+import { integrationDisplayPlugin, integrationPlugin } from "./integration-rows"
 
 describe("integration plugin", () => {
   const path = "/config/opencode.jsonc"
@@ -93,5 +93,25 @@ describe("integration plugin", () => {
     value.targets[1]!.expectedRevision = sourceAssociation.expectedRevision
     assert.deepEqual(integrationPlugin(value, associations), { sources: [] })
     assert.deepEqual(integrationPlugin(snapshot(), { configuredSources: [], configuredRules: [] }), { sources: [] })
+  })
+
+  it("correlates a unique runtime for display without granting writable source authority", () => {
+    const entry = { configuredSources: [], configuredRules: [], plugin: { declared: true, runtimeId: "acme.render" } }
+    for (const origin of ["other", "virtual", "runtime-only"] as const) {
+      const value = snapshot()
+      const loaded = { ...runtime, id: "acme.render" }
+      value.runtime = [loaded]
+      value.controls = [{ ...value.controls[0]!, id: loaded.id, runtime: loaded }]
+      value.configured.rules = []
+      value.configured.sources = origin === "runtime-only" ? [] : [{ ...value.configured.sources[0]!,
+        pluginId: loaded.id, scope: origin, path: origin === "other" ? "/ancestor/opencode.jsonc" : undefined }]
+      value.targets = []
+      assert.deepEqual(integrationPlugin(value, entry), { sources: [] }, origin)
+      assert.deepEqual(integrationDisplayPlugin(value, entry), { sources: [], control: value.controls[0], source: loaded.source }, origin)
+      assert.deepEqual(integrationDisplayPlugin(value, { ...entry, ambiguous: true }), { sources: [] })
+      assert.deepEqual(integrationDisplayPlugin(value, { ...entry, plugin: { declared: true, runtimeId: "other.plugin" } }), { sources: [] })
+      value.runtime.push(loaded)
+      assert.deepEqual(integrationDisplayPlugin(value, entry), { sources: [] }, "duplicate runtime IDs are ambiguous")
+    }
   })
 })

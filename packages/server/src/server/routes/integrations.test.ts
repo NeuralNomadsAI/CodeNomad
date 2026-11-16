@@ -66,13 +66,14 @@ describe("integrations route", () => {
     assert.deepEqual(body.integrations[0]!.configuredSources, [{ scope: "global", entryIndex: 0, expectedRevision: "a".repeat(64) }])
     assert.deepEqual(body.integrations[1]!.configuredSources, [], "only the scope's writable target is correlated")
     assert.deepEqual(body.integrations.map(item => item.plugin), [
-      { declared: true, runtime: "loaded" }, { declared: true, runtime: "loaded" }, { declared: false },
+      { declared: true, runtime: "loaded", runtimeId: "neuralnomads.fixture" },
+      { declared: true, runtime: "loaded", runtimeId: "neuralnomads.slow" }, { declared: false },
     ])
     assert.deepEqual(body.integrations.map(item => item.ambiguous), [undefined, undefined, undefined])
     assert.deepEqual(body.ambiguousSources, [])
     assert.equal(body.integrations[0]!.docs, "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/fixture")
     for (const field of ["rpc", "sources", "package"]) assert.equal(field in body.integrations[0]!, false, `${field} stays on the server`)
-    assert.equal(JSON.stringify(body).includes("neuralnomads."), false, "plugin and RPC IDs stay on the server")
+    assert.deepEqual(Object.keys(body.integrations[0]!.plugin), ["declared", "runtime", "runtimeId"])
     assert.equal(JSON.stringify(body.integrations).includes("/config/"), false, "configuration paths stay on the server")
     assert.equal(JSON.stringify(body.integrations).includes("@neuralnomads/"), false, "source specs stay on the server")
     assert.deepEqual(calls.map(call => [call.rpcID, call.method, call.input, call.location]),
@@ -108,13 +109,31 @@ describe("integrations route", () => {
       const { app, calls } = harness({ snapshot: () => snapshot, ...(kind === "marker-mismatch" ? { status: { contract: 1,
         integration: { id: "fixture-other", version: "0.1.0", family: "native", spec: 0 } } } : {}) })
       const item = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations[0]
-      assert.deepEqual(item.plugin, kind === "rule" || kind === "runtime-only" ? kind === "rule" ? { declared: false } : { declared: false, runtime: "loaded" }
-        : { declared: true, ...(kind === "ambiguous" ? {} : { runtime: kind === "failed" ? "failed" : "loaded" }) }, kind)
+      assert.deepEqual(item.plugin, { declared: kind !== "rule" && kind !== "runtime-only",
+        ...(kind === "rule" || kind === "ambiguous" ? {} : { runtime: kind === "failed" ? "failed" : "loaded" }),
+        ...(kind === "runtime-only" || kind === "marker-mismatch" ? { runtimeId: "neuralnomads.fixture" } : {}) }, kind)
       assert.equal(item.configured, true, kind)
       assert.equal(item.ambiguous, kind === "ambiguous" ? true : undefined, kind)
       assert.equal(item.state, kind === "rule" ? "inactive" : kind === "failed" ? "failed"
         : kind === "ambiguous" || kind === "marker-mismatch" ? "non-conforming" : "ok", kind)
       assert.equal(calls.length, kind === "runtime-only" || kind === "marker-mismatch" ? 1 : 0, kind)
+      await app.close()
+    }
+  })
+
+  it("projects the recognized runtime ID for inherited, virtual and runtime-only display independently of writable authority", async () => {
+    for (const origin of ["other", "virtual", "runtime-only"] as const) {
+      const snapshot = loadedSnapshot()
+      snapshot.runtime = [{ ...snapshot.runtime[0]!, id: "acme.render" }]
+      snapshot.configured.sources = origin === "runtime-only" ? [] : [{ ...snapshot.configured.sources[0]!,
+        pluginId: "acme.render", scope: origin, path: origin === "other" ? "/ancestor/opencode.jsonc" : undefined }]
+      const { app } = harness({ snapshot: () => snapshot, catalog: { state: "fresh",
+        catalog: catalogOf(catalogEntry("fixture", { plugin: "acme.render" })) } })
+      const item = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations[0]
+      assert.equal(item.state, "ok")
+      assert.deepEqual(item.plugin, { declared: origin !== "runtime-only", runtime: "loaded", runtimeId: "acme.render" })
+      assert.deepEqual(item.configuredSources, [])
+      assert.deepEqual(item.configuredRules, [])
       await app.close()
     }
   })

@@ -106,6 +106,8 @@ export interface RemoteGateDeps {
   /** A browser device paired on this verified direct HTTPS origin, independent of the tunnel. */
   authenticateDirect?(token: string | undefined, origin: string): RemoteControlDevice | null
   assignDirectDevice?(socket: Socket, deviceId: string): void
+  /** The host's opt-in for SideCar content on verified direct HTTPS origins only. */
+  allowsDirectSidecar?(request: FastifyRequest): boolean
 }
 
 /**
@@ -215,7 +217,8 @@ function gateDirectHttpsDevice(request: FastifyRequest, reply: FastifyReply, tok
     else reject(reply, 401, "This device is not paired")
     return true
   }
-  if ((isHostOnlyPath(pathname, method) || pathname === "/api/memory" || pathname.startsWith("/api/memory/")) && !PUBLIC_PATHS.has(pathname)) {
+  const directSidecar = pathname.startsWith("/sidecars/") && deps.allowsDirectSidecar?.(request) === true
+  if ((isHostOnlyPath(pathname, method) && !directSidecar || pathname === "/api/memory" || pathname.startsWith("/api/memory/")) && !PUBLIC_PATHS.has(pathname)) {
     reject(reply, 404, "Not found")
     return true
   }

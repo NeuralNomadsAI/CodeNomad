@@ -8,7 +8,7 @@ Dieselbe Oberfläche unterstützt [mehrere Projekt-Tabs und Worktrees](projects.
 
 1. Installieren Sie Node.js 24 LTS und npm; die Build-Laufzeit des Repositorys ist in `.node-version` festgelegt. Desktop-Pakete liefern ihre eigene Laufzeit: Electron nutzt sein integriertes Node, Tauri bündelt Node, und beide enthalten npm.
 2. Stellen Sie Git im **PATH des Backend-Prozesses** bereit. Git allein in WSL genügt für ein Windows-Backend nicht.
-3. Installieren oder wählen Sie OpenCode: **2.2.3** ist das erforderliche Minimum, **2.2.7** das empfohlene Qualifizierungsziel. Neuere/angepasste Builds durchlaufen Kompatibilitätsprüfungen, keine Positivliste getesteter Versionen. Siehe [OpenCode-Einrichtung](opencode.md).
+3. Installieren oder wählen Sie OpenCode: **2.3.0** ist das erforderliche Minimum, **2.3.0** das empfohlene Qualifizierungsziel. Neuere/angepasste Builds durchlaufen Kompatibilitätsprüfungen, keine Positivliste getesteter Versionen. Siehe [OpenCode-Einrichtung](opencode.md).
 4. Wählen Sie den Startordner des Servers oder übergeben Sie `--workspace-root` ausdrücklich.
 
 Ohne Git bleiben Unterhaltungen nur im ausdrücklich geöffneten physischen Ordner verfügbar; Git- und Worktree-Vorgänge schlagen fehl. Installieren Sie Git und starten Sie das Backend nach einer PATH-Änderung neu. Das Arbeitsbereichs-Stammverzeichnis begrenzt Öffnen/Durchsuchen, nicht Agentenausführung: siehe [Sicherheit](security.md).
@@ -104,6 +104,8 @@ Die öffentliche Referenz listet benutzerseitige Optionen; Desktop-Hosts verwalt
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; Repository für Release-Angebote. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Nicht gesetzt: gehostete OpenTunnel-API. Für selbst gehostetes Relay eine API-Origin setzen. |
+| `CODENOMAD_REMOTE_CONTROL` | Nicht gesetzt: Benutzer können die Fernsteuerung starten. `disabled`: von einem Administrator ausgeschaltet ([Richtlinie](remote-control.md#administrator-policy)); nicht gesetzt oder leer bedeutet keine Richtlinie, jeder andere Wert (auch Leerzeichen) verhindert den Start. |
+| `CODENOMAD_LOCKED_HOST` | Nicht gesetzt oder leer: `--host` gilt; nur Leerzeichen verhindern den Start. Eine Adresse: Der Server lauscht dort, unabhängig von `--host`, `CLI_HOST` oder dem Abhörschalter ([Richtlinie](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Optionale zusätzliche CA-Datei von Node; wird mit zulässiger Startumgebung beim Start eines fehlenden OpenCode-Daemons übergeben. Ändert keinen bereits laufenden Daemon. |
 
 Anbieterspezifische Nutzungszugangsdaten behandelt [Anbieter](providers.md). Desktop-Datenprofilauswahl beschreibt [Desktop](desktop.md); der Release-Kanal steuert sie nicht.

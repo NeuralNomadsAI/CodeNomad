@@ -122,6 +122,12 @@ export function createIntegrationBindingsStore(
       const entry = entries.get(id)
       return entry ? reconcile(id, entry, true) ?? Promise.resolve() : Promise.resolve()
     },
+    /** Explicit view refresh: only live demands of this exact conversation and Location. */
+    refreshDemanded(target: Omit<IntegrationBindingTarget, "integrationId">): Promise<void> {
+      return Promise.all([...entries].map(([id, entry]) => entry.target.instanceId === target.instanceId
+        && entry.target.directory === target.directory && entry.target.sessionID === target.sessionID
+        ? reconcile(id, entry, true) : undefined)).then(() => undefined)
+    },
     /** Payload-free integration events and exact-session changes are invalidation hints only. */
     applyEvent(instanceId: string, type: string, sessionID?: string): void {
       const integrationEvent = isIntegrationRefreshEvent(type)

@@ -192,6 +192,8 @@ interface ServerConfigBucket {
   secureEnvVars?: string[]
   opencodeBinary?: string
   speech?: Partial<SpeechSettings>
+  /** Host-only: signed-in browsers on a verified direct HTTPS origin may open SideCars. */
+  sidecarsOverDirectHttps?: boolean
 }
 
 interface UiStateBucket {
@@ -555,7 +557,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 export function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars" | "sidecarsOverDirectHttps">> & { speech: SpeechSettings } {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const logLevel =
@@ -568,7 +570,8 @@ export function normalizeServerConfig(
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech }
+  const sidecarsOverDirectHttps = source.sidecarsOverDirectHttps === true
+  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech, sidecarsOverDirectHttps }
 }
 
 function normalizeSecureEnvVars(input?: unknown): string[] {
@@ -1105,6 +1108,11 @@ function deleteColorSchemePreset(id: string): Promise<void> {
 /** Saves which releases are offered; desktop data and the backend stay unchanged. */
 async function setUpdateFeed(feed: UpdateFeed): Promise<void> {
   await patchConfigOwner("server", { updateFeed: feed })
+}
+
+/** Host-only: the server refuses this change from other clients. */
+async function setSidecarsOverDirectHttps(enabled: boolean): Promise<void> {
+  await patchConfigOwner("server", { sidecarsOverDirectHttps: enabled })
 }
 
 function updateEnvironmentVariables(envVars: Record<string, string>): void {
@@ -1677,7 +1685,7 @@ function subscribe() {
       unsubStateUi()
     }
 }
-return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, patchHotkeyPreferences, setUpdateFeed, subscribe, ensureEditDocument,
+return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, patchHotkeyPreferences, setUpdateFeed, setSidecarsOverDirectHttps, subscribe, ensureEditDocument,
   settleStateWrite: async () => { await Promise.all([favoritesOnlyWriteQueue, cloneParentSaves]); await stateWrite } }
 }
 
@@ -1848,6 +1856,7 @@ export const {
   providerModelVisibilitySaveFailed,
   setListeningMode,
   setUpdateFeed,
+  setSidecarsOverDirectHttps,
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,

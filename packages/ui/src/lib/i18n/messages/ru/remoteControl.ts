@@ -7,6 +7,8 @@ export const remoteControlMessages = {
   "remoteControl.state.connected": "Готово к удалённым подключениям",
   "remoteControl.state.reconnecting": "Повторное подключение…",
   "remoteControl.state.error": "Не удалось подключиться к ретранслятору",
+  "remoteControl.state.disabled": "Отключено администратором",
+  "remoteControl.disabled.info": "Администратор отключил удалённое управление на этом компьютере (CODENOMAD_REMOTE_CONTROL=disabled). Сопряжённые устройства не могут подключиться; их по-прежнему можно отозвать.",
   "remoteControl.status.localOnly": "CodeNomad доступен только на этом устройстве.",
   "remoteControl.status.hostOnly": "Управляйте Remote Control на основном устройстве CodeNomad.",
   "remoteControl.start": "Запустить удалённое управление",

@@ -60,7 +60,9 @@ try {
     assert.equal(off.configured, true, "The disabled integration is recognised by its exact rule")
     assert.deepEqual(off.scopes, ["global"])
     const facts = Object.fromEntries(response.integrations.map(item => [item.id, item.plugin]))
-    assert.deepEqual(facts, { fixture: { declared: true, runtime: "loaded" }, drift: { declared: true, runtime: "loaded" },
+    assert.deepEqual(facts, {
+      fixture: { declared: true, runtime: "loaded", runtimeId: "neuralnomads.fixture" },
+      drift: { declared: true, runtime: "loaded", runtimeId: "neuralnomads.drift" },
       off: { declared: true }, absent: { declared: false }, broken: { declared: true, runtime: "failed" }, later: { declared: false } })
     assert.equal(response.integrations.some(item => item.ambiguous), false)
     assert.equal(response.integrations.find(item => item.id === "drift").ambiguous, undefined, "a marker mismatch is not ambiguity")

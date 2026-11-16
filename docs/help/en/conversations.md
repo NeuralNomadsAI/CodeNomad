@@ -60,6 +60,12 @@ On desktop, sending moves keyboard focus to the conversation, so arrows, paging 
 
 Drafts are client-side working state, not shared native messages. Startup restoration can retain supported composer state, but do not treat an unsent draft or attachment as a backup or assume it appears on another device. Save important text before clearing startup data or closing a client whose restore policy is disabled; see [Desktop](desktop.md).
 
+## Open files from replies {#open-files-from-replies}
+
+1. Agent replies link project files with relative and absolute paths.
+2. A plain click opens the linked file in the file preview, read from the conversation’s worktree.
+3. Modified clicks (Ctrl/Cmd-click, Shift-click, middle-click) and links outside the session’s worktree keep normal link behavior.
+
 ## Commands and Shell mode {#commands-shell}
 
 1. Type `/` and select a discovered custom command, then supply its arguments.

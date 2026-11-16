@@ -29,14 +29,12 @@ async function openAdd(page: Page) {
   return page.getByRole("dialog", { name: "Add a plugin" })
 }
 
+/** A row's details: the name's native title, also the row's accessible description. */
 async function tooltip(page: Page, row: string) {
-  await page.mouse.move(0, 0)
-  await page.locator(`${row} .plugin-control-name`).focus()
-  const content = page.locator(".plugin-control-tooltip")
-  await content.waitFor()
-  const text = await content.innerText()
-  await page.locator(`${row} .plugin-control-name`).blur()
-  return text
+  const title = await page.locator(`${row} .plugin-control-name`).getAttribute("title") ?? ""
+  const described = await page.locator(row).getAttribute("aria-describedby")
+  assert.equal(await page.locator(`[id="${described}"]`).textContent(), title)
+  return title
 }
 
 test("adding a plugin defaults to Global, warns for Project and shows Installing until the inventory reports it", async () => {

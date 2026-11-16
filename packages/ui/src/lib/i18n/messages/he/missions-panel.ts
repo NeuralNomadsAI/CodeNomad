@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "מתחיל…",
+  "missionsPanel.action.resuming": "ממשיך…",
+  "missionsPanel.action.runningNow": "מתחיל הרצה…",
   "missionsPanel.pages.raw": "קריאת דפי JSON גולמיים",
   "missionsPanel.pages.rawPage": "דף JSON גולמי {page} מתוך {total}",
   "missionsPanel.pages.previous": "הדף הקודם",
@@ -41,6 +44,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "מזהה תזמון",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "בתהליך",
+  "missionsPanel.state.waiting": "בהמתנה להרצה מתוזמנת",
+  "missionsPanel.state.unreadSuccess": "הרצה שהצליחה וממתינה לעיון",
+  "missionsPanel.state.unconfirmed": "מצב לא מאומת",
   "missionsPanel.state.interrupted": "נקטעה",
   "missionsPanel.run.completed": "הושלמה",
   "missionsPanel.run.failed": "נכשלה",

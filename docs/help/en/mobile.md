@@ -42,3 +42,5 @@ The composer keeps Agent, Model and Thinking in its footer. The field resizes wi
 | Offline work | No offline backend or cached API history. Static UI assets may be cached, but documents and API responses are not an offline workspace. |
 
 Keep the backend reachable. Mobile OS suspension or a network switch can disconnect the event stream; returning reconnects and refetches current state, with no guaranteed event replay. Check whether an action completed before retrying it. Closing the PWA does not stop a standalone backend; quitting the host desktop app and its backend makes Remote Control unavailable until the next launch.
+
+Each browser tab, including the installed PWA, keeps its open projects, selected conversations, unsent drafts and scroll positions for that tab: when the page reloads, or the mobile OS reloads it after an app switch or screen lock, they come back. A new tab, or a PWA the OS fully closed, opens on the home page. Turn this off for the tab with **Settings → General → Restore previous state**.

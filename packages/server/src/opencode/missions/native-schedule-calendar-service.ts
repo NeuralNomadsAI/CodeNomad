@@ -18,6 +18,7 @@ import type { MissionCalendarWhen } from "../../missions/mission-calendar-plan"
 import type { MissionWake } from "../../missions/mission-document"
 import { NATIVE_SCHEDULE_CARRIER_MODEL, NATIVE_SCHEDULE_CARRIER_TITLE } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
+import { readNativeScheduleFlag } from "./native-schedule-flag"
 
 type NativeEffect = Effect.Effect<unknown, unknown>
 type Target = { missionID: string; descriptor: MissionCalendarOwnerSlot }
@@ -42,7 +43,7 @@ export const nativeScheduleCalendarMatches = (info: NativeScheduleCalendarInfo, 
   info.sessionID === slot.sessionID && info.name === slot.name && canonicalAuthority(info.when) === canonicalAuthority(slot.when)
   && info.endsAt === slot.endsAt && info.remainingRuns === null && (slot.anchorAt === undefined || info.createdAt === slot.anchorAt)
 const tag = (id: string) => Context.Service<never, unknown>(id)
-const scheduleTag = tag("@opencode/Schedule"), locationTag = tag("@opencode/Location"), configTag = tag("@opencode/Config")
+const scheduleTag = tag("@opencode/Schedule"), locationTag = tag("@opencode/Location")
 const sessionTag = tag("@opencode/Session"), databaseTag = tag("@opencode/storage/Database"), lifecycleTag = tag("@opencode/LocationLifecycle")
 const method = Schema.declare<(...args: any[]) => NativeEffect>((value): value is (...args: any[]) => NativeEffect => Predicate.isFunction(value))
 const schedulesShape = Schema.Struct({ create: method, list: method, get: method, pause: method, resume: method, remove: method, enabled: method })
@@ -66,11 +67,10 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
   }
   const schedules = Schema.decodeUnknownSync(schedulesShape)(required(scheduleTag))
   const location = Schema.decodeUnknownSync(Schema.toType(Schema.Struct(Location.Info.fields)))(required(locationTag))
-  const config = required(configTag) as { entries(): NativeEffect }
   const sessions = required(sessionTag) as { remove(id: string): NativeEffect; active: NativeEffect }
   const database = required(databaseTag) as { db: { $client: SqlClient.SqlClient } }
   const lifecycle = required(lifecycleTag) as { isClosed(): boolean }
-  if (!Predicate.isFunction(config.entries) || !Predicate.isFunction(sessions.remove) || !Effect.isEffect(sessions.active)
+  if (!Predicate.isFunction(sessions.remove) || !Effect.isEffect(sessions.active)
     || !Predicate.isFunction(database.db?.$client?.unsafe) || !Predicate.isFunction(lifecycle.isClosed) || !carrierAgent) throw new Error("Native calendar cleanup/config contract unavailable")
   let active = true
   yield* Effect.addFinalizer(() => Effect.sync(() => { active = false }))
@@ -99,10 +99,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
   })
   const enabled = Effect.fnUntraced(function* () {
     assertCurrent()
-    const entries = yield* config.entries()
-    if (!Array.isArray(entries) || entries.length > 256) throw new Error("Native calendar configuration incomplete")
-    const latest = [...entries].reverse().find(entry => entry?.type === "document" && entry.info?.experimental !== undefined)
-    if (latest?.info.experimental?.schedules !== true) throw new Error("Native calendar schedules disabled")
+    if (!(yield* readNativeScheduleFlag(ctx)).enabled) throw new Error("Native calendar schedules disabled")
     assertCurrent()
   })
   const carrier = Effect.fnUntraced(function* (target: Target) {

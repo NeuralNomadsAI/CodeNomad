@@ -178,16 +178,18 @@ test("initialization timeout includes a stalled Tiny import and ignores late com
   try {
     await page.clock.install()
     const requested = page.waitForRequest(request => request.url().includes("mermaid.tiny"))
-    await setText(page, fenced(graph))
+    // File preview mounts one renderer consumer. Markdown's deferred highlight
+    // pass can remount a fence and start an independent initialization attempt.
+    await page.evaluate(source => (window as any).fixture.file(source), graph)
     const request = await requested
     await page.clock.fastForward(10_100)
     await page.locator(".mermaid-error").waitFor()
-    assert.equal(await page.locator(".markdown-code-block > pre").isVisible(), true)
-    await setText(page, "New unrelated text")
+    assert.equal(await page.locator(".workspace-mermaid pre").isVisible(), true)
+    await page.evaluate(() => (window as any).fixture.setFileView(false))
     release()
     await page.evaluate(async url => { await import(url) }, request.url())
     assert.equal(await page.locator(".mermaid-renderer-frame").count(), 0, "a timed-out import must not create a late iframe")
-    await setText(page, fenced(graph))
+    await page.evaluate(source => (window as any).fixture.file(source), graph)
     await page.clock.resume()
     await diagram(page)
     assert.deepEqual(errors, [])

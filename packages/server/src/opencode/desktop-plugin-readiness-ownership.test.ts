@@ -5,7 +5,7 @@ import path from "node:path"
 import os from "node:os"
 import { createHash, randomUUID } from "node:crypto"
 import { syncBuiltinESMExports } from "node:module"
-import { setTimeout as delay } from "node:timers/promises"
+import { setTimeout as delay, setImmediate as nextTurn } from "node:timers/promises"
 import { createServer } from "node:http"
 import { OpenCode } from "@opencode/client"
 import { ownReadiness, registeredReadiness } from "./desktop-plugin-readiness"
@@ -24,6 +24,22 @@ async function fixture(t: TestContext) {
 async function until(read: () => Promise<boolean>) {
   for (let i = 0; i < 200; i++) { if (await read()) return; await delay(5) }
   throw new Error("Fixture condition timed out")
+}
+async function requestFile(lease: string) {
+  let file = ""
+  await until(async () => {
+    for (const name of await fs.readdir(`${lease}.prepare`).catch(() => [])) {
+      if (!name.endsWith(".json")) continue
+      const text = await fs.readFile(path.join(`${lease}.prepare`, name), "utf8").catch(() => "")
+      try {
+        if (JSON.parse(text).nonce !== name.slice(0, -5)) continue
+        file = path.join(`${lease}.prepare`, name)
+        return true
+      } catch { /* Exclusive creation exposes the name before its bytes are written. */ }
+    }
+    return false
+  })
+  return file
 }
 const scopeNamespace = (root: string, location = root) => path.join(root, "readiness", createHash("sha256").update(location).digest("hex"))
 
@@ -108,17 +124,37 @@ test("partial owned write is cleaned, while request and ACK replacements stay fo
     assert.equal(await fs.stat(file).catch(() => undefined), undefined)
   } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
   const scope = registeredReadiness(f.root, f.root, () => {}), controller = new AbortController()
+  let release!: () => void, enter!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve }), admitted = new Promise<void>(resolve => { enter = resolve })
+  t.mock.method(fs, "writeFile", async (...args: Parameters<typeof fs.writeFile>) => {
+    if (typeof args[0] === "object" && "fd" in args[0] && String(args[1]).includes('"nonce"')) { enter(); await hold }
+    return original(...args)
+  })
+  // Keep the backend's request alive while testing foreign replacements.
+  t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
+    if (String(args[0]).endsWith(".ack") && args[1] === "r") throw Object.assign(new Error("ACK read held"), { code: "ENOENT" })
+    return originalOpen(...args)
+  })
+  syncBuiltinESMExports()
   const pending = f.owner.prepare(f.root, controller.signal, () => {})
   const settled = pending.catch(() => {})
-  await until(async () => (await fs.readdir(`${f.lease}.prepare`)).some(name => name.endsWith(".json")))
-  file = path.join(`${f.lease}.prepare`, (await fs.readdir(`${f.lease}.prepare`)).find(name => name.endsWith(".json"))!)
-  await scope.reconcile([path.basename(f.lease)])
-  const ack = file.slice(0, -5) + ".ack"
-  await fs.rm(file); await fs.writeFile(file, "request replacement")
-  await fs.rm(ack); await fs.writeFile(ack, "ACK replacement")
-  controller.abort(); await settled; await scope.close(); await f.owner.close()
-  assert.equal(await fs.readFile(file, "utf8"), "request replacement")
-  assert.equal(await fs.readFile(ack, "utf8"), "ACK replacement")
+  try {
+    await admitted
+    await scope.reconcile([path.basename(f.lease)])
+    assert.equal((await fs.readdir(`${f.lease}.prepare`)).some(name => name.endsWith(".ack")), false, "an incomplete request is not proof")
+    release()
+    file = await requestFile(f.lease)
+    await scope.reconcile([path.basename(f.lease)])
+    const ack = file.slice(0, -5) + ".ack"
+    await fs.rm(file); await fs.writeFile(file, "request replacement")
+    await fs.rm(ack); await fs.writeFile(ack, "ACK replacement")
+    controller.abort(); await settled; await scope.close(); await f.owner.close()
+    assert.equal(await fs.readFile(file, "utf8"), "request replacement")
+    assert.equal(await fs.readFile(ack, "utf8"), "ACK replacement")
+  } finally {
+    release(); controller.abort(); await settled; await scope.close()
+    t.mock.restoreAll(); syncBuiltinESMExports()
+  }
 })
 
 test("later lease overflow publishes no ACK, then a fresh request succeeds after removal", async t => {
@@ -128,18 +164,19 @@ test("later lease overflow publishes no ACK, then a fresh request succeeds after
   await fs.writeFile(path.join(f.root, other), ""); await fs.mkdir(folder)
   for (let i = 0; i < 65; i++) await fs.writeFile(path.join(folder, `${randomUUID()}.json`), "{}")
   const controller = new AbortController()
-  const pending = f.owner.prepare(f.root, AbortSignal.any([controller.signal, AbortSignal.timeout(400)]), () => {})
+  const pending = f.owner.prepare(f.root, controller.signal, () => {})
   let accepted = false
   void pending.then(() => { accepted = true }, () => {})
   const refused = assert.rejects(pending)
-  await until(async () => (await fs.readdir(`${f.lease}.prepare`).catch(() => [])).some(n => n.endsWith(".json")))
+  await requestFile(f.lease)
   await assert.rejects(scope.reconcile([path.basename(f.lease), other]), /exceeds limit/)
   assert.equal((await fs.readdir(`${f.lease}.prepare`)).some(n => n.endsWith(".ack")), false)
+  controller.abort()
   await refused
   assert.equal(accepted, false, "the real backend must not accept partial proof from the refused reconciliation")
   await fs.rm(folder, { recursive: true })
   const fresh = f.owner.prepare(f.root, AbortSignal.timeout(2_000), () => {})
-  await until(async () => (await fs.readdir(`${f.lease}.prepare`)).some(n => n.endsWith(".json")))
+  await requestFile(f.lease)
   await scope.reconcile([path.basename(f.lease), other]); await fresh
   await scope.reconcile([path.basename(f.lease)]); await scope.close(); await f.owner.close()
   assert.equal(await fs.stat(`${f.lease}.prepare`).catch(() => undefined), undefined)
@@ -261,9 +298,8 @@ test("scope admission rechecks concurrent namespace growth and cleans only its o
 test("an ACK creation collision stays owned by its actual foreign creator", async t => {
   const f = await fixture(t), scope = registeredReadiness(f.root, f.root, () => {}), controller = new AbortController()
   const pending = f.owner.prepare(f.root, controller.signal, () => {}), refused = assert.rejects(pending)
-  await until(async () => (await fs.readdir(`${f.lease}.prepare`).catch(() => [])).some(n => n.endsWith(".json")))
-  const request = (await fs.readdir(`${f.lease}.prepare`)).find(n => n.endsWith(".json"))!
-  const ack = path.join(`${f.lease}.prepare`, request.slice(0, -5) + ".ack")
+  const request = await requestFile(f.lease)
+  const ack = request.slice(0, -5) + ".ack"
   await fs.writeFile(ack, "foreign ACK", { flag: "wx" })
   try { await scope.reconcile([path.basename(f.lease)]) }
   finally { controller.abort(); await refused; await scope.close(); await f.owner.close() }
@@ -280,13 +316,15 @@ for (const mode of ["abort", "deadline", "replace"] as const) test(`catalogue ${
   } } } } as unknown as ServiceConnection
   const prepared = await lifecycle.prepare({ config: path.join(f.root, "config"), data: path.join(f.root, "data") }, () => {}, connection)
   prepared.commit(); await prepared.release()
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() })
   const pending = lifecycle.ready({ connection, location: { directory: f.root }, signal: controller.signal, deadlineAt: Date.now() + (mode === "deadline" ? 60 : 2_000), assertCurrent() {} })
   const refused = assert.rejects(pending, /cancelled|timed out|replaced/).then(() => { returned = true })
   try {
     await admitted
     if (mode === "abort") controller.abort(new Error("cancelled"))
     if (mode === "replace") current = false
-    await delay(mode === "deadline" ? 90 : 30)
+    t.mock.timers.tick(mode === "deadline" ? 90 : 30)
+    await nextTurn()
     assert.equal(returned, false)
     if (mode !== "replace") assert.equal(transportSignal?.aborted, true)
     release(); await refused

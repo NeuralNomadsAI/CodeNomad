@@ -16,7 +16,8 @@ Object.assign(globalThis, { window: {
 } })
 const { initializeClientState } = await import("./client-state")
 await initializeClientState()
-const { markMissionsFinishedSeen, seedMissionFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView } = await import("./mission-view-state")
+const { markMissionsFinishedSeen, seedMissionFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView,
+  markScheduleSuccessSeen, scheduleSuccessSeen, seedScheduleSuccessSeen } = await import("./mission-view-state")
 const playbookReader = { missionId: "debug", kind: "playbook", taskMode: "independent" } as const
 
 // The completions a project lists at the end, with whether each reads as seen.
@@ -75,6 +76,12 @@ async function projectControls() {
 }
 
 if (reload) {
+  if (process.env.MISSION_PASSAGE_CHECK) test("exact passage acknowledgement survives reload without acknowledging a replacement", () => {
+    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "A"), true)
+    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), true)
+    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "C"), false)
+    assert.equal(scheduleSuccessSeen("passages", "scheduled", "schedule", "B"), false)
+  })
   if (process.env.MISSION_COLLISION_CHECK) test("legacy collision positives survive reload before the originally viewed row is discovered", () => {
     const { folder, scope, rows } = JSON.parse(process.env.MISSION_COLLISION_CHECK!)
     assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true, true])
@@ -107,6 +114,24 @@ if (reload) {
     assert.equal(missionProjectView("unknown-playbook").reader, undefined)
   })
 } else {
+  test("schedule success uses exact passage identity, initial history, ownership and captured acknowledgement", () => {
+    seedScheduleSuccessSeen("passages", "daily", "schedule", "A")
+    seedScheduleSuccessSeen("passages", "scheduled", "schedule")
+    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "A"), true, "historical success on first load is already seen")
+    seedScheduleSuccessSeen("passages", "daily", "schedule", "B")
+    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), false, "refresh never reseeds")
+    const lateA = () => markScheduleSuccessSeen("passages", "daily", "schedule", "A")
+    lateA()
+    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), false)
+    markScheduleSuccessSeen("passages", "daily", "schedule", "B")
+    lateA()
+    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), true)
+    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "C"), false, "next result recreates unread attention")
+    assert.equal(scheduleSuccessSeen("passages", "scheduled", "schedule", "B"), false, "document formats have distinct scopes")
+    seedScheduleSuccessSeen("other-project", "daily", "schedule")
+    assert.equal(scheduleSuccessSeen("other-project", "daily", "schedule", "A"), false)
+    reloadWith({ MISSION_PASSAGE_CHECK: "1" })
+  })
   test("discovering a colliding legacy positive first preserves the original seen mission and unopened boundary", () => {
     const folder = "/legacy-collision", scope = JSON.stringify([folder, "project"])
     const rows = [{ id: "historical", finishSequence: 1 }, { id: "unopened", finishSequence: 2 },

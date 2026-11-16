@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify from "fastify"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { PluginControlsError } from "../../opencode/plugin-controls"
+import { NativeScheduleActivationRefused } from "../../opencode/native-schedule-settings-activation"
 import { registerMissionScheduleList } from "./mission-schedule-list"
 
 async function fixture(t: test.TestContext) {
@@ -25,7 +25,8 @@ async function fixture(t: test.TestContext) {
       enabled: state.enabled, origin: "/config/opencode.jsonc" }) },
     scheduleSettingsActivation: { prepare: async () => {
       calls.push("prepare-read-only"); state.prepare?.()
-      if (state.forbidden) throw new PluginControlsError("Explicit project OFF", "forbidden")
+      if (state.forbidden) throw new NativeScheduleActivationRefused({ reason: "explicit-off", provenance: "experimental-block",
+        layer: "project", path: "/project/opencode.jsonc" })
       return { authority: "a".repeat(64), targets: [{ scope: "project", path: "/project/opencode.jsonc", expectation: "secret-expectation", resultDigest: "secret-result" }] }
     } },
   } as never)
@@ -57,6 +58,9 @@ test("capability distinguishes missing API, activable OFF and explicit refusal w
   f.state.forbidden = true
   response = await f.get("", true)
   assert.equal(response.json().activation.reason, "forbidden")
+  assert.equal(response.json().activation.code, "schedule-activation-refused")
+  assert.deepEqual(response.json().activation.refusal, { reason: "explicit-off", provenance: "experimental-block",
+    layer: "project", path: "/project/opencode.jsonc", openable: false })
   f.state.api = false
   response = await f.get("", true)
   assert.equal(response.json().api.reason, "missing-api")

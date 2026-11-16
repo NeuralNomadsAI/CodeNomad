@@ -1,6 +1,6 @@
 import { showConfirmDialog, type AlertDialogState } from "../stores/alerts"
 
-/** Install, host install, attach and remove confirmations enable their action this long after they are shown. */
+/** Install, host install and remove confirmations enable their action this long after they are shown. */
 export const INTEGRATION_CONFIRM_DELAY_MS = 600
 
 let claimed = false
@@ -9,7 +9,7 @@ let claimed = false
  * Reserves the single open integration or plugin-source confirmation. `undefined` while another one is open: the
  * new request shows nothing and sends nothing. The release is idempotent.
  */
-export function claimIntegrationConfirmation(): (() => void) | undefined {
+function claimIntegrationConfirmation(): (() => void) | undefined {
   if (claimed) return undefined
   claimed = true
   let released = false

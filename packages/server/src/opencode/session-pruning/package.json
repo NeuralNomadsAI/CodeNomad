@@ -21,8 +21,8 @@
     "transaction.ts", "message-storage.ts", "native-assistant-content.ts"
   ],
   "dependencies": {
-    "@opencode/plugin": "2.2.3",
-    "@opencode/schema": "2.2.3",
+    "@opencode/plugin": "2.3.0",
+    "@opencode/schema": "2.3.0",
     "zod": "^4.6.6"
   }
 }

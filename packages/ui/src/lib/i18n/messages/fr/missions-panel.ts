@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "Démarrage…",
+  "missionsPanel.action.resuming": "Reprise…",
+  "missionsPanel.action.runningNow": "Lancement du passage…",
   "missionsPanel.pages.raw": "Lire les pages JSON brutes",
   "missionsPanel.pages.rawPage": "Page JSON brute {page} sur {total}",
   "missionsPanel.pages.previous": "Page précédente",
@@ -41,6 +44,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "ID de planification",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "En cours",
+  "missionsPanel.state.waiting": "En attente programmée",
+  "missionsPanel.state.unreadSuccess": "Passage réussi à consulter",
+  "missionsPanel.state.unconfirmed": "État non confirmé",
   "missionsPanel.state.interrupted": "Interrompue",
   "missionsPanel.run.completed": "Terminée",
   "missionsPanel.run.failed": "Échec",

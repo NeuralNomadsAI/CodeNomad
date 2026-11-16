@@ -108,6 +108,8 @@ export interface ToolRenderer {
    * in sync with custom renderBody output when adding specialized tool UIs.
    */
   getSearchText?(context: ToolSearchTextContext): string[]
+  /** Part of a failed call's error shown under the error label when the body already shows the rest; defaults to the whole error. */
+  getErrorText?(context: ToolRendererContext): string | undefined
   renderBody(context: ToolRendererContext): JSXElement | null
 }
 

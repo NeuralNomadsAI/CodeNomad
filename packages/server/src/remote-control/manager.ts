@@ -31,7 +31,11 @@ interface ManagerOptions {
   lease?: RemoteControlOwnerLease
   /** Verified direct HTTPS origins (`direct-https.ts`) that pair and admit browser devices. */
   directHttpsOrigins?: () => readonly string[]
+  /** Administrator policy: no tunnel, pairing or launch resume; paired devices stay revocable. */
+  disabledByAdministrator?: boolean
 }
+
+export const REMOTE_CONTROL_DISABLED = "Remote Control is disabled by the administrator"
 
 export class RemoteControlManager {
   private readonly ingress: RemoteIngress
@@ -69,8 +73,9 @@ export class RemoteControlManager {
       : tunnelState ?? "connecting"
     return {
       manageable: true,
+      ...(this.options.disabledByAdministrator ? { disabledByAdministrator: true } : {}),
       enabled: this.enabled,
-      startsOnLaunch: this.options.registry.startsOnLaunch(),
+      startsOnLaunch: !this.options.disabledByAdministrator && this.options.registry.startsOnLaunch(),
       previews: this.options.registry.previewsAllowed(),
       state,
       ...(tunnel ? { remoteUrl: tunnel.url } : {}),
@@ -86,6 +91,7 @@ export class RemoteControlManager {
   }
 
   async start(): Promise<RemoteControlStartResponse> {
+    if (this.options.disabledByAdministrator) throw new Error(REMOTE_CONTROL_DISABLED)
     this.enabled = true
     this.error = undefined
     this.options.registry.setStartsOnLaunch(true)
@@ -97,6 +103,10 @@ export class RemoteControlManager {
 
   /** Reconnects at launch when the user left Remote Control on. Issues no pairing code. */
   async resume(): Promise<void> {
+    if (this.options.disabledByAdministrator) {
+      if (this.options.registry.startsOnLaunch()) this.options.logger.info(REMOTE_CONTROL_DISABLED + "; not resuming")
+      return
+    }
     if (this.enabled || !this.options.registry.startsOnLaunch()) return
     if (this.options.lease && !this.options.lease.tryAcquire()) {
       this.options.logger.info("Remote Control runs in another CodeNomad backend with this configuration; not resuming")
@@ -133,11 +143,13 @@ export class RemoteControlManager {
 
   /** A code for one verified direct HTTPS origin; the tunnel need not run. */
   createDirectPairing(origin: string): RemoteControlPairing {
+    if (this.options.disabledByAdministrator) throw new Error(REMOTE_CONTROL_DISABLED)
     if (!this.directHttpsOrigins().includes(origin)) throw new Error("This origin cannot pair devices")
     return pairingFromCode(origin, this.options.registry.createPairing(origin))
   }
 
   exchangeDirectPairing(code: string, origin: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
+    if (this.options.disabledByAdministrator) return null
     if (!this.directHttpsOrigins().includes(origin)) return null
     const paired = this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent), origin)
     if (!paired) return null
@@ -154,6 +166,7 @@ export class RemoteControlManager {
    * its channel is available: the connected tunnel, or its still-verified direct HTTPS origin.
    */
   isDeviceAuthorized(id: string): boolean {
+    if (this.options.disabledByAdministrator) return false
     return this.enabled && this.tunnel !== null && this.options.registry.isPaired(id)
       || this.directHttpsOrigins().some((origin) => this.options.registry.isPaired(id, origin))
   }
@@ -183,7 +196,7 @@ export class RemoteControlManager {
       assignDevice: (socket, deviceId) => trackSocket(this.deviceSockets, socket, deviceId),
       servesPreview: (token) => this.options.registry.previewsAllowed() && this.options.hasPreview?.(token) === true,
       directHttpsOrigins: () => this.directHttpsOrigins(),
-      authenticateDirect: (token, origin) => this.directHttpsOrigins().includes(origin) ? this.options.registry.authenticate(token, origin) : null,
+      authenticateDirect: (token, origin) => !this.options.disabledByAdministrator && this.directHttpsOrigins().includes(origin) ? this.options.registry.authenticate(token, origin) : null,
       assignDirectDevice: (socket, deviceId) => trackSocket(this.directDeviceSockets, socket, deviceId),
     }
   }

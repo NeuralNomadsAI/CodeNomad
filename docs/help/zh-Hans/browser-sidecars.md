@@ -77,7 +77,7 @@
 
 SideCar 是 CodeNomad 的可信扩展，而不是沙箱预览：其页面以 CodeNomad 自身的源运行，因此其脚本可以凭借你的登录访问权限使用 CodeNomad。只注册你信任其代码的服务。CodeNomad 不会将自身的登录 cookie 转发给该服务，但会保留该服务自己的 cookie。
 
-SideCar 内容（`/sidecars/`）和 SideCar WebSocket 要求在主机上使用回环连接。通过 `/api/sidecars` 注册可供已配对设备和已认证的局域网直连客户端使用。持有有效能力令牌时，活动预览内容（`/previews/`）可通过局域网直接访问；[远程控制](remote-control.md#remote-surface)网页预览在启用时仍可通过其能力令牌访问。直接访问的要求请参阅[升级](remote-access.md#upgrading)。
+SideCar 内容（`/sidecars/`）和 SideCar WebSocket 要求在主机上使用回环连接。如需从其他设备打开，请在主机的**设置 → SideCars**中开启**通过 HTTPS 打开 SideCars**：通过此服务器的 HTTPS 地址或 `CODENOMAD_ALLOWED_ORIGINS` 中的 HTTPS 来源（例如 TLS 反向代理）登录的浏览器即可打开 SideCars。普通 HTTP、`localhost` 地址和远程控制仍仅限主机使用。通过 `/api/sidecars` 注册可供已配对设备和已认证的局域网直连客户端使用。持有有效能力令牌时，活动预览内容（`/previews/`）可通过局域网直接访问；[远程控制](remote-control.md#remote-surface)网页预览在启用时仍可通过其能力令牌访问。直接访问的要求请参阅[升级](remote-access.md#upgrading)。
 
 ## OpenVSCode Server 示例 {#openvscode}
 

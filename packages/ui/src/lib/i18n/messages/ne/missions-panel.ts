@@ -1,4 +1,7 @@
 export const missionsPanelMessages = {
+  "missionsPanel.action.starting": "सुरु हुँदैछ…",
+  "missionsPanel.action.resuming": "पुनः सुरु हुँदैछ…",
+  "missionsPanel.action.runningNow": "चक्र सुरु हुँदैछ…",
   "missionsPanel.pages.raw": "कच्चा JSON पृष्ठहरू पढ्नुहोस्",
   "missionsPanel.pages.rawPage": "कच्चा JSON पृष्ठ {page}, जम्मा {total}",
   "missionsPanel.pages.previous": "अघिल्लो पृष्ठ",
@@ -41,6 +44,9 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "तालिका ID",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "प्रगतिमा",
+  "missionsPanel.state.waiting": "निर्धारित सञ्चालनको प्रतीक्षामा",
+  "missionsPanel.state.unreadSuccess": "समीक्षा गर्न बाँकी सफल सञ्चालन",
+  "missionsPanel.state.unconfirmed": "स्थिति पुष्टि भएको छैन",
   "missionsPanel.state.interrupted": "अवरुद्ध",
   "missionsPanel.run.completed": "सम्पन्न",
   "missionsPanel.run.failed": "असफल",

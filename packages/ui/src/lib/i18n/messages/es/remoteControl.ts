@@ -7,6 +7,8 @@ export const remoteControlMessages = {
   "remoteControl.state.connected": "Listo para conexiones remotas",
   "remoteControl.state.reconnecting": "Reconectando…",
   "remoteControl.state.error": "Falló la conexión al relé",
+  "remoteControl.state.disabled": "Desactivado por el administrador",
+  "remoteControl.disabled.info": "Un administrador desactivó el control remoto en este equipo (CODENOMAD_REMOTE_CONTROL=disabled). Los dispositivos vinculados no pueden conectarse; aún puedes revocarlos.",
   "remoteControl.status.localOnly": "CodeNomad solo está disponible en este dispositivo.",
   "remoteControl.status.hostOnly": "Gestiona Remote Control desde el equipo anfitrión de CodeNomad.",
   "remoteControl.start": "Iniciar control remoto",

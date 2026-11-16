@@ -280,6 +280,20 @@ may continue the same user intention; recovered activation leaves Play explicit.
 Never replay a mutation or start Play from receipt recovery or display publication.
 
 List and detail also expose `observation`, `availableActions` and `blockReason`.
+The shared list mark uses the current observation's temporal generation and positive
+active principal/next-wake evidence for **Waiting for scheduled run**. Daily documents
+use the native snapshot's positively observed running state and next date. A missing,
+stale, blocked or unresolved observation keeps **State unconfirmed**. Successful-history
+attention and exact passage acknowledgement follow the shared marks contract in
+`MISSIONS.md` (Agent conventions): accent icon with a static neutral underline for
+confirmed waiting, accent alone for prepared, orange Pause or warning triangle for
+pause/interruption, yellow pulse during a passage and green for a new successful
+passage awaiting review. Explicit attentive selection or **Mark as read** acknowledges
+that exact passage and returns an armed schedule to waiting. The context menu captures
+its passage identity when opened; a result arriving while it is open stays unread.
+Unselected rows count requests from their live coordinator and loaded descendants;
+the selected passage uses its authoritative request coverage. First-loaded history
+starts read. Acknowledged finished schedules and terminal Stop use neutral.
 Their `technical` projection exposes only the recorded current/retiring carrier
 session and calendar identifiers, role, slot, temporal generation and pending
 cleanup. It derives these from the same document read, including attempted
@@ -333,8 +347,19 @@ adapter, with zero model requests.
 
 `GET /api/workspaces/:id/missions/scheduled/capabilities` reads the acquired
 connection's consumed API contract, effective schedules flag and origin. Its
-read-only activation plan exposes the target scopes/paths or a refusal category.
-The native document preparation endpoint owns authenticated configuration writes.
+read-only activation plan exposes the project target/path or a refusal category,
+responsible layer and discovered path. Native `scheduleFlag` resolution supplies
+the effective state and provenance. Environment OFF and every discovered explicit
+document OFF refuse preparation, including an OFF hidden by a higher ON.
+The native document preparation endpoint owns authenticated project-only
+configuration writes; an already enabled Location receives a zero-target ready
+proof. Existing ready proofs are retained and revalidated read-only.
+Play/Resume perform this preparation automatically under the original view fences.
+A structured refusal offers **Open scheduling settings** only for a server-openable
+configuration ID; source/path and environment details use the focusable **i** tip.
+The requested button shows loading and `aria-busy` during HTTP work, with a status
+announcement. Uncertain activation keeps the exact receipt check available and
+leaves the next Play explicit after recovery.
 Both display routes revalidate workspace, connection, physical checkout and request
 lifetime after asynchronous work. Missing methods or capabilities return an
 explicit unavailable response. UI reads use the shared secondary HTTP budget.
@@ -675,6 +700,9 @@ Retain pending passage identity and observations rather than clearing live work.
 
 Desired running without a live native Job is displayed as **Interrupted** with
 an interruption reason. Service restart therefore leaves scheduling Interrupted.
+An archived daily passage ending without a report keeps its history outcome;
+a positively running daily Job with a future date shows **Waiting for scheduled run**.
+Failed passages retain their interruption attention.
 Do not rearm from plugin load, a read, UI reopen or backend reconnect.
 Only explicit Resume may restore scheduling; pending work is reconciled first.
 An Interrupted schedule keeps its passage pending. Resume reconciles its original

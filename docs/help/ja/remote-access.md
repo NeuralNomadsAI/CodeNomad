@@ -52,11 +52,15 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 ポートを 9898 や 9899 と決めつけないでください。省略時は使用中なら別ポートにフォールバックできます。ゼロ以外の `--https-port`、または HTTP 有効時の `--http-port` を明示するとポートを固定し、バインドできなければ失敗します。`0` は OS の割り当てを要求します。その実行での正規の情報は、表示された **Local Connection URL** と **Remote Connection URL**、および更新した **到達可能なアドレス** です。完全な[サーバー CLI リファレンス](server.md)を参照してください。
 
+## 管理者ポリシー {#administrator-policy}
+
+管理者は待ち受けアドレスを固定できます。`CODENOMAD_LOCKED_HOST` にサーバーが使うアドレスをシステム全体で設定し、CodeNomad を再起動します。この設定は `--host`、`CLI_HOST`、**他の IP からの接続を許可** より優先され、スイッチは結果を表示しますが変更できません。同僚が社内ネットワーク経由でサーバーに接続できるようにするにはイントラネットのアドレスを、このコンピューターに限定するには `127.0.0.1` を使います。すべてのアクセスを社内ネットワーク内に留めるには、`CODENOMAD_REMOTE_CONTROL=disabled` も設定します ([リモートコントロール](remote-control.md#administrator-policy))。
+
 ## アップグレード {#upgrading}
 
 アップグレード後は再度ログインしてください。ホスト名の別名、リバースプロキシ、別途ホストする UI を使う場合は、バックエンドの `CODENOMAD_ALLOWED_ORIGINS` に信頼する UI のオリジン（スキーム、ホスト名、ポート）を設定します。LAN 上のネイティブクライアントは、変更リクエストに許可された `Origin` ヘッダーを付ける必要があります。その HTTPS オリジンでは、ホストがトンネルなしで端末をペアリングすることもできます。[直接 HTTPS でペアリングする](remote-control.md#direct-https)を参照してください。
 
-ホスト専用の操作にはループバック接続を使ってください。対象は SideCar のコンテンツ（`/sidecars/`）と WebSocket、リモートコントロールの管理（`/api/remote-control/`）、プラグインブリッジ（`/api/opencode-plugin/`）、リモートプロキシ（`/api/remote-proxy/`）、保存済みサーバーの管理（`/api/remote-servers/`）、パスワード変更、トークンによる初期設定です。LAN からの直接アクセスでログイン済みでも、これらにはループバックが必要です。有効なケイパビリティトークンがあれば、アクティブなプレビューのコンテンツ（`/previews/`）は LAN からの直接アクセスで利用できます。
+ホスト専用の操作にはループバック接続を使ってください。対象は SideCar のコンテンツ（`/sidecars/`）と WebSocket、リモートコントロールの管理（`/api/remote-control/`）、プラグインブリッジ（`/api/opencode-plugin/`）、リモートプロキシ（`/api/remote-proxy/`）、保存済みサーバーの管理（`/api/remote-servers/`）、パスワード変更、トークンによる初期設定です。LAN からの直接アクセスでログイン済みでも、これらにはループバックが必要です。例外は SideCar だけです。ホストの **HTTPS で SideCar を開く** 設定を有効にすると、信頼された HTTPS オリジンからサインインしたブラウザーにそのコンテンツと WebSocket が開放されます（[SideCar](browser-sidecars.md#register-sidecar)）。有効なケイパビリティトークンがあれば、アクティブなプレビューのコンテンツ（`/previews/`）は LAN からの直接アクセスで利用できます。
 
 `/api/sidecars` 登録 API は、認証済みの LAN 直接接続クライアントとペアリング済み端末で引き続き利用できます。リモートコントロールの Web プレビューは、ホストで有効な間、ケイパビリティトークンで利用できます。
 

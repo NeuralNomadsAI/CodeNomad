@@ -18,6 +18,7 @@ const workspace = (occurrence: number, draft: string): RestorableWorkspaceTabSta
   folder: "/same-folder",
   occurrence,
   projectName: "same-project",
+  ...(occurrence === 1 ? { workspaceId: "record-b" } : {}),
   activeParentSessionId: "parent",
   activeSessionId: "session-1",
   expandedSessionIds: ["parent", "session-1"],
@@ -99,6 +100,17 @@ it("canonicalizes recursively without reordering arrays and hashes the exact UTF
   assert.equal(canonicalJson(reordered), canonical)
   assert.notEqual(canonicalJson({ values: [1, 2] }), canonicalJson({ values: [2, 1] }))
   assert.equal(await sha256(canonical), "23ed87995559a7cb383a758e7e2728ae0da9d8796565f005b92a4a7b2ba67d00")
+})
+
+it("round trips backend, record and occurrence together with each owner's drafts", async () => {
+  const snapshot = graphSnapshot()
+  snapshot.session!.tabs = [
+    { ...workspace(1, "remote A"), backendId: "a", workspaceId: "a~survivor" },
+    { ...workspace(0, "local"), workspaceId: "survivor" },
+    { ...workspace(1, "remote B"), backendId: "b", workspaceId: "b~survivor" },
+  ]
+  const encoded = await encodeClientSnapshotV2(snapshot)
+  assert.equal(canonicalJson(await decodeClientSnapshotV2(encoded.root, 1, loader(encoded))), canonicalJson(snapshot))
 })
 
 it("round trips the complete graph without matching duplicate workspaces or session IDs", async () => {

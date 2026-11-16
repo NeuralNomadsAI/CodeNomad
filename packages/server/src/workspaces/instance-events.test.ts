@@ -849,7 +849,7 @@ describe("InstanceEventBridge", () => {
     const connectionFor = (pid: number) => ({
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4010", auth: { username: "u", password: "p" } },
-        { [runtimeKey]: Object.freeze({ version: "2.2.3", pid, contract: {} }) },
+        { [runtimeKey]: Object.freeze({ version: "2.3.0", pid, contract: {} }) },
       ),
     })
     const first = serverConnected()
@@ -888,7 +888,7 @@ describe("InstanceEventBridge", () => {
       // The relayed identity must not be a digest a subscriber can recompute
       // from known fields: that would be an offline verifier for the password.
       const verifiable = createHash("sha256").update(JSON.stringify([
-        "http://127.0.0.1:4010", "2.2.3", 4242, "u", "p",
+        "http://127.0.0.1:4010", "2.3.0", 4242, "u", "p",
       ])).digest("hex")
       assert.notEqual(received[0].data.daemon, verifiable, "the token is server-held, not a recomputable digest")
       for (const digest of [received[0].data.daemon, received[2].data.daemon]) {
@@ -904,7 +904,7 @@ describe("InstanceEventBridge", () => {
     const connection = {
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4011" },
-        { [runtimeKey]: Object.freeze({ version: "2.2.3", pid: 4242, contract: {} }) },
+        { [runtimeKey]: Object.freeze({ version: "2.3.0", pid: 4242, contract: {} }) },
       ),
     }
     const firstSubscription = serverConnected()
@@ -944,7 +944,7 @@ describe("InstanceEventBridge", () => {
     const connectionFor = (pid: number) => ({
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4012" },
-        { [runtimeKey]: Object.freeze({ version: "2.2.3", pid, contract: {} }) },
+        { [runtimeKey]: Object.freeze({ version: "2.3.0", pid, contract: {} }) },
       ),
     })
     const before = serverConnected()
@@ -982,7 +982,7 @@ describe("InstanceEventBridge", () => {
     const connection = {
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4013" },
-        { [runtimeKey]: Object.freeze({ version: "2.2.3", pid: 3333, contract: {} }) },
+        { [runtimeKey]: Object.freeze({ version: "2.3.0", pid: 3333, contract: {} }) },
       ),
     }
     const attributedStream = () => {

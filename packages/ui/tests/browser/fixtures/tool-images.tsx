@@ -55,6 +55,8 @@ function content(kind: string) {
   if (kind === "deferred") return [{ ...png, uri: deferredUri() }]
   if (kind === "deferred-missing") return [{ ...png, uri: deferredUri("b") }]
   if (kind === "empty") return [{ type: "text", text: "Text-only result" }]
+  // Native Code Mode result: compact JSON, then its logs block.
+  if (kind === "json") return [{ type: "text", text: '{"answer":42,"items":["a","b"]}\n\nLogs:\nhello' }]
   if (kind === "broken") return [{ ...png, uri: "data:image/png;base64,broken" }]
   if (kind === "unsafe") return [{ ...png, uri: "javascript:window.unexpectedNavigation=true" }]
   return [{ type: "text", text: "Generated 2 images. Saved successfully." }, png, jpeg]
@@ -102,6 +104,14 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     await loadMessages(instanceId, sessionId, { force: true })
   },
   deferred: () => ({ path: deferredUri(), base64: png.uri.slice(png.uri.indexOf(",") + 1) }),
+  /** A shell call the user interrupted, as OpenCode 2.3 settles it: output so far, then the notice. */
+  interruptedShell: async () => {
+    const notice = "[full output saved to /fixture/out.txt]\n\nCommand interrupted by the user (shell ID: sh_1)."
+    messages = [{ ...completed("empty", "shell"), content: [{ id: "tool", type: "tool", name: "shell", time: { created: 1, completed: ++time },
+      state: { status: "error", input: { command: "npm test" }, error: { message: `PARTIAL_LINE_1\nPARTIAL_LINE_2\n\n${notice}` },
+        metadata: { interrupted: true, truncated: false, shellID: "sh_1", notice } } }] }]
+    await loadMessages(instanceId, sessionId, { force: true })
+  },
   execute: async (phase: string) => {
     const input = { code: "const results = await Promise.all([tools.paint({ prompt: 'sky' }), tools.fail({})]);\nreturn results" }
     const metadata = { toolCalls: [
@@ -111,6 +121,12 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     if (phase === "progress") {
       metadata.toolCalls.push({ tool: "third", status: "running", input: { test: true } })
       emit("session.tool.progress", { id: "tool", metadata })
+      return
+    }
+    if (phase === "json") {
+      messages = [{ ...completed("json", "execute"), content: [{ id: "tool", type: "tool", name: "execute",
+        time: { created: 1, completed: time }, state: { status: "completed", input, metadata: { toolCalls: [] }, content: content("json") } }] }]
+      await loadMessages(instanceId, sessionId, { force: true })
       return
     }
     if (phase === "running") {

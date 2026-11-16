@@ -8,7 +8,7 @@ La même interface prend en charge [plusieurs onglets de projet et worktrees](pr
 
 1. Installez Node.js 24 LTS et npm ; la version d’exécution du dépôt pour la compilation est épinglée dans `.node-version`. Les paquets de bureau fournissent leur propre environnement : Electron utilise son Node intégré, Tauri embarque Node et les deux incluent npm.
 2. Placez Git dans le **PATH du processus backend**. Git dans WSL seul ne suffit pas pour un backend Windows.
-3. Installez ou sélectionnez OpenCode : **2.2.3** est le minimum requis et **2.2.7** la cible de qualification recommandée. Les versions plus récentes ou personnalisées passent des contrôles de compatibilité, pas une liste de versions testées autorisées. Consultez la [configuration d’OpenCode](opencode.md).
+3. Installez ou sélectionnez OpenCode : **2.3.0** est le minimum requis et **2.3.0** la cible de qualification recommandée. Les versions plus récentes ou personnalisées passent des contrôles de compatibilité, pas une liste de versions testées autorisées. Consultez la [configuration d’OpenCode](opencode.md).
 4. Choisissez le dossier depuis lequel démarrer le serveur, ou passez explicitement `--workspace-root`.
 
 Sans Git, les conversations restent disponibles uniquement dans le dossier physique explicitement ouvert ; les opérations Git et worktree échouent. Installez Git et redémarrez le backend après une modification de PATH. Une racine d’espace de travail limite l’ouverture/la navigation, pas l’exécution de l’agent : voir [Sécurité](security.md).
@@ -104,6 +104,8 @@ La référence publique liste les options destinées aux utilisateurs ; les hôt
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad` ; dépôt interrogé pour les versions proposées. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Non défini : API OpenTunnel hébergée. Définissez une origine d’API pour un déploiement de relais auto-hébergé. |
+| `CODENOMAD_REMOTE_CONTROL` | Non définie : les utilisateurs peuvent démarrer le contrôle à distance. `disabled` : désactivé par un administrateur ([politique](remote-control.md#administrator-policy)) ; non définie ou vide : aucune politique, toute autre valeur (espaces compris) empêche le démarrage. |
+| `CODENOMAD_LOCKED_HOST` | Non définie ou vide : `--host` s’applique ; des espaces seuls empêchent le démarrage. Une adresse : le serveur écoute sur celle-ci, quels que soient `--host`, `CLI_HOST` ou l’interrupteur d’écoute ([politique](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Fichier d’AC supplémentaire facultatif de Node ; transmis avec l’environnement de démarrage autorisé au lancement d’un démon OpenCode manquant. Ne modifie pas un démon déjà actif. |
 
 Les identifiants d’utilisation propres aux fournisseurs sont décrits dans [Fournisseurs](providers.md). La sélection du profil de données de bureau est décrite dans [Bureau](desktop.md), et n’est pas contrôlée par le flux de versions.

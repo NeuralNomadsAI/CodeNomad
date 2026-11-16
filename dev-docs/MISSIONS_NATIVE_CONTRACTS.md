@@ -147,7 +147,7 @@ Exact request receipts remain point reads through `scheduleRead`.
 | --- | --- | --- |
 | `@opencode/client/service` | `discover({file})` returns Endpoint/undefined; `headers(endpoint)` builds authentication; public `Info` describes registration fields | Exact absolute registration, bounded non-secret id/pid/url/version projection, current PID/incarnation before dispatch and inside receiving RPC. Keep credentials in operation memory. For wake transport, forbid ensure/start/stop/terminate, CLI children, standalone and alternate namespaces. |
 | Client HTTP/RPC | `OpenCode.make(...).rpc(definition).method(input,{location,signal})` | Acquired authenticated connection, exact native directory and cancellation; preserve uncertainty after dispatch. |
-| Schedule HTTP contract | `experimental.schedule.create/list/get/pause/resume/delete`, `{data:Info}`, session-filtered list, delete 204 | `opencode/native-schedule-capability.ts` recognizes the consumed request/response shapes read-only. Read `experimental.schedules` independently from the highest-priority whole native block. Never create probe schedules. |
+| Schedule HTTP contract | `experimental.schedule.create/list/get/pause/resume/delete`, `{data:Info}`, session-filtered list, delete 204 | `opencode/native-schedule-capability.ts` recognizes the consumed request/response shapes read-only. The Location's `scheduleFlag` RPC reads native flag resolution independently. Never create probe schedules. |
 | Plugin Session facade | get/create/prompt/synthetic/interrupt/context | Prefer facade methods when they expose the required operation. Preserve exact session/message IDs and fixed profiles at admission. Use bounded point/page reads for source coverage. |
 | Session/AISDK hooks | prompt/context/title/compaction/language | Context admission requires the exact durable user message and schedule correlation. Title/compaction/language carry only local technical work. Treat metadata as correlation within service privileges. |
 | Native context message classification | Context message IDs select native carrier records | [Read bounds and authority](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds). |
@@ -169,6 +169,7 @@ documents without imposing a runtime version list.
 | Session message readers | messages({sessionID,limit,order,cursor:{id,direction}}) → array; message({sessionID,messageID}) → Info/undefined | Same adapter: ≤32 messages/source, ≤256 KiB native message, 16,384-character launch envelope; point-read anchor and each message, stable complete prefix, source placement/bytes rechecked after I/O. Deleted/moved/changed anchors block. |
 | Session active | `active` is an Effect returning a ReadonlySet | `native-passage-observation.ts`: actual Set, ≤4096 sessions. Treat activity as a process-local observation. Require correlated durable terminal evidence and complete family quiescence for restart settlement. Keep an old execution claim uncertain during asynchronous native recovery. |
 | `@opencode/Location` | directory/workspaceID/project{id,directory,canonical} | `native-service-adapter.ts`, `native-service-clock.ts`, recurrence readers: structural Location.Info fields, exact native/physical placement and current graph checks after I/O and before effects. |
+| `@opencode/Flag`, `@opencode/Config` | `resolve(entries).schedules` → `{enabled:boolean,source:"env"|"config"|"default"}`; `entries()` → Effect of ordered documents/directories | `native-schedule-flag.ts`: receiving RPC/Location graph, checked methods/Effect, at most 256 entries, checked result and live Location/lifecycle before and after the read. `scheduleFlag` returns only effective state and provenance (`environment`, `experimental-block`, `all-flags`, `channel-default`). The calendar facade uses this same reader before carrier effects and retains `Schedule.enabled(sessionID)` for the carrier's own Location. Missing service or shape blocks admission. |
 | `@opencode/storage/Database` | db.$client.unsafe(sql,params).withoutTransform → Effect rows; db.transaction(callback,{behavior:"immediate"}) | `native-recurrence-storage.ts`, `native-passage-observation.ts`: current graph, actual SQL client/transaction, safe row types and synchronous query guard. Preserve the driver's transaction Context when composing effects. Asynchronous-only reads cannot implement the synchronous admission fence. |
 | KV/CAS SQL | kv(key,value,time_created,time_updated); plugin namespace is plugin ID encoded as padded UTF-16 hex | `native-recurrence-storage.ts`: exact project key/bytes/revision, immediate transaction, conditional update and readback. Publish invalidation after commit; an invalidation failure preserves the committed result. |
 | Family SQL | session_v2 placement/parent/time_suspended, session_inbox, session_message id/type/seq/content/idle | `native-passage-observation.ts`: family ≤4096, exact message/inbox presence and nonnegative counts. Anchor the original input in durable seq order and require a later terminal idle as the latest projection. Count failures only between that input and terminal, then recheck family, claims and requests. Missing anchor/terminal or any remaining claim keeps uncertainty. |
@@ -409,13 +410,31 @@ remain covered by the separate scheduled-product qualification.
 
 `native-experimental-settings.ts` shares the depth/schedules JSONC reader and
 editor. Preserve explicit false/zero and local companions; materialize inherited
-true schedules when writing a depth, and preserve depth from the target's own
-lower-priority block only when creating an experimental block for schedules.
-An existing block keeps its depth key or native default unchanged. Copy only
-those two known keys.
+true schedules when writing a depth. Creating an experimental block for schedules
+copies every effective experimental option from the target's lower-priority whole
+block. An existing block keeps its own options and native defaults.
 `PluginControls` owns connection/Location/deletion fences, byte expectations and
 the physical file lock. Duplicate keys, invalid parents and simultaneous JSON/
 JSONC in one layer refuse settings edits.
+
+Native flag precedence is environment overrides (a specific key before `all`),
+the key in the highest-priority whole `experimental` block, then true from the
+highest-priority document setting `experimental.all_flags`, then the daemon's
+channel default. `all_flags:false` falls through to that default. The daemon's
+Flag service supplies environment and channel decisions.
+Activation refuses every discovered explicit `schedules:false`, including a
+hidden lower layer, and a native environment OFF. An upper experimental block
+masking the project target also refuses activation. `schedule-activation-refused`
+responses identify the reason, provenance, layer, discovered path, `openable` and
+`configFileID`. An editor action requires an openable ID with exact membership
+in the existing global config-file inventory; environment refusals expose their
+source through the information tip.
+
+An activation refusal before any document mutation, for an identity without an
+existing intent, includes `notApplied: { requestID, expectedRevision }`. This exact
+proof releases that local request for a fresh explicit Start after configuration
+correction. A refusal after a document mutation attempt or for an existing intent
+retains the original request and its explicit receipt recovery.
 
 Native regression: `node --import tsx
 scripts/test-mission-experimental-settings-native.mjs <absolute-isolated-cli>`.
@@ -426,7 +445,16 @@ The product preparation endpoint is
 `/api/workspaces/:id/missions/:missionID/schedule-settings`: GET reads its document;
 POST accepts only `requestID` and `expectedDocumentRevision`. It holds the owned
 worktree admission, refreshes authority before every typed `documentActivation`
-phase and composes the two-file executor with native document CAS. Readiness keeps
+phase and composes the project-only executor with native document CAS. An already
+enabled Location records a ready proof with zero targets and zero config writes.
+The sole writable target is the owned Location's project configuration; global
+configuration contributes discovery, refusal and exact editor targeting.
+Existing ready proofs retain their original request/revision, authority and digests;
+preparation revalidates them read-only. Incomplete persisted intentions containing
+a global target observe exact already-attempted effects only; never write global
+or unattempted targets during their reconciliation. An attempted effect without
+matching proof keeps its original barrier.
+Readiness requires the effective native flag in the acquired Location and keeps
 the Mission paused. Immediate objects refuse this path. A failed intent with no
 attempted write can be replaced only by a new explicit request at the fresh
 document revision; an attempted effect retains its original request fence.

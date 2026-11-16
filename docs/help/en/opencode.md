@@ -19,8 +19,8 @@ The installed executable and the running service can have different versions. Co
 
 | Classification | Current requirement | Meaning |
 | --- | --- | --- |
-| Minimum | OpenCode **2.2.3** | The image generation tool used by the **Images** settings and the Design extension, alongside correct JavaScript job ordering in Code Mode and the native replay and compaction format; conversations saved by earlier versions stay readable after updating. |
-| Recommended | OpenCode **2.2.7** | Qualified target, distinct from the technical minimum. |
+| Minimum | OpenCode **2.3.0** | The image generation tool used by the **Images** settings and the Design extension, alongside correct JavaScript job ordering in Code Mode and the native replay and compaction format; conversations saved by earlier versions stay readable after updating. It also delivers subagent results as background reports, which subagent cards and Missions read. |
+| Recommended | OpenCode **2.3.0** | Qualified target; currently the same version as the minimum. |
 | Unverified | A newer or custom version not fully validated | Not rejected merely for being untested; the connected service's actual API contracts are checked. |
 
 The connected service must expose the required session, permission, Form, inbox and session-environment contracts. Native Mission scheduling also checks the schedule APIs, plugin/provider bundle and effective `experimental.schedules` setting. Availability follows those consumed capabilities, including on compatible future versions. If setup reports an unsupported running service, select/install a supported CLI and use the explicit shared-service restart when ready.

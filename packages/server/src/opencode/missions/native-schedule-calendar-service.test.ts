@@ -38,6 +38,7 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
     Effect.provideService(Context.Service<never, unknown>("@opencode/Location"), location),
     Effect.provideService(Context.Service<never, unknown>("@opencode/LocationLifecycle"), { isClosed: () => state.closed }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Config"), { entries: () => Effect.succeed([{ type: "document", info: { experimental: { schedules: state.enabled } } }]) }),
+    Effect.provideService(Context.Service<never, unknown>("@opencode/Flag"), { resolve: () => ({ schedules: { enabled: state.enabled, source: "config" } }) }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), { remove: () => Effect.void, active: Effect.succeed(new Set()) }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: { unsafe: () => ({ withoutTransform: Effect.sync(() => state.row === undefined ? [] : [{ data: state.row }]) }) } } }),
     Effect.provideService(Scope.Scope, scope)))

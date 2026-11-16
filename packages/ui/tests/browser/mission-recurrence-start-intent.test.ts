@@ -402,6 +402,7 @@ test("a partial Pause, a failed status read and a live Job keep every hold witho
     await refresh(page)
     await expectLifecycle(page, [[CHECK, true], [STOP, false], [RUN_NOW, false]])
     assert.equal(await statusText(page).count(), 0)
+    const pause = (await f.read()).controls[1]!
     // Failed status reads keep it held.
     f.native.statusFails = true
     for (let index = 0; index < 2; index++) { await missionToolbarAction(page, CHECK).click(); await page.waitForTimeout(200) }
@@ -420,8 +421,11 @@ test("a partial Pause, a failed status read and a live Job keep every hold witho
     assert.equal(f.native.writes.length, 2)
     f.native.statusFails = false
     await missionRefresh(page).click()
+    // Loading restores Pause before the retry reaches native; wait for its exact completion.
+    await until(async () => (await f.read()).controls.find(item => item.requestID === pause.requestID)?.controlsComplete === true)
     await missionToolbarAction(page, CHECK).waitFor({ state: "hidden" })
-    assert.match(f.native.writes[2]!, /^pause:.*:retry$/)
+    assert.equal(f.native.writes[2], `pause:${pause.requestID}:retry`)
+    assert.equal(f.native.writes.length, 3, "only the exact partial Pause was retried")
     assert.equal(await f.permitFree(), true)
     assert.deepEqual(opened.errors, [])
   } finally { await opened.page.close(); await f.dispose() }

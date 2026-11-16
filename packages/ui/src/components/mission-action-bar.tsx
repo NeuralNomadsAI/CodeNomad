@@ -1,6 +1,6 @@
 import { Show, createContext, createMemo, createSignal, onCleanup, onMount, useContext, type Accessor, type JSX } from "solid-js"
 import { Portal } from "solid-js/web"
-import { ArrowUpRight, BookmarkPlus, PauseCircle, Eye, FastForward, Pause, Pencil, Play, RefreshCw, Square, Trash2 } from "lucide-solid"
+import { ArrowUpRight, BookmarkPlus, Loader2 as LoaderCircle, PauseCircle, Eye, FastForward, Pause, Pencil, Play, RefreshCw, Square, Trash2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
@@ -30,7 +30,7 @@ export function MissionActionBar(props: {
   openLabel?: string
   /** Interrupts a graceful Pause's still-running steps at once. */
   interrupt?: MissionPrimaryAction
-  onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
+  onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean; deleteBusy?: boolean
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
   /** The brief name form belongs to the deliberately revealed task detail. */
   secondaryInDetail?: boolean
@@ -80,17 +80,17 @@ export function MissionActionBar(props: {
   let bar: HTMLDivElement | undefined
   const toolbar = () => <div ref={bar} class="mission-action-bar" role="toolbar" aria-label={props.label}>
     <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={[primaryLabel(), feedbackText()].filter(Boolean).join(" — ")}
-      disabled={!props.primary || props.primary.disabled} onClick={() => void props.primary?.onSelect()}>
-      {primaryIcon(primaryKey())}
+      disabled={!props.primary || props.primary.disabled || props.primary.busy} aria-busy={props.primary?.busy || undefined} onClick={() => void props.primary?.onSelect()}>
+      <Show when={props.primary?.busy} fallback={primaryIcon(primaryKey())}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
     </button>
     <button type="button" class="mission-control-icon-button" aria-label={stopLabel()} title={stopLabel()}
-      disabled={!props.stop || props.stop.disabled} onClick={() => void props.stop?.onSelect()}>
-      <Square class="h-3.5 w-3.5" aria-hidden="true" />
+      disabled={!props.stop || props.stop.disabled || props.stop.busy} aria-busy={props.stop?.busy || undefined} onClick={() => void props.stop?.onSelect()}>
+      <Show when={props.stop?.busy} fallback={<Square class="h-3.5 w-3.5" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
     </button>
     <Show when={props.runNow}>{runNow =>
       <button type="button" class="mission-control-icon-button" aria-label={runNow().ariaLabel ?? runNow().label} title={runNow().ariaLabel ?? runNow().label}
-        disabled={runNow().disabled} onClick={() => void runNow().onSelect()}>
-        <FastForward class="h-3.5 w-3.5" aria-hidden="true" />
+        disabled={runNow().disabled || runNow().busy} aria-busy={runNow().busy || undefined} onClick={() => void runNow().onSelect()}>
+        <Show when={runNow().busy} fallback={<FastForward class="h-3.5 w-3.5" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
       </button>}
     </Show>
     <button type="button" class="mission-control-icon-button icon-toggle mission-overview-toggle" aria-pressed={props.reading}
@@ -102,7 +102,9 @@ export function MissionActionBar(props: {
       <ArrowUpRight class="h-4 w-4" aria-hidden="true" />
     </button>
     <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
-      disabled={!props.onDelete || props.deleteDisabled} onClick={() => props.onDelete?.()}><Trash2 class="h-4 w-4" aria-hidden="true" /></button>
+      disabled={!props.onDelete || props.deleteDisabled || props.deleteBusy} aria-busy={props.deleteBusy || undefined} onClick={() => props.onDelete?.()}>
+      <Show when={props.deleteBusy} fallback={<Trash2 class="h-4 w-4" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
+    </button>
     <ActionOverflowMenu label={t("messageItem.actions.more")} items={menu} triggerClass="mission-control-icon-button" />
   </div>
   const mount = () => props.inline ? undefined : slot?.()

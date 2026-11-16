@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
+import { setImmediate } from "node:timers/promises"
 import { createRoot, createSignal } from "solid-js"
 import { useSessionCache } from "./useSessionCache.ts"
 import { messageStoreBus } from "../../../stores/message-v2/bus.ts"
@@ -11,7 +12,8 @@ import { backendEvents } from "../../../lib/backend-events.ts"
 import { isSessionTranscriptVisible } from "../../../stores/session-transcript-visibility.ts"
 import { addInstance, removeInstance } from "../../../stores/instances.ts"
 
-it("keeps a visible over-budget transcript pinned across catalogue and loading changes, then releases it on hide", async () => {
+it("keeps a visible over-budget transcript pinned across catalogue and loading changes, then releases it on hide", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
   const instanceId = "cache-visible-lifetime", sessionId = "selected"
   const previousSessions = sessions(), previousLoading = loading()
   addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: {} as any })
@@ -29,7 +31,9 @@ it("keeps a visible over-budget transcript pinned across catalogue and loading c
       useSessionCache({ instanceId: () => instanceId, activeSessionId: () => sessionId,
         isActiveInstance: active, instanceSessions: () => sessions().get(instanceId)! })
     })
-    await new Promise(resolve => setTimeout(resolve, 250))
+    // Advance the measurement quiet window, then drain its async accounting.
+    t.mock.timers.tick(500)
+    await setImmediate()
     assert.deepEqual(store.getSessionMessageIds(sessionId), ["message"])
     setSessions(prev => new Map(prev).set(instanceId, new Map([[sessionId, { ...session, title: "Renamed" }]])))
     assert.deepEqual(store.getSessionMessageIds(sessionId), ["message"])
@@ -47,7 +51,8 @@ it("keeps a visible over-budget transcript pinned across catalogue and loading c
   }
 })
 
-it("releases memory protection on revoke and reacquires a retained view on the new attachment", async () => {
+it("releases memory protection on revoke and reacquires a retained view on the new attachment", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
   const backend = createBackendClient({ id: "cache_owner", baseUrl: "http://cache.invalid", fetcher: async () => { throw new Error("unexpected IO") } })
   const unregister = registerBackendClient(backend)
   let detach = backendEvents.attach(backend.id, backend.events)
@@ -65,7 +70,8 @@ it("releases memory protection on revoke and reacquires a retained view on the n
       useSessionCache({ instanceId: () => instanceId, activeSessionId: () => sessionId,
         isActiveInstance: () => true, instanceSessions: () => sessions().get(instanceId)! })
     })
-    await new Promise(resolve => setTimeout(resolve, 250))
+    t.mock.timers.tick(500)
+    await setImmediate()
     assert.deepEqual(store.getSessionMessageIds(sessionId), ["message"])
     detach()
     assert.equal(isSessionTranscriptVisible(instanceId, sessionId), false)
@@ -74,7 +80,8 @@ it("releases memory protection on revoke and reacquires a retained view on the n
     detach = backendEvents.attach(backend.id, backend.events)
     assert.equal(isSessionTranscriptVisible(instanceId, sessionId), true, "a retained view reacquires only the new attachment")
     store.upsertMessage({ id: "new-message", sessionId, role: "assistant", status: "complete" })
-    await new Promise(resolve => setTimeout(resolve, 250))
+    t.mock.timers.tick(500)
+    await setImmediate()
     assert.deepEqual(store.getSessionMessageIds(sessionId), ["new-message"])
     dispose(); dispose()
     assert.equal(isSessionTranscriptVisible(instanceId, sessionId), false)

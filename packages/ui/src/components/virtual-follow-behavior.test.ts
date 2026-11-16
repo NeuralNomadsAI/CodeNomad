@@ -15,6 +15,7 @@ import {
   getPrimaryPointerDragDirection,
   SCROLL_EDGE_TOLERANCE_PX,
   ScrollRestoreTokenGuard,
+  ScrollObservationGate,
   shouldNavigateAtBoundary,
   VirtualScrollController,
   hasReachedBottom,
@@ -588,5 +589,97 @@ describe("virtual follow behavior", () => {
       assert.equal(cancelled, true, path)
       assert.equal(restoredOldMode, false, path)
     }
+  })
+
+  it("coalesces scroll-event observations to one flush per animation frame", () => {
+    const makeGate = () => {
+      const pending = new Map<number, () => void>()
+      let flushes = 0
+      let nextHandle = 0
+      const gate = new ScrollObservationGate(() => { flushes += 1 }, {
+        schedule: (callback) => { nextHandle += 1; pending.set(nextHandle, callback); return nextHandle },
+        cancel: (handle) => { pending.delete(handle) },
+      })
+      return {
+        gate, flushes: () => flushes, pendingCount: () => pending.size,
+        runFrame: () => { const callbacks = [...pending.values()]; pending.clear(); for (const callback of callbacks) callback() },
+      }
+    }
+
+    const harness = makeGate()
+    harness.gate.request()
+    harness.gate.request()
+    harness.gate.request()
+    assert.equal(harness.flushes(), 0)
+    assert.equal(harness.pendingCount(), 1)
+
+    harness.runFrame()
+    assert.equal(harness.flushes(), 1)
+    assert.equal(harness.pendingCount(), 0)
+  })
+
+  it("defers a re-request made during a flush to the next frame", () => {
+    const pending = new Map<number, () => void>()
+    let flushes = 0
+    let nextHandle = 0
+    const gate = new ScrollObservationGate(() => {
+      flushes += 1
+      gate.request()
+    }, {
+      schedule: (callback) => { nextHandle += 1; pending.set(nextHandle, callback); return nextHandle },
+      cancel: (handle) => { pending.delete(handle) },
+    })
+    const runFrame = () => { const callbacks = [...pending.values()]; pending.clear(); for (const callback of callbacks) callback() }
+
+    gate.request()
+    runFrame()
+    assert.equal(flushes, 1)
+    // The re-request armed the next frame; nothing else runs in this one.
+    assert.equal(pending.size, 1)
+    runFrame()
+    assert.equal(flushes, 2)
+  })
+
+  it("observes immediately through the pending frame slot without double-flushing", () => {
+    const pending = new Map<number, () => void>()
+    const cancelled: number[] = []
+    let flushes = 0
+    let nextHandle = 0
+    const gate = new ScrollObservationGate(() => { flushes += 1 }, {
+      schedule: (callback) => { nextHandle += 1; pending.set(nextHandle, callback); return nextHandle },
+      cancel: (handle) => { cancelled.push(handle); pending.delete(handle) },
+    })
+    const runFrame = () => { const callbacks = [...pending.values()]; pending.clear(); for (const callback of callbacks) callback() }
+
+    gate.request()
+    gate.observeNow()
+    assert.equal(flushes, 1)
+    assert.deepEqual(cancelled, [1])
+    // The frame slot was consumed: running the frame flushes nothing more.
+    runFrame()
+    assert.equal(flushes, 1)
+  })
+
+  it("drops a pending observation on cancel", () => {
+    const pending = new Map<number, () => void>()
+    const cancelled: number[] = []
+    let flushes = 0
+    let nextHandle = 0
+    const gate = new ScrollObservationGate(() => { flushes += 1 }, {
+      schedule: (callback) => { nextHandle += 1; pending.set(nextHandle, callback); return nextHandle },
+      cancel: (handle) => { cancelled.push(handle); pending.delete(handle) },
+    })
+    const runFrame = () => { const callbacks = [...pending.values()]; pending.clear(); for (const callback of callbacks) callback() }
+
+    gate.request()
+    gate.cancelPending()
+    assert.deepEqual(cancelled, [1])
+    runFrame()
+    assert.equal(flushes, 0)
+
+    // A later request works again after a cancel.
+    gate.request()
+    runFrame()
+    assert.equal(flushes, 1)
   })
 })

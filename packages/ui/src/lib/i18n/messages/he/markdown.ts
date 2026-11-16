@@ -12,4 +12,5 @@ export const markdownMessages = {
   "markdown.copy": "העתק",
 
   "markdown.link.previewOpens": "נפתח בתצוגה המקדימה באינטרנט. Ctrl+לחיצה (⌘+לחיצה ב-macOS) או לחיצה אמצעית פותחת אותו בדפדפן.",
+  "markdown.link.fileOpens": "נפתח בתצוגה המקדימה של הקובץ. Ctrl+לחיצה (⌘-לחיצה ב-macOS) או לחיצה אמצעית פותחת אותו בדפדפן.",
 } as const

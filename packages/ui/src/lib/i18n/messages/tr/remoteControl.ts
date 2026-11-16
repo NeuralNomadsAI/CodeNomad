@@ -7,6 +7,8 @@ export const remoteControlMessages = {
   "remoteControl.state.connected": "Uzak bağlantılar için hazır",
   "remoteControl.state.reconnecting": "Yeniden bağlanılıyor…",
   "remoteControl.state.error": "Aktarıcı bağlantısı başarısız",
+  "remoteControl.state.disabled": "Yönetici tarafından devre dışı",
+  "remoteControl.disabled.info": "Bir yönetici bu bilgisayarda Uzaktan Kontrol'ü kapattı (CODENOMAD_REMOTE_CONTROL=disabled). Eşleştirilmiş cihazlar bağlanamaz; yine de iptal edebilirsiniz.",
   "remoteControl.status.localOnly": "CodeNomad yalnızca bu cihazda kullanılabilir.",
   "remoteControl.status.hostOnly": "Remote Control’ü CodeNomad ana cihazından yönetin.",
   "remoteControl.start": "Uzaktan Kontrolü başlat",

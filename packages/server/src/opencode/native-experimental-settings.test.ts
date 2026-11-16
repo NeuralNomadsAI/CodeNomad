@@ -54,7 +54,7 @@ test("companion inheritance uses the block before the target, not the final proj
     entry("/project/.opencode/opencode.jsonc", { todo: true })]
   assert.deepEqual(inheritedMissionExperimental(entries, "/global/opencode.jsonc", "/project"), { schedules: true, subagent_depth: 2 })
   assert.deepEqual(inheritedMissionExperimental(entries, "/project/.opencode/opencode.jsonc", "/project"), { subagent_depth: 8 })
-  assert.deepEqual(effectiveMissionExperimental(entries), { origin: "/project/.opencode/opencode.jsonc" })
+  assert.deepEqual(effectiveMissionExperimental(entries), { todo: true, origin: "/project/.opencode/opencode.jsonc" })
   assert.deepEqual(inheritedMissionExperimental(entries.slice(0, -1), "/project/.opencode/opencode.jsonc", "/project"), { subagent_depth: 8 })
   const globalWrite = editMissionExperimental(document("{}"), "schedules", true,
     inheritedMissionExperimental(entries, "/global/opencode.jsonc", "/project"), "global")
@@ -68,6 +68,14 @@ test("companion inheritance uses the block before the target, not the final proj
     { type: "directory", path: "/global" } as ConfigEntry,
     entry("/Project/opencode.jsonc", { subagent_depth: 8 }),
   ], "/project/.opencode/opencode.jsonc", "/project"), {}, "POSIX case remains significant")
+})
+
+test("creating an activation block preserves all effective inherited experimental options", () => {
+  const inherited = { subagent_depth: 0, todo: true, background_compaction: false, all_flags: false,
+    image_generate: { model: "fixture/image" }, location_idle_timeout: "4 hours" }
+  const saved = editMissionExperimental(document('{\r\n\t// keep\r\n\t"model":"keep"\r\n}\r\n'), "schedules", true, inherited)
+  assert.deepEqual(value(saved), { model: "keep", experimental: { ...inherited, schedules: true } })
+  assert.match(saved, /\r\n\t\/\/ keep/)
 })
 
 test("both paths reject malformed or ambiguous parents and companion keys", () => {

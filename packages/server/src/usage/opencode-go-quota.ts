@@ -64,6 +64,11 @@ function microCents(value: unknown): number | null {
   return amount !== null && Math.abs(amount) <= Number.MAX_SAFE_INTEGER ? amount : null
 }
 
+export function parseOpenCodeConsoleBalance(payload: unknown): ProviderUsageWindow | undefined {
+  const balance = microCents(asObject(payload)?.availableMicroCents)
+  return balance === null ? undefined : { ...toUsageWindow({ usedPercent: null }), balanceUSD: { remaining: balance / 100_000_000 } }
+}
+
 function parseOpenCodeGoConsoleQuota(payload: unknown): ProviderUsage {
   const meters = asObject(asObject(asObject(payload)?.access)?.meters)
   const windows: ProviderUsage["windows"] = {}
@@ -91,8 +96,8 @@ export async function fetchOpenCodeGoQuota(auth: OpenCodeGoAuth, signal: AbortSi
     const usage = parseOpenCodeGoConsoleQuota(await fetchBoundedJson(OPENCODE_GO_CONSOLE_URL, headers, signal))
     try {
       const billing = asObject(await fetchBoundedJson(OPENCODE_GO_BILLING_URL, headers, signal))
-      const balance = microCents(billing?.availableMicroCents)
-      if (balance !== null) usage.windows.credits_balance = { ...toUsageWindow({ usedPercent: null }), balanceUSD: { remaining: balance / 100_000_000 } }
+      const balance = parseOpenCodeConsoleBalance(billing)
+      if (balance) usage.windows.credits_balance = balance
     } catch (error) {
       signal.throwIfAborted()
       if (error instanceof ProviderHttpError && error.status === 401) throw error

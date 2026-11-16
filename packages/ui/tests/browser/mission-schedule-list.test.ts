@@ -15,6 +15,7 @@ import type { MissionDocument } from "../../../server/src/missions/mission-docum
 import type { MissionJsonValue } from "../../../server/src/missions/model"
 import { missionLaunchModel, type MissionConfiguration } from "../../../server/src/missions/launch-policy"
 import { legacyLaunch } from "../../../server/src/missions/legacy-launch-test-helper"
+import { BUILT_IN_COLOR_SCHEMES } from "../../src/lib/theme-scheme"
 
 let browser: Browser, url: string, events: Server, eventsURL: string
 before(async () => {
@@ -39,7 +40,7 @@ const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p"
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
 async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; available?: boolean; locale?: string; journalGate?: Promise<void>; outsidePage?: boolean } = {}) {
   page.setDefaultTimeout(15_000)
-  const values = new Map<string, MissionJsonValue>(), posts: Record<string, any>[] = [], reads: string[] = [], errors: string[] = []
+  const values = new Map<string, MissionJsonValue>(), posts: Record<string, any>[] = [], activations: Record<string, any>[] = [], reads: string[] = [], errors: string[] = []
   const store = new NativeMissionDocumentStore({ get: async key => values.get(key),
     compareAndSet: async (key, value) => { values.set(key, structuredClone(value)) } }, "project", "fixture")
   const config = { title: "Inspect local changes", objective: "Inspect local changes and report useful findings.", template: "custom" as const,
@@ -98,16 +99,19 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
       if (target.endsWith("/missions")) await options.journalGate
       return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: [], summaries: [], generatedAt: 1, discardedEvents: 0 } })
     }
-    const body = request.postDataJSON(); posts.push({ ...body, target })
+    const body = request.postDataJSON()
     if (target.endsWith("/schedule-settings")) {
+      activations.push({ ...body, target })
+      if (options.enabled === false) posts.push({ ...body, target })
       assert.equal(body.expectedDocumentRevision, doc!.revision, "activation uses the revision admitted by the UI")
       activation = body
-      doc = await store.change(doc!.id, doc!.revision, () => true, value => { value.scheduleActivation = { requestID: body.requestID,
+      if (doc!.scheduleActivation?.state !== "ready") doc = await store.change(doc!.id, doc!.revision, () => true, value => { value.scheduleActivation = { requestID: body.requestID,
         expectedRevision: body.expectedDocumentRevision, authority: "a".repeat(64), state: "ready", targets: [], effectiveOrigin: "/private/config/opencode.jsonc" } })
       enabled = true
       if (lost === "activation") return route.abort("connectionreset")
       return route.fulfill({ json: { document: missionDocumentSummary(doc) } })
     }
+    posts.push({ ...body, target })
     if (body.action === "create") doc = await store.create("msn_schedule", { ...config, ...body.configuration }, Date.now(), () => true)
     else if (body.action === "delete") deleted = true
     else doc = await store.change(doc!.id, body.expectedRevision, () => true, value => {
@@ -135,7 +139,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
    await page.evaluate(() => (window as any).missionFixture.connectCatalog())
    if (!streamObserved) await page.waitForResponse(response => response.headers()["content-type"] === "text/event-stream")
    page.off("response", observeStream)
-  return { posts, reads, errors, store, get doc() { return doc! }, result,
+  return { posts, activations, reads, errors, store, get doc() { return doc! }, result,
     addSchedule: async (id: string, change: Partial<MissionConfiguration>) => {
       extras.push(await store.create(id, { ...config, ...change } as MissionConfiguration, Date.now(), () => true))
     },
@@ -158,6 +162,65 @@ const deferred = () => {
   const promise = new Promise<void>(yes => { resolve = yes })
   return { promise, resolve }
 }
+
+test("unified waiting and exact successful passages distinguish prepared, pause, unknown and finished", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  const entry = page.locator('[data-mission-key="scheduled:msn_schedule"] .mission-row-select')
+  const waitMark = (expected: string) => page.waitForFunction(expected =>
+    document.querySelector('[data-mission-key="scheduled:msn_schedule"] .mission-row-flag')?.getAttribute("data-mark") === expected, expected)
+  const refresh = () => page.evaluate(() => (window as any).missionFixture.refresh())
+  const success = async (requestID: string) => {
+    await f.change(doc => {
+      changes.reserve(doc, { kind: "manual", requestID }, Date.now(), [])
+      changes.admitted(doc, doc.pending!.id, Date.now())
+      changes.settle(doc, doc.pending!.id, "completed", Date.now())
+    })
+    const latest = f.doc.history.at(-1)!.id
+    const published = page.waitForResponse(async response => new URL(response.url()).pathname.endsWith("/missions/scheduled")
+      && (await response.json()).schedules?.some((row: any) => row.latestResult?.id === latest))
+    await refresh(); await (await published).finished()
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await waitMark("done")
+  }
+  try {
+    await entry.waitFor(); await waitMark("prepared")
+    assert.equal(await entry.locator(".mission-row-mark").evaluate(element => getComputedStyle(element, "::after").content), "none")
+    await select(page); await click(page, "Play"); await waitMark("waiting")
+    assert.match(await entry.getAttribute("title") ?? "", /Waiting for scheduled run/)
+    await click(page, "Pause"); await waitMark("paused")
+    await click(page, "Resume"); await waitMark("waiting")
+    await success("first-result")
+    const first = f.doc.history.at(-1)!.id
+    await entry.click(); await waitMark("waiting")
+    await success("second-result")
+    assert.notEqual(f.doc.history.at(-1)!.id, first)
+    const second = f.doc.history.at(-1)!.id
+    await page.locator('[data-mission-key="scheduled:msn_schedule"] .session-item-expander').click({ button: "right" })
+    await success("third-result")
+    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
+    assert.equal(await entry.locator(".mission-row-mark").getAttribute("data-mark"), "done", "the later passage stays unread")
+    assert.deepEqual(await page.evaluate(async ({ second, third }) => {
+      const { scheduleSuccessSeen } = await import("/src/stores/mission-view-state.ts")
+      const scope = JSON.stringify(["fixture", "project"])
+      return [second, third].map(id => scheduleSuccessSeen(scope, "scheduled", "msn_schedule", id))
+    }, { second, third: f.doc.history.at(-1)!.id }), [true, false])
+    await page.locator('[data-mission-key="scheduled:msn_schedule"] .session-item-expander').click({ button: "right" })
+    await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click()
+    await waitMark("idle") // The third passage exhausted this fixture's launch limit.
+    await f.change(doc => { doc.state = "finished" }); await refresh(); await waitMark("idle")
+    await f.change(doc => { doc.state = "running" })
+    await page.route(url => url.pathname.endsWith("/missions/scheduled"), route => {
+      const doc = f.result().document!
+      return route.fulfill({ json: { version: 1, projectID: "project", schedules: [{ ...doc,
+        observation: { ...doc.observation, state: "unknown", nativeStatus: null, nextDueAt: null } }] } })
+    })
+    await refresh(); await waitMark("unconfirmed")
+    assert.match(await entry.getAttribute("title") ?? "", /State unconfirmed/)
+    assert.equal(await entry.locator(".mission-row-mark").evaluate(element => getComputedStyle(element, "::after").content), "none")
+    await f.change(doc => { doc.state = "stopped" }); await refresh(); await waitMark("idle")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
 async function select(page: Page) {
   const entry = page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inspect local changes" })
   await entry.click()
@@ -254,13 +317,11 @@ test("revision conflict is refused before dispatch and preserves the refreshed c
   } finally { await page.close() }
 })
 
-test("informed activation lists exact paths and its lost ACK never sends Play automatically", async () => {
+test("silent activation with a lost ACK never sends Play automatically", async () => {
   const page = await browser.newPage(), f = await setup(page, { seed: true, enabled: false })
   try {
     await select(page); f.lost = "activation"; await click(page, "Play")
-    const dialog = page.getByRole("dialog")
-    assert.match(await dialog.innerText(), /experimental.schedules.*\/private\/config\/opencode.jsonc/s)
-    await dialog.getByRole("button", { name: "Start", exact: true }).click()
+    assert.equal(await page.getByRole("dialog").count(), 0)
     await button(page, "Refresh saved request").waitFor()
     // Receipt settlement releases the hold before its parent's list revalidation.
     // Wait for that exact activated revision to traverse the real response/render path.
@@ -276,6 +337,321 @@ test("informed activation lists exact paths and its lost ACK never sends Play au
       throw new Error(`${error}\n${JSON.stringify({ posts: f.posts, reads: f.reads, document: f.doc })}\n${await detail(page).innerText()}\n${f.errors.join("\n")}`)
     })
     assert.deepEqual(f.posts.map(post => post.action), [undefined, "play"])
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("already ON without a receipt prepares on the server; only Start loads and double clicks send one Play", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  const gate = deferred(), submitted = deferred()
+  try {
+    await select(page)
+    const start = button(page, "Start"), bounds = await start.boundingBox()
+    await page.route("**/schedule-settings", async route => {
+      if (route.request().method() === "POST") { submitted.resolve(); await gate.promise }
+      return route.fallback()
+    })
+    await start.click(); await submitted.promise
+    assert.equal(await start.getAttribute("aria-busy"), "true")
+    assert.deepEqual(await start.boundingBox(), bounds)
+    assert.equal(await button(page, "Stop…").getAttribute("aria-busy"), null)
+    const status = page.locator(".mission-picker-selection-actions [role=status]")
+    assert.equal(await status.count(), 1)
+    assert.equal(await status.textContent(), "Starting…")
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    await start.evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
+    for (const scheme of BUILT_IN_COLOR_SCHEMES) {
+      await page.evaluate(async scheme => {
+        const module = await import("/src/lib/theme-scheme.ts")
+        module.applyColorScheme(module.normalizeColorScheme(scheme))
+      }, scheme.id)
+      const sample = await start.evaluate(element => {
+        const style = getComputedStyle(element), svg = element.querySelector("svg")!
+        const canvas = document.createElement("canvas").getContext("2d")!
+        const probe = document.createElement("span"); probe.style.color = "var(--surface-canvas)"; element.append(probe)
+        const [icon, surface] = [getComputedStyle(svg).color, getComputedStyle(probe).color].map(color => {
+          canvas.fillStyle = color; canvas.fillRect(0, 0, 1, 1)
+          return [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3)
+        })
+        probe.remove()
+        return { opacity: style.opacity, icon, surface, width: parseFloat(getComputedStyle(svg).width) }
+      })
+      const luminance = (rgb: number[]) => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+        .reduce((total, v, i) => total + v * [.2126, .7152, .0722][i], 0)
+      const [a, b] = [luminance(sample.icon), luminance(sample.surface)].sort((a, b) => b - a)
+      assert.ok((a + .05) / (b + .05) >= 3, `${scheme.id}: ${JSON.stringify(sample)}`)
+      assert.equal(sample.opacity, "1"); assert.equal(sample.width, 14)
+    }
+    await page.emulateMedia({ reducedMotion: "reduce" })
+    const motion = await start.locator("svg").evaluate(element => {
+      const style = getComputedStyle(element)
+      return { duration: style.animationDuration, iterations: style.animationIterationCount }
+    })
+    assert.equal(motion.iterations, "1"); assert.ok(parseFloat(motion.duration) <= .00001)
+    gate.resolve()
+    await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+    assert.equal(f.activations.length, 1); assert.deepEqual(f.posts.map(post => post.action), ["play"])
+    assert.equal(await page.locator(".mission-action-bar [aria-busy=true]").count(), 0)
+    assert.deepEqual(f.errors, [])
+  } finally { gate.resolve(); await page.close() }
+})
+
+for (const layer of ["project", "global", "inherited", "imposed", "environment"] as const)
+test(`explicit ${layer} OFF exposes only the supported repair action and hides details behind keyboard info`, async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  try {
+    await select(page)
+    const openable = layer === "project" || layer === "global", path = layer === "environment" ? undefined : "/private/responsible/opencode.jsonc"
+    const refusal = { reason: "explicit-off", provenance: layer === "environment" ? "environment" : "experimental-block",
+      layer, path, openable, ...(openable ? { configFileID: "responsible-config" } : {}) }
+    await page.evaluate(() => { (window as any).electronAPI.openPreferences = (section: string) => { (window as any).openedSection = section } })
+    await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: { location: { directory: "fixture" },
+      api: { available: true }, enabled: true, origin: path ?? null, activation: { available: false, targets: [],
+        reason: "explicit-off", code: "schedule-activation-refused", refusal } } }))
+    await click(page, "Play")
+    const repair = button(page, "Open scheduling settings")
+    await page.locator(".mission-picker-selection-actions [role=status]").filter({ hasText: "Scheduling is disabled" }).waitFor()
+    assert.equal(await repair.count(), openable ? 1 : 0)
+    assert.equal(f.posts.length, 0); assert.equal(f.activations.length, 0)
+    const info = page.locator(".mission-action-feedback .settings-info-tip")
+    await info.focus()
+    await page.getByRole("tooltip").filter({ hasText: layer === "environment" ? "service environment" : path! }).waitFor()
+    if (layer !== "environment") assert.match(await page.getByRole("tooltip").innerText(), /^(Project|Global|Inherited|Imposed) configuration:/)
+    assert.doesNotMatch(await page.locator(".mission-picker-selection-actions").innerText(), /experimental\.schedules|\/private\/responsible/)
+    if (openable) {
+      await repair.click()
+      await page.waitForFunction(() => (window as any).openedSection === "config-files")
+      const hint = await page.evaluate(() => JSON.parse(localStorage.getItem("codenomad.settings.rowTarget")!))
+      assert.equal(hint.row, "config-file:responsible-config")
+    }
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+const refusalLayers = ["project", "global", "inherited", "imposed"] as const
+const refusalLabels = {
+  en: ["Project configuration", "Global configuration", "Inherited configuration", "Imposed configuration"],
+  fr: ["Configuration du projet", "Configuration globale", "Configuration héritée", "Configuration imposée"],
+  de: ["Projektkonfiguration", "Globale Konfiguration", "Geerbte Konfiguration", "Vorgegebene Konfiguration"],
+  es: ["Configuración del proyecto", "Configuración global", "Configuración heredada", "Configuración impuesta"],
+  he: ["הגדרות הפרויקט", "הגדרות כלליות", "הגדרות בירושה", "הגדרות כפויות"],
+  ja: ["プロジェクト設定", "グローバル設定", "継承された設定", "強制された設定"],
+  ne: ["परियोजना कन्फिगरेसन", "विश्वव्यापी कन्फिगरेसन", "विरासतमा प्राप्त कन्फिगरेसन", "अनिवार्य कन्फिगरेसन"],
+  ru: ["Конфигурация проекта", "Глобальная конфигурация", "Унаследованная конфигурация", "Принудительная конфигурация"],
+  tr: ["Proje yapılandırması", "Genel yapılandırma", "Devralınan yapılandırma", "Zorunlu yapılandırma"],
+  "zh-Hans": ["项目配置", "全局配置", "继承的配置", "强制配置"],
+}
+for (const [locale, labels] of Object.entries(refusalLabels)) test(`${locale}: all document OFF sources are localized in the real information tip`, async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true, locale })
+  let layer: typeof refusalLayers[number] = "project"
+  try {
+    await select(page)
+    await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: { location: { directory: "fixture" },
+      api: { available: true }, enabled: true, origin: null, activation: { available: false, targets: [],
+        refusal: { reason: "explicit-off", provenance: "experimental-block", layer, path: "/private/source.jsonc", openable: false } } } }))
+    for (const [index, value] of refusalLayers.entries()) {
+      layer = value
+      await page.locator(".mission-picker-actions button").last().click()
+      const info = page.locator(".mission-action-feedback .settings-info-tip")
+      await info.focus()
+      const tip = page.getByRole("tooltip").filter({ hasText: labels[index] })
+      await tip.waitFor()
+      assert.match(await tip.innerText(), /\/private\/source\.jsonc/)
+    }
+    assert.equal(f.posts.length, 0); assert.equal(f.activations.length, 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("unselected unified passages prioritize their coordinator and descendant requests over working", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  const entry = page.locator('[data-mission-key="scheduled:msn_schedule"] .mission-row-select')
+  try {
+    await f.change(doc => {
+      changes.play(doc, "play-probe", Date.now(), []); doc.synchronization = null
+      changes.reserve(doc, { kind: "manual", requestID: "request-probe" }, Date.now(), [])
+      changes.admitted(doc, doc.pending!.id, Date.now())
+    })
+    await page.evaluate(() => (window as any).missionFixture.refresh())
+    await page.waitForFunction(() => document.querySelector('[data-mission-key="scheduled:msn_schedule"] .mission-row-mark')?.getAttribute("data-mark") === "working")
+    const root = f.doc.pending!.coordinatorSessionID
+    await page.evaluate(root => {
+      ;(window as any).missionFixture.seedCoordinators([root, "ses_child"], { ses_child: root })
+      ;(window as any).missionFixture.queuePermission("ses_child", "child-permission")
+    }, root)
+    await page.waitForFunction(() => document.querySelector('[data-mission-key="scheduled:msn_schedule"] .mission-row-mark')?.getAttribute("data-mark") === "permission")
+    assert.equal(await entry.getAttribute("aria-current"), null)
+    assert.match(await entry.getAttribute("title") ?? "", /Awaiting your input/)
+    await page.evaluate(async root => {
+      const { clearPermissionQueue } = await import("/src/stores/instances.ts")
+      clearPermissionQueue("fixture")
+      ;(window as any).missionFixture.queuePermission(root, "root-permission")
+    }, root)
+    assert.equal(await entry.locator(".mission-row-mark").getAttribute("data-mark"), "permission")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+for (const action of ["Start", "Pause", "Resume", "Run now"] as const)
+test(`${action} loads only its requested button and keeps Run now confirmation separate`, async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  const gate = deferred(), submitted = deferred()
+  try {
+    await f.change(doc => {
+      if (action !== "Start") doc.firstPlayedAt = Date.now()
+      doc.state = action === "Pause" ? "running" : "paused"
+      doc.scheduleActivation = { requestID: "ready_activation", expectedRevision: 0, authority: "a".repeat(64), state: "ready", targets: [], effectiveOrigin: null }
+    })
+    await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
+    await page.route("**/msn_schedule/schedule", async route => {
+      if (route.request().method() === "POST") {
+        submitted.resolve(); await gate.promise
+        if (action !== "Run now") {
+          const request = route.request().postDataJSON()
+          f.posts.push(request)
+          const value = f.result()
+          return route.fulfill({ json: { ...value, pending: false,
+            document: { ...value.document, control: { ...request, pending: false } } } })
+        }
+      }
+      return route.fallback()
+    })
+    await button(page, action).click()
+    if (action === "Run now") {
+      const dialog = page.getByRole("dialog")
+      await dialog.waitFor()
+      assert.equal(await page.locator('.mission-action-bar button[aria-label="Run now"]').getAttribute("aria-busy"), null)
+      await dialog.getByRole("button", { name: action, exact: true }).click()
+    }
+    await submitted.promise
+    if (action !== "Run now") {
+      const published = page.waitForResponse(async response => new URL(response.url()).pathname.endsWith("/missions/scheduled")
+        && (await response.json()).schedules?.some((row: any) => row.state === (action === "Pause" ? "paused" : "running")))
+      await f.change(doc => {
+        if (action === "Start") { changes.play(doc, "early-publication", Date.now(), []); doc.synchronization = null }
+        else doc.state = action === "Pause" ? "paused" : "running"
+      })
+      await page.evaluate(() => (window as any).missionFixture.refresh())
+      await (await published).finished()
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    }
+    assert.equal(await button(page, action).getAttribute("aria-busy"), "true")
+    assert.equal(await page.locator(".mission-action-bar [aria-busy=true]").count(), 1)
+    assert.equal(await page.locator(".mission-picker-selection-actions [role=status]").textContent(), action === "Resume" ? "Resuming…"
+      : action === "Start" ? "Starting…" : action === "Run now" ? "Starting run…" : "Saving…")
+    gate.resolve()
+    await page.waitForFunction(() => !document.querySelector(".mission-action-bar [aria-busy=true]"))
+    assert.equal(f.posts.length, 1); assert.equal(f.activations.length, 0)
+    assert.deepEqual(f.errors, [])
+  } finally { gate.resolve(); await page.close() }
+})
+
+test("a server activation conflict stops the spinner and releases the undispatched Play for review", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  try {
+    await select(page)
+    await page.route("**/schedule-settings", route => route.fulfill({ status: 409, json: { code: "schedule-activation-conflict" } }))
+    await click(page, "Play")
+    await page.locator(".mission-picker-selection-actions [role=status]").filter({ hasText: "The Mission changed" }).waitFor()
+    assert.equal(await button(page, "Start").getAttribute("aria-busy"), null)
+    assert.equal(await button(page, "Refresh saved request").count(), 0)
+    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+for (const leave of ["selection", "remount", "connection"] as const)
+test(`late activation after ${leave} preserves its proof but never continues the old Play`, async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  const gate = deferred(), submitted = deferred(), responded = deferred()
+  try {
+    await f.addSchedule("msn_other", { title: "Other schedule" })
+    await page.evaluate(() => (window as any).missionFixture.refresh())
+    await select(page)
+    await page.route("**/schedule-settings", async route => {
+      if (route.request().method() === "POST") { submitted.resolve(); await gate.promise; await route.fallback(); responded.resolve(); return }
+      return route.fallback()
+    })
+    await click(page, "Play"); await submitted.promise
+    if (leave === "selection") await page.locator(".mission-row-select").filter({ hasText: "Other schedule" }).click()
+    if (leave === "remount") {
+      await page.evaluate(() => (window as any).missionFixture.mount(false))
+      await page.evaluate(() => (window as any).missionFixture.mount(true))
+    }
+    if (leave === "connection") await page.evaluate(async () => {
+      const path = "/src/stores/instances.ts"
+      const module = await import(path), old = module.instances().get("fixture")
+      module.updateInstance("fixture", { client: Object.create(old.client) })
+    })
+    gate.resolve(); await responded.promise
+    await page.waitForFunction(() => !document.querySelector(".mission-action-bar [aria-busy=true]"))
+    assert.equal(f.activations.length, 1)
+    assert.equal(f.posts.filter(post => post.action === "play").length, 0)
+    assert.deepEqual(f.errors, [])
+  } finally { gate.resolve(); await page.close() }
+})
+
+test("structured server OFF after dispatch retains its exact activation and a failed read never starts Play", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  let request: any
+  try {
+    await select(page)
+    await page.route("**/schedule-settings", async route => {
+      if (route.request().method() === "GET") return route.fallback()
+      request = route.request().postDataJSON()
+      await f.change(doc => { doc.scheduleActivation = { requestID: request.requestID, expectedRevision: request.expectedDocumentRevision,
+        authority: "a".repeat(64), state: "failed", targets: [], effectiveOrigin: null, errorCode: "configuration-conflict" } })
+      return route.fulfill({ status: 409, json: { code: "schedule-activation-refused",
+        refusal: { reason: "explicit-off", provenance: "environment", layer: "environment", openable: false } } })
+    })
+    await click(page, "Play")
+    await button(page, "Refresh saved request").waitFor()
+    assert.equal(await button(page, "Start").getAttribute("aria-busy"), null)
+    assert.equal(await button(page, "Open scheduling settings").count(), 0)
+    assert.equal(f.posts.length, 0)
+    await button(page, "Refresh saved request").click()
+    await button(page, "Refresh saved request").and(page.locator(":enabled")).waitFor()
+    assert.ok(f.reads.some(url => url.includes(`requestID=${request.requestID}`)))
+    assert.equal(await button(page, "Start").isDisabled(), true)
+    assert.equal(f.posts.length, 0, "failed recovery never replays activation or Play")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+for (const proof of ["exact", "foreign-request", "foreign-revision"] as const)
+test(`OFF refusal with ${proof} no-effect proof only releases the exact activation for explicit Start`, async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  let request: any, attempts = 0
+  try {
+    await select(page)
+    await page.route("**/schedule-settings", async route => {
+      if (route.request().method() === "GET" || attempts++) return route.fallback()
+      request = route.request().postDataJSON()
+      return route.fulfill({ status: 403, json: { code: "schedule-activation-refused",
+        notApplied: { requestID: proof === "foreign-request" ? "other" : request.requestID,
+          expectedRevision: request.expectedDocumentRevision + (proof === "foreign-revision" ? 1 : 0) },
+        refusal: { reason: "explicit-off", provenance: "environment", layer: "environment", openable: false } } })
+    })
+    const refused = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/schedule-settings")
+      && response.request().method() === "POST" && response.status() === 403)
+    await click(page, "Play"); await (await refused).finished()
+    await page.waitForFunction(() => !document.querySelector(".mission-action-bar [aria-busy=true]"))
+    assert.equal(f.doc.scheduleActivation, null)
+    assert.equal(f.posts.length, 0, "refusal never sends Play")
+    await page.evaluate(() => (window as any).missionFixture.refresh())
+    if (proof === "exact") {
+      await button(page, "Start").and(page.locator(":enabled")).waitFor()
+      assert.equal(await button(page, "Refresh saved request").count(), 0)
+      assert.equal(f.posts.length, 0, "configuration correction and refresh never start Play")
+      await click(page, "Play")
+      await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+      assert.equal(f.posts.filter(post => post.action === "play").length, 1)
+      assert.notEqual(f.activation?.requestID, request.requestID)
+    } else {
+      await button(page, "Refresh saved request").click()
+      await button(page, "Refresh saved request").and(page.locator(":enabled")).waitFor()
+      assert.equal(await button(page, "Start").isDisabled(), true)
+      assert.equal(f.posts.length, 0, "a negative receipt cannot release a mismatched proof")
+    }
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -298,7 +674,6 @@ test(`confirmed publication barrier retains ${scenario} across stale inventory a
     await page.evaluate(() => (window as any).missionFixture.refresh()); await started.promise
     if (scenario.startsWith("recovered")) f.lost = activation ? "activation" : "play"
     await click(page, "Play")
-    if (activation) await page.getByRole("dialog").getByRole("button", { name: "Start", exact: true }).click()
     if (scenario.startsWith("recovered")) {
       await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
       await button(page, "Refresh saved request").click()
@@ -354,7 +729,6 @@ test("a confirmed activation stays known through read failure and stale recovery
     const stale = structuredClone(f.result().document)
     f.lost = "activation"
     await click(page, "Play")
-    await page.getByRole("dialog").getByRole("button", { name: "Start", exact: true }).click()
     await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
     let mode: "failed" | "stale" | "current" = "failed"
     await page.route("**/missions/scheduled?*", route => route.fulfill(mode === "failed" ? { status: 503, json: {} }
@@ -553,7 +927,7 @@ test("a positively recorded partial request offers no Check passage; its exact r
   const page = await browser.newPage(), f = await setup(page, { seed: true })
   try {
     await select(page); f.partial = "play"; await click(page, "Play")
-    await button(page, "Refresh saved request").waitFor()
+    await button(page, "Refresh saved request").and(page.locator(":enabled")).waitFor()
     const original = f.posts[0]
     assert.equal(await button(page, "Check passage").count(), 0)
     f.resolve()
@@ -567,13 +941,14 @@ test("a positively recorded partial request offers no Check passage; its exact r
 
 for (const negativeFirst of [true, false]) test(`cold reopen keeps the first page, cursor and original held request when selected detail is partial 503 (${negativeFirst ? "negative then positive" : "FIRST positive receipt"})`, async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 240 } }), f = await setup(page, { seed: true, outsidePage: true })
-  const originalRevision = f.doc.revision
+  let originalRevision = f.doc.revision
   let release!: () => void
   const continuation = new Promise<void>(resolve => { release = resolve })
   try {
     await select(page); f.partial = "play"; await click(page, "Play")
-    await button(page, "Refresh saved request").waitFor()
+    await button(page, "Refresh saved request").and(page.locator(":enabled")).waitFor()
     const original = f.posts[0]
+    originalRevision = f.doc.scheduleActivation!.expectedRevision + 1
     await page.evaluate(() => (window as any).missionFixture.mount(false))
     f.outside = true
     // Keep the selected object outside the freshly read inventory while asserting

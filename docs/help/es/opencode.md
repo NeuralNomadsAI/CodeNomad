@@ -19,8 +19,8 @@ El ejecutable instalado y el servicio en ejecución pueden tener versiones disti
 
 | Clasificación | Requisito actual | Significado |
 | --- | --- | --- |
-| Mínima | OpenCode **2.2.3** | La herramienta de generación de imágenes que usan los ajustes de **Imágenes** y la extensión Design, además del orden correcto de las tareas JavaScript en Code Mode y el formato nativo de reproducción y compactación; las conversaciones guardadas con versiones anteriores siguen siendo legibles tras actualizar. |
-| Recomendada | OpenCode **2.2.7** | Objetivo verificado, distinto del mínimo técnico. |
+| Mínima | OpenCode **2.3.0** | La herramienta de generación de imágenes que usan los ajustes de **Imágenes** y la extensión Design, además del orden correcto de las tareas JavaScript en Code Mode y el formato nativo de reproducción y compactación; las conversaciones guardadas con versiones anteriores siguen siendo legibles tras actualizar. También entrega los resultados de los subagentes como informes en segundo plano, que leen las tarjetas de subagente y las Misiones. |
+| Recomendada | OpenCode **2.3.0** | Objetivo verificado; actualmente la misma versión que la mínima. |
 | No verificada | Una versión más nueva o personalizada no validada por completo | No se rechaza simplemente por no estar probada; se comprueban los contratos API reales del servicio conectado. |
 
 El servicio conectado debe exponer los contratos requeridos de sesiones, permisos, formularios, bandeja de entrada y entorno de sesión. La programación nativa de Misiones también comprueba las API de programación, el paquete de plugin/proveedor y el ajuste efectivo `experimental.schedules`. La disponibilidad depende de esas capacidades utilizadas, también en versiones futuras compatibles. Si la configuración inicial informa de un servicio en ejecución no compatible, selecciona/instala una CLI compatible y usa el reinicio explícito del servicio compartido cuando estés listo.

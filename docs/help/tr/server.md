@@ -8,7 +8,7 @@ Aynı kullanıcı arayüzü [çoklu proje sekmeleri ve çalışma ağaçları](p
 
 1. Node.js 24 LTS ve npm'yi yükleyin; havuzun derleme çalışma zamanı `.node-version` dosyasında sabitlenmiştir. Masaüstü paketleri kendi çalışma zamanlarını sağlar: Electron yerleşik Node'unu kullanır, Tauri Node'u paketler ve ikisi de npm içerir.
 2. Git'i **arka uç sürecinin PATH** değişkenine ekleyin. Yalnızca WSL içindeki Git, Windows arka ucu için yeterli değildir.
-3. OpenCode'u yükleyin veya seçin: **2.2.3** gerekli minimum değer, **2.2.7** ise önerilen yeterlilik hedefidir. Daha yeni veya özel derlemeler, test edilmiş sürüm izin verilenler listesine değil, uyumluluk denetimlerine tabi tutulur. Bkz. [OpenCode kurulumu](opencode.md).
+3. OpenCode'u yükleyin veya seçin: **2.3.0** gerekli minimum değer, **2.3.0** ise önerilen yeterlilik hedefidir. Daha yeni veya özel derlemeler, test edilmiş sürüm izin verilenler listesine değil, uyumluluk denetimlerine tabi tutulur. Bkz. [OpenCode kurulumu](opencode.md).
 4. Sunucunun başlatılacağı klasörü seçin veya `--workspace-root`'yi açıkça iletin.
 
 Git olmadan, konuşmalar yalnızca açıkça açılan fiziksel klasörde kullanılabilir durumda kalır; Git ve çalışma ağacı işlemleri başarısız oluyor. Git'i yükleyin ve PATH değişikliğinden sonra arka ucu yeniden başlatın. Çalışma alanı kökü, aracının yürütülmesini değil, açmayı/göz atmayı sınırlar: bkz. [Güvenlik](security.md).
@@ -104,6 +104,8 @@ Genel referans, kullanıcıya yönelik seçenekleri listeler; masaüstü ana bil
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; sürüm teklifleri için depo sorgulandı. |
 | `CODENOMAD_REMOTE_CONTROL_API` | Ayarlanmadı: barındırılan OpenTunnel API. Şirket içinde barındırılan geçiş dağıtımı için bir API kaynağı ayarlayın. |
+| `CODENOMAD_REMOTE_CONTROL` | Ayarlanmamış: kullanıcılar Uzaktan Kontrol'ü başlatabilir. `disabled`: bir yönetici tarafından kapatıldı ([ilke](remote-control.md#administrator-policy)); ayarlanmamış veya boş: ilke yok, başka herhangi bir değer (boşluklar dahil) başlatmayı engeller. |
+| `CODENOMAD_LOCKED_HOST` | Ayarlanmamış veya boş: `--host` geçerlidir; yalnızca boşluk başlatmayı engeller. Bir adres: sunucu `--host`, `CLI_HOST` veya dinleme anahtarından bağımsız olarak orada dinler ([ilke](remote-access.md#administrator-policy)). |
 | `NODE_EXTRA_CA_CERTS` | Node'un isteğe bağlı ek CA dosyası; eksik OpenCode daemon'ı başlatılırken izin verilen başlangıç ortamıyla iletilir. Çalışan daemon'ı değiştirmez. |
 
 Sağlayıcıya özel kullanım kimlik bilgileri, [Sağlayıcılar](providers.md) belgesinde ele alınmaktadır. Masaüstü veri profili seçimi [Masaüstü](desktop.md) kapsamındadır ve yayın akışı tarafından kontrol edilmez.

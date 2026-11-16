@@ -8,7 +8,7 @@ project र tool भएको ठाउँमा CodeNomad चलाएर स�
 
 1. Node.js 24 LTS र npm स्थापना गर्नुहोस्; repository को build runtime `.node-version` मा pinned छ। desktop package ले आफ्नै runtime दिन्छ: Electron ले यसको integrated Node प्रयोग गर्छ, Tauri ले Node समावेश गर्छ र दुवैमा npm हुन्छ।
 2. Git लाई **backend प्रक्रियाको PATH** मा राख्नुहोस्। WSL भित्रको Git मात्र Windows backend का लागि पुग्दैन।
-3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.2.3**, सिफारिस qualification लक्ष्य **2.2.7**। नयाँ/custom build मा compatibility जाँच हुन्छ, tested-version allowlist होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
+3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.3.0**, सिफारिस qualification लक्ष्य **2.3.0**। नयाँ/custom build मा compatibility जाँच हुन्छ, tested-version allowlist होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
 4. server सुरु गर्ने फोल्डर रोज्नुहोस्, वा `--workspace-root` स्पष्ट दिनुहोस्।
 
 Git बिना स्पष्ट खोलिएको physical folder मा मात्र कुराकानी उपलब्ध हुन्छन्; Git र worktree कार्य असफल हुन्छन्। Git स्थापना र PATH परिवर्तनपछि backend restart गर्नुहोस्। workspace root ले opening/browsing सीमित गर्छ, agent execution होइन: [सुरक्षा](security.md) हेर्नुहोस्।
@@ -104,6 +104,8 @@ flag ले environment counterpart override गर्छन्। value-taking 
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`; release offer का लागि query गरिने repository। |
 | `CODENOMAD_REMOTE_CONTROL_API` | unset: hosted OpenTunnel API। self-hosted relay deployment का लागि API origin सेट गर्नुहोस्। |
+| `CODENOMAD_REMOTE_CONTROL` | सेट नगरिएको: प्रयोगकर्ताले रिमोट कन्ट्रोल सुरु गर्न सक्छन्। `disabled`: प्रशासकद्वारा बन्द ([नीति](remote-control.md#administrator-policy)); सेट नगरिएको वा खाली: कुनै नीति छैन, अरू कुनै मान (खाली ठाउँसमेत) ले सुरु हुन दिँदैन। |
+| `CODENOMAD_LOCKED_HOST` | सेट नगरिएको वा खाली: `--host` लागू हुन्छ; खाली ठाउँ मात्र भए सुरु हुँदैन। ठेगाना: `--host`, `CLI_HOST` वा सुन्ने स्विच जे भए पनि सर्भर त्यहीँ सुन्छ ([नीति](remote-access.md#administrator-policy))। |
 | `NODE_EXTRA_CA_CERTS` | Node को ऐच्छिक additional CA file; missing OpenCode daemon सुरु गर्दा allowed startup environment सँग पठाइन्छ। चलिरहेको daemon बदल्दैन। |
 
 provider-specific usage credential [प्रदायक](providers.md) मा छन्। desktop data-profile चयन [डेस्कटप](desktop.md) मा छ, release feed ले नियन्त्रण गर्दैन।

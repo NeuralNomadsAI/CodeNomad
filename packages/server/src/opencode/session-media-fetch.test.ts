@@ -4,6 +4,7 @@ import { setImmediate } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { OpenCodeSharedService } from "../workspaces/opencode-service"
 import { rememberRuntime } from "./compatibility/runtime"
+import { MINIMUM_OPENCODE_VERSION } from "./runtime-support"
 import { createSessionMediaFetch } from "./session-media-fetch"
 import { MESSAGE_LIMIT } from "./session-media-contract"
 import { createServer } from "node:http"
@@ -11,7 +12,7 @@ import { gzipSync, brotliCompressSync, deflateSync } from "node:zlib"
 
 async function connected() {
   const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "media", password: "fixture" } }
-  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService()
   await service.endpoint({ kind: "lifecycle", identity: "bounded-media", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })
   return { service, connection: await service.acquire() }
@@ -19,7 +20,7 @@ async function connected() {
 
 test("media processor receives the original non-JSON error before compatibility cancellation", async t => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   let cancel = 0, processed = 0, release!: () => void
   const cleanup = new Promise<void>(resolve => { release = resolve })
   const original = new Response(new ReadableStream({ cancel() { cancel++; return cleanup } }), { status: 400 })
@@ -48,7 +49,7 @@ test("media processor receives the original non-JSON error before compatibility 
 
 test("ordinary non-JSON errors still await their sole cancel and preserve its rejection", async t => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   let cancel = 0, reject!: (error: Error) => void, settled = false
   const cleanup = new Promise<void>((_, fail) => { reject = fail })
   const failure = new Error("original cancel rejected")
@@ -167,7 +168,7 @@ test("real loopback gzip, br and deflate bodies obey the decompressed limit for 
   })
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   const endpoint = { url: `http://127.0.0.1:${(server.address() as { port: number }).port}` }
-  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService()
   try {
     await service.endpoint({ kind: "lifecycle", identity: "compressed-media", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })
@@ -248,7 +249,7 @@ test("real fragmented gzip non-JSON errors bound decompressed bytes before norma
   })
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   const endpoint = { url: `http://127.0.0.1:${(server.address() as { port: number }).port}` }
-  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService()
   try {
     await service.endpoint({ kind: "lifecycle", identity: "gzip-error-boundary", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })
@@ -279,7 +280,7 @@ test("real under/overdeclared and absent HTTP length obey framing or reject befo
   })
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   const endpoint = { url: `http://127.0.0.1:${(server.address() as { port: number }).port}` }
-  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService()
   try {
     await service.endpoint({ kind: "lifecycle", identity: "framing-boundary", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })

@@ -110,6 +110,8 @@ import { invalidateFilesystemCaches, queueFilesystemInvalidation } from "../lib/
 import { detachInstanceTabMembership, openInstanceTabIds, requestInstanceTabClose } from "./app-tab-membership"
 import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
+import { restoreClosedWorkspaceDrafts, retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
+import { remoteRestoreTabs } from "./remote-restore-tabs"
 import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
@@ -1451,7 +1453,25 @@ function waitForWorkspaceLoadChange(
   })
 }
 
+/**
+ * Temporary folders as of the latest `workspace.temporaryChanged` on this
+ * backend event connection; absent before one arrives or after a reconnect may have
+ * missed some. A discard deletes the record before unregistering its folder,
+ * while Keep unregisters first: a deleted record whose folder is still
+ * registered was discarded, in whichever window. Without that list nothing is
+ * a discard: the instance's `temporary` mark can be stale (a list response
+ * older than Keep, a Keep missed while disconnected), and keeping a deleted
+ * folder's drafts is harmless while dropping a kept project's is not.
+ */
+const temporaryRegistries = new Map<BackendId, Set<string>>()
+serverEvents.onDetach(backendId => temporaryRegistries.delete(backendId))
+
+function isRegisteredTemporary(instance: Instance): boolean {
+  return temporaryRegistries.get(backendIdOf(instance))?.has(normalizeWorkspacePath(instance.folder)) === true
+}
+
 serverEvents.onOpen((backendId) => {
+  temporaryRegistries.delete(backendId)
   const backend = backends.get(backendId)
   if (!backend) return
   publishLatestWorkspaceLoad(refreshWorkspaceList(backendId, backend.api).then(
@@ -1533,15 +1553,19 @@ function handleWorkspaceEvent(event: BackendEventPayload) {
       const stop = Symbol(event.workspaceId)
       const operation = captureInstanceOperation(event.workspaceId)
       pendingWorkspaceStops.set(event.workspaceId, stop)
+      const discarded = event.reason === "deleted" && instance !== undefined && isRegisteredTemporary(instance)
       queueMicrotask(() => {
         if (pendingWorkspaceStops.get(event.workspaceId) !== stop) return
         pendingWorkspaceStops.delete(event.workspaceId)
         if (!operation.current()) return
         releaseInstanceResources(event.workspaceId)
-        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
+        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted", drafts: discarded ? "discard" : "keep" })
       })
       break
     }
+    case "workspace.temporaryChanged":
+      temporaryRegistries.set(event.backendId ?? LOCAL_BACKEND_ID, new Set(event.folders.map(normalizeWorkspacePath)))
+      break
     case "workspace.log":
       handleWorkspaceLog(event.entry)
       break
@@ -1639,6 +1663,7 @@ function addInstance(instance: Instance) {
     occurrence,
     ...(instance.backendId ? { backendId: instance.backendId } : {}),
   })
+  restoreClosedWorkspaceDrafts(instance.id, instance.folder, () => waitForInstanceInitialSessionHydration(instance.id))
   syncHasInstancesFlag()
 }
 
@@ -1666,7 +1691,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
   syncHasInstancesFlag()
 }
 
-function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard" } = {}) {
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
   pendingCompactions.delete(id)
@@ -1743,6 +1768,8 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
+  if (removedInstance) retainClosedWorkspaceDrafts(id, removedInstance.folder,
+    remoteRestoreTabs().some(tab => tab.instanceId === id) && options.drafts !== "discard" ? "suspend" : options.drafts)
   clearInstanceDraftPrompts(id)
   clearInstanceSeenInterruptions(id)
   clearSessionListRequestState(id)
@@ -1768,7 +1795,8 @@ function removeRestoreCreatedInstanceFromUi(instanceId: string): void {
   workspaceListReconciliationFence.markMutation(instanceId)
   if (instances().has(instanceId)) {
     releaseInstanceResources(instanceId)
-    removeInstance(instanceId, { authoritative: false })
+    // Restoration owns the drafts it seeded into an instance it discards.
+    removeInstance(instanceId, { authoritative: false, drafts: "skip" })
   }
 }
 

@@ -76,6 +76,27 @@ test("a backend that did not resume offers no Stop that would clear the owner's 
   } finally { await page.close() }
 })
 
+test("an administrator-disabled Remote Control offers no Start or previews, explains why and keeps devices revocable", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.goto(`${url}?scenario=disabled`)
+    await page.getByText("Disabled by administrator", { exact: true }).waitFor()
+    assert.equal(await page.locator('.remote-control-status').getAttribute("data-state"), "disabled")
+    const info = page.getByRole("link", { name: /CODENOMAD_REMOTE_CONTROL=disabled/ })
+    await info.waitFor()
+    for (const name of ["Start Remote Control", "Stop Remote Control", "Create new pairing link", "Create HTTPS pairing link"]) {
+      assert.equal(await page.getByRole("button", { name }).count(), 0, name)
+    }
+    assert.equal(await page.getByRole("switch", { name: "Web previews" }).count(), 0)
+    assert.equal(await page.getByText("Direct HTTPS pairing", { exact: true }).count(), 0)
+    await page.getByText("Android · Firefox", { exact: true }).waitFor()
+    await page.getByRole("button", { name: "Revoke" }).waitFor()
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a pairing link survives a reconnect and disappears once Remote Control stops", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   const setState = (state: string) => page.evaluate((value) => (window as unknown as { setRemoteState: (state: string) => void }).setRemoteState(value), state)
@@ -134,5 +155,21 @@ test("a resuming tunnel updates by itself until it can create pairing links", as
     const reads = await page.evaluate(() => (window as unknown as { statusReads: () => number }).statusReads())
     await page.waitForTimeout(4_000)
     assert.equal(await page.evaluate(() => (window as unknown as { statusReads: () => number }).statusReads()), reads)
+  } finally { await page.close() }
+})
+
+test("administrator policy clears an existing direct HTTPS pairing link on refresh", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
+  try {
+    await page.goto(`${url}?scenario=direct`)
+    await page.getByRole("button", { name: "Create HTTPS pairing link" }).click()
+    const link = page.getByText("https://code.example.test/remote-pair#fixture-code", { exact: true })
+    await link.waitFor()
+    await page.evaluate(() => (window as unknown as { setRemoteState: (state: string) => void }).setRemoteState("disabled"))
+    await page.getByRole("button", { name: "Refresh" }).click()
+    await page.getByText("Disabled by administrator", { exact: true }).waitFor()
+    await link.waitFor({ state: "detached" })
+    assert.equal(await page.getByRole("button", { name: "Create HTTPS pairing link" }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Revoke" }).count(), 2)
   } finally { await page.close() }
 })

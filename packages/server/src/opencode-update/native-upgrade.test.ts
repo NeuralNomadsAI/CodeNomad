@@ -99,7 +99,7 @@ test("native upgrade npm/npx commands override hostile caller PATH and cwd witho
     const env: NodeJS.ProcessEnv = { PATH: [hostile, process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32") : "/bin"].join(path.delimiter),
       ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec } : {}) }
     const original = { ...env }
-    await upgradeSharedOpenCode({ binary: "verified-opencode", version: "2.2.5", prefix, node: process.execPath,
+    await upgradeSharedOpenCode({ binary: "verified-opencode", version: "2.3.2", prefix, node: process.execPath,
       npm: path.join(bundled, "npm-cli.js"), env, platform: process.platform,
       execute: async (_file, _args, childEnv, options) => {
         assert.notEqual(options!.cwd, hostile, "the native command owns cwd as well as PATH")
@@ -108,7 +108,7 @@ test("native upgrade npm/npx commands override hostile caller PATH and cwd witho
             ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", name], { cwd: options?.cwd ?? hostile, env: childEnv, windowsHide: true, encoding: "utf8" })
             : spawnSync(name, [], { cwd: options?.cwd ?? hostile, env: childEnv, windowsHide: true, encoding: "utf8" })
           assert.equal(result.status, 0, result.stderr)
-          assert.deepEqual(JSON.parse(result.stdout), { execPath: process.execPath, cli: path.join(bundled, name + "-cli.js"), prefix, allow: "@opencode/cli@2.2.5" })
+          assert.deepEqual(JSON.parse(result.stdout), { execPath: process.execPath, cli: path.join(bundled, name + "-cli.js"), prefix, allow: "@opencode/cli@2.3.2" })
         }
       } })
     assert.deepEqual(env, original)
@@ -164,9 +164,9 @@ test("shared update delegates to native CLI, verifies publication, and never ret
     assert.equal(calls, 1, "no downgrade or same-version native invocation")
     assert.equal(registrations, 2)
     assert.equal(await readFile(binary, "utf8"), minimum)
-    await writeFile(binary, "2.2.4")
+    await writeFile(binary, "2.3.1")
     await installSharedOpenCode(minimum, options)
-    assert.equal(await readFile(binary, "utf8"), "2.2.4", "never downgrade a newer verified installation")
+    assert.equal(await readFile(binary, "utf8"), "2.3.1", "never downgrade a newer verified installation")
     assert.equal(calls, 1)
   } finally { await rm(home, { recursive: true, force: true }) }
 })

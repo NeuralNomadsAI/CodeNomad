@@ -18,6 +18,7 @@ export const exemptions: Record<string, string> = {
   "compaction-responsiveness.test.ts": "custom Vite transform/load hook",
   "composer-alternate-send.test.ts": "served by a harness that borrows from the daemon",
   "composer-draft-safety.test.ts": "served by a harness that borrows from the daemon",
+  "composer-history-focus.test.ts": "served by a harness that borrows from the daemon",
   "composer-picker-enter.test.ts": "served by a harness that borrows from the daemon",
   "composer-resume-typing.test.ts": "served by a harness that borrows from the daemon",
   "data-profiles.test.ts": "Vite config diverges from the canonical daemon config",

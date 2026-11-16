@@ -48,7 +48,7 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   Unsent consent expires after 120 s and is revoked by navigation, invalidation or disconnection.
   Cancellation and expiry perform no mutation. The captured request is sent once; uncertain responses
   reconcile actual configuration through the existing invalidation/read path before any fresh user action.
-   The integration's own Status section offers application install/update when a fresh active native integration reports
+   An integration's row menu offers application install/update when a fresh active native integration reports
    `host.action`. It uses the shared Cancel-first machine/package-version confirmation and the sessionless,
    outcome-only installation route ([application installation](OPENCODE_INTEGRATIONS.md#application-installation)).
   WSL is refused before catalog persistence or installer calls; uncertain requests must never be replayed.
@@ -109,8 +109,9 @@ The UI excludes managed records from every ordinary plugin row, activation switc
 check/update action and source-removal path. A compact warning above the Plugins list exposes
 only managed plugins that are disabled, failed or loading-unconfirmed. Each warning row has
 an `InfoPopoverButton` with available native error/ref details. Only a disabled row offers
-**Re-enable**, through the existing activation mutation: append the positive exact ID, retain
-the negative rule and all unrelated configuration. Use the disabling rule's Global/Project
+**Re-enable**, through the existing activation mutation: it removes the exact disabling rule when that
+alone re-enables the plugin, otherwise it replaces it with the positive exact ID, keeping all unrelated
+configuration. Use the disabling rule's Global/Project
 scope when writable, otherwise the writable Project override. Native rules still determine
 precedence. Keep the warning until a fenced inventory refresh confirms an active runtime
 entry; a durable write alone leaves it visible. Native events and the existing Refresh action
@@ -125,8 +126,12 @@ Virtual origins remain visible in details when the native rule has no filesystem
 
 OpenCode applies plugin entries in configuration order. `-plugin.id` disables
 an ID, `plugin.id` later re-enables it, `*` matches all plugins, and `prefix.*`
-matches an ID prefix. Source declarations remain in place when an activation
-rule is added.
+matches an ID prefix. Every string without `-` is one ordered add operation: it selects plugins only
+when it matches a plugin ID already defined or loaded earlier in that order, or is `*`, `prefix.*` or
+`opencode.*`; otherwise OpenCode loads it as a package (an npm install for a bare name). A lone `plugin.id`
+whose package has not loaded yet is therefore fetched from the registry (`packages/core/src/config/plugin/source.ts`
+and `packages/core/src/plugin/supervisor.ts` in OpenCode). Source declarations remain in place when an
+activation rule is written.
 
 The native plugin API offers `plugin.list`/`plugin.check`/`plugin.update`, and the
 pinned client's `config.update` accepts only its declared preference fields, so
@@ -227,8 +232,13 @@ connection refuse with `stale` and require a fresh selection/confirmation.
 2. Resolve physical file destinations, including symlinked parent directories,
    and fail closed on malformed content, invalid plugin entries, circular links,
    or filesystem errors.
-3. Edit with `jsonc-parser`: append only the requested exact `id`/`-id` rule or
-   source spec string, or delete exactly one verified element. Comments, source
+3. Edit with `jsonc-parser`: append one source spec string, delete exactly one verified source element,
+   or write one activation. An activation deletes the target document's earlier exact `id`/`-id` rules for
+   that plugin, then appends the requested rule, or only deletes them, whichever first produces exactly the
+   snapshot appending the rule would produce: every control's effective state and displayed switches, and
+   every source. Otherwise it only appends. Entries the snapshot reads as source declarations (a package named
+   like its ID), broad selectors and other files are never deleted, and a placeholder or watcher-lag projection
+   (not no-op safe) keeps the plain append. Each deleted entry is re-verified in the read document. Comments, source
    objects, options, unknown keys, ordering, indentation, line endings, and a
    UTF-8 BOM are retained.
 4. Serialize in-process mutations and hold a per-target interprocess lock across
@@ -273,7 +283,7 @@ daemon are paired positionally and replayed after its normalized document. Raw
 enable the no-op shortcut. A no-op additionally requires the whole normalized
 prefix to match the raw target, followed only by concrete rules included in the
 projection. A raw deletion/replacement or an unprojected entry during watcher
-lag instead appends the requested exact rule.
+lag instead appends the requested exact rule without deleting earlier ones.
 
 The connection generation is rechecked after discovery, before file preparation,
 and again immediately before the atomic rename. Mutations also enter the active
@@ -287,23 +297,25 @@ receives the current acquired configuration entries and native target position.
 Missions settings request strict document acquisition, rejecting JSON and JSONC
 coexistence in the same layer; plugin source edits retain the selected target
 and propagate their deadline signal through acquisition and commit. Missions'
-`native-experimental-settings.ts` edits only schedules/depth, retaining explicit
+`native-experimental-settings.ts` authors schedules/depth, retaining explicit
 companion values. Depth writes preserve inherited schedule activation when the
-local block omits its flag. Schedule activation materializes inherited depth
-only when creating a whole-block override. Adding schedules to an existing block
-keeps its effective depth choice, including the native default selected by an
+local block omits its flag. Schedule activation copies every effective inherited
+experimental option when creating a whole-block override. Adding schedules to an
+existing block keeps its options, including the native default selected by an
 absent depth key. Existing file-byte expectations and the
 physical replacement lock fence concurrent writers.
 
 `editConfigDocuments` prepares and verifies each required target before its first
-rename. The Missions activation journal records the plan before effects, an
-attempt before each rename, and each exact acknowledgement. A read-only target
-or conflicting source refuses preparation; a partial global/project write keeps
-its durable receipts and preserves the successful write. An uncertain attempted
-write is reconciled only by its exact result bytes, preserving a later explicit
-OFF. `native-schedule-settings-activation.ts` acknowledges readiness only after
-the native global and effective Location blocks both enable schedules, within
-ten seconds, under the acquired connection and host/distro authority.
+rename. The Missions activation journal records its project-only plan before effects,
+an attempt before each rename, and each exact acknowledgement. A read-only target,
+masking block, discovered explicit OFF or native environment OFF refuses preparation.
+An already enabled Location receives a zero-target ready proof without configuration
+writes. Persisted intentions with global targets retain exact attempted effects for
+read-only reconciliation. Never write global or unattempted targets from those intentions.
+An uncertain attempted write is reconciled only by its exact result bytes, preserving
+a later explicit OFF. `native-schedule-settings-activation.ts` acknowledges readiness
+after the effective native Location flag enables schedules, within ten seconds,
+under the acquired connection and host/distro authority.
 
 OpenCode watches these configuration roots. Never restart the daemon or report a
 successful file write as an active plugin: the mutation response publishes the
@@ -329,8 +341,11 @@ guessed paths.
 - `CODENOMAD_TEST_WSL_PLUGIN_CONTROLS=Ubuntu` enables the real Linux-filesystem/UNC
   publication, recognition, tamper and link checks in `desktop-plugin-managed-wsl.test.ts`,
   alongside the native document suite in `plugin-control-document-wsl.test.ts`.
-- JSONC preservation, malformed input, optimistic conflict, and atomic replace:
-  `plugin-control-document.test.ts`
+- JSONC preservation, malformed input, optimistic conflict, atomic replace, and rule replacement with
+  re-verified deletions: `plugin-control-document.test.ts`
+- rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
+  selectors, rules in another scope, source declarations named like their ID, managed re-enable):
+  `plugin-controls.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
   BOM, object entries, stale index): `plugin-source-document.test.ts`
 - source add/remove ownership, scope availability, duplicates across scopes,
@@ -374,9 +389,12 @@ guessed paths.
 ## Agent conventions
 
 - Recognise managed plugins on the server through validated installer entries and content-addressed payload locations. All ordinary UI paths exclude `managedBy: "codenomad"` records; surface managed failures only in the compact warning and its on-demand details, with scoped Re-enable for disabled entries.
+- Serialization tests await the held mutation's worktree identity lookup before launching competing scopes. Target discovery performs asynchronous filesystem reads, so arrival order is observed explicitly; the independent scope completes while a second same-target mutation stays queued.
+- Source-add deadline tests await admission of both parallel configuration reads and advance mocked timers through timeout and grace. Release and join the abandoned reads before checking durable bytes.
 - Present Global and Project as separate per-plugin columns so every mutation has an explicit scope. Cache display snapshots by instance and worktree directory, and refresh them only while the plugin surface is visible.
-- Keep the Plugins surface minimal: plugin names, one compact row-action icon when applicable, and Global/Project switches. The row menu (`components/plugin-row-actions.tsx`, memoized item descriptors) names each exact operation: package check or update with its native target, **Remove from Global/Project** per removable declaration, and Refresh for unconfirmed sources; a single package item keeps its package icon. Put source/status/version/target details, failure `ref`s and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary; source rows carry only a short state label (**Installing**/**Not confirmed**). The compact Refresh and Add icons occupy the name-column header; Refresh spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and `plugin-source-add.css`, and menu chrome is shared with `action-overflow-menu`.
+- Keep the Plugins surface minimal: plugin names and versions, one compact row-action icon when applicable, and Global/Project switches. The row menu (`components/plugin-row-actions.tsx`, memoized item descriptors) names each exact operation: package check or update with its native target, **Remove from Global/Project** per removable declaration, and Refresh for unconfirmed sources; a single package item keeps its package icon. Put source/status/version/target details, failure `ref`s and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary; source rows carry only a short state label (**Installing**/**Not confirmed**). The compact Refresh and Add icons occupy the name-column header; Refresh spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and `plugin-source-add.css`, and menu chrome is shared with `action-overflow-menu`.
 - The Plugins Add menu (`components/plugin-add-menu.tsx`) uses stable item descriptors for **Add an integration…** and **Add a plugin…**. The integration catalog window (`integration-catalog-window.tsx`) uses shared window primitives, overlay surface, an upper-right close button and reviewed catalog IDs through `pluginSourcesStore.installIntegration`; native integrations lock the focusable scope selector to Global. Confirmation uses the shared 600 ms guard. Installation hints and reconciliation use the existing source store.
 - The Add plugin window (`components/plugin-source-add.tsx`) is a transient `.window-*` popover without a close button: a `--surface-field` spec input, the native scope select (Global default, Project disabled when unavailable), the trust sentence and the Project warning. It closes on success and keeps refusals inline; it never announces an active plugin.
-- Recognized integrations keep their Plugins row alongside their own Status section. Both use `PluginActivationSwitch` and `PluginRowActions` with shared mutation/in-flight state. Application installation and conversation attachment actions belong to the integration section. Source ambiguity labels its Plugins row **Non-conforming** and suppresses its integration section. Supplemental integration details use `InfoPopoverButton` or tooltips, with localized terse labels.
+- A recognized integration has exactly one surface, its Plugins row ([integration rows](OPENCODE_INTEGRATIONS.md#ui-read-model)): display name, version, `PluginActivationSwitch` with its `integration` flag (the accent switch of Yolo and the settings, `ACCENT_SWITCH_SX`, instead of the green plugin variant), and under it a state line that always says where the integration stands and acts when it can (install or update the application part, attach or detach the displayed conversation). Its `PluginRowActions` menu adds the connection line, documentation and application (re)installation before the ordinary items. Source ambiguity labels a Plugins row **Non-conforming** and attributes it to no integration. Supplemental integration details use tooltips with localized terse labels.
 - Plugins that fail before exporting an ID remain visible by their native package target or local path, with failure details in the name tooltip; package entries retain check/update actions. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds. Managed failures belong to the attention block.
+- Plugins rows use the app's ordinary tooltips: the native `title` attribute (multi-line with `\n`) on names, the state line, switches and row actions, never Kobalte `Tooltip` or a custom tooltip surface. A row's details also go into a hidden element the row names through `aria-describedby` (`<name id>-details`), and every control keeps its `aria-label`, so keyboard and screen-reader users get the same text.

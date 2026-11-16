@@ -70,7 +70,7 @@ Drag a docked panel's inner edge to resize it. The handle stays highlighted and 
 2. Open **Customize right panel** in the right panel. Use checkboxes to choose built-in tabs and Status sections; at least one Status section remains visible. Drag across these checkboxes to set several at once.
 3. Drag right-panel tabs to reorder them. Use **Reset** to restore built-in layout choices.
 
-Recognised [integrations](integrations.md#integration-sections) also have Status sections. Hide them with the same checkboxes; reorder any Status section by dragging or with Up/Down keys. Visibility and order persist across reloads and temporary absence of an integration.
+Reorder any Status section by dragging or with Up/Down keys. Visibility and order persist across reloads.
 
 Status includes token information, Yolo mode, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
 

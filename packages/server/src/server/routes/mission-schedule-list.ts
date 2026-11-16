@@ -8,6 +8,7 @@ import { PluginControlsError } from "../../opencode/plugin-controls"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { requestAdmission } from "../request-admission"
 import { MissionMapMutationError, prepareMissionMapMutation, type MissionMapMutationManager } from "./mission-map-mutation"
+import { missionScheduleActivationRefusal } from "./mission-schedule-activation-refusal"
 
 const params = z.object({ id: z.string().min(1).max(200) }).strict()
 const directory = z.string().min(1).max(4096).refine(value => !value.includes("\0")).optional()
@@ -48,7 +49,9 @@ export function registerMissionScheduleList(app: FastifyInstance, deps: Deps) {
             const plan = await lifetime.wait(deps.scheduleSettingsActivation.prepare(selected.data.id, owned.location))
             activation = { available: true, targets: plan.targets.map(({ path, scope }) => ({ path, scope })) }
           } catch (error) {
-            activation = { available: false, reason: error instanceof PluginControlsError ? error.kind : "unavailable", targets: [] }
+            const refusal = missionScheduleActivationRefusal(error)
+            activation = { available: false, reason: error instanceof PluginControlsError ? error.kind : "unavailable", targets: [],
+              ...(refusal ? { code: "schedule-activation-refused", refusal } : {}) }
           }
         }
         await owned.refresh()

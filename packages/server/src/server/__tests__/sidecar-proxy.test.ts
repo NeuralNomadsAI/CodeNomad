@@ -12,6 +12,8 @@ import type { SideCar } from "../../api-types"
 import { AuthManager } from "../../auth/manager"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../http-server"
+import { resolveConfigLocation } from "../../config/location"
+import { SettingsService } from "../../settings/service"
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -147,7 +149,9 @@ function webSocketUpgrade(port: number, pathname: string, headers: Record<string
   })
 }
 
-async function startServer(options: UpstreamOptions & { cookieName?: string; prefixMode?: SideCar["prefixMode"]; skipAuth?: boolean; allowedOrigins?: string[]; devServerUrl?: string } = {}) {
+async function startServer(options: UpstreamOptions & { cookieName?: string; prefixMode?: SideCar["prefixMode"]; skipAuth?: boolean; allowedOrigins?: string[]; devServerUrl?: string
+  /** A real settings service over this fixture's `config.yaml`, which tests edit as the host would. */
+  realSettings?: boolean } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-sidecar-proxy-"))
   const logger = pino({ level: "silent" })
   const authManager = new AuthManager({
@@ -178,11 +182,15 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     },
   }
   const stub = new Proxy({}, { get: () => () => undefined }) as never
+  const configYamlPath = resolveConfigLocation(path.join(directory, "settings")).configYamlPath
+  await fs.mkdir(path.dirname(configYamlPath), { recursive: true })
+  const realSettings = options.realSettings ? new SettingsService(resolveConfigLocation(path.dirname(configYamlPath)), undefined, logger) : undefined
+  const settings = (realSettings ?? stub) as never
   const previewManager = new PreviewManager()
   const preview = previewManager.create("fixture", `http://127.0.0.1:${port}`)
   const { instance: app } = createHttpServer({
     bindHost: "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
-    workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: stub,
+    workspaceManager: stub, settings, fileSystemBrowser: stub, eventBus: stub,
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub, speechService: stub, sidecarManager: sidecarManager as never, previewManager,
     clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
@@ -206,6 +214,8 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     received,
     preview,
     cleanupDirectory: directory,
+    settings: realSettings,
+    configYamlPath,
   }
 }
 
@@ -245,6 +255,118 @@ it("non-local SideCar upgrades are refused even with a valid host session and sp
       assert.equal(server.connectionCount(), 0)
     }
     assert.deepEqual(server.upgrades, [])
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+// A TLS-terminating reverse proxy forwards the public Host and the browser's Origin from another machine.
+const PUBLIC = "https://code.example.test"
+const PUBLIC_HOST = "code.example.test"
+const LAN_HTTP = "http://lan.example.test:9899"
+const LOOPBACK_HTTPS = "https://localhost:8443"
+const LAN_PEER = "192.0.2.20"
+
+/** The real settings service over a `config.yaml` that each test edits as the host would. */
+async function startDirectHttpsServer(enabled: boolean) {
+  const server = await startServer({ realSettings: true, allowedOrigins: [PUBLIC, LAN_HTTP, LOOPBACK_HTTPS] })
+  // A deterministic non-loopback transport peer for raw upgrades, as app.inject's remoteAddress for HTTP.
+  server.app.server.prependListener("connection", socket => { Object.defineProperty(socket, "remoteAddress", { value: LAN_PEER }) })
+  const host = (content: string) => fs.writeFile(server.configYamlPath, content)
+  const setOptIn = (value: boolean) => host(`server:\n  logLevel: INFO\n  sidecarsOverDirectHttps: ${value}\n`)
+  await setOptIn(enabled)
+  return { ...server, host, setOptIn }
+}
+
+it("the host's opt-in admits SideCar content for authenticated verified direct HTTPS origins only", async () => {
+  const server = await startDirectHttpsServer(false)
+  try {
+    const get = (headers: Record<string, string>, method: "GET" | "POST" = "GET") => server.app.inject({ method, url: "/sidecars/fixture/token",
+      remoteAddress: LAN_PEER, headers: { cookie: server.cookie, "content-type": "text/plain", ...headers }, ...(method === "POST" ? { payload: "x" } : {}) })
+    // Navigations and same-origin fetches send the public Host, a Referer or an Origin.
+    const verified: Record<string, string>[] = [{ host: PUBLIC_HOST }, { host: `${PUBLIC_HOST}:443` }, { host: `127.0.0.1:${server.port}`, referer: `${PUBLIC}/` }, { host: PUBLIC_HOST, origin: PUBLIC }]
+    for (const headers of verified) assert.equal((await get(headers)).statusCode, 404, `off: ${JSON.stringify(headers)}`)
+    assert.equal((await get({ origin: PUBLIC }, "POST")).statusCode, 404)
+    assert.equal(server.received.length, 0)
+
+    await server.setOptIn(true)
+    for (const headers of verified) {
+      const response = await get(headers)
+      assert.equal(response.statusCode, 200, `${JSON.stringify(headers)}: ${response.body}`)
+      assert.equal(response.body, "{\"ok\":true}")
+    }
+    assert.equal((await get({ host: PUBLIC_HOST, origin: PUBLIC }, "POST")).statusCode, 200, "a mutation with its own verified Origin")
+    assert.equal(server.received.length, verified.length + 1)
+    const refused: Record<string, string>[] = [
+      // Plain-HTTP LAN, loopback-alias and unlisted pages.
+      { host: "lan.example.test:9899" }, { host: PUBLIC_HOST, origin: LAN_HTTP }, { host: PUBLIC_HOST, referer: `${LAN_HTTP}/` },
+      { host: "localhost:8443" }, { host: PUBLIC_HOST, origin: LOOPBACK_HTTPS }, { host: `127.0.0.1:${server.port}` },
+      { host: PUBLIC_HOST, origin: "https://foreign.test" }, { host: PUBLIC_HOST, origin: "https://code.example.test.evil.test" },
+      { host: `user@${PUBLIC_HOST}` }, { host: "lan.example.test:9899", "x-forwarded-proto": "https", "x-forwarded-host": PUBLIC_HOST },
+      // An opaque frame.
+      { host: PUBLIC_HOST, origin: "null" },
+    ]
+    for (const headers of refused) assert.equal((await get(headers)).statusCode, 404, JSON.stringify(headers))
+    // Mutations need their own verified Origin, never a Referer or Host.
+    for (const headers of [{ host: PUBLIC_HOST }, { host: PUBLIC_HOST, referer: `${PUBLIC}/` }] as Record<string, string>[]) {
+      assert.equal((await get(headers, "POST")).statusCode, 404, `POST ${JSON.stringify(headers)}`)
+    }
+    // Authentication still applies.
+    const anonymous = await server.app.inject({ url: "/sidecars/fixture/token", remoteAddress: LAN_PEER, headers: { host: PUBLIC_HOST } })
+    assert.equal(anonymous.statusCode, 401)
+    assert.equal(server.received.length, verified.length + 1)
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+it("the host's opt-in admits SideCar WebSockets from verified direct HTTPS origins, with the source and session checks", async () => {
+  const server = await startDirectHttpsServer(false)
+  try {
+    const upgrade = (headers: Record<string, string>) => webSocketUpgrade(server.port, "/sidecars/fixture/ws", headers, true)
+    const credentials = { cookie: server.cookie }
+    assert.equal((await upgrade({ ...credentials, host: PUBLIC_HOST, origin: PUBLIC })).status, 404, "off by default")
+    await server.setOptIn(true)
+    for (const host of [PUBLIC_HOST, `127.0.0.1:${server.port}`]) {
+      const response = await upgrade({ ...credentials, host, origin: PUBLIC })
+      assert.equal(response.status, 101, host)
+      assert.equal(response.echo, "sidecar-origin-check")
+    }
+    for (const origin of [LAN_HTTP, LOOPBACK_HTTPS, "https://foreign.test", "null", `http://127.0.0.1:${server.port}`]) {
+      assert.equal((await upgrade({ ...credentials, host: PUBLIC_HOST, origin })).status, 404, origin)
+    }
+    // Without an Origin the public Host qualifies, but the non-local source policy still refuses it.
+    assert.equal((await upgrade({ ...credentials, host: PUBLIC_HOST })).status, 403)
+    assert.equal((await upgrade({ host: PUBLIC_HOST, origin: PUBLIC })).status, 401)
+    assert.deepEqual(server.upgrades, ["/ws", "/ws"])
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
+it("a host edit of config.yaml revokes the opt-in on the next request, even after the display cache loaded it", async () => {
+  const server = await startDirectHttpsServer(true)
+  try {
+    const content = () => server.app.inject({ url: "/sidecars/fixture/token", remoteAddress: LAN_PEER, headers: { host: PUBLIC_HOST, cookie: server.cookie } })
+    const upgrade = () => webSocketUpgrade(server.port, "/sidecars/fixture/ws", { cookie: server.cookie, host: PUBLIC_HOST, origin: PUBLIC }, true)
+    const admitted = async (expected: boolean, label: string) => {
+      assert.equal((await content()).statusCode, expected ? 200 : 404, `content: ${label}`)
+      assert.equal((await upgrade()).status, expected ? 101 : 404, `upgrade: ${label}`)
+    }
+    // The display cache holds `true` from here on, as any settings read would leave it.
+    assert.equal(server.settings!.getOwner("config", "server").sidecarsOverDirectHttps, true)
+    await admitted(true, "on")
+    await server.setOptIn(false)
+    assert.equal(server.settings!.getOwner("config", "server").sidecarsOverDirectHttps, true, "the display cache is stale by design")
+    await admitted(false, "host turned it off")
+    await server.setOptIn(true)
+    await admitted(true, "host turned it on again")
+    // Unreadable, invalid or missing documents read as off.
+    for (const [label, write] of [
+      ["invalid YAML", () => server.host("server: [sidecarsOverDirectHttps: true\n")],
+      ["non-object server owner", () => server.host("server: true\n")],
+      ["a directory in its place", async () => { await fs.rm(server.configYamlPath); await fs.mkdir(server.configYamlPath) }],
+      ["missing", () => fs.rm(server.configYamlPath, { recursive: true })],
+    ] as const) {
+      await write()
+      await admitted(false, label)
+    }
+    await server.setOptIn(true)
+    await admitted(true, "restored")
   } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
 })
 

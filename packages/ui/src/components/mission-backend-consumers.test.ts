@@ -9,6 +9,7 @@ import { isReservedMissionScheduleSessionID } from "../../../server/src/missions
 import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
 import { backgroundReads } from "../lib/background-read-queue"
 import { recurrenceStartText } from "../../../server/src/missions/lifecycle-input"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import { createEffect, createMemo, createRoot, createSignal, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Run production consumer bodies/effects, with transport and view owners injected.
@@ -168,7 +169,7 @@ test("schedule controls never advance a detached preflight into confirmation or 
   const run = production("./mission-schedule-controls.ts", "act", { ...env,
     props: { instanceId: id, directory: "/repo", document: () => ({ id: "m", revision: 1 }), refresh: () => assert.fail("stale refresh") },
     capable: () => true, capture: () => env.captureBackendOperation(id).current, identity: () => "scope", held: () => undefined,
-    setBusy: () => {}, setFeedback: () => {},
+    setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {},
   })
   const pending = run("stop"); assert.equal(env.owners.length, 1)
   env.replace(); read.resolve({ document: { id: "m", revision: 1 } }); await pending; assert.equal(writes, 0)
@@ -263,7 +264,8 @@ test("daily recurrence controls route remotely and reject stale view effects", a
   const run = production("./mission-recurrence-list.tsx", "act", { ...env,
     props: { instanceId: id, schedule: { id: "s", revision: 1 }, directory: "/repo" }, generation: 1,
     retryCapable: () => true, capable: () => true, key: () => "scope", createRecurrenceControlIntent: () => ({ requestID: "r", scheduleID: "s" }),
-    unresolved: new Map(), setHeld: () => {}, setBusy: () => {}, setRefusal: () => {}, finish: () => assert.fail("stale recurrence publication"),
+    holdIntent: production("./mission-recurrence-list.tsx", "holdIntent", { unresolved: new Map(), setReleases: () => {} }),
+    setHeld: () => {}, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, finish: () => assert.fail("stale recurrence publication"),
   })
   const pending = run("pause"); assert.equal(env.owners.length, 1)
   env.replace(); read.resolve({}); await pending
@@ -513,7 +515,8 @@ for (const action of ["run-now", "pause"] as const) {
     const env = fixture(api), scope = { ...env,
       props: { instanceId: id, schedule: { id: "s", revision: 1 }, directory: "/repo", enabled: () => true, retryEnabled: () => true }, generation: 1,
       retryCapable: () => true, capable: () => true, key: () => "scope", createRecurrenceControlIntent: () => intent,
-      unresolved: new Map(), setHeld: () => {}, setBusy: () => {}, setRefusal: () => {}, busy: () => false,
+      holdIntent: production("./mission-recurrence-list.tsx", "holdIntent", { unresolved: new Map(), setReleases: () => {} }),
+      setHeld: () => {}, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, busy: () => false,
       completedRecurrenceManual: () => true, rejectedRecurrenceControl: () => undefined, partialRecurrenceControl: () => false,
       finish: () => settled.push("control"), settle: () => settled.push("manual"), heldIntent: () => intent, witness: undefined,
     }
@@ -558,7 +561,8 @@ function controlScope(api: Record<string, any>) {
   const scope: Record<string, any> = { ...env, holds, refreshed, doc,
     props: { instanceId: id, directory: "/repo", document: () => doc, active: () => true, refresh: () => refreshed.push("refresh") },
     capable: () => true, capture: () => env.captureBackendOperation(id).current, identity: () => "scope", held: () => undefined,
-    setBusy: () => {}, setFeedback: () => {}, bump: () => {}, label: () => "Play", t: (key: string) => key,
+    setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {}, bump: () => {}, label: () => "Play", t: (key: string) => key,
+    HttpResponseError,
     requiresMissionCalendar: () => true, showConfirmDialog: async () => true,
     partialReceipt: () => undefined, exactMissionScheduleControl: () => true, refusedMissionScheduleReceipt: () => false,
     settle: (_key: string, hold: any) => { holds.delete("scope"); refreshed.push(hold.phase) },
@@ -567,8 +571,8 @@ function controlScope(api: Record<string, any>) {
   return scope
 }
 
-for (const enabled of [false, true]) {
-  test(`schedule Play ${enabled ? "enabled" : "activation"} reaches every remote continuation`, async () => {
+for (const [enabled, prepared] of [[false, false], [true, false], [true, true]]) {
+  test(`schedule Play ${!enabled ? "activation" : prepared ? "enabled and prepared" : "enabled without proof"} reaches every remote continuation`, async () => {
     const calls: string[] = [], scope = controlScope({
       fetchMissionSchedule: async () => { calls.push("preflight"); return { document: scope.doc } },
       fetchMissionScheduleCapability: async () => { calls.push("capability"); return { api: { available: true }, enabled,
@@ -578,11 +582,12 @@ for (const enabled of [false, true]) {
           scheduleActivation: { requestID: input.requestID, expectedRevision: 1, state: "ready" } } }
       },
       controlMissionSchedule: async (_owner: string, _mission: string, input: any) => {
-        calls.push("play"); assert.equal(input.expectedRevision, enabled ? 1 : 2); return { document: { revision: enabled ? 2 : 3 } }
+        calls.push("play"); assert.equal(input.expectedRevision, prepared ? 1 : 2); return { document: { revision: prepared ? 2 : 3 } }
       },
     })
+    if (prepared) scope.doc.scheduleActivation = { requestID: "prepared", expectedRevision: 1, state: "ready" }
     await production("./mission-schedule-controls.ts", "act", scope)("play")
-    assert.deepEqual(calls, enabled ? ["preflight", "capability", "play"] : ["preflight", "capability", "activation", "play"])
+    assert.deepEqual(calls, prepared ? ["preflight", "capability", "play"] : ["preflight", "capability", "activation", "play"])
     assert.ok(scope.refreshed.includes("control"))
   })
 }
@@ -603,17 +608,22 @@ test("schedule control receipt explicitly reads the original request and settles
   const scope = controlScope({ fetchMissionSchedule: async (...args: any[]) => { calls.push(args); return { document: { revision: 2 } } } })
   scope.holds.set("scope", hold)
   await production("./mission-schedule-controls.ts", "receipt", scope)("scope", hold, () => true)
-  assert.deepEqual(calls, [[id, "m", { directory: "/repo", requestID: "r" }]])
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].length, 4)
+  assert.deepEqual(calls[0].slice(0, 3), [id, "m", { directory: "/repo", requestID: "r" }])
+  assert.ok(calls[0][3] instanceof AbortSignal)
+  assert.equal(calls[0][3].aborted, false)
   assert.ok(scope.refreshed.includes("control"))
 })
 
 test("schedule control passive capability display is owner routed", async () => {
-  const calls: string[] = [], env = fixture({ fetchMissionScheduleCapability: async () => { calls.push("capability"); return { api: { available: true }, enabled: true } } })
+  const calls: string[] = [], env = fixture({ fetchMissionScheduleCapability: async () => { calls.push("capability"); return { api: { available: true }, enabled: true, activation: { available: true } } } })
   let published: string | undefined, dispose!: () => void
   const effect = production("./mission-schedule-controls.ts", "createEffect", { ...env,
     props: { instanceId: id, directory: "/repo", refreshVersion: () => 0, active: () => true },
     capabilityOwner: () => ({ signal: new AbortController().signal }), previousOwner: undefined,
-    capture: () => env.captureBackendOperation(id).current, setBusy: () => {}, setCapability: (value: string) => { published = value },
+    capture: () => env.captureBackendOperation(id).current, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {},
+    feedback: () => undefined, setCapability: (value: string) => { published = value },
   }, "fetchMissionScheduleCapability")
   createRoot(close => { dispose = close; createEffect(effect) }); await flush()
   assert.deepEqual(calls, ["capability"]); assert.equal(published, "available"); dispose()

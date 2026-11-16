@@ -8,7 +8,7 @@
 
 1. 安装 Node.js 24 LTS 和 npm；仓库构建运行时固定在 `.node-version` 中。桌面包提供自己的运行时：Electron 使用内置 Node，Tauri 附带 Node，两者均包含 npm。
 2. 将 Git 加入**后端进程的 PATH**。仅 WSL 内的 Git 不满足 Windows 后端。
-3. 安装或选择 OpenCode：必需最低版本为 **2.2.3**，推荐验证目标为 **2.2.7**。更新或自定义构建会接受兼容检查，而非已测试版本白名单。参阅 [OpenCode 设置](opencode.md)。
+3. 安装或选择 OpenCode：必需最低版本为 **2.3.0**，推荐验证目标为 **2.3.0**。更新或自定义构建会接受兼容检查，而非已测试版本白名单。参阅 [OpenCode 设置](opencode.md)。
 4. 选择启动服务器的文件夹，或显式传入 `--workspace-root`。
 
 没有 Git 时，对话仅在显式打开的物理文件夹内可用；Git 和工作树操作失败。安装 Git，更改 PATH 后重启后端。工作区根目录限制打开/浏览，而非智能体执行：参阅[安全](security.md)。
@@ -104,6 +104,8 @@ HTTPS 首选端口 **9898**，HTTP 首选 **9899**。没有端口覆盖时，首
 | --- | --- |
 | `CODENOMAD_GITHUB_REPO` | `NeuralNomadsAI/CodeNomad`；查询发行版本的仓库。 |
 | `CODENOMAD_REMOTE_CONTROL_API` | 未设置：托管 OpenTunnel API。自托管中继部署时设置 API 来源。 |
+| `CODENOMAD_REMOTE_CONTROL` | 未设置：用户可以启动远程控制。`disabled`：已被管理员关闭（[策略](remote-control.md#administrator-policy)）；未设置或为空表示无策略，任何其他值（包括空格）都会阻止启动。 |
+| `CODENOMAD_LOCKED_HOST` | 未设置或为空：使用 `--host`；仅含空格会阻止启动。一个地址：无论 `--host`、`CLI_HOST` 或监听开关如何设置，服务器都在该地址监听（[策略](remote-access.md#administrator-policy)）。 |
 | `NODE_EXTRA_CA_CERTS` | Node 可选额外 CA 文件；启动缺失的 OpenCode 守护进程时与允许的启动环境一起传递。不改变已运行守护进程。 |
 
 提供商专用用量凭据见[提供商](providers.md)。桌面数据配置文件选择见[桌面](desktop.md)，不受发布通道控制。

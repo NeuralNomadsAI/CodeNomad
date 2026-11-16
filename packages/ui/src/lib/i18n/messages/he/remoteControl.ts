@@ -7,6 +7,8 @@ export const remoteControlMessages = {
   "remoteControl.state.connected": "מוכן לחיבורים מרחוק",
   "remoteControl.state.reconnecting": "מתחבר מחדש…",
   "remoteControl.state.error": "החיבור לממסר נכשל",
+  "remoteControl.state.disabled": "הושבת על ידי מנהל המערכת",
+  "remoteControl.disabled.info": "מנהל המערכת כיבה את השליטה מרחוק במחשב זה (CODENOMAD_REMOTE_CONTROL=disabled). מכשירים מצומדים לא יכולים להתחבר; עדיין אפשר לבטל אותם.",
   "remoteControl.status.localOnly": "CodeNomad זמין רק במכשיר זה.",
   "remoteControl.status.hostOnly": "יש לנהל את Remote Control מהמחשב המארח של CodeNomad.",
   "remoteControl.start": "הפעל שליטה מרחוק",

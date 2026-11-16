@@ -204,7 +204,7 @@ test("rows say Next, stuck passages explain their one action, history is plain a
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 })
     await waitForEntryStatus(page, TITLE, /Next: /)
-    assert.match(await missionEntryStatus(page, TITLE), /^Daily · Running · Next: /, "a running entry names its state, then its next run")
+    assert.match(await missionEntryStatus(page, TITLE), /^Daily · State unconfirmed · Next: /, "an uncertain passage names the uncertainty before its next run")
     // The picker selects the Mission (not its open coordinator conversation); its toolbar owns its primary control.
     await waitForEntryStatus(page, "One-time review", /^Prepared · /)
     const once = await inlineMissionEntry(page, "One-time review")

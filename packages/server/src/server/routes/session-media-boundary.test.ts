@@ -8,6 +8,7 @@ import { registerSessionMediaRoutes } from "./session-media"
 import { mediaDigest } from "../../opencode/session-media"
 import { OpenCodeSharedService } from "../../workspaces/opencode-service"
 import { rememberRuntime } from "../../opencode/compatibility/runtime"
+import { MINIMUM_OPENCODE_VERSION } from "../../opencode/runtime-support"
 
 function deferred() {
   let resolve!: () => void
@@ -33,7 +34,7 @@ async function fixture(stage: string) {
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}`, auth: { type: "basic" as const, username: "fixture", password: "fixture" } }
-  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService()
   await service.endpoint({ kind: "lifecycle", identity: "media-boundary", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })
   const connection = await service.acquire()

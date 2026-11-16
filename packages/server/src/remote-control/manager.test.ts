@@ -23,10 +23,11 @@ function fixture(t: test.TestContext) {
   const alive = new Set<number>()
   let nextPid = 100
   // Each launch is a new manager over the same config directory, as after a restart.
-  const launch = () => {
+  const launch = (disabledByAdministrator = false) => {
     const pid = nextPid++
     alive.add(pid)
     const manager = new RemoteControlManager({
+      disabledByAdministrator,
       registry: new RemoteDeviceRegistry(file),
       lease: new RemoteControlOwnerLease(path.join(directory, "remote-control.owner"), pid, (candidate) => alive.has(candidate)),
       router: () => null,
@@ -69,6 +70,30 @@ test("only one backend sharing the configuration resumes, until it goes away", a
   await next.resume()
   assert.equal(opened.length, 3)
   assert.equal(next.status().state, "connected")
+})
+
+test("an administrator-disabled Remote Control never opens a tunnel, resumes or pairs", async (t) => {
+  const { opened, launch } = fixture(t)
+  // A user left Remote Control on and paired a device before the policy applied.
+  const before = launch()
+  const { pairing } = await before.start()
+  const device = before.exchangePairing(new URL(pairing.url).hash.slice(1), undefined)
+  assert(device)
+  await before.shutdown()
+  before.exit()
+
+  const disabled = launch(true)
+  await disabled.resume()
+  await assert.rejects(disabled.start(), /disabled by the administrator/)
+  assert.throws(() => disabled.createPairing(), /not connected/)
+  assert.equal(opened.length, 1, "no tunnel after the policy applied")
+  assert.deepEqual(disabled.status(), { manageable: true, disabledByAdministrator: true, enabled: false, startsOnLaunch: false,
+    previews: true, state: "stopped", pairedDevices: 1 })
+  assert.equal(disabled.isDeviceAuthorized(device.device.id), false)
+  assert.equal(disabled.gate().publicHost(), null)
+  // Devices stay listed and revocable on the host.
+  assert.equal(disabled.revokeDevice(device.device.id), true)
+  assert.equal(disabled.status().pairedDevices, 0)
 })
 
 test("a started Remote Control reconnects at the next launch without a pairing link", async (t) => {
@@ -155,4 +180,36 @@ test("a connected tunnel is not tied to any start deadline", async (t) => {
   assert.equal(opened?.signal, undefined, "no signal can later close the connected tunnel")
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.deepEqual({ enabled: manager.status().enabled, state: manager.status().state }, { enabled: true, state: "connected" })
+})
+
+test("administrator policy refuses direct HTTPS devices and pairing while preserving origin classification and revocation", async (t) => {
+  const { file, opened } = fixture(t)
+  const origin = "https://code.example.test"
+  const registry = new RemoteDeviceRegistry(file)
+  const device = registry.exchange(registry.createPairing(origin).code, "direct device", origin)
+  assert(device)
+  const pendingCode = registry.createPairing(origin).code
+
+  const disabled = new RemoteControlManager({
+    disabledByAdministrator: true, directHttpsOrigins: () => [origin],
+    registry, router: () => null, logger,
+    openTunnel: async (options) => { opened.push(options); throw new Error("must never open") },
+  })
+  t.after(() => disabled.shutdown())
+  await disabled.resume()
+  await assert.rejects(disabled.start(), /disabled by the administrator/)
+  assert.throws(() => disabled.createDirectPairing(origin), /disabled by the administrator/)
+  assert.equal(disabled.exchangeDirectPairing(pendingCode, origin, undefined), null)
+  assert.equal(disabled.exchangePairing(pendingCode, undefined), null)
+  assert.equal(disabled.isDeviceAuthorized(device.device.id), false)
+  assert.equal(disabled.gate().authenticate(device.token), null)
+  assert.equal(disabled.gate().authenticateDirect!(device.token, origin), null)
+  assert.deepEqual(disabled.gate().directHttpsOrigins!(), [origin], "classify the cookie and refuse it, without password fallback")
+  assert.deepEqual(disabled.devices().map(value => value.id), [device.device.id])
+  assert.equal(opened.length, 0)
+  assert(disabled.revokeDevice(device.device.id))
+  await disabled.shutdown()
+
+  assert(registry.exchange(pendingCode, "new device", origin), "refused exchanges and shutdown preserve the direct code")
+  assert.equal(registry.isPaired(device.device.id, origin), false)
 })
