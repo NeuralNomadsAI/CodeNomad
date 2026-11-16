@@ -479,33 +479,43 @@ const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreW
 let restoreCreationRequestSequence = 0
 const restoreCreationCommitGates = new RestoreWorkspaceCommitGates<RestoreWorkspaceDescriptor>()
 
+/** Bounded backoff for a failed reconnect reconciliation; a reconnect pulse
+ * (upstream recovery) keeps the browser stream open, so nothing else retries it. */
+const CONNECTION_RESYNC_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000]
 const connectionResyncs = new TrailingResyncCoordinator(
   async (instanceId) => {
     await waitForSettledPrerequisite(initialHydrations.get(instanceId))
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
-    let sessionError: unknown
-    try {
-      await fetchSessions(instanceId, { reset: true })
-    } catch (error) {
-      sessionError = error
+    // Every read runs even when another fails: the transcript repair below is
+    // the only path for events this connection may have missed, and the first
+    // failure fails the pass so the coordinator retries it.
+    const failures: unknown[] = []
+    const settle = async (read: () => Promise<unknown>) => {
+      try {
+        await read()
+      } catch (error) {
+        failures.push(error)
+      }
     }
+    await settle(() => fetchSessions(instanceId, { reset: true }))
     await Promise.all([
-      reloadWorktrees(instanceId),
-      syncPendingRequests(instanceId),
-      refreshVolatileInstanceState(instanceId),
-      syncLoadedSessionInboxes(instanceId),
+      settle(() => reloadWorktrees(instanceId)),
+      settle(() => syncPendingRequests(instanceId)),
+      settle(() => refreshVolatileInstanceState(instanceId)),
+      settle(() => syncLoadedSessionInboxes(instanceId)),
     ])
-    if (sessionError) throw sessionError
     const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
     for (const sessionId of loadedMessages) invalidateSessionMessageLoad(instanceId, sessionId)
     const activeId = activeSessionId().get(instanceId)
-    if (activeId && loadedMessages.has(activeId)) await loadMessages(instanceId, activeId, { force: true })
+    if (activeId && loadedMessages.has(activeId)) await settle(() => loadMessages(instanceId, activeId, { force: true }))
     reconcilePendingSessionIndicators(instanceId)
+    if (failures.length) throw failures[0]
   },
   (instanceId, error) => {
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
   },
+  CONNECTION_RESYNC_RETRY_DELAYS_MS,
 )
 const connectionResyncGate = new ConnectionResyncGate()
 
@@ -1557,6 +1567,7 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   }
   detachInstanceTabMembership(id)
   connectionResyncGate.clear(id)
+  connectionResyncs.cancel(id)
   let nextActiveId: string | null = null
 
   setInstances((prev) => {

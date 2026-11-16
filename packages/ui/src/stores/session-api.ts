@@ -1873,11 +1873,14 @@ async function loadMessages(
         reconcilePendingPermissionsV2(instanceId, sessionId)
         committed = true
         // Streamed events reach the display only through the session reducer,
-        // which ignores them for messages it does not hold. A session known
-        // to be idle has no such message.
+        // which ignores them for messages it does not hold: every committed
+        // latest page offers it a seed. A first load's page is merged with the
+        // rows streamed during its fetch; any other latest commit passed the
+        // revision check, so no event changed the transcript during its fetch.
         const current = sessions().get(instanceId)?.get(sessionId)
-        if (initialSeed && (current?.status !== "idle" || current.runtimeStatusKnown !== true)) {
-          void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages)
+        if (nextWindow.kind === "latest") {
+          void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages,
+            current?.status === "idle" && current.runtimeStatusKnown === true)
         }
       }
     }

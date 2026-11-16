@@ -15,6 +15,10 @@ const LOCATION_OWNER_CACHE_MS = 2000
 const SESSION_LOCATION_CACHE_MS = 2000
 const ROUTING_RESYNC_MIN_MS = 5000
 const ROUTING_RESYNC_MAX_MS = 60_000
+const SESSION_RECIPIENT_LIMIT = 4096
+/** A session lookup that failed after its retry, or returned an unreadable location. */
+const UNRESOLVED = Symbol("unresolved session location")
+type SessionLocation = LocationRef | undefined | typeof UNRESOLVED
 const GLOBAL_EVENT_TYPES = new Set([
   "agent.updated",
   "command.updated",
@@ -84,7 +88,9 @@ export class InstanceEventBridge {
   private ownershipRevision = 0
   private lastSlowWarning = -Infinity
   private readonly workspaceEpochs = new Map<string, number>()
-  private readonly sessionLocations = new Map<string, { expiresAt: number; location: Promise<LocationRef | undefined> }>()
+  private readonly sessionLocations = new Map<string, { expiresAt: number; location: Promise<SessionLocation> }>()
+  /** Bounded, least recently delivered first; survives ownership invalidation. */
+  private readonly sessionRecipients = new Map<string, Set<string>>()
   private readonly ptyLocations = new Map<string, LocationRef>()
   private readonly shellLocations = new Map<string, LocationRef>()
   private readonly routingResyncs = new Map<string, { next: number; interval: number; timer?: ReturnType<typeof setTimeout> }>()
@@ -98,12 +104,14 @@ export class InstanceEventBridge {
     this.advanceWorkspace(event.workspaceId)
     this.clearLocationCaches()
     this.clearRoutingResync(event.workspaceId)
+    this.forgetSessionRecipient(undefined, event.workspaceId)
     this.publishStatus(event.workspaceId, "disconnected", "workspace stopped")
   }
   private readonly onWorkspaceError = (event: { workspace: { id: string } }) => {
     this.advanceWorkspace(event.workspace.id)
     this.clearLocationCaches()
     this.clearRoutingResync(event.workspace.id)
+    this.forgetSessionRecipient(undefined, event.workspace.id)
     this.publishStatus(event.workspace.id, "disconnected", "workspace error")
   }
   private readonly onWorktreesChanged = () => this.invalidateOwners()
@@ -208,13 +216,14 @@ export class InstanceEventBridge {
 
     // A scoped event is native location authority, not merely a cwd hint. Keep
     // that full pair for subsequent locationless PTY/Shell/session events.
-    const location = event.location ? readLocationRef(event.location)
+    const resolved = event.location ? readLocationRef(event.location)
       : (ptyId ? this.ptyLocations.get(ptyId) : undefined)
         ?? this.ptyInfoLocation(event)
         ?? (shellId ? this.shellLocations.get(shellId) : undefined)
         ?? this.shellInfoLocation(event)
         ?? (sessionId ? await this.resolveSessionLocation(sessionId, route.signal) : undefined)
     if (!route.current()) return
+    const location = resolved === UNRESOLVED ? undefined : resolved
     if (!location) {
       if (GLOBAL_EVENT_TYPES.has(event.type)) {
         this.deliverEvent(event, undefined, route)
@@ -225,7 +234,12 @@ export class InstanceEventBridge {
         // service-global, so notifying every logical workspace cannot delete another session.
         this.deliverEvent(event, undefined, route)
         this.sessionLocations.delete(sessionId)
+        return
       }
+      // An unreadable session location cannot name its owner: the session's
+      // recent recipients (every recipient when none is known) reconcile
+      // instead of losing the event silently.
+      if (resolved === UNRESOLVED && sessionId) this.requestSessionResync(sessionId, route)
       return
     }
     // The moved envelope can refer to the old location. The next locationless
@@ -258,6 +272,7 @@ export class InstanceEventBridge {
 
   private deliverEvent(event: OpenCodeEvent, location: LocationRef | undefined, route: EventRoute): void {
     const resolvedAt = Date.now()
+    const sessionId = this.sessionId(event)
     for (const { id: instanceId, epoch } of route.recipients) {
       const current = () => route.current() && (this.workspaceEpochs.get(instanceId) ?? 0) === epoch
       route.queue.enqueue(`deliver:${JSON.stringify([instanceId, route.key])}`, route.bytes, async () => {
@@ -289,6 +304,13 @@ export class InstanceEventBridge {
           }, "Slow instance event routing")
         }
         if (allowed) this.options.eventBus.publish({ type: "instance.event", instanceId, event })
+        if (!sessionId) return
+        // A recipient that received this session's events and is now refused
+        // without a move cannot tell an unreadable checkout from a foreign one:
+        // it reconciles. A location it never owned stays a silent rejection.
+        if (event.type === "session.moved" || event.type === "session.deleted") this.forgetSessionRecipient(sessionId, instanceId)
+        else if (allowed) this.rememberSessionRecipient(sessionId, instanceId)
+        else if (location && this.sessionRecipients.get(sessionId)?.has(instanceId)) this.requestRoutingResync(instanceId)
       })
     }
   }
@@ -325,7 +347,9 @@ export class InstanceEventBridge {
     return typeof cwd === "string" && cwd ? { directory: cwd } : undefined
   }
 
-  private resolveSessionLocation(sessionId: string, signal: AbortSignal): Promise<LocationRef | undefined> {
+  /** A missing session resolves to no location; a lookup that still fails
+   * after its retry, or an unreadable location, resolves to UNRESOLVED. */
+  private resolveSessionLocation(sessionId: string, signal: AbortSignal): Promise<SessionLocation> {
     const now = Date.now()
     const cached = this.sessionLocations.get(sessionId)
     if (cached && cached.expiresAt > now) return cached.location
@@ -333,11 +357,12 @@ export class InstanceEventBridge {
     const resolve = () => this.options.workspaceManager.getSharedServiceClient()
       .then((client) => client.session.get({ sessionID: sessionId }, { signal }))
       .then((session) => readLocationRef(session.location))
-    const location = resolve().catch((error) => {
+    const location = resolve().catch((error): Promise<SessionLocation> | undefined => {
       if (signal.aborted || isSessionNotFoundError(error)) return undefined
       return resolve().catch((retryError) => {
-        if (!signal.aborted) this.options.logger.warn({ err: retryError, sessionId }, "Failed to resolve instance event session location")
-        return undefined
+        if (signal.aborted || isSessionNotFoundError(retryError)) return undefined
+        this.options.logger.warn({ err: retryError, sessionId }, "Failed to resolve instance event session location")
+        return UNRESOLVED
       })
     })
     const entry = { expiresAt: Number.POSITIVE_INFINITY, location }
@@ -345,6 +370,36 @@ export class InstanceEventBridge {
     const settle = () => { entry.expiresAt = Date.now() + SESSION_LOCATION_CACHE_MS }
     void location.then(settle, settle)
     return location
+  }
+
+  /** Recipients that received this session's events; a later negative or
+   * unreadable answer for them is ambiguous rather than a foreign location. */
+  private rememberSessionRecipient(sessionId: string, instanceId: string): void {
+    const recipients = this.sessionRecipients.get(sessionId)
+    if (recipients?.has(instanceId)) return
+    this.sessionRecipients.delete(sessionId)
+    this.sessionRecipients.set(sessionId, new Set(recipients).add(instanceId))
+    if (this.sessionRecipients.size > SESSION_RECIPIENT_LIMIT) {
+      this.sessionRecipients.delete(this.sessionRecipients.keys().next().value!)
+    }
+  }
+
+  private forgetSessionRecipient(sessionId: string | undefined, instanceId: string): void {
+    for (const [id, recipients] of this.sessionRecipients) {
+      if (sessionId !== undefined && id !== sessionId) continue
+      recipients.delete(instanceId)
+      if (!recipients.size) this.sessionRecipients.delete(id)
+    }
+  }
+
+  /** An unresolvable session event pulses the recipients it reached before,
+   * or every current recipient when it reached none. */
+  private requestSessionResync(sessionId: string, route: EventRoute): void {
+    const known = this.sessionRecipients.get(sessionId)
+    for (const { id, epoch } of route.recipients) {
+      if (known && !known.has(id)) continue
+      if ((this.workspaceEpochs.get(id) ?? 0) === epoch) this.requestRoutingResync(id)
+    }
   }
 
   private resolveLocationOwner(instanceId: string, location: LocationRef, current: () => boolean, signal: AbortSignal): Promise<boolean> {

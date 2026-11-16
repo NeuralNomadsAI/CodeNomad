@@ -16,8 +16,11 @@ import {
 } from "./opencode-data-events"
 import { mergePageWithSnapshot, snapshotRows, type OpenCodeRowSnapshot } from "./opencode-data-read-merge"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
-import { hasTranscriptProjectionGates, scheduleTranscriptProjection } from "./opencode-projection-frame"
+import { hasTranscriptProjectionGates, isTranscriptWatched, scheduleTranscriptProjection } from "./opencode-projection-frame"
 import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
+import {
+  divergenceFor, isDiverged, MAX_DIVERGENCE_REPAIRS, missingEventTarget, type TranscriptDivergence,
+} from "./opencode-data-divergence"
 
 const log = getLogger("session")
 
@@ -96,6 +99,8 @@ type TranscriptEntry = {
   /** A repair demand reconnect carried across its reset; seeding owes it a new
    * read instead of trailing behind the quiet reconciliation. */
   deliveryRepairOwed: boolean
+  /** Live events that targeted rows this reducer lacks (a missed start). */
+  divergence?: TranscriptDivergence
   onResynced?: (data: Data) => void
 }
 
@@ -646,7 +651,7 @@ async function drainTranscriptQueue(
       }
       transcript.queue.shift()
       const relocatesDelivery = deliveryRelocatesRow(entry, queued.event)
-      entry.emit(queued.event)
+      emitTranscriptEvent(instanceId, sessionId, transcript, entry, queued.event)
       if (queued.event.type === "session.step.started") {
         // Keep each replay chunk's synchronous budget untouched: the scan runs
         // at the next task boundary, never inside a chunk.
@@ -796,7 +801,11 @@ export function applyOpenCodeDataEvent(
       // execution supersedes it, never same-round activity such as a late
       // terminal tool event.
       const transcript = transcriptEntries.get(key)
-      if (transcript) transcript.executionEpoch += 1
+      if (transcript) {
+        transcript.executionEpoch += 1
+        // Each execution gets its own repair budget.
+        transcript.divergence = undefined
+      }
     }
     if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
     if (event.type === "session.inbox.cancelled" || event.type === "session.revert.committed") bumpMutationRevision(key)
@@ -853,7 +862,8 @@ export function applyOpenCodeDataEvent(
     }
   }
   const relocatesDelivery = transcript ? deliveryRelocatesRow(entry, event) : false
-  entry.emit(event)
+  if (transcript && typeof sessionId === "string") emitTranscriptEvent(instanceId, sessionId, transcript, entry, event)
+  else entry.emit(event)
   // A finished round's tool still running or streaming once a later round
   // began lost its terminal event mid-execution: reconcile it at this step
   // boundary instead of waiting for the execution's settlement.
@@ -945,24 +955,123 @@ export function mergeOpenCodeLoadedPage(
   return transcript ? mergePageWithSnapshot(transcript.entry.data.session.message.list(sessionId), page, since) : page
 }
 
-/** Fills a session reducer that holds no rows with the newest rows of a loaded
- * page: it ignores streamed events for messages it does not hold, so a message
- * that was already streaming when the session opened would stay frozen. */
+/** Seeds a session reducer with the newest rows of a loaded latest page: it
+ * ignores streamed events for messages it does not hold, so a message that was
+ * already streaming when the page loaded would stay frozen. An empty reducer
+ * is seeded unless the session is known idle; a reducer holding rows is
+ * reseeded when it diverged or lacks an open assistant message of the page. */
 export async function seedOpenCodeSessionMessages(
   instanceId: string,
   sessionId: string,
   directory: string,
   page: SessionMessageInfo[],
+  knownIdle = false,
 ): Promise<void> {
-  const transcript = ensureTranscript(instanceId, sessionId, directory)
+  const existing = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  // Nothing streams into a known-idle session without a reducer.
+  if (!existing && knownIdle) return
+  const transcript = existing ?? ensureTranscript(instanceId, sessionId, directory)
   if (transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync || transcript.reconnectResync) return
-  if (transcript.entry.data.session.message.list(sessionId).length) return
+  const entry = transcript.entry
+  // The loaded page (oldest first) gives the SDK's own latest page without another read.
+  const seed = page.slice(-SDK_MESSAGE_PAGE_SIZE)
+  const diverged = isDiverged(transcript, entry)
+  const needsSeed = entry.data.session.message.list(sessionId).length
+    ? diverged || seed.some((message) => message.type === "assistant" && message.time.completed === undefined
+      && !entry.data.session.message.get(sessionId, message.id))
+    : diverged || !knownIdle
+  if (!needsSeed) return
+  // Resident rows keep text their stream displayed while the page still holds
+  // the open fragment empty (the read merge's open-fragment rule).
+  const live = entry.data.session.message.list(sessionId)
+  const merged = live.length ? mergePageWithSnapshot(live, [...seed].reverse(), snapshotRows(live)).reverse() : seed
   try {
-    // The loaded page (oldest first) gives the SDK's own latest page without another read.
-    await transcript.entry.syncMessages(sessionId, page.slice(-SDK_MESSAGE_PAGE_SIZE), () => true)
+    await entry.syncMessages(sessionId, merged, () => true)
+    if (transcript.entry === entry) transcript.divergence?.targets.clear()
   } catch (error) {
     log.warn("Failed to seed OpenCode session messages", { instanceId, sessionId, error })
   }
+}
+
+/** Reduces a session event and records a divergence when the event targets a
+ * row the reducer lacks (its start never arrived) or the reducer throws. */
+function emitTranscriptEvent(
+  instanceId: string,
+  sessionId: string,
+  transcript: TranscriptEntry,
+  entry: DataEntry,
+  event: OpenCodeEvent,
+): void {
+  const missing = missingEventTarget(entry.data, event)
+  try {
+    entry.emit(event)
+  } catch (error) {
+    log.warn("Failed to reduce a native transcript event", { instanceId, sessionId, type: event.type, error })
+    noteTranscriptDivergence(instanceId, sessionId, transcript, REDUCE_FAILED_TARGET)
+    return
+  }
+  if (missing !== undefined) noteTranscriptDivergence(instanceId, sessionId, transcript, missing)
+}
+
+const REDUCE_FAILED_TARGET = "\0reduce-failed"
+
+/** A reducer without rows whose session shows nothing yet: the first page
+ * (still loading) seeds it, so it owes no read of its own. */
+function awaitsFirstPage(instanceId: string, sessionId: string, transcript: TranscriptEntry): boolean {
+  return !transcript.entry.data.session.message.list(sessionId).length
+    && !messageStoreBus.getInstance(instanceId)?.getSessionMessageIds(sessionId).length
+}
+
+/** Authoritative recovery already owns reconnects, overflows and rotations.
+ * An unwatched session defers its repair to its next page load, which reseeds
+ * the reducer (`seedOpenCodeSessionMessages`); a watched one repairs now. */
+function noteTranscriptDivergence(instanceId: string, sessionId: string, transcript: TranscriptEntry, target: string): void {
+  if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.reconnectResync
+    || transcript.resyncing || transcript.needsAuthoritativeResync) return
+  divergenceFor(transcript, transcript.entry).targets.add(target)
+  if (!isTranscriptWatched(instanceId, sessionId) || awaitsFirstPage(instanceId, sessionId, transcript)) return
+  repairDivergedTranscript(instanceId, sessionId, transcript, false)
+}
+
+/** One coalesced authoritative read reseeds the reducer with the latest page,
+ * merged with the rows streamed during the fetch, and publishes it through
+ * the frame gates, fenced like a settlement read. A burst of misses shares the
+ * pending read; later misses start another within the execution's budget, and
+ * a settlement of a still-diverged transcript owes one more. */
+function repairDivergedTranscript(instanceId: string, sessionId: string, transcript: TranscriptEntry, settlement: boolean): void {
+  const entry = transcript.entry
+  const divergence = transcript.divergence
+  if (divergence?.entry !== entry || !divergence.targets.size) return
+  if (divergence.pending) {
+    if (settlement) divergence.settlementOwed = true
+    return
+  }
+  if (!settlement && divergence.repairs >= MAX_DIVERGENCE_REPAIRS) return
+  divergence.repairs += 1
+  divergence.pending = true
+  entry.data.session.message.invalidate(sessionId)
+  void completeSettlementRead(instanceId, sessionId, transcript, { publishGated: true }).finally(() => {
+    if (transcript.divergence !== divergence) return
+    divergence.pending = false
+    if (transcript.entry !== entry || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
+    // Misses the page healed are settled; the rest wait for a later miss or settlement.
+    divergence.targets.delete(REDUCE_FAILED_TARGET)
+    for (const id of divergence.targets) {
+      if (entry.data.session.message.get(sessionId, id)) divergence.targets.delete(id)
+    }
+    const owed = divergence.settlementOwed
+    divergence.settlementOwed = false
+    if (owed) repairDivergedTranscript(instanceId, sessionId, transcript, true)
+    retireDrainedTranscript(instanceId, sessionId, transcript)
+  })
+}
+
+/** Settlement evidence for a watched transcript that is still diverged, with
+ * no tool settlement read of its own: the stale projection cannot be trusted. */
+function repairDivergedSettlement(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (!isDiverged(transcript, transcript.entry) || !isTranscriptWatched(instanceId, sessionId)
+    || awaitsFirstPage(instanceId, sessionId, transcript)) return
+  repairDivergedTranscript(instanceId, sessionId, transcript, true)
 }
 
 // The reduce store mutates message rows in place (Solid `produce`), so list and
@@ -1018,6 +1127,7 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
   const data = transcript.entry.data
   if (transcript.deliveryRepairPending > 0 || transcript.deliveryRepairOwed
     || (transcript.settlementReadPending && transcript.settlementReadEntry === transcript.entry)
+    || (transcript.divergence?.pending && transcript.divergence.entry === transcript.entry)
     || data.session.pending.list(sessionId).length || data.session.message.list(sessionId).some(isUnsettledAtSettlement)) return
   // The reducer's final coalesced page — e.g. a tool that settled after the
   // execution did — publishes here, before normal retirement destroys the
@@ -1052,6 +1162,8 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
     // same-round activity does not.
     if (hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
       completeSettlementRead(instanceId, sessionId, transcript)
+    } else {
+      repairDivergedSettlement(instanceId, sessionId, transcript)
     }
   }
   // A settlement deferred by parked or running work completes once that clears.
@@ -1122,7 +1234,10 @@ function completeSettlementRead(
 export function observeNonEventSettlement(instanceId: string, sessionId: string): void {
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
   if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
-  if (!hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) return
+  if (!hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
+    repairDivergedSettlement(instanceId, sessionId, transcript)
+    return
+  }
   // Unlike a terminal event, nothing invalidated the SDK's message key; a key
   // an earlier sync completed would make this read a no-op.
   transcript.entry.data.session.message.invalidate(sessionId)
