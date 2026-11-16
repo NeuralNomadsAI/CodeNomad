@@ -205,9 +205,10 @@ Pause, Resume, Stop, Run now, Check, configuration edits and deletion stay human
 `mission.inspect({ configurations: true })` lists the owning backend's saved
 configuration IDs, names and templates. `configurations: "<id>"` reads one complete
 saved record plus the editor's suggested `title` (collapsed whitespace, bounded to
-60 characters). These read-only requests work from an owned root outside a mission,
-select no journal and use the same strict unique-backend discovery as profile
-preferences. The backend reads `ui.settings.missionModels` through
+60 characters). These read-only requests work from an owned root outside a mission
+and from a scheduled-passage coordinator. Lists, point reads and content slices
+use the ordinary owning backend, select no journal and use the same strict
+unique-backend discovery as profile preferences. The backend reads `ui.settings.missionModels` through
 `getRawConfigOwner("ui")`; the shared `missions/model-library.ts` codec validates
 every record. An absent field returns an empty list; invalid data and unavailable
 or ambiguous owners return their respective preference errors, with bytes preserved.
@@ -339,8 +340,13 @@ Pause, Resume, Stop, Run now, Check, configure and delete remain human actions.
 
 Preparation requestIDs are scoped to the actual author and native source mission
 when present; authors outside a mission use their stable `outside-mission` domain.
-Historical source provenance preserves replay after source completion. Each author
-retains its own read-only visibility.
+The original author/source binding owns replay after source completion or release
+of a reused passage root. Before creation, the author/request lane searches the
+journal, paged documents and retained preparation bindings for existing identities;
+multiple existing identities refuse as a conflict. Documents with an extended creation
+binding compare its frozen inputs; historical one-time documents use their original
+journal inputs and available creation choices. Each author retains its own
+read-only visibility.
 Preparations with the
 same requestID are serialized. Reuse that requestID and the original inputs:
 a retry first reads the saved creation event/document and returns the saved

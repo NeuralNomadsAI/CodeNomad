@@ -36,10 +36,11 @@ function fixture() {
     },
   }
   const store = new NativeMissionDocumentStore(storage, "project", directory), access = <T>(use: (store: NativeMissionDocumentStore) => Promise<T>) => use(store)
-  let sends = 0, lose = false, beforeCreateLoss = false, preferenceReads = 0, preferred = selection
+  let sends = 0, lose = false, beforeCreateLoss = false, preferenceReads = 0, preferred = selection, sourceMissionID: string | undefined
   const control = () => new MissionControl({ project: { id: "project", canonical: directory, location: { directory } }, storage,
     documents: access, documentReads: access,
-    sessions: { get: async ({ sessionID }) => ({ id: sessionID, projectID: "project", location: { directory } }),
+    sessions: { get: async ({ sessionID }) => ({ id: sessionID, projectID: "project", location: { directory },
+      ...(sourceMissionID ? { metadata: { "codenomad.mission": { missionID: sourceMissionID, kind: "coordinator" } } } : {}) }),
       create: async () => assert.fail("Scheduling creates no coordinator"), prompt: async () => assert.fail("No direct prompt"), synthetic: async () => assert.fail("No direct input") },
     transport: { prompt: async () => {}, synthetic: async () => {},
       resolveCreationDefaults: async (_id, input) => {
@@ -55,7 +56,8 @@ function fixture() {
           return recoveredScheduledPreparation(document)
         }
         sends++
-        const creation = missionPreparationCreation(input, { coordinatorSessionID: sessionID }, input.requestID)
+        const creation = missionPreparationCreation(input, { coordinatorSessionID: sessionID,
+          ...(input.missionID ? { missionID: input.missionID } : {}) }, input.requestID)
         assert.deepEqual(await readMissionPreparationBinding(storage, { id: "project", canonical: directory }, input.requestID),
           { author: creation.author, creationRequestID: input.requestID, creationDigest: creation.digest })
         if (beforeCreateLoss) throw new Error("Cut before Create")
@@ -69,6 +71,7 @@ function fixture() {
       } },
   })
   return { control, store, values, get sends() { return sends }, lose: () => { lose = true },
+    source: (value?: string) => { sourceMissionID = value },
     get preferenceReads() { return preferenceReads },
     beforeCreateLoss: (value: boolean) => { beforeCreateLoss = value },
     changePreferences: () => { preferred = { ...selection, model: { ...selection.model, id: "changed" } } } }
@@ -99,6 +102,41 @@ test("a lost calendar ACK recovers the document instead of dispatching again", a
   const result = await f.control().prepare(author, request)
   assert.equal(result.preparation.outcome, "prepared")
   assert.equal(f.sends, 1)
+})
+
+test("calendar recovery keeps its source after marker cleanup, even when another source becomes current", async () => {
+  const f = fixture()
+  f.source("msn_passage")
+  const first = await f.control().prepare(author, request)
+  for (const source of [undefined, "msn_another_passage"]) {
+    f.source(source)
+    const replay = await f.control().prepare(author, request)
+    assert.equal(replay.preparation.outcome, "prepared")
+    assert.deepEqual(replay.preparation.target, first.preparation.target)
+  }
+  assert.equal(f.sends, 1)
+  f.source()
+  const separate = await f.control().prepare(author, { ...request, requestID: "after_release" })
+  assert.equal(separate.preparation.target?.kind, "schedule")
+  if (separate.preparation.target?.kind === "schedule")
+    assert.deepEqual(separate.preparation.target.document.document?.creation?.author, { coordinatorSessionID: author })
+  assert.equal(f.sends, 2, "the released root remains eligible for new preparations")
+})
+
+test("uncertain pre-document scheduling keeps its original identity after marker cleanup", async () => {
+  const f = fixture()
+  f.source("msn_passage"); f.beforeCreateLoss(true)
+  let original: unknown
+  await assert.rejects(f.control().prepare(author, request), (error: any) => {
+    original = error.preparation
+    return error.code === "prepare-uncertain"
+  })
+  f.source()
+  await assert.rejects(f.control().prepare(author, request), (error: any) => {
+    assert.deepEqual(error.preparation, original)
+    return error.code === "prepare-uncertain"
+  })
+  assert.equal(f.sends, 1, "a changed source never redispatches an uncertain original")
 })
 
 test("uncertain pre-dispatch scheduling retains its resolved profiles across changed preferences and reconstruction", async () => {

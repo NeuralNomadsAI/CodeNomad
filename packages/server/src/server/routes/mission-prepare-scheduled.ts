@@ -81,7 +81,8 @@ export async function prepareScheduledCoordinatorMission(args: {
       const source = await missionPreparationSource(snapshot, fresh, id => client.session.get({ sessionID: id }, { signal }))
       check()
       if (fresh.id !== authorSessionID || fresh.projectID !== author.projectID || !sameLocation(fresh.location, location)
-        || source?.id !== input.missionID || !await manager.ownsLocation(workspaceID, fresh.location, client, { signal }))
+        || !input.observeOnly && source?.id !== input.missionID
+        || !await manager.ownsLocation(workspaceID, fresh.location, client, { signal }))
         throw new Error("Mission schedule author changed")
       check()
     }

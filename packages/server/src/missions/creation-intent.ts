@@ -123,6 +123,26 @@ export class MissionCreationIntents {
     try { await runMissionExclusive(this.prefix, () => this.clear(missionID)) } catch { /* Retain until storage recovers. */ }
   }
 
+  async preparationBindings(sessionID: string) {
+    const bindings: z.infer<typeof missionPreparationBindingSchema>[] = []
+    let after: string | undefined
+    do {
+      const page = await this.storage.scan({ prefix: this.prefix, after, limit: MISSION_CREATION_INTENT_LIMIT + 1 })
+      for (const entry of page.entries) {
+        if (!entry.key.startsWith(this.prefix) || after !== undefined && entry.key <= after)
+          throw new MissionControlError("Mission preparation storage is unreadable", "invalid-journal")
+        if (entry.value === null) continue
+        let saved: ReturnType<typeof parseIntent>
+        try { saved = parseIntent(entry.value) } catch { continue }
+        if (saved.binding?.author.coordinatorSessionID === sessionID) bindings.push(saved.binding)
+      }
+      if (page.next !== undefined && (page.next === after || !page.entries.length))
+        throw new MissionControlError("Mission preparation storage is unreadable", "invalid-journal")
+      after = page.next
+    } while (after)
+    return bindings
+  }
+
   async bind(missionID: string, binding: z.infer<typeof missionPreparationBindingSchema>): Promise<void> {
     await runMissionExclusive(this.prefix, async () => {
       const key = this.prefix + missionID, raw = await this.storage.get(key)

@@ -196,6 +196,21 @@ test("observe-only recovery with no retained document cannot dispatch creation",
   assert.equal(scheduledMissionHold(f.fence, f.missionID), undefined)
 })
 
+test("observe-only scheduling recovers frozen source provenance after release without admitting another creation or Play", async t => {
+  const f = await fixture(t)
+  f.state.sourceMissionID = "msn_passage"
+  assert.equal((await f.prepare({ missionID: "msn_passage" })).outcome, "prepared")
+  f.state.sourceMissionID = undefined
+  const before = structuredClone([...f.state.documents])
+  assert.equal((await f.prepare({ missionID: "msn_passage", observeOnly: true })).outcome, "prepared")
+  assert.equal((await f.prepare({ missionID: "msn_other", observeOnly: true })).outcome, "refused")
+  assert.equal((await f.prepare({ missionID: "msn_passage", startOnCreation: true, observeOnly: true })).outcome, "refused")
+  assert.equal((await f.prepare({ missionID: "msn_passage" })).outcome, "refused", "fresh dispatch still requires current source")
+  assert.deepEqual([...f.state.documents], before)
+  assert.equal(f.state.writes.length, 1)
+  assert.equal(f.state.activationCalls, 0)
+})
+
 test("fresh explicit automatic start activates the existing journal then guarded first Play once", async t => {
   const f = await fixture(t)
   assert.equal((await f.prepare({ startOnCreation: true })).outcome, "activated")

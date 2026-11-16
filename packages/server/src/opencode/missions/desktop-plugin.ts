@@ -33,8 +33,8 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
         const author = ordinary && { ...ordinary, readSessionID: sessionID }
         // Separate preparations always belong to the project journal, including
         // when their actual author executes inside an isolated passage journal.
-        if (name === "prepare") return author
-        const input = raw as { list?: boolean; missionID?: string }
+        const input = raw as { list?: boolean; missionID?: string; configurations?: true | string; content?: { kind?: string } }
+        if (name === "prepare" || name === "inspect" && (input.configurations !== undefined || input.content?.kind === "configuration")) return author
         const own = author && name === "inspect" && (input.list || input.missionID)
           ? await author.control.listMissions(sessionID) : undefined
         if (author && own?.some(mission => mission.missionID === input.missionID && mission.relation === "prepared")) return author

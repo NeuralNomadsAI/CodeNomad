@@ -234,6 +234,26 @@ for (const outside of [false, true]) test(`a prepare retry after a lost reply re
   assert.equal(reads, resolvedReads, "conflicting requests also leave preferences unread")
 })
 
+test("preparation replay keeps its original source after a reused root's passage marker is released", async () => {
+  let control!: MissionControl, sends = 0
+  const f = fixture({ transport: { prepare: async (id, input) => {
+    sends++
+    return control.create({ ...input, prepared: true, preparedBy: { coordinatorSessionID: id, missionID: input.missionID } })
+  } } })
+  control = f.control
+  f.sessions.get(coordinator)!.metadata = { "codenomad.mission": { missionID: "msn_passage", kind: "coordinator" } }
+  const request = { requestID: "released", objective: "Hand-off", template: "custom" as const }
+  const first = await control.prepare(coordinator, request)
+  delete f.sessions.get(coordinator)!.metadata
+  control = fixture({ transport: { prepare: async () => assert.fail("Replay never dispatches") },
+    storage: f.storage, sessions: f.sessions }).control
+  const replay = await control.prepare(coordinator, request)
+  assert.equal(replay.mission.id, first.mission.id)
+  assert.equal(replay.mission.preparedBy?.missionId, "msn_passage")
+  await assert.rejects(control.prepare(coordinator, { ...request, objective: "Changed" }), { code: "prepare-conflict" })
+  assert.equal(sends, 1)
+})
+
 test("a definite refusal releases its choice and the same request can use corrected preferences", async () => {
   let control!: MissionControl, refused = false, reads = 0
   let worker = "worker-before"
@@ -352,6 +372,33 @@ test("an ordinary root prepares once across concurrent calls and restart, remain
   f.sessions.set("ses_other", { ...original!, id: "ses_other" })
   assert.deepEqual(await control.listMissions("ses_other"), [])
   await assert.rejects(control.inspect("ses_other", { missionID: first.mission.id }, "foreign"), /not visible/)
+})
+
+test("a passage release during preparation cannot split concurrent retries into two source domains", async () => {
+  let f!: ReturnType<typeof fixture>, sends = 0
+  f = fixture({ transport: { prepare: async (id, input) => {
+    sends++
+    const result = await f.control.create({ ...input, prepared: true,
+      preparedBy: { coordinatorSessionID: id, missionID: input.missionID } })
+    delete f.sessions.get(coordinator)!.metadata
+    return result
+  } } })
+  f.sessions.get(coordinator)!.metadata = { "codenomad.mission": { missionID: "msn_passage" } }
+  const request = { requestID: "concurrent_release", objective: "Hand-off", template: "custom" as const }
+  const [first, second] = await Promise.all([f.control.prepare(coordinator, request), f.control.prepare(coordinator, request)])
+  assert.equal(first.mission.id, second.mission.id)
+  assert.equal(sends, 1)
+})
+
+test("multiple recorded source domains for one author/request refuse before another creation", async () => {
+  const f = fixture({ transport: { prepare: async () => assert.fail("Ambiguous original must not dispatch") } })
+  for (const source of [undefined, "msn_passage"]) {
+    const requestID = `prepare_${stableToken(`${source ?? "outside-mission"}\0${coordinator}\0ambiguous`, 24)}`
+    await f.control.create({ requestID, objective: "Hand-off", template: "custom", prepared: true,
+      preparedBy: { coordinatorSessionID: coordinator, ...(source ? { missionID: source } : {}) } })
+  }
+  await assert.rejects(f.control.prepare(coordinator, { requestID: "ambiguous", objective: "Hand-off", template: "custom" }),
+    { code: "prepare-conflict" })
 })
 
 test("author provenance is rechecked after creation preference/catalog reads before dispatch", async () => {

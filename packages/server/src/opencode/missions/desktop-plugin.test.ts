@@ -7,6 +7,7 @@ import { MISSION_JOURNAL_STORAGE_PREFIX } from "../../missions/journal"
 import { desktopPlugin } from "./desktop-plugin"
 import type { NativeMissionSession } from "../../missions/control-types"
 import type { MissionJsonValue } from "../../missions/model"
+import { MissionControl } from "../../missions/control"
 
 const RETIRED = "codenomad-missions/authority-"
 
@@ -54,6 +55,59 @@ test("presence-owned setup registers one-time Missions without touching the reti
     for (const [key, value] of old) assert.deepEqual(values.get(key), value)
     assert.equal([...values.keys()].filter(key => key.startsWith(RETIRED)).length, old.size, "nothing created under the old namespace")
   } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test("passage configuration list, ID and slices use the ordinary owning backend", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "opencode", "missions-config-routing-"))
+  await writeFile(path.join(directory, "abc.lease"), "")
+  const sessionID = "ses_passage", tools = new Map<string, any>(), registration = { dispose: async () => {} }
+  const session = { id: sessionID, projectID: "project", location: { directory } }
+  const storage = { get: async () => undefined, set: async () => assert.fail("Read-only"), scan: async () => ({ entries: [] }) }
+  const sessions = { get: async () => session, create: async () => assert.fail("Read-only"),
+    prompt: async () => assert.fail("Read-only"), synthetic: async () => assert.fail("Read-only") }
+  const passage = new MissionControl({ project: { id: "project", canonical: directory, location: { directory } }, storage, sessions,
+    transport: { prompt: async () => {}, synthetic: async () => {} } })
+  const saved = { version: 1, id: "00000000-0000-4000-8000-000000000001", name: "Saved",
+    objective: "\0".repeat(20_000), notes: "\0".repeat(20_000), template: "custom" }
+  const original = MissionControl.prototype.savedConfigurations
+  MissionControl.prototype.savedConfigurations = async function (id) {
+    if (this === passage) return original.call(this, id)
+    assert.equal(id, sessionID)
+    return [saved] as never
+  }
+  let sourceReads = 0
+  let cleanup: Awaited<ReturnType<ReturnType<typeof desktopPlugin>["setup"]>>
+  try {
+    cleanup = await desktopPlugin(directory, undefined, undefined, {
+      prepare: async () => true, select: async () => {
+        sourceReads++
+        return { control: passage, readSessionID: sessionID, current() {}, beforeTool: async () => {} }
+      },
+    }).setup({ location: { directory, project: { id: "project", canonical: directory } }, storage,
+      session: { ...sessions, hook: async () => registration },
+      rpc: { register: async () => ({ ...registration, events: { emit: async () => {} } }) },
+      tool: { transform: async (callback: any) => {
+        callback({ namespace() {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration
+      } },
+    } as never)
+    const inspect = async (input: unknown) => JSON.parse((await tools.get("inspect").execute(input,
+      { sessionID, messageID: "msg_config", id: "call_config", progress: async () => {} })).content)
+    assert.deepEqual((await inspect({ configurations: true })).configurations, [{ id: saved.id, name: saved.name, template: saved.template }])
+    const full = await inspect({ configurations: saved.id })
+    assert.ok(full.configuration.read)
+    let read = full.configuration.read, text = ""
+    while (read) {
+      const slice = await inspect(read)
+      text += slice.content.text
+      read = slice.content.next
+    }
+    assert.deepEqual(JSON.parse(text), { ...saved, title: saved.name })
+    assert.equal(sourceReads, 0)
+  } finally {
+    MissionControl.prototype.savedConfigurations = original
+    await cleanup!?.()
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test("passage authors use ordinary preparation and authored reads while their source list and coordination stay isolated", async () => {

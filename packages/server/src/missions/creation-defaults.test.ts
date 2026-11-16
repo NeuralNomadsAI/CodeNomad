@@ -217,6 +217,23 @@ test("prepare recovers its frozen document before journal publication without re
   assert.equal(f.created, 1, "retry reuses the same unprompted root")
 })
 
+test("a historical source-scoped preparation without extended creation binding recovers by its journal inputs", async () => {
+  const f = fixture()
+  await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: f.coordinator })
+  const request = { requestID: "historical", objective: "Pilot", template: "custom" as const }
+  const first = await f.control.prepare(f.coordinator, request)
+  const entry = [...f.values].find(([, value]) => value && typeof value === "object" && "oneTime" in value && value.id === first.mission.id)!
+  const historical = structuredClone(entry[1]) as any
+  delete historical.creation
+  f.values.set(entry[0], historical)
+  f.invalidate(); f.restart()
+  const before = structuredClone([...f.values])
+  assert.equal((await f.control.prepare(f.coordinator, request)).mission.id, first.mission.id)
+  assert.deepEqual([...f.values], before)
+  await assert.rejects(f.control.prepare(f.coordinator, { ...request, objective: "Changed" }), { code: "prepare-conflict" })
+  await assert.rejects(f.control.prepare(f.coordinator, { ...request, watchedConversationIDs: ["ses_new"] }), { code: "prepare-conflict" })
+})
+
 test("the pre-dispatch creation intention survives a failure before the first document and reinstantiation", async () => {
   const f = fixture()
   await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: f.coordinator })

@@ -53,8 +53,9 @@ import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { consumeAutomaticStart, type AutomaticStart } from "./automatic-start"
 import { recoveredPreparation, preparationResult, scheduledPreparationResult, type PreparationResult } from "./preparation-result"
-import { missionPreparationCreation, normalizedPreparationOptions } from "./preparation-input"
+import { missionPreparationCreation, normalizedPreparationOptions, samePreparationOptions } from "./preparation-input"
 import { assertScheduledPreparation, recoveredScheduledPreparation } from "./scheduled-preparation"
+import { missionPreparationIdentity } from "./preparation-identity"
 import { missionScheduleID } from "./mission-schedule-contract"
 import { missionScheduleView } from "./mission-schedule-view"
 import { readMissionSchedulePage } from "./mission-schedule-list"
@@ -1200,7 +1201,11 @@ export class MissionControl {
   prepare(sessionID: string, input: MissionPrepareRequest & { launch?: undefined }): Promise<{ mission: MissionMap; preparation: PreparationResult }>
   prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }>
   prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }> {
-    return this.prepareCurrent(sessionID, structuredClone(input))
+    input = structuredClone(input)
+    // Serialize identity lookup with creation for this author's exact request;
+    // unrelated requests and project mutations keep their own lanes.
+    return runMissionExclusive(`prepare:${this.journal.projectToken}:${sessionID}:${input.requestID}`,
+      () => this.prepareCurrent(sessionID, input))
   }
 
   private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }> {
@@ -1211,12 +1216,14 @@ export class MissionControl {
     const scheduling = normalizedPreparationOptions(input)
     if (scheduling.coordinatorSessionID && scheduling.kind !== "schedule") throw missionRecoveryControlError("prepare-refused")
     const snapshot = await this.snapshot()
-    const source = await missionPreparationSource(snapshot, caller, id => this.ownedSession(id))
+    const currentSource = await missionPreparationSource(snapshot, caller, id => this.ownedSession(id))
     if (!this.options.transport?.prepare) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "prepare-unavailable")
     const sendPreparation = this.options.transport.prepare.bind(this.options.transport)
-    // Preserve existing replay domains, always bound to the actual author.
-    const requestID = `prepare_${stableToken(source ? `${source.id}\0${sessionID}\0${input.requestID}`
-      : `outside-mission\0${sessionID}\0${input.requestID}`, 24)}`
+    const identity = await missionPreparationIdentity({ sessionID, requestID: input.requestID, sourceMissionID: currentSource?.id,
+      snapshot, journal: this.journal, intents: this.creationIntents, storage: this.options.storage, project: this.options.project,
+      documents: this.options.documents && (this.options.documentReads ?? this.options.documents) })
+    const requestID = identity.requestID
+    const source = identity.sourceMissionID ? { id: identity.sourceMissionID } : undefined
     // A retry after a lost or uncertain reply finds the saved creation instead of asking the backend again.
     const intentID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`
     const scheduleID = missionScheduleID(this.options.project.id, this.options.project.canonical, requestID)
@@ -1230,7 +1237,9 @@ export class MissionControl {
       })
       if (saved) {
         if ("deletedAt" in saved) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
-        assertScheduledPreparation(saved, author, requestID, originalInput)
+        if (saved.creation?.author) assertScheduledPreparation(saved, author, requestID, originalInput)
+        else if (scheduling.kind === "schedule" || !samePreparationOptions({}, originalInput))
+          throw missionRecoveryControlError("prepare-conflict")
         if (scheduling.kind === "schedule") {
           // Native observation alone cannot settle the backend's retained
           // physical permit. Its exact receipt path is read-only on recovery.
@@ -1281,71 +1290,65 @@ export class MissionControl {
     input = resolved.input
     this.assertCompareCreation(input.template, input.profiles)
     if (!input.creationDefaults) input.profiles = freezeCompareProfiles(input.template, input.profiles)
-    // Native effects for one request stay single-flight; independent preference
-    // reads can complete concurrently before the first choice is reserved.
-    return runMissionExclusive(`prepare:${this.journal.projectToken}:${sessionID}:${originalInput.requestID}`, async () => {
-      if (await this.journal.event(missionID, this.eventID(missionID, "created"))) return this.prepareCurrent(sessionID, originalInput)
-      retained = await this.creationIntents.read(intentID, originalInput,
-        () => this.journal.event(missionID, this.eventID(missionID, "created")), "prepare-conflict")
-      if (retained) input = { ...input, profiles: retained.profiles, taskMode: retained.taskMode, creationDefaults: retained }
-      let dispatched = false
-      let result: unknown
-      try {
-        if (input.creationDefaults) {
-          const caller = await this.ownedSession(sessionID)
-          try { await this.options.validateProfiles?.(input.profiles, caller.location.directory, parseMissionTaskMode(input.taskMode)) }
-          catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
-          input = await this.retainCreationInput(input, intentID, "prepare-conflict")
-          if (scheduling.kind === "schedule") {
-            const creation = missionPreparationCreation(input, author, requestID)
-            await this.creationIntents.bind(intentID, { author, creationRequestID: requestID, creationDigest: creation.digest })
-          }
-        }
-        this.assertActive()
-        const fresh = await this.ownedSession(sessionID)
-        const freshSource = await missionPreparationSource(await this.snapshot(), fresh, id => this.ownedSession(id))
-        if (!sameLocation(caller.location, fresh.location) || freshSource?.id !== source?.id) throw missionRecoveryControlError("prepare-refused")
-        dispatched = true
-        result = await sendPreparation(sessionID, { ...structuredClone(input), requestID,
-          ...(source ? { missionID: source.id } : {}) })
-      } catch (error) {
-        if (error instanceof MissionControlError && ["prepare-conflict", "request-conflict"].includes(error.code)
-          && !(error instanceof MissionCreateNoEffectError)) throw error
-        const originalNoEffect = error instanceof MissionCreateNoEffectError && error.noEffect.requestID === requestID && error.noEffect.missionID === missionID
-          || error instanceof MissionControlError && error.code === "prepare-no-effect"
-        const refused = error instanceof MissionControlError && ["prepare-refused", "mission-preferences-update-required"].includes(error.code)
-        if (originalNoEffect || !retained && !retainedDocument && (!dispatched || refused)) {
-          await this.creationIntents.settled(intentID)
-          throw error
-        }
-        throw uncertain()
+    if (await this.journal.event(missionID, this.eventID(missionID, "created"))) return this.prepareCurrent(sessionID, originalInput)
+    retained = await this.creationIntents.read(intentID, originalInput,
+      () => this.journal.event(missionID, this.eventID(missionID, "created")), "prepare-conflict")
+    if (retained) input = { ...input, profiles: retained.profiles, taskMode: retained.taskMode, creationDefaults: retained }
+    let dispatched = false
+    let result: unknown
+    try {
+      if (input.creationDefaults) {
+        const caller = await this.ownedSession(sessionID)
+        try { await this.options.validateProfiles?.(input.profiles, caller.location.directory, parseMissionTaskMode(input.taskMode)) }
+        catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
+        input = await this.retainCreationInput(input, intentID, "prepare-conflict")
+        const creation = missionPreparationCreation(input, author, requestID)
+        await this.creationIntents.bind(intentID, { author, creationRequestID: requestID, creationDigest: creation.digest })
       }
-      // Journal-only composition retains the native receipt's acknowledgement.
-      const returned = result && typeof result === "object" && "mission" in result
-        ? { outcome: "prepared" as const, acknowledgement: (result as { mission: unknown; acknowledgement?: unknown }).acknowledgement,
-          target: { kind: "one-time" as const, mission: (result as { mission: MissionMap }).mission } }
-        : result as PreparationResult
-      if (scheduling.kind === "schedule" && this.options.documents) {
-        const doc = await (this.options.documentReads ?? this.options.documents)(store => store.read(missionID))
-        if (!doc && !retained && !retainedDocument && returned?.outcome === "refused" && returned.phase === "creation"
-          && !returned.target && typeof returned.code === "string" && /^[a-z0-9-]{1,80}$/.test(returned.code)) {
-          await this.creationIntents.settled(intentID)
-          return { preparation: { outcome: "refused", phase: "creation", code: returned.code } }
-        }
-        if (!doc || "deletedAt" in doc || returned?.target?.kind !== "schedule" || returned.target.document.document?.id !== missionID) throw uncertain()
-        assertScheduledPreparation(doc, author, requestID, originalInput)
-        const preparation = scheduledPreparationResult(returned, missionScheduleView(doc), requestID)
+      this.assertActive()
+      const fresh = await this.ownedSession(sessionID)
+      const freshSource = await missionPreparationSource(await this.snapshot(), fresh, id => this.ownedSession(id))
+      if (!sameLocation(caller.location, fresh.location) || freshSource?.id !== source?.id) throw missionRecoveryControlError("prepare-refused")
+      dispatched = true
+      result = await sendPreparation(sessionID, { ...structuredClone(input), requestID,
+        ...(source ? { missionID: source.id } : {}) })
+    } catch (error) {
+      if (error instanceof MissionControlError && ["prepare-conflict", "request-conflict"].includes(error.code)
+        && !(error instanceof MissionCreateNoEffectError)) throw error
+      const originalNoEffect = error instanceof MissionCreateNoEffectError && error.noEffect.requestID === requestID && error.noEffect.missionID === missionID
+        || error instanceof MissionControlError && error.code === "prepare-no-effect"
+      const refused = error instanceof MissionControlError && ["prepare-refused", "mission-preferences-update-required"].includes(error.code)
+      if (originalNoEffect || !retained && !retainedDocument && (!dispatched || refused)) {
         await this.creationIntents.settled(intentID)
-        return { preparation }
+        throw error
       }
-      const returnedID = returned?.target?.kind === "one-time" ? returned.target.mission.id : undefined
-      const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
-      if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source?.id) {
-        throw uncertain()
+      throw uncertain()
+    }
+    // Journal-only composition retains the native receipt's acknowledgement.
+    const returned = result && typeof result === "object" && "mission" in result
+      ? { outcome: "prepared" as const, acknowledgement: (result as { mission: unknown; acknowledgement?: unknown }).acknowledgement,
+        target: { kind: "one-time" as const, mission: (result as { mission: MissionMap }).mission } }
+      : result as PreparationResult
+    if (scheduling.kind === "schedule" && this.options.documents) {
+      const doc = await (this.options.documentReads ?? this.options.documents)(store => store.read(missionID))
+      if (!doc && !retained && !retainedDocument && returned?.outcome === "refused" && returned.phase === "creation"
+        && !returned.target && typeof returned.code === "string" && /^[a-z0-9-]{1,80}$/.test(returned.code)) {
+        await this.creationIntents.settled(intentID)
+        return { preparation: { outcome: "refused", phase: "creation", code: returned.code } }
       }
-      try { return { mission, preparation: preparationResult(returned, mission, requestID) } }
-      catch { throw uncertain() }
-    })
+      if (!doc || "deletedAt" in doc || returned?.target?.kind !== "schedule" || returned.target.document.document?.id !== missionID) throw uncertain()
+      assertScheduledPreparation(doc, author, requestID, originalInput)
+      const preparation = scheduledPreparationResult(returned, missionScheduleView(doc), requestID)
+      await this.creationIntents.settled(intentID)
+      return { preparation }
+    }
+    const returnedID = returned?.target?.kind === "one-time" ? returned.target.mission.id : undefined
+    const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
+    if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source?.id) {
+      throw uncertain()
+    }
+    try { return { mission, preparation: preparationResult(returned, mission, requestID) } }
+    catch { throw uncertain() }
   }
 
   /** Advisory native evidence of a native task's own conversations; never settlement. */

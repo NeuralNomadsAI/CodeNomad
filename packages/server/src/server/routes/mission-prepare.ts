@@ -60,7 +60,7 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
     }) as MissionSnapshot
     const get = (sessionID: string) => connection.client.session.get({ sessionID }, { signal })
     const source = await missionPreparationSource(snapshot, coordinator, get)
-    if (source?.id !== input.missionID) {
+    if (source?.id !== input.missionID && !(input.observeOnly && options.kind === "schedule")) {
       throw refusal("prepare-refused")
     }
     if (options.kind === "schedule") {
