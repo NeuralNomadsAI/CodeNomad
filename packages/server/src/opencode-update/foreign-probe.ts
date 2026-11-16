@@ -114,7 +114,8 @@ export function boundedVersionProbe(command: string, timeoutMs: number): Promise
 function killTree(child: ChildProcess, spawnedBy: Date) {
   if (!child.pid) return
   if (process.platform === "win32") {
-    void stopWindowsProcessTree(child.pid, spawnedBy)
+    // Without a listing, at least end the root through the handle Node holds.
+    void stopWindowsProcessTree(child.pid, spawnedBy).then(stopped => { if (stopped === 0) child.kill() })
     return
   }
   try { process.kill(-child.pid, "SIGKILL") } catch { child.kill("SIGKILL") }

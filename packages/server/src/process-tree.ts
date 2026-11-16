@@ -46,8 +46,9 @@ export function dotNetTicks(milliseconds: number): bigint {
   return (BigInt(Math.trunc(milliseconds)) + 62_135_596_800_000n) * 10_000n
 }
 
-const WINDOWS_PROCESS_ROWS = "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process | ForEach-Object { "
-  + "'{0}|{1}|{2}' -f $_.ProcessId, $_.ParentProcessId, ([datetime]$_.CreationDate).ToUniversalTime().Ticks }"
+// Some system processes report no creation date; they can never be tree members.
+const WINDOWS_PROCESS_ROWS = "$ErrorActionPreference = 'Stop'; foreach ($row in Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate) { "
+  + "if ($null -ne $row.CreationDate) { '{0}|{1}|{2}' -f $row.ProcessId, $row.ParentProcessId, $row.CreationDate.ToUniversalTime().Ticks } }"
 
 export function parseWindowsProcessRows(stdout: string): ProcessTreeRow[] {
   const rows: ProcessTreeRow[] = []
@@ -71,15 +72,15 @@ export function windowsTreeStopTargets(rootPid: number, rows: readonly ProcessTr
 }
 
 function windowsStopScript(targets: readonly ProcessTreeRow[]): string {
-  const list = targets.map(({ pid, startedAt }) => `@(${pid},${startedAt})`).join(",")
+  const list = targets.map(({ pid, startedAt }) => `@{ Id = ${pid}; Ticks = ${startedAt} }`).join(",")
   // Each Process object binds its handle before the creation-time check, so the stop cannot
   // reach a process that took the ID after the listing.
   return `$ErrorActionPreference = 'Continue'
 foreach ($target in @(${list})) {
-  $process = Get-Process -Id $target[0] -ErrorAction SilentlyContinue
+  $process = Get-Process -Id $target.Id -ErrorAction SilentlyContinue
   if ($null -eq $process) { continue }
   try { $null = $process.Handle; $ticks = $process.StartTime.ToUniversalTime().Ticks } catch { continue }
-  if (($ticks - $ticks % 10) -ne [long]$target[1]) { continue }
+  if (($ticks - $ticks % 10) -ne [long]$target.Ticks) { continue }
   Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue
 }`
 }
@@ -95,9 +96,11 @@ function powershell(script: string, timeoutMs: number): Promise<string | undefin
 /**
  * Force-stops a Windows process tree that this process spawned at or before `rootStartedBy`,
  * without `taskkill /T`, which follows recorded parent IDs and so reaches unrelated processes
- * whose dead parent's ID was reused. Resolves to the number of processes it tried to stop.
+ * whose dead parent's ID was reused. Resolves to the number of processes it tried to stop; 0 when
+ * the listing failed or the root ID was reused, so a caller holding the root's handle can stop it.
+ * WMI and PowerShell start slowly on a cold host, hence the generous default budget.
  */
-export async function stopWindowsProcessTree(rootPid: number, rootStartedBy: Date, timeoutMs = 10_000): Promise<number> {
+export async function stopWindowsProcessTree(rootPid: number, rootStartedBy: Date, timeoutMs = 30_000): Promise<number> {
   const deadline = Date.now() + timeoutMs
   const listing = await powershell(WINDOWS_PROCESS_ROWS, timeoutMs)
   if (listing === undefined) return 0
