@@ -340,4 +340,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "Zamanlamanın güncel durumunu inceleyip gerekirse yeniden deneyin.",
   "missions.recurrence.reader": "Yinelenen takvim {id}",
   "missions.recurrence.section": "Bölüm {section} / {total}",
+  "missions.cleanup.error.revisionConflict": "Görev değişti. Silmeden önce iptal edip yeniden seçin.",
+  "missions.cleanup.error.requestConflict": "Silme isteği farklı. Yeniden denemeden önce asıl isteği kontrol edin.",
+  "missions.cleanup.error.controlPending": "Bekleyen bir kontrol var. Silmeyi yeniden denemeden önce kontrol edin.",
 } as const

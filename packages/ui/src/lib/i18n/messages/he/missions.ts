@@ -340,4 +340,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "בדקו את המצב הנוכחי של לוח הזמנים ונסו שוב במידת הצורך.",
   "missions.recurrence.reader": "לוח זמנים חוזר {id}",
   "missions.recurrence.section": "קטע {section} מתוך {total}",
+  "missions.cleanup.error.revisionConflict": "המשימה השתנתה. יש לבטל ולבחור בה שוב לפני המחיקה.",
+  "missions.cleanup.error.requestConflict": "בקשת המחיקה שונה. יש לבדוק את הבקשה המקורית לפני ניסיון נוסף.",
+  "missions.cleanup.error.controlPending": "פעולת בקרה ממתינה. יש לבדוק אותה לפני ניסיון מחיקה נוסף.",
 } as const

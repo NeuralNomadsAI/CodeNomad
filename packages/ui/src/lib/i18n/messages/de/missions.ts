@@ -340,4 +340,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "Aktuellen Zustand des Zeitplans prüfen und bei Bedarf erneut versuchen.",
   "missions.recurrence.reader": "Wiederkehrender Zeitplan {id}",
   "missions.recurrence.section": "Abschnitt {section} von {total}",
+  "missions.cleanup.error.revisionConflict": "Mission geändert. Abbrechen und vor dem Löschen erneut auswählen.",
+  "missions.cleanup.error.requestConflict": "Löschanfrage weicht ab. Vor dem erneuten Versuch die ursprüngliche Anfrage prüfen.",
+  "missions.cleanup.error.controlPending": "Eine Steueraktion läuft. Vor dem erneuten Löschen prüfen.",
 } as const

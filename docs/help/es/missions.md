@@ -128,6 +128,8 @@ Conserva la solicitud original no confirmada. Usa la consulta de estado, actuali
 
 ## Editar, eliminar y limpiar conversaciones {#cleanup}
 
+Si la eliminación entra en conflicto, CodeNomad vuelve a leer la solicitud original. Si la Misión cambió, cancela y vuelve a seleccionarla antes de eliminarla; si la solicitud difiere o hay un control pendiente, revisa la operación original antes de reintentar. Los reintentos conservan la solicitud, revisión y opción de limpieza originales.
+
 La limpieza de conversaciones de tareas es una opción de Misiones puntuales. Eliminar programaciones nativas conserva sus conversaciones.
 
 La edición en ⋯ abre el mismo formulario. Antes del primer inicio se editan campos desbloqueados; después, instrucciones y Notas cuando esté permitido. Los campos bloqueados explican el motivo.

@@ -249,3 +249,75 @@ test("pre-tombstone 403 and 409 errors do not claim deleted or remaining cleanup
     } finally { await page.close(); await f.app.close() }
   }
 })
+
+test("a stale deletion rereads its original intent and never adopts a fresh revision, including after remount", async () => {
+  const f = cleanupBackend(), mission = await f.create("stale-delete")
+  const { page, requests } = await setup(f, false, undefined, async () => {
+    await f.control.update({ missionID: mission.id, expectedRevision: mission.revision, requestID: "external", objective: "Changed externally" })
+  })
+  try {
+    await remove(page, "Private cleanup stale-delete")
+    const form = page.locator("form.mission-editor")
+    const message = "Mission changed. Cancel and select it again before deleting."
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(requests.length, 1)
+    await submit(page)
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(requests.length, 1, "a retry only reads: the original revision is stale")
+    await fixture(page, "mount", false); await fixture(page, "mount", true)
+    await submit(page)
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(requests.length, 1, "a restored original intent cannot adopt the live revision")
+    assert.deepEqual(f.removed, [])
+  } finally { await page.close(); await f.app.close() }
+})
+
+for (const [code, message] of [
+  ["request-conflict", "Deletion request differs. Check the original request before retrying."],
+  ["control-pending", "A control is pending. Check it before retrying deletion."],
+] as const) test(`${code} rereads the original deletion before any explicit retry`, async () => {
+  const f = cleanupBackend(), mission = await f.create(code)
+  const { page } = await setup(f)
+  const writes: unknown[] = []
+  let reads = 0
+  await page.route(`**/api/workspaces/fixture/missions/${mission.id}`, async route => {
+    if (route.request().method() === "GET") { reads++; return route.fallback() }
+    writes.push(route.request().postDataJSON())
+    return route.fulfill({ status: 409, json: { code } })
+  })
+  try {
+    await remove(page, `Private cleanup ${code}`)
+    const form = page.locator("form.mission-editor")
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(writes.length, 1); assert.ok(reads >= 1, "the refusal reconciles the original intent")
+    const before = reads
+    await submit(page)
+    await form.getByRole("alert").getByText(message, { exact: true }).waitFor()
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1], writes[0])
+    assert.ok(reads >= before + 2, "explicit retry preflights and reconciles without changing its request")
+    assert.deepEqual(f.removed, [])
+  } finally { await page.close(); await f.app.close() }
+})
+
+test("cleanup 409 rereads the exact receipt without replaying or hiding the conflict", async () => {
+  const f = cleanupBackend(), mission = await f.create("cleanup-conflict")
+  const actor = mission.actors.find(actor => actor.kind === "specialist")!
+  f.failing.add(actor.sessionId)
+  const original = { requestId: "cleanup-original", expectedRevision: mission.revision, deleteManagedSessions: true }
+  assert.equal((await f.app.inject({ method: "DELETE", url: `/api/workspaces/fixture/missions/${mission.id}`, payload: original })).statusCode, 503)
+  const { page } = await setup(f)
+  let reads = 0, writes = 0
+  await page.route(`**/api/workspaces/fixture/missions/${mission.id}`, async route => {
+    if (route.request().method() === "GET") { reads++; return route.fallback() }
+    writes++; assert.deepEqual(route.request().postDataJSON(), original)
+    return route.fulfill({ status: 409, json: { code: "request-conflict" } })
+  })
+  try {
+    const cleanup = page.locator(".mission-control .mission-cleanup")
+    await cleanup.getByText("0 removed · 0 kept · 1 pending", { exact: true }).waitFor()
+    await clickListItemAction(cleanup.locator(".mission-list-item"), "Try again")
+    await cleanup.getByRole("alert").getByText("Deletion request differs. Check the original request before retrying.", { exact: true }).waitFor()
+    assert.equal(writes, 1); assert.equal(reads, 2, "preflight followed by conflict reconciliation")
+    assert.deepEqual(f.removed, [])
+  } finally { await page.close(); await f.app.close() }
+})

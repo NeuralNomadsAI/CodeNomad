@@ -24,7 +24,11 @@ export async function deleteMissionRequest(url: string, input: MissionDeletionRe
 export function deletionErrorKey(error: unknown): string {
   if (error instanceof MissionDeletionError) {
     if (error.status === 503 && error.code === "cleanup-pending") return "missions.cleanup.error.pending"
-    if (error.status === 409) return "missions.control.mutation.conflict"
+    if (error.status === 409) {
+      if (error.code === "revision-conflict") return "missions.cleanup.error.revisionConflict"
+      if (error.code === "request-conflict") return "missions.cleanup.error.requestConflict"
+      if (error.code === "control-pending") return "missions.cleanup.error.controlPending"
+    }
     if (error.status === 403) return "missions.cleanup.error.forbidden"
     if (error.status === 404) return "missions.cleanup.error.missing"
   }

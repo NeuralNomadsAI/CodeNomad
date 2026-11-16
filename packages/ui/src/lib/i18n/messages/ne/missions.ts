@@ -340,4 +340,7 @@ export const missionMessages = {
   "missions.recurrence.refused.notSent": "तालिकाको हालको स्थिति हेरेर आवश्यक भए फेरि प्रयास गर्नुहोस्।",
   "missions.recurrence.reader": "दोहोरिने तालिका {id}",
   "missions.recurrence.section": "खण्ड {section} / {total}",
+  "missions.cleanup.error.revisionConflict": "मिसन बदलिएको छ। मेटाउनुअघि रद्द गरेर फेरि चयन गर्नुहोस्।",
+  "missions.cleanup.error.requestConflict": "मेटाउने अनुरोध फरक छ। फेरि प्रयास गर्नुअघि मूल अनुरोध जाँच्नुहोस्।",
+  "missions.cleanup.error.controlPending": "नियन्त्रण कार्य बाँकी छ। मेटाउन फेरि प्रयास गर्नुअघि जाँच्नुहोस्।",
 } as const

@@ -130,6 +130,8 @@ Behalten Sie unbestätigte Originalanfragen. Nutzen Sie Statusprüfung, Quittung
 
 ## Bearbeiten, löschen und Unterhaltungen bereinigen {#cleanup}
 
+Bei einem Löschkonflikt liest CodeNomad die ursprüngliche Anfrage erneut. Eine geänderte Mission muss vor dem Löschen abgebrochen und erneut ausgewählt werden; bei einer abweichenden Anfrage oder laufenden Steueraktion prüfen Sie zuerst den ursprünglichen Vorgang. Wiederholungen behalten Anfrage, Revision und Bereinigungsoption bei.
+
 Die Aufgabenunterhaltungs-Bereinigung ist eine Option einmaliger Missionen. Das Löschen nativer Zeitpläne erhält ihre Unterhaltungen.
 
 Die Bearbeitungsaktion im ⋯-Menü öffnet dasselbe Formular. Vor erstem Start sind entsperrte Vorbereitungsfelder bearbeitbar, danach Anweisungen und Notizen soweit erlaubt. Gesperrte Felder erklären warum.
