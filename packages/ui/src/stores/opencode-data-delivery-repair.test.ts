@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
-  armLive, assistantRow, emitEvent, readFixture, readTestingModel, readTestingSessionId as sessionId, textOf,
+  armLive, assistantRow, emitEvent, readFixture, readTestingSessionId as sessionId, textOf,
 } from "./opencode-data-read-testing.ts"
 
 /** Quiet means no new fetch for a window covering many fetch round trips, so
@@ -22,63 +22,29 @@ async function waitForQuietReads(reads: () => number, windowMs = 100, deadlineMs
   assert.fail(`message.list reads never went quiet (last count ${lastReads})`)
 }
 
-const fullText = "H".repeat(800) + "TAIL".repeat(50)
-const midStreamText = fullText.slice(0, 800)
+const streamedText = "H".repeat(800) + "TAIL".repeat(50)
+
+/** Arms the delivery repair read: the prompt row is admitted, a later row
+ * makes it not the reducer's last row, and its delivery is announced. */
+function armDeliveryRepair(instanceId: string) {
+  emitEvent(instanceId, "session.inbox.enqueued", {
+    inboxID: "msg_prompt",
+    item: { type: "user", delivery: "steer", payload: { text: "follow-up" } },
+  })
+  emitEvent(instanceId, "session.synthetic", { text: "note", description: "later row" })
+  emitEvent(instanceId, "session.inbox.delivered", { inboxID: "msg_prompt" })
+}
 
 describe("OpenCode data delivery repair read", () => {
-  it("keeps a completed reply's ended text when the repair read's page still holds its mid-stream prefix", async () => {
-    const instanceId = "opencode-data-delivery-repair"
-    let reads = 0
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      // A page fetched while the native's stored copy of the completed reply
-      // still held its mid-stream text: a strict prefix of the ended text.
-      return {
-        data: [
-          assistantRow("next", undefined, 300),
-          { id: "msg_prompt", type: "user", text: "follow-up", time: { created: 250 } },
-          assistantRow("live", midStreamText, 100),
-        ],
-        cursor: {},
-      }
-    })
-    try {
-      // The previous turn completes: the stream assembled the full text and the
-      // text ending stamped the final content onto the row.
-      const data = armLive(instanceId, fullText)
-      emitEvent(instanceId, "session.text.ended", { assistantMessageID: "live", ordinal: 0, text: fullText })
-      emitEvent(instanceId, "session.step.ended", { assistantMessageID: "live", finish: "stop" })
-      emitEvent(instanceId, "session.execution.succeeded")
-      assert.equal(textOf(data, "live"), fullText)
-
-      // The user sends the next prompt; the native admits it and already began
-      // the following turn, so the delivered prompt row is not the reducer's
-      // last row and its delivery owes the authoritative page read.
-      emitEvent(instanceId, "session.inbox.enqueued", {
-        inboxID: "msg_prompt",
-        item: { type: "user", delivery: "steer", payload: { text: "follow-up" } },
-      })
-      emitEvent(instanceId, "session.step.started", { assistantMessageID: "next", agent: "build", model: readTestingModel, started: 300 })
-      emitEvent(instanceId, "session.inbox.delivered", { inboxID: "msg_prompt" })
-
-      await waitForQuietReads(() => reads)
-      assert.equal(reads, 1, "the delivery repair read restarted")
-      assert.equal(textOf(data, "live"), fullText, "the repair read's mid-stream page truncated the completed reply")
-    } finally {
-      f.cleanup()
-    }
-  })
-
-  it("keeps a streaming reply's assembled deltas when the repair read's page holds the fragment's empty persistence", async () => {
-    const instanceId = "opencode-data-delivery-repair-streaming"
+  it("keeps a streaming reply's assembled deltas when the page holds the fragment's empty persistence", async () => {
+    const instanceId = "opencode-data-delivery-repair-open"
     let reads = 0
     const f = readFixture(instanceId, async () => {
       reads += 1
       await new Promise<void>((resolve) => setImmediate(resolve))
       // The native persists an empty part until the fragment's full-text
       // ending commits, so a page fetched while its deltas are paused holds
-      // the fragment with no text even though the stream already delivered it.
+      // the fragment with no text even though the stream already displayed it.
       return {
         data: [
           { id: "msg_prompt", type: "user", text: "follow-up", time: { created: 250 } },
@@ -89,21 +55,50 @@ describe("OpenCode data delivery repair read", () => {
     })
     try {
       // The reply is mid-stream with its deltas paused; the live row holds the
-      // text the stream assembled so far and no completion stamp.
-      const data = armLive(instanceId, fullText)
-      emitEvent(instanceId, "session.inbox.enqueued", {
-        inboxID: "msg_prompt",
-        item: { type: "user", delivery: "steer", payload: { text: "follow-up" } },
-      })
-      // Any later row makes the delivered prompt row not the reducer's last,
-      // owing the authoritative page read.
-      emitEvent(instanceId, "session.synthetic", { text: "note", description: "later row" })
-      emitEvent(instanceId, "session.inbox.delivered", { inboxID: "msg_prompt" })
+      // text the stream assembled so far and no completion stamp, and so does
+      // the page's copy of the row.
+      const data = armLive(instanceId, streamedText)
+      armDeliveryRepair(instanceId)
 
       await waitForQuietReads(() => reads)
-      assert.equal(textOf(data, "live"), fullText, "the repair read's empty persistence rewound the streamed text")
+      assert.equal(textOf(data, "live"), streamedText, "the repair read's empty persistence rewound the streamed text")
     } finally {
       f.cleanup()
     }
   })
+
+  for (const finalText of ["D", ""]) {
+    it(`takes the page's completed-item final ${JSON.stringify(finalText)} over the streamed draft`, async () => {
+      const instanceId = `opencode-data-delivery-repair-final-${finalText.length}`
+      let reads = 0
+      const f = readFixture(instanceId, async () => {
+        reads += 1
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        // The provider's completed item replaced the streamed draft; the page
+        // carries the replacement together with the step's completion, both
+        // committed before the ending's event reached the reducer.
+        return {
+          data: [
+            { id: "msg_prompt", type: "user", text: "follow-up", time: { created: 250 } },
+            {
+              ...assistantRow("live", finalText, 100),
+              finish: "stop",
+              time: { created: 100, completed: 200 },
+            },
+          ],
+          cursor: {},
+        }
+      })
+      try {
+        const data = armLive(instanceId, streamedText)
+        armDeliveryRepair(instanceId)
+
+        await waitForQuietReads(() => reads)
+        assert.equal(textOf(data, "live"), finalText, "the page's authoritative final must replace the streamed draft")
+        assert.equal((data.session.message.get(sessionId, "live") as { finish?: unknown })?.finish, "stop")
+      } finally {
+        f.cleanup()
+      }
+    })
+  }
 })

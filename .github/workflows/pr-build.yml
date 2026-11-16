@@ -609,6 +609,8 @@ jobs:
           packages/ui/src/stores/opencode-data-reconnect.test.ts
           packages/ui/src/stores/opencode-data-trailing-read.test.ts
           packages/ui/src/stores/opencode-data-read-merge.test.ts
+          packages/ui/src/stores/opencode-data-delivery-repair.test.ts
+          packages/ui/src/stores/opencode-rotation-replay.test.ts
           packages/ui/src/stores/session-api-running-open.test.ts
           packages/ui/src/stores/session-child-transcript-watch.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts

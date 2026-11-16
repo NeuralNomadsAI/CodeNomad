@@ -48,22 +48,34 @@ function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, s
   return replaced ? { ...(row as object), content: parts } as SessionMessageInfo : row
 }
 
-/** Text-bearing parts without part identity: a stream only ever appends to
- * them, and the native persists either the empty part (before its full-text
- * ending commits) or the ended value. A fetched copy therefore cannot be a
- * legitimately newer value when it is strictly shorter than the live text and
- * prefixed by it — that shape is the stream state the live row already
- * superseded, whatever route the page took. */
-function isSupersededStreamText(live: unknown, fetched: unknown): boolean {
-  if (typeof live !== "string" || typeof fetched !== "string" || fetched.length >= live.length) return false
-  return live.startsWith(fetched)
+/** Text-bearing parts without part identity: a stream only ever appends within
+ * a fragment, and the native persists a fragment's text only when its
+ * full-text ending commits — as the accumulated value or as the provider's
+ * completed-item replacement, which may be shorter, prefixed or empty. A
+ * fetched part holding no text on a row whose step is open on both sides is
+ * therefore a fragment whose ending has not committed yet: older than the
+ * deltas the live row already displays, and never authoritative. Any
+ * committed final carries a value or the row's completion, and keeps full
+ * page authority. */
+function isUnpersistedOpenFragment(
+  row: SessionMessageInfo,
+  fetched: SessionMessageInfo,
+  live: unknown,
+  fetchedPart: unknown,
+): boolean {
+  if ((row as unknown as { time?: { completed?: unknown } }).time?.completed !== undefined) return false
+  if ((fetched as unknown as { time?: { completed?: unknown } }).time?.completed !== undefined) return false
+  if (typeof live !== "string" || live === "") return false
+  if (typeof (fetchedPart as { text?: unknown })?.text !== "string") return false
+  const endedReasoning = (fetchedPart as { time?: { completed?: unknown } }).time?.completed
+  return (fetchedPart as { text?: unknown }).text === "" && endedReasoning === undefined
 }
 
-/** A row keeps its streamed text and reasoning when the fetched page still
- * holds their superseded prefixes; every other field of the fetched row stays
- * authoritative. Text part shapes that do not pair up keep full page
- * authority. */
-function mergeStreamTextRow(row: SessionMessageInfo, fetched: SessionMessageInfo): SessionMessageInfo {
+/** An open row keeps the text and reasoning its stream already displayed when
+ * the fetched page still holds those fragments empty; every other field of the
+ * fetched row stays authoritative, and text part shapes that do not pair up
+ * keep full page authority. */
+function mergeOpenFragmentRow(row: SessionMessageInfo, fetched: SessionMessageInfo): SessionMessageInfo {
   const content = (row as ContentRow).content
   const fetchedContent = (fetched as ContentRow).content
   if (!Array.isArray(content) || !Array.isArray(fetchedContent)) return fetched
@@ -78,20 +90,20 @@ function mergeStreamTextRow(row: SessionMessageInfo, fetched: SessionMessageInfo
     if (type !== "text" && type !== "reasoning") return part
     const live = streamed[cursor]
     cursor += 1
-    if (live === undefined || !isSupersededStreamText((live as { text?: unknown }).text, (part as { text?: unknown }).text)) return part
+    if (live === undefined || !isUnpersistedOpenFragment(row, fetched, (live as { text?: unknown }).text, part)) return part
     replaced = true
     return live
   })
   if (!replaced || cursor !== streamed.length) return fetched
-  log.warn("Kept a message's streamed text over a fetched page holding its superseded prefix", { messageId: row.id })
+  log.warn("Kept a message's streamed text over a fetched page holding its uncommitted fragment empty", { messageId: row.id })
   return { ...(fetched as object), content: mergedContent } as SessionMessageInfo
 }
 
 /** Merges a fetched page (newest first) with the live rows: the page is the
  * base, a live row that is new or changed since `since` keeps its live version
- * (with unchanged identified parts from the page), a row keeps the streamed
- * text the page would rewind, and live rows created during the fetch and
- * absent from the page ride along newest-first. */
+ * (with unchanged identified parts from the page), an open row keeps the text
+ * of fragments the page still holds uncommitted, and live rows created during
+ * the fetch and absent from the page ride along newest-first. */
 export function mergePageWithSnapshot(
   live: readonly SessionMessageInfo[],
   page: readonly SessionMessageInfo[],
@@ -103,7 +115,7 @@ export function mergePageWithSnapshot(
     const row = liveById.get(message.id)
     if (row === undefined) return message
     const snapshot = since.get(row.id)
-    if (snapshot === serializeRowForDiff(row)) return mergeStreamTextRow(row, message)
+    if (snapshot === serializeRowForDiff(row)) return mergeOpenFragmentRow(row, message)
     return mergeChangedRow(row, message, snapshot)
   })
   const created = live.filter((message) => !pageIds.has(message.id) && !since.has(message.id)).reverse()
