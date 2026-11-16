@@ -57,7 +57,7 @@ Usa **Recargar la configuración de OpenCode**, en **Solución de problemas** cu
 ## Entorno de sesión {#session-environment}
 
 1. Abre **Configuración → Avanzado** y expande **Variables de entorno**.
-2. Añade, cambia o retira los valores sobrescritos del perfil; cada cambio se guarda de inmediato.
+2. Añade valores sobrescritos, edita sus valores o retíralos; los nombres guardados son de solo lectura y cada cambio se guarda de inmediato.
 3. Envía el siguiente mensaje, comando personalizado o solicitud shell de sesión a través de CodeNomad para aplicar el entorno actual a esa conversación.
 
 Es un ajuste del perfil de configuración. Abrir/leer una conversación o guardar ajustes no altera una sesión nativa. Retirar un valor sobrescrito restaura el valor heredado del equipo de ejecución, o lo elimina si allí no existe.
