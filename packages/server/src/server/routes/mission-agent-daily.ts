@@ -10,6 +10,8 @@ import { recurrenceNotDispatchedReply } from "./mission-recurrence-holds"
 import type { ownedMissionAgent } from "./mission-agent-owner"
 import type { ScheduledMissionDeps } from "./mission-scheduled"
 import { prepareMissionMapMutation } from "./mission-map-mutation"
+import { recurrenceListSchema, recurrencePlacementReadSchema } from "../../missions/recurrence-discovery"
+import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 
 type Agent = Awaited<ReturnType<typeof ownedMissionAgent>>
 
@@ -20,27 +22,44 @@ export async function controlAgentDailyRecurrence(deps: ScheduledMissionDeps, ag
   const lifetime = { signal, wait: <T>(promise: Promise<T>) => promise }
   let status = 200
   const reply = { code(value: number) { status = value; return this }, send(value: unknown) { return value } }
-  if (input.action === "list" || input.action === "read" && !input.requestID && !input.creation) {
+  const assertProject = (view: { projectID: string; projectCanonical: string }) => {
+    if (view.projectID !== session.projectID || view.projectCanonical !== agent.project.canonical)
+      throw new Error("Foreign daily Mission view")
+  }
+  const snapshotAt = async (target: { id: string; directory: string }) => {
     const owned = await prepareMissionMapMutation({ manager, fence: deps.worktreeDeletionFence,
-      workspaceID: workspace.id, directory: session.location.directory, signal })
+      workspaceID: workspace.id, directory: target.directory, signal })
     return owned.run(async (rpc, nativeOptions) => {
-      const snapshot = recurrenceSnapshotSchema.parse(await rpc.recurrenceSnapshot({}, { ...nativeOptions, signal }))
+      const location = await owned.client.location.get({ location: owned.location }, { signal })
+      assertProject({ projectID: location.project.id, projectCanonical: location.project.canonical })
       await owned.refresh(); await refresh()
-      if (snapshot.projectID !== session.projectID || snapshot.projectCanonical !== agent.project.canonical || !sameLocation(snapshot.location, session.location))
+      const snapshot = recurrenceSnapshotSchema.parse(await rpc.recurrenceSnapshot({ scheduleID: target.id }, { ...nativeOptions, signal }))
+      await owned.refresh(); await refresh()
+      assertProject(snapshot)
+      if (!sameLocation(snapshot.location, owned.location) || snapshot.schedules.some(row => row.id !== target.id))
         throw new Error("Foreign daily Mission view")
-      const rows = snapshot.schedules.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
-      if (input.action === "read") return { schedule: rows.find(row => row.id === input.missionID) ?? null }
-      const selected = rows.filter(row => !input.after || row.id > input.after).slice(0, input.limit ?? 8)
-      return { projectID: snapshot.projectID, schedules: selected.map(({ id, title, revision, state, clock, nextDueAt, actions }) =>
-        ({ missionID: id, title, revision, state, clock, nextDueAt, actions })),
-        ...(rows.some(row => row.id > (selected.at(-1)?.id ?? input.after ?? "")) ? { next: selected.at(-1)?.id } : {}) }
+      const row = snapshot.schedules.find(row => row.id === target.id)
+      if (!row) throw new Error("Daily Mission placement changed")
+      return row
     })
   }
-  if (!deps.worktreeDeletionFence || !deps.settings?.configYamlPathForAuthority || !deps.bridgeToken)
-    throw new Error("Daily Mission admission unavailable")
+  if (input.action === "list") {
+    const owned = await prepareMissionMapMutation({ manager, fence: deps.worktreeDeletionFence,
+      workspaceID: workspace.id, directory: session.location.directory, signal })
+    const page = await owned.run(async (rpc, nativeOptions) => {
+      const page = recurrenceListSchema.parse(await rpc.recurrenceList({ after: input.after, limit: input.limit ?? 8 }, { ...nativeOptions, signal }))
+      await owned.refresh(); await refresh(); assertProject(page)
+      return page
+    })
+    const rows = await Promise.all(page.schedules.map(snapshotAt))
+    return { projectID: page.projectID, schedules: rows.map(({ id, title, revision, state, clock, nextDueAt, actions }) =>
+      ({ missionID: id, title, revision, state, clock, nextDueAt, actions })), ...(page.next ? { next: page.next } : {}) }
+  }
+  if (!deps.worktreeDeletionFence) throw new Error("Daily Mission admission unavailable")
   const settings = { getProfileScope: () => deps.settings!.getProfileScope(),
     configYamlPathForAuthority: () => deps.settings!.configYamlPathForAuthority!() }
   if (input.action === "create" || input.action === "read" && input.creation) {
+    if (!deps.settings?.configYamlPathForAuthority || !deps.bridgeToken) throw new Error("Daily Mission admission unavailable")
     let missionID: string | undefined
     const body = await executeMissionRecurrenceCreation(deps, { workspaceID: workspace.id,
       input: { ...input.creation, requestID: input.requestID, directory: session.location.directory },
@@ -50,9 +69,32 @@ export async function controlAgentDailyRecurrence(deps: ScheduledMissionDeps, ag
     await refresh()
     return { status, requestID: input.requestID, ...(missionID ? { missionID } : {}), ...(body as object) }
   }
+  // Routing reads take no new physical permit: an exact held receipt can settle
+  // while deletion waits on its original control hold.
+  const { schedule: target } = recurrencePlacementReadSchema.parse(await agent.client.rpc(CODENOMAD_MISSIONS_RPC)
+    .recurrenceRead({ id: input.missionID! }, agent.options))
+  await refresh()
+  if (target) {
+    assertProject(target)
+    if (target.id !== input.missionID) throw new Error("Daily Mission identity differs")
+  }
+  if (!target) {
+    if (input.action === "read") return { schedule: null }
+    throw new Error("Daily Mission unavailable")
+  }
+  // The project-scoped lookup supplies routing only. The owned Location read and
+  // shared control admission revalidate placement; native origin guards stay exact.
+  const directory = target.directory
+  if (input.action === "read" && !input.requestID) return { schedule: await snapshotAt(target) }
+  const location = await agent.client.location.get({ location: { directory } }, { signal })
+  assertProject({ projectID: location.project.id, projectCanonical: location.project.canonical })
+  if (!sameLocation(location, { directory }) || !await manager.ownsLocation(workspace.id, location, agent.client, { signal, strict: true }))
+    throw new Error("Foreign daily Mission Location")
+  await refresh()
+  if (!deps.settings?.configYamlPathForAuthority || !deps.bridgeToken) throw new Error("Daily Mission admission unavailable")
   const shared = { manager, fence: deps.worktreeDeletionFence }
   if (input.action === "read") {
-    const body = await readExactRecurrenceControlStatus(shared, { id: workspace.id, requestedDirectory: session.location.directory,
+    const body = await readExactRecurrenceControlStatus(shared, { id: workspace.id, requestedDirectory: directory,
       input: { scheduleID: input.missionID!, requestID: input.requestID!, expectedRevision: input.expectedRevision!, action: input.receiptAction! },
       lifetime, currentPrincipal: current,
     }, reply)
@@ -63,7 +105,7 @@ export async function controlAgentDailyRecurrence(deps: ScheduledMissionDeps, ag
   const controlDeps = { ...shared, settings, bridgeToken: deps.bridgeToken,
     manager: manager as typeof manager & Required<Pick<typeof manager, "getServicePathStyle">> }
   const request = recurrenceControlHttpSchema.parse({ scheduleID: input.missionID!, requestID: input.requestID!, expectedRevision: input.expectedRevision!,
-    action: input.action, directory: session.location.directory, ...(input.retry ? { retry: true } : {}) })
+    action: input.action, directory, ...(input.retry ? { retry: true } : {}) })
   let prepared: Awaited<ReturnType<typeof prepareRecurrenceControl>> | undefined, dispatched = false
   try {
     prepared = await prepareRecurrenceControl(workspace.id, request, controlDeps, signal, { principal, current, refresh })

@@ -487,7 +487,9 @@ creation/request/digest scope. Mutation dispatch requires the native document's 
 `agentScheduleControl` capability. The shared `executeScheduledMission` admission owns the
 same physical holds, payload identity, native CAS, receipt settlement and single-passage
 Run now as public human controls. Play/Resume share settings preparation and preserve
-explicit OFF. Exact completed replays return their original result; changed inputs
+explicit OFF. Exact completed replays read their original receipt with no document
+write or revision change; partial calendar, actor or admission proofs retain their
+original reconciliation path. Changed inputs
 conflict. Lost acknowledgements retain the original hold: read that request's receipt
 without resending or choosing another identity. Deletion replays read the tombstone.
 Public HTTP mutations authenticate their human principal before admission.
@@ -507,6 +509,11 @@ An exact receipt read supplies `missionID`, `requestID`, `expectedRevision` and
 `receiptAction`. Partial Pause/Stop retries use their original fields and
 `retry: true`. The public human routes and private agent bridge share physical
 admission, signed-principal verification, dispatch and receipt settlement.
+A project-scoped discovery page returns at most eight schedule IDs and owning
+directories. Point reads resolve the saved directory; snapshots, exact receipts
+and controls then acquire and revalidate that owned Location, including from
+another checkout of the same project. Native snapshot and origin placement guards
+remain Location-exact.
 A daily creation's exact recovery uses `read` with its original `requestID` and
 `creation` fields, with no mission ID or revision; absence remains pending and
 the read dispatches no creation.

@@ -65,7 +65,8 @@ exclude this caller and its followed/trigger sources. Play/Resume preserve expli
 OFF; Stop is terminal. Delete keeps conversations unless `deleteManagedSessions`
 is explicitly true. After uncertainty, use `read` with the original `requestID`;
 never resend or choose a replacement identity to evade the shared hold. Exact
-completed requests replay idempotently; changed inputs conflict. Keep exactly one
+completed requests read their original receipt without changing the document revision;
+partial proofs keep their original recovery path. Changed inputs conflict. Keep exactly one
 owning CodeNomad backend available.
 
 `mission.control` controls any one-time project Mission from any owned conversation:
@@ -96,7 +97,9 @@ play/pause/resume/stop/run-now/check. Creation takes a stable requestID and no m
 or expectedRevision. An exact daily receipt read includes requestID, expectedRevision
 and receiptAction. Only partial Pause/Stop supports explicit original `retry: true`.
 Recover a daily creation with `read`, its original `requestID` and `creation`
-fields alone; an absent receipt stays pending without dispatch.
+fields alone; an absent receipt stays pending without dispatch. Daily discovery covers
+the project across checkouts; reads, receipts and controls resolve and revalidate
+each schedule's saved execution Location.
 
 `prepare.launch?: { when: [...] }` accepts the editor's ordered criteria: same-kind
 cards are OR, schedule→event is IF, event→schedule is ELSE. Absent, empty or sole

@@ -94,6 +94,8 @@ Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Ges
 
 ### Bestehende tägliche Zeitpläne {#existing-daily-schedules}
 
+Agenten können diese Zeitpläne aus jeder Unterhaltung desselben Projekts finden und steuern, auch aus einem anderen Worktree.
+
 Diese Einträge behalten ihre Kontrollen und Zeitzone. Nach Dienstneustart benötigen unterbrochene tägliche Zeitpläne **Fortsetzen**. Sie holen den letzten zulässigen Tag nach, nicht alle versäumten Tage. Ergebnisse stehen beim ausgewählten Eintrag.
 
 ## Baum und Ergebnisse {#tracking}

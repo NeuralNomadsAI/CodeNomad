@@ -14,6 +14,7 @@ import { resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { assertRecurrenceDispatchFeasible } from "../../missions/recurrence-read-budget"
 import { assertRecurrenceBridgeProof, nativeRecurrenceControlInputSchema } from "./native-recurrence-control"
+import { recurrenceListInput } from "../../missions/recurrence-discovery"
 
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
 const requestSchema = Schema.Struct({ id: Schema.String, requestID: Schema.String, digest: Schema.String,
@@ -62,11 +63,24 @@ export const nativeRecurrenceHandlers = (ctx: Pick<Plugin.Context, "location" | 
     projectID: doc.projectID, projectCanonical: doc.projectCanonical,
   } })
   return {
+    recurrenceList: (raw: unknown) => Effect.gen(function* () {
+      const native = yield* location, input = recurrenceListInput.parse(raw)
+      const store = yield* acquireNativeRecurrenceStore(ctx)
+      const rows = (yield* Effect.promise(() => store.list())).filter(doc => !input.after || doc.id > input.after)
+      const selected = rows.slice(0, input.limit)
+      return { projectID: native.project.id, projectCanonical: native.project.canonical,
+        schedules: selected.map(doc => {
+          if (doc.config.roots.length !== 1) throw new Error("Recurrence scope changed")
+          return { id: doc.id, directory: doc.config.roots[0].directory }
+        }), ...(rows.length > selected.length ? { next: selected.at(-1)!.id } : {}) }
+    }),
     recurrenceRead: (input: { id: string }) => Effect.gen(function* () {
       yield* location
       const store = yield* acquireNativeRecurrenceStore(ctx)
       const doc = yield* Effect.promise(() => store.read(recurrenceIDSchema.parse(input.id)))
-      return doc ? summary(doc) : { schedule: null }
+      if (!doc) return { schedule: null }
+      if (doc.config.roots.length !== 1) throw new Error("Recurrence scope changed")
+      return { schedule: { ...summary(doc).schedule, directory: doc.config.roots[0].directory } }
     }),
     recurrenceCreate: (raw: unknown) => Effect.gen(function* () {
       const native = yield* location

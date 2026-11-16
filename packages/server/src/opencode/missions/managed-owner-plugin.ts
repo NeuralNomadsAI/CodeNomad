@@ -34,7 +34,7 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeS
             const store = yield* acquireNativeMissionDocumentStore(ctx, run)
             return yield* Effect.tryPromise({ try: () => applyMissionDocumentActivation(store, input, () => true, ctx.location.directory), catch: error => error })
           }))), catch: error => error,
-        })).pipe(Effect.orDie), recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx),
+        })).pipe(Effect.orDie), recurrenceSnapshot: (input: { scheduleID?: string }) => readNativeRecurrenceSnapshot(ctx, input),
         ...nativeRecurrenceHandlers(ctx), recurrencePassageRead: (input: unknown) => readNativeRecurrencePage(ctx, input),
         recurrenceCurrent: (input: unknown) => readNativeRecurrenceCurrent(ctx, input),
         recurrenceCurrentPage: (input: unknown) => readNativeRecurrenceCurrentPage(ctx, input),

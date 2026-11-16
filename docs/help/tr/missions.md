@@ -92,6 +92,8 @@ Seçilen program durumunu, sonraki uyanma/kontrolü, başlatılmış/başarılı
 
 ### Mevcut günlük programlar {#existing-daily-schedules}
 
+Aracılar bu programları, başka bir çalışma ağacı da dahil olmak üzere aynı projeye ait herhangi bir konuşmadan bulabilir ve kontrol edebilir.
+
 Kendi kontrollerini ve saat dilimini korurlar. Hizmet yeniden başlayınca kesintiye uğramış günlük kayıtlar Devam gerektirir. Kaçırılan tüm günler yerine son uygun günü telafi ederler. Sonuçlar seçilen kayıttadır.
 
 ## Ağaç ve sonuçlar {#tracking}

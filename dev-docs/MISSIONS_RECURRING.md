@@ -241,6 +241,10 @@ for status and explicit controls. Requests pin the native directory, signed huma
 profile source, request ID and document revision through the existing signed bridge.
 `scheduleRead({missionID,requestID})` reads an exact retained control receipt;
 missing or evicted proof stays unknown. Passive reads send no controls.
+An exact completed human or agent control replay reads that receipt without a
+document write or revision change. Completion includes the actor-family control
+and original passage admission proofs. Partial or missing proofs keep their
+original reconciliation path.
 
 Serialized calendar validation returns an identity/payload-bound refusal for an
 expired first-Play date or a revision conflict before its first write. The initial
@@ -552,6 +556,11 @@ Resume, Run now, Check, configure and delete use the shared human business opera
 physical holds and native admission. Every owned project session qualifies, including
 descendants, actors and scheduled passages. Signed project-agent principals bind the
 actual native caller and are revalidated through the private bridge and native fences.
+Project discovery scans at most 64 daily documents in sixteen-entry native storage
+pages and returns at most eight IDs with their saved owning directories per tool
+page. Target reads acquire and revalidate that owned Location before its exact
+snapshot, receipt or control. The snapshot filter and effect-origin guard retain
+the schedule's exact execution directory.
 The creation-scoped principal used by `prepare.startOnCreation` binds its author,
 original request and creation digest to fresh first Play. Recovered preparations read
 their original result. Public HTTP controls authenticate their human principal.

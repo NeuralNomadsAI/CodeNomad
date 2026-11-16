@@ -102,6 +102,8 @@ In **Followed conversations**, use **Add conversation** and choose a conversatio
 
 ### Existing daily schedules {#existing-daily-schedules}
 
+Agents can find and control these schedules from any conversation belonging to the same project, including another worktree.
+
 Existing daily entries keep their own controls and saved time zone. After a service restart they show **Interrupted** and require **Resume**. They catch up the latest eligible day rather than running every missed day. Read their retained results through the selected entry.
 
 ## Follow the tree and read results {#tracking}

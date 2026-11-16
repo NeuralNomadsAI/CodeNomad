@@ -74,6 +74,19 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   const manual = [doc.pending, ...doc.history].find(passage => passage?.origin.kind === "manual" && passage.origin.requestID === requestID)
   if (manual && (action !== "run-now" || manual.manualExpectedRevision !== expectedRevision)
     || action === "run-now" && nativeScheduleOwnerControlReceipt(doc, requestID)) return conflict()
+  const receipt = nativeScheduleOwnerControlReceipt(doc, requestID)
+  if (receipt && doc.preparation?.requestID !== requestID
+    && (receipt.action !== action || receipt.expectedRevision !== expectedRevision
+      || receipt.fingerprint !== stableToken(canonicalAuthority({ action, configuration: request.configuration ?? null,
+        deleteManagedSessions: request.deleteManagedSessions ?? false }), 64))) return conflict()
+  // A completed calendar receipt still needs its actor/admission proof. Unknown
+  // or partial results retain the original reconciliation path after a lost reply.
+  if (receipt && !receipt.pending && doc.pending?.admittedAt !== null
+    || manual && (manual.admittedAt !== null || "reason" in manual && manual.reason === "not-started")) {
+    const result = yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
+    current()
+    if (!result.pending) { admitControl(doc); return result }
+  }
   if (request.transport.principal?.kind === "agent" && request.transport.principal.creationRequestID) {
     if (action !== "play" || doc.creation?.automaticStart?.requestID !== requestID || doc.creation.automaticStart.attempted
       || doc.firstPlayedAt !== null) throw new Error("Agent Mission first Play unavailable")

@@ -18,11 +18,16 @@ import { scheduleToolInput } from "../../missions/schedule-tool"
 import type { MissionJsonValue } from "../../missions/model"
 import { canonicalWorktreeIdentity } from "../../workspaces/manager"
 
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, sibling = false) {
   const scratch = await mkdtemp(path.join(tmpdir(), "opencode", "agent-daily-"))
   t.after(() => rm(scratch, { recursive: true, force: true }))
   execFileSync("git", ["init", "-q", scratch])
+  if (sibling) {
+    execFileSync("git", ["-C", scratch, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "Fixture"])
+    execFileSync("git", ["-C", scratch, "worktree", "add", "-qb", "sibling", path.join(scratch, "sibling")])
+  }
   const directory = await realpath(scratch), yaml = path.join(directory, "profile.yaml")
+  const callerDirectory = sibling ? await realpath(path.join(scratch, "sibling")) : directory
   await writeFile(yaml, "server: {}\n")
   const scope = canonicalScope("stable", yaml, directory, directory), workspace = { id: "owned" }
   const settings = { getProfileScope: () => scope, configYamlPathForAuthority: () => yaml }
@@ -30,7 +35,7 @@ async function fixture(t: test.TestContext) {
   const storage = { get: async (key: string) => values.get(key), set: async (key: string, value: MissionJsonValue) => { values.set(key, structuredClone(value)) },
     scan: async ({ prefix }: { prefix: string }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })) }) }
   const store = new NativeMissionRecurrenceStore(storage, "project", directory), current = () => true as const
-  const state = { loseACK: false, unknown: false, owned: true, effects: 0 }
+  const state = { loseACK: false, unknown: false, owned: true, effects: 0, foreignTarget: false, unreadableSnapshot: false }
   const manuals = new Map<string, any>()
   const receipt = async (input: any) => {
     const doc = await store.read(input.scheduleID), record = doc?.controls.find(row => row.requestID === input.requestID)
@@ -51,8 +56,14 @@ async function fixture(t: test.TestContext) {
     await verifyRecurrenceRequest(body, { auth, manager, settings } as never, new AbortController().signal)
   }
   const rpc = {
+    recurrenceList: async ({ after, limit }: any) => {
+      const rows = (await store.list()).filter(doc => !after || doc.id > after), selected = rows.slice(0, limit)
+      return { projectID: "project", projectCanonical: directory, schedules: selected.map(doc => ({ id: doc.id, directory: doc.config.roots[0].directory })),
+        ...(rows.length > selected.length ? { next: selected.at(-1)!.id } : {}) }
+    },
     recurrenceRead: async ({ id }: any) => { const doc = await store.read(id); return { schedule: doc ? {
-      id, revision: doc.revision, state: doc.state, digest: recurrenceConfigDigest(doc.config), projectID: "project", projectCanonical: directory } : null } },
+      id, revision: doc.revision, state: doc.state, digest: recurrenceConfigDigest(doc.config), projectID: "project", projectCanonical: directory,
+      directory: doc.config.roots[0].directory } : null } },
     recurrenceCreate: async (input: any) => {
       await verify(input.transport); calls.push(input)
       const doc = await store.create(input.id, input.config, Date.now(), current)
@@ -88,15 +99,20 @@ async function fixture(t: test.TestContext) {
       manuals.set(input.requestID, result)
       return result
     },
-    recurrenceSnapshot: async () => ({ version: 1, projectID: "project", projectCanonical: directory, location: { directory },
-      schedules: (await store.list()).map(doc => ({ id: doc.id, title: doc.config.title, revision: doc.revision, state: doc.state,
+    recurrenceSnapshot: async ({ scheduleID }: any, options: any) => {
+      if (state.unreadableSnapshot) throw new Error("Display clock unavailable")
+      return { version: 1, projectID: "project", projectCanonical: directory, location: options.location,
+      schedules: (await store.list()).filter(doc => doc.config.roots[0].directory === options.location.directory && (!scheduleID || doc.id === scheduleID))
+      .map(doc => ({ id: doc.id, title: doc.config.title, revision: doc.revision, state: doc.state,
         clock: doc.config.clock, nextDueAt: doc.state === "running" ? Date.now() + 60_000 : null, pending: null, latestResult: null, history: [],
-        actions: ["play", "pause", "stop", "resume", "run-now", "check"], controls: [] })) }),
+        actions: ["play", "pause", "stop", "resume", "run-now", "check"], controls: [] })) }
+    },
   }
   const profile = { agent: "build", model: { providerID: "test", id: "model" } }
   const client = {
-    location: { get: async ({ location }: any) => ({ ...location, project: { id: "project", canonical: directory } }) },
-    session: { get: async ({ sessionID }: any) => ({ id: sessionID, parentID: "ses_root", projectID: "project", location: { directory } }) },
+    location: { get: async ({ location }: any) => ({ ...location, project: {
+      id: state.foreignTarget && location.directory === directory ? "foreign" : "project", canonical: directory } }) },
+    session: { get: async ({ sessionID }: any) => ({ id: sessionID, parentID: "ses_root", projectID: "project", location: { directory: callerDirectory } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
     agent: { list: async () => ({ data: [{ id: "build", mode: "all" }] }) },
     model: { list: async () => ({ data: [{ ...profile.model, enabled: true, capabilities: { tools: true }, variants: [] }] }) },
@@ -105,8 +121,8 @@ async function fixture(t: test.TestContext) {
   const connection = { client, assertCurrent() {} }
   const manager = { list: () => [workspace], get: () => workspace, getServiceLocation: () => ({ directory }),
     getSharedServiceConnection: async () => connection, ownsLocation: async () => state.owned,
-    getServiceDirectoryForPath: async () => directory, getWorktreeIdentityForPath: async () => canonicalWorktreeIdentity(directory),
-    getHostPathForServicePath: async () => directory, getServiceWslDistro: () => undefined,
+    getServiceDirectoryForPath: async (_id: string, path: string) => path, getWorktreeIdentityForPath: async (_id: string, path: string) => canonicalWorktreeIdentity(path),
+    getHostPathForServicePath: async (_id: string, path: string) => path, getServiceWslDistro: () => undefined,
     getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix" }
   const roots = [await resolveRecurrenceRoot(manager as never, workspace.id, directory, directory, undefined)]
   const creation = { instructions: "Daily fixture", clock: { time: "09:30", zone: "UTC" }, template: "custom",
@@ -119,8 +135,29 @@ async function fixture(t: test.TestContext) {
   t.after(() => app.close())
   const agent = (input: object) => controlAgentMissionSchedule(deps as never, "ses_child", { kind: "schedule",
     input: { owner: "daily", ...input } }, new AbortController().signal) as Promise<any>
-  return { agent, store, state, calls, creation, app }
+  return { agent, store, state, calls, creation, app, directory, callerDirectory, fence }
 }
+
+test("daily project discovery from owned Location B routes reads, receipts and controls to A and refuses a foreign project", async t => {
+  const f = await fixture(t, true), id = "daily_human"
+  assert.notEqual(f.callerDirectory, f.directory)
+  assert.equal((await f.agent({ action: "list", limit: 1 })).schedules[0].missionID, id)
+  assert.equal((await f.agent({ action: "read", missionID: id })).schedule.id, id)
+  f.state.unreadableSnapshot = true
+  const expectedRevision = (await f.store.read(id))!.revision
+  const input = { action: "play", missionID: id, requestID: "from_sibling", expectedRevision }
+  assert.equal((await f.agent(input)).status, 200)
+  assert.equal(f.calls.at(-1).location.directory, f.directory)
+  const writes = f.calls.length
+  assert.equal((await f.agent({ ...input, action: "read", receiptAction: "play" })).status, 200)
+  assert.equal(f.calls.length, writes)
+  assert.equal((await f.agent(input)).status, 200)
+  assert.equal(f.state.effects, 1)
+  f.state.foreignTarget = true
+  for (const request of [{ action: "list" }, { action: "read", missionID: id }, { ...input, action: "stop", requestID: "foreign" }])
+    await assert.rejects(f.agent(request))
+  assert.equal(f.calls.length, writes + 1)
+})
 
 test("owned agent reads and controls a human daily document with signed identity and idempotent native records", async t => {
   const f = await fixture(t)
@@ -191,7 +228,9 @@ test("lost daily ACK holds human concurrency and exact read settles without rese
     payload: { action: "stop", requestID: "racing_human", expectedRevision } })
   assert.notEqual(human.statusCode, 200)
   f.state.unknown = false
+  const deleting = f.fence.run(f.directory, [f.directory], async () => {})
   assert.equal((await f.agent({ action: "read", missionID: id, requestID: input.requestID, expectedRevision, receiptAction: "play" })).status, 200)
+  await deleting
   assert.equal(f.calls.length, writes)
 })
 

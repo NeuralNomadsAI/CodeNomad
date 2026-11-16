@@ -102,6 +102,8 @@ Dans **Conversations suivies**, utilisez **Ajouter une conversation** puis chois
 
 ### Programmations quotidiennes existantes {#existing-daily-schedules}
 
+Les agents peuvent trouver et contrôler ces programmations depuis toute conversation appartenant au même projet, y compris dans un autre worktree.
+
 Les entrées quotidiennes existantes conservent leurs contrôles et leur fuseau. Après un redémarrage du service, elles indiquent **Interrompue** et demandent **Reprendre**. Elles rattrapent le dernier jour admissible plutôt que chaque jour manqué. L’entrée sélectionnée donne accès aux résultats conservés.
 
 ## Suivre l’arbre et lire les résultats {#tracking}

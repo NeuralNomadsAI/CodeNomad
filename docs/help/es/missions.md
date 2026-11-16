@@ -92,6 +92,8 @@ En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conver
 
 ### Programaciones diarias existentes {#existing-daily-schedules}
 
+Los agentes pueden encontrar y controlar estas programaciones desde cualquier conversación del mismo proyecto, incluso en otro worktree.
+
 Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** desde el estado interrumpido. Recuperan el último día válido, no todos los perdidos. La entrada seleccionada permite leer resultados.
 
 ## Árbol y resultados {#tracking}

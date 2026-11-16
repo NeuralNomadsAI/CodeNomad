@@ -139,6 +139,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         tasks(input: unknown): Promise<unknown>
         panelPage(input: unknown): Promise<unknown>
         recurrenceSnapshot(input: unknown): Promise<unknown>
+        recurrenceList(input: unknown): Promise<unknown>
         recurrenceControl(input: unknown): Promise<unknown>
         recurrenceControlStatus(input: unknown): Promise<unknown>
         recurrenceRunNow(input: unknown): Promise<unknown>
@@ -284,6 +285,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       // Bundled Effect entry replaces this at registration with the native
       // request-graph handlers. A Promise setup graph never has Job authority.
       recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
+      recurrenceList: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceControl: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceControlStatus: async () => { throw new Error("Native recurrence status unavailable") },
       recurrenceRunNow: async () => { throw new Error("Native recurrence admission unavailable") },
@@ -342,6 +344,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
       recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),
       recurrenceRead: tracked(handlers.recurrenceRead),
+      recurrenceList: tracked(handlers.recurrenceList),
       recurrenceCreate: tracked(handlers.recurrenceCreate),
       recurrenceCurrent: tracked(handlers.recurrenceCurrent), recurrenceCurrentContent: tracked(handlers.recurrenceCurrentContent),
       recurrenceCurrentPage: tracked(handlers.recurrenceCurrentPage),

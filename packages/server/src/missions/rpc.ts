@@ -25,6 +25,7 @@ import { RECURRENCE_RUN_NOW_STATUS_INPUT, RECURRENCE_RUN_NOW_STATUS_REQUEST, REC
 import { missionDocumentSummaryWire, missionScheduleActivationWire } from "./mission-document-wire"
 import { missionScheduleRpcMethods } from "./mission-schedule-contract"
 import { schedulePrincipalWire } from "./recurrence-control-proof"
+import { recurrenceListWire } from "./recurrence-discovery"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -359,16 +360,17 @@ export const CODENOMAD_MISSIONS_RPC = {
     recurrenceCurrentPage: { input: { type: "object", properties: { source: missionCurrentSourceWire, selector: missionPanelPageInputSchema,
       body: { type: "object" } }, required: ["source", "selector"], additionalProperties: false }, output: missionPanelPageOutputSchema },
     recurrenceCurrentContent: recurrenceCurrentContentWire,
+    recurrenceList: recurrenceListWire,
     recurrenceSnapshot: {
-      input: { type: "object", properties: {}, additionalProperties: false },
+      input: { type: "object", properties: { scheduleID: { type: "string" } }, additionalProperties: false },
       output: recurrenceSnapshotOutput,
     },
     recurrenceRead: {
       input: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
       output: { type: "object", properties: { schedule: { type: ["object", "null"], properties: {
         id: { type: "string" }, revision: { type: "integer" }, state: { type: "string", enum: ["paused", "running", "stopped"] },
-        digest: { type: "string" }, projectID: { type: "string" }, projectCanonical: { type: "string" },
-      }, required: ["id", "revision", "state", "digest", "projectID", "projectCanonical"], additionalProperties: false } },
+        digest: { type: "string" }, projectID: { type: "string" }, projectCanonical: { type: "string" }, directory: { type: "string" },
+      }, required: ["id", "revision", "state", "digest", "projectID", "projectCanonical", "directory"], additionalProperties: false } },
       required: ["schedule"], additionalProperties: false },
     },
     recurrenceCreate: {
