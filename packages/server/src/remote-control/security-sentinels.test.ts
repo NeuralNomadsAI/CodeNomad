@@ -76,6 +76,9 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
     const pairingToken = "pairing_SENTINEL_8a527c2adfc635d"
     const pairedCredential = `paired_SENTINEL_${"d".repeat(27)}`
     const wrongPassword = "rejected-password-SENTINEL-6a8f2851"
+    const memoryTitle = "memory-title-SENTINEL-19ac76a4"
+    const memoryText = "memory-content-SENTINEL-847aa4e1"
+    const memoryDirectory = "/memory-directory-SENTINEL-b2d592ec"
     const sshPath = path.join(directory, ".ssh", "id-SENTINEL-89b3c0a2")
     const sshKey = "SSH-PRIVATE-CONTENTS-SENTINEL-fb27610c"
     fs.mkdirSync(path.dirname(sshPath))
@@ -98,6 +101,11 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
         body: [{ id: "same-workspace", server: id }],
         headers: { "set-cookie": `private=${device}`, authorization: `Bearer ${password}`,
           location: `https://blocked.test/?password=${password}`, "x-private-key": sshKey } })
+      remote.state.overrides.set("/api/memory/settings", { status: 200, body: { enabled: true } })
+      remote.state.overrides.set("/api/memory", { status: 200, body: {
+        entries: [{ id: "same-entry", sessionId: "same-session", title: memoryTitle, text: `${id}:${memoryText}` }],
+      }, headers: { "set-cookie": `private=${device}`, authorization: `Bearer ${password}`,
+        location: `https://blocked.test/?password=${password}`, "x-private-key": sshKey } })
       remote.state.overrides.set("/api/failure", { status: 503, body: { error: "controlled" },
         headers: { location: `https://blocked.test/?token=${device}`, "set-cookie": `private=${device}` } })
       remote.state.overrides.set("/api/redirect", { status: 302, body: { redirect: true },
@@ -249,6 +257,24 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
       assert.equal(workspaces.headers.location, undefined)
       assert.equal(workspaces.headers["set-cookie"], undefined)
       const remote = remotes[id === "A" ? 0 : 1]!
+      const memoryStart = remote.state.requests.length
+      const memorySettings = await call(`/api/backends/${id}/api/memory/settings`, { headers: { [AUTHORITY]: proof } })
+      assert.equal(memorySettings.status, 200, memorySettings.body)
+      assert.equal((await call(`/api/backends/${id}/api/memory/settings`, {
+        method: "PUT", headers: { [AUTHORITY]: proof }, body: { enabled: true },
+      })).status, 200)
+      const memory = await call(`/api/backends/${id}/api/memory`, {
+        method: "POST", headers: { [AUTHORITY]: proof, authorization: "Bearer caller-only-SENTINEL" },
+        body: { operation: { action: "list", scope: "project" },
+          context: { workspaceId: "same-workspace", directory: memoryDirectory } },
+      })
+      assert.equal(memory.status, 200, memory.body)
+      assert.equal(JSON.parse(memory.body).entries[0].text, `${id}:${memoryText}`)
+      assert.equal(memory.headers["set-cookie"], undefined)
+      assert.equal(memory.headers.authorization, undefined)
+      assert.equal(memory.headers.location, undefined)
+      assert.equal(memory.headers["x-private-key"], undefined)
+      assert.equal(remote.state.requests.slice(memoryStart).filter(request => request.path.startsWith("/api/memory")).length, 3)
       for (const [target, status] of [["failure", 503], ["redirect", 302]] as const) {
         remote.state.overrides.set("/api/workspaces", remote.state.overrides.get(`/api/${target}`)!)
         const reply = await call(`/api/backends/${id}/api/workspaces`, { headers: { [AUTHORITY]: proof } })
@@ -298,6 +324,7 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
     }
     assertHidden(fs.readFileSync(location.stateYamlPath, "utf8"), "persisted client state", proofs)
     assertHidden(settings.getDoc("state"), "client state snapshot", proofs)
+    assertSentinelsHidden(settings.getDoc("state"), [memoryTitle, memoryText, memoryDirectory], "memory stays out of client state")
     assertHidden(urls, "client-visible URLs")
     for (const request of network) {
       const url = new URL(request.target, "http://client.invalid")
@@ -370,7 +397,7 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
     assert.ok(remotes[1]!.state.requests.some(request => request.headers.cookie?.includes(device)), "stored device actually used")
     assert.deepEqual(forward.opened, viaSsh ? ["fixture-A", "fixture-B"] : [])
     assert.ok(logs.split("\n").some(line => line && JSON.parse(line).msg), "real pino emitted records")
-    assertHidden(logs, "real application logs", [...proofs, surface.code, cookie.split("=")[1]!])
+    assertHidden(logs, "real application logs", [...proofs, surface.code, cookie.split("=")[1]!, memoryTitle, memoryText, memoryDirectory])
     t.diagnostic(`${channel}/${viaSsh ? "injected TCP-forward" : "direct"}: ${replies.length} replies, ${network.length} client requests, ${remotes.reduce((n, remote) => n + remote.state.requests.length, 0)} upstream requests; ${malformedPaths} malformed-path probes; ${hidden.length} secrets + ${proofs.length} proofs; 30 encoding slots each; response bodies/headers, client URL/header/body, upstream URL/header/body, persisted state/snapshot, trace pino`)
     for (const reply of malformedReplies) assertHidden(reply, "malformed-path response", proofs)
   })

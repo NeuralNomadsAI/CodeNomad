@@ -162,6 +162,8 @@ An originless native caller keeps local UI authority on a loopback target Host. 
 | `/api/remote-servers/:id/connect`, including password/pairing | Common capture; queue and private connection/pairing client inherit its signal | Each connect owns its private candidate; destination-generation checks fence credential persistence | Check before dispatch and credential/result publication |
 | SSH forward readiness and renewal identity check | Each principal owns its interruptible wait; profile generation and forward identity fence readiness | The backend owns one bounded forward/identity check per profile generation, across principals | Cancelled waiters cannot resume business dispatch; retargeting, Forget and final-owner shutdown close shared infrastructure |
 | Probe, SSH-host/profile inventory, Forget and profile-state mutations | Common capture; probe IO inherits the signal; synchronous administration checks before mutation | None; explicit administration retains its profile-wide effects | Common pre-publication check |
+| Host `/api/memory` and `/api/memory/settings` | Common pre-body channel guard and principal capture; signal follows project identity, repository-lock waits, reads and locked decisions | The repository lock serializes transactions; each waiter retains its own signal | Recheck after awaits and before journal admission; accepted journals complete durably; acknowledgement uses the original principal |
+| Relayed memory and Tidy up preflight | Same relay capture, current destination proof and request signal | Existing backend client and borrower-aware authentication | Memory replies retain the relay header filter and publication fence; Tidy up retains its selected backend/project context |
 | Request logging, including rejected/malformed targets | Independent of admission | None | Static route template, method, status and duration only; raw paths, params, queries and bodies stay private |
 
 Registered wildcard families retain their static template, including `/api/backends/:id/*`. Only global `*` / `/*` fallbacks use `<catchall>`; unmatched routes use `<unmatched>`.
@@ -179,7 +181,7 @@ The host connects to saved CodeNomad profiles through `codenomad-servers/`. Loca
 | Direct LAN HTTP | Authenticated session and an explicitly admitted non-loopback HTTP Origin; sensitive reads may instead supply its Referer. |
 | Installed PWA | Its current URL's channel rules. |
 
-`/api/meta` announces `serversUsable`, `serversManageable` and `secretEntryAllowed`. The UI uses these host capabilities alongside the strict feature flag. Password or pairing-link submission to connect and relay login is backend-refused with `403` / `secret_entry_forbidden` on LAN HTTP; Remote Control, verified HTTPS and local loopback permit it. Foreign, opaque, undeclared or absent LAN provenance is refused before destination access. Forwarding headers confer no authority. Explicit server-device traffic retains its closed protocol catalog; it never receives these browser exceptions. Remote-side administration, nested relays, memory and remote-preview capability management keep their existing route boundaries. Administrator-disabled Remote Control supplies no ingress principal; the listening lock governs which direct peers can connect.
+`/api/meta` announces `serversUsable`, `serversManageable` and `secretEntryAllowed`. The UI uses these host capabilities alongside the strict feature flag. Password or pairing-link submission to connect and relay login is backend-refused with `403` / `secret_entry_forbidden` on LAN HTTP; Remote Control, verified HTTPS and local loopback permit it. Foreign, opaque, undeclared or absent LAN provenance is refused before destination access. Forwarding headers confer no authority. Explicit server-device traffic retains its closed protocol catalog; it never receives these browser exceptions. Remote-side administration, nested relays and remote-preview capability management keep their existing route boundaries. Administrator-disabled Remote Control supplies no ingress principal; the listening lock governs which direct peers can connect.
 
 Shared state writes that replace `ui.remoteServers`, delete that key or replace/delete its owner apply the same admission before persistence. Local preference writes retain their direct source policy. Non-loopback HTTP/HTTPS provenance through a loopback proxy retains its remote UI class and the strict feature flag. Probe URLs reject userinfo and pairing fragments before IO; malformed URL diagnostics omit the submitted value.
 
@@ -208,12 +210,27 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 | Reviewed device-route family | Admission surface |
 |---|---|
 | Identity and connection | GET auth status, metadata, events and read-only Remote Control status; POST connection pong. |
-| Backend data and preferences | Explicit filesystem, config-file, storage owner/instance, usage, runtime, speech, SideCar/previews and panel-extension method/path pairs in `SERVER_DEVICE_ROUTES`; existing host-only exclusions still apply. |
-| Project operations | Workspace inventory/lifecycle, directory-owned background Shell inventory (GET), worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning, pending requests, Missions and Yolo method/path pairs. |
-| Agent memory | The local UI relay requires its current proof for POST `/api/memory` and GET/PUT `/api/memory/settings`; direct transport retains authentication and project-directory ownership. Remote Control ingress keeps this family host-only. |
+| Backend data and preferences | Explicit filesystem, config-file, storage owner/instance, usage, runtime/logs, speech, SideCar/previews and panel-extension method/path pairs in `SERVER_DEVICE_ROUTES`; existing host-only exclusions still apply. |
+| Project operations | Workspace inventory/lifecycle, repository-source discovery, directory-owned background Shell inventory (GET), worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning preview and mutation, pending requests, Missions and Yolo method/path pairs. |
+| Agent memory | UI clients use exact POST `/api/memory` and GET/PUT `/api/memory/settings`; remote browser admission requires the strict host flag and channel provenance. Relayed memory requires its current proof. The explicit server-device catalog retains its authenticated direct transport and ingress boundary. Project-directory ownership and strict schemas apply at the destination. |
 | Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
 
 Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership or a verified direct HTTPS origin.
+
+### Host and device-local boundaries
+
+Authenticated browser admission retains these method/path boundaries:
+
+| Surface | Authority |
+|---|---|
+| `/login`, `/auth/token`; POST `/api/auth/{login,token,logout,password}` | Local bootstrap/password administration; direct password clients retain login/logout |
+| POST `/api/remote-control/{start,pairings}`; DELETE `/api/remote-control`; GET `/api/remote-control/devices`; DELETE `/api/remote-control/devices/:id`; PUT `/api/remote-control/previews` | Host administration under the Remote Control/listening policy |
+| Config document/owner patches changing `server.sidecarsOverDirectHttps` | Host-owned setting; authoritative before/after comparison |
+| `/sidecars/:id` and descendants, HTTP/WS | Device-local content, with the explicit host-controlled direct HTTPS opt-in |
+| `/api/backends/:id/preview-capabilities` and `/:capability`; preview HTTP/WS content | Scoped preview authority; live ingress content additionally follows the Web previews switch |
+| POST `/api/opencode-plugin/automation` | Private loopback native bridge and token |
+| POST `/api/remote-proxy/sessions`; DELETE `/api/remote-proxy/sessions/:id` | Local native window transport |
+| Nested relays and destination host administration | Closed relay boundary |
 
 ## Direct HTTPS devices
 
@@ -221,7 +238,7 @@ Where the tunnel is blocked but a direct HTTPS deployment exists (a TLS-terminat
 
 - **Verified direct HTTPS origins** (`remote-control/direct-https.ts` `verifiedHttpsOrigins()`) are the `https:` origins the direct listener already trusts for mutations: the advertised `localUrl`, `remoteUrl` and reachable addresses, plus `CODENOMAD_ALLOWED_ORIGINS`. Loopback (`localhost`, `*.localhost`, `127/8`, `[::1]`, mapped IPv4 loopback) and unspecified hosts never qualify, nor do the UI development origin and same-origin loopback aliases. Removing an origin from the configuration ends its devices' authority at the next request.
 - `verifiedDirectHttpsOrigin()` is the only request predicate. It never accepts an ingress socket. Unsafe methods need their own `Origin`; safe methods use `Origin`, else the `Referer` origin, else the targeted `Host` as `https`, because same-origin navigations and fetches send neither header. Opaque (`null`), empty, `http:` and unlisted values give null. The listener's transport is deliberately ignored: behind a TLS-terminating proxy the request reaches a plain-HTTP socket, so the configured public origin, which the proxy forwards in `Host`/`Origin`, is the evidence. Browsers send the `Secure`, host-only `__Host-` cookie only over TLS to the host that received it, and pairing sets it only in response to a verified origin. The proxy must forward the public `Host` and `Origin` and reach the backend over loopback or a protected hop.
-- `gate.ts` `gateDirectHttpsDevice()` judges a direct request carrying the device cookie only on a verified origin; elsewhere the cookie is ignored and password rules apply unchanged. Pairing paths and `/previews/<token>/…` capability paths pass through untouched. A valid device of that origin (`registry.authenticate(token, origin)`) is attached with `attachRemoteDevice()`, so `isRemoteRequest()`, `isLocalRequest()` and the auth manager treat it like an ingress device: no loopback privileges, even through a proxy on loopback; ingress host-only paths and the memory family return 404; forwarding headers are stripped. `isDirectHttpsDeviceRequest()` marks it separately; the direct origin policy uses it to keep the direct listener's CORS origins instead of the tunnel origin. An invalid, revoked, expired or other-channel credential marks the request refused (`isRefusedDeviceRequest()`): the auth manager returns no session, so it never falls back to a password session or skipped authentication; `/api/auth/status` reports `pairingRequired`, the static bundle stays public, HTML navigations redirect to `/remote-pair` and everything else gets 401.
+- `gate.ts` `gateDirectHttpsDevice()` judges a direct request carrying the device cookie only on a verified origin; elsewhere the cookie is ignored and password rules apply unchanged. Pairing paths and `/previews/<token>/…` capability paths pass through untouched. A valid device of that origin (`registry.authenticate(token, origin)`) is attached with `attachRemoteDevice()`, so `isRemoteRequest()`, `isLocalRequest()` and the auth manager treat it like an ingress device: no loopback privileges, even through a proxy on loopback; host-only paths return 404 except for the reviewed authenticated UI catalog under `multiBackend`; forwarding headers are stripped. `isDirectHttpsDeviceRequest()` marks it separately; the direct origin policy uses it to keep the direct listener's CORS origins instead of the tunnel origin. An invalid, revoked, expired or other-channel credential marks the request refused (`isRefusedDeviceRequest()`): the auth manager returns no session, so it never falls back to a password session or skipped authentication; `/api/auth/status` reports `pairingRequired`, the static bundle stays public, HTML navigations redirect to `/remote-pair` and everything else gets 401.
 - The host creates a link with `POST /api/remote-control/pairings` and body `{ "origin": "https://…" }` (host-only; 409 for an unverified origin). `GET /api/remote-control/status` lists `directOrigins` for local requests only, and Remote Access settings offer **Direct HTTPS pairing** in the Remote Control card, with a native select when several origins exist; the tunnel need not run. The direct exchange requires its own verified `Origin`, redeems only that origin's code, counts failures in the backend-wide bucket shared with server pairing (a valid code is checked first) and sets the same `__Host-codenomad_device` cookie. The direct listener's host-only hook admits `/api/remote-control/pair` only on a verified origin. The pairing page refuses to post a code from a non-`https:` page.
 - Direct devices are independent of the tunnel: Stop, tunnel failure and resume neither cancel their codes nor close their sockets (`directDeviceSockets` in `manager.ts`). Revocation, eviction at the device limit and shutdown destroy them. `isDeviceAuthorized()` accepts a direct device while its origin remains verified, so Missions human-answer and recurrence proofs keep working. The inventory exposes `origin` for direct devices; Settings labels each device with its HTTPS origin or Remote Control.
 - `verifiedDirectHttpsOrigin()` and the explicit server-device protocol stay separate: `X-CodeNomad-Server-Request: 1` keeps its tunnel-bound admission and catalog, and a tunnel device's credential is refused on direct HTTPS origins as a direct device's is on the ingress.
@@ -242,8 +259,8 @@ asset-fallback and WebSocket dispatch. Control APIs on this backend's own origin
 and loopback aliases, and every preview capability origin, return 404 before IO.
 Ordinary application targets retain their proxy behavior. Direct HTTPS SideCar
 opt-in admits only SideCar content, including an authenticated direct browser
-device. Backend relays follow the authenticated UI matrix; memory and remote-preview
-authority retain their host rules.
+device. Backend relays and memory follow the authenticated UI matrix; remote-preview
+authority retains its host rules.
 
 The administrator's listening lock governs the ordinary application listener.
 Relay APIs share that listener and apply the authenticated UI admission matrix.
@@ -304,6 +321,12 @@ credentials follow their separate registry lifetime and revocation rules.
 
 ## Validation
 
+- `remote-control/memory-remote.test.ts` covers the exact host/relay memory catalog,
+  channel provenance, strict feature flag, schemas, project ownership, proofs and
+  principal revocation before body parsing, during lock waits and before publication.
+  `memory-project-remotes.test.ts` exercises real Git-backed A/B project stores
+  with colliding raw IDs over ingress, a TLS reverse proxy and non-loopback LAN,
+  including destination-owned Tidy up eligibility and strict mutation revisions.
 - `remote-control/security-sentinels.test.ts` scans admitted Remote Control, TLS reverse-proxy and non-loopback LAN flows over direct and injected SSH TCP-forward transports. Controlled A/B destinations exercise stored password/device identities, private SSH/TLS material, pairing tokens and relay proofs. Captured response bodies/headers, redirect failures, rejected raw targets, exposed URL carriers, persisted state and trace-level application logs are checked together. Relay proofs retain their authorized bootstrap-header/resource-query contract; every other response, state/log field and upstream request keeps them private. Rejected targets retain the fixed namespace log treatment even when path admission refuses their syntax.
 - `codenomad-servers/relay-principal.test.ts` drives real HTTP streams through logout, idle/absolute session expiry, persistent password replacement, device revocation/expiry and tunnel Stop, checking bounded upstream/client closure and isolation of other principals and local-loopback authority.
 

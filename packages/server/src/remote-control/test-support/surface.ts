@@ -8,6 +8,7 @@ import { createLogger } from "../../logger"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../../server/http-server"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
+import type { MemoryStore } from "../../memory/store"
 import { RemoteDeviceRegistry } from "../devices"
 import { verifiedHttpsOrigins } from "../direct-https"
 import { RemoteControlManager } from "../manager"
@@ -33,6 +34,9 @@ export async function startRemoteSurface(t: TestContext, options: {
   allowedOrigins?: string[]
   /** Settings service in place of the stub, such as one that reads the host's SideCar opt-in. */
   settings?: unknown
+  memoryStore?: MemoryStore
+  workspaceManager?: unknown
+  serverIdentity?: { serverId: string; apiContract: number }
   sidecarManager?: unknown
   configureApp?: (app: ReturnType<typeof createHttpServer>["instance"]) => void
   openTunnel?: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
@@ -63,7 +67,7 @@ export async function startRemoteSurface(t: TestContext, options: {
   let app: ReturnType<typeof createHttpServer>["instance"] | undefined
   let previewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
   const previewManager = new PreviewManager()
-  const serverMeta = { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] }
+  const serverMeta = { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [], ...options.serverIdentity }
   const manager = new RemoteControlManager({
     directHttpsOrigins: () => verifiedHttpsOrigins(serverMeta, options.allowedOrigins),
     registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json"), options.now),
@@ -94,7 +98,8 @@ export async function startRemoteSurface(t: TestContext, options: {
     bindPort: 0,
     defaultPort: 0,
     protocol: "http",
-    workspaceManager: (options.panelExtensions?.workspaceManager ?? stub) as never,
+    workspaceManager: (options.workspaceManager ?? options.panelExtensions?.workspaceManager ?? stub) as never,
+    memoryStore: options.memoryStore,
     panelExtensions: options.panelExtensions?.store,
     settings: (options.settings ?? (options.browse ? { getOwner: () => ({ recentFolders: [] }) } : stub)) as never,
     fileSystemBrowser: options.browse ? { browse: () => ({ entries: [{ name: "app", path: "/srv/app", type: "directory" }],

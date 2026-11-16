@@ -38,6 +38,8 @@ En **Configuración → General**, **Mantener el ordenador activo mientras CodeN
 
 ## Memoria persistente del agente {#agent-memory}
 
+Con el modo multibackend experimental (`multiBackend`) activado, los usuarios autenticados mediante Control remoto, HTTPS verificado, LAN o una PWA instalada pueden revisar y editar la memoria del proyecto local o remoto seleccionado y usar **Ordenar**. El proyecto seleccionado determina qué backend gestiona la memoria.
+
 CodeNomad intenta retirar las instrucciones de memoria obsoletas de la sesión; si esa limpieza también falla, las anteriores pueden permanecer hasta una actualización correcta.
 
 Abre **Preferencias → General → Memoria** (o **Configuración → General** en el navegador). La memoria está desactivada por defecto. Actívala para que el agente conserve hechos y preferencias útiles entre conversaciones. El interruptor se aplica a la configuración CodeNomad conectada; desactivarlo conserva las entradas y su historial. Mientras está desactivada, los agentes no reciben ninguna herramienta de memoria; el cambio se aplica a las conversaciones en curso en pocos segundos, sin reiniciar.

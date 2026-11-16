@@ -195,6 +195,23 @@ filesystem targets.
 
 ## Authorized HTTP operations
 
+Remote browsers use the authenticated UI admission matrix in
+[Remote Control](REMOTE_CONTROL.md#saved-profile-relay). With the strict host-owned
+`multiBackend` flag enabled, paired Remote Control devices, verified HTTPS clients
+and declared LAN HTTP sessions can use the exact memory routes on the host and
+through saved-profile relays. PWA requests follow their current URL's channel.
+Relayed memory retains the current backend proof, destination schemas and
+project-directory ownership. The selected Preferences project owns review,
+editing and Tidy up on that backend.
+
+The common pre-body hook captures the request principal. Its signal fences
+project-identity follow-ups, repository-lock waits, read/writability checks,
+locked mutation decisions and response publication. Each lock waiter owns its
+cancellation. The journal checkpoint admits a durable transaction; accepted
+transactions and their Git recovery finish while revoked callers lose their
+acknowledgements. Individual host filesystem/Git reads retain their bounded
+native lifetime, with the original signal checked before subsequent work.
+
 `memory/api.ts` validates the shared UI/tool operation contract from
 `memory/contract.ts`. `POST /api/memory` takes `{ operation, context? }`; operations
 are `list`, `read` with `query` (exact ID first, then title), `save` with `content`,
@@ -328,10 +345,10 @@ reads, edits and cleanup checks retain that backend's attachment and relay trans
 HTTP context carries its raw workspace ID. Draft and badge frontiers include the
 backend identity; unavailable Preferences projects keep the card inactive and
 retain unsent drafts for the same project owner.
-Local calls retain `localHttp`. The local UI relay requires a current relay proof
+Local calls retain `localHttp`. The UI relay requires a current relay proof
 for exact POST `/api/memory` and GET/PUT `/api/memory/settings`. The destination
 admits these methods over its authenticated direct server-device transport;
-Remote Control ingress keeps memory host-only.
+Remote Control browser admission follows the host flag and principal contract above.
 The cleanup action and its info tip wrap as one group. Editable title/text fields
 derive direction from their contents, and list titles use bidirectional isolation.
 
@@ -453,6 +470,8 @@ for cross-process contention. The five committed entries, fresh locked decisions
 Windows sharing failures and crash-recovery history remain asserted. Readiness
 and lock-candidate publication coordinate handoffs; test polling deadlines bound
 missing signals independently of the unchanged product lock deadline.
+`memory/cancellation.integration.ts` checks independently cancelled lock/read/write
+waiters, pre-journal refusal and post-journal durability with real Git/filesystem IO.
 
 ```text
 node --import tsx --test packages/ui/tests/contracts/agent-memory-types.test.ts
