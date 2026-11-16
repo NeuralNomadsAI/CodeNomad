@@ -2,6 +2,8 @@
 
 ## Agent conventions
 
+- The experimental background-push host capability snapshots the device's existing System-column choices for `needsInput` and `sessionDone` in versioned subscription preferences (`v: 1`). Explicit browser consent initializes the private VAPID key; subscription updates carry the current local projects and System choices. The host API and local producer are guarded by `multiBackend` and `CODENOMAD_WEB_PUSH`; browser activation and service-worker integration belong to the device UI. Protocol, storage and revocation are in [REMOTE_CONTROL.md](REMOTE_CONTROL.md#background-push-host-capability).
+
 - Shared state PATCH routes apply saved-server UI admission before mutations of `ui.remoteServers`, including whole-owner deletion/replacement. Native local writes retain the direct source policy; remote writes require the host's strict multi-backend flag and their authenticated channel.
 
 - Native Servers Open succeeds after the main renderer accepts its selection. Tauri correlates replies with a native-generated request ID and the exact opener, bounds pending requests to 32 and waits up to five seconds. Refusal, a missing handler and a lost reply reach the existing Preferences error path; expired and duplicate replies leave later selections untouched. Only local main windows can reply.

@@ -42,6 +42,12 @@ export class SessionManager {
     return session
   }
 
+  /** Check validity without activity updates or revocation side effects. */
+  hasSession(id: string): boolean {
+    const session = this.sessions.get(id)
+    return session !== undefined && !this.expired(session, this.now())
+  }
+
   /** Observe the captured session without refreshing its idle lifetime. */
   onInvalidated(id: string, listener: () => void): () => void {
     let timer: ReturnType<typeof setTimeout> | undefined

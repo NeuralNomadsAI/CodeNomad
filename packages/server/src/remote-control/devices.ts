@@ -25,6 +25,7 @@ interface StoredState {
   devices: StoredDevice[]
   /** Set by Start and cleared only by Stop, so Remote Control resumes after a restart. */
   enabled?: boolean
+  tunnelPushEpoch?: string
   /** Stored only when the host turns web previews off; they are served by default. */
   previews?: false
 }
@@ -58,10 +59,16 @@ export class RemoteDeviceRegistry {
     return this.state.enabled === true
   }
 
-  /** Records the user's Start/Stop choice; installations that never started stay unwritten. */
+  tunnelPushEpoch(): string {
+    return this.state.tunnelPushEpoch ?? ""
+  }
+
+  /** Records the Start/Stop choice and rotates tunnel push authority atomically on Stop. */
   setStartsOnLaunch(enabled: boolean): void {
-    if (this.startsOnLaunch() === enabled) return
+    if (enabled && this.startsOnLaunch()) return
+    if (!enabled && !this.persisted && !this.startsOnLaunch()) return
     this.state.enabled = enabled
+    if (!enabled) this.state.tunnelPushEpoch = randomUUID()
     this.persist()
   }
 
@@ -206,6 +213,8 @@ function readState(filePath: string): StoredState | null {
   if (typeof value !== "object" || value === null) return null
   const candidate = value as Partial<StoredState>
   if (candidate.version !== 1 || typeof candidate.route !== "string" || !isRoute(candidate.route) || !Array.isArray(candidate.devices)) return null
+  if (candidate.tunnelPushEpoch !== undefined && (typeof candidate.tunnelPushEpoch !== "string"
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.tunnelPushEpoch))) return null
   const devices = candidate.devices.filter((device): device is StoredDevice =>
     typeof device === "object" && device !== null
     && typeof device.id === "string" && typeof device.name === "string" && /^[0-9a-f]{64}$/.test(String(device.tokenHash))
@@ -214,6 +223,7 @@ function readState(filePath: string): StoredState | null {
   return {
     version: 1, route: candidate.route, devices,
     ...(candidate.enabled === true ? { enabled: true } : {}),
+    ...(candidate.tunnelPushEpoch !== undefined ? { tunnelPushEpoch: candidate.tunnelPushEpoch } : {}),
     ...(candidate.previews === false ? { previews: false as const } : {}),
   }
 }

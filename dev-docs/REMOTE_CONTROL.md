@@ -163,6 +163,10 @@ An originless native caller keeps local UI authority on a loopback target Host. 
 | SSH forward readiness and renewal identity check | Each principal owns its interruptible wait; profile generation and forward identity fence readiness | The backend owns one bounded forward/identity check per profile generation, across principals | Cancelled waiters cannot resume business dispatch; retargeting, Forget and final-owner shutdown close shared infrastructure |
 | Probe, SSH-host/profile inventory, Forget and profile-state mutations | Common capture; probe IO inherits the signal; synchronous administration checks before mutation | None; explicit administration retains its profile-wide effects | Common pre-publication check |
 | Request logging, including rejected/malformed targets | Independent of admission | None | Static route template, method, status and duration only; raw paths, params, queries and bodies stay private |
+| `/api/push/status`, `PUT/DELETE /api/push/subscription` | Strict host multi-backend flag; authenticated browser device on its tunnel/direct HTTPS channel, or password session on verified direct HTTPS | One host-owned private registry across HTTP/HTTPS listeners | Consent creates VAPID keys; subscription endpoint, keys and owner binding stay in mode-0600 storage beside configuration |
+| `/api/push/routes/:token` | Exact authenticated subscription owner, live channel and five-minute expiry; `Cache-Control: no-store` | Opaque tokens resolve to an existing local project and session | Generic notifications carry only an opaque route; resolved targets require authentication |
+| Local background push dispatch | Original subscription principal rechecked at queue entry and before every send; logout/expiry, device revoke/eviction, password replacement and tunnel Stop revoke queued/active work | Shared local instance-event bus; four concurrent sends, 256 pending jobs, three attempts and twenty-second total send budget | RFC 8291 `aes128gcm`, VAPID, five-minute TTL; event × subscription dedupe; 404/410 removes consent |
+| Browser-device `POST /api/auth/logout` | Paired browser principal and channel mutation-Origin checks; explicit server-device protocol keeps its closed catalog | Logout purges this principal's push consent | Clears the Secure device cookie before returning |
 
 Registered wildcard families retain their static template, including `/api/backends/:id/*`. Only global `*` / `/*` fallbacks use `<catchall>`; unmatched routes use `<unmatched>`.
 
@@ -216,6 +220,43 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership or a verified direct HTTPS origin.
 
 ## Direct HTTPS devices
+
+### Background push host capability
+
+The experimental host capability requires `ui.settings.multiBackend === true`.
+`CODENOMAD_WEB_PUSH=disabled` refuses consent and dispatch;
+`CODENOMAD_WEB_PUSH_SUBJECT` overrides the VAPID contact (default
+`https://github.com/NeuralNomadsAI/CodeNomad`). Contact values accept HTTPS or
+`mailto:`. Invalid policy/contact values refuse listener creation.
+
+The browser API first sends `PUT /api/push/subscription` with `{ "consent": true }`
+to obtain the public VAPID key after explicit consent. It then submits
+`{ subscription, projects, preferences: { v: 1, needsInput, sessionDone } }`.
+Projects are existing local workspace IDs. Preferences snapshot the device's
+existing notification routing System column; later project/preference changes
+replace that subscription's snapshot. DELETE removes this principal's subscriptions.
+GET status reports capability, subscription state and the public key when initialized.
+
+Push endpoints use qualified FCM, Mozilla and Apple HTTPS hosts, validated key
+sizes and public DNS answers pinned to the connection. Redirects are refused.
+Private storage contains VAPID keys, bounded subscriptions and expiring opaque routes;
+password session bindings use a hash and are dropped at restart. Device bindings
+are revalidated at restart and dispatch. The private document binds consent to
+the authentication credential epoch, so password replacement also invalidates
+persisted consent when a purge write fails. A failed logout purge returns 503
+and retains the browser cookie for retry. Password replacement purges every
+subscription, including device subscriptions. Explicit Remote Control Stop purges
+tunnel subscriptions and rotates their durable registry epoch; transient tunnel loss
+suspends them. Direct HTTPS devices
+retain their independent origin binding.
+
+Local permission/question and root-conversation completion events use the existing
+instance-event bus. Qualification starts only for live, opted-in subscriptions;
+registered-only event worktree inventory keeps it on existing connections.
+Authoritative unavailable session/status reads abandon delivery. Opaque-route
+resolution revalidates the session's current project ownership.
+Payloads contain only version, generic title/body, random notification ID, opaque
+route and expiry; endpoint or payload failures retain silent, bounded delivery.
 
 Where the tunnel is blocked but a direct HTTPS deployment exists (a TLS-terminating reverse proxy with a real certificate, or the backend's own HTTPS listener), browsers pair and authenticate as devices on that origin. Plain-HTTP and loopback pages stay password-only.
 

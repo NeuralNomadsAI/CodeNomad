@@ -248,8 +248,8 @@ export function admitRemoteUpgrade(request: IncomingMessage, deps: RemoteGateDep
   return parsed !== null && deps.servesPreview(parsed.token)
 }
 
-export function deviceCookie(token: string): string {
-  return `${DEVICE_COOKIE_NAME}=${token}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${DEVICE_COOKIE_MAX_AGE_SECONDS}`
+export function deviceCookie(token: string, maxAge = DEVICE_COOKIE_MAX_AGE_SECONDS): string {
+  return `${DEVICE_COOKIE_NAME}=${token}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`
 }
 
 // An early reply leaves any request body unread; closing the connection keeps a
@@ -264,6 +264,8 @@ function isStaticBundlePath(pathname: string): boolean {
 }
 
 export function isHostOnlyPath(pathname: string, method: string, direct = false): boolean {
+  // Browser logout releases that authenticated device's background consent.
+  if (pathname === "/api/auth/logout" && method === "POST") return false
   // Direct browsers sign in/out with the password; token bootstrap stays local.
   if (direct && ["/login", "/api/auth/login", "/api/auth/logout"].includes(pathname)) return false
   if (method === "GET" && REMOTE_MANAGEMENT_READS.has(pathname)) return false

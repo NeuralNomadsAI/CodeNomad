@@ -90,6 +90,8 @@ import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
+import { registerPushRoutes } from "./routes/push"
+import { acquirePushHost, readPushPolicy } from "../web-push/host"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
@@ -196,6 +198,7 @@ function blocksHostProxyTarget(server: object, target: URL): boolean {
 }
 
 export function createHttpServer(deps: HttpServerDeps) {
+  readPushPolicy()
   // Fastify's type-level RawServer inference gets noisy when toggling HTTP vs HTTPS.
   // We keep the runtime behavior correct and cast the instance to a generic FastifyInstance.
   const app = Fastify(
@@ -346,6 +349,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
 
   registerAuthRoutes(app, { authManager: deps.authManager })
+  let pushHost: ReturnType<typeof acquirePushHost> | undefined
+  const getPushHost = () => pushHost ??= acquirePushHost(deps)
+  if (multiBackendEnabled() || typeof deps.settings.configYamlPathForAuthority?.() === "string") getPushHost()
+  registerPushRoutes(app, {
+    get push() { return getPushHost().push }, auth: deps.authManager, remoteControl: deps.remoteControlManager,
+    httpsOrigin: request => verifiedDirectHttpsOrigin(request, remoteGate.directHttpsOrigins?.() ?? []),
+    multiBackend: multiBackendEnabled,
+  })
+  app.addHook("onClose", async () => { pushHost?.release() })
 
   app.addHook("preHandler", (request, reply, done) => {
     // Judge the path the router routed: the raw target can differ ("/%61pi" routes as "/api").
