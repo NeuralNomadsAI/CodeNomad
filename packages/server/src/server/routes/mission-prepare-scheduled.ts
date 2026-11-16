@@ -153,7 +153,9 @@ export async function prepareScheduledCoordinatorMission(args: {
       await owned.refresh(); await assertAuthor()
       if (capabilities.version !== 1 || capabilities.automaticStart !== true || capabilities.agentSchedulePreparation !== true)
         return refused("prepare-refused")
-      const previous = receipt.parse(await native.scheduleRead({ missionID, requestID: input.requestID }, { ...nativeOptions, signal }))
+      // Before first dispatch, absence is a document read; an absent exact receipt
+      // stays uncertain only on the held/observation-only recovery paths above.
+      const previous = receipt.parse(await native.scheduleRead({ missionID }, { ...nativeOptions, signal }))
       await owned.refresh(); await assertAuthor()
       if (previous.document) return recovered(previous)
       if (previous.pending) return uncertain()

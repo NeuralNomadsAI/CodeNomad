@@ -36,7 +36,8 @@ async function fixture(t: test.TestContext) {
   const state = { capability: true, agentSchedulePreparation: true, owned: true, authorDirectory: root, profile, loseCreate: false, losePlay: false,
     activation: "ready" as "ready" | "off" | "unknown", activationCalls: 0, activationWrites: 0,
     readPending: false, sourceMissionID: undefined as string | undefined,
-    writes: [] as MissionScheduleRequest[], documents: new Map<string, any>(), receipts: new Map<string, any>(),
+    writes: [] as MissionScheduleRequest[], reads: [] as { missionID: string; requestID?: string }[],
+    documents: new Map<string, any>(), receipts: new Map<string, any>(),
     beforeWrite: undefined as (() => Promise<void>) | undefined }
   const authorSessionID = "ses_author", missionID = missionScheduleID("project", root, input.requestID)
   const nativeStore = new NativeMissionDocumentStore({
@@ -54,10 +55,13 @@ async function fixture(t: test.TestContext) {
     snapshot: async () => snapshot(),
     documentCapabilities: async () => ({ version: 1, ...(state.capability ? { automaticStart: true } : {}),
       ...(state.agentSchedulePreparation ? { agentSchedulePreparation: true } : {}) }),
-    scheduleRead: async ({ missionID: id, requestID }: { missionID: string; requestID: string }) => {
+    scheduleRead: async ({ missionID: id, requestID }: { missionID: string; requestID?: string }) => {
+      state.reads.push({ missionID: id, ...(requestID ? { requestID } : {}) })
       if (state.readPending) return { document: null, pending: true }
-      const doc = state.documents.get(id), original = state.receipts.get(requestID)
-      return doc && original ? view(doc, original) : { document: null, pending: false }
+      const doc = state.documents.get(id), original = requestID ? state.receipts.get(requestID) : undefined
+      if (!doc) return { document: null, pending: !!requestID }
+      if (!requestID) return missionScheduleView(doc)
+      return original ? view(doc, original) : { ...missionScheduleView(doc), pending: true }
     },
     scheduleControl: async (raw: unknown, options: { signal?: AbortSignal }) => {
       assert.equal(options.signal, undefined)
@@ -213,7 +217,10 @@ test("observe-only scheduling recovers frozen source provenance after release wi
 
 test("fresh explicit automatic start activates the existing journal then guarded first Play once", async t => {
   const f = await fixture(t)
-  assert.equal((await f.prepare({ startOnCreation: true })).outcome, "activated")
+  const first = await f.prepare({ startOnCreation: true })
+  assert.equal(first.outcome, "activated")
+  assert.equal(first.outcome === "activated" && first.acknowledgement, "fresh")
+  assert.deepEqual(f.state.reads[0], { missionID: f.missionID }, "first dispatch checks document absence, not an unsent receipt")
   assert.deepEqual(f.state.writes.map(value => value.action), ["create", "play"])
   assert.equal(f.state.writes[1].requestID, automaticMissionStartID(input.requestID))
   assert.equal(f.state.activationCalls, 1)
@@ -223,6 +230,18 @@ test("fresh explicit automatic start activates the existing journal then guarded
   assert.equal(retry.outcome === "activated" && retry.acknowledgement, "recovered")
   assert.equal(f.state.writes.length, 2)
   assert.equal(f.state.activationWrites, 1)
+})
+
+test("missing exact receipt after an uncertain dispatch keeps recovery observation-only", async t => {
+  const f = await fixture(t)
+  f.state.loseCreate = true
+  assert.equal((await f.prepare({ startOnCreation: true })).outcome, "uncertain")
+  f.state.documents.clear(); f.state.receipts.clear()
+  assert.equal((await f.prepare({ startOnCreation: true })).outcome, "uncertain")
+  assert.deepEqual(f.state.reads.at(-1), { missionID: f.missionID, requestID: input.requestID })
+  assert.ok(scheduledMissionHold(f.fence, f.missionID))
+  assert.equal(f.state.writes.length, 1)
+  assert.equal(f.state.activationCalls, 0)
 })
 
 test("automaticStart alone cannot admit agent scheduled preparation or reserve its hold", async t => {

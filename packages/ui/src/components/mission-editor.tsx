@@ -420,7 +420,7 @@ export function MissionEditor(props: {
       } else {
         const result = await serverApi.createMission(instanceId, { ...fields, directory, requestId })
         if (kind === "create") releaseMissionCreation(origin, creation.requestId)
-        if (kind === "create" && current()) await start(result.mission)
+        if (kind === "create" && result.acknowledgement === "fresh" && current()) await start(result.mission)
         if (current()) props.onSaved(result.mission)
         else if (identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
       }

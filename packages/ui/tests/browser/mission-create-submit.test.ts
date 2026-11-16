@@ -38,7 +38,7 @@ function created(body: Record<string, unknown>): MissionMap {
     history: [], historyTruncated: false, frontier: [], claims: [], actors: [], tasks: [], reports: [] }
 }
 
-async function setup(page: Page) {
+async function setup(page: Page, acknowledgement: "fresh" | "recovered" | null = "fresh") {
   const errors: string[] = [], creates: Array<Record<string, unknown>> = [], controls: string[] = [], activations: Record<string, any>[] = []
   let list: MissionMap[] = []
   let scheduled: Awaited<ReturnType<typeof pausedMissionScheduleReceipt>> | undefined
@@ -77,7 +77,7 @@ async function setup(page: Page) {
     if (path.endsWith("/missions")) {
       const body = request.postDataJSON(); creates.push(body)
       list = [created(body)]
-      return route.fulfill({ json: { mission: list[0] } })
+      return route.fulfill({ json: { mission: list[0], ...(acknowledgement ? { acknowledgement } : {}) } })
     }
     return route.fulfill({ json: {} })
   })
@@ -173,6 +173,23 @@ test("an opted-in one-time Create retains its draft choice across remount and se
     assert.equal(controls.length, 1)
     assert.equal(controls[0].action, "start")
     assert.equal(controls[0].expectedRevision, 1)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+for (const acknowledgement of ["recovered", null] as const) test(`opted-in one-time creation with ${acknowledgement ?? "missing"} acknowledgement leaves Play explicit`, async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, acknowledgement)
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Keep recovered preparation paused")
+    await form.getByRole("checkbox", { name: "Start automatically", exact: true }).check()
+    await submitReady(page)
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await form.waitFor({ state: "detached" })
+    assert.equal(fixture.creates.length, 1)
+    assert.deepEqual(fixture.controls, [])
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })

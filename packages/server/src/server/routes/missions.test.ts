@@ -193,7 +193,8 @@ test("range damage survives whole-map, field and task reads through real control
 })
 
 function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean
-  pluginInactive?: boolean; noConnection?: boolean; locationError?: unknown; createError?: unknown; unsupportedDocuments?: boolean } = {}) {
+  acknowledgement?: "fresh" | "recovered" | null; pluginInactive?: boolean; noConnection?: boolean;
+  locationError?: unknown; createError?: unknown; unsupportedDocuments?: boolean } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const workspace = { id: "workspace-1" }
   const value = {
@@ -225,7 +226,8 @@ function mutationManager(options: { owns?: boolean; error?: unknown; dropProfile
             if (options.createError) throw options.createError
             const id = `msn_${stableToken(`project-1\0${input.requestID}`, 24)}`
             const sessionID = input.coordinatorSessionID ?? `ses_${stableToken(`${id}\0coordinator`, 26)}`
-            return { mission: { id, projectID: "project-1", coordinatorSessionId: sessionID,
+            return { ...(options.acknowledgement === null ? {} : { acknowledgement: options.acknowledgement ?? "fresh" }),
+              mission: { id, projectID: "project-1", coordinatorSessionId: sessionID,
               ...(options.dropTaskMode ? {} : { taskMode: input.taskMode }),
               ...(input.profiles === undefined || options.dropProfiles ? {} : { profiles: structuredClone(input.profiles) }),
               actors: [{ sessionId: sessionID, kind: "coordinator", location: input.expectedCoordinatorLocation }] } }
@@ -554,7 +556,7 @@ test("brokers typed mission create, update and delete only at authorized project
     objective: "Ship it", template: "wayfinder", coordinatorSessionId: "ses_existing", directory: "/owned/repo", requestId: "create-1",
   } })
   assert.equal(create.statusCode, 200)
-  assert.deepEqual(create.json(), { mission: { id: `msn_${stableToken("project-1\0create-1", 24)}`, projectID: "project-1",
+  assert.deepEqual(create.json(), { acknowledgement: "fresh", mission: { id: `msn_${stableToken("project-1\0create-1", 24)}`, projectID: "project-1",
     taskMode: "native", coordinatorSessionId: "ses_existing", actors: [{ sessionId: "ses_existing", kind: "coordinator", location: { directory: "/owned/repo" } }] } })
   assert.deepEqual(fake.calls.find((call) => call.method === "create")?.value, {
     input: { prepared: true, requestID: "create-1", objective: "Ship it", template: "wayfinder", taskMode: "native", coordinatorSessionID: "ses_existing", expectedCoordinatorLocation: { directory: "/owned/repo" } },
@@ -584,6 +586,21 @@ test("brokers typed mission create, update and delete only at authorized project
   } })
   assert.equal(invalid.statusCode, 400)
   await app.close()
+})
+
+test("creation requires a native fresh or recovered acknowledgement; a missing acknowledgement stays uncertain", async t => {
+  for (const acknowledgement of ["fresh", "recovered", null] as const) {
+    const fake = mutationManager({ acknowledgement }), app = Fastify({ logger: false })
+    t.after(() => app.close())
+    registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
+    const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
+      payload: { objective: "Creation acknowledgement", template: "custom", requestId: "acknowledgement" } })
+    assert.equal(response.statusCode, acknowledgement ? 200 : 409)
+    if (acknowledgement) assert.equal(response.json().acknowledgement, acknowledgement)
+    else assert.equal(response.json().code, "creation-uncertain")
+    assert.equal(fake.calls.filter(call => call.method === "create").length, 1)
+    assert.equal(fake.calls.some(call => call.method === "lifecycle"), false)
+  }
 })
 
 test("maps only declared native mutation codes and keeps opaque plugin failures unavailable", async () => {

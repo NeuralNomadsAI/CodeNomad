@@ -340,6 +340,8 @@ the single automatic-start slot. Explicit OFF, missing capabilities and incompat
 settings refuse activation while keeping the prepared target visible.
 Document recovery reads the backend's exact retained receipt to release its physical
 permit; its internal observation-only path keeps absent or partial receipts uncertain.
+Before first scheduled dispatch, preparation reads document existence without a
+request selector; held and observation-only recovery reads the exact original receipt.
 Pause, Resume, Stop, Run now, Check, configure and delete remain human actions.
 
 Preparation requestIDs are scoped to the actual author and native source mission
