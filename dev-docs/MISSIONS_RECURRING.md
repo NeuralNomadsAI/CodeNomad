@@ -73,7 +73,10 @@ that event only at the one-shot slot. An unmet condition consumes that slot, so 
 conditional one-shot can finish with zero launches. Adjacent `now` and cron criteria
 share their schedule group's **or** and conditions.
 
-Creation stays paused. Pause/Resume, exact Play replay, restarts and Run now preserve
+Creation stores a paused document. Explicit **Start automatically**, or the user's
+explicit request passed as `prepare.startOnCreation: true`, may continue its fresh
+acknowledgement through guarded first Play. Recovery only observes its original result.
+Pause/Resume, exact Play replay, restarts and Run now preserve
 the frozen one-shot instant and processed slot. A timing edit that keeps `now` retains
 that instant and its consumed-slot proof even when native calendars are replaced.
 Adding `now` to an armed mixed policy freezes a new one-shot at the edit plus one
@@ -534,13 +537,15 @@ that is still authorized; the bridge callback revalidates the same principal and
 never treats a device as a cookie. Any other principal is refused before a
 deletion permit or control hold exists, so a refusal is definitive, never uncertain.
 
-Unified agent preparation admits only creation of its own document and, when explicitly
-requested through `startOnCreation`, that fresh creation's first Play. A signed agent
+Agents may create their own unified schedule and request its first activation through
+`mission.prepare`. An explicit user request passed as `startOnCreation` authorizes
+only that fresh creation's first Play. A signed agent
 principal binds the actual owned author, original request and creation digest; live
 bridge verification and document CAS enforce that scope. Recovered acknowledgements
 only read the original result. Public HTTP controls retain their authenticated human
 principal. Pause, Stop, Resume, Run now, Check, configure, delete and another Play stay human-only.
-Never expose these controls as model tools beyond that bounded preparation path. Validate project/Location ownership,
+Never expose Pause, Stop, Resume, Run now, Check, configure, delete or another Play
+as model tools. Validate project/Location ownership,
 connection identity, inputs and frozen execution profiles at the existing boundary.
 Each control has `requestID` idempotency and `expectedRevision` CAS.
 A duplicate request must not start a second Job, passage or coordinator message.

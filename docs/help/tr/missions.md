@@ -10,11 +10,13 @@ Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak 
 
 **Görev oluştur**, oluşturana veya iptal edene kadar ağacın yerine formu gösterir. Oluşturma doğrulanınca görev seçilir; reddedilince form düzenlenebilir kalır.
 
-Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşmasındaki ajandan düzenleyicinin ölçütleri ve sonraki çalıştırmalara taşınan bağlamla ayrı, tek seferlik veya zamanlanmış bir Görev hazırlamasını isteyebilirsiniz; varsayılan olarak yeni bir koordinatör konuşması açılır. İlk otomatik başlatmaya yönelik açık istek, yalnızca bu Görev için yeni oluşturulan zamanlamanın ilk etkinleştirilmesine izin verir; oluşturma kurtarıldıktan sonra başlatma elle yapılır. Duraklatma, durdurma, sürdürme, şimdi çalıştırma, kontrol, yapılandırma ve silme panelde sizin yapacağınız işlemler olarak kalır.
+Alt ajan veya zamanlanmış çalıştırma dahil, projenin herhangi bir konuşmasındaki ajandan ayrı, tek seferlik veya zamanlanmış bir Görev hazırlamasını isteyin. Konuşması değişmez; varsayılan olarak yeni bir koordinatör konuşması oluşturulur. İlgili CodeNomad arka ucunu kullanılabilir tutun. Açıkça **Otomatik başlat** istemek yalnızca yeni Görevin ilk başlatılmasına izin verir; kurtarma, yeniden başlatmadan özgün sonucu okur. Duraklatma, durdurma, sürdürme, şimdi çalıştırma, kontrol, düzenleme ve silme panelde sizin işlemleriniz olarak kalır.
 
 ### Yapılandırma {#saved-briefs}
 
 **Yapılandırma**, kayıtlı hedefi, notları, rehberi, profilleri ve görev oturumlarını yükler; adı düzenlenebilir başlık olur. Alanları kontrol edin.
+
+Ajanlar kayıtlı yapılandırmaları okuyabilir ve seçtiğiniz değerleri ayrı bir Göreve kopyalayabilir.
 
 Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullanılabilir bir yapılandırma saklar; Görev oluşturmaz veya başlatmaz. Zamanlama ve otomatik başlatma ayrı seçilir. Dişli, Tercihler ve kitaplığı açar; yapılandırmayı silmek mevcut görevleri ve konuşmaları korur.
 

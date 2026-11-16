@@ -10,11 +10,13 @@ Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Ve
 
 **Mission erstellen** öffnet das Formular anstelle des Baums. Eine bestätigte Erstellung wählt die Mission aus; bei einer abgelehnten Erstellung bleibt das Formular bearbeitbar.
 
-Sie können einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder einen geplanten Lauf, bitten, eine separate einmalige oder geplante Mission mit den Kriterien des Editors und fortgeführtem Kontext vorzubereiten, standardmäßig mit einer neuen Koordinator-Unterhaltung. Ein ausdrücklicher Auftrag zum automatischen ersten Start erlaubt nur die erste Aktivierung des neu erstellten Zeitplans; nach Wiederherstellung der Erstellung bleibt der Start manuell. Pausieren, Stoppen, Fortsetzen, sofortiges Ausführen, Prüfen, Konfigurieren und Löschen bleiben Ihre Aktionen im Panel.
+Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder geplanten Lauf, eine separate einmalige oder geplante Mission vorzubereiten. Seine Unterhaltung bleibt unverändert; standardmäßig wird eine neue Koordinator-Unterhaltung erstellt. Halten Sie das zuständige CodeNomad-Backend verfügbar. Die ausdrückliche Anforderung **Automatisch starten** erlaubt nur den ersten Start dieser neuen Mission; eine Wiederherstellung liest das ursprüngliche Ergebnis ohne erneuten Start. Pausieren, Stoppen, Fortsetzen, sofortiges Ausführen, Prüfen, Bearbeiten und Löschen bleiben Ihre Aktionen im Panel.
 
 ### Konfiguration {#saved-briefs}
 
 **Konfiguration** lädt gespeichertes Ziel, Notizen, Playbook, Profile und Aufgabensitzungen. Der Name wird zum bearbeitbaren Titel. Prüfen Sie die Felder.
+
+Agenten können gespeicherte Konfigurationen lesen und Ihre gewählten Werte in eine separate Mission übernehmen.
 
 **Konfiguration speichern** unten neben Abbrechen und Erstellen speichert eine wiederverwendbare Konfiguration, ohne eine Mission zu erstellen oder zu starten. Zeitplanung und automatischer Start werden separat gewählt. Das Zahnrad öffnet die Einstellungen und die Bibliothek; das Entfernen einer Konfiguration erhält Missionen und Unterhaltungen.
 

@@ -10,11 +10,13 @@ Les connexions distantes utilisent le même formulaire et les mêmes commandes. 
 
 Choisissez **Créer une mission**. Le formulaire remplace l’arbre jusqu’à la création ou l’annulation. Une création confirmée sélectionne la Mission ; une création refusée laisse le formulaire modifiable.
 
-Vous pouvez demander à un agent dans toute conversation du projet, y compris un sous-agent ou un passage programmé, de préparer une Mission séparée, ponctuelle ou programmée, avec les critères de l’éditeur et le contexte suivi, dans une nouvelle conversation de coordination par défaut. Une demande explicite de premier démarrage automatique autorise uniquement la première activation de sa programmation nouvellement créée ; après récupération de la création, le démarrage reste manuel. Mettre en pause, arrêter, reprendre, exécuter maintenant, vérifier, configurer et supprimer restent vos actions dans le panneau.
+Demandez à un agent dans toute conversation du projet, y compris un sous-agent ou un passage programmé, de préparer une Mission séparée, ponctuelle ou programmée. Sa conversation reste inchangée ; une nouvelle coordination est créée par défaut. Gardez le backend CodeNomad propriétaire disponible. Demander explicitement **Démarrer automatiquement** autorise seulement le premier démarrage de cette nouvelle Mission ; la récupération lit le résultat d’origine sans redémarrer. Mettre en pause, arrêter, reprendre, lancer maintenant, vérifier, modifier et supprimer restent vos actions dans le panneau.
 
 ### Configuration {#saved-briefs}
 
 **Configuration** charge éventuellement un objectif, des notes, un scénario et des choix d’agents, de modèles et de sessions enregistrés. Son nom fournit le titre modifiable. Vérifiez les champs remplis avant de créer.
+
+Les agents peuvent lire les configurations enregistrées et copier les valeurs choisies dans une Mission séparée.
 
 **Enregistrer la configuration**, en bas à côté d’Annuler et Créer, nomme et conserve une configuration réutilisable. Cette action ne crée ni ne démarre de Mission. Programmation et **Démarrer automatiquement** se règlent séparément. L’engrenage des Missions ouvre les Préférences et la bibliothèque ; supprimer une configuration conserve les missions et conversations existantes.
 

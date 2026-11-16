@@ -10,11 +10,13 @@ Remote connections use the same form and controls. Prefer HTTPS to protect netwo
 
 Choose **Create mission**. The form replaces the tree until you create or cancel. A confirmed creation selects the Mission; a refused creation leaves the form editable.
 
-You can ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate one-time or scheduled Mission with the editor's criteria and carry-forward context, using a new coordinator conversation by default. An explicit request for automatic first start authorizes only the first activation of its newly created schedule; after creation recovery, starting remains manual. Pausing, stopping, resuming, running now, checking, configuring and deleting remain your actions in the panel.
+Ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate one-time or scheduled Mission. Its conversation stays unchanged; a new coordinator is the default. Keep the owning CodeNomad backend available. Explicitly requesting **Start automatically** authorizes only that new Mission's first start; recovery reads the original result without starting again. Pausing, stopping, resuming, running now, checking, editing and deleting remain your actions in the panel.
 
 ### Configuration {#saved-briefs}
 
 **Configuration** optionally loads a saved objective, notes, playbook, agents/models and task-session choices. Its name supplies the editable title. Check the filled fields before creating.
+
+Agents can read saved configurations and copy your chosen values into a separate Mission.
 
 **Save configuration**, in the footer beside Cancel and Create, names and saves a reusable configuration. It does not create or start a Mission. Scheduling and **Start automatically** are separate choices. The Missions gear opens Preferences, including the saved-configuration library; removing a configuration keeps existing missions and conversations.
 
