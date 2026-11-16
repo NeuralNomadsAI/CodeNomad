@@ -1,12 +1,31 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { createAuthRecovery } from "./auth-recovery"
+import { authenticatedFetch, authRecovery, createAuthRecovery } from "./auth-recovery"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>(done => { resolve = done })
   return { promise, resolve }
 }
+
+test("validation stays local and authentication still probes globally without replaying the action", async () => {
+  const original = globalThis.fetch, requests: string[] = []
+  let status = 400
+  globalThis.fetch = async input => {
+    requests.push(String(input))
+    return String(input).endsWith("/api/auth/status") ? Response.json({ authenticated: false }) : Response.json({}, { status })
+  }
+  try {
+    await authenticatedFetch("/api/workspaces/fixture/missions/recurrence/schedule/control", { method: "POST" })
+    assert.equal(requests.length, 1)
+    status = 401
+    await authenticatedFetch("/api/workspaces/fixture/missions/recurrence/schedule/control", { method: "POST" })
+    await authRecovery.check()
+    assert.equal(authRecovery.required(), true)
+    assert.deepEqual(requests, ["/api/workspaces/fixture/missions/recurrence/schedule/control",
+      "/api/workspaces/fixture/missions/recurrence/schedule/control", "/api/auth/status"])
+  } finally { globalThis.fetch = original }
+})
 
 test("coalesces status checks and only explicit unauthenticated status opens recovery", async () => {
   let calls = 0

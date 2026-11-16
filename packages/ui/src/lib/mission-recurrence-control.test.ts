@@ -36,8 +36,8 @@ test("only proven no-effect refusals release a control; uncertain failures stay 
   const error = (status: number, code?: string) => new HttpResponseError("refused", status, null, code)
   assert.equal(recurrenceControlRefusalKey(error(409, "recurrence-revision-conflict")), "missions.recurrence.refused.stale")
   assert.equal(recurrenceControlRefusalKey(error(409, "recurrence-control-conflict")), "missions.recurrence.refused.conflict")
-  assert.equal(recurrenceControlRefusalKey(error(401)), "missions.recurrence.refused.notAdmitted", "refused before any permit")
-  assert.equal(recurrenceControlRefusalKey(error(400)), "missions.recurrence.refused.notAdmitted")
+  assert.equal(recurrenceControlRefusalKey(error(401)), "missions.recurrence.refused.authentication", "refused before any permit")
+  assert.equal(recurrenceControlRefusalKey(error(400)), "missions.recurrence.refused.validation")
   // Refused before dispatch (preparation failure or another request's permit): nothing was sent.
   assert.equal(recurrenceControlRefusalKey(error(503, "recurrence-not-dispatched")), "missions.recurrence.refused.notSent")
   assert.equal(recurrenceControlRefusalKey(error(409, "recurrence-not-dispatched")), "missions.recurrence.refused.notSent")

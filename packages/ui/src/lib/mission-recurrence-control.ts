@@ -53,7 +53,8 @@ export function recurrenceControlRefusalKey(error: unknown): string | undefined 
   if (error.status === 409 && error.code === "recurrence-revision-conflict") return refusalKeys["revision-conflict"]
   if (error.status === 409 && error.code === "recurrence-control-conflict") return refusalKeys["control-conflict"]
   if ((error.status === 409 || error.status === 503) && error.code === recurrenceNotDispatchedCode) return "missions.recurrence.refused.notSent"
-  if (!error.code && (error.status === 400 || error.status === 401)) return "missions.recurrence.refused.notAdmitted"
+  if (!error.code && error.status === 400) return "missions.recurrence.refused.validation"
+  if (!error.code && error.status === 401) return "missions.recurrence.refused.authentication"
   return undefined
 }
 /** Message key of an exact status read proving the request never applied and never can. */

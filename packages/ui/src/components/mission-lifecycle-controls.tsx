@@ -152,13 +152,20 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
         && original.requestId === next.requestId && original.action === next.action && original.expectedRevision === next.expectedRevision)
   }
   const resend = () => retryable() ? act((props.mission.panelControl ?? props.mission.control)?.action ?? retry()?.input.action ?? "start", true) : Promise.resolve()
+  const pendingLabel = () => {
+    if (refreshing()) return "missions.control.run.checking"
+    const input = retry()?.input
+    return input?.action === "pause" && !input.graceful ? "missions.control.run.pending.interrupt"
+      : `missions.control.run.pending.${input?.action ?? "start"}`
+  }
   const feedback = <>
-    <Show when={busy()}><small role="status">{t("missions.control.mutation.pending")}</small></Show>
+    <Show when={busy()}><small role="status">{t(pendingLabel())}</small></Show>
     <Show when={!busy() && !unresolved() && pausing()}><small role="status">{t("missions.control.run.pausing")}</small></Show>
     <Show when={!busy() && !unresolved() && partialInterrupt(props.mission)}>
       <small role="status">{t("missions.control.run.partialInterrupt")}</small>
     </Show>
-    <Show when={!busy() && (unresolved() || (full() && !terminal()))}><small role="alert">{t("missions.control.run.error")}</small></Show>
+    <Show when={!busy() && unresolved()}><small role="alert">{t("missions.control.run.error")}</small></Show>
+    <Show when={!busy() && !unresolved() && full() && !terminal()}><small role="alert">{t("missions.control.run.capacity")}</small></Show>
     <Show when={!busy() && rejection()}>{value =>
       <small role="alert">{t(value().reason === "rejected" ? `missions.control.run.rejected.${value().action}` : "missions.control.run.notSent.stop")}</small>}
     </Show>
