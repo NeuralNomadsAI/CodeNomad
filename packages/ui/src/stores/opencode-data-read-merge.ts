@@ -45,10 +45,47 @@ function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, s
   return replaced ? { ...(row as object), content: parts } as SessionMessageInfo : row
 }
 
+/** Text-bearing parts without part identity: a stream appends to them and a
+ * full-text ending finalizes them. A fetched copy strictly shorter than the
+ * live text and prefixed by it is the mid-stream state that ending already
+ * superseded, never a newer authoritative value. */
+function isSupersededStreamText(live: unknown, fetched: unknown): boolean {
+  if (typeof live !== "string" || typeof fetched !== "string" || fetched.length >= live.length) return false
+  return live.startsWith(fetched)
+}
+
+/** A row the stream completed (`time.completed` stamped) keeps its ended text
+ * and reasoning when the fetched page still holds their mid-stream prefixes;
+ * every other field of the fetched row stays authoritative. */
+function mergeEndedRow(row: SessionMessageInfo, fetched: SessionMessageInfo): SessionMessageInfo {
+  const completed = (row as unknown as { time?: { completed?: unknown } }).time?.completed
+  const content = (row as ContentRow).content
+  const fetchedContent = (fetched as ContentRow).content
+  if (completed === undefined || !Array.isArray(content) || !Array.isArray(fetchedContent)) return fetched
+  const ended: unknown[] = content.filter((part) => {
+    const type = (part as { type?: unknown } | null)?.type
+    return type === "text" || type === "reasoning"
+  })
+  let cursor = 0
+  let replaced = false
+  const mergedContent = fetchedContent.map((part) => {
+    const type = (part as { type?: unknown } | null)?.type
+    if (type !== "text" && type !== "reasoning") return part
+    const live = ended[cursor]
+    cursor += 1
+    if (live === undefined || !isSupersededStreamText((live as { text?: unknown }).text, (part as { text?: unknown }).text)) return part
+    replaced = true
+    return live
+  })
+  if (!replaced || cursor !== ended.length) return fetched
+  return { ...(fetched as object), content: mergedContent } as SessionMessageInfo
+}
+
 /** Merges a fetched page (newest first) with the live rows: the page is the
  * base, a live row that is new or changed since `since` keeps its live version
- * (with unchanged identified parts from the page), and live rows created
- * during the fetch and absent from the page ride along newest-first. */
+ * (with unchanged identified parts from the page), a completed row keeps the
+ * stream-ended text the page would rewind, and live rows created during the
+ * fetch and absent from the page ride along newest-first. */
 export function mergePageWithSnapshot(
   live: readonly SessionMessageInfo[],
   page: readonly SessionMessageInfo[],
@@ -60,7 +97,8 @@ export function mergePageWithSnapshot(
     const row = liveById.get(message.id)
     if (row === undefined) return message
     const snapshot = since.get(row.id)
-    return snapshot !== serializeRowForDiff(row) ? mergeChangedRow(row, message, snapshot) : message
+    if (snapshot === serializeRowForDiff(row)) return mergeEndedRow(row, message)
+    return mergeChangedRow(row, message, snapshot)
   })
   const created = live.filter((message) => !pageIds.has(message.id) && !since.has(message.id)).reverse()
   return [...created, ...merged]
