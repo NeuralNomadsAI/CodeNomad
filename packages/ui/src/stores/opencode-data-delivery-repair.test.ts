@@ -69,4 +69,41 @@ describe("OpenCode data delivery repair read", () => {
       f.cleanup()
     }
   })
+
+  it("keeps a streaming reply's assembled deltas when the repair read's page holds the fragment's empty persistence", async () => {
+    const instanceId = "opencode-data-delivery-repair-streaming"
+    let reads = 0
+    const f = readFixture(instanceId, async () => {
+      reads += 1
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      // The native persists an empty part until the fragment's full-text
+      // ending commits, so a page fetched while its deltas are paused holds
+      // the fragment with no text even though the stream already delivered it.
+      return {
+        data: [
+          { id: "msg_prompt", type: "user", text: "follow-up", time: { created: 250 } },
+          assistantRow("live", "", 100),
+        ],
+        cursor: {},
+      }
+    })
+    try {
+      // The reply is mid-stream with its deltas paused; the live row holds the
+      // text the stream assembled so far and no completion stamp.
+      const data = armLive(instanceId, fullText)
+      emitEvent(instanceId, "session.inbox.enqueued", {
+        inboxID: "msg_prompt",
+        item: { type: "user", delivery: "steer", payload: { text: "follow-up" } },
+      })
+      // Any later row makes the delivered prompt row not the reducer's last,
+      // owing the authoritative page read.
+      emitEvent(instanceId, "session.synthetic", { text: "note", description: "later row" })
+      emitEvent(instanceId, "session.inbox.delivered", { inboxID: "msg_prompt" })
+
+      await waitForQuietReads(() => reads)
+      assert.equal(textOf(data, "live"), fullText, "the repair read's empty persistence rewound the streamed text")
+    } finally {
+      f.cleanup()
+    }
+  })
 })

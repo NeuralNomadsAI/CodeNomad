@@ -1,4 +1,7 @@
 import type { SessionMessageInfo } from "@opencode/client"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("session")
 
 /** A session's live rows, serialized when a read starts. */
 export type OpenCodeRowSnapshot = Map<string, string>
@@ -45,24 +48,26 @@ function mergeChangedRow(row: SessionMessageInfo, fetched: SessionMessageInfo, s
   return replaced ? { ...(row as object), content: parts } as SessionMessageInfo : row
 }
 
-/** Text-bearing parts without part identity: a stream appends to them and a
- * full-text ending finalizes them. A fetched copy strictly shorter than the
- * live text and prefixed by it is the mid-stream state that ending already
- * superseded, never a newer authoritative value. */
+/** Text-bearing parts without part identity: a stream only ever appends to
+ * them, and the native persists either the empty part (before its full-text
+ * ending commits) or the ended value. A fetched copy therefore cannot be a
+ * legitimately newer value when it is strictly shorter than the live text and
+ * prefixed by it — that shape is the stream state the live row already
+ * superseded, whatever route the page took. */
 function isSupersededStreamText(live: unknown, fetched: unknown): boolean {
   if (typeof live !== "string" || typeof fetched !== "string" || fetched.length >= live.length) return false
   return live.startsWith(fetched)
 }
 
-/** A row the stream completed (`time.completed` stamped) keeps its ended text
- * and reasoning when the fetched page still holds their mid-stream prefixes;
- * every other field of the fetched row stays authoritative. */
-function mergeEndedRow(row: SessionMessageInfo, fetched: SessionMessageInfo): SessionMessageInfo {
-  const completed = (row as unknown as { time?: { completed?: unknown } }).time?.completed
+/** A row keeps its streamed text and reasoning when the fetched page still
+ * holds their superseded prefixes; every other field of the fetched row stays
+ * authoritative. Text part shapes that do not pair up keep full page
+ * authority. */
+function mergeStreamTextRow(row: SessionMessageInfo, fetched: SessionMessageInfo): SessionMessageInfo {
   const content = (row as ContentRow).content
   const fetchedContent = (fetched as ContentRow).content
-  if (completed === undefined || !Array.isArray(content) || !Array.isArray(fetchedContent)) return fetched
-  const ended: unknown[] = content.filter((part) => {
+  if (!Array.isArray(content) || !Array.isArray(fetchedContent)) return fetched
+  const streamed: unknown[] = content.filter((part) => {
     const type = (part as { type?: unknown } | null)?.type
     return type === "text" || type === "reasoning"
   })
@@ -71,21 +76,22 @@ function mergeEndedRow(row: SessionMessageInfo, fetched: SessionMessageInfo): Se
   const mergedContent = fetchedContent.map((part) => {
     const type = (part as { type?: unknown } | null)?.type
     if (type !== "text" && type !== "reasoning") return part
-    const live = ended[cursor]
+    const live = streamed[cursor]
     cursor += 1
     if (live === undefined || !isSupersededStreamText((live as { text?: unknown }).text, (part as { text?: unknown }).text)) return part
     replaced = true
     return live
   })
-  if (!replaced || cursor !== ended.length) return fetched
+  if (!replaced || cursor !== streamed.length) return fetched
+  log.warn("Kept a message's streamed text over a fetched page holding its superseded prefix", { messageId: row.id })
   return { ...(fetched as object), content: mergedContent } as SessionMessageInfo
 }
 
 /** Merges a fetched page (newest first) with the live rows: the page is the
  * base, a live row that is new or changed since `since` keeps its live version
- * (with unchanged identified parts from the page), a completed row keeps the
- * stream-ended text the page would rewind, and live rows created during the
- * fetch and absent from the page ride along newest-first. */
+ * (with unchanged identified parts from the page), a row keeps the streamed
+ * text the page would rewind, and live rows created during the fetch and
+ * absent from the page ride along newest-first. */
 export function mergePageWithSnapshot(
   live: readonly SessionMessageInfo[],
   page: readonly SessionMessageInfo[],
@@ -97,7 +103,7 @@ export function mergePageWithSnapshot(
     const row = liveById.get(message.id)
     if (row === undefined) return message
     const snapshot = since.get(row.id)
-    if (snapshot === serializeRowForDiff(row)) return mergeEndedRow(row, message)
+    if (snapshot === serializeRowForDiff(row)) return mergeStreamTextRow(row, message)
     return mergeChangedRow(row, message, snapshot)
   })
   const created = live.filter((message) => !pageIds.has(message.id) && !since.has(message.id)).reverse()
