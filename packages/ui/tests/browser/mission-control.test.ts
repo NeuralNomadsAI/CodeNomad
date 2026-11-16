@@ -591,9 +591,10 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
     read.resolve()
     await waitForDepthInfo(form, "OpenCode effective depth: 2")
     await waitForDepthReady(form)
+    const saving = await fixtureText(page, "missions.depth.saving")
     await menu.selectOption("3")
     await writing.promise
-    await controls.getByRole("status").filter({ hasText: "Saving…" }).waitFor({ state: "attached" })
+    await controls.getByRole("status").filter({ hasText: saving }).waitFor({ state: "attached" })
     assert.equal(await locked(), true, "a write locks the menu too")
     assert.equal(await menu.evaluate(element => (element as HTMLSelectElement).disabled), false, "and keeps it focusable")
     // Choices made during the write (a native closed select's arrow keys fire one change
@@ -610,7 +611,7 @@ test("a depth read only locks the menu; only a write announces Saving", async ()
     assert.deepEqual(writes, [3, 5])
     assert.equal(await menu.inputValue(), "5")
     assert.equal(await menu.evaluate(element => element === document.activeElement), true, "focus stays on the menu")
-    await page.waitForFunction(() => !document.querySelector(".mission-depth [role=status]")?.textContent?.includes("Saving…"))
+    await page.waitForFunction(text => !document.querySelector(".mission-depth [role=status]")?.textContent?.includes(text), saving)
   } finally { read.resolve(); write.resolve(); await page.close() }
 })
 
