@@ -150,9 +150,7 @@ test("command details, state changes and distinct arguments survive a narrow LTR
     await page.goto(fixture.url)
     const row = page.locator('[data-shell-id="sh_one"]'), command = row.locator(".status-process-command")
     await row.waitFor()
-    assert.equal(await command.locator("strong").textContent(), '"C:\\Build Tools\\watch.ps1"')
-    assert.match(await command.textContent() ?? "", /3001/)
-    assert.match(await page.locator('[data-shell-id="sh_two"] .status-process-command').textContent() ?? "", /3002/)
+    assert.equal(await command.locator("strong").textContent(), "watch.ps1")
     for (const dir of ["ltr", "rtl"]) {
       await page.locator("aside").evaluate((el, dir) => { el.style.width = "220px"; el.dir = dir }, dir)
       for (const current of await page.locator(".status-process-card").all()) {
@@ -167,6 +165,29 @@ test("command details, state changes and distinct arguments survive a narrow LTR
         assert.equal(geometry.overflow, false)
         assert.equal(geometry.siblings && geometry.separate && geometry.sameLine, true)
         assert.ok(geometry.target >= 24)
+        const field = (await current.locator(".status-process-command").boundingBox())!
+        const trash = (await current.locator(".window-icon-button").boundingBox())!
+        assert.ok(dir === "ltr" ? field.x + field.width <= trash.x : trash.x + trash.width <= field.x, `trash follows logical order in ${dir}`)
+      }
+      for (const [id, port] of [["sh_one", "3001"], ["sh_two", "3002"]]) {
+        const visible = await page.locator(`[data-shell-id="${id}"] .status-process-label`).evaluate((el, port) => {
+          const nodes = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+          for (let node = nodes.nextNode(); node; node = nodes.nextNode()) {
+            const start = node.textContent?.indexOf(port) ?? -1
+            if (start < 0) continue
+            const range = document.createRange()
+            range.setStart(node, start); range.setEnd(node, start + port.length)
+            const text = range.getBoundingClientRect()
+            for (let parent: Element | null = node.parentElement; parent; parent = parent.parentElement) {
+              if (getComputedStyle(parent).overflowX === "visible") continue
+              const clip = parent.getBoundingClientRect()
+              if (text.left < clip.left || text.right > clip.right || text.top < clip.top || text.bottom > clip.bottom) return false
+            }
+            return text.width > 0
+          }
+          return false
+        }, port)
+        assert.equal(visible, true, `${port} is visibly painted, not merely in textContent (${dir})`)
       }
     }
     await command.hover()
@@ -247,10 +268,17 @@ test("trash confirms the right action, cancel is initially focused, and failures
     await page.keyboard.press("Enter")
     await dialog.waitFor({ state: "hidden" })
     assert.equal(deletes, 0)
+    await page.waitForFunction(() => document.activeElement === document.querySelector(".status-process-card > .window-icon-button"))
+    assert.equal(await row.locator(".window-icon-button").evaluate(el => el === document.activeElement), true, "cancel returns focus to this trash")
     await row.getByRole("button", { name: "Stop and remove", exact: true }).focus()
     await page.keyboard.press("Space")
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    await page.waitForFunction(() => document.activeElement === document.querySelector(".status-process-card > .window-icon-button"))
+    assert.equal(await row.locator(".window-icon-button").evaluate(el => el === document.activeElement), true, "keyboard cancel restores this trash")
+    await page.keyboard.press("Space")
     await dialog.getByRole("button", { name: "Stop and remove", exact: true }).click()
-    await page.waitForFunction(() => !document.querySelector(".status-process-card > button")?.hasAttribute("disabled"))
+    await page.waitForFunction(() => document.querySelector(".status-process-card > .window-icon-button")?.getAttribute("aria-disabled") !== "true")
     assert.equal(deletes, 1)
     assert.equal(await row.count(), 1, "ownership failure preserves the entry")
     assert.equal(outputReads, 0)
@@ -272,11 +300,100 @@ test("trash confirms the right action, cancel is initially focused, and failures
     assert.equal(await remove.isDisabled(), true, "pending removal disables the trash")
     releaseDelete!()
     await row.waitFor({ state: "detached" })
+    assert.equal(await page.locator('[data-status-section-trigger="background-processes"]').evaluate(el => el === document.activeElement), true, "last removal focuses the section")
     assert.ok(listReads > readsBefore, "successful removal rereads inventory")
     assert.equal(deletes, 2)
     assert.equal(outputReads, 0, "trash never opens or reads output")
     assert.equal(await page.getByRole("dialog").count(), 0)
   } finally { releaseDelete?.(); await page.close() }
+})
+
+test("a delayed passive inventory refresh retains the focused trash", async () => {
+  const page = await fixture.browser.newPage()
+  let hold = false, release: (() => void) | undefined
+  try {
+    await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+    await page.route("**/api/**", async route => {
+      if (!new URL(route.request().url()).pathname.endsWith("/background-shells")) return route.fulfill({ json: {} })
+      if (hold) await new Promise<void>(resolve => { release = resolve })
+      return route.fulfill({ json: { data: [{ id: "sh_focus", command: "node watch.js --port 3001", status: "running",
+        cwd: "/repo", shell: "bash", file: "/tmp/out", metadata: {}, time: { started: 1 } }] } })
+    })
+    await page.goto(fixture.url)
+    const trash = page.locator(".status-process-card > .window-icon-button")
+    await trash.focus()
+    hold = true
+    await Promise.all([
+      page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/background-shells")),
+      page.evaluate(() => (window as any).fixture.event("shell.exited")),
+    ])
+    await page.waitForFunction(() => document.querySelector(".status-process-card > .window-icon-button")?.getAttribute("aria-disabled") === "true"
+      || document.querySelector(".status-process-card > .window-icon-button")?.hasAttribute("disabled"))
+    assert.equal(await trash.evaluate(el => el === document.activeElement), true, "refresh keeps focus while the inventory is pending")
+    await page.keyboard.press("Enter")
+    assert.equal(await page.getByRole("alertdialog").count(), 0, "aria-disabled retains focus but blocks activation")
+    release!()
+    await page.waitForFunction(() => document.querySelector(".status-process-card > .window-icon-button")?.getAttribute("aria-disabled") !== "true"
+      && !document.querySelector(".status-process-card > .window-icon-button")?.hasAttribute("disabled"))
+    assert.equal(await trash.evaluate(el => el === document.activeElement), true)
+  } finally { release?.(); await page.close() }
+})
+
+test("removing a focused shell hands focus to its neighboring trash", async () => {
+  const page = await fixture.browser.newPage()
+  let ids = ["sh_first", "sh_next"]
+  try {
+    await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+    await page.route("**/api/**", route => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith("/background-shells")) return route.fulfill({ json: { data: ids.map(id => ({
+        id, command: "node watch.js --port 3001", status: "exited", exit: 0, cwd: "/repo", shell: "bash",
+        file: "/tmp/out", metadata: {}, time: { started: 1 },
+      })) } })
+      if (route.request().method() === "DELETE") {
+        ids = ids.filter(id => !url.pathname.endsWith("/" + id))
+        return route.fulfill({ status: 204 })
+      }
+      return route.fulfill({ json: {} })
+    })
+    await page.goto(fixture.url)
+    await page.locator('[data-shell-id="sh_first"] > .window-icon-button').focus()
+    await page.keyboard.press("Enter")
+    await page.getByRole("alertdialog").getByRole("button", { name: "Remove", exact: true }).click()
+    await page.locator('[data-shell-id="sh_first"]').waitFor({ state: "detached" })
+    await page.waitForFunction(() => document.activeElement === document.querySelector('[data-shell-id="sh_next"] > .window-icon-button'))
+  } finally { await page.close() }
+})
+
+test("keyboard scroll keys reveal every long detail while focus stays on the command", async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 600, height: 700 } })
+  try {
+    await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+    await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/background-shells")
+      ? { data: [{ id: "sh_long", command: "node script.js " + "argument ".repeat(1800), status: "exited", exit: 0,
+        cwd: "/repo", shell: "bash", pid: 42, file: "/tmp/out", metadata: {}, time: { started: 1, completed: 2 } }] } : {} }))
+    await page.goto(fixture.url)
+    const command = page.locator(".status-process-command"), tooltip = page.getByRole("tooltip")
+    await command.focus()
+    await tooltip.waitFor()
+    assert.equal(await tooltip.evaluate(el => el.scrollHeight > el.clientHeight), true)
+    await page.keyboard.press("PageDown")
+    assert.ok(await tooltip.evaluate(el => el.scrollTop) > 0, "PageDown scrolls the open details")
+    assert.equal(await command.evaluate(el => el === document.activeElement), true)
+    await page.keyboard.press("End")
+    const end = await tooltip.evaluate(el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight,
+      last: el.lastElementChild!.getBoundingClientRect().bottom, bottom: el.getBoundingClientRect().bottom }))
+    assert.ok(Math.abs(end.top - end.max) <= 1)
+    assert.ok(end.last <= end.bottom, "the final completion date is visible")
+    await page.keyboard.press("ArrowUp")
+    assert.ok(await tooltip.evaluate(el => el.scrollTop) < end.top)
+    await page.keyboard.press("Home")
+    assert.equal(await tooltip.evaluate(el => el.scrollTop), 0)
+    await page.keyboard.press("Escape")
+    await tooltip.waitFor({ state: "hidden" })
+    await page.keyboard.press("Tab")
+    assert.equal(await page.locator(".status-process-card > .window-icon-button").evaluate(el => el === document.activeElement), true)
+  } finally { await page.close() }
 })
 
 test("Hebrew labels keep long Windows, WSL and POSIX commands on one 220px row", async () => {
@@ -297,7 +414,7 @@ test("Hebrew labels keep long Windows, WSL and POSIX commands on one 220px row",
       const geometry = await row.evaluate(el => {
         const label = el.querySelector(".status-process-label")!
         return { height: el.getBoundingClientRect().height, overflow: el.scrollWidth > el.clientWidth,
-          clipped: label.scrollWidth > label.clientWidth, direction: getComputedStyle(label).direction,
+          clipped: [...label.children].some(child => child.scrollWidth > child.clientWidth), direction: getComputedStyle(label).direction,
           trashLabel: el.querySelector(".window-icon-button")?.getAttribute("aria-label") }
       })
       assert.ok(geometry.height <= 30)

@@ -146,11 +146,19 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     )
   }
 
-  const removeShell = async (shellId: string, command: string, running: boolean) => {
+  const removeShell = async (shellId: string, command: string, running: boolean, source: HTMLButtonElement) => {
     const instanceId = props.instanceId
     const location = { ...shellLocation() }
     const key = JSON.stringify([instanceId, location, shellId])
     if (removingShells().has(key)) return
+    const row = source.closest(".status-process-card")!
+    const next = row.nextElementSibling?.querySelector<HTMLButtonElement>(".window-icon-button")
+      ?? row.previousElementSibling?.querySelector<HTMLButtonElement>(".window-icon-button")
+    const section = row.closest(".right-panel-section-draggable")?.querySelector<HTMLButtonElement>("[data-status-section-trigger]")
+    const returnFocus = () => {
+      const target = [source, next, section].find(element => element?.isConnected)
+      target?.focus({ preventScroll: true })
+    }
     setRemovingShells(current => new Set([...current, key]))
     try {
       const action = running ? "stopRemove" : "remove"
@@ -159,6 +167,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         {
           title: props.t(`instanceShell.backgroundProcesses.${action}.title`),
           confirmLabel: props.t(`instanceShell.backgroundProcesses.actions.${action}`),
+          returnFocus,
         },
       )
       if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
@@ -166,6 +175,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       }
     } finally {
       setRemovingShells(current => { const next = new Set(current); next.delete(key); return next })
+      if (!source.isConnected && document.activeElement === document.body) returnFocus()
     }
   }
 
@@ -190,7 +200,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
                   <BackgroundShellRow shell={shell()}
                     removing={shellState().loading || removingShells().has(JSON.stringify([props.instanceId, shellLocation(), id]))}
                     onOutput={() => setOutputShell({ shell: shell(), location: { ...shellLocation() }, instanceId: props.instanceId })}
-                    onRemove={() => void removeShell(id, shell().command, shell().status === "running")} />
+                    onRemove={source => void removeShell(id, shell().command, shell().status === "running", source)} />
                 )
               }}
             </For>

@@ -24,7 +24,7 @@ function commandLabel(command: string, depth: number): ShellCommandLabel | null 
   const rest = (index: number) => command.slice(tokens[index]?.index ?? command.length).trim()
   const plain = (index: number): ShellCommandLabel | null => {
     if (!tokens[index] || /^[\w]+=/u.test(value(index))) return null
-    return { program: tokens[index][0], args: rest(index + 1) }
+    return { program: value(index).split(/[\\/]/).pop()!, args: rest(index + 1) }
   }
   if (executable === "cmd") {
     return value(1).toLowerCase() === "/c" && !rest(2).startsWith('"') ? commandLabel(rest(2), depth + 1) : null

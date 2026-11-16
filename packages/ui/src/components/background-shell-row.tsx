@@ -10,7 +10,7 @@ interface BackgroundShellRowProps {
   shell: ShellInfo
   removing: boolean
   onOutput: () => void
-  onRemove: () => void
+  onRemove: (button: HTMLButtonElement) => void
 }
 
 export function BackgroundShellRow(props: BackgroundShellRowProps) {
@@ -31,6 +31,15 @@ export function BackgroundShellRow(props: BackgroundShellRowProps) {
   const removeLabel = () => t(`instanceShell.backgroundProcesses.actions.${state() === "running" ? "stopRemove" : "remove"}`)
   const close = () => { setPinned(false); setOpen(false) }
   const handlers = createLongPressHandlers({ onClick: () => { close(); props.onOutput() }, onLongPress: () => setPinned(true) })
+  const onKeyDown = (event: KeyboardEvent) => {
+    handlers.onKeyDown(event)
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || (!open() && !pinned()) || !content) return
+    const distance = { ArrowDown: 40, ArrowUp: -40, PageDown: content.clientHeight * .9,
+      PageUp: -content.clientHeight * .9, Home: -content.scrollHeight, End: content.scrollHeight }[event.key]
+    if (distance === undefined) return
+    event.preventDefault()
+    content.scrollTop += distance
+  }
   const date = (value: number) => new Date(value).toLocaleString(locale(), {
     year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
   })
@@ -59,7 +68,7 @@ export function BackgroundShellRow(props: BackgroundShellRowProps) {
           }}
           onPointerUp={handlers.onPointerUp} onPointerCancel={handlers.onPointerCancel}
           onPointerLeave={handlers.onPointerLeave} onTouchEnd={handlers.onTouchEnd}
-          onContextMenu={handlers.onContextMenu} onKeyDown={handlers.onKeyDown}
+          onContextMenu={handlers.onContextMenu} onKeyDown={onKeyDown}
         >
           <span class="status-process-state" data-state={state()} aria-hidden="true">
             <Show when={state() !== "running"} fallback={<Circle fill="currentColor" />}>
@@ -69,8 +78,10 @@ export function BackgroundShellRow(props: BackgroundShellRowProps) {
             </Show>
           </span>
           <span class="status-process-label" dir="ltr">
-            <Show when={label()} fallback={props.shell.command}>
-              {(value) => <><strong>{value().program}</strong>{value().args && ` ${value().args}`}</>}
+            <Show when={label()} fallback={<span class="min-w-0 truncate">{props.shell.command}</span>}>
+              {(value) => <><strong>{value().program}</strong><Show when={value().args}>
+                <span class="status-process-args">{value().args}</span>
+              </Show></>}
             </Show>
           </span>
         </Tooltip.Trigger>
@@ -88,7 +99,7 @@ export function BackgroundShellRow(props: BackgroundShellRowProps) {
         </Tooltip.Portal>
       </Tooltip>
       <button type="button" class="window-icon-button" title={removeLabel()} aria-label={removeLabel()}
-        disabled={props.removing} onClick={props.onRemove}>
+        aria-disabled={props.removing} onClick={event => { if (!props.removing) props.onRemove(event.currentTarget) }}>
         <Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </article>

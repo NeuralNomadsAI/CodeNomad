@@ -21,12 +21,18 @@
 }
 
 .status-process-label {
-  @apply min-w-0 truncate;
+  @apply flex min-w-0 flex-1 items-center gap-1 overflow-hidden whitespace-nowrap;
   unicode-bidi: isolate;
 }
 
 .status-process-label strong {
+  @apply min-w-0 truncate;
   font-weight: 600;
+}
+
+.status-process-args {
+  @apply shrink-0 truncate;
+  max-width: calc(100% - 1ch);
 }
 
 .status-process-state {
