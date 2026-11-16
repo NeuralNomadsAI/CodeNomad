@@ -8,6 +8,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { panelMissions } from "./mission-content-fixture"
 import { missionMenuItem, missionToolbar } from "./mission-actions"
+import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 
 // "Request an update" sends an application-authored native prompt: its admission
 // reads the authoritative full snapshot, never the panel's hints.
@@ -77,8 +78,9 @@ test("project damage the hints have not seen refuses the coordinator request: no
     await page.locator("section.mission-detail").waitFor({ state: "attached" })
     await (await missionMenuItem(page, "request")).click()
     // The refusal is announced (visually hidden) and joins the primary button's tooltip.
-    await page.locator(".mission-briefing-feedback").getByText("No prompt was sent", { exact: false }).waitFor({ state: "attached" })
-    assert.match(await missionToolbar(page).locator("button").first().getAttribute("title") ?? "", / — .*No prompt was sent/)
+    const error = en["missions.briefing.request.error"]
+    await page.locator(".mission-briefing-feedback").getByRole("alert").getByText(error, { exact: true }).waitFor({ state: "attached" })
+    assert.ok((await missionToolbar(page).locator("button").first().getAttribute("title") ?? "").endsWith(` — ${error}`))
     assert.deepEqual(reads, [`/api/workspaces/fixture/missions/${mission.id}/admission`], "admission reads the full snapshot only")
     assert.deepEqual(writes.filter(path => path.endsWith("/prompt")), [], "no prompt reached the coordinator")
   } finally { await page.close(); await app.close() }
