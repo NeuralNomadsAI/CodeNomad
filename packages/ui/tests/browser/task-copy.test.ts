@@ -127,6 +127,20 @@ test("a background subagent's header stays running until the child session settl
     const match = /^(\d+)m (\d+)s$/.exec(text)
     return Boolean(match && Number(match[1]) * 60 + Number(match[2]) > start)
   }, afterReturn, { timeout: 5_000 })
+  // A full browser restart resumes the same accumulated timer: the delegation instant and
+  // the reports are daemon-persisted message data, rebuilt by the cold store's page read.
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await page.waitForFunction(() => Boolean((window as any).fixture))
+  await parent.waitFor()
+  assert.equal(await parent.getAttribute("data-status"), "running", "a cold start still shows the child running")
+  assert.equal(await duration.getAttribute("data-live"), "true")
+  const afterReload = await durationSeconds()
+  assert.ok(Number.isFinite(afterReload) && afterReload >= beforeLeave, `the restart resumes the persisted delegation instant (${afterReload}s >= ${beforeLeave}s)`)
+  await page.waitForFunction(start => {
+    const text = document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .part-duration')?.textContent ?? ""
+    const match = /^(\d+)m (\d+)s$/.exec(text)
+    return Boolean(match && Number(match[1]) * 60 + Number(match[2]) > start)
+  }, afterReload, { timeout: 5_000 })
   // The child's first termination is what marks the card completed.
   await page.evaluate(() => (window as any).fixture.report("completed", "Final answer: 42"))
   await page.waitForFunction(() => document.querySelector('.tool-call[data-part-id="parent-task"] > .tool-call-header .tool-call-header-status')?.getAttribute("data-status") === "completed")

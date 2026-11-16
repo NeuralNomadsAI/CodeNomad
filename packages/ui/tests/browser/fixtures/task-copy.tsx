@@ -61,8 +61,14 @@ if (scenario) {
     // A background launch only acknowledges; the child reports through hidden synthetic messages.
     history[childId] = [toolMessage(childId, 0)]
     const launch = history[parentId][0].content[0]
-    // Realistic epochs: the header's live duration must render and keep counting from the delegation.
-    const launchTime = Date.now() - 65_000
+    // Realistic epochs: the header's live duration must render and keep counting from the
+    // delegation. The instant is minted once per tab and survives page reloads, the way the
+    // daemon persists it across a full browser restart.
+    const launchTime = Number(sessionStorage.getItem("task-copy-launch-time")) || (() => {
+      const value = Date.now() - 65_000
+      sessionStorage.setItem("task-copy-launch-time", String(value))
+      return value
+    })()
     launch.time = { created: launchTime, ran: launchTime, completed: launchTime + 1_000 }
     parentClock = launchTime + 2_000
     launch.state.metadata = { sessionID: childId, status: "running" }
