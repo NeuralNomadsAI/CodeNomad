@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { processTreeRows } from "../../../server/src/process-tree"
 import { getProcessStartIdentityAsync, type AsyncProcessStartIdentityLookup } from "./client-state-process-identity"
 import { windowsProcessTreeScript, windowsTerminateProcessTreeScript } from "./windows-process-tree"
 import { windowsCimProcessTreeScript, windowsManagedTerminateScript } from "./windows-process-fallback"
@@ -145,20 +146,21 @@ done`], { encoding: "utf8", timeout: timeoutMs })
   return rows
 }
 
+/** Comparable creation time of a start identity: Windows ticks, Linux boot clock ticks, macOS `lstart` seconds. */
+function startedAt(platform: NodeJS.Platform, startIdentity: string): bigint | undefined {
+  const raw = platform === "win32" ? startIdentity.match(/^win32:(\d+)$/)?.[1]
+    : platform === "linux" ? startIdentity.match(/^linux:[^:]+:(\d+)$/)?.[1]
+      : undefined
+  if (raw) return BigInt(raw)
+  if (platform !== "darwin") return undefined
+  const milliseconds = Date.parse(startIdentity.slice("darwin:".length))
+  return Number.isFinite(milliseconds) ? BigInt(milliseconds) : undefined
+}
+
 function processTreeFromRows(rootPid: number, platform: NodeJS.Platform, rows: ProcessRow[]): CapturedProcessTree | undefined {
-  const descendants = new Set([rootPid])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const row of rows) {
-      if (!descendants.has(row.parentPid) || descendants.has(row.pid)) continue
-      descendants.add(row.pid)
-      changed = true
-    }
-  }
-  const members = rows.filter((row) => descendants.has(row.pid))
+  const members = processTreeRows(rootPid, rows.map((row) => ({ ...row, startedAt: startedAt(platform, row.startIdentity) })))
     .map(({ pid, startIdentity }) => ({ pid, startIdentity }))
-  return members.some((member) => member.pid === rootPid) ? { platform, members } : undefined
+  return members.length > 0 ? { platform, members } : undefined
 }
 
 export async function captureProcessTree(

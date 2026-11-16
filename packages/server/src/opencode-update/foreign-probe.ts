@@ -1,5 +1,6 @@
-import { execFile, spawn, type ChildProcess } from "node:child_process"
+import { spawn, type ChildProcess } from "node:child_process"
 import { realpathSync, statSync } from "node:fs"
+import { stopWindowsProcessTree } from "../process-tree"
 import { buildSpawnSpec, parseBinaryVersion } from "../workspaces/spawn"
 
 /** `undefined` means unknown (timed out or not probed yet): the PATH command keeps precedence. */
@@ -81,6 +82,7 @@ export function boundedVersionProbe(command: string, timeoutMs: number): Promise
       child = spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env, windowsHide: true, detached: posix,
         windowsVerbatimArguments: Boolean(spec.options.windowsVerbatimArguments), stdio: ["ignore", "pipe", "pipe"] })
     } catch { return resolve({ valid: false }) }
+    const spawnedBy = new Date()
     let stdout = "", stderr = "", status: number | null = null, settled = false
     let drain: NodeJS.Timeout | undefined
     const finish = (result: ForeignProbe) => {
@@ -90,7 +92,7 @@ export function boundedVersionProbe(command: string, timeoutMs: number): Promise
       child.stdout?.destroy(); child.stderr?.destroy()
       resolve(result)
     }
-    const abort = () => { killTree(child); finish(undefined) }
+    const abort = () => { killTree(child, spawnedBy); finish(undefined) }
     const collect = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
       if (stream === "stdout") stdout += chunk.toString("utf8"); else stderr += chunk.toString("utf8")
       if (stdout.length + stderr.length > OUTPUT_LIMIT) abort()
@@ -109,10 +111,10 @@ export function boundedVersionProbe(command: string, timeoutMs: number): Promise
   })
 }
 
-function killTree(child: ChildProcess) {
+function killTree(child: ChildProcess, spawnedBy: Date) {
   if (!child.pid) return
   if (process.platform === "win32") {
-    execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }, () => {})
+    void stopWindowsProcessTree(child.pid, spawnedBy)
     return
   }
   try { process.kill(-child.pid, "SIGKILL") } catch { child.kill("SIGKILL") }
