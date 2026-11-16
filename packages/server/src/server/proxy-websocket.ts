@@ -2,10 +2,11 @@ import { request as httpRequest, ServerResponse, type IncomingMessage, type Inco
 import { request as httpsRequest } from "node:https"
 import type { Socket } from "node:net"
 import type { Logger } from "../logger"
+import { proxyDestination, ProxyDestinationDenied } from "./proxy-destination"
 
 // Use Node's bounded HTTP parser before forwarding a handshake. Piping raw
 // upstream bytes would let Set-Cookie overwrite the application's credentials.
-export function proxyWebSocket(args: {
+export async function proxyWebSocket(args: {
   request: IncomingMessage
   socket: Socket
   head: Buffer
@@ -16,10 +17,21 @@ export function proxyWebSocket(args: {
   logContext: Record<string, unknown>
 }) {
   const { request, socket, head, targetUrl } = args
+  let lookup
+  try {
+    lookup = await proxyDestination(targetUrl.hostname, Number(targetUrl.port) || (targetUrl.protocol === "https:" ? 443 : 80))
+  } catch (error) {
+    const status = error instanceof ProxyDestinationDenied ? "404 Not Found" : "502 Bad Gateway"
+    if (!socket.destroyed) socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+    return
+  }
+  if (socket.destroyed) return
   let upgraded: Socket | undefined
   let replied = false
   const send = targetUrl.protocol === "https:" ? httpsRequest : httpRequest
-  const upstream = send(targetUrl, { method: request.method, headers: args.headers, agent: false })
+  const upstream = send(targetUrl, {
+    method: request.method, headers: args.headers, agent: false, lookup,
+  })
   upstream.setTimeout(15_000, () => upstream.destroy(new Error("WebSocket handshake timed out")))
   upstream.on("error", () => {
     args.logger.warn(args.logContext, "SideCar/preview WebSocket upstream failed")

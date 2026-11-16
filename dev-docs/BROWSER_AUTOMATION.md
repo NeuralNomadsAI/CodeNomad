@@ -132,6 +132,10 @@ Local Tauri primary renderers receive `__CODENOMAD_BROWSER_CAPABILITIES__` durin
 
 Agent browser automation (`codenomad.browser`, including open, probe and page actions) routes through the authenticated backend and guarded native-parent channel on Electron and Tauri Windows/macOS/Linux. Plain-browser and remote-view clients use the sandboxed iframe proxy.
 
+The iframe proxy's HTTP, asset fallback and WebSocket connections pin one DNS
+lookup's answers and refuse the backend's live listening addresses/ports before connecting
+(`server/proxy-destination.ts`; boundary details in `REMOTE_CONTROL.md`).
+
 The Tauri launcher pipes backend stdin and sets `CODENOMAD_NATIVE_PARENT=1` after shell-environment resolution on Windows, macOS and Linux. The private channel fences requests and responses against the backend process generation and absolute deadline. WebKit's internal open, navigate, probe and visible-PNG operations use the common target/open-claim registry, with native navigation completion/failure callbacks and registration/document checks around capture. Native adapter code is compiled only for its target platform.
 
 Supported Tauri hosts publish `CODENOMAD_NATIVE_BROWSER_AUTOMATION=1` independently of transport readiness and retain `CODENOMAD_TAURI_WEBKIT` for host identity. The authenticated bridge validates session ownership and native availability; the UI's open-request subscription follows embedding availability. Mission-only ownership claims retain their normal admission path. Desktop transport/capability markers are stripped from the shared daemon's startup environment.

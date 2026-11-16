@@ -1,5 +1,7 @@
 # 浏览器预览与 SideCar
 
+iframe 预览和 SideCar 会拒绝连接到 CodeNomad 自身的监听地址和端口，包括通过 DNS 别名的连接。请使用应用服务器的独立端口。
+
 ## 打开会话浏览器 {#session-browser}
 
 1. 在对话工具栏中选择**打开网页预览**。

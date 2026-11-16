@@ -1,6 +1,7 @@
 import http from "node:http"
 import type { AddressInfo, Socket } from "node:net"
 import { markRemoteSocket } from "./request-origin"
+import { guardProxyListener } from "../server/proxy-destination"
 
 type Router = (request: http.IncomingMessage, response: http.ServerResponse) => void
 /** Takes an admitted WebSocket upgrade; false when nothing handled it. */
@@ -27,6 +28,7 @@ export class RemoteIngress {
   async start(): Promise<string> {
     if (this.server) return target(this.server)
     const server = http.createServer((request, response) => this.router(request, response))
+    guardProxyListener(server)
     Object.assign(server, INGRESS_TIMEOUTS)
     server.on("connection", (socket: Socket) => {
       markRemoteSocket(socket)

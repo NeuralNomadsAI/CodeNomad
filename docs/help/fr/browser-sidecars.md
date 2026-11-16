@@ -1,5 +1,7 @@
 # Aperçus navigateur et SideCars
 
+Les aperçus iframe et les SideCars refusent les connexions aux adresses et ports d'écoute de CodeNomad, y compris via des alias DNS. Utilisez le port distinct du serveur de votre application.
+
 ## Ouvrir un navigateur de session {#session-browser}
 
 1. Dans la barre d’outils d’une conversation, choisissez **Ouvrir l'aperçu web**.
